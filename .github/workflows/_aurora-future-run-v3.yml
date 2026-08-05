@@ -65,6 +65,16 @@ on:
         required: false
         default: 0
         type: number
+      autonomous_batch_id:
+        description: Deterministic autonomous-discovery batch identifier
+        required: false
+        default: 0
+        type: number
+      autonomous_candidate_count:
+        description: Pre-registered candidate count for an autonomous batch
+        required: false
+        default: 96
+        type: number
   workflow_call:
     inputs:
       spec_path:
@@ -129,6 +139,16 @@ on:
         required: false
         default: 0
         type: number
+      autonomous_batch_id:
+        description: Deterministic autonomous-discovery batch identifier
+        required: false
+        default: 0
+        type: number
+      autonomous_candidate_count:
+        description: Pre-registered candidate count for an autonomous batch
+        required: false
+        default: 96
+        type: number
     outputs:
       selected_jobs:
         description: Exact standard-runner shard count selected by the plan
@@ -149,6 +169,8 @@ env:
   TZ: UTC
   LC_ALL: C.UTF-8
   LANG: C.UTF-8
+  AURORA_AUTONOMOUS_BATCH_ID: ${{ inputs.autonomous_batch_id }}
+  AURORA_AUTONOMOUS_CANDIDATE_COUNT: ${{ inputs.autonomous_candidate_count }}
   AURORA_PREPARED_ARTIFACT_NAME: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}', inputs.run_label, github.run_id) }}
   AURORA_WHEELHOUSE_ARTIFACT_NAME: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}', inputs.run_label, github.run_id) }}
 

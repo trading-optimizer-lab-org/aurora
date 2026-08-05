@@ -1,0 +1,308 @@
+name: SP500 Autonomous Discovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: Campaign phase
+        required: true
+        default: preflight
+        type: choice
+        options:
+          - preflight
+          - pilot
+          - search_batch
+          - validation_once
+      batch_id:
+        description: Deterministic autonomous batch identifier
+        required: false
+        default: 0
+        type: number
+      candidate_count:
+        description: Pre-registered candidates in a train batch
+        required: false
+        default: 96
+        type: number
+      execution_mode:
+        description: Universal planner mode
+        required: false
+        default: optimized
+        type: choice
+        options:
+          - optimized
+          - baseline
+      forced_job_count:
+        description: Zero lets the measured planner choose
+        required: false
+        default: 0
+        type: number
+      validation_ack:
+        description: Exact one-shot validation authorization
+        required: false
+        default: ""
+        type: string
+      train_run_id:
+        description: Verified train run containing frozen artifacts
+        required: false
+        default: ""
+        type: string
+      train_results_artifact:
+        description: Frozen train results artifact
+        required: false
+        default: ""
+        type: string
+      train_prepared_artifact:
+        description: Frozen train prepared-input artifact
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  PYTHONHASHSEED: "0"
+  TZ: UTC
+  LC_ALL: C.UTF-8
+  LANG: C.UTF-8
+  AURORA_TRAIN_END: "2010-12-31"
+  AURORA_VALIDATION_START: "2011-01-01"
+  AURORA_VALIDATION_END: "2020-12-31"
+  AURORA_LOCKED_START: "2021-01-01"
+
+jobs:
+  preflight:
+    if: inputs.phase == 'preflight'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Install locked runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Run fail-closed preflight
+        run: |
+          set -euo pipefail
+          python scripts/preflight_sp500_autonomous_discovery.py \
+            --repo-root . \
+            --output-dir "$RUNNER_TEMP/preflight"
+      - name: Upload preflight evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-autonomous-preflight-${{ github.run_id }}
+          path: ${{ runner.temp }}/preflight
+          if-no-files-found: error
+          retention-days: 90
+
+  pilot:
+    if: inputs.phase == 'pilot'
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/sp500_autonomous_discovery.yaml
+      workload: aurora.infra.sp500_autonomous_discovery.workload:PILOT_WORKLOAD
+      run_label: sp500-auto-pilot-b${{ inputs.batch_id }}
+      retention_days: 30
+      execution_mode: ${{ inputs.execution_mode }}
+      forced_job_count: ${{ inputs.forced_job_count }}
+      autonomous_batch_id: ${{ inputs.batch_id }}
+      autonomous_candidate_count: 24
+    secrets: inherit
+
+  train_batch:
+    if: inputs.phase == 'search_batch'
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/sp500_autonomous_discovery.yaml
+      workload: aurora.infra.sp500_autonomous_discovery.workload:TRAIN_WORKLOAD
+      run_label: sp500-auto-batch-${{ inputs.batch_id }}
+      retention_days: 90
+      execution_mode: ${{ inputs.execution_mode }}
+      forced_job_count: ${{ inputs.forced_job_count }}
+      autonomous_batch_id: ${{ inputs.batch_id }}
+      autonomous_candidate_count: ${{ inputs.candidate_count }}
+    secrets: inherit
+
+  continue_or_freeze:
+    needs: train_batch
+    if: inputs.phase == 'search_batch' && needs.train_batch.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Download verified batch result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "sp500-auto-batch-${{ inputs.batch_id }}-results" \
+            --dir "$RUNNER_TEMP/batch"
+      - name: Continue search or open validation exactly once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BATCH_ID: ${{ inputs.batch_id }}
+          CANDIDATE_COUNT: ${{ inputs.candidate_count }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "batch" / "autonomous_batch_summary.json")
+              .read_text(encoding="utf-8")
+          )
+          finalists = int(summary.get("eligible_finalists", 0))
+          batch_id = int(os.environ["BATCH_ID"])
+          if finalists:
+              next_inputs = {
+                  "phase": "validation_once",
+                  "batch_id": str(batch_id),
+                  "candidate_count": os.environ["CANDIDATE_COUNT"],
+                  "execution_mode": "optimized",
+                  "forced_job_count": "0",
+                  "validation_ack": "OPEN_VALIDATION_2011_2020_ONCE_AUTONOMOUS",
+                  "train_run_id": os.environ["GITHUB_RUN_ID"],
+                  "train_results_artifact": f"sp500-auto-batch-{batch_id}-results",
+                  "train_prepared_artifact": f"sp500-auto-batch-{batch_id}-prepared-{os.environ['GITHUB_RUN_ID']}",
+              }
+          else:
+              next_inputs = {
+                  "phase": "search_batch",
+                  "batch_id": str(batch_id + 1),
+                  "candidate_count": os.environ["CANDIDATE_COUNT"],
+                  "execution_mode": "optimized",
+                  "forced_job_count": "0",
+              }
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write(json.dumps({"batch_summary": summary, "next_inputs": next_inputs}, indent=2))
+          with open(Path(os.environ["RUNNER_TEMP"]) / "next_inputs.json", "w", encoding="utf-8") as handle:
+              json.dump(next_inputs, handle, indent=2, sort_keys=True)
+          PY
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          inputs = json.loads((Path(os.environ["RUNNER_TEMP"]) / "next_inputs.json").read_text(encoding="utf-8"))
+          payload = {"ref": os.environ["GITHUB_REF_NAME"], "inputs": inputs}
+          (Path(os.environ["RUNNER_TEMP"]) / "dispatch.json").write_text(json.dumps(payload), encoding="utf-8")
+          PY
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/sp500-autonomous-discovery.yml/dispatches" \
+            --input "$RUNNER_TEMP/dispatch.json"
+      - name: Upload controller evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-autonomous-controller-${{ github.run_id }}
+          path: ${{ runner.temp }}/next_inputs.json
+          if-no-files-found: error
+          retention-days: 90
+
+  validation_once:
+    if: inputs.phase == 'validation_once'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact frozen revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Install locked runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Verify one-shot authorization
+        env:
+          VALIDATION_ACK: ${{ inputs.validation_ack }}
+          TRAIN_RUN_ID: ${{ inputs.train_run_id }}
+          TRAIN_RESULTS_ARTIFACT: ${{ inputs.train_results_artifact }}
+          TRAIN_PREPARED_ARTIFACT: ${{ inputs.train_prepared_artifact }}
+        run: |
+          set -euo pipefail
+          [[ "$VALIDATION_ACK" == "OPEN_VALIDATION_2011_2020_ONCE_AUTONOMOUS" ]]
+          [[ "$TRAIN_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ -n "$TRAIN_RESULTS_ARTIFACT" && -n "$TRAIN_PREPARED_ARTIFACT" ]]
+      - name: Download frozen train artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "${{ inputs.train_run_id }}" --repo "$GITHUB_REPOSITORY" \
+            --name "${{ inputs.train_results_artifact }}" --dir "$RUNNER_TEMP/train-results"
+          gh run download "${{ inputs.train_run_id }}" --repo "$GITHUB_REPOSITORY" \
+            --name "${{ inputs.train_prepared_artifact }}" --dir "$RUNNER_TEMP/train-prepared"
+      - name: Prepare bounded validation data
+        env:
+          RUNNER_TEMP_VALUE: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from aurora.infra.sp500_autonomous_discovery.registry import base_package
+          from aurora.infra.sp500_long_short_daily.data import prepare_market_snapshot
+
+          prepare_market_snapshot(
+              Path(os.environ["RUNNER_TEMP_VALUE"]) / "validation-prepared",
+              base_package(),
+              start="2011-01-01",
+              end="2020-12-31",
+              split="validation",
+          )
+          PY
+      - name: Open validation once
+        run: |
+          set -euo pipefail
+          python scripts/run_sp500_autonomous_validation.py \
+            --train-results-dir "$RUNNER_TEMP/train-results" \
+            --train-prepared-dir "$RUNNER_TEMP/train-prepared" \
+            --validation-prepared-dir "$RUNNER_TEMP/validation-prepared" \
+            --output-dir "$RUNNER_TEMP/validation-results" \
+            --validation-ack "${{ inputs.validation_ack }}"
+      - name: Check validation boundary
+        env:
+          RUNNER_TEMP_VALUE: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import pandas as pd
+
+          root = Path(os.environ["RUNNER_TEMP_VALUE"]) / "validation-results"
+          summary = json.loads((root / "validation_summary.json").read_text(encoding="utf-8"))
+          if summary["locked_opened"] is not False or summary["validation_used_for_selection"] is not False:
+              raise SystemExit("VALIDATION_BOUNDARY_OR_SELECTION_BREACH")
+          annual = pd.read_csv(root / "validation_annual_metrics.csv")
+          if len(annual) and (annual["year"].min() < 2011 or annual["year"].max() > 2020):
+              raise SystemExit("VALIDATION_YEAR_BREACH")
+          PY
+      - name: Upload one-shot validation artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-autonomous-validation-once-${{ github.run_id }}
+          path: ${{ runner.temp }}/validation-results
+          if-no-files-found: error
+          retention-days: 90

@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "campaign_id": "sp500-autonomous-discovery",
+  "phase": "preflight",
+  "next_batch_id": 0,
+  "previous_trial_count": 312,
+  "validation_opened": false,
+  "locked_opened": false,
+  "train_end": "2010-12-31",
+  "validation_start": "2011-01-01",
+  "validation_end": "2020-12-31",
+  "locked_start": "2021-01-01"
+}
