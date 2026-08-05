@@ -161,6 +161,7 @@ def test_v2_module_is_in_distribution_package_map() -> None:
     lock = (ROOT / "requirements" / "github-performance.lock").read_text("utf-8")
     assert "scikit-learn==1.9.0" in lock
     assert "joblib==1.5.3" in lock
+    assert "narwhals==2.24.0" in lock
     assert "threadpoolctl==3.6.0" in lock
 
 

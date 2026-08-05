@@ -1454,6 +1454,9 @@ wheel==0.47.0 \
 joblib==1.5.3 \
     --hash=sha256:5fc3c5039fc5ca8c0276333a188bbd59d6b7ab37fe6632daa76bc7f9ec18e713
     # via scikit-learn
+narwhals==2.24.0 \
+    --hash=sha256:42fdedf44e5b2ca7505630d45b4ac3058f38d8485cba9fe1652ca23152df7489
+    # via scikit-learn
 scikit-learn==1.9.0 \
     --hash=sha256:056c92bb67ad4c28463c2f2653d9701449201e7e7a9e94e321be0f71c4fef2b8
     # via -r requirements/github-performance.in
