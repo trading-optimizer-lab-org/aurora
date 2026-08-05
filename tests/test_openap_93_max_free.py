@@ -29,6 +29,7 @@ from aurora.research.openap_93.current_pipeline import (
     SCORE_VARIANTS,
     _integrate_features,
     _normalize_signal_results,
+    _score_identity,
     build_coverage_report,
     build_validation_report,
 )
@@ -1525,6 +1526,27 @@ def test_feature_integration_normalizes_empty_arrow_like_columns() -> None:
     assert integrated.loc[0, "formula_id"] == "regression_dtype_contract"
     assert integrated.loc[0, "source_available_at"] == pd.Timestamp("2026-08-01")
     assert bool(integrated.loc[0, "is_current_for_natural_frequency"])
+
+
+def test_score_identity_preserves_stable_unique_security_ids() -> None:
+    signals = pd.DataFrame(
+        {
+            "ticker": ["AAA", "AAA", "BBB"],
+            "security_id": [
+                "US-SEC-0000000001-AAA",
+                "US-SEC-0000000001-AAA",
+                "US-SEC-0000000002-BBB",
+            ],
+            "cik": [1, 1, 2],
+        }
+    )
+
+    identity = _score_identity(signals)
+
+    assert identity.to_dict(orient="records") == [
+        {"symbol": "AAA", "security_id": "US-SEC-0000000001-AAA", "cik": 1},
+        {"symbol": "BBB", "security_id": "US-SEC-0000000002-BBB", "cik": 2},
+    ]
 
 
 def test_not_applicable_is_distinct_from_missing_in_normalized_coverage() -> None:

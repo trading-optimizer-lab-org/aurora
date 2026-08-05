@@ -799,14 +799,31 @@ def _score_variant(features: pd.DataFrame, score_name: str, allowed: set[str]) -
     return scores
 
 
+def _score_identity(signals: pd.DataFrame) -> pd.DataFrame:
+    required = {"ticker", "security_id", "cik"}
+    missing = sorted(required - set(signals.columns))
+    if missing:
+        raise RuntimeError(f"Score identity columns are missing: {missing}")
+    identity = (
+        signals[["ticker", "security_id", "cik"]]
+        .drop_duplicates()
+        .rename(columns={"ticker": "symbol"})
+        .reset_index(drop=True)
+    )
+    if identity["symbol"].duplicated().any():
+        raise RuntimeError("A symbol maps to multiple score identities")
+    if identity["security_id"].isna().any() or identity["security_id"].duplicated().any():
+        raise RuntimeError("Score security_id values must be present and unique")
+    return identity
+
+
 def build_score_table(
     base_features: pd.DataFrame,
     metadata: pd.DataFrame,
     signals: pd.DataFrame,
 ) -> pd.DataFrame:
     integrated = _integrate_features(base_features, metadata, signals)
-    symbols = pd.DataFrame({"symbol": sorted(set(integrated["symbol"].astype(str)))})
-    score_table = symbols
+    score_table = _score_identity(signals)
     for score_name, allowed in SCORE_VARIANTS.items():
         score_table = score_table.merge(
             _score_variant(integrated, score_name, set(allowed)),
