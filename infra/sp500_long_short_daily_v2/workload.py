@@ -388,9 +388,9 @@ class Sp500LongShortV2SmokeWorkload(Sp500LongShortV2TrainWorkload):
     dataset_name = "bounded_spy_v2_smoke_market"
     result_filename = "sp500_long_short_v2_smoke_results.parquet"
     phase_name = "smoke"
-    data_start = "2003-01-01"
-    data_end = "2010-12-31"
-    evaluation_start = "2005-01-01"
+    data_start = "2005-10-01"
+    data_end = "2009-09-30"
+    evaluation_start = "2006-10-01"
     minimum_rows = 200
     minimum_years = 1
     candidate_ids = SMOKE_IDS

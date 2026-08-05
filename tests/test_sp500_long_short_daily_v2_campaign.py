@@ -32,7 +32,11 @@ from aurora.infra.sp500_long_short_daily_v2.validation import (
     ValidationGateError,
     verify_train_freeze,
 )
-from aurora.infra.sp500_long_short_daily_v2.workload import BENCHMARK_IDS, TRAIN_WORKLOAD
+from aurora.infra.sp500_long_short_daily_v2.workload import (
+    BENCHMARK_IDS,
+    SMOKE_WORKLOAD,
+    TRAIN_WORKLOAD,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +98,12 @@ def test_package_cardinality_and_contract(package: CampaignPackage) -> None:
     assert all(row["position_values"] == [-1, 1] for row in package.candidates)
     assert all(all(float(row[name]) == 0 for name in ("commission_bps", "slippage_bps", "borrow_cost_bps", "financing_bps", "switching_cost_bps", "market_impact_bps")) for row in package.candidates)
     assert all(row["locked_opened"] is False for row in package.candidates)
+
+
+def test_smoke_uses_complete_audited_distribution_periods() -> None:
+    assert SMOKE_WORKLOAD.data_start == "2005-10-01"
+    assert SMOKE_WORKLOAD.data_end == "2009-09-30"
+    assert SMOKE_WORKLOAD.evaluation_start == "2006-10-01"
 
 
 def test_embedded_v1_has_exact_65_streams_and_312_trial_ledger(package: CampaignPackage) -> None:
