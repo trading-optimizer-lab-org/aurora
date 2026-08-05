@@ -1,23 +1,31 @@
-name: OpenAP Repair SEC Shards And Merge
+name: OpenAP V2 Refresh SEC API Shards And Merge
 
 on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: Completed OpenAP run whose successful artifacts will be reused
+        description: Completed OpenAP v2 run whose prepare and YFinance artifacts will be reused
         required: true
-        default: "30736374334"
       sec_user_agent:
         description: SEC-compliant User-Agent with contact email
         required: true
         default: "Aurora Research gomez5757@users.noreply.github.com"
+      remerge_only:
+        description: Reuse existing SEC API shard artifacts without redownloading them
+        required: true
+        type: boolean
+        default: false
+      sec_artifact_run_id:
+        description: Completed repair run containing SEC shard artifacts when remerge_only is true
+        required: false
+        default: ""
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: openap-sec-shard-repair
+  group: openap-v2-sec-api-shard-refresh
   cancel-in-progress: false
 
 env:
@@ -31,19 +39,20 @@ jobs:
     with:
       spec_path: config/github_performance_reference.yaml
       workload: aurora.infra.github_performance.reference_workload:WORKLOAD
-      run_label: openap-sec-shard-repair-framework-contract
+      run_label: openap-v2-sec-api-shard-refresh-framework-contract
       retention_days: 1
       forced_job_count: 1
 
   repair_sec:
     needs: framework_contract
+    if: ${{ !inputs.remerge_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 48
       matrix:
-        chunk: [7, 23]
+        chunk: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
@@ -58,24 +67,27 @@ jobs:
           path: inputs/prepare
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Repair SEC shard
+      - name: Refresh audited SEC API shard
         env:
           AU_SEC_EDGAR_USER_AGENT: ${{ inputs.sec_user_agent }}
         run: |
           python scripts/run_openap_yfinance_sec_current.py \
             --config "$OPENAP_CONFIG" sec-chunk \
-            --security-master inputs/prepare/security_master_seed.parquet \
+            --security-master inputs/prepare/sec_cik_universe.parquet \
             --sec-user-agent "$AU_SEC_EDGAR_USER_AGENT" \
             --chunk-index "${{ matrix.chunk }}" \
             --total-chunks "$SEC_CHUNKS" \
             --output-dir "outputs/sec_${{ matrix.chunk }}"
-      - name: Validate repaired shard
+      - name: Validate refreshed SEC API shard
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           chunk = int("${{ matrix.chunk }}")
           summary = json.loads(Path(f"outputs/sec_{chunk}/sec_summary_{chunk:03d}.json").read_text())
+          assert summary["source_layout"] == "official_api_shards_with_audited_readthrough"
+          assert summary["chunk_index"] == chunk
+          assert summary["total_chunks"] == 48
           assert summary["companyfacts_ciks_ok"] > 0
           assert summary["submissions_ciks_ok"] > 0
           assert summary["companyfacts_rows"] > 0
@@ -90,18 +102,19 @@ jobs:
             outputs/sec_${{ matrix.chunk }}/sec_status_*.csv
             outputs/sec_${{ matrix.chunk }}/sec_summary_*.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
           compression-level: 0
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openap-sec-repair-raw-${{ matrix.chunk }}
           path: outputs/sec_${{ matrix.chunk }}/raw/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
           compression-level: 0
 
   merge:
-    needs: repair_sec
+    needs: [framework_contract, repair_sec]
+    if: ${{ always() && needs.framework_contract.result == 'success' && (needs.repair_sec.result == 'success' || needs.repair_sec.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -111,7 +124,26 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install dependencies
-        run: python -m pip install --disable-pip-version-check -e . duckdb requests
+        run: python -m pip install --disable-pip-version-check -e ".[dev]" duckdb requests
+      - name: Validate OpenAP implementation before remerge
+        run: python -m pytest tests/test_openap_yfinance_sec_current.py -q
+      - name: Wait for all source YFinance artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          status=""
+          for attempt in $(seq 1 240); do
+            status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" --jq .status)"
+            if [ "$status" = "completed" ]; then
+              break
+            fi
+            sleep 30
+          done
+          test "$status" = "completed"
+          yfinance_artifacts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false and (.name | test("^openap-yfinance-[0-9]+$")))] | length')"
+          test "$yfinance_artifacts" -eq 48
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-prepare
@@ -124,32 +156,31 @@ jobs:
           path: inputs/yfinance
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate reusable SEC artifact run
+        if: ${{ inputs.remerge_only }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SEC_ARTIFACT_RUN_ID: ${{ inputs.sec_artifact_run_id }}
+        run: |
+          test -n "$SEC_ARTIFACT_RUN_ID"
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SEC_ARTIFACT_RUN_ID}" --jq .status)" = "completed"
+          sec_artifacts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SEC_ARTIFACT_RUN_ID}/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false and (.name | test("^openap-sec-repair-lake-[0-9]+$")))] | length')"
+          test "$sec_artifacts" -eq 48
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        if: ${{ inputs.remerge_only }}
         with:
-          pattern: openap-sec-lake-*
+          pattern: openap-sec*lake-*
           path: inputs/sec
-          run-id: ${{ inputs.source_run_id }}
+          run-id: ${{ inputs.sec_artifact_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        if: ${{ !inputs.remerge_only }}
         with:
           pattern: openap-sec-repair-lake-*
-          path: inputs/repair
-      - name: Replace empty source shards with repaired shards
+          path: inputs/sec
+      - name: Validate all 48 audited SEC API shards
         run: |
-          for chunk in 007 023; do
-            find inputs/sec -type f \( \
-              -name "sec_companyfacts_${chunk}.parquet" -o \
-              -name "sec_submissions_${chunk}.parquet" -o \
-              -name "sec_status_${chunk}.csv" -o \
-              -name "sec_summary_${chunk}.json" \
-            \) -delete
-            find inputs/repair -type f \( \
-              -name "sec_companyfacts_${chunk}.parquet" -o \
-              -name "sec_submissions_${chunk}.parquet" -o \
-              -name "sec_status_${chunk}.csv" -o \
-              -name "sec_summary_${chunk}.json" \
-            \) -exec cp {} inputs/sec/ \;
-          done
           test "$(find inputs/sec -name 'sec_companyfacts_*.parquet' | wc -l)" -eq 48
           test "$(find inputs/sec -name 'sec_submissions_*.parquet' | wc -l)" -eq 48
           test "$(find inputs/sec -name 'sec_summary_*.json' | wc -l)" -eq 48
@@ -166,7 +197,22 @@ jobs:
           test -s outputs/final/openap_current.duckdb
           test -s outputs/final/openap_features_current.parquet
           test -s outputs/final/openap_scores_current.parquet
+          test -s outputs/final/openap_overall_scores_current.parquet
           test -s outputs/final/openap_scores_aggregate_current.parquet
+          test -s outputs/final/openap_score_contributions_current.parquet
+          test -s outputs/final/openap_current_leaderboard.csv
+          test -s outputs/final/openap_current_deployable_leaderboard.csv
+          test -s outputs/final/data_quality_issues.csv
+          test -s outputs/final/price_quality_current.csv
+          test -s outputs/final/schema_contract.csv
+          test -s outputs/final/index_contract.csv
+          test -s outputs/final/database_contract_checks.csv
+          test -s outputs/final/current_redundancy_groups.csv
+          test -s outputs/final/overall_redundancy_groups.csv
+          test -s outputs/final/sec_download_status.csv
+          test -s outputs/final/yfinance_download_status.csv
+          test -s outputs/final/options_quality_summary.csv
+          test -s outputs/final/yahoo_analyst_current.parquet
           test -s outputs/final/sec_concept_inputs_current.parquet
           test -s outputs/final/coverage_185.csv
           test -s outputs/final/execution_summary.json
@@ -188,20 +234,54 @@ jobs:
           assert summary["duplicate_price_rows"] == 0
           assert summary["future_price_rows"] == 0
           assert summary["facts_without_available_at"] == 0
-          assert summary["sec_concept_input_rows"] > 100_000
-          assert summary["concept_inputs_without_available_at"] == 0
+          assert summary["concept_inputs_before_period_end"] == 0
+          assert summary["concept_inputs_before_filed"] == 0
+          assert summary["future_concept_inputs"] == 0
+          assert summary["invalid_concept_units"] == 0
+          assert summary["duplicate_companyfacts"] == 0
+          assert summary["duplicate_submissions"] == 0
+          assert summary["blank_required_identifiers"] == 0
+          assert summary["inconsistent_feature_status"] == 0
+          assert summary["ineligible_leaderboard_rows"] == 0
+          assert summary["stale_leaderboard_prices"] == 0
+          assert summary["unsupported_official_filters"] == 0
+          assert summary["weak_bucket_scores"] == 0
+          assert summary["family_weight_cap_violations"] == 0
+          assert summary["required_horizon_denominator_variants"] == 0
+          assert summary["ranking_sec_download_failures"] == 0
+          assert summary["uninformative_weighted_rows"] == 0
+          assert summary["weighted_constant_predictors"] == 0
+          assert summary["stale_sec_leaderboard_rows"] == 0
+          assert summary["undercovered_leaderboard_rows"] == 0
+          assert summary["exact_formula_policy_violations"] == 0
+          assert summary["mixed_unit_turnover_rows"] == 0
+          assert summary["shallow_option_feature_rows"] == 0
+          assert summary["duplicate_usable_option_contracts"] == 0
+          assert summary["overall_score_scale_violations"] == 0
+          assert summary["score_contribution_mismatches"] == 0
+          assert summary["clean_price_rows_in_database"] > 1_000_000
+          assert summary["raw_price_rows_in_database"] >= summary["clean_price_rows_in_database"]
+          assert summary["schema_contract_rows"] >= 30
+          assert summary["database_index_rows"] >= 15
+          assert summary["database_contract_violations"] == 0
+          assert summary["score_validation_status"] == "unvalidated_current_snapshot_only"
+          assert summary["prediction_probability_claimed"] is False
           assert summary["score_horizons"] == [1, 3, 6, 12, 36]
           assert summary["aggregate_scores_rows"] == summary["eligible_symbols"]
+          assert summary["overall_scores_rows"] == summary["eligible_symbols"]
+          assert summary["ranking_score_mode"] == "all_predictors_single_cross_sectional_score"
           assert summary["source_manifest_rows"] == 3
           assert summary["yfinance_source_manifest_rows"] == 48
+          assert summary["sec_source_layout"] == "official_api_shards_with_audited_readthrough"
           assert summary["sec_source_manifest_rows"] == 48
+          assert summary["sec_jina_fallback_downloads"] > 0
           assert summary["security_master_rows"] > summary["eligible_symbols"]
           assert summary["security_exclusion_rows"] > 0
           assert len(summary["pipeline_git_sha"]) == 40
           assert len(summary["config_sha256"]) == 64
           import pandas as pd
           output_manifest = pd.read_csv("outputs/final/output_manifest.csv")
-          assert len(output_manifest) >= 15
+          assert len(output_manifest) >= 25
           assert output_manifest["sha256"].astype(str).str.fullmatch(r"[0-9a-f]{64}").all()
           yahoo_manifest = pd.read_csv("outputs/final/yfinance_source_manifest.csv")
           sec_manifest = pd.read_csv("outputs/final/sec_source_manifest.csv")
@@ -219,11 +299,21 @@ jobs:
           assert summary["locked_opened"] is False
           assert summary["backtest_enabled"] is False
           assert summary["partial"] is False
+          import duckdb
+          con = duckdb.connect("outputs/final/openap_current.duckdb", read_only=True)
+          tables = {row[0] for row in con.execute("SHOW TABLES").fetchall()}
+          assert {
+              "selected_predictors", "redundancy_groups", "redundancy_correlation_audit",
+              "coverage_185", "data_quality_current", "proxy_audit",
+              "unavailable_predictors", "security_universe_exclusions",
+          }.issubset(tables)
+          con.close()
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ always() && hashFiles('outputs/final/**') != '' }}
         with:
           name: openap-yfinance-sec-current-score-results
           path: outputs/final/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
           compression-level: 0

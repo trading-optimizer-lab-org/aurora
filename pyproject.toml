@@ -17,6 +17,7 @@ dependencies = [
     "matplotlib>=3.7",
     "yfinance>=0.2.40",
     "pyarrow>=14",
+    "duckdb>=1.1,<2",
     "pyyaml>=6",
     "numba>=0.58",
     "pydantic>=2",
@@ -103,6 +104,7 @@ packages = [
     "aurora.reporting.daily_ops",
     "aurora.reporting.tearsheet",
     "aurora.research",
+    "aurora.research.openap_93",
     "aurora.research.agent_loop",
     "aurora.research.factory",
     "aurora.research.factory.factory",
@@ -154,6 +156,7 @@ packages = [
 "aurora.reporting.daily_ops" = "reporting/daily_ops"
 "aurora.reporting.tearsheet" = "reporting/tearsheet"
 "aurora.research" = "research"
+"aurora.research.openap_93" = "research/openap_93"
 "aurora.research.agent_loop" = "research/agent_loop"
 "aurora.research.factory" = "research/factory"
 "aurora.research.factory.factory" = "research/factory/factory"

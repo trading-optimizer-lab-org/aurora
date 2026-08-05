@@ -1,0 +1,103 @@
+name: OpenAP 93 Maximum Free Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision containing the OpenAP 93 implementation
+        required: true
+        default: 897900212b2b506f8891f08796fe913036c199e1
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-93-max-free-runner
+  cancel-in-progress: false
+
+jobs:
+  framework_contract:
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: openap-93-framework-contract
+      retention_days: 1
+      forced_job_count: 1
+
+  focused_tests_and_source_probe:
+    needs: framework_contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      GITHUB_ACTIONS: "true"
+    steps:
+      - name: Checkout exact OpenAP implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install focused dependencies
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Compile OpenAP 93 modules
+        run: |
+          python -m py_compile research/openap_93/registry.py
+          python -m py_compile research/openap_93/http.py
+          python -m py_compile research/openap_93/sources.py
+          python -m py_compile research/openap_93/external.py
+          python -m py_compile research/openap_93/market.py
+          python -m py_compile research/openap_93/advanced_accounting_pipeline.py
+          python -m py_compile research/openap_93/analyst_pipeline.py
+          python -m py_compile research/openap_93/event_pipeline.py
+          python -m py_compile research/openap_93/institutional_pipeline.py
+          python -m py_compile research/openap_93/short_interest_pipeline.py
+          python -m py_compile research/openap_93/current_pipeline.py
+          python -m py_compile scripts/run_openap_93_max_free.py
+      - name: Run focused OpenAP tests
+        run: python -m pytest tests/test_openap_93_max_free.py -q --tb=short
+      - name: Probe real public sources
+        run: |
+          python scripts/run_openap_93_max_free.py \
+            --signals-config config/openap_93/signals_93.yaml \
+            probe-sources \
+            --output-dir outputs/openap_93_source_probe
+      - name: Download and normalize public formula inputs
+        run: |
+          python scripts/run_openap_93_max_free.py \
+            --signals-config config/openap_93/signals_93.yaml \
+            fetch-public-inputs \
+            --output-dir outputs/openap_93_public_inputs
+      - name: Validate evidence contract
+        run: |
+          test -s outputs/openap_93_source_probe/source_probe_results.csv
+          test -s outputs/openap_93_source_probe/source_symbol_probe_results.csv
+          test -s outputs/openap_93_source_probe/source_coverage_matrix.csv
+          test -s outputs/openap_93_source_probe/source_ablation.csv
+          test -s outputs/openap_93_source_probe/selected_sources.json
+          test -s outputs/openap_93_source_probe/sources.lock.json
+          test "$(find outputs/openap_93_source_probe/evidence/source_tests -name '*.json' | wc -l)" -eq 12
+          test -s outputs/openap_93_public_inputs/public_inputs_manifest.json
+          test -s outputs/openap_93_public_inputs/normalized/ff48_sic_codes.parquet
+          test "$(find outputs/openap_93_public_inputs/normalized -name '*.parquet' | wc -l)" -eq 12
+          test -s outputs/openap_93_public_inputs/normalized/openap_reference_metadata.json
+          test -s outputs/openap_93_public_inputs/normalized/sec_13f_filings.parquet
+          test -s outputs/openap_93_public_inputs/normalized/sec_13f_holdings.parquet
+          test -s outputs/openap_93_public_inputs/normalized/openfigi_cusip_map.parquet
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-93-max-free-source-probe
+          path: outputs/openap_93_source_probe/
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-93-public-inputs
+          path: outputs/openap_93_public_inputs/
+          if-no-files-found: error
+          retention-days: 90
