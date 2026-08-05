@@ -1,0 +1,99 @@
+name: OpenAP Five Proxy Pairwise Similarity
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Run containing the reconstructed proxy panel artifact
+        required: true
+        default: "31014018200"
+        type: string
+      source_artifact_name:
+        description: Artifact containing proxy_reconstruction_panel.parquet
+        required: true
+        default: "openap-five-proxy-historical-validation-results"
+        type: string
+      min_pairs:
+        description: Minimum paired firms required in a month
+        required: true
+        default: "30"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GITHUB_ACTIONS: "true"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and focused test dependency
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Compile pairwise validator
+        run: |
+          python -m py_compile research/openap_93/historical_proxy_validation.py
+          python -m py_compile scripts/run_openap_93_proxy_pairwise_similarity.py
+      - name: Run focused tests
+        run: python -m pytest tests/test_openap_93_five_proxy_validation.py tests/test_openap_93_proxy_pairwise_similarity.py -q --tb=short
+
+  pairwise_similarity:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GITHUB_ACTIONS: "true"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Download reconstructed proxy panel
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.source_artifact_name || 'openap-five-proxy-historical-validation-results' }}
+          path: inputs/source
+          run-id: ${{ inputs.source_run_id || '31014018200' }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Locate panel and calculate pairwise metrics
+        shell: bash
+        run: |
+          set -euo pipefail
+          panel=$(find inputs/source -type f -name 'proxy_reconstruction_panel.parquet' -print -quit)
+          test -n "$panel"
+          python scripts/run_openap_93_proxy_pairwise_similarity.py \
+            --panel "$panel" \
+            --output-dir outputs/openap_five_proxy_pairwise_similarity \
+            --min-pairs "${{ inputs.min_pairs || '30' }}"
+      - name: Verify invariants and non-empty result
+        run: |
+          test -s outputs/openap_five_proxy_pairwise_similarity/proxy_pairwise_similarity_summary.csv
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('outputs/openap_five_proxy_pairwise_similarity')
+          audit = json.loads((root / 'proxy_pairwise_similarity_audit.json').read_text())
+          assert audit['official_openap_crosswalk_used'] is False
+          assert audit['locked_opened'] is False
+          assert audit['backtest_enabled'] is False
+          assert audit['validation_used_for_selection'] is False
+          assert audit['lookahead_checked'] is True
+          PY
+      - name: Upload pairwise similarity artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-five-proxy-pairwise-similarity-results
+          path: outputs/openap_five_proxy_pairwise_similarity/
+          if-no-files-found: error
+          retention-days: 30

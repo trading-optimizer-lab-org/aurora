@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import math
 import zipfile
+from itertools import combinations
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -628,6 +629,130 @@ def compare_to_reference(
             "reason": "" if not valid.empty else f"Fewer than {min_pairs} paired firms in every month",
         })
     return pd.DataFrame(rows), pd.DataFrame(summary_rows)
+
+
+def _proxy_pair_monthly_similarity(
+    group: pd.DataFrame,
+    *,
+    left_signal: str,
+    right_signal: str,
+) -> dict[str, object]:
+    """Measure whether two reconstructed signals rank the same firms."""
+
+    pair = group[[left_signal, right_signal]].apply(pd.to_numeric, errors="coerce").dropna()
+    record: dict[str, object] = {
+        "left_signal": left_signal,
+        "right_signal": right_signal,
+        "formation_month": group["formation_month"].iloc[0],
+        "paired_observations": int(len(pair)),
+        "spearman": np.nan,
+        "pearson": np.nan,
+        "quintile_agreement": np.nan,
+        "extreme_decile_agreement": np.nan,
+        "top_bottom_overlap": np.nan,
+        "sign_consistency": np.nan,
+        "sign_pairs": 0,
+        "status": "insufficient_pairs",
+    }
+    if len(pair) < 2:
+        return record
+    left = pair[left_signal]
+    right = pair[right_signal]
+    record["spearman"] = float(left.rank(method="average").corr(right.rank(method="average")))
+    record["pearson"] = float(left.corr(right))
+    left_quintile = _rank_buckets(left)
+    right_quintile = _rank_buckets(right)
+    record["quintile_agreement"] = float((left_quintile == right_quintile).mean())
+    n = max(1, math.ceil(len(pair) * 0.10))
+    left_order = left.sort_values()
+    right_order = right.sort_values()
+    left_bottom, left_top = set(left_order.index[:n]), set(left_order.index[-n:])
+    right_bottom, right_top = set(right_order.index[:n]), set(right_order.index[-n:])
+    low = _jaccard(left_bottom, right_bottom)
+    high = _jaccard(left_top, right_top)
+    record["extreme_decile_agreement"] = float(np.nanmean([low, high]))
+    record["top_bottom_overlap"] = float(np.nanmean([low, high]))
+    signs = pair.loc[left.ne(0) & right.ne(0)]
+    record["sign_pairs"] = int(len(signs))
+    if not signs.empty:
+        record["sign_consistency"] = float(
+            (np.sign(signs[left_signal]) == np.sign(signs[right_signal])).mean()
+        )
+    record["status"] = "ok"
+    return record
+
+
+def compare_proxy_pairs(
+    proxies: pd.DataFrame,
+    *,
+    min_pairs: int = 30,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Compare the five reconstructed proxies against one another by month.
+
+    This is a useful diagnostic even when the official PERMNO crosswalk is
+    missing. It never substitutes for proxy-versus-OpenAP validation.
+    """
+
+    frame = proxies[["symbol", "formation_month", "signal", "proxy_value"]].copy()
+    frame["formation_month"] = pd.to_datetime(frame["formation_month"], errors="coerce")
+    frame["proxy_value"] = pd.to_numeric(frame["proxy_value"], errors="coerce")
+    frame = frame.dropna(subset=["symbol", "formation_month"])
+    wide = frame.pivot_table(
+        index=["symbol", "formation_month"],
+        columns="signal",
+        values="proxy_value",
+        aggfunc="last",
+    ).reset_index()
+    rows: list[dict[str, object]] = []
+    summaries: list[dict[str, object]] = []
+    for left_signal, right_signal in combinations(FIVE_PROXY_SIGNALS, 2):
+        if left_signal not in wide or right_signal not in wide:
+            summaries.append({
+                "left_signal": left_signal,
+                "right_signal": right_signal,
+                "validation_status": "unavailable_missing_proxy_column",
+                "paired_observations": 0,
+                "months_evaluated": 0,
+                "mean_monthly_spearman": np.nan,
+                "median_monthly_spearman": np.nan,
+                "mean_quintile_agreement": np.nan,
+                "mean_extreme_decile_agreement": np.nan,
+                "mean_top_bottom_overlap": np.nan,
+                "mean_sign_consistency": np.nan,
+                "positive_spearman_month_pct": np.nan,
+                "reason": "One or both proxy columns are unavailable",
+            })
+            continue
+        pair_frame = wide[["formation_month", left_signal, right_signal]].copy()
+        for month, group in pair_frame.groupby("formation_month", sort=True):
+            rows.append(_proxy_pair_monthly_similarity(
+                group,
+                left_signal=left_signal,
+                right_signal=right_signal,
+            ))
+        month_rows = pd.DataFrame([
+            row for row in rows
+            if row["left_signal"] == left_signal and row["right_signal"] == right_signal
+        ])
+        valid = month_rows.loc[
+            month_rows["paired_observations"].ge(min_pairs)
+        ] if not month_rows.empty else month_rows
+        summaries.append({
+            "left_signal": left_signal,
+            "right_signal": right_signal,
+            "validation_status": "ok" if not valid.empty else "insufficient_pairs",
+            "paired_observations": int(valid["paired_observations"].sum()) if not valid.empty else 0,
+            "months_evaluated": int(len(valid)),
+            "mean_monthly_spearman": valid["spearman"].mean() if not valid.empty else np.nan,
+            "median_monthly_spearman": valid["spearman"].median() if not valid.empty else np.nan,
+            "mean_quintile_agreement": valid["quintile_agreement"].mean() if not valid.empty else np.nan,
+            "mean_extreme_decile_agreement": valid["extreme_decile_agreement"].mean() if not valid.empty else np.nan,
+            "mean_top_bottom_overlap": valid["top_bottom_overlap"].mean() if not valid.empty else np.nan,
+            "mean_sign_consistency": valid["sign_consistency"].mean() if not valid.empty else np.nan,
+            "positive_spearman_month_pct": (valid["spearman"] > 0).mean() if not valid.empty else np.nan,
+            "reason": "" if not valid.empty else f"Fewer than {min_pairs} paired firms in every month",
+        })
+    return pd.DataFrame(rows), pd.DataFrame(summaries)
 
 
 def write_validation_outputs(
