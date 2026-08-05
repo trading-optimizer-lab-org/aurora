@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trading-optimizer-lab-org.github.io/aurora/gtbi/v7/results/summary.schema.json",
+  "title": "GTBI V7 canonical successor summary",
+  "type": "object",
+  "required": [
+    "campaign_id",
+    "github_only_run",
+    "requires_local_machine",
+    "locked_start",
+    "locked_authorized",
+    "locked_data_accessed",
+    "train_end",
+    "validation_start",
+    "validation_end",
+    "total_strategies_requested",
+    "total_strategies_loaded",
+    "total_strategies_evaluated",
+    "total_strategies_early_rejected",
+    "total_terminal_identities",
+    "leaderboard_rows"
+  ],
+  "properties": {
+    "campaign_id": {"const": "gtbi_v7_new_reference_v1"},
+    "github_only_run": {"const": true},
+    "requires_local_machine": {"const": false},
+    "locked_start": {"const": "2021-01-01"},
+    "locked_authorized": {"const": false},
+    "locked_data_accessed": {"const": false},
+    "train_end": {"const": "2010-12-31"},
+    "validation_start": {"const": "2011-01-01"},
+    "validation_end": {"const": "2020-12-31"},
+    "total_strategies_requested": {"const": 72000},
+    "total_strategies_loaded": {"const": 72000},
+    "total_strategies_evaluated": {"type": "integer", "minimum": 0},
+    "total_strategies_early_rejected": {"type": "integer", "minimum": 0},
+    "total_terminal_identities": {"const": 72000},
+    "leaderboard_rows": {"type": "integer", "minimum": 0},
+    "best_candidate_id": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}

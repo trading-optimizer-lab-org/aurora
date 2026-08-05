@@ -1,0 +1,70 @@
+name: GTBI V7 Successor Completed Clean Reconciliation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONHASHSEED: "0"
+  locked_start: "2021-01-01"
+
+jobs:
+  reconcile:
+    name: Verify successor and emit COMPLETED_CLEAN
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout reviewed commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install test runtime
+        run: python -m pip install -e ".[dev,ga]"
+      - name: Run successor closure tests
+        run: >-
+          python -m pytest
+          tests/test_gtbi_v7_successor_completion.py
+          tests/test_gtbi_v7_successor_contracts.py
+          tests/test_gtbi_v7_feature_store_boundary.py
+          tests/test_global_technical_buy_indicator.py
+          tests/test_gtbi_v7_successor_task_applicability.py
+          tests/test_gtbi_v7_canonical_successor_authorization.py
+          -q
+      - name: Emit fail-closed terminal receipt
+        run: >-
+          python scripts/reconcile_gtbi_v7_successor.py
+          --finalize
+          --reviewed-commit "$GITHUB_SHA"
+          --output-dir outputs
+      - name: Verify locked remained closed
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          receipt = json.loads(Path("outputs/completed_clean.json").read_text())
+          assert receipt["locked_start"] == "2021-01-01"
+          assert receipt["locked_authorized"] is False
+          assert receipt["locked_data_accessed"] is False
+          assert receipt["github_only"] is True
+          assert receipt["requires_local_machine"] is False
+          assert receipt["incremental_net_spend_usd"] == 0.0
+          assert receipt["completed_task_count"] == 22
+          PY
+      - name: Upload terminal receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gtbi-v7-successor-completed-clean-${{ github.run_id }}
+          path: outputs/completed_clean.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90

@@ -23,6 +23,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--environment-setup-benchmark",
         type=Path,
     )
+    parser.add_argument(
+        "--comparison-dimension",
+        choices=("assignment_strategy", "adaptive_topology"),
+        default="assignment_strategy",
+    )
     parser.add_argument("--output-dir", required=True, type=Path)
     return parser
 
@@ -40,6 +45,7 @@ def main() -> int:
                 if args.environment_setup_benchmark is not None
                 else None
             ),
+            comparison_dimension=args.comparison_dimension,
         )
     except ScientificOutputMismatch as error:
         failure = {

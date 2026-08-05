@@ -1,0 +1,411 @@
+name: GTBI V7 New Reference Merge Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_full_run_id:
+        description: Completed V7 full run containing all exact runner artifacts
+        required: true
+        type: string
+      source_commit_sha:
+        description: Exact scientific commit used by the source full run
+        required: true
+        type: string
+      source_block_run_id:
+        description: Optional prior recovery run containing all 18 verified block artifacts
+        required: false
+        default: ""
+        type: string
+      prepared_run_id:
+        description: Exact successful V7 preparation run
+        required: true
+        type: string
+      benchmark_run_id:
+        description: Exact accepted V7 benchmark run
+        required: true
+        type: string
+      smoke_run_id:
+        description: Exact accepted 100-job V7 smoke run
+        required: true
+        type: string
+      recovery_authorized:
+        description: Explicitly authorize merge-only recovery; never authorizes locked
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: gtbi-v7-new-reference-merge-recovery-${{ inputs.source_full_run_id }}
+  cancel-in-progress: false
+
+env:
+  PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/..
+  PYTHONUNBUFFERED: "1"
+  PYTHONFAULTHANDLER: "1"
+  PYTHONHASHSEED: "0"
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+  DATA_ARTIFACT_PREFIX: gtbi-v7-new-reference-historical-data
+  PLAN_ARTIFACT_PREFIX: gtbi-v7-new-reference-plan
+  BENCHMARK_ARTIFACT_PREFIX: gtbi-v7-new-reference-benchmark
+  SMOKE_ARTIFACT_PREFIX: gtbi-v7-new-reference-smoke
+  FINAL_ARTIFACT_NAME: gtbi-v7-new-reference-historical-results
+
+jobs:
+  framework-gate:
+    name: Validate Aurora framework before V7 merge recovery
+    if: inputs.recovery_authorized
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: gtbi-v7-merge-recovery-framework-gate
+      retention_days: 1
+      execution_mode: optimized
+      forced_job_count: 4
+
+  recovery-gate:
+    name: Verify exact reusable full-run evidence
+    if: always() && inputs.recovery_authorized && needs.framework-gate.result == 'success'
+    needs: framework-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      block_matrix: ${{ steps.matrix.outputs.block_matrix }}
+    steps:
+      - name: Checkout recovery code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download immutable plan and accepted evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.prepared_run_id }}" --name "${PLAN_ARTIFACT_PREFIX}-${{ inputs.prepared_run_id }}" --dir plan
+          gh run download "${{ inputs.benchmark_run_id }}" --name "${BENCHMARK_ARTIFACT_PREFIX}-${{ inputs.benchmark_run_id }}" --dir benchmark
+          gh run download "${{ inputs.smoke_run_id }}" --name "${SMOKE_ARTIFACT_PREFIX}-${{ inputs.smoke_run_id }}" --dir smoke
+      - name: Verify campaign, source run and all 90 runner artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_full_run_id }}
+          SOURCE_COMMIT_SHA: ${{ inputs.source_commit_sha }}
+        run: |
+          python -m scripts.verify_gtbi_v7_new_reference_evidence \
+            --campaign-manifest plan/campaign_manifest.json \
+            --benchmark benchmark/benchmark.json \
+            --smoke-validation smoke/smoke_validation.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" > source-run.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts" --paginate \
+            --jq '.artifacts[].name' > source-artifacts.txt
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          run = json.loads(Path("source-run.json").read_text(encoding="utf-8"))
+          source_run = os.environ["SOURCE_RUN_ID"]
+          source_sha = os.environ["SOURCE_COMMIT_SHA"]
+          if run.get("status") != "completed" or run.get("head_sha") != source_sha:
+              raise SystemExit("source full run is incomplete or used another commit")
+          campaign = json.loads(Path("plan/campaign_manifest.json").read_text(encoding="utf-8"))
+          if campaign.get("inputs", {}).get("code_sha") != source_sha:
+              raise SystemExit("source commit differs from immutable campaign plan")
+          names = set(Path("source-artifacts.txt").read_text(encoding="utf-8").splitlines())
+          expected = {f"gtbi-v7-runner-{runner:03d}-{source_run}" for runner in range(90)}
+          missing = sorted(expected - names)
+          if missing:
+              raise SystemExit(f"source run is missing runner artifacts: {missing[:5]}")
+          extras = sorted(name for name in names if name.startswith("gtbi-v7-runner-") and name not in expected)
+          if extras:
+              raise SystemExit(f"source run has unexpected runner artifacts: {extras[:5]}")
+          PY
+      - name: Verify reusable block artifacts when supplied
+        if: inputs.source_block_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_BLOCK_RUN_ID: ${{ inputs.source_block_run_id }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_BLOCK_RUN_ID}/artifacts" --paginate \
+            --jq '.artifacts[].name' > source-block-artifacts.txt
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          run_id = os.environ["SOURCE_BLOCK_RUN_ID"]
+          names = set(Path("source-block-artifacts.txt").read_text(encoding="utf-8").splitlines())
+          expected = {f"gtbi-v7-block-{block:02d}-{run_id}" for block in range(18)}
+          missing = sorted(expected - names)
+          if missing:
+              raise SystemExit(f"source block run is missing block artifacts: {missing}")
+          PY
+      - name: Emit exact 18-block recovery matrix
+        id: matrix
+        run: |
+          python - <<'PY'
+          import json, os
+          benchmark = json.load(open("benchmark/benchmark.json", encoding="utf-8"))
+          processes = int(benchmark["selected_processes_per_runner"])
+          if processes != 4:
+              raise SystemExit("recovery source must use the accepted four-process allocation")
+          blocks = {
+              "include": [
+                  {
+                      "block_id": block,
+                      "block_padded": f"{block:02d}",
+                      "runner_start": block * 5,
+                      "runner_count": 5,
+                      "worker_ids": ",".join(str(value) for value in range(block * 20, (block + 1) * 20)),
+                  }
+                  for block in range(18)
+              ]
+          }
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write("block_matrix=" + json.dumps(blocks, separators=(",", ":")) + "\n")
+          PY
+
+  merge-block:
+    name: Recover merge block ${{ matrix.block_padded }}
+    if: always() && inputs.recovery_authorized && inputs.source_block_run_id == '' && needs.recovery-gate.result == 'success'
+    needs: recovery-gate
+    strategy:
+      fail-fast: false
+      max-parallel: 18
+      matrix: ${{ fromJSON(needs.recovery-gate.outputs.block_matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout corrected merge code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /__init__.py
+            /pyproject.toml
+            /requirements/gtbi-fast-strict.lock
+            /core/**
+            /infra/gtbi_v7_readiness/**
+            /scripts/*.py
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download only source runner artifacts for this block
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_full_run_id }}
+          RUNNER_START: ${{ matrix.runner_start }}
+          RUNNER_COUNT: ${{ matrix.runner_count }}
+        run: |
+          mkdir -p block-input
+          for offset in $(seq 0 $((RUNNER_COUNT - 1))); do
+            runner=$((RUNNER_START + offset))
+            padded=$(printf '%03d' "$runner")
+            gh run download "$SOURCE_RUN_ID" \
+              --name "gtbi-v7-runner-${padded}-${SOURCE_RUN_ID}" \
+              --dir "block-input/runner-${padded}"
+          done
+      - name: Strictly merge exact 20-worker block
+        env:
+          WORKER_IDS: ${{ matrix.worker_ids }}
+        run: |
+          python scripts/merge_gtbi_fast_strict_block.py \
+            --input-root block-input \
+            --output-dir "block-output/block-${{ matrix.block_padded }}" \
+            --block-id "${{ matrix.block_id }}" \
+            --worker-ids "$WORKER_IDS"
+      - name: Upload recovered block artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gtbi-v7-block-${{ matrix.block_padded }}-${{ github.run_id }}
+          path: block-output
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 14
+
+  merge-final:
+    name: Recover, validate and seal 72,000 historical strategies
+    if: always() && inputs.recovery_authorized && needs.recovery-gate.result == 'success' && (inputs.source_block_run_id != '' || needs.merge-block.result == 'success')
+    needs: [recovery-gate, merge-block]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout recovery source and strategy pack
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download plan, data manifest, blocks and accepted evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_BLOCK_RUN_ID: ${{ inputs.source_block_run_id }}
+        run: |
+          gh run download "${{ inputs.prepared_run_id }}" --name "${PLAN_ARTIFACT_PREFIX}-${{ inputs.prepared_run_id }}" --dir plan
+          gh run download "${{ inputs.prepared_run_id }}" --name "${DATA_ARTIFACT_PREFIX}-${{ inputs.prepared_run_id }}" --dir prepared
+          gh run download "${{ inputs.benchmark_run_id }}" --name "${BENCHMARK_ARTIFACT_PREFIX}-${{ inputs.benchmark_run_id }}" --dir benchmark
+          gh run download "${{ inputs.smoke_run_id }}" --name "${SMOKE_ARTIFACT_PREFIX}-${{ inputs.smoke_run_id }}" --dir smoke
+          mkdir -p blocks
+          block_run_id="$SOURCE_BLOCK_RUN_ID"
+          if [ -z "$block_run_id" ]; then block_run_id="$GITHUB_RUN_ID"; fi
+          for block in $(seq 0 17); do
+            padded=$(printf '%02d' "$block")
+            gh run download "$block_run_id" \
+              --name "gtbi-v7-block-${padded}-${block_run_id}" \
+              --dir "blocks/block-${padded}"
+          done
+      - name: Strict final merge and 72,000-alias expansion
+        run: |
+          python -m scripts.materialize_gtbi_v7_strategy_pack extract \
+            --pack-root scripts/strategy_packs/gtbi_long_hold_fundamental_timing_v1 \
+            --output-dir materialized-strategy-pack
+          python scripts/merge_gtbi_fast_strict_final.py \
+            --plan-root plan \
+            --blocks-root blocks \
+            --original-pack materialized-strategy-pack \
+            --output-dir final-results \
+            --expected-alias-count 72000 \
+            --expected-block-count 18 \
+            --expected-worker-count 360
+      - name: Record merge-only recovery provenance
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_full_run_id }}
+          SOURCE_COMMIT_SHA: ${{ inputs.source_commit_sha }}
+          SOURCE_BLOCK_RUN_ID: ${{ inputs.source_block_run_id }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          receipt = {
+              "schema_version": "gtbi_v7_new_reference_merge_recovery_receipt_v1",
+              "source_full_run_id": int(os.environ["SOURCE_RUN_ID"]),
+              "source_block_run_id": int(os.environ["SOURCE_BLOCK_RUN_ID"] or os.environ["GITHUB_RUN_ID"]),
+              "source_scientific_commit_sha": os.environ["SOURCE_COMMIT_SHA"],
+              "merge_recovery_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "merge_recovery_commit_sha": os.environ["GITHUB_SHA"],
+              "scientific_recalculation_performed": False,
+              "locked_authorized": False,
+              "locked_data_accessed": False,
+              "historical_exclusion_start": "2021-01-01",
+          }
+          raw = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+          receipt["receipt_digest"] = "sha256:" + hashlib.sha256(raw).hexdigest()
+          Path("final-results/merge_recovery_receipt.json").write_text(
+              json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Validate and seal independent V7 artifact
+        run: |
+          python -m scripts.finalize_gtbi_v7_new_reference_results \
+            --artifact-root final-results \
+            --plan-root plan \
+            --data-manifest prepared/data_manifest.json \
+            --authorization docs/readiness/gtbi-v7-new-reference/campaign_authorization.json \
+            --benchmark benchmark/benchmark.json \
+            --smoke-validation smoke/smoke_validation.json \
+            --expected-strategy-count 72000 \
+            --merge-recovery-receipt final-results/merge_recovery_receipt.json
+      - name: Upload final immutable historical artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.FINAL_ARTIFACT_NAME }}
+          path: final-results
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 90
+
+  preserve-final:
+    name: Preserve recovered V7 result in private GitHub release
+    if: always() && inputs.recovery_authorized && needs.merge-final.result == 'success'
+    needs: merge-final
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Download sealed final artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ github.run_id }}
+          name: ${{ env.FINAL_ARTIFACT_NAME }}
+          path: final-results
+          github-token: ${{ github.token }}
+      - name: Create deterministic release assets and receipt
+        run: |
+          mkdir -p preserved
+          tar --sort=name --mtime='UTC 1980-01-01' --owner=0 --group=0 --numeric-owner \
+            -czf preserved/gtbi-v7-new-reference-results.tar.gz final-results
+          archive_size=$(stat -c '%s' preserved/gtbi-v7-new-reference-results.tar.gz)
+          if [ "$archive_size" -gt 1900000000 ]; then
+            split -b 1900000000 -d -a 3 preserved/gtbi-v7-new-reference-results.tar.gz preserved/gtbi-v7-new-reference-results.tar.gz.part-
+            rm preserved/gtbi-v7-new-reference-results.tar.gz
+          fi
+          sha256sum preserved/gtbi-v7-new-reference-results.tar.gz* > preserved/SHA256SUMS
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          files=[]
+          for path in sorted(Path("preserved").glob("gtbi-v7-new-reference-results.tar.gz*")):
+              hasher=hashlib.sha256()
+              with path.open("rb") as handle:
+                  while chunk := handle.read(1024 * 1024):
+                      hasher.update(chunk)
+              digest=hasher.hexdigest()
+              files.append({"name":path.name,"size_bytes":path.stat().st_size,"sha256":"sha256:"+digest})
+          receipt={
+              "schema_version":"gtbi_v7_new_reference_preservation_receipt_v1",
+              "source_repository":os.environ["GITHUB_REPOSITORY"],
+              "release_repository":"trading-optimizer-lab-org/aurora-v7-assets",
+              "run_id":int(os.environ["GITHUB_RUN_ID"]),
+              "commit_sha":os.environ["GITHUB_SHA"],
+              "release_tag":f"gtbi-v7-new-reference-results-{os.environ['GITHUB_RUN_ID']}",
+              "files":files,
+              "locked_authorized":False,
+              "locked_data_accessed":False,
+              "historical_exclusion_start":"2021-01-01",
+          }
+          raw=json.dumps(receipt,sort_keys=True,separators=(",",":")).encode()
+          receipt["receipt_digest"]="sha256:"+hashlib.sha256(raw).hexdigest()
+          Path("preserved/preservation_receipt.json").write_text(json.dumps(receipt,sort_keys=True,separators=(",",":"))+"\n",encoding="utf-8")
+          PY
+      - name: Publish or repair private release
+        env:
+          GH_TOKEN: ${{ secrets.GTBI_INVENTORY_TOKEN }}
+        run: |
+          release_repo="trading-optimizer-lab-org/aurora-v7-assets"
+          tag="gtbi-v7-new-reference-results-${GITHUB_RUN_ID}"
+          test -n "$GH_TOKEN"
+          if gh release view "$tag" --repo "$release_repo" >/dev/null 2>&1; then
+            gh release upload "$tag" preserved/* --clobber --repo "$release_repo"
+          else
+            gh release create "$tag" preserved/* --repo "$release_repo" --target main \
+              --title "GTBI V7 new-reference historical results ${GITHUB_RUN_ID}" \
+              --notes "Merge-only recovery of the independent survivorship-biased historical campaign. Locked remained closed; no data after 2020-12-31 was evaluated."
+          fi
+      - name: Upload preservation receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gtbi-v7-new-reference-preservation-${{ github.run_id }}
+          path: |
+            preserved/preservation_receipt.json
+            preserved/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90

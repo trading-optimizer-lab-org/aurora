@@ -17,6 +17,19 @@ on:
         required: false
         default: 0
         type: number
+      baseline_forced_job_count:
+        description: Optional legacy baseline topology for topology benchmark
+        required: false
+        default: 0
+        type: number
+      comparison_dimension:
+        description: Compare assignment only or different job topologies
+        required: false
+        default: assignment_strategy
+        type: choice
+        options:
+          - assignment_strategy
+          - adaptive_topology
       performance_profile_run_id:
         description: Prior benchmark run containing an exact profile
         required: false
@@ -204,7 +217,9 @@ jobs:
       retention_days: 30
       execution_mode: baseline
       forced_job_count: >-
-        ${{ inputs.forced_job_count > 0 &&
+        ${{ inputs.baseline_forced_job_count > 0 &&
+        fromJSON(format('{0}', inputs.baseline_forced_job_count)) ||
+        inputs.forced_job_count > 0 &&
         fromJSON(format('{0}', inputs.forced_job_count)) ||
         fromJSON(needs.optimized.outputs.selected_jobs) }}
       prepared_artifact_name: github-performance-benchmark-${{ inputs.workload_family }}-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
@@ -259,6 +274,7 @@ jobs:
             --optimized-dir "$RUNNER_TEMP/benchmark/optimized" \
             --environment-setup-benchmark \
               "$RUNNER_TEMP/benchmark/setup/environment_setup_benchmark.json" \
+            --comparison-dimension "${{ inputs.comparison_dimension }}" \
             --output-dir "$RUNNER_TEMP/benchmark/comparison"
       - name: Build exact reusable performance profile
         env:

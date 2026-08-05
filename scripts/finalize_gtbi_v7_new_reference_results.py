@@ -39,6 +39,31 @@ def _json(path: Path) -> dict[str, Any]:
     return dict(value)
 
 
+def _validate_merge_recovery_receipt(path: Path) -> dict[str, Any]:
+    receipt = _json(path)
+    value = dict(receipt)
+    supplied_digest = str(value.pop("receipt_digest", ""))
+    expected_digest = "sha256:" + hashlib.sha256(canonical_bytes(value)).hexdigest()
+    if supplied_digest != expected_digest:
+        raise ValueError("merge recovery receipt digest mismatch")
+    current_sha = os.environ.get("GITHUB_SHA") if os.environ.get("GITHUB_ACTIONS") == "true" else None
+    if (
+        receipt.get("schema_version") != "gtbi_v7_new_reference_merge_recovery_receipt_v1"
+        or int(receipt.get("source_full_run_id", 0) or 0) <= 0
+        or int(receipt.get("source_block_run_id", 0) or 0) <= 0
+        or int(receipt.get("merge_recovery_run_id", 0) or 0) <= 0
+        or len(str(receipt.get("source_scientific_commit_sha") or "")) != 40
+        or receipt.get("scientific_recalculation_performed") is not False
+        or receipt.get("locked_authorized") is not False
+        or receipt.get("locked_data_accessed") is not False
+        or receipt.get("historical_exclusion_start") != HISTORICAL_EXCLUSION_START
+        or not current_sha
+        or receipt.get("merge_recovery_commit_sha") != current_sha
+    ):
+        raise ValueError("merge recovery receipt contract mismatch")
+    return receipt
+
+
 def _assert_no_locked_result_rows(root: Path) -> None:
     boundary = pd.Timestamp(HISTORICAL_EXCLUSION_START, tz="UTC")
     for path in sorted(Path(root).glob("*.csv")):
@@ -72,13 +97,22 @@ def finalize(
     benchmark_path: Path,
     smoke_validation_path: Path,
     expected_strategy_count: int = 72_000,
+    merge_recovery_receipt_path: Path | None = None,
 ) -> dict[str, Any]:
     root = Path(artifact_root)
     verification = validate_artifact(root, expected_strategy_count=expected_strategy_count)
+    recovery = (
+        _validate_merge_recovery_receipt(Path(merge_recovery_receipt_path))
+        if merge_recovery_receipt_path is not None
+        else None
+    )
     campaign = verify_v7_campaign_plan(
         plan_root=Path(plan_root),
         data_manifest_path=Path(data_manifest_path),
         authorization_path=Path(authorization_path),
+        expected_code_sha=(
+            str(recovery["source_scientific_commit_sha"]) if recovery is not None else None
+        ),
     )
     campaign_manifest_path = Path(plan_root) / "campaign_manifest.json"
     benchmark = validate_benchmark_evidence(
@@ -116,6 +150,18 @@ def finalize(
             "optimized_evaluation_mode": campaign["inputs"]["execution_mode"],
         }
     )
+    if recovery is not None:
+        summary.update(
+            {
+                "merge_recovery": True,
+                "source_full_run_id": int(recovery["source_full_run_id"]),
+                "source_scientific_commit_sha": recovery["source_scientific_commit_sha"],
+                "merge_recovery_run_id": int(recovery["merge_recovery_run_id"]),
+                "merge_recovery_commit_sha": recovery["merge_recovery_commit_sha"],
+                "merge_recovery_receipt_digest": recovery["receipt_digest"],
+                "scientific_recalculation_performed": False,
+            }
+        )
     summary_path.write_bytes(canonical_bytes(summary) + b"\n")
     (root / "final_summary.json").write_bytes(canonical_bytes(summary) + b"\n")
     verification = validate_artifact(root, expected_strategy_count=expected_strategy_count)
@@ -153,6 +199,18 @@ def finalize(
             "historical_causal_claims_prohibited",
         ],
     }
+    if recovery is not None:
+        report.update(
+            {
+                "merge_recovery": True,
+                "source_full_run_id": int(recovery["source_full_run_id"]),
+                "source_scientific_commit_sha": recovery["source_scientific_commit_sha"],
+                "merge_recovery_run_id": int(recovery["merge_recovery_run_id"]),
+                "merge_recovery_commit_sha": recovery["merge_recovery_commit_sha"],
+                "merge_recovery_receipt_digest": recovery["receipt_digest"],
+                "scientific_recalculation_performed": False,
+            }
+        )
     report["receipt_digest"] = "sha256:" + hashlib.sha256(canonical_bytes(report)).hexdigest()
     (root / "v7_final_report.json").write_bytes(canonical_bytes(report) + b"\n")
     inventory = [
@@ -181,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--benchmark", type=Path, required=True)
     parser.add_argument("--smoke-validation", type=Path, required=True)
     parser.add_argument("--expected-strategy-count", type=int, default=72_000)
+    parser.add_argument("--merge-recovery-receipt", type=Path)
     args = parser.parse_args(argv)
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise SystemExit("GTBI V7 result finalization is GitHub Actions only")
@@ -192,6 +251,7 @@ def main(argv: list[str] | None = None) -> int:
         benchmark_path=args.benchmark,
         smoke_validation_path=args.smoke_validation,
         expected_strategy_count=args.expected_strategy_count,
+        merge_recovery_receipt_path=args.merge_recovery_receipt,
     )
     print(json.dumps(report, sort_keys=True))
     return 0

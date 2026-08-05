@@ -17,9 +17,9 @@ from aurora.core.costs import CostModel
 from aurora.core.engine import run_backtest
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.github_performance.metric_verifier import MetricInputRecord
-from aurora.infra.github_performance.shard_planner import sha256_file
 from aurora.infra.github_performance.workloads.common import (
     FrozenScientificWorkload,
+    logical_table_sha256,
     metrics_for_row,
     primary_metric_record,
 )
@@ -115,13 +115,14 @@ class CandidateSweepWorkload(FrozenScientificWorkload):
 
     def _prepare_dataset(self, root: Path) -> tuple[tuple[str, ...], str]:
         path = root / "candidate_sweep_prices.parquet"
+        table = pa.Table.from_pandas(_generate_prices(), preserve_index=False)
         pq.write_table(
-            pa.Table.from_pandas(_generate_prices(), preserve_index=False),
+            table,
             path,
             compression="zstd",
             version="2.6",
         )
-        return (path.name,), sha256_file(path)
+        return (path.name,), logical_table_sha256(table)
 
     def _load_dataset(self, root: Path) -> pd.DataFrame:
         path = Path(root) / "candidate_sweep_prices.parquet"

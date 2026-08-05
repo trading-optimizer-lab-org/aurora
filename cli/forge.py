@@ -18,6 +18,7 @@ callers and tests have a stable surface.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from . import (
@@ -210,5 +211,21 @@ def main(argv=None):
         parser.error(e.message)
 
 
+def _exit_after_main(exit_code: int | None) -> None:
+    """Exit a module invocation without corrupting data-verify failures.
+
+    PyArrow can abort during Linux interpreter teardown after a failed parquet
+    integrity check, replacing the intentional exit code 1 with SIGABRT.  The
+    command is read-only and its output is complete at this point, so flush it
+    and bypass native-library teardown only for that explicit failure path.
+    """
+    normalized = int(exit_code or 0)
+    if normalized and sys.argv[1:3] == ["data", "verify"]:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(normalized)
+    raise SystemExit(normalized)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    _exit_after_main(main())

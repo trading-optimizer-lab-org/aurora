@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trading-optimizer-lab-org.github.io/aurora/gtbi/v7/results/leaderboard-row.schema.json",
+  "title": "GTBI V7 leaderboard row",
+  "type": "object",
+  "required": [
+    "candidate_id",
+    "strategy_id",
+    "family",
+    "score",
+    "locked_opened",
+    "train_profit_factor",
+    "validation_profit_factor",
+    "adjusted_return_time_risk",
+    "strict_quality_pass"
+  ],
+  "properties": {
+    "candidate_id": {"type": "string", "minLength": 1},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "family": {"type": "string", "minLength": 1},
+    "score": {"type": "number"},
+    "locked_opened": {"enum": [false, "False", "false", 0]},
+    "train_profit_factor": {"type": "number"},
+    "validation_profit_factor": {"type": "number"},
+    "adjusted_return_time_risk": {"type": "number"},
+    "strict_quality_pass": {"enum": [true, false, "True", "False", "true", "false", 0, 1]}
+  },
+  "additionalProperties": true
+}

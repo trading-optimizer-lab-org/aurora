@@ -20,6 +20,17 @@ def _json(path: Path) -> dict[str, Any]:
     return dict(value)
 
 
+def _summary_count(summary: dict[str, Any], name: str) -> int:
+    """Read current and legacy count names without hiding disagreement."""
+    keys = (name, f"total_{name}")
+    values = {key: int(summary.get(key, 0) or 0) for key in keys if key in summary}
+    if not values:
+        return 0
+    if len(set(values.values())) != 1:
+        raise ValueError(f"smoke summary count mismatch for {name}: {values}")
+    return next(iter(values.values()))
+
+
 def validate_smoke(root: Path, output_path: Path, *, expected_workers: int = 100) -> dict[str, Any]:
     source = Path(root)
     receipts: dict[int, tuple[dict[str, Any], Path]] = {}
@@ -45,18 +56,18 @@ def validate_smoke(root: Path, output_path: Path, *, expected_workers: int = 100
             raise ValueError(f"smoke worker {worker_id} scientific digest mismatch")
         summary = _json(worker_root / "worker_summary.json")
         failure = sum(
-            int(summary.get(name, 0) or 0)
+            _summary_count(summary, name)
             for name in (
-                "total_strategies_timed_out",
-                "total_strategies_runtime_error",
-                "total_strategies_unsupported",
-                "total_strategies_slow_deferred",
+                "strategies_timed_out",
+                "strategies_runtime_error",
+                "strategies_unsupported",
+                "strategies_slow_deferred",
             )
         )
         if failure:
             raise ValueError(f"smoke worker {worker_id} contains failures")
-        worker_evaluated = int(summary.get("total_strategies_evaluated", 0) or 0)
-        worker_early = int(summary.get("total_strategies_early_rejected", 0) or 0)
+        worker_evaluated = _summary_count(summary, "strategies_evaluated")
+        worker_early = _summary_count(summary, "strategies_early_rejected")
         canonical = int(summary.get("canonical_group_count", 0) or 0)
         if worker_evaluated + worker_early != canonical:
             raise ValueError(f"smoke worker {worker_id} terminal count mismatch")

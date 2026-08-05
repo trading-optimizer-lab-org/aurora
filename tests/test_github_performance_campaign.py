@@ -167,6 +167,55 @@ def test_merge_only_reuses_verified_sources_and_schedules_no_compute() -> None:
     )
 
 
+def test_merge_only_can_branch_from_completed_verified_campaign() -> None:
+    ready = transition_campaign_state(
+        _initial(),
+        phase=CampaignPhase.READY_TO_MERGE,
+        completed_unit_count=10,
+        completed_unit_manifest_sha256=SHA["completed"],
+        pending_unit_count=0,
+        verified_source_artifacts=("artifact-a", "artifact-b"),
+        created_at=NOW,
+    )
+    merging = transition_campaign_state(
+        ready,
+        phase=CampaignPhase.MERGING,
+        created_at=NOW,
+    )
+    verifying = transition_campaign_state(
+        merging,
+        phase=CampaignPhase.VERIFYING,
+        created_at=NOW,
+    )
+    completed = transition_campaign_state(
+        verifying,
+        phase=CampaignPhase.COMPLETED,
+        created_at=NOW,
+    )
+
+    merge = begin_merge_only(
+        completed,
+        source_artifacts=("artifact-b", "artifact-a"),
+        created_at=NOW,
+    )
+
+    assert merge.phase is CampaignPhase.MERGING
+    assert merge.previous_state_sha256 == completed.state_sha256
+    assert merge.version == completed.version + 1
+    assert merge.completed_unit_manifest_sha256 == (
+        completed.completed_unit_manifest_sha256
+    )
+    assert merge.completed_unit_count == completed.completed_unit_count
+    assert merge.pending_unit_count == 0
+    assert merge.merge_only is True
+    assert merge.compute_scheduled is False
+    assert merge.active_attempt_ids == ()
+    assert merge.verified_source_artifacts == (
+        "artifact-a",
+        "artifact-b",
+    )
+
+
 def test_transition_rejects_completed_count_regression() -> None:
     progressed = transition_campaign_state(
         _initial(),

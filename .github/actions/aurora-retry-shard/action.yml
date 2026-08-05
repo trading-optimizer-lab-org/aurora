@@ -1,0 +1,226 @@
+name: Aurora retry shard
+description: Execute one exact retry descriptor without nested workflows
+
+inputs:
+  descriptor-json:
+    description: Exact retry descriptor emitted by recovery planning
+    required: true
+  workload:
+    description: Registered Aurora workload family
+    required: true
+  run-label:
+    description: Stable artifact prefix for the run
+    required: true
+  retention-days:
+    description: Artifact retention period
+    required: true
+  wheelhouse-artifact-name:
+    description: Immutable wheelhouse artifact
+    required: true
+  prepared-artifact-name:
+    description: Immutable prepared data artifact
+    required: true
+  contract-artifact-name:
+    description: Frozen scientific contract artifact
+    required: true
+  plan-artifact-name:
+    description: Immutable execution plan artifact
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Download immutable wheelhouse
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ inputs.wheelhouse-artifact-name }}
+        path: ${{ runner.temp }}/wheelhouse
+    - name: Restore Aurora runtime
+      uses: ./.github/actions/aurora-runtime-setup
+      with:
+        python-version: "3.12"
+        wheelhouse-path: ${{ runner.temp }}/wheelhouse
+        dependency-lock-path: requirements/github-performance.lock
+    - name: Download frozen contract
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ inputs.contract-artifact-name }}
+        path: ${{ runner.temp }}/contract
+    - name: Download prepared inputs
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ inputs.prepared-artifact-name }}
+        path: ${{ runner.temp }}/prepared
+    - name: Download assignment plan
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ inputs.plan-artifact-name }}
+        path: ${{ runner.temp }}/plan
+    - name: Read exact retry descriptor
+      id: descriptor
+      shell: bash
+      env:
+        DESCRIPTOR_JSON: ${{ inputs.descriptor-json }}
+      run: |
+        set -euo pipefail
+        python - <<'PY'
+        import json
+        import os
+
+        payload = json.loads(os.environ["DESCRIPTOR_JSON"])
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+            out.write(
+                "has_checkpoint="
+                f"{str(bool(payload['checkpoint_artifact'])).lower()}\n"
+            )
+            out.write(
+                f"checkpoint_artifact={payload['checkpoint_artifact']}\n"
+            )
+        PY
+    - name: Download verified checkpoint
+      if: steps.descriptor.outputs.has_checkpoint == 'true'
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ steps.descriptor.outputs.checkpoint_artifact }}
+        path: ${{ runner.temp }}/checkpoint
+    - name: Materialize exact retry descriptor
+      shell: bash
+      env:
+        SHARD_JSON: ${{ inputs.descriptor-json }}
+      run: |
+        set -euo pipefail
+        python - <<'PY'
+        import json
+        import os
+        from pathlib import Path
+
+        descriptor = json.loads(os.environ["SHARD_JSON"])
+        plan = json.loads(
+            Path(os.environ["RUNNER_TEMP"])
+            .joinpath("plan", "balanced_shard_plan.json")
+            .read_text(encoding="utf-8")
+        )
+        payload = next(
+            shard
+            for shard in plan["shards"]
+            if shard["shard_id"] == descriptor["shard_id"]
+        )
+        for key in (
+            "merge_group",
+            "assignment_artifact",
+            "assignment_member",
+            "assignment_sha256",
+        ):
+            if payload[key] != descriptor[key]:
+                raise SystemExit(f"SHARD_DESCRIPTOR_MISMATCH: {key}")
+        Path(os.environ["RUNNER_TEMP"]).joinpath("shard.json").write_text(
+            json.dumps(payload, sort_keys=True),
+            encoding="utf-8",
+        )
+        PY
+    - name: Execute exact retry
+      shell: bash
+      env:
+        WORKLOAD: ${{ inputs.workload }}
+        DESCRIPTOR_JSON: ${{ inputs.descriptor-json }}
+      run: |
+        set -euo pipefail
+        readarray -t fields < <(
+          python - <<'PY'
+        import json
+        import os
+
+        payload = json.loads(os.environ["DESCRIPTOR_JSON"])
+        print(payload["shard_id"])
+        print(payload["attempt_id"])
+        print(payload["merge_group"])
+        print(payload["checkpoint_artifact"])
+        PY
+        )
+        shard_id="${fields[0]}"
+        attempt_id="${fields[1]}"
+        merge_group="${fields[2]}"
+        checkpoint_artifact="${fields[3]}"
+        artifact_name="${{ inputs.run-label }}-shard-${merge_group}-${shard_id}-${attempt_id}"
+        checkpoint_args=()
+        if [[ -n "$checkpoint_artifact" ]]; then
+          checkpoint_path="$(
+            find "$RUNNER_TEMP/checkpoint" \
+              -name checkpoint_manifest.json -type f |
+              head -1
+          )"
+          checkpoint_args=(--checkpoint "$checkpoint_path")
+        fi
+        aurora github run-shard \
+          --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+          --workload "$WORKLOAD" \
+          --shard "$RUNNER_TEMP/shard.json" \
+          --attempt-id "$attempt_id" \
+          --artifact-name "$artifact_name" \
+          --assignment-root "$RUNNER_TEMP/plan" \
+          --prepared-root "$RUNNER_TEMP/prepared" \
+          --output-dir "$RUNNER_TEMP/attempt/${shard_id}/${attempt_id}" \
+          "${checkpoint_args[@]}" \
+          --defer-technical-failure-to-recovery
+    - name: Resolve artifact identities
+      if: always()
+      id: identity
+      shell: bash
+      env:
+        DESCRIPTOR_JSON: ${{ inputs.descriptor-json }}
+      run: |
+        set -euo pipefail
+        python - <<'PY'
+        import json
+        import os
+
+        payload = json.loads(os.environ["DESCRIPTOR_JSON"])
+        artifact = (
+            f"${{ inputs.run-label }}-shard-"
+            f"{payload['merge_group']}-{payload['shard_id']}-"
+            f"{payload['attempt_id']}"
+        )
+        checkpoint = (
+            f"run-checkpoint-{payload['shard_id']}-"
+            f"{payload['attempt_id']}"
+        )
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+            out.write(f"attempt_artifact={artifact}\n")
+            out.write(f"checkpoint_artifact={checkpoint}\n")
+        PY
+    - name: Salvage retry evidence
+      if: always()
+      continue-on-error: true
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: ${{ steps.identity.outputs.attempt_artifact }}
+        path: ${{ runner.temp }}/attempt
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: ${{ inputs.retention-days }}
+    - name: Detect valid checkpoint
+      if: always()
+      id: checkpoint
+      shell: bash
+      run: |
+        set -euo pipefail
+        checkpoint="$(
+          find "$RUNNER_TEMP/attempt" \
+            -name checkpoint_manifest.json -type f -print -quit \
+            2>/dev/null || true
+        )"
+        if [[ -n "$checkpoint" ]]; then
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Salvage valid checkpoint
+      if: always() && steps.checkpoint.outputs.exists == 'true'
+      continue-on-error: true
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: ${{ steps.identity.outputs.checkpoint_artifact }}
+        path: ${{ runner.temp }}/attempt/**/checkpoint*
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: ${{ inputs.retention-days }}

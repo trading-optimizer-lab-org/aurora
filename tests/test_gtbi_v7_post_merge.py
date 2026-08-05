@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import shutil
 from pathlib import Path
@@ -66,6 +67,7 @@ def test_receipt_rejects_a_non_success_ci_run(
     for relative in (
         "docs/readiness/gtbi-v7/owner_simplification_directive.json",
         "docs/readiness/gtbi-v7/initial_inventory_binding.json",
+        "docs/readiness/gtbi-v7/canonical_successor_authorization.json",
         (
             "config/gtbi/fixtures/v7/governance/"
             "role_registry_v1.owner_controlled.json"
@@ -79,5 +81,41 @@ def test_receipt_rejects_a_non_success_ci_run(
     with pytest.raises(
         PostMergeValidationError,
         match="non-success",
+    ):
+        validate_pr1_merge_receipt(tmp_path)
+
+
+def test_successor_amendment_preserves_historical_pr1_receipt() -> None:
+    receipt = validate_pr1_merge_receipt(ROOT)
+    authorization = json.loads(
+        (
+            ROOT
+            / "docs/readiness/gtbi-v7/canonical_successor_authorization.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert authorization["historical_pr1_bootstrap"] == {
+        "immutable_historical_record": True,
+        "master_plan_git_blob_id": receipt["master_plan_git_blob_id"],
+        "master_plan_sha256": receipt["master_plan_sha256"],
+        "pr1_merge_receipt_digest": receipt["receipt_digest"],
+    }
+    with (
+        ROOT / "docs/readiness/gtbi-v7/task_planning_inputs.csv"
+    ).open(encoding="utf-8", newline="") as handle:
+        foundation = next(
+            row for row in csv.DictReader(handle) if row["task_id"] == "PREV7-0000"
+        )
+    assert foundation["estimate_basis_digest"] == receipt["master_plan_sha256"]
+
+
+def test_successor_amendment_rejects_current_plan_drift(tmp_path: Path) -> None:
+    shutil.copytree(ROOT / "docs", tmp_path / "docs")
+    shutil.copytree(ROOT / "config", tmp_path / "config")
+    plan = tmp_path / "docs/plans/gtbi-v7-master-plan.md"
+    plan.write_text(plan.read_text(encoding="utf-8") + "\nDRIFT\n", encoding="utf-8")
+
+    with pytest.raises(
+        PostMergeValidationError,
+        match="canonical-successor master-plan SHA-256 mismatch",
     ):
         validate_pr1_merge_receipt(tmp_path)
