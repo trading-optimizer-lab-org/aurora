@@ -146,7 +146,7 @@ jobs:
           mkdir -p inputs/earnings
           curl --fail --location --retry 3 \
             --output inputs/earnings/eps_history.csv \
-            https://www.dolthub.com/csv/post-no-preference/earnings/main/eps_history
+            https://www.dolthub.com/csv/post-no-preference/earnings/master/eps_history
       - name: Run causal historical validation
         run: |
           args=(--base-db "${{ steps.locate.outputs.db }}" --reference "${{ steps.locate.outputs.reference }}" --output-dir outputs/openap_five_proxy_historical_validation --min-pairs "${{ inputs.min_pairs || '30' }}")
