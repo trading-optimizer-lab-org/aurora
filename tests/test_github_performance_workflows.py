@@ -675,6 +675,8 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
         "autonomous_batch_id",
         "autonomous_candidate_count",
         "autonomous_previous_trial_count",
+        "autonomous_prior_ledger_artifact_name",
+        "autonomous_prior_ledger_run_id",
     }
     assert inputs["fault_injection_shard_id"]["default"] == ""
     assert inputs["fault_injection_after_units"]["default"] == 0
