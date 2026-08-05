@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from research.openap_93.official_portfolio_similarity import (
     build_official_spreads,
@@ -20,7 +21,7 @@ def test_official_deciles_normalise_and_form_spread() -> None:
     official = normalise_official_deciles(raw)
     spreads = build_official_spreads(official)
     assert len(spreads) == 1
-    assert spreads.iloc[0]["official_spread_return"] == 0.09
+    assert spreads.iloc[0]["official_spread_return"] == pytest.approx(0.09)
 
 
 def test_proxy_deciles_use_next_formation_month_return() -> None:
@@ -37,7 +38,7 @@ def test_proxy_deciles_use_next_formation_month_return() -> None:
     })
     spreads = build_proxy_spreads(proxy, monthly)
     assert len(spreads) == 1
-    assert spreads.iloc[0]["proxy_spread_return"] == 0.09
+    assert spreads.iloc[0]["proxy_spread_return"] == pytest.approx(0.09)
 
 
 def test_similarity_reports_high_match_without_claiming_identity() -> None:
