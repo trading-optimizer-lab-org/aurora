@@ -1,0 +1,213 @@
+{
+  "authoritative_precedence": [
+    "candidate_strategy_pack.jsonl for per-candidate exact contracts",
+    "family_formula_contract.md for formula interpretation",
+    "campaign_spec.yaml for global machine-readable boundaries",
+    "train_selection_protocol.md and acceptance_gates.md for selection",
+    "CODEX_GITHUB_RUN_PROMPT.md for operational execution"
+  ],
+  "campaign_id": "sp500_long_short_daily_zero_cost_v2_new_strategies",
+  "conflict_rule": "Stop fail-closed and report the exact conflict; do not choose the performance-favorable interpretation.",
+  "entrypoint": "CODEX_GITHUB_RUN_PROMPT.md",
+  "inputs": [
+    {
+      "bytes": 2174,
+      "path": "README_START_HERE.md",
+      "required": true,
+      "role": "entry point and immutable overview",
+      "sha256": "e2bd559414b72cf3b5c2f7ed30d702bf24dc253b2fba885fae3f9a37c5357064"
+    },
+    {
+      "bytes": 4322,
+      "path": "executive_summary.md",
+      "required": true,
+      "role": "counts, priorities and direct conclusion",
+      "sha256": "3e2a09dd6da1a132e9652bd8f84f040b520b952cc8181352af6ea720594ff763"
+    },
+    {
+      "bytes": 526738,
+      "path": "research_library.csv",
+      "required": true,
+      "role": "combined V1+V2 research/context registry",
+      "sha256": "ad2254cefb8a0d35b4444f9f5f77a98e257fae36156aaf23035eebdd007be9de"
+    },
+    {
+      "bytes": 42931,
+      "path": "incremental_research_library.csv",
+      "required": true,
+      "role": "20 records added specifically for V2",
+      "sha256": "ecdff28de5d8970e737f6c9c383027362b48806c5be88c275146a11d366decef"
+    },
+    {
+      "bytes": 5571,
+      "path": "bibliographic_verification_audit.csv",
+      "required": true,
+      "role": "verification status for incremental sources",
+      "sha256": "9b55b4b1ecd0d1101b2a774b4a45958cb332cf50836ec0cb25308dbd03eb6ad0"
+    },
+    {
+      "bytes": 3259,
+      "path": "research_synthesis.md",
+      "required": true,
+      "role": "incremental evidence synthesis",
+      "sha256": "37b85f327f06354696d2f69ebc2349fbca5c5b3c6f0e3c3641fd720b4c7bba8e"
+    },
+    {
+      "bytes": 2168,
+      "path": "contradictions_and_negative_results.md",
+      "required": true,
+      "role": "opposing signs and negative evidence",
+      "sha256": "3e30d8bfa76e8bbf7a9eeca212967a3bcc48385390e9cf041f3f98750c1cb8a3"
+    },
+    {
+      "bytes": 13781,
+      "path": "data_source_inventory.csv",
+      "required": true,
+      "role": "V2 data contracts and classifications",
+      "sha256": "5af3047e67a51db2a3c2cff98fbe793ca7eb153d022ff7fed9fd8e816dd61b21"
+    },
+    {
+      "bytes": 3830,
+      "path": "data_acquisition_plan.md",
+      "required": true,
+      "role": "bounded causal acquisition rules",
+      "sha256": "40971a9459c952c2790cb3ca8997f41d1b405d950aa954c40c130832b8d5bafa"
+    },
+    {
+      "bytes": 124715,
+      "path": "feature_catalog.csv",
+      "required": true,
+      "role": "144 exact feature definitions",
+      "sha256": "3109f8bb4e046a070a4e6fd93174fb161a3af72ab240e663f6331c0586aa52ae"
+    },
+    {
+      "bytes": 12275,
+      "path": "strategy_family_ranking.csv",
+      "required": true,
+      "role": "pre-backtest family priority",
+      "sha256": "2fc9d6edbac93f5b3ec081626b901212e0dbecf28fe5998c69d2231874a1df1c"
+    },
+    {
+      "bytes": 480069,
+      "path": "candidate_strategy_pack.jsonl",
+      "required": true,
+      "role": "144 frozen executable candidate contracts",
+      "sha256": "7f4b24f4a4100eb93d813929a68c691ab9022206ccbd42baf71ccf272173ecda"
+    },
+    {
+      "bytes": 2154,
+      "path": "candidate_pack_manifest.json",
+      "required": true,
+      "role": "cardinality, hashes and invariants",
+      "sha256": "2de103243ed765041f37f7afb930c528251f46e0d7ce1e0ae679173a1a5bdf88"
+    },
+    {
+      "bytes": 50904,
+      "path": "canonical_novelty_audit.csv",
+      "required": true,
+      "role": "V2 uniqueness and nearest V1 family disclosure",
+      "sha256": "9c60081a865c3f67f9939d49389efefea67db8ae4bbf271c87494313c0abf308"
+    },
+    {
+      "bytes": 31479,
+      "path": "family_formula_contract.md",
+      "required": true,
+      "role": "all family formulas and parameter grids",
+      "sha256": "bce7d50df8a08b9b76532ef95e484367aa660c219fc3e352eff285d9dcb2d7e1"
+    },
+    {
+      "bytes": 4514,
+      "path": "train_selection_protocol.md",
+      "required": true,
+      "role": "OOF selection and cumulative multiplicity",
+      "sha256": "01f39c9460b679fbfcae2b4ef9423a180e611fc5615136f12c21bbf4a19490ad"
+    },
+    {
+      "bytes": 4738,
+      "path": "campaign_spec.yaml",
+      "required": true,
+      "role": "machine-readable campaign contract",
+      "sha256": "05fd5c58c6fd06738b607757e36d7fe37613379f496ca2cf197902c3cdb4e44a"
+    },
+    {
+      "bytes": 3183,
+      "path": "acceptance_gates.md",
+      "required": true,
+      "role": "technical/train/validation gates",
+      "sha256": "22c3ab64b9e132e283d62844b5a7f50ffd2189350fc0ded47a2a4bd7a14c9930"
+    },
+    {
+      "bytes": 2673,
+      "path": "aurora_implementation_handoff.md",
+      "required": true,
+      "role": "actual Aurora branch/path integration",
+      "sha256": "e93e154ca61ffb242a72c35ed7ab444bf0b9a05d285268a8bc1df14981208f5d"
+    },
+    {
+      "bytes": 2240,
+      "path": "open_questions_and_risks.md",
+      "required": true,
+      "role": "known blockers and fail-closed handling",
+      "sha256": "9d82c13f37c798f53a2d89a4e08b002a7b3ccd06ddfc9f45d717d5feb34725b8"
+    },
+    {
+      "bytes": 2684,
+      "path": "source_links.md",
+      "required": true,
+      "role": "direct incremental source links",
+      "sha256": "f66605333da80246931414cd65dc050c946521df9092d8e1b0ba3abead67706d"
+    },
+    {
+      "bytes": 1653,
+      "path": "prior_campaign_reference.json",
+      "required": true,
+      "role": "authoritative V1 facts and hashes",
+      "sha256": "f9be66a9530cb795845a5f3b56e749494169c8aa5f49a0349e02b64350a99146"
+    },
+    {
+      "bytes": 165676,
+      "path": "prior_campaign/SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_FINAL.zip",
+      "required": true,
+      "role": "exact V1 research package",
+      "sha256": "a8db7fd9ab2422d81601104234a80185e317b6cc2fae07914c5bca6c7e421925"
+    },
+    {
+      "bytes": 4964835,
+      "path": "prior_campaign/sp500-ls-train-yahoo-fallback-r8-results.zip",
+      "required": true,
+      "role": "exact V1 final-results artifact",
+      "sha256": "164ce2d50909c5224e5260fa185516e9ecee368d948201852f35a72fa0780775"
+    },
+    {
+      "bytes": 49294,
+      "path": "CODEX_GITHUB_RUN_PROMPT.md",
+      "required": true,
+      "role": "direct self-contained execution order",
+      "sha256": "af3caf09a104ba8b0cfa39995d687582ee9aecf9d993a2b79b5c6c78d03ad8ad"
+    }
+  ],
+  "locked_opened": false,
+  "required_minimum_files": [
+    "README_START_HERE.md",
+    "executive_summary.md",
+    "research_library.csv",
+    "research_synthesis.md",
+    "contradictions_and_negative_results.md",
+    "data_source_inventory.csv",
+    "data_acquisition_plan.md",
+    "feature_catalog.csv",
+    "strategy_family_ranking.csv",
+    "candidate_strategy_pack.jsonl",
+    "candidate_pack_manifest.json",
+    "train_selection_protocol.md",
+    "campaign_spec.yaml",
+    "acceptance_gates.md",
+    "aurora_implementation_handoff.md",
+    "open_questions_and_risks.md",
+    "source_links.md",
+    "CODEX_GITHUB_RUN_PROMPT.md",
+    "codex_run_inputs_manifest.json"
+  ],
+  "schema_version": "2.0.0",
+  "validation_ack": "OPEN_VALIDATION_2011_2020_ONCE_V2"
+}
