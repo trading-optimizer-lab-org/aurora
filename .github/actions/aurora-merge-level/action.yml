@@ -26,6 +26,12 @@ inputs:
   plan-artifact-name:
     description: Immutable execution and merge plan artifact
     required: true
+  prepared-artifact-name:
+    description: Immutable prepared market-data artifact
+    required: true
+  prepared-artifact-run-id:
+    description: Run containing the immutable prepared market-data artifact
+    required: true
 
 runs:
   using: composite
@@ -51,6 +57,13 @@ runs:
       with:
         name: ${{ inputs.plan-artifact-name }}
         path: ${{ runner.temp }}/plan
+    - name: Download prepared inputs
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ inputs.prepared-artifact-name }}
+        path: ${{ runner.temp }}/prepared
+        github-token: ${{ github.token }}
+        run-id: ${{ inputs.prepared-artifact-run-id }}
     - name: Download direct children only
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
@@ -62,6 +75,7 @@ runs:
       env:
         WORKLOAD: ${{ inputs.workload }}
         GROUP_ID: ${{ inputs.group-id }}
+        AURORA_PREPARED_ROOT: ${{ runner.temp }}/prepared
       run: |
         set -euo pipefail
         aurora github merge-plan-group \

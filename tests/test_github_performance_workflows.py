@@ -588,6 +588,17 @@ def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:
             == "./.github/actions/aurora-merge-level"
             for step in job["steps"]
         )
+        merge_step = next(
+            step
+            for step in job["steps"]
+            if step.get("uses") == "./.github/actions/aurora-merge-level"
+        )
+        assert merge_step["with"]["prepared-artifact-name"] == (
+            "${{ env.AURORA_PREPARED_ARTIFACT_NAME }}"
+        )
+        assert merge_step["with"]["prepared-artifact-run-id"] == (
+            "${{ inputs.prepared_artifact_run_id || github.run_id }}"
+        )
     for level_index in range(1, 4):
         assert _needs(jobs[f"merge_level_{level_index}"]) == {
             "plan",
@@ -601,6 +612,9 @@ def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:
     merge_text = MERGE_LEVEL_ACTION_PATH.read_text(encoding="utf-8")
     assert "aurora github merge-plan-group" in merge_text
     assert "inputs.output-artifact" in merge_text
+    assert "inputs.prepared-artifact-name" in merge_text
+    assert "inputs.prepared-artifact-run-id" in merge_text
+    assert "AURORA_PREPARED_ROOT: ${{ runner.temp }}/prepared" in merge_text
     final_text = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "_aurora-merge-level-v3.yml" not in final_text
     assert "needs.plan.outputs.merge_root_artifact" in final_text

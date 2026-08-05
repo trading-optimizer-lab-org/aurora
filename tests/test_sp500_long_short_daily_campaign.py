@@ -2116,7 +2116,7 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "dt.timedelta(days=44)" not in universal
     assert '--source-mode "yahoo-fallback"' in universal
     assert "prepared_artifact_run_id" in universal
-    assert universal.count("inputs.prepared_artifact_run_id || github.run_id") == 9
+    assert universal.count("inputs.prepared_artifact_run_id || github.run_id") == 13
     assert universal.count(
         "prepared-artifact-run-id: ${{ inputs.prepared_artifact_run_id }}"
     ) == 8

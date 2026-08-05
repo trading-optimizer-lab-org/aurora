@@ -1965,6 +1965,8 @@ jobs:
           wheelhouse-artifact-name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
           contract-artifact-name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
           plan-artifact-name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          prepared-artifact-name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
+          prepared-artifact-run-id: ${{ inputs.prepared_artifact_run_id || github.run_id }}
 
   merge_level_1:
     needs: [plan, merge_level_0]
@@ -1996,6 +1998,8 @@ jobs:
           wheelhouse-artifact-name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
           contract-artifact-name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
           plan-artifact-name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          prepared-artifact-name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
+          prepared-artifact-run-id: ${{ inputs.prepared_artifact_run_id || github.run_id }}
 
   merge_level_2:
     needs: [plan, merge_level_1]
@@ -2027,6 +2031,8 @@ jobs:
           wheelhouse-artifact-name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
           contract-artifact-name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
           plan-artifact-name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          prepared-artifact-name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
+          prepared-artifact-run-id: ${{ inputs.prepared_artifact_run_id || github.run_id }}
 
   merge_level_3:
     needs: [plan, merge_level_2]
@@ -2058,6 +2064,8 @@ jobs:
           wheelhouse-artifact-name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
           contract-artifact-name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
           plan-artifact-name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          prepared-artifact-name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
+          prepared-artifact-run-id: ${{ inputs.prepared_artifact_run_id || github.run_id }}
 
   final_merge:
     needs: [plan, freeze_contract, merge_level_0, merge_level_1, merge_level_2, merge_level_3]
