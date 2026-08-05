@@ -26,9 +26,8 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
     campaign = repo / "campaigns" / "sp500_long_short_daily_v2"
     issues: list[str] = []
-    package = CampaignPackage.load(
-        campaign / "research_input",
-        campaign / "input_package" / "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_V2_NEW_STRATEGIES.zip",
+    package = CampaignPackage.load_zip(
+        campaign / "input_package" / "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_V2_NEW_STRATEGIES.zip"
     )
     spec = validate_run_spec(repo / "config" / "sp500_long_short_daily_v2_train_v3.yaml")
     if not spec.valid:

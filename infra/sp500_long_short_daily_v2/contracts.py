@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -175,6 +176,28 @@ class CampaignPackage:
     research: tuple[Mapping[str, str], ...]
     novelty: tuple[Mapping[str, str], ...]
     v1_candidate_hashes: frozenset[str]
+
+    @classmethod
+    def load_zip(cls, zip_path: Path) -> "CampaignPackage":
+        """Load the exact frozen package bytes, independent of checkout line endings."""
+
+        zip_path = Path(zip_path).resolve()
+        if not zip_path.is_file() or zip_path.stat().st_size != EXPECTED_ZIP_BYTES:
+            raise PackageContractError("ZIP_SIZE_MISMATCH")
+        digest = sha256_file(zip_path)
+        if digest != EXPECTED_ZIP_SHA256:
+            raise PackageContractError("ZIP_SHA256_MISMATCH")
+        root = Path(tempfile.gettempdir()) / f"aurora-sp500-v2-{digest[:16]}"
+        expected = set(EXPECTED_PACKAGE_FILES)
+        with zipfile.ZipFile(zip_path) as archive:
+            actual = {name for name in archive.namelist() if not name.endswith("/")}
+            if actual != expected:
+                raise PackageContractError("ZIP_FILE_SET_MISMATCH")
+            for relative in sorted(expected):
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.read(relative))
+        return cls.load(root, zip_path)
 
     @classmethod
     def load(cls, root: Path, zip_path: Path) -> "CampaignPackage":
@@ -392,4 +415,3 @@ def validate_exact_coverage(
         raise PackageContractError("DUPLICATE_TERMINAL_UNIT")
     if set(terminal) != set(expected):
         raise PackageContractError("INCOMPLETE_TERMINAL_COVERAGE")
-

@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -59,11 +60,11 @@ def _campaign_root() -> Path:
     return _repo_root() / "campaigns" / "sp500_long_short_daily_v2"
 
 
+@lru_cache(maxsize=1)
 def _package() -> CampaignPackage:
     root = _campaign_root()
-    return CampaignPackage.load(
-        root / "research_input",
-        root / "input_package" / "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_V2_NEW_STRATEGIES.zip",
+    return CampaignPackage.load_zip(
+        root / "input_package" / "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_V2_NEW_STRATEGIES.zip"
     )
 
 

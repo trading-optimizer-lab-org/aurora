@@ -41,9 +41,8 @@ CAMPAIGN = ROOT / "campaigns" / "sp500_long_short_daily_v2"
 
 @pytest.fixture(scope="module")
 def package() -> CampaignPackage:
-    return CampaignPackage.load(
-        CAMPAIGN / "research_input",
-        CAMPAIGN / "input_package" / "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_V2_NEW_STRATEGIES.zip",
+    return CampaignPackage.load_zip(
+        CAMPAIGN / "input_package" / "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_V2_NEW_STRATEGIES.zip"
     )
 
 
