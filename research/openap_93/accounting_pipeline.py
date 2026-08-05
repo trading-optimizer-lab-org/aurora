@@ -51,15 +51,15 @@ class AccountingSignalValue:
     caveat: str = ""
 
     def to_record(self, formation_at: pd.Timestamp) -> dict[str, Any]:
-        value = self.value
-        finite = value is not None and np.isfinite(float(value))
+        value = _number(self.value)
+        finite = value is not None
         fidelity = self.fidelity if finite else FidelityClass.UNAVAILABLE
         available = pd.to_datetime(self.available_at, errors="coerce")
         period_end = pd.to_datetime(self.period_end, errors="coerce")
         return {
             "symbol": self.symbol,
             "signal": self.signal,
-            "value": float(value) if finite else None,
+            "value": value,
             "fidelity_class": fidelity.value,
             "current_usable": bool(
                 finite
@@ -189,12 +189,13 @@ def _append(
 ) -> None:
     available_at = _latest_date(available, symbol, dependencies)
     period_end = _latest_date(periods, symbol, dependencies)
-    finite = value is not None and np.isfinite(float(value))
+    finite_value = _number(value)
+    finite = finite_value is not None
     rows.append(
         AccountingSignalValue(
             symbol=symbol,
             signal=signal,
-            value=float(value) if finite else None,
+            value=finite_value,
             fidelity=fidelity,
             formula_id=formula_id,
             source_ids=source_ids,
@@ -286,7 +287,7 @@ def calculate_accounting_signals(
             assets
             - cash
             - (assets - debt_long - debt_current - preferred - equity)
-            if None not in (assets, cash, equity)
+            if assets is not None and cash is not None and equity is not None
             else None
         )
         noa_lag = (
@@ -299,7 +300,11 @@ def calculate_accounting_signals(
                 - preferred_lag
                 - equity_lag
             )
-            if None not in (assets_lag, cash_lag, equity_lag)
+            if (
+                assets_lag is not None
+                and cash_lag is not None
+                and equity_lag is not None
+            )
             else None
         )
         d_noa = _ratio(
@@ -326,9 +331,11 @@ def calculate_accounting_signals(
             caveat="Minority interest is zero-filled exactly as the OpenAP implementation permits",
         )
 
+        operating_income = get("operating_income")
+        depreciation = get("depreciation")
         ebitda = (
-            get("operating_income") + get("depreciation")
-            if get("operating_income") is not None and get("depreciation") is not None
+            operating_income + depreciation
+            if operating_income is not None and depreciation is not None
             else None
         )
         enterprise_value = (
@@ -351,6 +358,7 @@ def calculate_accounting_signals(
 
         backlog = get("backlog")
         backlog_lag = get("backlog", 1)
+        assets_lag2 = get("assets", 2)
         _append(
             rows,
             symbol=symbol,
@@ -377,9 +385,13 @@ def calculate_accounting_signals(
                 else None,
                 _ratio(
                     backlog_lag,
-                    0.5 * (assets_lag + get("assets", 2)),
+                    0.5 * (assets_lag + assets_lag2),
                 )
-                if None not in (backlog_lag, assets_lag, get("assets", 2))
+                if (
+                    backlog_lag is not None
+                    and assets_lag is not None
+                    and assets_lag2 is not None
+                )
                 else None
             ),
             fidelity=FidelityClass.RECONSTRUCTED,
@@ -430,7 +442,7 @@ def calculate_accounting_signals(
             signal="DelNetFin",
             value=_ratio(
                 net_fin - net_fin_lag,
-                np.mean([assets, assets_lag])
+                float(np.mean([assets, assets_lag]))
                 if assets is not None and assets_lag is not None
                 else None,
             ),
@@ -486,7 +498,12 @@ def calculate_accounting_signals(
         )
 
         cb_oper = None
-        if None not in (revenue, cogs, sga, assets):
+        if (
+            revenue is not None
+            and cogs is not None
+            and sga is not None
+            and assets is not None
+        ):
             cb_oper = _ratio(
                 revenue
                 - cogs
@@ -541,7 +558,10 @@ def calculate_accounting_signals(
             get("investing_cash_flow"),
         )
         pct_total_accrual = None
-        if all(value is not None for value in pct_total_accrual_inputs):
+        present_accrual_inputs = [
+            float(value) for value in pct_total_accrual_inputs if value is not None
+        ]
+        if len(present_accrual_inputs) == len(pct_total_accrual_inputs):
             (
                 pct_net_income,
                 repurchases,
@@ -550,19 +570,19 @@ def calculate_accounting_signals(
                 operating_cash_flow,
                 financing_cash_flow,
                 investing_cash_flow,
-            ) = pct_total_accrual_inputs
-            if abs(float(pct_net_income)) >= 1e-12:
+            ) = present_accrual_inputs
+            if abs(pct_net_income) >= 1e-12:
                 pct_total_accrual = (
-                    float(pct_net_income)
+                    pct_net_income
                     - (
-                        float(repurchases)
-                        - float(share_issuance)
-                        + float(dividends)
-                        + float(operating_cash_flow)
-                        + float(financing_cash_flow)
-                        + float(investing_cash_flow)
+                        repurchases
+                        - share_issuance
+                        + dividends
+                        + operating_cash_flow
+                        + financing_cash_flow
+                        + investing_cash_flow
                     )
-                ) / abs(float(pct_net_income))
+                ) / abs(pct_net_income)
         _append(
             rows,
             symbol=symbol,
@@ -747,7 +767,7 @@ def calculate_accounting_signals(
                     ),
                 ),
             ):
-                source_ids = ("sec_edgar",)
+                source_ids: tuple[str, ...] = ("sec_edgar",)
                 if signal in {"AccrualsBM", "BMdec", "ChInvIA", "PS"}:
                     source_ids = ("sec_edgar", "yahoo_public")
                 elif signal == "OScore":

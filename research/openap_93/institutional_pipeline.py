@@ -342,6 +342,7 @@ def map_cusips_openfigi(
             request_failed = response is None
             if request_failed:
                 response = [{"error": last_error}] * len(batch)
+            assert response is not None
 
             batch_rows: list[dict[str, Any]] = []
             for cusip, item in zip(batch, response, strict=True):
@@ -576,9 +577,7 @@ def _forecast_dispersion(
     rows: list[dict[str, Any]] = []
     for symbol in symbols:
         payload, available_at = payloads.get((symbol, "earnings_estimate"), ([], None))
-        item = _period(payload, "0y")
-        if not item:
-            item = _period(payload, "+1y")
+        item = _period(payload, "0y") or _period(payload, "+1y") or {}
         low = pd.to_numeric(pd.Series([item.get("low")]), errors="coerce").iloc[0]
         high = pd.to_numeric(pd.Series([item.get("high")]), errors="coerce").iloc[0]
         average = pd.to_numeric(pd.Series([item.get("avg")]), errors="coerce").iloc[0]

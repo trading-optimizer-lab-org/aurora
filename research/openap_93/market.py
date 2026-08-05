@@ -21,7 +21,10 @@ def _finite(values: Sequence[float]) -> np.ndarray:
     return array[np.isfinite(array)]
 
 
-def ols_fit(y: Sequence[float], x: np.ndarray) -> tuple[np.ndarray, float, np.ndarray]:
+def ols_fit(
+    y: Sequence[float] | np.ndarray,
+    x: Sequence[float] | np.ndarray,
+) -> tuple[np.ndarray, float, np.ndarray]:
     """Return OLS coefficients, R-squared and residuals with an intercept."""
 
     y_array = np.asarray(y, dtype=float)

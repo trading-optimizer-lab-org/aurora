@@ -102,14 +102,15 @@ class AdvancedValue:
     caveat: str = ""
 
     def record(self, formation_at: pd.Timestamp) -> dict[str, Any]:
-        finite = self.value is not None and np.isfinite(float(self.value))
+        finite_value = _finite(self.value)
+        finite = finite_value is not None
         fidelity = self.fidelity if finite else FidelityClass.UNAVAILABLE
         available = pd.to_datetime(self.available_at, errors="coerce")
         period = pd.to_datetime(self.period_end, errors="coerce")
         return {
             "symbol": self.symbol,
             "signal": self.signal,
-            "value": float(self.value) if finite else None,
+            "value": finite_value,
             "fidelity_class": fidelity.value,
             "current_usable": bool(
                 finite
@@ -293,8 +294,12 @@ def _brand_invest(annual: pd.DataFrame) -> dict[str, tuple[float, pd.Timestamp, 
                 capital = advertising / 0.6
             else:
                 capital = 0.5 * capital + (advertising or 0.0)
-            current_scaled = capital / assets if assets and assets > 0 and advertising is not None else None
-            if prior_scaled not in (None, 0.0):
+            current_scaled = (
+                capital / assets
+                if assets is not None and assets > 0 and advertising is not None
+                else None
+            )
+            if prior_scaled is not None and prior_scaled != 0.0:
                 value = (advertising or 0.0) / prior_scaled
                 if np.isfinite(value):
                     used += 1
@@ -320,7 +325,7 @@ def _org_cap(
             sga = _finite(getattr(row, "sga", np.nan)) or 0.0
             assets = _finite(getattr(row, "assets", np.nan))
             eligible = deflator.loc[deflator["date"].le(pd.Timestamp(row.period_end))]
-            if eligible.empty or assets in (None, 0.0):
+            if eligible.empty or assets is None or assets == 0.0:
                 continue
             real_sga = sga / float(eligible.iloc[-1]["gnpdef"])
             capital = 4.0 * real_sga if capital is None else 0.85 * capital + real_sga

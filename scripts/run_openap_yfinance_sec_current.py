@@ -1,3 +1,5 @@
+# mypy: disable-error-code="index"
+
 """GitHub-only OpenAP current data and score pipeline."""
 
 from __future__ import annotations

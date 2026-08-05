@@ -41,7 +41,8 @@ class AnalystValue:
     caveat: str = ""
 
     def record(self, formation_at: pd.Timestamp) -> dict[str, Any]:
-        finite = self.value is not None and np.isfinite(float(self.value))
+        finite_value = _number(self.value)
+        finite = finite_value is not None
         fidelity = self.fidelity if finite else FidelityClass.UNAVAILABLE
         available = pd.to_datetime(self.available_at, errors="coerce", utc=True)
         if pd.notna(available):
@@ -50,7 +51,7 @@ class AnalystValue:
         return {
             "symbol": self.symbol,
             "signal": self.signal,
-            "value": float(self.value) if finite else None,
+            "value": finite_value,
             "fidelity_class": fidelity.value,
             "current_usable": bool(
                 finite
@@ -313,12 +314,13 @@ def calculate_analyst_signals(
         )
         latest_two = ordered_history[-2:]
         surprises = [_number(row.get("surprisePercent")) for row in latest_two]
+        finite_surprises = [value for value in surprises if value is not None]
         same_sign = (
-            len(surprises) == 2
-            and all(value is not None and value != 0 for value in surprises)
-            and np.sign(float(surprises[0])) == np.sign(float(surprises[1]))
+            len(finite_surprises) == 2
+            and all(value != 0 for value in finite_surprises)
+            and np.sign(finite_surprises[0]) == np.sign(finite_surprises[1])
         )
-        streak = float(surprises[-1]) if same_sign else None
+        streak = finite_surprises[-1] if same_sign else None
         latest_quarter = (
             pd.to_datetime(ordered_history[-1].get("quarter"), errors="coerce")
             if ordered_history
@@ -353,7 +355,11 @@ def calculate_analyst_signals(
             else None
         )
         exclusions_at = max(
-            (value for value in (history_at, reported_at) if pd.notna(value)),
+            (
+                value
+                for value in (history_at, reported_at)
+                if value is not None and pd.notna(value)
+            ),
             default=pd.NaT,
         )
         values.append(

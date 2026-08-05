@@ -160,7 +160,12 @@ def calculate_event_signals(
                 "Listing age substitutes for founding age; values outside 3-36 months are not applicable",
             ),
         ):
-            finite = value is not None and np.isfinite(float(value))
+            finite_value = (
+                float(value)
+                if value is not None and np.isfinite(float(value))
+                else None
+            )
+            finite = finite_value is not None
             actual_fidelity = fidelity if finite else FidelityClass.UNAVAILABLE
             if finite:
                 missing_reason = ""
@@ -176,7 +181,7 @@ def calculate_event_signals(
                 {
                     **common,
                     "signal": signal,
-                    "value": float(value) if finite else None,
+                    "value": finite_value,
                     "fidelity_class": actual_fidelity.value,
                     "current_usable": bool(
                         finite

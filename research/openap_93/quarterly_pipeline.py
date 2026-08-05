@@ -35,6 +35,11 @@ SHARE_TAGS = (
 ASSET_TAGS = ("Assets",)
 
 
+def _finite_float(value: Any) -> float | None:
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    return float(numeric) if pd.notna(numeric) and np.isfinite(numeric) else None
+
+
 @dataclass(frozen=True)
 class QuarterlyValue:
     symbol: str
@@ -50,7 +55,8 @@ class QuarterlyValue:
     caveat: str = ""
 
     def record(self, formation_at: pd.Timestamp) -> dict[str, Any]:
-        finite = self.value is not None and np.isfinite(float(self.value))
+        finite_value = _finite_float(self.value)
+        finite = finite_value is not None
         fidelity = self.fidelity if finite else FidelityClass.UNAVAILABLE
         available_at = pd.to_datetime(self.available_at, errors="coerce", utc=True)
         if pd.notna(available_at):
@@ -59,7 +65,7 @@ class QuarterlyValue:
         return {
             "symbol": self.symbol,
             "signal": self.signal,
-            "value": float(self.value) if finite else None,
+            "value": finite_value,
             "fidelity_class": fidelity.value,
             "current_usable": bool(
                 finite
@@ -237,31 +243,37 @@ def calculate_quarterly_signals(
         earnings_surprise, earnings_n = _standardized_surprise(eps)
         revenue_surprise, revenue_n = _standardized_surprise(revenue_ps)
         streak, streak_n = _earnings_streak(net_income)
-        common = dict(
-            symbol=symbol,
-            sources=("sec_edgar",),
-            available_at=available_at,
-            period_end=period_end,
-        )
         rows.extend(
             [
                 QuarterlyValue(
+                    symbol=symbol,
                     signal="EarningsSurprise", value=earnings_surprise,
                     fidelity=FidelityClass.RECONSTRUCTED,
                     formula_id="openap_eps_yoy_drift_standardized_8q_sec",
-                    observation_count=earnings_n, **common,
+                    sources=("sec_edgar",),
+                    available_at=available_at,
+                    period_end=period_end,
+                    observation_count=earnings_n,
                 ),
                 QuarterlyValue(
+                    symbol=symbol,
                     signal="RevenueSurprise", value=revenue_surprise,
                     fidelity=FidelityClass.RECONSTRUCTED,
                     formula_id="openap_revenue_per_share_yoy_drift_standardized_8q_sec",
-                    observation_count=revenue_n, **common,
+                    sources=("sec_edgar",),
+                    available_at=available_at,
+                    period_end=period_end,
+                    observation_count=revenue_n,
                 ),
                 QuarterlyValue(
+                    symbol=symbol,
                     signal="NumEarnIncrease", value=streak,
                     fidelity=FidelityClass.RECONSTRUCTED,
                     formula_id="openap_consecutive_positive_yoy_quarterly_income_max8_sec",
-                    observation_count=streak_n, **common,
+                    sources=("sec_edgar",),
+                    available_at=available_at,
+                    period_end=period_end,
+                    observation_count=streak_n,
                 ),
             ]
         )
@@ -275,10 +287,14 @@ def calculate_quarterly_signals(
                 roaq_value = float(net_income.loc[latest] / denominator)
         rows.append(
             QuarterlyValue(
+                symbol=symbol,
                 signal="roaq", value=roaq_value,
                 fidelity=FidelityClass.RECONSTRUCTED,
                 formula_id="openap_quarterly_income_over_lagged_quarterly_assets_sec",
-                observation_count=min(len(net_income), len(assets)), **common,
+                sources=("sec_edgar",),
+                available_at=available_at,
+                period_end=period_end,
+                observation_count=min(len(net_income), len(assets)),
             )
         )
 
