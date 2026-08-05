@@ -14,9 +14,14 @@ on:
         default: "30837929185"
         type: string
       public_inputs_run_id:
-        description: Run containing openap-93-public-inputs and the official reference archive
+        description: Run containing the audited OpenAP public inputs and official reference archive
         required: true
         default: "30995267332"
+        type: string
+      public_inputs_artifact_name:
+        description: Artifact containing the public inputs and official reference archive
+        required: true
+        default: "openap-93-max-free-full-results"
         type: string
       crosswalk_artifact_run_id:
         description: Optional run containing an authorized PERMNO-to-symbol crosswalk
@@ -99,7 +104,7 @@ jobs:
       - name: Download audited public inputs artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: openap-93-public-inputs
+          name: ${{ inputs.public_inputs_artifact_name }}
           path: inputs/public
           run-id: ${{ inputs.public_inputs_run_id }}
           repository: trading-optimizer-lab-org/aurora
