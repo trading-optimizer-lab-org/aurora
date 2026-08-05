@@ -151,3 +151,5 @@ def test_workflow_is_github_only_and_bounded() -> None:
     assert "2020-12-31" in text
     assert "2021-01-01" in text
     assert "OPEN_VALIDATION_2011_2020_ONCE_AUTONOMOUS" in text
+    for phase in ("preflight", "research", "data_build", "pilot", "search_batch", "merge_batch", "statistical_gate", "freeze", "validation_once", "verify"):
+        assert f"- {phase}" in text

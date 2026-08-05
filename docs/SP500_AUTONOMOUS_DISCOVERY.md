@@ -10,11 +10,15 @@ a portfolio and does not select a rule from validation.
 
 1. `preflight` checks the frozen specification, candidate contract, workflow,
    and date boundaries.
-2. `pilot` exercises the real workload on a small pre-registered batch.
-3. `search_batch` generates a deterministic batch, registers every candidate,
+2. `research` and `data_build` publish source and boundary evidence before
+   any search batch.
+3. `pilot` exercises the real workload on a small pre-registered batch.
+4. `search_batch` generates a deterministic batch, registers every candidate,
    evaluates chronological train returns, writes metrics and multiplicity
    evidence, and either dispatches the next batch or freezes finalists.
-4. `validation_once` is dispatched only from a successful train freeze and
+5. `merge_batch`, `statistical_gate`, `freeze`, and `verify` independently
+   check a completed train artifact and its boundary/reconciliation evidence.
+6. `validation_once` is dispatched only from a successful train freeze and
    requires `OPEN_VALIDATION_2011_2020_ONCE_AUTONOMOUS`.
 
 The controller never opens validation when a batch has no eligible finalist.

@@ -10,9 +10,15 @@ on:
         type: choice
         options:
           - preflight
+          - research
+          - data_build
           - pilot
           - search_batch
+          - merge_batch
+          - statistical_gate
+          - freeze
           - validation_once
+          - verify
       batch_id:
         description: Deterministic autonomous batch identifier
         required: false
@@ -126,6 +132,84 @@ jobs:
       autonomous_previous_trial_count: ${{ inputs.prior_trial_count }}
     secrets: inherit
 
+  research:
+    if: inputs.phase == 'research'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Install locked runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Freeze research registry inventory
+        env:
+          RUNNER_TEMP_VALUE: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from aurora.infra.sp500_autonomous_discovery.registry import base_package
+
+          package = base_package()
+          root = Path(os.environ["RUNNER_TEMP_VALUE"]) / "research"
+          root.mkdir(parents=True, exist_ok=True)
+          payload = {
+              "campaign_id": "sp500-autonomous-discovery",
+              "research_rows": len(package.research),
+              "feature_rows": len(package.features),
+              "dataset_rows": len(package.datasets),
+              "candidate_templates": len(package.candidates),
+              "source_zip_sha256": hashlib.sha256(package.zip_path.read_bytes()).hexdigest(),
+              "selection_binding": False,
+          }
+          (root / "research_inventory.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+      - name: Upload research inventory
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-autonomous-research-${{ github.run_id }}
+          path: ${{ runner.temp }}/research
+          if-no-files-found: error
+          retention-days: 90
+
+  data_build:
+    if: inputs.phase == 'data_build'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Validate bounded data contract
+        run: |
+          set -euo pipefail
+          test "$AURORA_TRAIN_END" = "2010-12-31"
+          test "$AURORA_VALIDATION_END" = "2020-12-31"
+          test "$AURORA_LOCKED_START" = "2021-01-01"
+          mkdir -p "$RUNNER_TEMP/data-build"
+          printf '{"train_end":"%s","validation_end":"%s","locked_start":"%s","locked_opened":false}\n' "$AURORA_TRAIN_END" "$AURORA_VALIDATION_END" "$AURORA_LOCKED_START" > "$RUNNER_TEMP/data-build/data_contract.json"
+      - name: Upload data contract evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-autonomous-data-build-${{ github.run_id }}
+          path: ${{ runner.temp }}/data-build
+          if-no-files-found: error
+          retention-days: 90
+
   train_batch:
     if: inputs.phase == 'search_batch'
     uses: ./.github/workflows/_aurora-future-run-v3.yml
@@ -221,6 +305,40 @@ jobs:
           path: ${{ runner.temp }}/next_inputs.json
           if-no-files-found: error
           retention-days: 90
+
+  verify_train_artifact:
+    if: contains(fromJSON('["merge_batch","statistical_gate","freeze","verify"]'), inputs.phase)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Require a completed train artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRAIN_RUN_ID: ${{ inputs.train_run_id }}
+          TRAIN_RESULTS_ARTIFACT: ${{ inputs.train_results_artifact }}
+        run: |
+          set -euo pipefail
+          [[ "$TRAIN_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ -n "$TRAIN_RESULTS_ARTIFACT" ]]
+          gh run download "$TRAIN_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$TRAIN_RESULTS_ARTIFACT" --dir "$RUNNER_TEMP/train"
+      - name: Verify selected control phase
+        env:
+          PHASE: ${{ inputs.phase }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "train"
+          summary = json.loads((root / "autonomous_batch_summary.json").read_text(encoding="utf-8"))
+          if summary["locked_opened"] is not False or summary["validation_used_for_selection"] is not False:
+              raise SystemExit("TRAIN_CONTROL_BOUNDARY_BREACH")
+          if int(summary["total_strategies_loaded"]) < int(summary["total_strategies_evaluated"]):
+              raise SystemExit("TRAIN_RECONCILIATION_BREACH")
+          print(json.dumps({"phase": os.environ["PHASE"], "summary": summary}, sort_keys=True))
+          PY
 
   validation_once:
     if: inputs.phase == 'validation_once'
