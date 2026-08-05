@@ -510,6 +510,34 @@ def _validate_scientific_content_identity(
     return output_name in manifest_files
 
 
+def _scientific_metric_unit_keys(root: Path) -> set[str] | None:
+    summary_path = Path(root) / "final_merge_summary.json"
+    if not summary_path.is_file():
+        return None
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        output = Path(root) / str(summary.get("scientific_output", ""))
+        if output.suffix.lower() != ".parquet" or not output.is_file():
+            return None
+        schema = pq.ParquetFile(output).schema_arrow
+        if not {"unit_key", "status"}.issubset(schema.names):
+            return None
+        rows = pq.read_table(
+            output,
+            columns=["unit_key", "status"],
+        ).to_pylist()
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, pa.ArrowInvalid):
+        return None
+    statuses = {str(row["status"]) for row in rows}
+    if not statuses.intersection({"evaluated", "rejected"}):
+        return None
+    return {
+        str(row["unit_key"])
+        for row in rows
+        if row["status"] == "evaluated"
+    }
+
+
 def verify_final_artifact(
     root: Path,
     spec: RunSpec,
@@ -859,7 +887,16 @@ def verify_final_artifact(
                 for row in reconciliation_table.to_pylist()
                 if row["state"] == "completed"
             }
-            if completed_metric_units != metric_unit_keys:
+            scientific_metric_units = _scientific_metric_unit_keys(root)
+            expected_metric_units = (
+                completed_metric_units
+                if scientific_metric_units is None
+                else scientific_metric_units
+            )
+            if (
+                expected_metric_units != metric_unit_keys
+                or not metric_unit_keys.issubset(completed_metric_units)
+            ):
                 failures.append("METRIC_EVIDENCE_INCOMPLETE")
     if (
         terminal_sum + terminal_counts["missing_units"]
