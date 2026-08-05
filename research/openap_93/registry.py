@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +14,7 @@ class RegistryError(ValueError):
     """Raised when the 93-signal contract is incomplete or ambiguous."""
 
 
-class FidelityClass(StrEnum):
+class FidelityClass(str, Enum):
     EXACT = "exact"
     RECONSTRUCTED = "reconstructed"
     VALIDATED_PROXY = "validated_proxy"
