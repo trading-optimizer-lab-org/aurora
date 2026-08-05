@@ -7,6 +7,7 @@ import math
 import os
 import shutil
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,9 @@ from aurora.infra.github_performance.workloads.common import (
 from aurora.infra.github_performance.shard_planner import sha256_file
 from aurora.infra.sp500_long_short_daily.contracts import (
     CampaignPackage,
+    EXPECTED_ZIP_SHA256,
+    RESULT_FILES_IN_ORDER,
+    VALIDATION_ACK,
     canonical_json_hash,
     validate_exact_coverage,
 )
@@ -88,6 +92,30 @@ def _package() -> CampaignPackage:
         campaign / "research_input",
         campaign / "input_package" / "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_FINAL.zip",
     )
+
+
+def _json_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """Return JSON-safe records without pandas/numpy scalar leakage."""
+
+    if frame.empty:
+        return []
+    return json.loads(frame.to_json(orient="records", date_format="iso"))
+
+
+def _campaign_code_hashes() -> dict[str, str]:
+    root = _repo_root()
+    relative_paths = (
+        ".github/workflows/_aurora-future-run-v3.yml",
+        ".github/workflows/sp500-long-short-daily-campaign.yml",
+        "infra/sp500_long_short_daily/contracts.py",
+        "infra/sp500_long_short_daily/data.py",
+        "infra/sp500_long_short_daily/ledger.py",
+        "infra/sp500_long_short_daily/signals.py",
+        "infra/sp500_long_short_daily/statistics.py",
+        "infra/sp500_long_short_daily/validation.py",
+        "infra/sp500_long_short_daily/workload.py",
+    )
+    return {path: sha256_file(root / path) for path in relative_paths}
 
 
 def _result_schema() -> pa.Schema:
@@ -825,9 +853,42 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
         source_audit = campaign_root / "official_inputs" / "official_source_audit.json"
         candidate_lookup = _package().candidate_by_id()
         ranking_by_id = {str(row["strategy_id"]): row for row in ranking.to_dict("records")}
+        candidate_identities = [
+            {
+                "strategy_id": str(candidate["strategy_id"]),
+                "canonical_hash": str(candidate["canonical_hash"]),
+                "family": str(candidate["family"]),
+                "feature_hash": str(candidate["feature_hash"]),
+                "variant_label": str(candidate["variant_label"]),
+            }
+            for candidate in _package().candidates
+        ]
+        selection_criteria = {
+            "hard_train_gates": {
+                "cagr_positive": "> 0",
+                "sharpe_gt_0_30": "> 0.30",
+                "calmar_gt_0_25": "> 0.25",
+                "max_drawdown_gt_minus_55": "> -55.0 pct",
+                "positive_years_ge_60pct": ">= 0.60",
+                "rolling_3y_cagr_positive": "> 0",
+                "worst_fold_gt_minus_30": "> -30.0 pct",
+                "gain_concentration_le_60pct": "<= 0.60",
+                "neighbour_sensitivity": ">= 0.50",
+                "deflated_sharpe_gt_0_80": "> 0.80",
+                "pbo_lt_0_50": "< 0.50",
+            },
+            "multiple_testing_gate": {"spa_pvalue": "<= 0.10"},
+            "eligible_for_freeze": "all hard_train_gates and spa_pvalue <= 0.10",
+            "maximum_finalists": 30,
+            "maximum_finalists_per_family": 2,
+            "ranking_source": "train_only_outer_oof_static_rules_1998_2010",
+            "validation_used_for_selection": False,
+        }
         freeze = {
             "schema_version": "1",
             "campaign_id": "sp500_long_short_daily_zero_cost_v1",
+            "freeze_created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "freeze_timestamp_semantics": "artifact_creation_time_not_scientific_input",
             "selection_closed": True,
             "validation_opened": False,
             "locked_opened": False,
@@ -837,6 +898,7 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             "locked_start": "2021-01-01",
             "candidate_pack_sha256": canonical_json_hash(list(_package().candidates)),
             "code_sha": os.environ.get("GITHUB_SHA", "LOCAL_TEST_ONLY"),
+            "code_files_sha256": _campaign_code_hashes(),
             "data_manifest_sha256": sha256_file(manifest_path),
             "dependency_lock_sha256": sha256_file(dependency_lock),
             "multiple_testing_sha256": sha256_file(root / "multiple_testing.json"),
@@ -846,8 +908,14 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             "train_selection_protocol_sha256": sha256_file(selection_protocol),
             "official_source_audit_sha256": sha256_file(source_audit),
             "selection_scope": "train_only_outer_oof_static_rules_1998_2010",
+            "selection_criteria": selection_criteria,
+            "validation_authorization_required": VALIDATION_ACK,
+            "validation_authorization_used": False,
             "candidate_count": 168,
             "benchmark_count": 5,
+            "candidate_identities": candidate_identities,
+            "definitive_train_ranking": _json_records(ranking),
+            "pareto_frontier": _json_records(pareto_frame),
             "costs": {
                 "commission_bps": 0,
                 "spread_bps": 0,
@@ -1103,6 +1171,60 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             _repo_root() / "campaigns" / "sp500_long_short_daily" / "implementation_mapping.md"
         )
         shutil.copy2(implementation, root / "implementation_mapping.md")
+        research_input = (
+            _repo_root() / "campaigns" / "sp500_long_short_daily" / "research_input"
+        )
+        for name in RESULT_FILES_IN_ORDER:
+            source = research_input / name
+            if not source.is_file():
+                raise RuntimeError(f"FROZEN_RESEARCH_INPUT_MISSING:{name}")
+            shutil.copy2(source, root / name)
+
+        family_coverage = (
+            candidate_frame.groupby("family", sort=True)["status"]
+            .agg(
+                expected_candidates="size",
+                evaluated_candidates=lambda values: int((values == "evaluated").sum()),
+                rejected_candidates=lambda values: int((values == "rejected").sum()),
+            )
+            .reset_index()
+        )
+        family_coverage["terminal_candidates"] = (
+            family_coverage["evaluated_candidates"] + family_coverage["rejected_candidates"]
+        )
+        family_coverage["exact_coverage"] = (
+            family_coverage["expected_candidates"].eq(6)
+            & family_coverage["terminal_candidates"].eq(6)
+        )
+        if len(family_coverage) != 28 or not bool(family_coverage["exact_coverage"].all()):
+            raise RuntimeError("FAMILY_COVERAGE_NOT_EXACT")
+        family_coverage.to_csv(root / "family_coverage.csv", index=False)
+
+        source_inventory = pd.read_csv(root / "data_source_inventory.csv")
+        proxy_limitations = source_inventory.loc[
+            source_inventory["classification"].astype(str).eq("proxy_only")
+        ].copy()
+        proxy_limitations.to_csv(root / "proxy_limitations.csv", index=False)
+        source_inventory.loc[
+            ~source_inventory["classification"].astype(str).eq("usable_now")
+        ].to_csv(root / "dataset_limitations.csv", index=False)
+
+        warning_sources = (
+            "contradictions_and_negative_results.md",
+            "open_questions_and_risks.md",
+        )
+        warning_text = [
+            "# Scientific warnings",
+            "",
+            f"Final train result: {summary['result_status']}.",
+            "Validation was not opened and observations from 2021 onward were not accessed.",
+            "The following frozen research warnings remain authoritative.",
+        ]
+        for name in warning_sources:
+            warning_text.extend(("", f"## Source: {name}", "", (root / name).read_text("utf-8")))
+        (root / "scientific_warnings.md").write_text(
+            "\n".join(warning_text).rstrip() + "\n", encoding="utf-8"
+        )
         official_source_audit = (
             _repo_root()
             / "campaigns"
@@ -1162,7 +1284,7 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             encoding="utf-8",
         )
 
-        required = (
+        generated_required = (
             "RESULT_STATUS.md",
             "train_selection_freeze.json",
             "candidate_and_benchmark_metrics.csv",
@@ -1180,7 +1302,12 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             "environment_lock.txt",
             "implementation_mapping.md",
             "official_source_audit.json",
+            "family_coverage.csv",
+            "proxy_limitations.csv",
+            "dataset_limitations.csv",
+            "scientific_warnings.md",
         )
+        required = tuple(dict.fromkeys((*generated_required, *RESULT_FILES_IN_ORDER)))
         missing = [name for name in required if not (root / name).is_file()]
         if missing:
             raise RuntimeError(f"FINAL_DELIVERABLES_MISSING:{','.join(missing)}")
@@ -1188,10 +1315,18 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             "schema_version": "1",
             "campaign_id": "sp500_long_short_daily_zero_cost_v1",
             "result_status": status,
+            "code_sha": os.environ.get("GITHUB_SHA", "LOCAL_TEST_ONLY"),
+            "authoritative_input_zip_sha256": EXPECTED_ZIP_SHA256,
+            "candidate_pack_sha256": str(summary["candidate_pack_sha256"]),
             "train_end": "2010-12-31",
+            "validation_start": "2011-01-01",
+            "validation_end": "2020-12-31",
             "validation_opened": False,
+            "validation_authorization_required": VALIDATION_ACK,
+            "validation_authorization_used": False,
             "locked_start": "2021-01-01",
             "locked_opened": False,
+            "required_file_count": len(required),
             "files": {name: sha256_file(root / name) for name in sorted(required)},
         }
         manifest["manifest_sha256"] = canonical_json_hash(manifest)

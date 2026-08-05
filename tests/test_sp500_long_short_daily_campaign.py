@@ -2263,11 +2263,20 @@ def test_full_coverage_reduction_keeps_every_terminal_unit(tmp_path: Path, monke
         "environment_lock.txt",
         "implementation_mapping.md",
         "official_source_audit.json",
+        "candidate_strategy_pack.jsonl",
+        "feature_catalog.csv",
+        "family_coverage.csv",
+        "proxy_limitations.csv",
+        "dataset_limitations.csv",
+        "scientific_warnings.md",
     }
     assert required <= {path.name for path in output.iterdir()}
     final_manifest = json.loads((output / "final_manifest.json").read_text("utf-8"))
     assert final_manifest["validation_opened"] is False
     assert final_manifest["locked_opened"] is False
+    assert final_manifest["validation_authorization_used"] is False
+    assert final_manifest["required_file_count"] == len(final_manifest["files"])
+    assert len(final_manifest["authoritative_input_zip_sha256"]) == 64
     assert set(final_manifest["files"]) >= required - {"final_manifest.json"}
     metrics = pd.read_csv(output / "candidate_and_benchmark_metrics.csv")
     assert len(metrics) == 173
@@ -2291,6 +2300,18 @@ def test_full_coverage_reduction_keeps_every_terminal_unit(tmp_path: Path, monke
     }
     freeze = json.loads((output / "train_selection_freeze.json").read_text("utf-8"))
     assert freeze["finalists"] == []
+    assert freeze["validation_authorization_required"] == "OPEN_VALIDATION_2011_2020_ONCE"
+    assert freeze["validation_authorization_used"] is False
+    assert freeze["freeze_created_at_utc"].endswith("+00:00")
+    assert len(freeze["candidate_identities"]) == 168
+    assert len({row["strategy_id"] for row in freeze["candidate_identities"]}) == 168
+    assert len(freeze["definitive_train_ranking"]) == 1
+    assert isinstance(freeze["pareto_frontier"], list)
+    assert freeze["selection_criteria"]["multiple_testing_gate"] == {
+        "spa_pvalue": "<= 0.10"
+    }
+    assert freeze["code_files_sha256"]
+    assert all(len(value) == 64 for value in freeze["code_files_sha256"].values())
     assert freeze["position_contract"]["allowed_values"] == [-1, 1]
     assert freeze["costs"] == {
         "commission_bps": 0,
@@ -2300,3 +2321,27 @@ def test_full_coverage_reduction_keeps_every_terminal_unit(tmp_path: Path, monke
         "borrow_bps": 0,
         "financing_bps": 0,
     }
+    strategy_pack = [
+        json.loads(line)
+        for line in (output / "candidate_strategy_pack.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert len(strategy_pack) == 168
+    assert {row["strategy_id"] for row in strategy_pack} == {
+        row["strategy_id"] for row in freeze["candidate_identities"]
+    }
+    features = pd.read_csv(output / "feature_catalog.csv")
+    assert len(features) == 168
+    coverage = pd.read_csv(output / "family_coverage.csv")
+    assert len(coverage) == 28
+    assert set(coverage["expected_candidates"]) == {6}
+    assert set(coverage["terminal_candidates"]) == {6}
+    assert coverage["exact_coverage"].all()
+    proxies = pd.read_csv(output / "proxy_limitations.csv")
+    assert set(proxies["classification"]) == {"proxy_only"}
+    assert set(proxies["dataset_id"]) == {"DS046", "DS070", "DS071", "DS072"}
+    warnings = (output / "scientific_warnings.md").read_text(encoding="utf-8")
+    assert "Validation was not opened" in warnings
+    assert "contradictions_and_negative_results.md" in warnings
