@@ -1599,6 +1599,95 @@ def test_alfred_rejects_release_after_phase_end_without_persisting_it(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_cftc_publication_lag_uses_release_date_not_observation_date() -> None:
+    sessions = pd.bdate_range("2008-01-08", "2008-01-14")
+    releases = pd.DataFrame(
+        {
+            "observation_date": [pd.Timestamp("2008-01-08")],
+            "release_date": [pd.Timestamp("2008-01-11")],
+            "value": [42.0],
+        }
+    )
+    aligned = _align_initial_releases(releases, sessions)
+    assert aligned.loc["2008-01-08":"2008-01-11"].isna().all()
+    assert aligned.loc[pd.Timestamp("2008-01-14")] == 42.0
+
+
+def test_cboe_first_dissemination_blocks_retrospective_backfill() -> None:
+    sessions = pd.DatetimeIndex(
+        [
+            pd.Timestamp("2003-09-19"),
+            pd.Timestamp("2003-09-22"),
+            pd.Timestamp("2003-09-23"),
+        ]
+    )
+    releases = pd.DataFrame(
+        {
+            "release_date": [pd.Timestamp("2003-01-02")],
+            "value": [20.0],
+        }
+    )
+    aligned = _align_initial_releases(
+        releases,
+        sessions,
+        first_dissemination=pd.Timestamp("2003-09-22"),
+    )
+    assert pd.isna(aligned.loc[pd.Timestamp("2003-09-19")])
+    assert aligned.loc[pd.Timestamp("2003-09-22")] == 20.0
+
+
+def test_cboe_series_after_train_is_rejected_instead_of_backfilled() -> None:
+    candidate = _campaign().candidate_by_id()["STRAT0019"]
+    base = _long_fixture()
+    data = PreparedMarketData(
+        ledger=base.ledger,
+        series={"VIX": pd.Series(20.0, index=base.ledger.index)},
+        available_dataset_ids=frozenset({"DS001", "DS002", "DS004"}),
+        rejected_datasets={
+            "DS009": "FIRST_DISSEMINATION_AFTER_TRAIN_END:VIX3M_2013_09_30"
+        },
+        receipts=(),
+        split="train",
+    )
+    with pytest.raises(
+        CandidateRejected,
+        match="FIRST_DISSEMINATION_AFTER_TRAIN_END:VIX3M_2013_09_30",
+    ):
+        candidate_decisions(candidate, data)
+
+
+def test_breadth_current_membership_proxy_is_rejected_fail_closed() -> None:
+    candidate = next(
+        row for row in _campaign().candidates if row["family"] == "breadth_trend_proxy"
+    )
+    base = _long_fixture()
+    data = PreparedMarketData(
+        ledger=base.ledger,
+        series={},
+        available_dataset_ids=base.available_dataset_ids,
+        rejected_datasets={"DS071": "PROXY_ONLY_NOT_EXECUTION_GRADE"},
+        receipts=(),
+        split="train",
+    )
+    with pytest.raises(CandidateRejected, match="PROXY_ONLY_NOT_EXECUTION_GRADE"):
+        candidate_decisions(candidate, data)
+
+
+def test_markov_family_cannot_fall_back_to_smoothed_probabilities() -> None:
+    candidate = next(
+        row for row in _campaign().candidates if row["family"] == "markov_regime_filtered"
+    )
+    with pytest.raises(
+        CandidateRejected,
+        match="MARKOV_MODEL_RESTART_AND_CONVERGENCE_GRID",
+    ):
+        candidate_decisions(candidate, _long_fixture())
+    signals_source = (
+        REPO_ROOT / "infra" / "sp500_long_short_daily" / "signals.py"
+    ).read_text(encoding="utf-8")
+    assert "smoothed_prob" not in signals_source
+
+
 def test_close_decision_executes_at_next_open_and_ties_persist() -> None:
     ledger, _ = build_total_return_ledger(_prices())
     decisions = pd.Series([1.0, -1.0, np.nan, 1.0], index=ledger.index, dtype=float)
@@ -2292,6 +2381,11 @@ def test_full_coverage_reduction_keeps_every_terminal_unit(tmp_path: Path, monke
         "out_of_fold",
     } <= set(folds.columns)
     assert set(folds["fit_mode"]) == {"static_rule_no_fit"}
+    assert pd.to_datetime(folds["outer_train_end"]).lt(
+        pd.to_datetime(folds["outer_test_start"])
+    ).all()
+    assert not folds["validation_used"].astype(bool).any()
+    assert pd.to_datetime(folds["outer_test_end"]).max() <= pd.Timestamp("2010-12-31")
     regimes = pd.read_csv(output / "regime_metrics.csv")
     assert set(regimes["status"]) == {"calculated"}
     assert set(regimes["regime"]) <= {
