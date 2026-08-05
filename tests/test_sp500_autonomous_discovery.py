@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
+import tomllib
 
 import numpy as np
 import pandas as pd
@@ -20,6 +22,14 @@ from aurora.infra.sp500_autonomous_discovery.validation import (
 )
 from aurora.infra.sp500_long_short_daily.data import PreparedMarketData
 from aurora.infra.sp500_long_short_daily.signals import candidate_decisions
+
+
+def test_autonomous_discovery_runtime_is_packaged_in_wheel() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    setuptools = pyproject["tool"]["setuptools"]
+    package = "aurora.infra.sp500_autonomous_discovery"
+    assert package in setuptools["packages"]
+    assert setuptools["package-dir"][package] == "infra/sp500_autonomous_discovery"
 
 
 def _template() -> dict[str, object]:
