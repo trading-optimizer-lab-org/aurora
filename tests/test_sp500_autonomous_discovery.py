@@ -297,5 +297,17 @@ def test_workflow_is_github_only_and_bounded() -> None:
     ).read()
     assert "autonomous_prior_ledger_artifact_name" in reusable_text
     assert 'or "sp500_autonomous_discovery" in workload' in reusable_text
+    reusable = yaml.safe_load(reusable_text)
+    for job_name, step_name in (
+        ("smoke", "Run bounded smoke"),
+        ("pilot", "Resolve exact profile or measure fresh pilot"),
+        ("plan", "Build adaptive balanced plan"),
+    ):
+        step = next(
+            item
+            for item in reusable["jobs"][job_name]["steps"]
+            if item.get("name") == step_name
+        )
+        assert step["env"]["AURORA_PREPARED_ROOT"] == "${{ runner.temp }}/prepared"
     for phase in ("preflight", "research", "data_build", "pilot", "search_batch", "merge_batch", "statistical_gate", "freeze", "validation_once", "verify"):
         assert f"- {phase}" in text
