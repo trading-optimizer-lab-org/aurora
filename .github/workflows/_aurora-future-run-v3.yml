@@ -465,6 +465,14 @@ jobs:
           python-version: "3.12"
           wheelhouse-path: ${{ runner.temp }}/wheelhouse
           dependency-lock-path: requirements/github-performance.lock
+      - name: Download prior autonomous trial ledger
+        if: inputs.autonomous_prior_ledger_artifact_name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.autonomous_prior_ledger_artifact_name }}
+          path: ${{ runner.temp }}/prior-ledger
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.autonomous_prior_ledger_run_id }}
       - name: Download every Stooq window
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:

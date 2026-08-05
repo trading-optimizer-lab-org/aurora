@@ -309,5 +309,21 @@ def test_workflow_is_github_only_and_bounded() -> None:
             if item.get("name") == step_name
         )
         assert step["env"]["AURORA_PREPARED_ROOT"] == "${{ runner.temp }}/prepared"
+    sp500_prepare_steps = reusable["jobs"]["sp500_prepare_data"]["steps"]
+    prior_ledger_index = next(
+        index
+        for index, item in enumerate(sp500_prepare_steps)
+        if item.get("name") == "Download prior autonomous trial ledger"
+    )
+    prepare_index = next(
+        index
+        for index, item in enumerate(sp500_prepare_steps)
+        if item.get("name") == "Prepare immutable SPY data"
+    )
+    assert prior_ledger_index < prepare_index
+    prior_ledger_step = sp500_prepare_steps[prior_ledger_index]
+    assert prior_ledger_step["with"]["run-id"] == (
+        "${{ inputs.autonomous_prior_ledger_run_id }}"
+    )
     for phase in ("preflight", "research", "data_build", "pilot", "search_batch", "merge_batch", "statistical_gate", "freeze", "validation_once", "verify"):
         assert f"- {phase}" in text
