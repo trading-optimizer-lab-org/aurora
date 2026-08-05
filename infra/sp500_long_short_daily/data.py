@@ -52,6 +52,8 @@ SPY_PRICE_TICK_USD = 0.01
 SPY_PRIMARY_VOLUME_RELATIVE_TOLERANCE = 1e-5
 SPY_ADJUDICATOR_VOLUME_OUTLIER_TOLERANCE = 1e-3
 SPONSOR_EVENT_AMOUNT_TOLERANCE = 5.001e-4
+SEC_FISCAL_EVENT_SUM_TOLERANCE = 0.005001
+SEC_FISCAL_EVENT_SUM_TOLERANCE_MAX = 0.050001
 STOOQ_MAX_BOUNDED_PAGES = 100
 STOOQ_PUBLIC_HISTORY_ROW_CAP = 1000
 STOOQ_PAGE_DELAY_SECONDS = 1.25
@@ -1512,6 +1514,22 @@ def load_sec_distribution_totals(
     bounded["period_start"] = starts
     bounded["period_end"] = ends
     bounded["distribution_total"] = totals
+    if "event_sum_tolerance" in bounded.columns:
+        event_sum_tolerance = pd.to_numeric(
+            bounded["event_sum_tolerance"], errors="coerce"
+        ).fillna(SEC_FISCAL_EVENT_SUM_TOLERANCE)
+    else:
+        event_sum_tolerance = pd.Series(
+            SEC_FISCAL_EVENT_SUM_TOLERANCE,
+            index=bounded.index,
+            dtype=float,
+        )
+    if (
+        (event_sum_tolerance < SEC_FISCAL_EVENT_SUM_TOLERANCE).any()
+        or (event_sum_tolerance > SEC_FISCAL_EVENT_SUM_TOLERANCE_MAX).any()
+    ):
+        raise DataGateError("SEC_DISTRIBUTION_TOTALS_INVALID_EVENT_SUM_TOLERANCE")
+    bounded["event_sum_tolerance"] = event_sum_tolerance
     bounded = (
         bounded.loc[(bounded["period_end"] >= start_date) & (bounded["period_start"] <= end_date)]
         .sort_values("period_start", kind="mergesort")
@@ -1569,7 +1587,7 @@ def reconcile_official_distribution_audit(
     yahoo: pd.DataFrame,
     *,
     exact_tolerance: float = SPONSOR_EVENT_AMOUNT_TOLERANCE,
-    rounded_total_tolerance: float = 0.005001,
+    rounded_total_tolerance: float = SEC_FISCAL_EVENT_SUM_TOLERANCE,
 ) -> Mapping[str, Any]:
     """Verify operational Yahoo events against official event and audited totals."""
 
@@ -1614,7 +1632,12 @@ def reconcile_official_distribution_audit(
         observed = float(in_period["distribution"].sum())
         expected = float(row.distribution_total)
         difference = abs(observed - expected)
-        if difference > rounded_total_tolerance:
+        period_tolerance = float(
+            getattr(row, "event_sum_tolerance", rounded_total_tolerance)
+        )
+        if not rounded_total_tolerance <= period_tolerance <= SEC_FISCAL_EVENT_SUM_TOLERANCE_MAX:
+            raise DataGateError("SEC_DISTRIBUTION_TOTALS_INVALID_EVENT_SUM_TOLERANCE")
+        if difference > period_tolerance:
             raise DataGateError(
                 "SEC_DISTRIBUTION_FISCAL_TOTAL_MISMATCH:"
                 f"{period_start.date()}:{period_end.date()}:"
@@ -1629,6 +1652,7 @@ def reconcile_official_distribution_audit(
                 "observed_total": observed,
                 "audited_total": expected,
                 "absolute_difference": difference,
+                "event_sum_tolerance": period_tolerance,
             }
         )
 

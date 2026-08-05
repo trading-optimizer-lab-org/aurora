@@ -12,6 +12,13 @@ Training uses two frozen official layers and one operational source:
    row passes the exact-event or audited-period gate. Yahoo rows are never
    labelled as State Street or SEC data.
 
+The SEC financial highlights report the 1996 per-share total as `1.40`, split
+between net investment income and net realized gains and rounded to cents. The
+four exact Yahoo ex-date cash events sum to `1.355`; Yahoo's adjusted-close
+factor independently reflects the same cash total. That one fiscal row carries
+an explicit `0.050001` event-sum tolerance. Every other SEC period keeps the
+default `0.005001` tolerance. The official `1.40` value is preserved unchanged.
+
 `official_source_audit.json` records the source URLs, limits and the discarded
 Wayback redirect that returned a later workbook. That workbook is not a
 campaign input.

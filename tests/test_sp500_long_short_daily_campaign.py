@@ -1018,6 +1018,57 @@ def test_layered_official_distribution_audit_rejects_fiscal_total_mismatch(
         reconcile_official_distribution_audit(exact, totals, exact.copy())
 
 
+def test_sec_1996_rounded_total_uses_only_its_explicit_bounded_tolerance() -> None:
+    exact = pd.DataFrame(columns=["date", "distribution"])
+    operational = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["1996-03-15", "1996-06-21", "1996-09-20", "1996-12-20"]
+            ),
+            "distribution": [0.285, 0.351, 0.352, 0.367],
+        }
+    )
+    strict_totals = pd.DataFrame(
+        {
+            "period_start": [pd.Timestamp("1996-01-01")],
+            "period_end": [pd.Timestamp("1996-12-31")],
+            "distribution_total": [1.40],
+        }
+    )
+    with pytest.raises(DataGateError, match="SEC_DISTRIBUTION_FISCAL_TOTAL_MISMATCH"):
+        reconcile_official_distribution_audit(exact, strict_totals, operational)
+
+    documented_totals = strict_totals.assign(event_sum_tolerance=0.050001)
+    audit = reconcile_official_distribution_audit(exact, documented_totals, operational)
+    period = audit["fiscal_period_audit"][0]
+    assert period["observed_total"] == pytest.approx(1.355)
+    assert period["audited_total"] == pytest.approx(1.40)
+    assert period["event_sum_tolerance"] == pytest.approx(0.050001)
+
+
+def test_sec_fiscal_event_sum_tolerance_cannot_exceed_documented_maximum() -> None:
+    exact = pd.DataFrame(columns=["date", "distribution"])
+    totals = pd.DataFrame(
+        {
+            "period_start": [pd.Timestamp("1996-01-01")],
+            "period_end": [pd.Timestamp("1996-12-31")],
+            "distribution_total": [1.40],
+            "event_sum_tolerance": [0.050002],
+        }
+    )
+    operational = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["1996-12-20"]),
+            "distribution": [1.355],
+        }
+    )
+    with pytest.raises(
+        DataGateError,
+        match="SEC_DISTRIBUTION_TOTALS_INVALID_EVENT_SUM_TOLERANCE",
+    ):
+        reconcile_official_distribution_audit(exact, totals, operational)
+
+
 def test_sponsor_snapshot_cannot_cross_train_or_locked_boundary(tmp_path: Path) -> None:
     path = tmp_path / "bad.csv"
     path.write_text(
