@@ -1,6 +1,9 @@
 name: OpenAP Five Proxy Pairwise Similarity
 
 on:
+  push:
+    branches:
+      - codex/openap-full-data-quality-fix
   workflow_dispatch:
     inputs:
       source_run_id:
