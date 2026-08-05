@@ -4,6 +4,7 @@ import pandas as pd
 
 from aurora.research.openap_93.historical_proxy_validation import (
     FIVE_PROXY_SIGNALS,
+    _build_earnings_streak,
     _rank_buckets,
     compare_to_reference,
 )
@@ -66,3 +67,20 @@ def test_paired_reference_and_proxy_calculate_similarity() -> None:
     assert (summary["mean_monthly_spearman"] == 1.0).all()
     assert (summary["mean_quintile_agreement"] == 1.0).all()
 
+
+def test_earnings_streak_uses_conservative_availability_lag() -> None:
+    monthly = pd.DataFrame({
+        "symbol": ["AAA", "AAA"],
+        "completed_month": pd.to_datetime(["2016-09-30", "2016-10-31"]),
+        "formation_month": pd.to_datetime(["2016-10-01", "2016-11-01"]),
+    })
+    history = pd.DataFrame({
+        "act_symbol": ["AAA", "AAA"],
+        "period_end_date": pd.to_datetime(["2016-03-31", "2016-06-30"]),
+        "reported": [1.0, 1.2],
+        "estimate": [0.8, 1.0],
+    })
+    result = _build_earnings_streak(monthly, history)
+    assert result.loc[result["completed_month"].eq(pd.Timestamp("2016-09-30")), "proxy_value"].notna().all()
+    assert result["reconstruction_status"].eq("reconstructed").all()
+    assert result["caveat"].str.contains("90-day").all()

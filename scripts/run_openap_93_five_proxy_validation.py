@@ -19,6 +19,7 @@ def main() -> None:
     parser.add_argument("--reference", required=True)
     parser.add_argument("--crosswalk", default=None)
     parser.add_argument("--ff3-daily", default=None)
+    parser.add_argument("--earnings-history", default=None)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--min-pairs", type=int, default=30)
     args = parser.parse_args()
@@ -27,6 +28,7 @@ def main() -> None:
         reference=args.reference,
         crosswalk=args.crosswalk,
         ff3_daily=args.ff3_daily,
+        earnings_history=args.earnings_history,
         output_dir=args.output_dir,
         min_pairs=args.min_pairs,
     )

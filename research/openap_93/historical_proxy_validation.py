@@ -355,14 +355,84 @@ def _build_announcement_return(
     return result.drop_duplicates(["symbol", "completed_month"], keep="last")
 
 
-def _build_earnings_streak(monthly: pd.DataFrame) -> pd.DataFrame:
-    """Keep this unavailable: current Yahoo earnings history is not PIT monthly data."""
+def _build_earnings_streak(
+    monthly: pd.DataFrame,
+    earnings_history: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Build a conservative earnings-surprise streak proxy when history exists.
+
+    The free DoltHub history has period-end dates but not a reliable filing
+    timestamp. We therefore expose the observation only after a conservative
+    90-day lag. This is explicitly a partial proxy, not the IBES replica.
+    """
+
     result = monthly[["symbol", "completed_month", "formation_month"]].copy()
     result["signal"] = "EarningsStreak"
     result["proxy_value"] = np.nan
     result["proxy_formula_id"] = "openap_earnings_streak_yahoo_two_same_sign_surprises_proxy"
     result["reconstruction_status"] = "unavailable_missing_historical_analyst_source"
     result["caveat"] = "No historical point-in-time Yahoo earnings-surprise snapshots are present"
+    if earnings_history is None or earnings_history.empty:
+        return result
+    source = earnings_history.copy()
+    lowered = {str(col).lower(): col for col in source.columns}
+    symbol_col = lowered.get("symbol") or lowered.get("act_symbol")
+    period_col = lowered.get("period_end_date")
+    reported_col = lowered.get("reported")
+    estimate_col = lowered.get("estimate")
+    if not all((symbol_col, period_col, reported_col, estimate_col)):
+        return result
+    history = pd.DataFrame({
+        "symbol": source[symbol_col].astype("string").str.upper().str.strip(),
+        "period_end_date": pd.to_datetime(source[period_col], errors="coerce"),
+        "reported": pd.to_numeric(source[reported_col], errors="coerce"),
+        "estimate": pd.to_numeric(source[estimate_col], errors="coerce"),
+    }).dropna(subset=["symbol", "period_end_date", "reported", "estimate"])
+    if history.empty:
+        return result
+    history["surprise"] = history["reported"] - history["estimate"]
+    history = history.sort_values(["symbol", "period_end_date"])
+    history["previous_surprise"] = history.groupby("symbol")["surprise"].shift(1)
+    same_sign = (
+        history["surprise"].ne(0)
+        & history["previous_surprise"].ne(0)
+        & history["surprise"].notna()
+        & history["previous_surprise"].notna()
+        & (np.sign(history["surprise"]) == np.sign(history["previous_surprise"]))
+    )
+    history["streak_value"] = history["surprise"].where(same_sign)
+    history["available_at_proxy"] = history["period_end_date"] + pd.Timedelta(days=90)
+    rows: list[pd.DataFrame] = []
+    for symbol, group in monthly.groupby("symbol", sort=False):
+        events = history.loc[history["symbol"].eq(symbol), ["available_at_proxy", "streak_value"]]
+        if events.empty:
+            continue
+        cutoffs = group[["completed_month", "formation_month"]].copy()
+        cutoffs["cutoff"] = cutoffs["completed_month"] + pd.offsets.MonthEnd(0)
+        aligned = pd.merge_asof(
+            cutoffs.sort_values("cutoff"),
+            events.sort_values("available_at_proxy"),
+            left_on="cutoff",
+            right_on="available_at_proxy",
+            direction="backward",
+        )
+        aligned["symbol"] = symbol
+        aligned["signal"] = "EarningsStreak"
+        aligned["proxy_value"] = aligned["streak_value"]
+        aligned["proxy_formula_id"] = "openap_earnings_streak_dolthub_eps_history_90d_lag_proxy"
+        aligned["reconstruction_status"] = np.where(
+            aligned["proxy_value"].notna(), "reconstructed", "insufficient_history"
+        )
+        aligned["caveat"] = (
+            "DoltHub eps_history reported-minus-estimate; period-end plus 90-day "
+            "conservative availability lag; not PIT IBES"
+        )
+        rows.append(aligned[[
+            "symbol", "completed_month", "formation_month", "signal", "proxy_value",
+            "proxy_formula_id", "reconstruction_status", "caveat",
+        ]])
+    if rows:
+        return pd.concat(rows, ignore_index=True)
     return result
 
 
@@ -458,6 +528,7 @@ def reconstruct_monthly_proxies(
     base_db: str | Path,
     *,
     ff3_daily: str | Path | None = None,
+    earnings_history: str | Path | pd.DataFrame | None = None,
     start_month: pd.Timestamp | None = None,
     end_month: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
@@ -491,10 +562,18 @@ def reconstruct_monthly_proxies(
     ff3 = pd.read_parquet(ff3_daily) if ff3_daily and str(ff3_daily).lower().endswith(".parquet") else None
     if ff3_daily and ff3 is None:
         ff3 = pd.read_csv(ff3_daily)
+    if earnings_history is None:
+        earnings_frame = None
+    elif isinstance(earnings_history, pd.DataFrame):
+        earnings_frame = earnings_history
+    elif str(earnings_history).lower().endswith(".parquet"):
+        earnings_frame = pd.read_parquet(earnings_history)
+    else:
+        earnings_frame = pd.read_csv(earnings_history)
     parts = [
         _build_divseason(monthly),
         _build_announcement_return(monthly, facts, prices_daily, ff3, master),
-        _build_earnings_streak(monthly),
+        _build_earnings_streak(monthly, earnings_frame),
         _build_indretbig(monthly, master, facts),
         _build_delnetfin(monthly, master, facts),
     ]
@@ -798,6 +877,7 @@ def run_validation(
     output_dir: str | Path,
     crosswalk: str | Path | None = None,
     ff3_daily: str | Path | None = None,
+    earnings_history: str | Path | None = None,
     min_pairs: int = 30,
 ) -> dict[str, object]:
     require_github_execution("OpenAP five-proxy historical validation")
@@ -805,6 +885,7 @@ def run_validation(
     proxy_panel = reconstruct_monthly_proxies(
         base_db,
         ff3_daily=ff3_daily,
+        earnings_history=earnings_history,
         start_month=reference_frame["formation_month"].min(),
         end_month=reference_frame["formation_month"].max(),
     )
@@ -839,6 +920,7 @@ def run_validation(
         "backtest_enabled": False,
         "validation_used_for_selection": False,
         "partial": bool((summary["validation_status"] != "ok").any()),
+        "earnings_history_used": bool(earnings_history),
     }
     (Path(output_dir) / "proxy_validation_summary.json").write_text(
         json.dumps(payload, indent=2, default=str), encoding="utf-8"

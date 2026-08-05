@@ -133,18 +133,31 @@ jobs:
           ref=$(find inputs/public -type f \( -name 'signed_predictors_dl_wide.zip' -o -name 'signed_predictors_dl_wide.csv' \) -print -quit)
           ff3=$(find inputs/public -type f \( -name 'ff3_daily.parquet' -o -name 'ff3_daily.csv' \) -print -quit || true)
           crosswalk=$(find inputs/crosswalk -type f \( -name '*.csv' -o -name '*.parquet' \) -print -quit 2>/dev/null || true)
+          earnings=$(find inputs/earnings -type f \( -name 'eps_history.csv' -o -name 'eps_history.parquet' \) -print -quit 2>/dev/null || true)
           test -n "$db"
           test -n "$ref"
           echo "db=$db" >> "$GITHUB_OUTPUT"
           echo "reference=$ref" >> "$GITHUB_OUTPUT"
           echo "ff3=$ff3" >> "$GITHUB_OUTPUT"
           echo "crosswalk=$crosswalk" >> "$GITHUB_OUTPUT"
+          echo "earnings=$earnings" >> "$GITHUB_OUTPUT"
+      - name: Download public historical EPS history
+        run: |
+          mkdir -p inputs/earnings
+          curl --fail --location --retry 3 \
+            --output inputs/earnings/eps_history.csv \
+            https://www.dolthub.com/csv/post-no-preference/earnings/main/eps_history
       - name: Run causal historical validation
         run: |
           args=(--base-db "${{ steps.locate.outputs.db }}" --reference "${{ steps.locate.outputs.reference }}" --output-dir outputs/openap_five_proxy_historical_validation --min-pairs "${{ inputs.min_pairs || '30' }}")
           if [ -n "${{ steps.locate.outputs.ff3 }}" ]; then args+=(--ff3-daily "${{ steps.locate.outputs.ff3 }}"); fi
           if [ -n "${{ steps.locate.outputs.crosswalk }}" ]; then args+=(--crosswalk "${{ steps.locate.outputs.crosswalk }}"); fi
+          args+=(--earnings-history inputs/earnings/eps_history.csv)
           python scripts/run_openap_93_five_proxy_validation.py "${args[@]}"
+          python scripts/run_openap_93_proxy_pairwise_similarity.py \
+            --panel outputs/openap_five_proxy_historical_validation/proxy_reconstruction_panel.parquet \
+            --output-dir outputs/openap_five_proxy_historical_validation \
+            --min-pairs "${{ inputs.min_pairs || '30' }}"
       - name: Verify fail-closed invariants
         run: |
           test -s outputs/openap_five_proxy_historical_validation/proxy_validation_summary.json
