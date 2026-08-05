@@ -36,6 +36,12 @@ OPENFIGI_BATCH_SIZE = 10
 OPENFIGI_REQUESTS_PER_MINUTE = 25
 
 
+def _naive_utc(values: pd.Series) -> pd.Series:
+    """Normalize mixed SEC/Yahoo timestamps before causal comparisons."""
+
+    return pd.to_datetime(values, errors="coerce", utc=True).dt.tz_convert(None)
+
+
 def _archive_table(archive: ZipFile, stem: str) -> pd.DataFrame:
     candidates = [
         name
@@ -438,9 +444,9 @@ def _latest_concept(concepts: pd.DataFrame, concept: str) -> pd.DataFrame:
                 f"{concept}_available_at",
             ]
         )
-    frame["available_at"] = pd.to_datetime(frame["available_at"], errors="coerce")
+    frame["available_at"] = _naive_utc(frame["available_at"])
     if "period_end" in frame:
-        frame["period_end"] = pd.to_datetime(frame["period_end"], errors="coerce")
+        frame["period_end"] = _naive_utc(frame["period_end"])
     else:
         frame["period_end"] = pd.NaT
     frame = frame.sort_values(["symbol", "available_at"]).drop_duplicates(
@@ -487,8 +493,8 @@ def _historical_shares(
             {"EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"}
         )
     ].copy()
-    frame["period_end"] = pd.to_datetime(frame["period_end"], errors="coerce")
-    frame["available_at"] = pd.to_datetime(frame["available_at"], errors="coerce")
+    frame["period_end"] = _naive_utc(frame["period_end"])
+    frame["available_at"] = _naive_utc(frame["available_at"])
     frame["shares_outstanding"] = pd.to_numeric(frame["value"], errors="coerce")
     frame = frame.loc[
         frame["period_end"].le(report_period)
@@ -510,7 +516,7 @@ def _historical_shares(
 
 def _latest_price_at(prices: pd.DataFrame, date: pd.Timestamp) -> pd.DataFrame:
     frame = prices.copy()
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame["date"] = _naive_utc(frame["date"])
     frame["adj_close"] = pd.to_numeric(frame["adj_close"], errors="coerce")
     frame = frame.loc[frame["date"].le(date) & frame["adj_close"].gt(0)]
     if frame.empty:
@@ -527,7 +533,7 @@ def _turnover_and_volatility(
     formation: pd.Timestamp,
 ) -> pd.DataFrame:
     frame = prices.copy()
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame["date"] = _naive_utc(frame["date"])
     frame["adj_close"] = pd.to_numeric(frame["adj_close"], errors="coerce")
     frame["volume"] = pd.to_numeric(frame["volume"], errors="coerce")
     completed_month = formation.to_period("M") - 1
@@ -659,16 +665,12 @@ def calculate_institutional_signals(
     ].drop_duplicates("cusip")
     mapped = holdings.merge(mapping, on="cusip", how="inner", validate="many_to_one")
     mapped = mapped.rename(columns={"ticker": "symbol"})
-    mapped["report_period"] = pd.to_datetime(mapped["report_period"], errors="coerce")
-    mapped["filing_date"] = pd.to_datetime(mapped["filing_date"], errors="coerce")
+    mapped["report_period"] = _naive_utc(mapped["report_period"])
+    mapped["filing_date"] = _naive_utc(mapped["filing_date"])
     mapped = mapped.loc[mapped["filing_date"].le(formation)].copy()
     causal_filings = filings.copy()
-    causal_filings["report_period"] = pd.to_datetime(
-        causal_filings["report_period"], errors="coerce"
-    )
-    causal_filings["filing_date"] = pd.to_datetime(
-        causal_filings["filing_date"], errors="coerce"
-    )
+    causal_filings["report_period"] = _naive_utc(causal_filings["report_period"])
+    causal_filings["filing_date"] = _naive_utc(causal_filings["filing_date"])
     causal_filings = causal_filings.loc[causal_filings["filing_date"].le(formation)]
     periods = sorted(causal_filings["report_period"].dropna().unique())
 
@@ -801,8 +803,8 @@ def calculate_institutional_signals(
         characteristic_columns.append(market_cap_timestamp_column)
     characteristics = master[characteristic_columns].copy()
     if market_cap_timestamp_column is not None:
-        characteristics["market_cap_available_at"] = pd.to_datetime(
-            characteristics[market_cap_timestamp_column], errors="coerce"
+        characteristics["market_cap_available_at"] = _naive_utc(
+            characteristics[market_cap_timestamp_column]
         )
     else:
         characteristics["market_cap_available_at"] = pd.NaT

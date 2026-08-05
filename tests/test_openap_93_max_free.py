@@ -728,7 +728,8 @@ def test_institutional_signals_use_lagged_13f_and_current_characteristics() -> N
             "symbol": symbols,
             "tag": "EntityCommonStockSharesOutstanding",
             "period_end": pd.Timestamp("2025-12-31"),
-            "available_at": pd.Timestamp("2026-01-20"),
+            # DuckDB returns this SEC timestamp as timezone-aware in the full run.
+            "available_at": pd.Timestamp("2026-01-20", tz="UTC"),
             "value": 1_000_000.0,
         }
     )
