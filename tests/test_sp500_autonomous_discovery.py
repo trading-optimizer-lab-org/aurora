@@ -89,6 +89,13 @@ def test_candidate_generation_is_reproducible_and_contract_bound(monkeypatch) ->
     assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in first)
 
 
+def test_real_candidate_grid_supports_full_96_candidate_batch() -> None:
+    candidates = registry.generate_candidates(1, count=96)
+    assert len(candidates) == 96
+    assert len({row["canonical_hash"] for row in candidates}) == 96
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in candidates)
+
+
 def test_trial_ledger_is_cumulative_and_pre_registered(tmp_path, monkeypatch) -> None:
     candidates = tuple(_template() | {"strategy_id": f"candidate-{index}", "canonical_hash": canonical_rule_hash(_template() | {"strategy_id": f"candidate-{index}"})} for index in range(3))
     monkeypatch.setattr(registry, "base_package", lambda: SimpleNamespace(candidates=(), research=(), features=(), datasets=()))

@@ -54,6 +54,18 @@ def get_previous_trial_count() -> int:
 
 
 def _numeric_mutation(value: Any, rng: random.Random) -> Any:
+    if isinstance(value, list) and value and all(
+        isinstance(item, (int, float)) and not isinstance(item, bool)
+        for item in value
+    ):
+        scale = rng.choice((0.75, 0.9, 1.0, 1.1, 1.25))
+        mutated = [
+            max(1, int(round(item * scale)))
+            if isinstance(item, int)
+            else round(float(item) * scale, 8)
+            for item in value
+        ]
+        return mutated
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return value
     if isinstance(value, int):
@@ -108,8 +120,9 @@ def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, An
     candidates: list[dict[str, Any]] = []
     hashes: set[str] = set()
     for index in range(count):
-        template = templates[(index + batch_id * 7) % len(templates)]
-        for attempt in range(100):
+        template_offset = index + batch_id * 7
+        for attempt in range(max(100, len(templates) * 20)):
+            template = templates[(template_offset + attempt) % len(templates)]
             candidate = _mutate(template, batch_id, index + attempt * count, rng)
             digest = str(candidate["canonical_hash"])
             if digest not in hashes:
