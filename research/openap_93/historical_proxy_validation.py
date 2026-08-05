@@ -446,11 +446,16 @@ def _build_earnings_streak(
     for symbol, group in monthly.groupby("symbol", sort=False):
         events = history.loc[
             history["symbol"].eq(symbol), ["available_at_proxy", "streak_value"]
-        ]
+        ].copy()
         if events.empty:
             continue
+        events["available_at_proxy"] = pd.to_datetime(
+            events["available_at_proxy"], errors="coerce"
+        ).astype("datetime64[ns]")
         cutoffs = group[["completed_month", "formation_month"]].copy()
-        cutoffs["cutoff"] = cutoffs["completed_month"] + pd.offsets.MonthEnd(0)
+        cutoffs["cutoff"] = pd.to_datetime(
+            cutoffs["completed_month"] + pd.offsets.MonthEnd(0), errors="coerce"
+        ).astype("datetime64[ns]")
         aligned = pd.merge_asof(
             cutoffs.sort_values("cutoff"),
             events.sort_values("available_at_proxy"),
