@@ -55,6 +55,17 @@ def _numeric_mutation(value: Any, rng: random.Random) -> Any:
 
 def _mutate(template: Mapping[str, Any], batch_id: int, index: int, rng: random.Random) -> dict[str, Any]:
     candidate = json.loads(json.dumps(template))
+    candidate.update(
+        {
+            "instrument": "SPY",
+            "cash_allowed": False,
+            "partial_exposure_allowed": False,
+            "leverage_allowed": False,
+            "volatility_scaling_allowed": False,
+            "pyramiding_allowed": False,
+            "multiple_assets_in_portfolio": False,
+        }
+    )
     candidate["strategy_id"] = f"AUTO-B{batch_id:04d}-{index:04d}"
     candidate["variant_label"] = f"autonomous_batch_{batch_id}_{index}"
     candidate["evidence_track"] = "pre_2011_evidence"

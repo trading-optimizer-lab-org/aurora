@@ -18,11 +18,18 @@ from aurora.infra.sp500_autonomous_discovery.statistics import evaluate_batch
 def _template() -> dict[str, object]:
     candidate = {
         "strategy_id": "template",
+        "instrument": "SPY",
         "family": "price_trend_sma",
         "variant_label": "template",
         "evidence_track": "pre_2011_evidence",
         "position_values": [-1, 1],
         "absolute_exposure": 1.0,
+        "cash_allowed": False,
+        "partial_exposure_allowed": False,
+        "leverage_allowed": False,
+        "volatility_scaling_allowed": False,
+        "pyramiding_allowed": False,
+        "multiple_assets_in_portfolio": False,
         "locked_boundary": ">=2021-01-01 unopened",
         "commission_bps": 0.0,
         "slippage_bps": 0.0,

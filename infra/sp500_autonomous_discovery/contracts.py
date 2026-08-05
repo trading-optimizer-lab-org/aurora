@@ -82,10 +82,22 @@ def canonical_rule_hash(candidate: Mapping[str, Any]) -> str:
 
 
 def assert_contract(candidate: Mapping[str, Any]) -> None:
+    if candidate.get("instrument") != "SPY":
+        raise ValueError("INVALID_INSTRUMENT")
     if list(candidate.get("position_values", ())) != [-1, 1]:
         raise ValueError("INVALID_POSITION_CONTRACT")
     if float(candidate.get("absolute_exposure", 0.0)) != 1.0:
         raise ValueError("INVALID_EXPOSURE")
+    for field in (
+        "cash_allowed",
+        "partial_exposure_allowed",
+        "leverage_allowed",
+        "volatility_scaling_allowed",
+        "pyramiding_allowed",
+        "multiple_assets_in_portfolio",
+    ):
+        if candidate.get(field) is not False:
+            raise ValueError(f"INVALID_OPERATING_CONTRACT:{field}")
     for field in (
         "commission_bps",
         "slippage_bps",
