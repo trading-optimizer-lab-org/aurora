@@ -672,6 +672,7 @@ jobs:
       - name: Run bounded smoke
         env:
           WORKLOAD: ${{ inputs.workload }}
+          AURORA_PREPARED_ROOT: ${{ runner.temp }}/prepared
         run: |
           set -euo pipefail
           aurora github smoke \
@@ -734,6 +735,7 @@ jobs:
       - name: Resolve exact profile or measure fresh pilot
         env:
           WORKLOAD: ${{ inputs.workload }}
+          AURORA_PREPARED_ROOT: ${{ runner.temp }}/prepared
         run: |
           set -euo pipefail
           profile_args=()
@@ -850,6 +852,7 @@ jobs:
       - name: Build adaptive balanced plan
         env:
           WORKLOAD: ${{ inputs.workload }}
+          AURORA_PREPARED_ROOT: ${{ runner.temp }}/prepared
           EXECUTION_MODE: ${{ inputs.execution_mode }}
           FORCED_JOB_COUNT: ${{ inputs.forced_job_count }}
           ARTIFACT_PREFIX: ${{ inputs.run_label }}
