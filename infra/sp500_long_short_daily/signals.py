@@ -161,28 +161,53 @@ def _required_data_gate(candidate: Mapping[str, Any], data: PreparedMarketData) 
         raise CandidateRejected("DATA_GATE_REJECTED:" + "|".join(reasons))
 
 
-def _price_score(candidate: Mapping[str, Any], data: PreparedMarketData) -> pd.Series:
+def _price_score(
+    candidate: Mapping[str, Any],
+    data: PreparedMarketData,
+    *,
+    feature_frame: pd.DataFrame | None = None,
+) -> pd.Series:
     family = str(candidate["family"])
     parameters = candidate["parameters"]
     ledger = data.ledger
     close = ledger["tr_close"].astype(float)
     log_return = np.log(close / close.shift(1))
 
+    def cached(name: str) -> pd.Series | None:
+        if feature_frame is None or name not in feature_frame.columns:
+            return None
+        return feature_frame[name].reindex(close.index)
+
     if family == "price_trend_sma":
         lookback = int(parameters["lookback"])
-        return close - close.rolling(lookback, min_periods=lookback).mean()
+        cached_sma = cached(f"sma_{lookback}")
+        return close - cached_sma if cached_sma is not None else close - close.rolling(lookback, min_periods=lookback).mean()
     if family == "time_series_momentum":
         lookback = int(parameters["lookback"])
-        return close / close.shift(lookback) - 1.0
+        cached_return = cached(f"return_{lookback}d")
+        return cached_return if cached_return is not None else close / close.shift(lookback) - 1.0
     if family == "short_horizon_reversal":
         lookback = int(parameters["lookback"])
-        return -(close / close.shift(lookback) - 1.0)
+        cached_return = cached(f"return_{lookback}d")
+        return -cached_return if cached_return is not None else -(close / close.shift(lookback) - 1.0)
     if family == "trend_ensemble":
-        components = [np.sign(close / close.shift(int(horizon)) - 1.0) for horizon in parameters["horizons"]]
+        components = []
+        for horizon in parameters["horizons"]:
+            lookback = int(horizon)
+            cached_return = cached(f"return_{lookback}d")
+            components.append(
+                np.sign(cached_return)
+                if cached_return is not None
+                else np.sign(close / close.shift(lookback) - 1.0)
+            )
         return pd.concat(components, axis=1).sum(axis=1, min_count=len(components))
     if family == "dual_ma_cross":
         fast = int(parameters["fast"])
         slow = int(parameters["slow"])
+        cached_fast = cached(f"sma_{fast}")
+        cached_slow = cached(f"sma_{slow}")
+        if cached_fast is not None and cached_slow is not None:
+            return cached_fast - cached_slow
         return close.rolling(fast, min_periods=fast).mean() - close.rolling(slow, min_periods=slow).mean()
     if family == "realized_volatility_state":
         window = int(parameters["rv"])
@@ -442,6 +467,7 @@ def _ensemble_decisions(
     data: PreparedMarketData,
     candidate_lookup: Mapping[str, Mapping[str, Any]] | None,
     evaluation_stack: Sequence[str],
+    feature_frame: pd.DataFrame | None,
 ) -> pd.Series:
     if candidate_lookup is None:
         raise CandidateRejected("ENSEMBLE_REQUIRES_FROZEN_CANDIDATE_REGISTRY")
@@ -464,6 +490,7 @@ def _ensemble_decisions(
                 data,
                 candidate_lookup=candidate_lookup,
                 evaluation_stack=next_stack,
+                feature_frame=feature_frame,
             ).decisions
         )
     score = pd.concat(components, axis=1).sum(axis=1, min_count=len(components))
@@ -481,6 +508,7 @@ def candidate_decisions(
     *,
     candidate_lookup: Mapping[str, Mapping[str, Any]] | None = None,
     evaluation_stack: Sequence[str] = (),
+    feature_frame: pd.DataFrame | None = None,
 ) -> SignalResult:
     _required_data_gate(candidate, data)
     family = str(candidate["family"])
@@ -498,6 +526,7 @@ def candidate_decisions(
             data,
             candidate_lookup,
             evaluation_stack,
+            feature_frame,
         )
     elif family in {
         "price_trend_sma",
@@ -509,7 +538,7 @@ def candidate_decisions(
         "overnight_futures_proxy",
         "volatility_conditioned_trend",
     }:
-        decisions = _state_from_score(_price_score(candidate, data))
+        decisions = _state_from_score(_price_score(candidate, data, feature_frame=feature_frame))
     elif family in {"vix_term_structure", "variance_risk_premium_proxy", "vix_level_change"}:
         decisions = _state_from_score(_vix_score(candidate, data))
     elif family in {

@@ -33,9 +33,15 @@ metadata. Changing a rule changes its hash and creates a new candidate ID.
 
 The result artifact includes the batch registry, train OOF returns, annual
 metrics, candidate leaderboard, rejection ledger, bootstrap/multiple-testing
-evidence, train freeze record, and an autonomous batch summary. All heavy work
-runs on GitHub Actions; local verification is limited to syntax, schema, and
-small synthetic tests.
+evidence, train freeze record, feature-store manifest, cost-balanced job
+manifest, canonical dedupe map, pre-registration manifest, trial ledger, and
+an autonomous batch summary. The trial ledger assigns every candidate a
+monotonic global index before performance is calculated, including the 312
+previously registered trials. The FeatureStore is keyed by symbol, snapshot
+hash, code revision, and date range; only formulas proven equivalent to the
+original signal engine use its cached values, while unsupported formulas keep
+the original path. All heavy work runs on GitHub Actions; local verification
+is limited to syntax, schema, and small synthetic tests.
 
 ## Scientific boundary
 

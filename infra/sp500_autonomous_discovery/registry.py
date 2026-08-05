@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import hashlib
 import json
 import os
 import random
@@ -164,6 +165,21 @@ def write_batch_registry(
         writer.writeheader()
         writer.writerows(dataset_rows)
     previous_trial_count = previous_trial_count if previous_trial_count is not None else get_previous_trial_count()
+    ledger_rows = [
+        {
+            "batch_id": batch_id,
+            "canonical_hash": str(candidate["canonical_hash"]),
+            "global_trial_index": previous_trial_count + index + 1,
+            "pre_registered_before_performance": True,
+            "status": "registered",
+            "strategy_id": str(candidate["strategy_id"]),
+        }
+        for index, candidate in enumerate(candidates)
+    ]
+    ledger_payload = "".join(
+        json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in ledger_rows
+    )
+    (root / "trial_ledger.jsonl").write_text(ledger_payload, encoding="utf-8")
     manifest = {
         "schema_version": "1",
         "batch_id": batch_id,
@@ -178,6 +194,10 @@ def write_batch_registry(
         "locked_start": LOCKED_START,
         "locked_opened": False,
         "validation_used_for_selection": False,
+        "trial_ledger_file": "trial_ledger.jsonl",
+        "trial_ledger_rows": len(ledger_rows),
+        "trial_ledger_sha256": hashlib.sha256(ledger_payload.encode("utf-8")).hexdigest(),
+        "trial_indices": [row["global_trial_index"] for row in ledger_rows],
     }
     (root / "candidate_registry_manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"

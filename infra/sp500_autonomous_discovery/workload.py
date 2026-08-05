@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 import csv
 from collections.abc import Mapping, Sequence
@@ -44,6 +45,7 @@ from aurora.infra.sp500_long_short_daily.workload import (
 
 from .contracts import LOCKED_START, TRAIN_END
 from .dedupe import build_dedupe_map
+from .feature_store import FeatureStore
 from .registry import (
     base_package,
     generate_candidates,
@@ -109,6 +111,12 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
     result_schema = _result_schema().append(pa.field("seconds_total", pa.float64()))
     result_schema = result_schema.append(pa.field("seconds_signal", pa.float64()))
     result_schema = result_schema.append(pa.field("seconds_simulation", pa.float64()))
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._feature_root: Path | None = None
+        self._feature_frame: pd.DataFrame | None = None
+        self._feature_store_manifest: Mapping[str, object] | None = None
 
     def describe_contract(self) -> Mapping[str, Any]:
         payload = dict(super().describe_contract())
@@ -187,12 +195,31 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
             "research_registry_source.csv",
             "feature_registry_source.csv",
             "dataset_registry_source.csv",
+            "trial_ledger.jsonl",
         ), str(manifest["snapshot_sha256"])
 
     def _load_dataset(self, root: Path) -> PreparedMarketData:
+        root = Path(root).resolve()
         data = load_market_snapshot(root)
         if data.split != "train" or data.ledger.index.max() >= pd.Timestamp(LOCKED_START):
             raise RuntimeError("TRAIN_DATA_BOUNDARY_MISMATCH")
+        if self._feature_root != root or self._feature_frame is None:
+            snapshot_manifest = json.loads(
+                (root / "market_data_manifest.json").read_text(encoding="utf-8")
+            )
+            store = FeatureStore(
+                dataset_sha256=str(snapshot_manifest["snapshot_sha256"]),
+                code_sha=os.environ.get("GITHUB_SHA", "LOCAL_TEST_ONLY"),
+                start=self.data_start,
+                end=self.data_end,
+            )
+            self._feature_frame = store.get_or_build("SPY", data.ledger)
+            self._feature_store_manifest = store.manifest()
+            self._feature_root = root
+            (root / "feature_store_manifest.json").write_text(
+                json.dumps(self._feature_store_manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
         return data
 
     def _candidate_rows(self) -> tuple[dict[str, Any], ...]:
@@ -243,6 +270,7 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
                     parameters,
                     data,
                     candidate_lookup=self._candidate_lookup(),
+                    feature_frame=self._feature_frame,
                 )
             )
             row["seconds_signal"] = time.perf_counter() - signal_started
@@ -301,6 +329,11 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
         if expected != observed:
             raise RuntimeError(f"INCOMPLETE_BATCH_COVERAGE:expected={len(expected)}:observed={len(observed)}")
         root = Path(root)
+        if self._feature_frame is None:
+            # Merge runs also carry the immutable prepared train snapshot. Build
+            # the same keyed manifest there so the final artifact proves which
+            # cache identity was available to the workers.
+            self._load_dataset(self._prepared_root())
         summary = evaluate_batch(
             rows,
             root,
@@ -311,6 +344,40 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
             self._registry_path(self._prepared_root()).read_text(encoding="utf-8"),
             encoding="utf-8",
         )
+        summary = dict(summary)
+        summary.update(
+            {
+                "feature_store_file": "feature_store_manifest.json",
+                "feature_store_enabled": self._feature_frame is not None,
+                "trial_ledger_file": "trial_ledger.jsonl",
+                "trial_ledger_rows": len(read_batch_registry(self._prepared_root())),
+            }
+        )
+        (root / "autonomous_batch_summary.json").write_text(
+            json.dumps(summary, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        if self._feature_store_manifest is not None:
+            (root / "feature_store_manifest.json").write_text(
+                json.dumps(self._feature_store_manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        prepared_root = self._prepared_root()
+        for filename in (
+            "candidate_registry_manifest.json",
+            "dedupe_map.csv",
+            "job_manifest.csv",
+            "research_registry.csv",
+            "feature_registry.csv",
+            "dataset_registry.csv",
+            "research_registry_source.csv",
+            "feature_registry_source.csv",
+            "dataset_registry_source.csv",
+            "trial_ledger.jsonl",
+        ):
+            source = prepared_root / filename
+            if source.is_file():
+                shutil.copy2(source, root / filename)
         (root / "autonomous_batch_identity.json").write_text(
             json.dumps({
                 "batch_id": _batch_id(),

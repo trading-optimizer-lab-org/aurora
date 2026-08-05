@@ -31,6 +31,7 @@ from aurora.infra.sp500_long_short_daily.workload import (
 from aurora.infra.sp500_long_short_daily.contracts import canonical_json_hash
 
 from .contracts import LOCKED_START, VALIDATION_END, VALIDATION_START
+from .feature_store import FeatureStore
 from .registry import base_package, read_batch_registry
 
 
@@ -61,6 +62,7 @@ def _evaluate(
     data: Any,
     candidate: Mapping[str, Any],
     lookup: Mapping[str, Mapping[str, Any]],
+    feature_frame: pd.DataFrame | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     candidate_id = str(candidate["strategy_id"])
     row: dict[str, Any] = {
@@ -73,7 +75,12 @@ def _evaluate(
         "locked_opened": False,
     }
     try:
-        signal = candidate_decisions(candidate, data, candidate_lookup=lookup)
+        signal = candidate_decisions(
+            candidate,
+            data,
+            candidate_lookup=lookup,
+            feature_frame=feature_frame,
+        )
         if signal.first_evaluable_date is None or signal.missing_fraction > 0.02 + 1e-12:
             raise CandidateRejected("DATA_INELIGIBLE:VALIDATION_CAUSAL_COVERAGE")
         applied = apply_positions(data.ledger, signal.decisions)
@@ -159,13 +166,34 @@ def run_validation_once(
     if validation.ledger.index.min() < pd.Timestamp(VALIDATION_START) or validation.ledger.index.max() > pd.Timestamp(VALIDATION_END):
         raise ValidationGateError("VALIDATION_BOUNDARY_BREACH")
     data = validation
+    manifest = json.loads(
+        (Path(validation_prepared_dir) / "market_data_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    feature_store = FeatureStore(
+        dataset_sha256=str(manifest["snapshot_sha256"]),
+        code_sha=os.environ.get("GITHUB_SHA", "LOCAL_TEST_ONLY"),
+        start=VALIDATION_START,
+        end=VALIDATION_END,
+    )
+    feature_frame = feature_store.get_or_build("SPY", data.ledger)
+    (output_dir / "feature_store_manifest.json").write_text(
+        json.dumps(feature_store.manifest(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     lookup = base_package().candidate_by_id()
     lookup.update(candidates)
     rows: list[dict[str, Any]] = []
     daily: list[dict[str, Any]] = []
     annual: list[dict[str, Any]] = []
     for item in finalists:
-        row, row_daily, row_annual = _evaluate(data, candidates[str(item["strategy_id"])], lookup)
+        row, row_daily, row_annual = _evaluate(
+            data,
+            candidates[str(item["strategy_id"])],
+            lookup,
+            feature_frame,
+        )
         rows.append(row)
         daily.extend(row_daily)
         annual.extend(row_annual)

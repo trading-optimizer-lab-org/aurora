@@ -13,6 +13,8 @@ from aurora.infra.sp500_autonomous_discovery.dedupe import build_dedupe_map
 from aurora.infra.sp500_autonomous_discovery.feature_store import FeatureStore
 from aurora.infra.sp500_autonomous_discovery.scheduling import assign_by_cost
 from aurora.infra.sp500_autonomous_discovery.statistics import evaluate_batch
+from aurora.infra.sp500_long_short_daily.data import PreparedMarketData
+from aurora.infra.sp500_long_short_daily.signals import candidate_decisions
 
 
 def _template() -> dict[str, object]:
@@ -70,6 +72,23 @@ def test_candidate_generation_is_reproducible_and_contract_bound(monkeypatch) ->
     assert {row["position_values"][0] for row in first} == {-1}
     assert all(row["position_values"] == [-1, 1] for row in first)
     assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in first)
+
+
+def test_trial_ledger_is_cumulative_and_pre_registered(tmp_path, monkeypatch) -> None:
+    candidates = tuple(_template() | {"strategy_id": f"candidate-{index}", "canonical_hash": canonical_rule_hash(_template() | {"strategy_id": f"candidate-{index}"})} for index in range(3))
+    monkeypatch.setattr(registry, "base_package", lambda: SimpleNamespace(candidates=(), research=(), features=(), datasets=()))
+    registry.write_batch_registry(
+        tmp_path,
+        batch_id=4,
+        candidates=candidates,
+        previous_trial_count=312,
+    )
+    rows = registry.read_jsonl(tmp_path / "trial_ledger.jsonl")
+    assert [row["global_trial_index"] for row in rows] == [313, 314, 315]
+    assert all(row["pre_registered_before_performance"] is True for row in rows)
+    manifest = json.loads((tmp_path / "candidate_registry_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["global_trial_count_after_batch"] == 315
+    assert manifest["trial_ledger_rows"] == 3
 
 
 def _metric_row(strategy_id: str, values: np.ndarray, *, family: str = "price_trend_sma") -> dict[str, object]:
@@ -138,6 +157,55 @@ def test_feature_store_is_causal_and_keyed() -> None:
     assert store.key("SPY").value == store.key("SPY").value
     assert store.key("SPY").value != store.key("OTHER").value
     assert "SPY" in store.manifest()["symbols"]
+
+
+def test_cached_price_signal_matches_uncached_signal() -> None:
+    index = pd.date_range("2000-01-01", periods=260, freq="B")
+    close = pd.Series(np.linspace(100.0, 130.0, len(index)), index=index)
+    ledger = pd.DataFrame(
+        {
+            "tr_close": close,
+            "tr_open": close,
+            "open": close,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "volume": 1000.0,
+            "long_return": close.pct_change().fillna(0.0),
+            "short_return": -close.pct_change().fillna(0.0),
+        },
+        index=index,
+    )
+    data = PreparedMarketData(
+        ledger=ledger,
+        series={},
+        available_dataset_ids=frozenset({"DS001"}),
+        rejected_datasets={},
+        receipts=(),
+        split="train",
+    )
+    store = FeatureStore(
+        dataset_sha256="data",
+        code_sha="code",
+        start="2000-01-01",
+        end="2000-12-31",
+    )
+    features = store.get_or_build("SPY", ledger)
+    cases = (
+        ("price_trend_sma", {"lookback": 20}),
+        ("time_series_momentum", {"lookback": 20}),
+        ("short_horizon_reversal", {"lookback": 20}),
+        ("trend_ensemble", {"horizons": [20, 63]}),
+        ("dual_ma_cross", {"fast": 10, "slow": 20}),
+    )
+    for family, parameters in cases:
+        candidate = _template() | {
+            "family": family,
+            "required_datasets": ["DS001"],
+            "parameters": parameters,
+        }
+        uncached = candidate_decisions(candidate, data).decisions
+        cached = candidate_decisions(candidate, data, feature_frame=features).decisions
+        pd.testing.assert_series_equal(uncached, cached)
 
 
 def test_workflow_is_github_only_and_bounded() -> None:
