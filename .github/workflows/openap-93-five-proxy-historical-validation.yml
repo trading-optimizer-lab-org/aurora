@@ -1,0 +1,160 @@
+name: OpenAP Five Proxy Historical Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision containing the validator
+        required: true
+        default: HEAD
+        type: string
+      base_run_id:
+        description: Run containing openap-yfinance-sec-current-score-results
+        required: true
+        default: "30837929185"
+        type: string
+      public_inputs_run_id:
+        description: Run containing openap-93-public-inputs and the official reference archive
+        required: true
+        default: "30995267332"
+        type: string
+      crosswalk_artifact_run_id:
+        description: Optional run containing an authorized PERMNO-to-symbol crosswalk
+        required: false
+        default: ""
+        type: string
+      crosswalk_artifact_name:
+        description: Artifact name containing the crosswalk CSV or Parquet
+        required: false
+        default: "permno-crosswalk"
+        type: string
+      crosswalk_url:
+        description: Optional public authorized crosswalk URL; leave empty to fail closed
+        required: false
+        default: ""
+        type: string
+      min_pairs:
+        description: Minimum paired firms required in a month
+        required: true
+        default: "30"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-93-five-proxy-historical-validation
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GITHUB_ACTIONS: "true"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Compile validator
+        run: |
+          python -m py_compile research/openap_93/historical_proxy_validation.py
+          python -m py_compile scripts/run_openap_93_five_proxy_validation.py
+      - name: Run focused validator tests
+        run: python -m pytest tests/test_openap_93_five_proxy_validation.py -q --tb=short
+
+  historical_validate:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      GITHUB_ACTIONS: "true"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Download audited base database artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-yfinance-sec-current-score-results
+          path: inputs/openap_base
+          run-id: ${{ inputs.base_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download audited public inputs artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-93-public-inputs
+          path: inputs/public
+          run-id: ${{ inputs.public_inputs_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download optional crosswalk artifact
+        if: ${{ inputs.crosswalk_artifact_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.crosswalk_artifact_name }}
+          path: inputs/crosswalk
+          run-id: ${{ inputs.crosswalk_artifact_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download optional crosswalk URL
+        if: ${{ inputs.crosswalk_url != '' }}
+        run: curl --fail --location --retry 3 --output inputs/crosswalk.csv "${{ inputs.crosswalk_url }}"
+      - name: Locate audited inputs
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          db=$(find inputs/openap_base -type f -name '*.duckdb' -print -quit)
+          ref=$(find inputs/public -type f \( -name 'signed_predictors_dl_wide.zip' -o -name 'signed_predictors_dl_wide.csv' \) -print -quit)
+          ff3=$(find inputs/public -type f \( -name 'ff3_daily.parquet' -o -name 'ff3_daily.csv' \) -print -quit || true)
+          crosswalk=$(find inputs/crosswalk -type f \( -name '*.csv' -o -name '*.parquet' \) -print -quit 2>/dev/null || true)
+          test -n "$db"
+          test -n "$ref"
+          echo "db=$db" >> "$GITHUB_OUTPUT"
+          echo "reference=$ref" >> "$GITHUB_OUTPUT"
+          echo "ff3=$ff3" >> "$GITHUB_OUTPUT"
+          echo "crosswalk=$crosswalk" >> "$GITHUB_OUTPUT"
+      - name: Run causal historical validation
+        run: |
+          args=(--base-db "${{ steps.locate.outputs.db }}" --reference "${{ steps.locate.outputs.reference }}" --output-dir outputs/openap_five_proxy_historical_validation --min-pairs "${{ inputs.min_pairs }}")
+          if [ -n "${{ steps.locate.outputs.ff3 }}" ]; then args+=(--ff3-daily "${{ steps.locate.outputs.ff3 }}"); fi
+          if [ -n "${{ steps.locate.outputs.crosswalk }}" ]; then args+=(--crosswalk "${{ steps.locate.outputs.crosswalk }}"); fi
+          python scripts/run_openap_93_five_proxy_validation.py "${args[@]}"
+      - name: Verify fail-closed invariants
+        run: |
+          test -s outputs/openap_five_proxy_historical_validation/proxy_validation_summary.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('outputs/openap_five_proxy_historical_validation')
+          summary = json.loads((root / 'proxy_validation_summary.json').read_text())
+          audit = json.loads((root / 'proxy_validation_audit.json').read_text())
+          assert summary['locked_opened'] is False
+          assert summary['backtest_enabled'] is False
+          assert summary['validation_used_for_selection'] is False
+          assert audit['lookahead_checked'] is True
+          PY
+      - name: Upload five-proxy validation artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-five-proxy-historical-validation-results
+          path: outputs/openap_five_proxy_historical_validation/
+          if-no-files-found: error
+          retention-days: 30
