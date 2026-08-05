@@ -670,7 +670,6 @@ def _integrate_features(
         "formula_id",
         "note",
         "value_status",
-        "is_current_for_natural_frequency",
     ):
         features[column] = features[column].astype(object)
     base_fidelity = np.select(

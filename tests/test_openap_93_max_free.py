@@ -1491,7 +1491,6 @@ def test_feature_integration_normalizes_empty_arrow_like_columns() -> None:
             "note": pd.Series([pd.NA], dtype="string"),
             "source_available_at": pd.Series([pd.NA], dtype="string"),
             "source_input_age_days": pd.Series([pd.NA], dtype="string"),
-            "is_current_for_natural_frequency": pd.Series([pd.NA], dtype="string"),
             "value_status": pd.Series([pd.NA], dtype="string"),
         }
     )
@@ -1525,6 +1524,7 @@ def test_feature_integration_normalizes_empty_arrow_like_columns() -> None:
     assert pd.api.types.is_float_dtype(integrated["raw_value"])
     assert integrated.loc[0, "formula_id"] == "regression_dtype_contract"
     assert integrated.loc[0, "source_available_at"] == pd.Timestamp("2026-08-01")
+    assert bool(integrated.loc[0, "is_current_for_natural_frequency"])
 
 
 def test_not_applicable_is_distinct_from_missing_in_normalized_coverage() -> None:
