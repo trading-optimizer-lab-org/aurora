@@ -154,6 +154,12 @@ def test_workflow_is_github_only_and_has_exact_ack() -> None:
     assert "aurora.infra.sp500_long_short_daily_v2.workload" in text
 
 
+def test_v2_module_is_in_distribution_package_map() -> None:
+    text = (ROOT / "pyproject.toml").read_text("utf-8")
+    assert '"aurora.infra.sp500_long_short_daily_v2"' in text
+    assert '"aurora.infra.sp500_long_short_daily_v2" = "infra/sp500_long_short_daily_v2"' in text
+
+
 def test_no_post_2020_boundary_in_spec() -> None:
     text = (ROOT / "config" / "sp500_long_short_daily_v2_train_v3.yaml").read_text("utf-8")
     assert 'train_end: "2010-12-31"' in text
