@@ -216,16 +216,27 @@ def write_partitioned_parquet_transport(
         part_index += 1
         if total_rows == 0:
             break
+    persisted_tables = [
+        pq.read_table(root / part.relative_path)
+        for part in parts
+    ]
+    persisted = (
+        pa.concat_tables(persisted_tables).combine_chunks()
+        if persisted_tables
+        else pa.table({})
+    )
+    if persisted.num_rows != table.num_rows:
+        raise PhysicalMergeError("partition writer changed logical row count")
     return PartitionedTransport(
         logical_name=logical_name,
         source_file_name=source.name,
         format="parquet",
         key_columns=keys,
         schema_sha256=hashlib.sha256(
-            table.schema.serialize().to_pybytes()
+            persisted.schema.serialize().to_pybytes()
         ).hexdigest(),
-        logical_sha256=_logical_table_sha256(table),
-        row_count=table.num_rows,
+        logical_sha256=_logical_table_sha256(persisted),
+        row_count=persisted.num_rows,
         target_bytes=target_bytes,
         parts=tuple(parts),
     )
