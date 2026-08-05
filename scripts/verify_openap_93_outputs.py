@@ -213,6 +213,11 @@ def verify_output(root: str | Path) -> dict[str, Any]:
     report = (output / "FINAL_REPORT.md").read_text(encoding="utf-8")
     _require(report.startswith("RESULTADO:"), "FINAL_REPORT.md lacks numeric opening")
     _require("93" in report, "FINAL_REPORT.md does not state the 93-signal result")
+    _require("--formation-date today --refresh" in report, "Final report lacks rerun command")
+    _require(
+        f"{actual_bytes:020d} bytes" in report,
+        "Final report does not state the verified artifact size",
+    )
 
     return {
         "verified": True,

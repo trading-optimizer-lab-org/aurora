@@ -950,6 +950,7 @@ def _write_final_report(
     selected_sources: dict[str, Any],
     manifest: dict[str, Any],
     source_probes: pd.DataFrame,
+    artifact_size_bytes: int = 0,
 ) -> None:
     exact = int(coverage["fidelity_class"].eq(FidelityClass.EXACT.value).sum())
     reconstructed = int(
@@ -1047,13 +1048,28 @@ def _write_final_report(
         "",
         "## Reejecucion",
         "",
-        "Use `python scripts/run_openap_93_max_free.py run --help` dentro de GitHub Actions.",
+        (
+            "Comando completo en GitHub Actions: "
+            "`python scripts/run_openap_93_max_free.py "
+            "--signals-config config/openap_93/signals_93.yaml run "
+            "--base-db inputs/openap_current.duckdb "
+            "--output-dir outputs/openap_93_current "
+            "--formation-date today --refresh`."
+        ),
+        (
+            "Reejecucion sin red con cache auditada: el mismo comando sustituyendo "
+            "`--refresh` por `--offline`."
+        ),
         "",
         "## Ejecucion",
         "",
         f"- Formation date: {manifest['formation_at']}",
         f"- Retrieved at: {manifest['retrieved_at']}",
         f"- Runtime seconds: {manifest['runtime_seconds']}",
+        (
+            "- Tamano total de outputs sin manifiesto: "
+            f"{artifact_size_bytes:020d} bytes"
+        ),
         f"- OpenAP commit: {manifest['openap_commit']}",
         f"- Base database SHA-256: {manifest['base_database_sha256']}",
         "- Los SHA-256 de todos los outputs estan en `run_manifest.json`.",
@@ -1314,15 +1330,31 @@ def run_current_pipeline(
         manifest,
         source_probes,
     )
+    output_total_bytes = sum(
+        path.stat().st_size
+        for path in output.rglob("*")
+        if path.is_file() and path.name != "run_manifest.json"
+    )
+    _write_final_report(
+        output / "FINAL_REPORT.md",
+        coverage,
+        score_table,
+        selected_sources,
+        manifest,
+        source_probes,
+        artifact_size_bytes=output_total_bytes,
+    )
     hashes: dict[str, str] = {}
-    output_total_bytes = 0
+    verified_output_total_bytes = 0
     for path in sorted(output.rglob("*")):
         if path.is_file() and path.name != "run_manifest.json":
             relative = path.relative_to(output).as_posix()
             hashes[relative] = _sha256(path)
-            output_total_bytes += path.stat().st_size
+            verified_output_total_bytes += path.stat().st_size
+    if verified_output_total_bytes != output_total_bytes:
+        raise RuntimeError("Final report changed the fixed-width artifact byte count")
     manifest["output_hashes"] = hashes
-    manifest["output_total_bytes_excluding_manifest"] = output_total_bytes
+    manifest["output_total_bytes_excluding_manifest"] = verified_output_total_bytes
     (output / "run_manifest.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=True), encoding="utf-8"
     )
