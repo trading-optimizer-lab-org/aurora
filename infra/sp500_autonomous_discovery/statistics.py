@@ -21,7 +21,7 @@ from aurora.infra.sp500_long_short_daily.contracts import canonical_json_hash
 from .contracts import BLOCK_LENGTH, BOOTSTRAP_REPETITIONS, PREVIOUS_TRIAL_COUNT
 
 
-def _nav_metrics(values: Sequence[float]) -> dict[str, float | int | None]:
+def _nav_metrics(values: Sequence[float] | np.ndarray) -> dict[str, float | int | None]:
     raw = np.asarray(values, dtype=float)
     raw = raw[np.isfinite(raw)]
     if raw.size == 0:
@@ -47,7 +47,7 @@ def _nav_metrics(values: Sequence[float]) -> dict[str, float | int | None]:
     }
 
 
-def _annual_rows(dates: Sequence[str], values: Sequence[float]) -> list[dict[str, Any]]:
+def _annual_rows(dates: Sequence[str], values: Sequence[float] | np.ndarray) -> list[dict[str, Any]]:
     frame = pd.DataFrame({"date": pd.to_datetime(list(dates)), "return": list(values)})
     rows: list[dict[str, Any]] = []
     for year, group in frame.groupby(frame["date"].dt.year, sort=True):

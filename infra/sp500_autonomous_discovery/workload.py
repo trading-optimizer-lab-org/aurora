@@ -227,6 +227,7 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
                 "seconds_simulation": None,
             }
         )
+        records: tuple[MetricInputRecord, ...] = ()
         try:
             signal_started = time.perf_counter()
             signal = (
