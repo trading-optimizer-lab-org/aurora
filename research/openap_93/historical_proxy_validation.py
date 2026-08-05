@@ -470,7 +470,7 @@ def _build_earnings_streak(
         )
         aligned["caveat"] = (
             "Surprise is price-scaled like OpenAP; announcement date is used when present, "
-            "otherwise period-end plus 90 days; source is not PIT IBES"
+            "otherwise period-end plus 90-day lag; source is not PIT IBES"
         )
         rows.append(aligned[[
             "symbol", "completed_month", "formation_month", "signal", "proxy_value",
