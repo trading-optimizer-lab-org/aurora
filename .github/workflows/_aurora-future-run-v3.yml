@@ -2123,6 +2123,13 @@ jobs:
         with:
           name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/plan
+      - name: Download prepared inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/prepared
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.prepared_artifact_run_id || github.run_id }}
       - name: Download merge root only
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -2192,6 +2199,7 @@ jobs:
       - name: Build final artifact and reconciliation
         env:
           WORKLOAD: ${{ inputs.workload }}
+          AURORA_PREPARED_ROOT: ${{ runner.temp }}/prepared
         run: |
           set -euo pipefail
           aurora github final-merge \

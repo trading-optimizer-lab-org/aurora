@@ -609,6 +609,26 @@ def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:
         "freeze_contract",
         *level_names,
     }
+    final_steps = jobs["final_merge"]["steps"]
+    prepared_download = next(
+        step
+        for step in final_steps
+        if step.get("name") == "Download prepared inputs"
+    )
+    assert prepared_download["with"] == {
+        "name": "${{ env.AURORA_PREPARED_ARTIFACT_NAME }}",
+        "path": "${{ runner.temp }}/prepared",
+        "github-token": "${{ github.token }}",
+        "run-id": "${{ inputs.prepared_artifact_run_id || github.run_id }}",
+    }
+    final_build = next(
+        step
+        for step in final_steps
+        if step.get("name") == "Build final artifact and reconciliation"
+    )
+    assert final_build["env"]["AURORA_PREPARED_ROOT"] == (
+        "${{ runner.temp }}/prepared"
+    )
     merge_text = MERGE_LEVEL_ACTION_PATH.read_text(encoding="utf-8")
     assert "aurora github merge-plan-group" in merge_text
     assert "inputs.output-artifact" in merge_text
