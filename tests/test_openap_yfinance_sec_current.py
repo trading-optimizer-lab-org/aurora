@@ -8,6 +8,7 @@ import pytest
 import requests
 import yaml
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import scripts.run_openap_yfinance_sec_current as current_runner
 
@@ -96,7 +97,7 @@ def test_sec_bulk_archive_uses_next_official_hostname(
     ) -> None:
         calls.append((url, headers))
         assert retries == 7
-        if url.startswith("https://www.sec.gov"):
+        if urlsplit(url).hostname == "www.sec.gov":
             raise requests.HTTPError("403")
         with zipfile.ZipFile(destination, "w") as archive:
             archive.writestr("CIK0000000001.json", "{}")
@@ -141,7 +142,7 @@ def test_sec_direct_403_opens_process_circuit_and_uses_audited_fallback(
 
     def fake_get(url: str, **_: object) -> Response:
         calls.append(url)
-        if url.startswith("https://data.sec.gov"):
+        if urlsplit(url).hostname == "data.sec.gov":
             return Response(403)
         return Response(200, 'Markdown Content:\n```json\n{"fallback": true}\n```')
 
@@ -163,7 +164,7 @@ def test_sec_direct_403_opens_process_circuit_and_uses_audited_fallback(
     assert second[1] == "sec_via_jina_readthrough"
     assert first[0] == {"fallback": True}
     assert second[0] == {"fallback": True}
-    assert sum(url.startswith("https://data.sec.gov") for url in calls) == 1
+    assert sum(urlsplit(url).hostname == "data.sec.gov" for url in calls) == 1
 
 
 def test_sec_surface_availability_fails_closed_per_issuer() -> None:
