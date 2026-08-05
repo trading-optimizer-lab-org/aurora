@@ -202,8 +202,8 @@ env:
   AURORA_AUTONOMOUS_BATCH_ID: ${{ inputs.autonomous_batch_id }}
   AURORA_AUTONOMOUS_CANDIDATE_COUNT: ${{ inputs.autonomous_candidate_count }}
   AURORA_AUTONOMOUS_PREVIOUS_TRIAL_COUNT: ${{ inputs.autonomous_previous_trial_count }}
-  AURORA_PREPARED_ARTIFACT_NAME: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}', inputs.run_label, github.run_id) }}
-  AURORA_WHEELHOUSE_ARTIFACT_NAME: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}', inputs.run_label, github.run_id) }}
+  AURORA_PREPARED_ARTIFACT_NAME: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+  AURORA_WHEELHOUSE_ARTIFACT_NAME: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
 
 jobs:
   validate:

@@ -806,10 +806,10 @@ def test_reusable_workflow_can_reuse_exact_prepared_artifact() -> None:
     assert "inputs.prepared_artifact_name" in str(
         workflow["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
     )
-    assert "github.run_attempt" not in str(
+    assert "github.run_attempt" in str(
         workflow["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
     )
-    assert "github.run_attempt" not in str(
+    assert "github.run_attempt" in str(
         workflow["env"]["AURORA_WHEELHOUSE_ARTIFACT_NAME"]
     )
 
