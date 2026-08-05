@@ -265,6 +265,16 @@ def run_validation_once(
     finalists = list(freeze.get("finalists", []))
     if not finalists:
         raise ValidationGateError("NO_FROZEN_FINALISTS_VALIDATION_MUST_NOT_OPEN")
+    ineligible = [
+        str(item.get("strategy_id", "UNKNOWN"))
+        for item in finalists
+        if bool(item.get("diagnostic_only"))
+        or item.get("eligible_for_validation", True) is not True
+    ]
+    if ineligible:
+        raise ValidationGateError(
+            "INELIGIBLE_FROZEN_FINALISTS_VALIDATION_MUST_NOT_OPEN:" + ",".join(ineligible)
+        )
     train = load_market_snapshot(Path(train_prepared_dir))
     validation = load_market_snapshot(Path(validation_prepared_dir))
     data = combine_phase_snapshots(train, validation)
@@ -308,7 +318,7 @@ def run_validation_once(
         strategy_id = str(row["strategy_id"])
         yearly = annual.loc[annual["unit_key"] == strategy_id]
         gates = _validation_gate_results(row, yearly, benchmark_map, frozen_by_id[strategy_id])
-        passed = all(gates.values()) and not bool(frozen_by_id[strategy_id].get("diagnostic_only"))
+        passed = all(gates.values())
         gate_rows.append(
             {
                 "strategy_id": strategy_id,

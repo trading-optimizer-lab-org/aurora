@@ -1989,6 +1989,45 @@ def test_validation_ack_is_required_before_any_artifact_read(tmp_path: Path) -> 
         )
 
 
+def test_validation_refuses_diagnostic_representatives_before_loading_data(tmp_path: Path) -> None:
+    freeze = {
+        "schema_version": "1",
+        "selection_closed": True,
+        "validation_opened": False,
+        "locked_opened": False,
+        "train_end": "2010-12-31",
+        "locked_start": "2021-01-01",
+        "code_sha": "LOCAL_TEST_ONLY",
+        "finalists": [
+            {
+                "strategy_id": "STRAT0014",
+                "canonical_hash": "a" * 64,
+                "diagnostic_only": True,
+                "eligible_for_validation": False,
+            }
+        ],
+    }
+    freeze["freeze_sha256"] = canonical_json_hash(freeze)
+    train_results = tmp_path / "train-results"
+    train_results.mkdir()
+    (train_results / "train_selection_freeze.json").write_text(
+        json.dumps(freeze), encoding="utf-8"
+    )
+
+    with pytest.raises(
+        ValidationGateError,
+        match="INELIGIBLE_FROZEN_FINALISTS_VALIDATION_MUST_NOT_OPEN:STRAT0014",
+    ):
+        run_validation_once(
+            train_results_dir=train_results,
+            train_prepared_dir=tmp_path / "missing-train",
+            validation_prepared_dir=tmp_path / "missing-validation",
+            output_dir=tmp_path / "output",
+            validation_ack=VALIDATION_ACK,
+            code_sha="LOCAL_TEST_ONLY",
+        )
+
+
 def test_phase_snapshots_combine_without_opening_locked() -> None:
     train = _long_fixture()
     validation_dates = pd.bdate_range("2011-01-03", "2020-12-31")
@@ -2204,6 +2243,9 @@ def test_full_coverage_reduction_keeps_every_terminal_unit(tmp_path: Path, monke
     assert len(eligibility) == 173
     assert int(summary["expected_candidates"]) == 168
     assert int(summary["expected_benchmarks"]) == 5
+    assert int(summary["frozen_finalists"]) == 0
+    assert int(summary["multiple_testing_eligible_candidates"]) == 0
+    assert summary["result_status"] == "NEGATIVE_RESULT"
     assert (output / "train_selection_freeze.json").is_file()
     assert (output / "multiple_testing.json").is_file()
     required = {
@@ -2248,6 +2290,7 @@ def test_full_coverage_reduction_keeps_every_terminal_unit(tmp_path: Path, monke
         "spy_at_or_below_sma200",
     }
     freeze = json.loads((output / "train_selection_freeze.json").read_text("utf-8"))
+    assert freeze["finalists"] == []
     assert freeze["position_contract"]["allowed_values"] == [-1, 1]
     assert freeze["costs"] == {
         "commission_bps": 0,

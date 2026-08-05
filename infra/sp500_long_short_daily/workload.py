@@ -797,7 +797,7 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             "family", sort=True
         ):
             finalists.extend(group.head(2).to_dict("records"))
-        selected_ids = {str(row["unit_key"]) for row in finalists}
+        diagnostic_representatives = []
         for family, group in ranking.loc[ranking["hard_train_eligible"]].groupby(
             "family", sort=True
         ):
@@ -805,10 +805,13 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
                 diagnostic = group.head(1).to_dict("records")
                 if diagnostic:
                     diagnostic[0]["diagnostic_family_representative"] = True
-                    finalists.extend(diagnostic)
-                    selected_ids.add(str(diagnostic[0]["unit_key"]))
+                    diagnostic_representatives.extend(diagnostic)
         finalists = sorted(
             finalists,
+            key=lambda row: (-float(row["train_selection_score"]), str(row["unit_key"])),
+        )[:30]
+        diagnostic_representatives = sorted(
+            diagnostic_representatives,
             key=lambda row: (-float(row["train_selection_score"]), str(row["unit_key"])),
         )[:30]
 
@@ -896,9 +899,56 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
                         "fdr_qvalue": row.get("fdr_qvalue"),
                         "pbo": row["pbo"],
                     },
-                    "diagnostic_only": bool(row.get("diagnostic_family_representative", False)),
+                    "diagnostic_only": False,
+                    "eligible_for_validation": True,
                 }
                 for order, row in enumerate(finalists, start=1)
+            ],
+            "diagnostic_representatives": [
+                {
+                    "order": order,
+                    "strategy_id": row["strategy_id"],
+                    "canonical_hash": row["canonical_hash"],
+                    "family": row["family"],
+                    "train_selection_score": row["train_selection_score"],
+                    "candidate_rules": candidate_lookup[str(row["strategy_id"])],
+                    "train_metrics": {
+                        "cagr_pct": row["train_cagr_pct"],
+                        "sharpe": row["train_sharpe"],
+                        "calmar": row["train_calmar"],
+                        "max_drawdown_pct": row["train_max_drawdown_pct"],
+                        "positive_year_fraction": row["train_positive_year_fraction"],
+                        "median_rolling_3y_cagr_pct": row[
+                            "train_median_rolling_3y_cagr_pct"
+                        ],
+                        "worst_year_return_pct": row["train_worst_year_return_pct"],
+                        "min_outer_fold_cagr_pct": row["train_min_outer_fold_cagr_pct"],
+                        "sortino": row["train_sortino"],
+                        "turnover": row["train_turnover"],
+                    },
+                    "annual_oof_metrics": annual_frame.loc[
+                        annual_frame["unit_key"] == str(row["unit_key"])
+                    ]
+                    .sort_values("year", kind="mergesort")
+                    .to_dict("records"),
+                    "selection_gate_results": {
+                        key: bool(value)
+                        for key, value in ranking_by_id[str(row["strategy_id"])].items()
+                        if str(key).startswith("gate_")
+                    },
+                    "multiple_testing": {
+                        "deflated_sharpe_probability": row[
+                            "deflated_sharpe_probability"
+                        ],
+                        "spa_pvalue": row["spa_pvalue"],
+                        "fdr_qvalue": row.get("fdr_qvalue"),
+                        "pbo": row["pbo"],
+                    },
+                    "diagnostic_only": True,
+                    "eligible_for_validation": False,
+                    "ineligibility_reason": "MULTIPLE_TESTING_GATE_NOT_PASSED",
+                }
+                for order, row in enumerate(diagnostic_representatives, start=1)
             ],
         }
         freeze["freeze_sha256"] = canonical_json_hash(freeze)
@@ -921,7 +971,11 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             "hard_train_eligible_candidates": int(ranking["hard_train_eligible"].sum())
             if len(ranking)
             else 0,
+            "multiple_testing_eligible_candidates": int(ranking["eligible_for_freeze"].sum())
+            if len(ranking)
+            else 0,
             "frozen_finalists": len(finalists),
+            "diagnostic_representatives": len(diagnostic_representatives),
             "locked_opened": False,
             "validation_opened": False,
             "validation_used_for_selection": False,
