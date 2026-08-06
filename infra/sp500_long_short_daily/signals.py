@@ -34,6 +34,7 @@ IMPLEMENTED_FAMILIES = frozenset(
         "high_vol_crash_recovery_reversal",
         "adaptive_recovery_edge_switch",
         "recovery_overnight_tug_vote",
+        "recovery_turn_month_vote",
         "financial_conditions_regime",
         "monetary_inflation_regime",
         "overnight_futures_proxy",
@@ -1122,6 +1123,94 @@ def _price_score(
             & rolling_peak.notna()
             & recovery_return.notna()
         )
+    if family == "recovery_turn_month_vote":
+        rsi_window = int(parameters["rsi_window"])
+        delta = close.diff()
+        gain = delta.clip(lower=0.0).ewm(
+            alpha=1.0 / rsi_window,
+            adjust=False,
+            min_periods=rsi_window,
+        ).mean()
+        loss = (-delta.clip(upper=0.0)).ewm(
+            alpha=1.0 / rsi_window,
+            adjust=False,
+            min_periods=rsi_window,
+        ).mean()
+        relative_strength = gain / loss.replace(0.0, np.nan)
+        rsi = 100.0 - 100.0 / (1.0 + relative_strength)
+        rsi = rsi.mask((loss == 0.0) & (gain > 0.0), 100.0)
+        rsi = rsi.mask((gain == 0.0) & (loss > 0.0), 0.0)
+        rsi = rsi.mask((gain == 0.0) & (loss == 0.0), 50.0)
+
+        rsi_trend_return = (
+            close / close.shift(int(parameters["rsi_trend_window"])) - 1.0
+        )
+        rsi_component = np.sign(rsi_trend_return)
+        rsi_component = rsi_component.where(
+            rsi > float(parameters["lower"]), 1.0
+        )
+        rsi_component = rsi_component.where(
+            rsi < float(parameters["upper"]), -1.0
+        )
+        reversal_return = (
+            close / close.shift(int(parameters["reversal_window"])) - 1.0
+        )
+        reversal_trend_return = (
+            close / close.shift(int(parameters["reversal_trend_window"])) - 1.0
+        )
+        reversal_component = np.sign(reversal_trend_return)
+        reversal_threshold = (
+            float(parameters["reversal_threshold_pct"]) / 100.0
+        )
+        reversal_component = reversal_component.where(
+            reversal_return.abs() < reversal_threshold,
+            -np.sign(reversal_return),
+        )
+
+        session_frame = pd.DataFrame(index=ledger.index)
+        session_frame["month"] = ledger.index.to_period("M")
+        session_frame["from_start"] = (
+            session_frame.groupby("month").cumcount() + 1
+        )
+        session_frame["from_end"] = (
+            session_frame.groupby("month").cumcount(ascending=False) + 1
+        )
+        next_position = session_frame[["from_start", "from_end"]].shift(-1)
+        turn_month = (
+            next_position["from_start"] <= int(parameters["first_sessions"])
+        ) | (next_position["from_end"] <= int(parameters["last_sessions"]))
+        score = (
+            rsi_component
+            + reversal_component
+            + float(parameters["calendar_weight"]) * turn_month.astype(float)
+        )
+
+        drawdown_lookback = int(parameters["drawdown_lookback"])
+        rolling_peak = close.rolling(
+            drawdown_lookback,
+            min_periods=drawdown_lookback,
+        ).max()
+        drawdown = close / rolling_peak - 1.0
+        recent_deep_drawdown = drawdown.rolling(
+            int(parameters["recovery_memory_window"]),
+            min_periods=1,
+        ).min() <= -(float(parameters["drawdown_trigger_pct"]) / 100.0)
+        recovery_return = (
+            close / close.shift(int(parameters["recovery_window"])) - 1.0
+        )
+        recovery_override = recent_deep_drawdown & (
+            recovery_return
+            > float(parameters["recovery_threshold_pct"]) / 100.0
+        )
+        score = score.where(~recovery_override, 1.0)
+        return score.where(
+            rsi.notna()
+            & rsi_trend_return.notna()
+            & reversal_return.notna()
+            & reversal_trend_return.notna()
+            & rolling_peak.notna()
+            & recovery_return.notna()
+        )
     if family == "trend_ensemble":
         components = []
         for horizon in parameters["horizons"]:
@@ -1567,6 +1656,7 @@ def candidate_decisions(
             "high_vol_crash_recovery_reversal",
             "adaptive_recovery_edge_switch",
             "recovery_overnight_tug_vote",
+            "recovery_turn_month_vote",
             "realized_volatility_state",
         "overnight_futures_proxy",
         "volatility_conditioned_trend",
