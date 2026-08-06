@@ -160,17 +160,17 @@ def _targeted_reversal_candidates(
             f"RSI_t <= {lower}",
             f"RSI_t >= {upper}",
         ))
-    for lower, upper in (
+    for lower_fraction, upper_fraction in (
         (0.05, 0.95), (0.10, 0.90), (0.15, 0.85), (0.20, 0.80),
         (0.25, 0.75), (0.30, 0.70), (0.35, 0.65), (0.40, 0.60),
         (0.10, 0.80), (0.20, 0.90), (0.15, 0.75), (0.25, 0.85),
     ):
         definitions.append((
             "internal_bar_strength_reversal",
-            {"lower": lower, "upper": upper},
+            {"lower": lower_fraction, "upper": upper_fraction},
             "IBS_t = (TR_CLOSE_t - LOW_t) / (HIGH_t - LOW_t)",
-            f"IBS_t <= {lower}",
-            f"IBS_t >= {upper}",
+            f"IBS_t <= {lower_fraction}",
+            f"IBS_t >= {upper_fraction}",
         ))
     for lookback, threshold in (
         (1, 0.25), (1, 0.50), (1, 0.75), (1, 1.00),

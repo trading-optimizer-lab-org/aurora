@@ -6,7 +6,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -167,7 +167,7 @@ def _evaluate(
 
 
 def _candidate_from_registry(
-    registry: list[Mapping[str, Any]], strategy_id: str
+    registry: Sequence[Mapping[str, Any]], strategy_id: str
 ) -> Mapping[str, Any]:
     matches = [row for row in registry if str(row.get("strategy_id")) == strategy_id]
     if len(matches) != 1:

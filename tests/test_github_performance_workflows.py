@@ -597,7 +597,7 @@ def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:
             "${{ env.AURORA_PREPARED_ARTIFACT_NAME }}"
         )
         assert merge_step["with"]["prepared-artifact-run-id"] == (
-            "${{ inputs.prepared_artifact_run_id || github.run_id }}"
+            "${{ env.AURORA_PREPARED_ARTIFACT_RUN_ID }}"
         )
     for level_index in range(1, 4):
         assert _needs(jobs[f"merge_level_{level_index}"]) == {
@@ -619,7 +619,7 @@ def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:
         "name": "${{ env.AURORA_PREPARED_ARTIFACT_NAME }}",
         "path": "${{ runner.temp }}/prepared",
         "github-token": "${{ github.token }}",
-        "run-id": "${{ inputs.prepared_artifact_run_id || github.run_id }}",
+        "run-id": "${{ env.AURORA_PREPARED_ARTIFACT_RUN_ID }}",
     }
     final_build = next(
         step
@@ -652,7 +652,7 @@ def test_reusable_workflow_uses_compact_unique_attempt_artifacts() -> None:
     assert "compression-level: 0" in text
     assert "if-no-files-found: error" in text
     assert text.count('--assignment-root "$RUNNER_TEMP/plan"') == 4
-    assert text.count('--prepared-root "$RUNNER_TEMP/prepared"') == 4
+    assert text.count('--prepared-root "$RUNNER_TEMP/prepared"') == 5
 
 
 def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
@@ -801,7 +801,7 @@ def test_reusable_workflow_can_reuse_exact_prepared_artifact() -> None:
     assert upload["if"] == prepare["if"]
     assert (
         shared_download["with"]["name"]
-        == "${{ env.AURORA_PREPARED_ARTIFACT_NAME }}"
+        == "${{ inputs.prepared_artifact_name || env.AURORA_PREPARED_ARTIFACT_NAME }}"
     )
     assert "inputs.prepared_artifact_name" in str(
         workflow["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
