@@ -363,17 +363,40 @@ def test_batch_thirteen_refines_best_dual_reversal_without_repeats() -> None:
 def test_batch_sixteen_adds_unique_asymmetric_trend_overrides() -> None:
     batch_sixteen = registry.generate_candidates(16, count=96)
     batch_seventeen = registry.generate_candidates(17, count=96)
+    batch_eighteen = registry.generate_candidates(18, count=96)
     assert len(batch_sixteen) == 96
     assert len(batch_seventeen) == 96
+    assert len(batch_eighteen) == 96
     assert {row["family"] for row in batch_sixteen} == {
         "asymmetric_trend_override_reversal"
     }
     assert not {row["canonical_hash"] for row in batch_sixteen}.intersection(
         row["canonical_hash"] for row in batch_seventeen
     )
+    assert not {row["canonical_hash"] for row in batch_sixteen}.intersection(
+        row["canonical_hash"] for row in batch_eighteen
+    )
+    assert not {row["canonical_hash"] for row in batch_seventeen}.intersection(
+        row["canonical_hash"] for row in batch_eighteen
+    )
     assert all(row["position_values"] == [-1, 1] for row in batch_sixteen)
     assert all(row["cash_allowed"] is False for row in batch_sixteen)
     assert all(row["leverage_allowed"] is False for row in batch_sixteen)
+
+
+def test_batch_eighteen_searches_the_stable_override_neighborhood() -> None:
+    candidates = registry.generate_candidates(18, count=96)
+    parameter_rows = [row["parameters"] for row in candidates]
+    assert any(
+        row["positive_override_window"] == 120
+        and row["positive_override_threshold_pct"] == 3.0
+        and row["negative_override_window"] == 120
+        and row["negative_override_threshold_pct"] == 3.0
+        for row in parameter_rows
+    )
+    assert {
+        row["negative_override_window"] for row in parameter_rows
+    } == {90, 120, 150}
 
 
 def test_asymmetric_trend_override_is_causal_and_fully_covered() -> None:

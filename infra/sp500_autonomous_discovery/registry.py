@@ -1066,25 +1066,46 @@ def _asymmetric_override_candidates(
             "reversal_trend_window": 40,
         },
     )
-    positive_overrides = ((90, 2.0), (120, 2.0), (120, 3.0), (150, 3.0))
-    negative_overrides = (
-        (40, 3.0),
-        (60, 3.0),
-        (60, 5.0),
-        (90, 5.0),
-        (120, 5.0),
-        (120, 8.0),
-    )
+    if batch_id >= 18:
+        local_generation = batch_id - 18
+        positive_overrides = (
+            (90, 2.0),
+            (120, 2.5),
+            (120, 3.0),
+            (150, 3.0),
+        )
+        negative_overrides = (
+            (90, 2.0),
+            (90, 3.0),
+            (120, 2.0),
+            (120, 3.0),
+            (120, 4.0),
+            (150, 3.0),
+        )
+        positive_step = local_generation * 0.125
+        negative_step = local_generation * 0.25
+    else:
+        positive_overrides = ((90, 2.0), (120, 2.0), (120, 3.0), (150, 3.0))
+        negative_overrides = (
+            (40, 3.0),
+            (60, 3.0),
+            (60, 5.0),
+            (90, 5.0),
+            (120, 5.0),
+            (120, 8.0),
+        )
+        positive_step = generation * 0.25
+        negative_step = generation * 0.5
     parameters_list = [
         {
             **core,
             "positive_override_window": positive_window,
             "positive_override_threshold_pct": round(
-                positive_threshold + generation * 0.25, 4
+                positive_threshold + positive_step, 4
             ),
             "negative_override_window": negative_window,
             "negative_override_threshold_pct": round(
-                negative_threshold + generation * 0.5, 4
+                negative_threshold + negative_step, 4
             ),
         }
         for core in core_variants
