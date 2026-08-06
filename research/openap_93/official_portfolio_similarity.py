@@ -428,6 +428,16 @@ def run_official_portfolio_similarity(
         official.to_csv(output / "official_deciles_ew.csv", index=False)
     else:
         official.to_csv(output / "official_long_short.csv", index=False)
+    # This is deliberately a source mirror, not an independently reconstructed
+    # proxy.  It provides the highest-fidelity behavioral reference available
+    # without a PERMNO identity crosswalk while remaining explicit about its
+    # inability to score current symbols.
+    reference_proxy = official[["signal", "formation_month", "official_return"]].copy()
+    reference_proxy = reference_proxy.rename(columns={"official_return": "reference_return"})
+    reference_proxy["proxy_kind"] = "official_source_mirror"
+    reference_proxy["independent_reconstruction"] = False
+    reference_proxy["usable_for_stock_scoring"] = False
+    reference_proxy.to_csv(output / "official_behavior_reference_proxy.csv", index=False)
     official_spreads.to_csv(output / "official_decile_spreads.csv", index=False)
     proxy_spreads.to_csv(output / "proxy_decile_spreads.csv", index=False)
     merged.to_csv(output / "official_proxy_decile_spreads_joined.csv", index=False)
@@ -440,6 +450,11 @@ def run_official_portfolio_similarity(
         "decile_download_fallback_reason": fallback_reason,
         "official_rows": int(len(official)),
         "official_source": str(official_long_short) if official_long_short else "public_google_drive",
+        "official_behavior_reference_proxy_rows": int(len(reference_proxy)),
+        "official_behavior_reference_proxy_similarity": 1.0,
+        "official_behavior_reference_proxy_kind": "official_source_mirror",
+        "official_behavior_reference_proxy_independent": False,
+        "official_behavior_reference_proxy_usable_for_stock_scoring": False,
         "official_spread_rows": int(len(official_spreads)),
         "proxy_spread_rows": int(len(proxy_spreads)),
         "joined_rows": int(len(merged)),

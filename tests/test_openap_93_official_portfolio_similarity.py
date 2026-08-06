@@ -117,3 +117,22 @@ def test_similarity_reports_high_match_without_claiming_identity() -> None:
     row = summary.query("signal == 'DivSeason' and period == 'all'").iloc[0]
     assert row["pearson_same_direction"] == 1.0
     assert row["orientation"] == "same"
+
+
+def test_reference_backed_proxy_is_explicitly_not_independent(tmp_path: Path) -> None:
+    source = tmp_path / "PredictorLSretWide.csv"
+    pd.DataFrame(
+        {
+            "yyyymm": [202001],
+            "DivSeason": [0.10],
+            "AnnouncementReturn": [0.04],
+            "EarningsStreak": [0.03],
+            "IndRetBig": [0.02],
+            "DelNetFin": [-0.01],
+        }
+    ).to_csv(source, index=False)
+    result = download_official_long_short(output_dir=tmp_path / "out", archive_path=source)
+    mirror = result[["signal", "formation_month", "official_return"]].rename(
+        columns={"official_return": "reference_return"}
+    )
+    assert mirror["reference_return"].equals(result["official_return"])
