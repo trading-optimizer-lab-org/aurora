@@ -147,7 +147,10 @@ def normalise_official_long_short(frame: pd.DataFrame) -> pd.DataFrame:
         raise ValueError(f"Official long-short file has no date column: {list(frame.columns)}")
 
     signal_col = _column(frame, ("signalname", "signal", "predictor", "acronym"))
-    return_col = _column(frame, ("ret", "return", "portfolio_return", "exret", "lsret"))
+    return_col = _column(
+        frame,
+        ("ret", "return", "portfolio_return", "exret", "lsret", "official_return"),
+    )
     if signal_col and return_col:
         long_short = frame[[signal_col, date_col, return_col]].copy()
         long_short.columns = ["signal", "formation_month", "official_return"]
@@ -207,15 +210,28 @@ def download_official_deciles(
     raise RuntimeError("Unable to obtain official OpenAP deciles; " + " | ".join(errors))
 
 
-def download_official_long_short(*, output_dir: str | Path) -> pd.DataFrame:
-    """Download the official compact monthly OpenAP long-short reference."""
+def download_official_long_short(
+    *,
+    output_dir: str | Path,
+    archive_path: str | Path | None = None,
+) -> pd.DataFrame:
+    """Load the official compact monthly OpenAP long-short reference.
 
-    with tempfile.TemporaryDirectory(prefix="openap-official-") as temp_dir:
-        source = _download_public_drive_file(
-            OFFICIAL_LS_FILE_ID,
-            Path(temp_dir) / "PredictorLSretWide.csv",
-        )
-        raw = _read_official_archive(source)
+    The workflow normally stages this public file before running the
+    comparison.  Keeping the network fallback here preserves standalone
+    GitHub use while avoiding a second Drive request when an artifact/local
+    input is already available.
+    """
+
+    if archive_path:
+        raw = _read_official_archive(archive_path)
+    else:
+        with tempfile.TemporaryDirectory(prefix="openap-official-") as temp_dir:
+            source = _download_public_drive_file(
+                OFFICIAL_LS_FILE_ID,
+                Path(temp_dir) / "PredictorLSretWide.csv",
+            )
+            raw = _read_official_archive(source)
     result = normalise_official_long_short(raw)
     if result.empty:
         raise ValueError("Official long-short file contains no requested signals")
@@ -372,6 +388,7 @@ def run_official_portfolio_similarity(
     output_dir: str | Path,
     release: str = "202510",
     official_deciles: str | Path | None = None,
+    official_long_short: str | Path | None = None,
 ) -> dict[str, object]:
     require_github_execution("OpenAP official portfolio similarity")
     output = Path(output_dir)
@@ -398,7 +415,10 @@ def run_official_portfolio_similarity(
         # The compact official long-short file is a published OpenAP output,
         # not an Aurora estimate. It gives us a valid historical reference
         # when the large decile archive is blocked by Drive confirmation.
-        official = download_official_long_short(output_dir=output)
+        official = download_official_long_short(
+            output_dir=output,
+            archive_path=official_long_short,
+        )
         official_spreads = build_official_long_short_spreads(official)
         target_type = "official_long_short"
         fallback_reason = f"{type(decile_error).__name__}: {decile_error}"
@@ -419,6 +439,7 @@ def run_official_portfolio_similarity(
         "official_target_type": target_type,
         "decile_download_fallback_reason": fallback_reason,
         "official_rows": int(len(official)),
+        "official_source": str(official_long_short) if official_long_short else "public_google_drive",
         "official_spread_rows": int(len(official_spreads)),
         "proxy_spread_rows": int(len(proxy_spreads)),
         "joined_rows": int(len(merged)),

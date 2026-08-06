@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
+from research.openap_93.historical_proxy_validation import FIVE_PROXY_SIGNALS
 from research.openap_93.official_portfolio_similarity import (
     build_official_spreads,
     build_official_long_short_spreads,
@@ -10,6 +13,7 @@ from research.openap_93.official_portfolio_similarity import (
     compare_official_and_proxy,
     normalise_official_deciles,
     normalise_official_long_short,
+    download_official_long_short,
 )
 
 
@@ -50,6 +54,22 @@ def test_official_long_short_wide_normalises_requested_signals() -> None:
     assert set(official["signal"]) == {"DivSeason", "AnnouncementReturn"}
     spreads = build_official_long_short_spreads(official)
     assert spreads["official_spread_return"].tolist() == pytest.approx([0.10, -0.02, 0.04, 0.03])
+
+
+def test_official_long_short_can_load_staged_csv(tmp_path: Path) -> None:
+    source = tmp_path / "PredictorLSretWide.csv"
+    pd.DataFrame(
+        {
+            "yyyymm": [202001],
+            "DivSeason": [0.10],
+            "AnnouncementReturn": [0.04],
+            "EarningsStreak": [0.03],
+            "IndRetBig": [0.02],
+            "DelNetFin": [-0.01],
+        }
+    ).to_csv(source, index=False)
+    result = download_official_long_short(output_dir=tmp_path / "out", archive_path=source)
+    assert set(result["signal"]) == set(FIVE_PROXY_SIGNALS)
 
 
 def test_proxy_deciles_use_next_formation_month_return() -> None:

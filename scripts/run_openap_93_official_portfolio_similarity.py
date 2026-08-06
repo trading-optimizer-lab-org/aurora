@@ -20,6 +20,7 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--release", default="202510")
     parser.add_argument("--official-deciles", default="")
+    parser.add_argument("--official-long-short", default="")
     args = parser.parse_args()
     run_official_portfolio_similarity(
         proxy_panel=args.proxy_panel,
@@ -27,6 +28,7 @@ def main() -> None:
         output_dir=args.output_dir,
         release=args.release,
         official_deciles=args.official_deciles or None,
+        official_long_short=args.official_long_short or None,
     )
 
 

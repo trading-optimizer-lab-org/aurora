@@ -23,6 +23,16 @@ on:
         required: true
         default: "openap-93-max-free-full-results"
         type: string
+      official_reference_run_id:
+        description: Successful run containing the staged official OpenAP long-short reference
+        required: true
+        default: "31076097192"
+        type: string
+      official_reference_artifact_name:
+        description: Artifact containing official_portfolio_similarity/official_long_short.csv
+        required: true
+        default: "openap-five-proxy-historical-validation-results"
+        type: string
       crosswalk_artifact_run_id:
         description: Optional run containing an authorized PERMNO-to-symbol crosswalk
         required: false
@@ -113,6 +123,14 @@ jobs:
           run-id: ${{ inputs.public_inputs_run_id || '30995267332' }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
+      - name: Download staged official OpenAP reference artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.official_reference_artifact_name || 'openap-five-proxy-historical-validation-results' }}
+          path: inputs/official_archive
+          run-id: ${{ inputs.official_reference_run_id || '31076097192' }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
       - name: Download optional crosswalk artifact
         if: ${{ inputs.crosswalk_artifact_run_id != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -152,6 +170,15 @@ jobs:
           curl --fail --location --retry 3 \
             --output inputs/earnings/eps_history.csv \
             https://www.dolthub.com/csv/post-no-preference/earnings/master/eps_history
+      - name: Stage official OpenAP long-short reference
+        run: |
+          mkdir -p inputs/official
+          source=$(find inputs/official_archive -type f \
+            \( -name 'official_long_short.csv' -o -name 'PredictorLSretWide.csv' \) \
+            -print -quit)
+          test -n "$source"
+          cp "$source" inputs/official/PredictorLSretWide.csv
+          test -s inputs/official/PredictorLSretWide.csv
       - name: Run causal historical validation
         run: |
           args=(--base-db "${{ steps.locate.outputs.db }}" --reference "${{ steps.locate.outputs.reference }}" --output-dir outputs/openap_five_proxy_historical_validation --min-pairs "${{ inputs.min_pairs || '30' }}")
@@ -169,6 +196,7 @@ jobs:
             --monthly outputs/openap_five_proxy_historical_validation/proxy_realized_monthly.csv \
             --output-dir outputs/openap_five_proxy_historical_validation/official_portfolio_similarity \
             --release 202510,202410,202408 \
+            --official-long-short inputs/official/PredictorLSretWide.csv \
             $([[ -n "${{ steps.locate.outputs.official }}" ]] && printf '%s' "--official-deciles ${{ steps.locate.outputs.official }}")
       - name: Verify fail-closed invariants
         run: |
