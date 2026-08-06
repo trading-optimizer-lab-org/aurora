@@ -30,6 +30,7 @@ IMPLEMENTED_FAMILIES = frozenset(
         "asymmetric_trend_override_reversal",
         "drawdown_recovery_override_reversal",
         "quiet_bull_recovery_override_reversal",
+        "recovery_trend_breakout_majority",
         "financial_conditions_regime",
         "monetary_inflation_regime",
         "overnight_futures_proxy",
@@ -747,6 +748,111 @@ def _price_score(
             & bull_return.notna()
             & realized_volatility.notna()
         )
+    if family == "recovery_trend_breakout_majority":
+        rsi_window = int(parameters["rsi_window"])
+        delta = close.diff()
+        gain = delta.clip(lower=0.0).ewm(
+            alpha=1.0 / rsi_window,
+            adjust=False,
+            min_periods=rsi_window,
+        ).mean()
+        loss = (-delta.clip(upper=0.0)).ewm(
+            alpha=1.0 / rsi_window,
+            adjust=False,
+            min_periods=rsi_window,
+        ).mean()
+        relative_strength = gain / loss.replace(0.0, np.nan)
+        rsi = 100.0 - 100.0 / (1.0 + relative_strength)
+        rsi = rsi.mask((loss == 0.0) & (gain > 0.0), 100.0)
+        rsi = rsi.mask((gain == 0.0) & (loss > 0.0), 0.0)
+        rsi = rsi.mask((gain == 0.0) & (loss == 0.0), 50.0)
+
+        rsi_trend_return = (
+            close / close.shift(int(parameters["rsi_trend_window"])) - 1.0
+        )
+        rsi_component = np.sign(rsi_trend_return)
+        rsi_component = rsi_component.where(
+            rsi > float(parameters["lower"]), 1.0
+        )
+        rsi_component = rsi_component.where(
+            rsi < float(parameters["upper"]), -1.0
+        )
+        reversal_return = (
+            close / close.shift(int(parameters["reversal_window"])) - 1.0
+        )
+        reversal_trend_return = (
+            close / close.shift(int(parameters["reversal_trend_window"])) - 1.0
+        )
+        reversal_component = np.sign(reversal_trend_return)
+        reversal_threshold = (
+            float(parameters["reversal_threshold_pct"]) / 100.0
+        )
+        reversal_component = reversal_component.where(
+            reversal_return.abs() < reversal_threshold,
+            -np.sign(reversal_return),
+        )
+        recovery_score = rsi_component + reversal_component
+
+        drawdown_lookback = int(parameters["drawdown_lookback"])
+        rolling_peak = close.rolling(
+            drawdown_lookback,
+            min_periods=drawdown_lookback,
+        ).max()
+        drawdown = close / rolling_peak - 1.0
+        recent_deep_drawdown = drawdown.rolling(
+            int(parameters["recovery_memory_window"]),
+            min_periods=1,
+        ).min() <= -(float(parameters["drawdown_trigger_pct"]) / 100.0)
+        recovery_return = (
+            close / close.shift(int(parameters["recovery_window"])) - 1.0
+        )
+        recovery_override = recent_deep_drawdown & (
+            recovery_return
+            > float(parameters["recovery_threshold_pct"]) / 100.0
+        )
+        recovery_score = recovery_score.where(~recovery_override, 1.0)
+        recovery_valid = (
+            rsi.notna()
+            & rsi_trend_return.notna()
+            & reversal_return.notna()
+            & reversal_trend_return.notna()
+            & rolling_peak.notna()
+            & recovery_return.notna()
+        )
+        recovery_vote = _state_from_score(recovery_score.where(recovery_valid))
+
+        trend_components = [
+            np.sign(close / close.shift(int(horizon)) - 1.0)
+            for horizon in parameters["trend_horizons"]
+        ]
+        trend_score = pd.concat(trend_components, axis=1).sum(
+            axis=1,
+            min_count=len(trend_components),
+        )
+        trend_vote = _state_from_score(trend_score)
+
+        breakout_window = int(parameters["breakout_window"])
+        prior_high = close.shift(1).rolling(
+            breakout_window,
+            min_periods=breakout_window,
+        ).max()
+        prior_low = close.shift(1).rolling(
+            breakout_window,
+            min_periods=breakout_window,
+        ).min()
+        breakout_valid = prior_high.notna() & prior_low.notna()
+        breakout_vote = _state_from_events(
+            pd.DatetimeIndex(close.index),
+            breakout_valid & (close > prior_high),
+            breakout_valid & (close < prior_low),
+            eligible=breakout_valid,
+        )
+
+        valid = recovery_valid & trend_score.notna() & breakout_valid
+        majority_score = recovery_vote + trend_vote + breakout_vote
+        if (majority_score.loc[valid] == 0).any():
+            raise CandidateRejected("EVEN_ENSEMBLE_VOTE")
+        return majority_score.astype(float).where(valid)
     if family == "trend_ensemble":
         components = []
         for horizon in parameters["horizons"]:
@@ -1188,6 +1294,7 @@ def candidate_decisions(
             "asymmetric_trend_override_reversal",
             "drawdown_recovery_override_reversal",
             "quiet_bull_recovery_override_reversal",
+            "recovery_trend_breakout_majority",
             "realized_volatility_state",
         "overnight_futures_proxy",
         "volatility_conditioned_trend",

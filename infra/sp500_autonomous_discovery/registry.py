@@ -1397,12 +1397,140 @@ def _quiet_bull_recovery_override_candidates(
     return tuple(candidates)
 
 
+def _recovery_trend_breakout_majority_candidates(
+    package: CampaignPackage,
+    batch_id: int,
+    count: int,
+) -> tuple[dict[str, Any], ...]:
+    """Diversify the strongest recovery rule with trend and breakout votes."""
+
+    if count != 96:
+        raise ValueError("RECOVERY_TREND_BREAKOUT_REQUIRES_96_CANDIDATES")
+    usable = [
+        row
+        for row in package.candidates
+        if str(row.get("family")) in IMPLEMENTED_FAMILIES
+        and set(row.get("required_datasets", ())).issubset({"DS001", "DS002"})
+    ]
+    if not usable:
+        raise RuntimeError("NO_USABLE_CAUSAL_TEMPLATES")
+    base = next(
+        (row for row in usable if str(row.get("family")) == "short_horizon_reversal"),
+        usable[0],
+    )
+    generation = batch_id - 22
+    core_variants = (
+        {
+            "rsi_window": 4,
+            "lower": 28,
+            "upper": 72,
+            "rsi_trend_window": 220,
+            "rsi_weight": 1,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 0.825,
+            "reversal_trend_window": 40,
+            "reversal_weight": 1,
+            "drawdown_lookback": 252,
+            "drawdown_trigger_pct": 22.5,
+            "recovery_window": 20,
+            "recovery_threshold_pct": round(2.25 + generation * 0.25, 4),
+        },
+        {
+            "rsi_window": 4,
+            "lower": 26,
+            "upper": 74,
+            "rsi_trend_window": 180,
+            "rsi_weight": 1,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 0.875,
+            "reversal_trend_window": 40,
+            "reversal_weight": 1,
+            "drawdown_lookback": 252,
+            "drawdown_trigger_pct": 22.5,
+            "recovery_window": 20,
+            "recovery_threshold_pct": round(2.25 + generation * 0.25, 4),
+        },
+    )
+    trend_horizon_sets = (
+        [20, 63, 126],
+        [20, 63, 126, 252],
+        [63, 126, 252],
+        [20, 126, 252],
+        [10, 20, 63, 126],
+        [20, 63, 126, 189, 252],
+    )
+    parameters_list = [
+        {
+            **core,
+            "recovery_memory_window": recovery_memory_window,
+            "trend_horizons": trend_horizons,
+            "breakout_window": breakout_window,
+        }
+        for core in core_variants
+        for recovery_memory_window in (63, 189)
+        for trend_horizons in trend_horizon_sets
+        for breakout_window in (20, 50, 100, 252)
+    ]
+    candidates: list[dict[str, Any]] = []
+    for index, parameters in enumerate(parameters_list):
+        candidate = json.loads(json.dumps(base))
+        candidate.update(
+            {
+                "instrument": "SPY",
+                "cash_allowed": False,
+                "partial_exposure_allowed": False,
+                "leverage_allowed": False,
+                "volatility_scaling_allowed": False,
+                "pyramiding_allowed": False,
+                "multiple_assets_in_portfolio": False,
+                "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
+                "variant_label": (
+                    f"autonomous_recovery_trend_breakout_batch_{batch_id}_{index}"
+                ),
+                "family": "recovery_trend_breakout_majority",
+                "family_name": "Recovery Trend Breakout Majority",
+                "parameters": parameters,
+                "required_datasets": ["DS001", "DS002"],
+                "feature_formulas": [
+                    "majority vote of causal recovery reversal, multi-horizon trend, and prior-range breakout"
+                ],
+                "long_rule": "at least two of three causal component states are long",
+                "short_rule": "at least two of three causal component states are short",
+                "features": ["AUTO_RECOVERY_TREND_BREAKOUT_MAJORITY"],
+                "warmup_rule": (
+                    "No signal before every causal input required by all three votes is defined."
+                ),
+                "known_failure_modes": (
+                    "Train-only diversified ensemble; must pass every frozen robustness gate."
+                ),
+                "economic_sign_rationale": (
+                    "Independent reversal, trend, and breakout evidence reduces dependence on one market mechanism."
+                ),
+                "priority_score": max(1, 100 - index),
+                "evidence_track": "pre_2011_evidence",
+                "selection_role": "autonomous_pre_registered_candidate",
+            }
+        )
+        candidate["canonical_hash"] = canonical_rule_hash(candidate)
+        assert_contract(candidate)
+        candidates.append(candidate)
+    if len(candidates) != count or len(
+        {row["canonical_hash"] for row in candidates}
+    ) != count:
+        raise RuntimeError("RECOVERY_TREND_BREAKOUT_COUNT_OR_HASH_MISMATCH")
+    return tuple(candidates)
+
+
 def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, Any], ...]:
     """Generate a reproducible, pre-registered batch from causal templates."""
 
     if batch_id < 0 or count < 1:
         raise ValueError("INVALID_BATCH_ARGUMENT")
     package = base_package()
+    if batch_id >= 22:
+        return _recovery_trend_breakout_majority_candidates(
+            package, batch_id, count
+        )
     if batch_id >= 21:
         return _quiet_bull_recovery_override_candidates(package, batch_id, count)
     if batch_id >= 19:
