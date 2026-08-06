@@ -326,18 +326,51 @@ def attach_prior_closes(events: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFr
         result["prior_close"] = np.nan
     result["event_at"] = pd.to_datetime(result["event_at"], errors="coerce", utc=True)
     price_frame = prices.copy()
-    price_frame["date"] = pd.to_datetime(price_frame["date"], errors="coerce")
+    price_frame["date"] = pd.to_datetime(
+        price_frame["date"], errors="coerce"
+    ).astype("datetime64[ns]")
     price_column = "close" if "close" in price_frame else "adj_close"
     price_frame[price_column] = pd.to_numeric(price_frame[price_column], errors="coerce")
-    for index, event in result.loc[result["prior_close"].isna()].iterrows():
-        event_date = pd.Timestamp(event["event_at"]).tz_convert(None).normalize()
-        history = price_frame.loc[
-            price_frame["symbol"].eq(event["symbol"])
-            & price_frame["date"].lt(event_date)
-            & price_frame[price_column].notna()
-        ].sort_values("date")
-        if not history.empty:
-            result.at[index, "prior_close"] = float(history[price_column].iloc[-1])
+    missing = result.loc[
+        result["prior_close"].isna() & result["event_at"].notna()
+    ].copy()
+    if missing.empty:
+        return result
+    missing["_row_id"] = missing.index
+    missing["event_date"] = (
+        missing["event_at"].dt.tz_convert(None).dt.normalize()
+    ).astype("datetime64[ns]")
+    price_frame = price_frame.loc[
+        price_frame["symbol"].notna()
+        & price_frame["date"].notna()
+        & price_frame[price_column].notna(),
+        ["symbol", "date", price_column],
+    ].copy()
+    aligned_parts: list[pd.DataFrame] = []
+    price_groups = {
+        str(symbol): group.sort_values("date")
+        for symbol, group in price_frame.groupby("symbol", sort=False)
+    }
+    for symbol, group in missing.groupby("symbol", sort=False):
+        history = price_groups.get(str(symbol))
+        if history is None or history.empty:
+            continue
+        aligned = pd.merge_asof(
+            group[["_row_id", "event_date"]].sort_values("event_date"),
+            history[["date", price_column]].sort_values("date"),
+            left_on="event_date",
+            right_on="date",
+            direction="backward",
+            allow_exact_matches=False,
+        )
+        aligned_parts.append(aligned[["_row_id", price_column]])
+    if aligned_parts:
+        aligned = pd.concat(aligned_parts, ignore_index=True).dropna(
+            subset=[price_column]
+        )
+        result.loc[aligned["_row_id"].astype(int), "prior_close"] = aligned[
+            price_column
+        ].to_numpy(dtype=float)
     return result
 
 
@@ -355,4 +388,11 @@ def build_earnings_events(
     populated = [frame for frame in frames if not frame.empty]
     if not populated:
         return _empty_events()
-    return attach_prior_closes(pd.concat(populated, ignore_index=True), prices)
+    events = pd.concat(populated, ignore_index=True)
+    yahoo_missing = events["source_id"].eq("yahoo_earnings_actual") & events[
+        "prior_close"
+    ].isna()
+    if yahoo_missing.any():
+        yahoo = attach_prior_closes(events.loc[yahoo_missing].copy(), prices)
+        events.loc[yahoo.index, "prior_close"] = yahoo["prior_close"]
+    return events
