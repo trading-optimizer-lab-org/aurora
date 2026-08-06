@@ -274,6 +274,56 @@ def test_volatility_regime_rule_is_causal_and_fully_covered() -> None:
     assert result.missing_fraction == 0.0
 
 
+def test_batch_nine_adds_unique_overnight_tug_rules() -> None:
+    batch_eight = registry.generate_candidates(8, count=96)
+    batch_nine = registry.generate_candidates(9, count=96)
+    assert len(batch_nine) == 96
+    assert {row["family"] for row in batch_nine} == {"overnight_tug_reversal_vote"}
+    assert all(row["position_values"] == [-1, 1] for row in batch_nine)
+    assert all(row["cash_allowed"] is False for row in batch_nine)
+    assert not {row["canonical_hash"] for row in batch_eight}.intersection(
+        row["canonical_hash"] for row in batch_nine
+    )
+
+
+def test_overnight_tug_rule_is_causal_and_fully_covered() -> None:
+    index = pd.date_range("2000-01-03", periods=300, freq="B")
+    close = pd.Series(np.linspace(100.0, 200.0, len(index)), index=index)
+    adjusted_open = close.shift(1).fillna(close.iloc[0]) * 1.001
+    ledger = pd.DataFrame(
+        {
+            "tr_close": close,
+            "tr_open": adjusted_open,
+            "open": adjusted_open,
+            "high": pd.concat([close, adjusted_open], axis=1).max(axis=1) + 1.0,
+            "low": pd.concat([close, adjusted_open], axis=1).min(axis=1) - 1.0,
+            "volume": 1000.0,
+            "long_return": close.pct_change().fillna(0.0),
+            "short_return": -close.pct_change().fillna(0.0),
+        },
+        index=index,
+    )
+    candidate = registry.generate_candidates(9, count=1)[0]
+    result = candidate_decisions(
+        candidate,
+        PreparedMarketData(
+            ledger=ledger,
+            series={},
+            available_dataset_ids=frozenset({"DS001", "DS002"}),
+            rejected_datasets={},
+            receipts=(),
+            split="train",
+        ),
+    )
+    expected_warmup = max(
+        int(candidate["parameters"]["rsi_trend_window"]),
+        int(candidate["parameters"]["reversal_trend_window"]),
+        int(candidate["parameters"]["tug_lookback"]),
+    )
+    assert result.first_evaluable_date == index[expected_warmup].date().isoformat()
+    assert result.missing_fraction == 0.0
+
+
 def test_complete_rsi_definition_preserves_coverage_during_one_way_market() -> None:
     index = pd.date_range("2000-01-03", periods=300, freq="B")
     close = pd.Series(np.linspace(100.0, 200.0, len(index)), index=index)

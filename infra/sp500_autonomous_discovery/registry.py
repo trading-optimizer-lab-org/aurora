@@ -679,12 +679,99 @@ def _volatility_regime_candidates(
     return tuple(candidates)
 
 
+def _overnight_tug_reversal_candidates(
+    package: CampaignPackage,
+    batch_id: int,
+    count: int,
+) -> tuple[dict[str, Any], ...]:
+    """Combine the strongest train reversal blend with the independent V2 tug signal."""
+
+    usable = [
+        row
+        for row in package.candidates
+        if str(row.get("family")) in IMPLEMENTED_FAMILIES
+        and set(row.get("required_datasets", ())).issubset({"DS001", "DS002"})
+    ]
+    if not usable:
+        raise RuntimeError("NO_USABLE_CAUSAL_TEMPLATES")
+    base = next(
+        (row for row in usable if str(row.get("family")) == "short_horizon_reversal"),
+        usable[0],
+    )
+    generation = batch_id - 9
+    grid = [
+        {
+            "rsi_window": rsi_window,
+            "lower": lower,
+            "upper": 100 - lower,
+            "rsi_trend_window": rsi_trend_window,
+            "reversal_window": reversal_window,
+            "reversal_threshold_pct": round(threshold + generation * 0.025, 4),
+            "reversal_trend_window": reversal_trend_window,
+            "rsi_weight": rsi_weight,
+            "reversal_weight": reversal_weight,
+            "tug_lookback": tug_lookback,
+            "tug_weight": tug_weight,
+        }
+        for rsi_window in (3, 4, 5, 6)
+        for lower in (24, 26, 28, 30)
+        for rsi_trend_window in (160, 180, 200, 225)
+        for reversal_window in (3, 4, 5, 6)
+        for threshold in (0.7, 0.85, 1.0, 1.15)
+        for reversal_trend_window in (30, 40, 50, 60)
+        for rsi_weight, reversal_weight in ((1, 1), (2, 1), (1, 2))
+        for tug_lookback in (1, 2, 3, 5)
+        for tug_weight in (0.5, 1.0, 1.5, 2.0, 3.0)
+    ]
+    parameters_list = [grid[(index * len(grid)) // count] for index in range(count)]
+    candidates: list[dict[str, Any]] = []
+    for index, parameters in enumerate(parameters_list):
+        candidate = json.loads(json.dumps(base))
+        candidate.update(
+            {
+                "instrument": "SPY",
+                "cash_allowed": False,
+                "partial_exposure_allowed": False,
+                "leverage_allowed": False,
+                "volatility_scaling_allowed": False,
+                "pyramiding_allowed": False,
+                "multiple_assets_in_portfolio": False,
+                "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
+                "variant_label": f"autonomous_overnight_tug_batch_{batch_id}_{index}",
+                "family": "overnight_tug_reversal_vote",
+                "family_name": "Overnight Tug Reversal Vote",
+                "parameters": parameters,
+                "required_datasets": ["DS001", "DS002"],
+                "feature_formulas": [
+                    "weighted vote of causal RSI reversal, return reversal, and overnight-intraday tug"
+                ],
+                "long_rule": "weighted causal score_t > 0",
+                "short_rule": "weighted causal score_t < 0",
+                "features": ["AUTO_OVERNIGHT_TUG_REVERSAL_VOTE"],
+                "warmup_rule": "No signal before every causal input required by the rule is defined.",
+                "known_failure_modes": "Train-only cross-mechanism hypothesis; must pass every frozen robustness gate.",
+                "economic_sign_rationale": "Independent overnight and intraday information augments causal reversal signals.",
+                "priority_score": max(1, 100 - index),
+                "evidence_track": "pre_2011_evidence",
+                "selection_role": "autonomous_pre_registered_candidate",
+            }
+        )
+        candidate["canonical_hash"] = canonical_rule_hash(candidate)
+        assert_contract(candidate)
+        candidates.append(candidate)
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
+        raise RuntimeError("OVERNIGHT_TUG_CANDIDATE_COUNT_OR_HASH_MISMATCH")
+    return tuple(candidates)
+
+
 def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, Any], ...]:
     """Generate a reproducible, pre-registered batch from causal templates."""
 
     if batch_id < 0 or count < 1:
         raise ValueError("INVALID_BATCH_ARGUMENT")
     package = base_package()
+    if batch_id >= 9:
+        return _overnight_tug_reversal_candidates(package, batch_id, count)
     if batch_id >= 8:
         return _volatility_regime_candidates(package, batch_id, count)
     if batch_id >= 7:
