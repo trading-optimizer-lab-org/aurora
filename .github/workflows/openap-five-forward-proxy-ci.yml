@@ -10,6 +10,8 @@ on:
       - "research/openap_93/**"
       - "scripts/run_openap_five_forward_proxies.py"
       - "tests/test_openap_93_forward_proxy_*.py"
+      - "tests/test_openap_93_five_proxy_validation.py"
+      - "tests/test_openap_93_official_portfolio_similarity.py"
   workflow_dispatch:
 
 jobs:
@@ -30,4 +32,6 @@ jobs:
         run: >-
           python -m pytest
           tests/test_openap_93_forward_proxy_*.py
+          tests/test_openap_93_five_proxy_validation.py
+          tests/test_openap_93_official_portfolio_similarity.py
           -q --tb=short
