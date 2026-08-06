@@ -12,6 +12,64 @@ from .registry import FidelityClass
 
 EVENT_IMPLEMENTED_SIGNALS = frozenset({"AgeIPO", "DivInit", "DivOmit", "DivSeason"})
 
+DIVSEASON_VARIANT_ID = "official_lags_frequency_inferred_v1"
+
+
+def _dividend_periods(dividend_months: Any) -> list[pd.Period]:
+    periods: list[pd.Period] = []
+    for value in dividend_months:
+        if value is None or pd.isna(value):
+            continue
+        periods.append(pd.Period(value, freq="M"))
+    return sorted(set(periods))
+
+
+def infer_dividend_frequency(dividend_months: Any) -> str:
+    """Infer payment frequency using completed dividend months only."""
+
+    periods = _dividend_periods(dividend_months)
+    if len(periods) < 2:
+        return "unknown"
+    gaps = np.diff([period.ordinal for period in periods]).astype(float)
+    recent_gaps = gaps[-12:]
+    median_gap = float(np.median(recent_gaps))
+    classifications = (
+        ("monthly", 1.0, 1.0),
+        ("quarterly", 3.0, 1.0),
+        ("semiannual", 6.0, 1.0),
+        ("annual", 12.0, 2.0),
+    )
+    for label, expected_gap, tolerance in classifications:
+        close = np.abs(recent_gaps - expected_gap) <= tolerance
+        if abs(median_gap - expected_gap) <= tolerance and float(close.mean()) >= 0.60:
+            return label
+    return "unknown"
+
+
+def dividend_season_value(
+    dividend_months: Any,
+    completed_month: str | pd.Period | pd.Timestamp,
+) -> float | None:
+    """Return the OpenAP-style expected-payment indicator for next month."""
+
+    through = pd.Period(completed_month, freq="M")
+    periods = [period for period in _dividend_periods(dividend_months) if period <= through]
+    if not periods:
+        return None
+    lags = {through.ordinal - period.ordinal for period in periods}
+    if not any(0 <= lag <= 11 for lag in lags):
+        return None
+    frequency = infer_dividend_frequency(periods)
+    if frequency == "monthly":
+        return None
+    eligible_lags = {
+        "quarterly": {2, 5, 8, 11},
+        "semiannual": {5, 11},
+        "annual": {11},
+        "unknown": {2, 5, 8, 11},
+    }[frequency]
+    return float(bool(lags.intersection(eligible_lags)))
+
 
 def _monthly_dividends(prices: pd.DataFrame, formation: pd.Timestamp) -> pd.DataFrame:
     frame = prices.copy()
@@ -104,11 +162,8 @@ def calculate_event_signals(
             or _omission(paid, completed_month, 12, 24)
         )
         pay_months = [period for period, value in paid.items() if value > 0]
-        expected = False
-        if pay_months:
-            offsets = [completed_month.ordinal - period.ordinal for period in pay_months]
-            expected = any(offset in {2, 5, 8, 11} for offset in offsets)
-        season = float(expected) if paid.tail(12).sum() > 0 else None
+        dividend_frequency = infer_dividend_frequency(pay_months)
+        season = dividend_season_value(pay_months, completed_month)
 
         first = pd.to_datetime(
             getattr(item, "first_clean_price_date", None), errors="coerce"
@@ -175,6 +230,8 @@ def calculate_event_signals(
                 and not 3 <= months_since_listing <= 36
             ):
                 missing_reason = "not_applicable:listing_age_outside_3_36_months"
+            elif signal == "DivSeason" and dividend_frequency == "monthly":
+                missing_reason = "not_applicable:monthly_dividend_payer"
             else:
                 missing_reason = "insufficient_event_history"
             rows.append(
@@ -192,11 +249,17 @@ def calculate_event_signals(
                             FidelityClass.VALIDATED_PROXY,
                         }
                     ),
+                    "variant_id": (
+                        DIVSEASON_VARIANT_ID if signal == "DivSeason" else formula
+                    ),
                     "formula_id": formula,
                     "source_ids": "yahoo_public",
                     "observation_count": int(len(paid)),
                     "reason_if_missing": missing_reason,
                     "caveat": caveat,
+                    "dividend_frequency": (
+                        dividend_frequency if signal == "DivSeason" else None
+                    ),
                 }
             )
     return pd.DataFrame(rows)
