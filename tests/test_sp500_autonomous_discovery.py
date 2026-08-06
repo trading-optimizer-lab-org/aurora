@@ -792,6 +792,35 @@ def test_validation_workflow_requests_only_the_frozen_validation_period() -> Non
     assert dates.max() <= pd.Timestamp("2020-12-31")
 
 
+def test_exploratory_validation_can_reuse_verified_stooq_windows() -> None:
+    workflow = yaml.safe_load(
+        Path(".github/workflows/sp500-autonomous-discovery.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    inputs = workflow[True]["workflow_dispatch"]["inputs"]
+    assert inputs["validation_stooq_run_id"]["default"] == ""
+
+    steps = workflow["jobs"]["exploratory_validation"]["steps"]
+    download = next(
+        step
+        for step in steps
+        if step["name"] == "Download reusable validation Stooq windows"
+    )
+    merge = next(
+        step for step in steps if step["name"] == "Merge reusable validation Stooq windows"
+    )
+    prepare = next(
+        step for step in steps if step["name"] == "Prepare bounded validation data"
+    )
+    assert "sp500-ls-stooq-window-${VALIDATION_STOOQ_RUN_ID}-*" in download["run"]
+    assert "--expected-windows 82" in merge["run"]
+    assert "--requested-start 2011-01-01" in merge["run"]
+    assert "--requested-end 2020-12-31" in merge["run"]
+    assert "SP500_STOOQ_HISTORY_CSV" in prepare["run"]
+    assert "SP500_STOOQ_HISTORY_MANIFEST" in prepare["run"]
+
+
 def test_block_sum_bootstrap_matches_original_sampling(monkeypatch) -> None:
     repetitions = 100
     monkeypatch.setattr(autonomous_statistics, "BOOTSTRAP_REPETITIONS", repetitions)

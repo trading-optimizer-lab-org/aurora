@@ -83,6 +83,11 @@ on:
         required: false
         default: ""
         type: string
+      validation_stooq_run_id:
+        description: Prior verified run containing bounded validation Stooq windows
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -522,11 +527,37 @@ jobs:
           set -euo pipefail
           gh run download "${{ inputs.train_run_id }}" --repo "$GITHUB_REPOSITORY" \
             --name "${{ inputs.train_results_artifact }}" --dir "$RUNNER_TEMP/train-results"
+      - name: Download reusable validation Stooq windows
+        if: inputs.validation_stooq_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATION_STOOQ_RUN_ID: ${{ inputs.validation_stooq_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$VALIDATION_STOOQ_RUN_ID" =~ ^[0-9]+$ ]]
+          gh run download "$VALIDATION_STOOQ_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --pattern "sp500-ls-stooq-window-${VALIDATION_STOOQ_RUN_ID}-*" \
+            --dir "$RUNNER_TEMP/stooq-windows"
+      - name: Merge reusable validation Stooq windows
+        if: inputs.validation_stooq_run_id != ''
+        run: |
+          set -euo pipefail
+          python scripts/merge_sp500_stooq_windows.py \
+            --input-root "$RUNNER_TEMP/stooq-windows" \
+            --output-dir "$RUNNER_TEMP/stooq-merged" \
+            --expected-windows 82 \
+            --requested-start 2011-01-01 \
+            --requested-end 2020-12-31
       - name: Prepare bounded validation data
         env:
           RUNNER_TEMP_VALUE: ${{ runner.temp }}
+          VALIDATION_STOOQ_RUN_ID: ${{ inputs.validation_stooq_run_id }}
         run: |
           set -euo pipefail
+          if [[ -n "$VALIDATION_STOOQ_RUN_ID" ]]; then
+            export SP500_STOOQ_HISTORY_CSV="$RUNNER_TEMP/stooq-merged/stooq_spy_us_history.csv"
+            export SP500_STOOQ_HISTORY_MANIFEST="$RUNNER_TEMP/stooq-merged/stooq_sharded_manifest.json"
+          fi
           python - <<'PY'
           import os
           from pathlib import Path
