@@ -8,6 +8,7 @@ from aurora.research.openap_93.historical_proxy_validation import (
     _attach_formation_month_returns,
     _build_announcement_return,
     _build_earnings_streak,
+    _build_earnings_streak_from_events,
     _rank_buckets,
     compare_to_reference,
 )
@@ -231,3 +232,62 @@ def test_earnings_streak_expires_after_six_months() -> None:
 
     assert pd.notna(by_month.loc[pd.Timestamp("2020-04-01")])
     assert pd.isna(by_month.loc[pd.Timestamp("2020-11-01")])
+
+
+def test_yahoo_event_history_builds_same_prospective_earnings_streak_variant() -> None:
+    monthly = pd.DataFrame(
+        {
+            "symbol": ["AAA", "AAA"],
+            "completed_month": pd.to_datetime(["2020-04-30", "2020-11-30"]),
+            "formation_month": pd.to_datetime(["2020-05-01", "2020-12-01"]),
+        }
+    )
+    events = pd.DataFrame(
+        {
+            "symbol": ["AAA", "AAA"],
+            "event_at": pd.to_datetime(
+                ["2020-01-10T13:00:00Z", "2020-04-10T13:00:00Z"], utc=True
+            ),
+            "reported_eps": [1.10, 1.30],
+            "consensus_eps": [1.00, 1.10],
+            "prior_close": [10.0, 10.0],
+            "source_id": ["yahoo_earnings_actual", "yahoo_earnings_actual"],
+        }
+    )
+
+    result = _build_earnings_streak_from_events(monthly, events)
+    by_month = result.set_index("formation_month")
+
+    assert by_month.loc[pd.Timestamp("2020-05-01"), "proxy_value"] == pytest.approx(0.02)
+    assert by_month.loc[pd.Timestamp("2020-05-01"), "variant_id"] == (
+        "yahoo_earnings_actual_price_scaled_v1"
+    )
+    assert pd.isna(by_month.loc[pd.Timestamp("2020-12-01"), "proxy_value"])
+
+
+def test_announcement_return_keeps_yahoo_and_sec_variants_separate() -> None:
+    dates = pd.date_range("2020-01-06", periods=6, freq="B")
+    prices = pd.DataFrame(
+        {"symbol": ["AAA"] * 6, "date": dates, "adj_close": range(100, 106)}
+    )
+    events = pd.DataFrame(
+        {
+            "symbol": ["AAA", "AAA"],
+            "event_at": pd.to_datetime(
+                ["2020-01-09T13:00:00Z", "2020-01-09T13:00:00Z"], utc=True
+            ),
+            "source_id": ["sec_8k_item_202", "yahoo_earnings_actual"],
+        }
+    )
+    monthly = pd.DataFrame(
+        {
+            "symbol": ["AAA"],
+            "completed_month": [pd.Timestamp("2020-01-31")],
+            "formation_month": [pd.Timestamp("2020-02-01")],
+        }
+    )
+    master = pd.DataFrame({"symbol": ["AAA"], "cik": [1]})
+
+    result = _build_announcement_return(monthly, events, prices, None, master)
+
+    assert set(result["variant_id"]) == {"sec_8k_item_202", "yahoo_earnings_actual"}
