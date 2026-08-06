@@ -772,6 +772,21 @@ def test_every_runtime_consumer_downloads_the_same_wheelhouse_first() -> None:
         )
 
 
+def test_prepare_data_retries_the_critical_wheelhouse_download() -> None:
+    workflow = _workflow()
+    download = next(
+        step
+        for step in workflow["jobs"]["prepare_data"]["steps"]
+        if step.get("name") == "Download immutable wheelhouse"
+    )
+    assert download["uses"] == "./.github/actions/download-artifact-retry"
+    assert download["with"] == {
+        "artifact-name": "${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}",
+        "output-dir": "${{ runner.temp }}/wheelhouse",
+        "attempts": "6",
+    }
+
+
 def test_reusable_workflow_can_reuse_exact_prepared_artifact() -> None:
     workflow = _workflow()
     prepared = workflow["jobs"]["prepare_data"]

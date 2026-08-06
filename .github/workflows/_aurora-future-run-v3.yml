@@ -545,10 +545,11 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Download immutable wheelhouse
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: ./.github/actions/download-artifact-retry
         with:
-          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
-          path: ${{ runner.temp }}/wheelhouse
+          artifact-name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          output-dir: ${{ runner.temp }}/wheelhouse
+          attempts: "6"
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
