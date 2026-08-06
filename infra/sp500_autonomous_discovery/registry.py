@@ -2102,12 +2102,121 @@ def _recovery_internal_bar_strength_candidates(
     return tuple(candidates)
 
 
+def _recovery_multi_horizon_candidates(
+    package: CampaignPackage,
+    batch_id: int,
+    count: int,
+) -> tuple[dict[str, Any], ...]:
+    """Combine recovery reversal with thresholded multi-horizon reversal."""
+
+    if count != 96:
+        raise ValueError("RECOVERY_MULTI_HORIZON_REQUIRES_96_CANDIDATES")
+    usable = [
+        row
+        for row in package.candidates
+        if str(row.get("family")) in IMPLEMENTED_FAMILIES
+        and set(row.get("required_datasets", ())).issubset({"DS001", "DS002"})
+    ]
+    if not usable:
+        raise RuntimeError("NO_USABLE_CAUSAL_TEMPLATES")
+    base = next(
+        (row for row in usable if str(row.get("family")) == "short_horizon_reversal"),
+        usable[0],
+    )
+    generation = batch_id - 28
+    core_variants = (
+        {
+            "rsi_window": 4,
+            "lower": 28,
+            "upper": 72,
+            "rsi_trend_window": 220,
+            "rsi_weight": 1.0,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 0.825,
+            "reversal_trend_window": 40,
+            "reversal_weight": 1.0,
+            "drawdown_lookback": 252,
+            "drawdown_trigger_pct": 22.5,
+            "recovery_memory_window": recovery_memory_window,
+            "recovery_window": 20,
+            "recovery_threshold_pct": 2.25,
+        }
+        for recovery_memory_window in (63, 189)
+    )
+    parameters_list = [
+        {
+            **core,
+            "multi_horizons": list(horizons),
+            "multi_threshold_pct": round(threshold + generation * 0.025, 4),
+            "multi_reversal_weight": weight,
+        }
+        for core in core_variants
+        for horizons in ((1, 2), (1, 3, 5), (2, 3, 5), (1, 2, 3, 5))
+        for threshold in (0.0, 0.25, 0.5, 1.0)
+        for weight in (0.5, 1.5, 3.0)
+    ]
+    candidates: list[dict[str, Any]] = []
+    for index, parameters in enumerate(parameters_list):
+        candidate = json.loads(json.dumps(base))
+        candidate.update(
+            {
+                "instrument": "SPY",
+                "cash_allowed": False,
+                "partial_exposure_allowed": False,
+                "leverage_allowed": False,
+                "volatility_scaling_allowed": False,
+                "pyramiding_allowed": False,
+                "multiple_assets_in_portfolio": False,
+                "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
+                "variant_label": (
+                    f"autonomous_recovery_multi_horizon_batch_{batch_id}_{index}"
+                ),
+                "family": "recovery_multi_horizon_reversal_vote",
+                "family_name": "Recovery Multi-Horizon Reversal Vote",
+                "parameters": parameters,
+                "required_datasets": ["DS001", "DS002"],
+                "feature_formulas": [
+                    "causal recovery reversal plus thresholded mean reversal across declared price horizons"
+                ],
+                "long_rule": (
+                    "weighted recovery-reversal and negative multi-horizon return score is positive, or recovery is confirmed"
+                ),
+                "short_rule": (
+                    "weighted recovery-reversal and positive multi-horizon return score is negative outside recovery"
+                ),
+                "features": ["AUTO_RECOVERY_MULTI_HORIZON_REVERSAL_VOTE"],
+                "warmup_rule": (
+                    "No signal before recovery, RSI, and every declared return horizon are defined."
+                ),
+                "known_failure_modes": (
+                    "Correlated horizons can duplicate the base reversal signal; canonical and signal-level dedupe remain mandatory."
+                ),
+                "economic_sign_rationale": (
+                    "Price pressure measured across several short horizons can identify temporary overreaction more robustly than one horizon alone."
+                ),
+                "priority_score": max(1, 100 - index),
+                "evidence_track": "pre_2011_evidence",
+                "selection_role": "autonomous_pre_registered_candidate",
+            }
+        )
+        candidate["canonical_hash"] = canonical_rule_hash(candidate)
+        assert_contract(candidate)
+        candidates.append(candidate)
+    if len(candidates) != count or len(
+        {row["canonical_hash"] for row in candidates}
+    ) != count:
+        raise RuntimeError("RECOVERY_MULTI_HORIZON_COUNT_OR_HASH_MISMATCH")
+    return tuple(candidates)
+
+
 def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, Any], ...]:
     """Generate a reproducible, pre-registered batch from causal templates."""
 
     if batch_id < 0 or count < 1:
         raise ValueError("INVALID_BATCH_ARGUMENT")
     package = base_package()
+    if batch_id >= 28:
+        return _recovery_multi_horizon_candidates(package, batch_id, count)
     if batch_id >= 27:
         return _recovery_internal_bar_strength_candidates(package, batch_id, count)
     if batch_id >= 26:

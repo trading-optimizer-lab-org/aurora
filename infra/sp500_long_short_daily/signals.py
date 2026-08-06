@@ -36,6 +36,7 @@ IMPLEMENTED_FAMILIES = frozenset(
         "recovery_overnight_tug_vote",
         "recovery_turn_month_vote",
         "recovery_internal_bar_strength_vote",
+        "recovery_multi_horizon_reversal_vote",
         "financial_conditions_regime",
         "monetary_inflation_regime",
         "overnight_futures_proxy",
@@ -1257,6 +1258,55 @@ def _price_score(
         )
         score = score.where(~recovery_override, 1.0)
         return score.where(base_score.notna() & smoothed_ibs.notna())
+    if family == "recovery_multi_horizon_reversal_vote":
+        base_score = _price_score(
+            {
+                "family": "drawdown_recovery_override_reversal",
+                "parameters": parameters,
+            },
+            data,
+            feature_frame=feature_frame,
+        )
+        horizon_returns = [
+            close / close.shift(int(horizon)) - 1.0
+            for horizon in parameters["multi_horizons"]
+        ]
+        mean_horizon_return = pd.concat(horizon_returns, axis=1).mean(
+            axis=1,
+            skipna=False,
+        )
+        threshold = float(parameters["multi_threshold_pct"]) / 100.0
+        multi_component = pd.Series(0.0, index=ledger.index)
+        multi_component = multi_component.where(
+            mean_horizon_return > -threshold, 1.0
+        )
+        multi_component = multi_component.where(
+            mean_horizon_return < threshold, -1.0
+        )
+        score = (
+            base_score
+            + float(parameters["multi_reversal_weight"]) * multi_component
+        )
+
+        drawdown_lookback = int(parameters["drawdown_lookback"])
+        rolling_peak = close.rolling(
+            drawdown_lookback,
+            min_periods=drawdown_lookback,
+        ).max()
+        drawdown = close / rolling_peak - 1.0
+        recent_deep_drawdown = drawdown.rolling(
+            int(parameters["recovery_memory_window"]),
+            min_periods=1,
+        ).min() <= -(float(parameters["drawdown_trigger_pct"]) / 100.0)
+        recovery_return = (
+            close / close.shift(int(parameters["recovery_window"])) - 1.0
+        )
+        recovery_override = recent_deep_drawdown & (
+            recovery_return
+            > float(parameters["recovery_threshold_pct"]) / 100.0
+        )
+        score = score.where(~recovery_override, 1.0)
+        return score.where(base_score.notna() & mean_horizon_return.notna())
     if family == "trend_ensemble":
         components = []
         for horizon in parameters["horizons"]:
@@ -1704,6 +1754,7 @@ def candidate_decisions(
             "recovery_overnight_tug_vote",
             "recovery_turn_month_vote",
             "recovery_internal_bar_strength_vote",
+            "recovery_multi_horizon_reversal_vote",
             "realized_volatility_state",
         "overnight_futures_proxy",
         "volatility_conditioned_trend",
