@@ -523,7 +523,9 @@ def _build_earnings_streak_from_events(
         & (np.sign(history["surprise"]) == np.sign(history["previous_surprise"]))
     )
     history["streak_value"] = history["surprise"].where(same_sign)
-    history["available_at"] = history["event_at"].dt.tz_convert(None)
+    history["available_at"] = history["event_at"].dt.tz_convert(None).astype(
+        "datetime64[ns]"
+    )
 
     rows: list[pd.DataFrame] = []
     for symbol, group in monthly.groupby("symbol", sort=False):
