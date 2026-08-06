@@ -876,8 +876,16 @@ def reconstruct_monthly_proxies(
     ff48_sic_codes: str | Path | pd.DataFrame | None = None,
     start_month: pd.Timestamp | None = None,
     end_month: pd.Timestamp | None = None,
+    signals: Iterable[str] | None = None,
 ) -> pd.DataFrame:
     """Reconstruct five proxies using data available by each prior month-end."""
+
+    requested = tuple(dict.fromkeys(signals or FIVE_PROXY_SIGNALS))
+    unknown = sorted(set(requested) - set(FIVE_PROXY_SIGNALS))
+    if unknown:
+        raise ValueError(f"Unknown OpenAP proxy signals: {unknown}")
+    if not requested:
+        raise ValueError("At least one OpenAP proxy signal is required")
 
     db = Path(base_db)
     if db.is_dir():
@@ -888,21 +896,31 @@ def reconstruct_monthly_proxies(
     con = duckdb.connect(str(db), read_only=True)
     try:
         master = _security_master(con)
-        submissions = _historical_submissions(con, master)
         monthly = _monthly_prices(con, start_month=start_month, end_month=end_month)
-        facts = _sec_facts(con, master)
-        daily_query = """
-            SELECT p.symbol, p.date, p.adj_close, p.dividends
-            FROM prices_daily_clean p
-            JOIN security_master s USING(symbol)
-            WHERE coalesce(s.ranking_eligible, false)
-              AND (? IS NULL OR p.date >= ?)
-              AND (? IS NULL OR p.date < ?)
-            ORDER BY p.symbol, p.date
-        """
-        start = start_month.to_period("M").start_time - pd.offsets.MonthBegin(1) if start_month is not None else None
-        end = end_month.to_period("M").end_time + pd.Timedelta(days=1) if end_month is not None else None
-        prices_daily = con.execute(daily_query, [start, start, end, end]).df()
+        needs_submissions = bool(
+            {"AnnouncementReturn", "EarningsStreak", "IndRetBig"} & set(requested)
+        )
+        needs_facts = bool({"IndRetBig", "DelNetFin"} & set(requested))
+        needs_daily = bool({"AnnouncementReturn", "EarningsStreak"} & set(requested))
+        submissions = (
+            _historical_submissions(con, master) if needs_submissions else pd.DataFrame()
+        )
+        facts = _sec_facts(con, master) if needs_facts else pd.DataFrame()
+        if needs_daily:
+            daily_query = """
+                SELECT p.symbol, p.date, p.adj_close, p.dividends
+                FROM prices_daily_clean p
+                JOIN security_master s USING(symbol)
+                WHERE coalesce(s.ranking_eligible, false)
+                  AND (? IS NULL OR p.date >= ?)
+                  AND (? IS NULL OR p.date < ?)
+                ORDER BY p.symbol, p.date
+            """
+            start = start_month.to_period("M").start_time - pd.offsets.MonthBegin(1) if start_month is not None else None
+            end = end_month.to_period("M").end_time + pd.Timedelta(days=1) if end_month is not None else None
+            prices_daily = con.execute(daily_query, [start, start, end, end]).df()
+        else:
+            prices_daily = pd.DataFrame()
     finally:
         con.close()
     ff3 = pd.read_parquet(ff3_daily) if ff3_daily and str(ff3_daily).lower().endswith(".parquet") else None
@@ -932,18 +950,37 @@ def reconstruct_monthly_proxies(
         ff48_frame = pd.read_parquet(ff48_sic_codes)
     else:
         ff48_frame = pd.read_csv(ff48_sic_codes)
-    earnings_events = build_earnings_events(
-        master, submissions, analyst_frame, prices_daily
+    earnings_events = (
+        build_earnings_events(master, submissions, analyst_frame, prices_daily)
+        if {"AnnouncementReturn", "EarningsStreak"} & set(requested)
+        else pd.DataFrame()
     )
-    parts = [
-        _build_divseason(monthly),
-        _build_announcement_return(monthly, earnings_events, prices_daily, ff3, master),
-        _build_earnings_streak_from_events(monthly, earnings_events),
-        _build_earnings_streak(monthly, earnings_frame),
-        _build_indretbig(monthly, master, facts, submissions, ff48_frame),
-        _build_delnetfin(monthly, master, facts),
-    ]
-    result = pd.concat([part for part in parts if not part.empty], ignore_index=True)
+    parts: list[pd.DataFrame] = []
+    if "DivSeason" in requested:
+        parts.append(_build_divseason(monthly))
+    if "AnnouncementReturn" in requested:
+        parts.append(
+            _build_announcement_return(
+                monthly, earnings_events, prices_daily, ff3, master
+            )
+        )
+    if "EarningsStreak" in requested:
+        parts.extend(
+            [
+                _build_earnings_streak_from_events(monthly, earnings_events),
+                _build_earnings_streak(monthly, earnings_frame),
+            ]
+        )
+    if "IndRetBig" in requested:
+        parts.append(
+            _build_indretbig(monthly, master, facts, submissions, ff48_frame)
+        )
+    if "DelNetFin" in requested:
+        parts.append(_build_delnetfin(monthly, master, facts))
+    populated = [part for part in parts if not part.empty]
+    if not populated:
+        raise RuntimeError(f"No proxy rows reconstructed for {list(requested)}")
+    result = pd.concat(populated, ignore_index=True)
     if "variant_id" not in result:
         result["variant_id"] = result["proxy_formula_id"]
     else:
@@ -1253,6 +1290,7 @@ def write_validation_outputs(
     summary: pd.DataFrame,
     reference_rows: int,
     crosswalk_quality: Mapping[str, object],
+    signals: Iterable[str] = FIVE_PROXY_SIGNALS,
 ) -> None:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -1275,7 +1313,7 @@ def write_validation_outputs(
     monthly.to_csv(output / "proxy_validation_monthly.csv", index=False)
     summary.to_csv(output / "proxy_validation_summary.csv", index=False)
     audit = {
-        "signals": list(FIVE_PROXY_SIGNALS),
+        "signals": list(signals),
         "reference_rows_inspected": int(reference_rows),
         "crosswalk": dict(crosswalk_quality),
         "locked_opened": False,
@@ -1307,8 +1345,10 @@ def run_validation(
     analyst_snapshots: str | Path | None = None,
     ff48_sic_codes: str | Path | None = None,
     min_pairs: int = 30,
+    signals: Iterable[str] | None = None,
 ) -> dict[str, object]:
     require_github_execution("OpenAP five-proxy historical validation")
+    requested = tuple(dict.fromkeys(signals or FIVE_PROXY_SIGNALS))
     reference_frame = load_reference_values(reference)
     proxy_panel = reconstruct_monthly_proxies(
         base_db,
@@ -1318,6 +1358,7 @@ def run_validation(
         ff48_sic_codes=ff48_sic_codes,
         start_month=reference_frame["formation_month"].min(),
         end_month=reference_frame["formation_month"].max(),
+        signals=requested,
     )
     crosswalk_frame = None
     crosswalk_quality: dict[str, object] = {
@@ -1338,9 +1379,10 @@ def run_validation(
         summary=summary,
         reference_rows=len(reference_frame),
         crosswalk_quality=crosswalk_quality,
+        signals=requested,
     )
     payload = {
-        "signals": list(FIVE_PROXY_SIGNALS),
+        "signals": list(requested),
         "reference_rows_inspected": int(len(reference_frame)),
         "proxy_rows": int(len(proxy_panel)),
         "crosswalk_status": crosswalk_quality.get("status"),

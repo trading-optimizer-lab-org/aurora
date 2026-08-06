@@ -33,6 +33,25 @@ def test_forward_proxy_workflow_certifies_before_current_score() -> None:
     assert "config/openap_93/five_forward_proxy_sources.yaml" in text
 
 
+def test_forward_proxy_workflow_checkpoints_each_signal_before_certification() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "reconstruct:" in text
+    assert "max-parallel: 5" in text
+    for signal in (
+        "DivSeason",
+        "AnnouncementReturn",
+        "EarningsStreak",
+        "IndRetBig",
+        "DelNetFin",
+    ):
+        assert f"          - {signal}" in text
+    assert '--signals "${{ matrix.signal }}"' in text
+    assert "Upload isolated reconstruction checkpoint" in text
+    assert "merge_openap_five_proxy_reconstructions.py" in text
+    assert "needs: [framework_contract, reconstruct]" in text
+
+
 def test_forward_proxy_workflow_publishes_complete_final_artifact() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 

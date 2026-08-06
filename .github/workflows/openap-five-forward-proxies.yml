@@ -47,10 +47,120 @@ jobs:
       retention_days: 1
       forced_job_count: 1
 
-  certify:
+  reconstruct:
     needs: framework_contract
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        signal:
+          - DivSeason
+          - AnnouncementReturn
+          - EarningsStreak
+          - IndRetBig
+          - DelNetFin
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 240
+    env:
+      GITHUB_ACTIONS: "true"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install exact project
+        run: python -m pip install --disable-pip-version-check -e . openassetpricing==0.0.2
+      - name: Download audited base database
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-yfinance-sec-current-score-results
+          path: inputs/base
+          run-id: ${{ inputs.base_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download audited public inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-93-max-free-full-results
+          path: inputs/public
+          run-id: ${{ inputs.public_inputs_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Locate immutable reconstruction inputs
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          db=$(find inputs/base -type f -name 'openap_current.duckdb' -print -quit)
+          reference=$(find inputs/public -type f \( -name 'signed_predictors_dl_wide.zip' -o -name 'signed_predictors_dl_wide.csv' \) -print -quit)
+          ff3=$(find inputs/public -type f -name 'ff3_daily.parquet' -print -quit)
+          ff48=$(find inputs/public -type f -name 'ff48_sic_codes.parquet' -print -quit)
+          normalized=$(dirname "$ff3")
+          probe=$(dirname "$(find inputs/public -type f -name 'sources.lock.json' -print -quit)")
+          analyst=$(find inputs/base -type f -name 'yahoo_analyst_current.parquet' -print -quit)
+          test -s "$db"
+          test -s "$reference"
+          test -s "$ff3"
+          test -s "$ff48"
+          test -s "$analyst"
+          test -s "$probe/sources.lock.json"
+          echo "db=$db" >> "$GITHUB_OUTPUT"
+          echo "reference=$reference" >> "$GITHUB_OUTPUT"
+          echo "ff3=$ff3" >> "$GITHUB_OUTPUT"
+          echo "ff48=$ff48" >> "$GITHUB_OUTPUT"
+          echo "normalized=$normalized" >> "$GITHUB_OUTPUT"
+          echo "probe=$probe" >> "$GITHUB_OUTPUT"
+          echo "analyst=$analyst" >> "$GITHUB_OUTPUT"
+      - name: Download public historical earnings observations
+        run: |
+          mkdir -p inputs/earnings
+          curl --fail --location --retry 3 \
+            --output inputs/earnings/eps_history.csv \
+            https://www.dolthub.com/csv/post-no-preference/earnings/master/eps_history
+      - name: Reconstruct and checkpoint ${{ matrix.signal }}
+        run: |
+          python scripts/run_openap_93_five_proxy_validation.py \
+            --base-db "${{ steps.locate.outputs.db }}" \
+            --reference "${{ steps.locate.outputs.reference }}" \
+            --ff3-daily "${{ steps.locate.outputs.ff3 }}" \
+            --ff48-sic-codes "${{ steps.locate.outputs.ff48 }}" \
+            --earnings-history inputs/earnings/eps_history.csv \
+            --analyst-snapshots "${{ steps.locate.outputs.analyst }}" \
+            --output-dir "outputs/reconstruction/${{ matrix.signal }}" \
+            --min-pairs 30 \
+            --signals "${{ matrix.signal }}"
+      - name: Verify isolated reconstruction
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          from pathlib import Path
+          signal = '${{ matrix.signal }}'
+          root = Path('outputs/reconstruction') / signal
+          panel = pd.read_parquet(root / 'proxy_reconstruction_panel.parquet')
+          audit = json.loads((root / 'proxy_validation_audit.json').read_text())
+          assert set(panel['signal']) == {signal}
+          assert audit['signals'] == [signal]
+          assert audit['locked_opened'] is False
+          assert audit['validation_used_for_selection'] is False
+          assert audit['backtest_enabled'] is False
+          PY
+      - name: Upload isolated reconstruction checkpoint
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-five-reconstruction-${{ matrix.signal }}-${{ github.run_id }}
+          path: outputs/reconstruction/${{ matrix.signal }}/
+          if-no-files-found: error
+          retention-days: 30
+
+  certify:
+    needs: [framework_contract, reconstruct]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     env:
       GITHUB_ACTIONS: "true"
       train_end: "2010-12-31"
@@ -93,51 +203,35 @@ jobs:
           run-id: ${{ inputs.historical_run_id }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
-      - name: Locate immutable reconstruction inputs
+      - name: Download all isolated reconstruction checkpoints
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: openap-five-reconstruction-*-${{ github.run_id }}
+          path: inputs/reconstructed
+          merge-multiple: false
+      - name: Locate immutable certification inputs
         id: locate
         shell: bash
         run: |
           set -euo pipefail
           db=$(find inputs/base -type f -name 'openap_current.duckdb' -print -quit)
-          reference=$(find inputs/public -type f \( -name 'signed_predictors_dl_wide.zip' -o -name 'signed_predictors_dl_wide.csv' \) -print -quit)
           ff3=$(find inputs/public -type f -name 'ff3_daily.parquet' -print -quit)
-          ff48=$(find inputs/public -type f -name 'ff48_sic_codes.parquet' -print -quit)
           normalized=$(dirname "$ff3")
           probe=$(dirname "$(find inputs/public -type f -name 'sources.lock.json' -print -quit)")
           official=$(find inputs/official -type f -name 'official_long_short.csv' -print -quit)
-          analyst=$(find inputs/base -type f -name 'yahoo_analyst_current.parquet' -print -quit)
           test -s "$db"
-          test -s "$reference"
           test -s "$ff3"
-          test -s "$ff48"
           test -s "$official"
-          test -s "$analyst"
           test -s "$probe/sources.lock.json"
           echo "db=$db" >> "$GITHUB_OUTPUT"
-          echo "reference=$reference" >> "$GITHUB_OUTPUT"
-          echo "ff3=$ff3" >> "$GITHUB_OUTPUT"
-          echo "ff48=$ff48" >> "$GITHUB_OUTPUT"
           echo "normalized=$normalized" >> "$GITHUB_OUTPUT"
           echo "probe=$probe" >> "$GITHUB_OUTPUT"
           echo "official=$official" >> "$GITHUB_OUTPUT"
-          echo "analyst=$analyst" >> "$GITHUB_OUTPUT"
-      - name: Download public historical earnings observations
+      - name: Merge five reconstruction checkpoints
         run: |
-          mkdir -p inputs/earnings
-          curl --fail --location --retry 3 \
-            --output inputs/earnings/eps_history.csv \
-            https://www.dolthub.com/csv/post-no-preference/earnings/master/eps_history
-      - name: Reconstruct historical candidates with this exact revision
-        run: |
-          python scripts/run_openap_93_five_proxy_validation.py \
-            --base-db "${{ steps.locate.outputs.db }}" \
-            --reference "${{ steps.locate.outputs.reference }}" \
-            --ff3-daily "${{ steps.locate.outputs.ff3 }}" \
-            --ff48-sic-codes "${{ steps.locate.outputs.ff48 }}" \
-            --earnings-history inputs/earnings/eps_history.csv \
-            --analyst-snapshots "${{ steps.locate.outputs.analyst }}" \
-            --output-dir outputs/historical \
-            --min-pairs 30
+          python scripts/merge_openap_five_proxy_reconstructions.py \
+            --input-dir inputs/reconstructed \
+            --output-dir outputs/historical
       - name: Select on train and validate frozen variants
         run: |
           python scripts/certify_openap_five_forward_proxies.py \

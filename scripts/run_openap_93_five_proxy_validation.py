@@ -24,6 +24,16 @@ def main() -> None:
     parser.add_argument("--ff48-sic-codes", default=None)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--min-pairs", type=int, default=30)
+    parser.add_argument(
+        "--signals",
+        default=",".join((
+            "DivSeason",
+            "AnnouncementReturn",
+            "EarningsStreak",
+            "IndRetBig",
+            "DelNetFin",
+        )),
+    )
     args = parser.parse_args()
     run_validation(
         base_db=args.base_db,
@@ -35,6 +45,7 @@ def main() -> None:
         ff48_sic_codes=args.ff48_sic_codes,
         output_dir=args.output_dir,
         min_pairs=args.min_pairs,
+        signals=[value.strip() for value in args.signals.split(",") if value.strip()],
     )
 
 

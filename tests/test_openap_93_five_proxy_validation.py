@@ -11,12 +11,18 @@ from aurora.research.openap_93.historical_proxy_validation import (
     _build_earnings_streak_from_events,
     _rank_buckets,
     compare_to_reference,
+    reconstruct_monthly_proxies,
 )
 
 
 def test_rank_buckets_are_cross_sectional_and_bounded() -> None:
     buckets = _rank_buckets(pd.Series([10.0, 20.0, 30.0, 40.0, 50.0]))
     assert buckets.tolist() == [1.0, 2.0, 3.0, 4.0, 5.0]
+
+
+def test_reconstruction_rejects_unknown_signal_before_opening_database() -> None:
+    with pytest.raises(ValueError, match="Unknown OpenAP proxy signals"):
+        reconstruct_monthly_proxies("does-not-exist.duckdb", signals=["Unknown"])
 
 
 def test_realized_return_is_aligned_to_formation_month_not_completed_month() -> None:
