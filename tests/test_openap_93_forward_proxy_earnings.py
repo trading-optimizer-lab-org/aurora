@@ -120,3 +120,21 @@ def test_sec_item_202_and_yahoo_events_normalize_to_common_schema() -> None:
     assert yahoo.iloc[0]["reported_eps"] == pytest.approx(2.1)
     assert yahoo.iloc[0]["consensus_eps"] == pytest.approx(2.0)
     assert set(sec.columns) == set(yahoo.columns)
+
+
+def test_sec_item_202_accepts_nullable_numeric_items_column() -> None:
+    master = pd.DataFrame({"symbol": ["AAA"], "cik": [1]})
+    submissions = pd.DataFrame(
+        {
+            "cik": pd.Series([1], dtype="Int64"),
+            "accession_number": ["a"],
+            "form": ["10-Q"],
+            "items": pd.Series([pd.NA], dtype="Int32"),
+            "accepted_at": ["2026-02-05T12:00:00Z"],
+            "report_date": ["2025-12-31"],
+        }
+    )
+
+    result = normalize_sec_item_202_events(submissions, master)
+
+    assert result.empty

@@ -89,7 +89,7 @@ def normalize_sec_item_202_events(
     frame = submissions.copy()
     frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce")
     frame["form"] = frame["form"].astype(str)
-    item_202 = frame["items"].fillna("").astype(str).str.contains(
+    item_202 = frame["items"].astype("string").fillna("").str.contains(
         r"(?:^|[,;\s])2\.02(?:$|[,;\s])", regex=True
     )
     frame = frame.loc[frame["form"].str.startswith("8-K") & item_202].merge(
