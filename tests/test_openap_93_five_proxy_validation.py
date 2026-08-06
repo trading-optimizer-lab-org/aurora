@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from aurora.research.openap_93.historical_proxy_validation import (
     FIVE_PROXY_SIGNALS,
+    _build_announcement_return,
     _build_earnings_streak,
     _rank_buckets,
     compare_to_reference,
@@ -84,3 +86,29 @@ def test_earnings_streak_uses_conservative_availability_lag() -> None:
     assert result.loc[result["completed_month"].eq(pd.Timestamp("2016-09-30")), "proxy_value"].notna().all()
     assert result["reconstruction_status"].eq("reconstructed").all()
     assert result["caveat"].str.contains("90-day").all()
+
+
+def test_announcement_return_uses_official_minus_two_plus_one_window() -> None:
+    dates = pd.date_range("2020-01-06", periods=5, freq="B")
+    prices = pd.DataFrame({
+        "symbol": ["AAA"] * len(dates),
+        "date": dates,
+        "adj_close": [100.0, 101.0, 103.0, 106.0, 110.0],
+    })
+    facts = pd.DataFrame({
+        "cik": [1],
+        "tag": ["NetIncomeLoss"],
+        "form": ["10-Q"],
+        "filed": [dates[2]],
+    })
+    monthly = pd.DataFrame({
+        "symbol": ["AAA"],
+        "completed_month": [pd.Timestamp("2020-01-31")],
+        "formation_month": [pd.Timestamp("2020-02-01")],
+    })
+    master = pd.DataFrame({"symbol": ["AAA"], "cik": [1]})
+    result = _build_announcement_return(monthly, facts, prices, None, master)
+    # The official window is dates[0:4], not dates[1:5].
+    expected = (101 / 100 - 1) + (103 / 101 - 1) + (106 / 103 - 1) + (110 / 106 - 1)
+    assert result.iloc[0]["proxy_value"] == pytest.approx(expected)
+    assert result.iloc[0]["proxy_formula_id"].endswith("window_exact")

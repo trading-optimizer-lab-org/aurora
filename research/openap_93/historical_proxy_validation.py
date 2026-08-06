@@ -162,7 +162,20 @@ def _monthly_prices(
 
 
 def _security_master(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    cols = "symbol, cik, industry"
+    available = {
+        str(row[0])
+        for row in con.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'security_master'"
+        ).fetchall()
+    }
+    selected = [column for column in ("symbol", "cik", "industry") if column in available]
+    if "symbol" not in selected:
+        raise RuntimeError("security_master has no symbol column")
+    for optional in ("sic_sec", "sic"):
+        if optional in available:
+            selected.append(optional)
+    cols = ", ".join(dict.fromkeys(selected))
     frame = con.execute(
         f"SELECT {cols} FROM security_master WHERE coalesce(ranking_eligible, false)"
     ).df()
@@ -170,6 +183,56 @@ def _security_master(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce")
     frame["industry"] = frame["industry"].fillna("UNKNOWN").astype("string")
     return frame.dropna(subset=["symbol"]).drop_duplicates("symbol")
+
+
+def _historical_submissions(
+    con: duckdb.DuckDBPyConnection,
+    master: pd.DataFrame,
+) -> pd.DataFrame:
+    """Load filing SIC values used causally for historical industry membership."""
+
+    try:
+        frame = con.execute(
+            """
+            SELECT u.cik, m.symbol, u.accepted_at, u.sic
+            FROM sec_submissions u
+            INNER JOIN security_master m USING (cik)
+            WHERE u.accepted_at IS NOT NULL AND u.sic IS NOT NULL
+            """
+        ).df()
+    except Exception:
+        return pd.DataFrame(columns=["cik", "symbol", "accepted_at", "sic"])
+    if frame.empty:
+        return frame
+    selected = set(master["symbol"].astype("string"))
+    frame["symbol"] = frame["symbol"].astype("string").str.upper()
+    frame = frame.loc[frame["symbol"].isin(selected)].copy()
+    frame["accepted_at"] = _naive_date(frame["accepted_at"])
+    frame["sic"] = pd.to_numeric(frame["sic"], errors="coerce")
+    return frame.dropna(subset=["symbol", "accepted_at", "sic"])
+
+
+def _ff48_from_sic(sic: pd.Series, ff48_sic_codes: pd.DataFrame | None) -> pd.Series:
+    """Map SIC to the official Kenneth French FF48 ranges when supplied."""
+
+    if ff48_sic_codes is None or ff48_sic_codes.empty:
+        return pd.Series(pd.NA, index=sic.index, dtype="Int64")
+    required = {"ff48", "sic_start", "sic_end"}
+    if not required.issubset(ff48_sic_codes.columns):
+        return pd.Series(pd.NA, index=sic.index, dtype="Int64")
+    lookup = np.full(10_000, np.nan)
+    for row in ff48_sic_codes.itertuples(index=False):
+        start = int(row.sic_start)
+        end = int(row.sic_end)
+        if 0 <= start <= end < len(lookup):
+            lookup[start : end + 1] = int(row.ff48)
+    codes = pd.to_numeric(sic, errors="coerce")
+    mapped = pd.Series(pd.NA, index=sic.index, dtype="Int64")
+    valid = codes.between(0, len(lookup) - 1) & codes.notna()
+    mapped.loc[valid] = pd.Series(
+        lookup[codes.loc[valid].astype(int)], index=codes.loc[valid].index
+    ).round().astype("Int64")
+    return mapped
 
 
 def _sec_facts(con: duckdb.DuckDBPyConnection, master: pd.DataFrame) -> pd.DataFrame:
@@ -325,14 +388,14 @@ def _build_announcement_return(
         event_rows: list[dict[str, object]] = []
         for event_date in sorted(pd.to_datetime(events["filed"]).dropna().unique()):
             event = pd.Timestamp(event_date)
-            # OpenAP uses the event trading day plus [-1, +2] trading days.
+            # OpenAP uses the event trading day plus [-2, +1] trading days.
             # A calendar window accidentally includes extra sessions around
             # weekends and holidays and changes the signal.
             event_position = int(px["date"].searchsorted(event, side="left"))
             if event_position >= len(px):
                 continue
-            start_position = event_position - 1
-            end_position = event_position + 2
+            start_position = event_position - 2
+            end_position = event_position + 1
             if start_position < 0 or end_position >= len(px):
                 continue
             window = px.iloc[start_position:end_position + 1]
@@ -358,7 +421,7 @@ def _build_announcement_return(
                 "formation_month": item.formation_month,
                 "signal": "AnnouncementReturn",
                 "proxy_value": float(item.proxy_value),
-                "proxy_formula_id": "openap_announcement_abnormal_return_sec_filing_date_proxy",
+                "proxy_formula_id": "openap_announcement_abnormal_return_sec_filing_date_window_exact",
                 "reconstruction_status": "reconstructed",
                 "caveat": "SEC filing date replaces Compustat announcement date; event window is complete before formation",
             })
@@ -485,8 +548,53 @@ def _build_earnings_streak(
     return pd.concat(rows, ignore_index=True) if rows else result
 
 
-def _build_indretbig(monthly: pd.DataFrame, master: pd.DataFrame, facts: pd.DataFrame) -> pd.DataFrame:
-    frame = monthly.merge(master[["symbol", "cik", "industry"]], on="symbol", how="left")
+def _build_indretbig(
+    monthly: pd.DataFrame,
+    master: pd.DataFrame,
+    facts: pd.DataFrame,
+    submissions: pd.DataFrame | None = None,
+    ff48_sic_codes: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    master_columns = ["symbol", "cik", "industry"]
+    for optional in ("sic_sec", "sic"):
+        if optional in master.columns:
+            master_columns.append(optional)
+    frame = monthly.merge(master[master_columns], on="symbol", how="left")
+    frame["sic"] = np.nan
+    for column in ("sic_sec", "sic"):
+        if column in frame.columns:
+            frame["sic"] = frame["sic"].fillna(pd.to_numeric(frame[column], errors="coerce"))
+    if submissions is not None and not submissions.empty:
+        right = submissions[["symbol", "accepted_at", "sic"]].copy()
+        right["symbol"] = right["symbol"].astype("string").str.upper()
+        right["accepted_at"] = _naive_date(right["accepted_at"])
+        right["sic"] = pd.to_numeric(right["sic"], errors="coerce")
+        right = right.dropna(subset=["symbol", "accepted_at", "sic"])
+        causal_frames: list[pd.DataFrame] = []
+        for symbol, group in frame.groupby("symbol", sort=False):
+            history = right.loc[right["symbol"].eq(symbol)].sort_values("accepted_at")
+            if history.empty:
+                causal_frames.append(group)
+                continue
+            left = group.sort_values("completed_month").copy()
+            left["cutoff"] = pd.to_datetime(
+                left["completed_month"] + pd.offsets.MonthEnd(0), errors="coerce"
+            )
+            joined = pd.merge_asof(
+                left.sort_values("cutoff"),
+                history[["accepted_at", "sic"]].sort_values("accepted_at").rename(columns={"sic": "sic_filing"}),
+                left_on="cutoff",
+                right_on="accepted_at",
+                direction="backward",
+            )
+            joined["sic"] = pd.to_numeric(joined["sic_filing"], errors="coerce").fillna(
+                pd.to_numeric(joined["sic"], errors="coerce")
+            )
+            causal_frames.append(joined.drop(columns=["accepted_at", "sic_filing"], errors="ignore"))
+        frame = pd.concat(causal_frames, ignore_index=True)
+    frame["industry_group"] = _ff48_from_sic(frame["sic"], ff48_sic_codes)
+    frame["industry_group"] = frame["industry_group"].astype("string")
+    frame["industry_group"] = frame["industry_group"].fillna(frame["industry"])
     share_facts = facts.loc[facts["tag"].isin(
         ["EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"]
     )].copy()
@@ -511,19 +619,22 @@ def _build_indretbig(monthly: pd.DataFrame, master: pd.DataFrame, facts: pd.Data
     for completed_month, group in frame.groupby("completed_month", sort=True):
         group = group.copy()
         group["market_equity"] = group["month_end_adj_close"] * group["shares"]
-        group["big"] = group.groupby("industry")["market_equity"].transform(
+        group["big"] = group.groupby("industry_group")["market_equity"].transform(
             lambda s: s.ge(s.quantile(0.70))
         )
-        big_return = group.loc[group["big"]].groupby("industry")["month_return"].mean()
-        group["proxy_value"] = group["industry"].map(big_return)
+        big_return = group.loc[group["big"]].groupby("industry_group")["month_return"].mean()
+        group["proxy_value"] = group["industry_group"].map(big_return)
         group.loc[group["big"], "proxy_value"] = np.nan
         group["signal"] = "IndRetBig"
         group["formation_month"] = group["completed_month"] + pd.offsets.MonthBegin(1)
-        group["proxy_formula_id"] = "openap_big_industry_return_industry_label_proxy"
+        group["proxy_formula_id"] = "openap_big_industry_return_ff48_sic_pit_proxy"
         group["reconstruction_status"] = np.where(
             group["proxy_value"].notna(), "reconstructed", "insufficient_history"
         )
-        group["caveat"] = "Current industry label replaces historical FF48; shares are PIT SEC values"
+        group["caveat"] = (
+            "FF48 SIC from latest accepted SEC filing at cutoff when available; "
+            "SEC shares and SEC SIC replace CRSP market equity and CRSP SIC"
+        )
         rows.append(group[["symbol", "completed_month", "formation_month", "signal", "proxy_value", "proxy_formula_id", "reconstruction_status", "caveat"]])
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
@@ -593,6 +704,7 @@ def reconstruct_monthly_proxies(
     *,
     ff3_daily: str | Path | None = None,
     earnings_history: str | Path | pd.DataFrame | None = None,
+    ff48_sic_codes: str | Path | pd.DataFrame | None = None,
     start_month: pd.Timestamp | None = None,
     end_month: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
@@ -607,6 +719,7 @@ def reconstruct_monthly_proxies(
     con = duckdb.connect(str(db), read_only=True)
     try:
         master = _security_master(con)
+        submissions = _historical_submissions(con, master)
         monthly = _monthly_prices(con, start_month=start_month, end_month=end_month)
         facts = _sec_facts(con, master)
         daily_query = """
@@ -634,11 +747,19 @@ def reconstruct_monthly_proxies(
         earnings_frame = pd.read_parquet(earnings_history)
     else:
         earnings_frame = pd.read_csv(earnings_history)
+    if ff48_sic_codes is None:
+        ff48_frame = None
+    elif isinstance(ff48_sic_codes, pd.DataFrame):
+        ff48_frame = ff48_sic_codes
+    elif str(ff48_sic_codes).lower().endswith(".parquet"):
+        ff48_frame = pd.read_parquet(ff48_sic_codes)
+    else:
+        ff48_frame = pd.read_csv(ff48_sic_codes)
     parts = [
         _build_divseason(monthly),
         _build_announcement_return(monthly, facts, prices_daily, ff3, master),
         _build_earnings_streak(monthly, earnings_frame),
-        _build_indretbig(monthly, master, facts),
+        _build_indretbig(monthly, master, facts, submissions, ff48_frame),
         _build_delnetfin(monthly, master, facts),
     ]
     result = pd.concat([part for part in parts if not part.empty], ignore_index=True)
@@ -959,6 +1080,7 @@ def run_validation(
     crosswalk: str | Path | None = None,
     ff3_daily: str | Path | None = None,
     earnings_history: str | Path | None = None,
+    ff48_sic_codes: str | Path | None = None,
     min_pairs: int = 30,
 ) -> dict[str, object]:
     require_github_execution("OpenAP five-proxy historical validation")
@@ -967,6 +1089,7 @@ def run_validation(
         base_db,
         ff3_daily=ff3_daily,
         earnings_history=earnings_history,
+        ff48_sic_codes=ff48_sic_codes,
         start_month=reference_frame["formation_month"].min(),
         end_month=reference_frame["formation_month"].max(),
     )
