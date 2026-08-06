@@ -24,6 +24,11 @@ from .contracts import (
     assert_contract,
     canonical_rule_hash,
 )
+from .historical_evidence import (
+    HISTORICAL_DIR,
+    load_historical_trial_ledger,
+    load_prior_autonomous_status,
+)
 
 
 def repo_root() -> Path:
@@ -197,13 +202,42 @@ def write_batch_registry(
         if prior_ledger_path is not None and prior_ledger_path.is_file()
         else []
     )
+    historical_path = Path(root) / HISTORICAL_DIR / "historical_trial_ledger.jsonl"
+    historical_rows = (
+        load_historical_trial_ledger(root) if historical_path.is_file() else []
+    )
+    combined_prior: dict[int, dict[str, Any]] = {}
+    for row in (*historical_rows, *prior_ledger_rows):
+        index = int(row.get("global_trial_index", 0))
+        if index < 1 or index > previous_trial_count:
+            continue
+        existing = combined_prior.get(index)
+        if existing is not None and str(existing.get("strategy_id")) != str(
+            row.get("strategy_id")
+        ):
+            raise ValueError(f"PRIOR_TRIAL_LEDGER_INDEX_COLLISION:{index}")
+        combined_prior[index] = dict(row)
+    status_lookup = load_prior_autonomous_status(root)
+    for row in combined_prior.values():
+        status = status_lookup.get(str(row.get("strategy_id")))
+        if status is not None:
+            row["status"] = str(status["status"])
+            row["rejection_reason"] = str(status.get("rejection_reason") or "")
+    complete_prior = [combined_prior[index] for index in sorted(combined_prior)]
     if previous_trial_count > PREVIOUS_TRIAL_COUNT and not prior_ledger_rows:
         raise ValueError("PRIOR_TRIAL_LEDGER_REQUIRED")
-    if prior_ledger_rows:
+    if historical_rows and [int(row["global_trial_index"]) for row in complete_prior] != list(
+        range(1, previous_trial_count + 1)
+    ):
+        raise ValueError("PRIOR_TRIAL_LEDGER_COUNT_MISMATCH")
+    if not historical_rows and prior_ledger_rows:
         last_index = int(prior_ledger_rows[-1].get("global_trial_index", 0))
         if last_index != previous_trial_count:
             raise ValueError("PRIOR_TRIAL_LEDGER_COUNT_MISMATCH")
-    ledger_rows = [*prior_ledger_rows, *new_ledger_rows]
+        complete_prior = list(prior_ledger_rows)
+    ledger_rows = [*complete_prior, *new_ledger_rows]
+    for row in ledger_rows:
+        row["batch_id"] = str(row.get("batch_id", ""))
     ledger_payload = "".join(
         json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in ledger_rows
     )
@@ -226,7 +260,8 @@ def write_batch_registry(
         "trial_ledger_file": "trial_ledger.jsonl",
         "trial_ledger_rows": len(ledger_rows),
         "new_trial_ledger_rows": len(new_ledger_rows),
-        "prior_trial_ledger_rows": len(prior_ledger_rows),
+        "prior_trial_ledger_rows": len(complete_prior),
+        "historical_trial_ledger_rows": len(historical_rows),
         "trial_ledger_sha256": hashlib.sha256(ledger_payload.encode("utf-8")).hexdigest(),
         "trial_indices": [row["global_trial_index"] for row in new_ledger_rows],
     }

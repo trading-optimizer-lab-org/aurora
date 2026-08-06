@@ -478,6 +478,21 @@ jobs:
         with:
           pattern: ${{ inputs.run_label }}-stooq-${{ github.run_id }}-*
           path: ${{ runner.temp }}/stooq-windows
+      - name: Download canonical V1 and V2 multiplicity evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-ls-v2-train-results
+          path: ${{ runner.temp }}/historical-multiplicity
+          github-token: ${{ github.token }}
+          run-id: "31007105419"
+      - name: Download canonical autonomous pilot evidence
+        if: inputs.autonomous_previous_trial_count > 312
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-auto-pilot-b0-results
+          path: ${{ runner.temp }}/autonomous-pilot
+          github-token: ${{ github.token }}
+          run-id: "31036879593"
       - name: Merge and verify Stooq windows
         run: |
           set -euo pipefail
@@ -494,6 +509,8 @@ jobs:
           SPEC_PATH: ${{ inputs.spec_path }}
           WORKLOAD: ${{ inputs.workload }}
           AURORA_PRIOR_TRIAL_LEDGER_PATH: ${{ runner.temp }}/prior-ledger/trial_ledger.jsonl
+          AURORA_HISTORICAL_MULTIPLICITY_SOURCE: ${{ runner.temp }}/historical-multiplicity
+          AURORA_AUTONOMOUS_PILOT_EVIDENCE_ROOT: ${{ runner.temp }}/autonomous-pilot
         run: |
           set -euo pipefail
           aurora github prepare \

@@ -11,11 +11,19 @@ import pytest
 import yaml
 
 from aurora.infra.sp500_autonomous_discovery import registry
+from aurora.infra.sp500_autonomous_discovery import statistics as autonomous_statistics
 from aurora.infra.sp500_autonomous_discovery.contracts import canonical_rule_hash
 from aurora.infra.sp500_autonomous_discovery.dedupe import build_dedupe_map
 from aurora.infra.sp500_autonomous_discovery.feature_store import FeatureStore
+from aurora.infra.sp500_autonomous_discovery.historical_evidence import (
+    build_historical_trial_ledger,
+)
 from aurora.infra.sp500_autonomous_discovery.scheduling import assign_by_cost
 from aurora.infra.sp500_autonomous_discovery.statistics import evaluate_batch
+from aurora.infra.sp500_autonomous_discovery.workload import (
+    freeze_rejection_reasons,
+    freeze_selection_reason,
+)
 from aurora.infra.sp500_autonomous_discovery.validation import (
     ValidationGateError,
     _verify_freeze,
@@ -148,6 +156,95 @@ def test_trial_ledger_appends_to_prior_batch(tmp_path, monkeypatch) -> None:
     assert (tmp_path / "current" / "autonomous_trial_ledger.parquet").is_file()
 
 
+def test_trial_ledger_prepends_verified_312_historical_rows(
+    tmp_path, monkeypatch
+) -> None:
+    historical = [
+        {
+            "batch_id": "V1" if index <= 168 else "V2",
+            "canonical_hash": f"historical-{index}",
+            "global_trial_index": index,
+            "pre_registered_before_performance": True,
+            "status": "evaluated",
+            "strategy_id": f"historical-{index}",
+        }
+        for index in range(1, 313)
+    ]
+    historical_path = (
+        tmp_path
+        / "current"
+        / "historical_multiplicity"
+        / "historical_trial_ledger.jsonl"
+    )
+    registry.write_jsonl(historical_path, historical)
+    prior = [
+        {
+            "batch_id": "0",
+            "canonical_hash": "pilot-313",
+            "global_trial_index": 313,
+            "pre_registered_before_performance": True,
+            "status": "evaluated",
+            "strategy_id": "pilot-313",
+        }
+    ]
+    prior_path = tmp_path / "prior" / "trial_ledger.jsonl"
+    registry.write_jsonl(prior_path, prior)
+    monkeypatch.setenv("AURORA_PRIOR_TRIAL_LEDGER_PATH", str(prior_path))
+    candidate = _template() | {
+        "strategy_id": "candidate-314",
+        "canonical_hash": canonical_rule_hash(
+            _template() | {"strategy_id": "candidate-314"}
+        ),
+    }
+    monkeypatch.setattr(
+        registry,
+        "base_package",
+        lambda: SimpleNamespace(candidates=(), research=(), features=(), datasets=()),
+    )
+    registry.write_batch_registry(
+        tmp_path / "current",
+        batch_id=1,
+        candidates=(candidate,),
+        previous_trial_count=313,
+    )
+    rows = registry.read_jsonl(tmp_path / "current" / "trial_ledger.jsonl")
+    assert len(rows) == 314
+    assert [row["global_trial_index"] for row in rows] == list(range(1, 315))
+
+
+def test_historical_ledger_preserves_all_312_canonical_trials() -> None:
+    v1_ids = [f"V1-{index:03d}" for index in range(168)]
+    v2_ids = [f"V2-{index:03d}" for index in range(144)]
+    cumulative = pd.DataFrame(
+        [
+            {"campaign": campaign, "strategy_id": identifier, "status": "evaluated", "fdr_pvalue": 0.5}
+            for campaign, identifiers in (("V1", v1_ids), ("V2", v2_ids))
+            for identifier in identifiers
+        ]
+    )
+
+    def metrics(ids: list[str]) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {
+                    "unit_type": "candidate",
+                    "unit_key": identifier,
+                    "strategy_id": identifier,
+                    "canonical_hash": f"hash-{identifier}",
+                    "status": "evaluated",
+                }
+                for identifier in ids
+            ]
+        )
+
+    rows = build_historical_trial_ledger(
+        cumulative, metrics(v1_ids), metrics(v2_ids)
+    )
+    assert len(rows) == 312
+    assert [row["global_trial_index"] for row in rows] == list(range(1, 313))
+    assert len({row["canonical_hash"] for row in rows}) == 312
+
+
 def test_trial_ledger_requires_prior_source_after_first_batch(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("AURORA_PRIOR_TRIAL_LEDGER_PATH", raising=False)
     monkeypatch.setattr(
@@ -188,6 +285,7 @@ def test_evaluate_batch_writes_auditable_rows(tmp_path) -> None:
     benchmark["unit_type"] = "benchmark"
     result = evaluate_batch([candidate, benchmark], tmp_path, batch_id=0)
     assert result["total_strategies_evaluated"] == 1
+    assert result["total_strategies_rejected"] == 0
     leaderboard = pd.read_csv(tmp_path / "leaderboard.csv")
     assert set(leaderboard["strategy_id"]) == {"AUTO-1", "buy_and_hold_spy_total_return"}
     summary = json.loads((tmp_path / "autonomous_batch_summary.json").read_text(encoding="utf-8"))
@@ -198,6 +296,48 @@ def test_evaluate_batch_writes_auditable_rows(tmp_path) -> None:
     assert json.loads((tmp_path / "train_freeze_candidate.json").read_text(encoding="utf-8")) == freeze
     with pytest.raises(ValidationGateError, match="TRAIN_FREEZE_NOT_ELIGIBLE"):
         _verify_freeze(tmp_path / "train_selection_freeze.json", require_finalized=True)
+
+
+def test_block_sum_bootstrap_matches_original_sampling(monkeypatch) -> None:
+    repetitions = 100
+    monkeypatch.setattr(autonomous_statistics, "BOOTSTRAP_REPETITIONS", repetitions)
+    values = np.linspace(-0.02, 0.03, 137)
+    matrix = np.column_stack([values, values[::-1] * 0.7, np.sin(np.arange(137)) / 100])
+
+    def reference_global(raw: np.ndarray, seed: int) -> float:
+        observed = raw.mean(axis=0)
+        centered = raw - observed
+        blocks = int(np.ceil(len(raw) / autonomous_statistics.BLOCK_LENGTH))
+        rng = np.random.default_rng(seed)
+        exceed = 0
+        for _ in range(repetitions):
+            starts = rng.integers(0, len(raw), size=blocks)
+            sampled = np.empty((blocks * autonomous_statistics.BLOCK_LENGTH, raw.shape[1]))
+            for offset in range(autonomous_statistics.BLOCK_LENGTH):
+                sampled[offset::autonomous_statistics.BLOCK_LENGTH] = centered[
+                    (starts + offset) % len(raw)
+                ]
+            means = sampled[: len(raw)].mean(axis=0)
+            exceed += int(means.max() >= observed.max())
+        return (1 + exceed) / (repetitions + 1)
+
+    expected = reference_global(matrix, 77)
+    observed = autonomous_statistics._global_max_bootstrap_pvalue(matrix, seed=77)
+    assert observed == expected
+
+
+def test_freeze_reason_and_rejections_are_semantically_consistent() -> None:
+    assert freeze_selection_reason([]) == "no candidate passed all frozen train gates"
+    assert freeze_selection_reason([{"strategy_id": "winner"}]) == (
+        "all frozen train gates passed"
+    )
+    assert freeze_rejection_reasons(
+        [
+            {"strategy_id": "ok", "status": "evaluated", "rejection_reason": None},
+            {"strategy_id": "bad", "status": "rejected", "rejection_reason": "DATA_MISSING"},
+            {"strategy_id": "empty", "status": "rejected", "rejection_reason": None},
+        ]
+    ) == {"bad": "DATA_MISSING"}
 
 
 def test_dedupe_and_cost_assignment_are_traceable() -> None:
@@ -332,5 +472,24 @@ def test_workflow_is_github_only_and_bounded() -> None:
     assert prior_ledger_step["with"]["run-id"] == (
         "${{ inputs.autonomous_prior_ledger_run_id }}"
     )
+    historical_step = next(
+        item
+        for item in sp500_prepare_steps
+        if item.get("name") == "Download canonical V1 and V2 multiplicity evidence"
+    )
+    assert historical_step["with"]["run-id"] == "31007105419"
+    assert historical_step["with"]["name"] == "sp500-ls-v2-train-results"
+    pilot_step = next(
+        item
+        for item in sp500_prepare_steps
+        if item.get("name") == "Download canonical autonomous pilot evidence"
+    )
+    assert pilot_step["with"]["run-id"] == "31036879593"
+    prepare_step = next(
+        item
+        for item in sp500_prepare_steps
+        if item.get("name") == "Prepare immutable SPY data"
+    )
+    assert "AURORA_HISTORICAL_MULTIPLICITY_SOURCE" in prepare_step["env"]
     for phase in ("preflight", "research", "data_build", "pilot", "search_batch", "merge_batch", "statistical_gate", "freeze", "validation_once", "verify"):
         assert f"- {phase}" in text
