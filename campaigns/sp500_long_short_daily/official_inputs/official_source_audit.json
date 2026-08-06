@@ -11,6 +11,13 @@
       "url": "https://web.archive.org/web/20110103050231id_/https://www.spdrs.com/resources/distributions/index.seam"
     },
     {
+      "id": "state_street_exact_events_2011_2020",
+      "maximum_observation": "2020-12-18",
+      "role": "exact_validation_event_date_and_amount_verification",
+      "source_capture_scope": "SPY rows with ex_date from 2011-01-01 through 2020-12-31",
+      "url": "https://www.ssga.com/bin/v1/ssmp/fund/dividend-distribution?country=us&language=en&role=intermediary&product=etfs&ticker=SPY"
+    },
+    {
       "id": "sec_audited_totals_1993_1995",
       "role": "audited_fiscal_total_verification",
       "url": "https://www.sec.gov/Archives/edgar/data/884394/000091205796003840/0000912057-96-003840.txt"

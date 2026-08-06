@@ -782,6 +782,15 @@ def test_validation_workflow_requests_only_the_frozen_validation_period() -> Non
     assert 'split="validation"' in text
     assert 'start="2010-01-01"' not in text
 
+    distributions = pd.read_csv(
+        "campaigns/sp500_long_short_daily/official_inputs/"
+        "state_street_spy_distributions_2011_2020.csv"
+    )
+    dates = pd.to_datetime(distributions["ex_date"])
+    assert len(distributions) == 40
+    assert dates.min() >= pd.Timestamp("2011-01-01")
+    assert dates.max() <= pd.Timestamp("2020-12-31")
+
 
 def test_block_sum_bootstrap_matches_original_sampling(monkeypatch) -> None:
     repetitions = 100
