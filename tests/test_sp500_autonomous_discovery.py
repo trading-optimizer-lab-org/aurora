@@ -217,7 +217,7 @@ def test_complete_rsi_definition_preserves_coverage_during_one_way_market() -> N
             split="train",
         ),
     )
-    assert result.first_evaluable_date == index[5].date().isoformat()
+    assert result.first_evaluable_date == index[225].date().isoformat()
     assert result.missing_fraction == 0.0
 
 

@@ -248,16 +248,18 @@ def _price_score(
         rsi = rsi.mask((loss == 0.0) & (gain > 0.0), 100.0)
         rsi = rsi.mask((gain == 0.0) & (loss > 0.0), 0.0)
         rsi = rsi.mask((gain == 0.0) & (loss == 0.0), 50.0)
-        rsi_component = np.sign(
+        rsi_trend_return = (
             close / close.shift(int(parameters["rsi_trend_window"])) - 1.0
         )
+        rsi_component = np.sign(rsi_trend_return)
         rsi_component = rsi_component.where(rsi > float(parameters["lower"]), 1.0)
         rsi_component = rsi_component.where(rsi < float(parameters["upper"]), -1.0)
 
         reversal_return = close / close.shift(int(parameters["reversal_window"])) - 1.0
-        reversal_component = np.sign(
+        reversal_trend_return = (
             close / close.shift(int(parameters["reversal_trend_window"])) - 1.0
         )
+        reversal_component = np.sign(reversal_trend_return)
         threshold = float(parameters["reversal_threshold_pct"]) / 100.0
         reversal_component = reversal_component.where(
             reversal_return.abs() < threshold,
@@ -267,7 +269,12 @@ def _price_score(
             float(parameters["rsi_weight"]) * rsi_component
             + float(parameters["reversal_weight"]) * reversal_component
         )
-        return score.where(rsi.notna() & reversal_return.notna())
+        return score.where(
+            rsi.notna()
+            & rsi_trend_return.notna()
+            & reversal_return.notna()
+            & reversal_trend_return.notna()
+        )
     if family == "trend_ensemble":
         components = []
         for horizon in parameters["horizons"]:
