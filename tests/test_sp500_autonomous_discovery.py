@@ -898,6 +898,49 @@ def test_workflow_is_github_only_and_bounded() -> None:
     assert "autonomous_prior_ledger_artifact_name" in reusable_text
     assert 'or "sp500_autonomous_discovery" in workload' in reusable_text
     reusable = yaml.safe_load(reusable_text)
+    assert "refreshed-prepared" in reusable["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
+    assert reusable["env"]["AURORA_PREPARED_ARTIFACT_RUN_ID"] == (
+        "${{ inputs.prepared_artifact_name != '' && contains(inputs.workload, "
+        "'sp500_autonomous_discovery') && github.run_id || "
+        "inputs.prepared_artifact_run_id || github.run_id }}"
+    )
+    prepare_data_steps = reusable["jobs"]["prepare_data"]["steps"]
+    source_download = next(
+        item
+        for item in prepare_data_steps
+        if item.get("name") == "Download shared immutable inputs"
+    )
+    assert source_download["with"]["name"] == (
+        "${{ inputs.prepared_artifact_name || env.AURORA_PREPARED_ARTIFACT_NAME }}"
+    )
+    assert source_download["with"]["run-id"] == (
+        "${{ inputs.prepared_artifact_run_id || github.run_id }}"
+    )
+    refresh_index = next(
+        index
+        for index, item in enumerate(prepare_data_steps)
+        if item.get("name") == "Refresh autonomous batch inputs on reused market data"
+    )
+    refreshed_upload_index = next(
+        index
+        for index, item in enumerate(prepare_data_steps)
+        if item.get("name") == "Upload refreshed autonomous prepared inputs"
+    )
+    assert refresh_index < refreshed_upload_index
+    refreshed_upload = prepare_data_steps[refreshed_upload_index]
+    assert refreshed_upload["with"]["name"] == (
+        "${{ env.AURORA_PREPARED_ARTIFACT_NAME }}"
+    )
+    for job in reusable["jobs"].values():
+        for step in job.get("steps", []):
+            if step.get("name") == "Download prepared inputs":
+                assert step["with"]["run-id"] == (
+                    "${{ env.AURORA_PREPARED_ARTIFACT_RUN_ID }}"
+                )
+        if "uses" in job and "prepared-artifact-run-id" in job.get("with", {}):
+            assert job["with"]["prepared-artifact-run-id"] == (
+                "${{ env.AURORA_PREPARED_ARTIFACT_RUN_ID }}"
+            )
     for job_name, step_name in (
         ("smoke", "Run bounded smoke"),
         ("pilot", "Resolve exact profile or measure fresh pilot"),
