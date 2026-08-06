@@ -122,6 +122,27 @@ def test_targeted_batch_three_is_distinct_causal_and_full() -> None:
     assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in candidates)
 
 
+def test_batch_four_neighborhood_is_new_balanced_and_full() -> None:
+    batch_three = registry.generate_candidates(3, count=96)
+    batch_four = registry.generate_candidates(4, count=96)
+    assert len(batch_four) == 96
+    assert len({row["canonical_hash"] for row in batch_four}) == 96
+    assert {row["family"] for row in batch_four} == {
+        "reversal_trend_blend",
+        "rsi_trend_blend",
+    }
+    assert sum(row["family"] == "reversal_trend_blend" for row in batch_four) == 48
+    assert sum(row["family"] == "rsi_trend_blend" for row in batch_four) == 48
+    batch_three_rules = {
+        (row["family"], json.dumps(row["parameters"], sort_keys=True))
+        for row in batch_three
+    }
+    assert not batch_three_rules.intersection(
+        (row["family"], json.dumps(row["parameters"], sort_keys=True))
+        for row in batch_four
+    )
+
+
 def test_trial_ledger_is_cumulative_and_pre_registered(tmp_path, monkeypatch) -> None:
     candidates = tuple(_template() | {"strategy_id": f"candidate-{index}", "canonical_hash": canonical_rule_hash(_template() | {"strategy_id": f"candidate-{index}"})} for index in range(3))
     monkeypatch.setattr(registry, "base_package", lambda: SimpleNamespace(candidates=(), research=(), features=(), datasets=()))

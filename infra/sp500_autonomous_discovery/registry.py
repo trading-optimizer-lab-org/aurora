@@ -275,12 +275,134 @@ def _targeted_reversal_candidates(
     return tuple(candidates)
 
 
+def _neighborhood_reversal_candidates(
+    package: CampaignPackage,
+    batch_id: int,
+    count: int,
+) -> tuple[dict[str, Any], ...]:
+    """Search the two strongest batch-3 families without repeating its grid."""
+
+    usable = [
+        row
+        for row in package.candidates
+        if str(row.get("family")) in IMPLEMENTED_FAMILIES
+        and set(row.get("required_datasets", ())).issubset({"DS001", "DS002"})
+    ]
+    if not usable:
+        raise RuntimeError("NO_USABLE_CAUSAL_TEMPLATES")
+    base = next(
+        (row for row in usable if str(row.get("family")) == "short_horizon_reversal"),
+        usable[0],
+    )
+    prior_reversal = {
+        (1, 20, 0.5), (1, 50, 0.5), (1, 100, 0.5), (1, 200, 0.5),
+        (2, 20, 1.0), (2, 50, 1.0), (2, 100, 1.0), (2, 200, 1.0),
+        (3, 20, 1.5), (3, 50, 1.5), (3, 100, 1.5), (3, 200, 1.5),
+    }
+    prior_rsi = {
+        (2, 10, 90, 20), (2, 10, 90, 50), (2, 10, 90, 100), (2, 10, 90, 200),
+        (2, 20, 80, 20), (2, 20, 80, 50), (2, 20, 80, 100), (2, 20, 80, 200),
+        (3, 20, 80, 20), (3, 20, 80, 50), (3, 20, 80, 100), (3, 20, 80, 200),
+    }
+    generation = batch_id - 4
+    trend_windows = [30, 40, 60, 80, 100, 126, 150, 180, 200, 225]
+    reversal_thresholds = [
+        round(value + generation * 0.05, 4)
+        for value in (0.35, 0.5, 0.65, 0.75, 0.9, 1.0, 1.1, 1.25, 1.4, 1.6)
+    ]
+    reversal_grid = [
+        (reversal_window, trend_window, threshold)
+        for trend_window in trend_windows
+        for threshold in reversal_thresholds
+        for reversal_window in (1, 2, 3, 4, 5)
+        if (reversal_window, trend_window, threshold) not in prior_reversal
+    ]
+    rsi_grid = [
+        (window, lower, 100 - lower, trend_window)
+        for trend_window in trend_windows
+        for lower in (5, 10, 15, 20, 25, 30)
+        for window in (2, 3, 4, 5, 7)
+        if (window, lower, 100 - lower, trend_window) not in prior_rsi
+    ]
+
+    # Interleave the whole parameter space so the first 48 are not clustered
+    # around one lookback or one trend horizon.
+    def spread(rows: list[tuple[Any, ...]], wanted: int) -> list[tuple[Any, ...]]:
+        return [rows[(index * len(rows)) // wanted] for index in range(wanted)]
+
+    definitions: list[tuple[str, dict[str, Any], str, str, str]] = []
+    for reversal_window, trend_window, threshold in spread(reversal_grid, count // 2):
+        definitions.append((
+            "reversal_trend_blend",
+            {
+                "reversal_window": reversal_window,
+                "trend_window": trend_window,
+                "reversal_threshold_pct": threshold,
+            },
+            "use short-return reversal after an extreme move; otherwise use causal trend",
+            "effective score_t > 0",
+            "effective score_t < 0",
+        ))
+    for window, lower, upper, trend_window in spread(rsi_grid, count - len(definitions)):
+        definitions.append((
+            "rsi_trend_blend",
+            {
+                "rsi_window": window,
+                "lower": lower,
+                "upper": upper,
+                "trend_window": trend_window,
+            },
+            "use RSI reversal at extremes; otherwise use causal price trend",
+            "score_t > 0",
+            "score_t < 0",
+        ))
+
+    candidates: list[dict[str, Any]] = []
+    for index, (family, parameters, formula, long_rule, short_rule) in enumerate(definitions):
+        candidate = json.loads(json.dumps(base))
+        candidate.update(
+            {
+                "instrument": "SPY",
+                "cash_allowed": False,
+                "partial_exposure_allowed": False,
+                "leverage_allowed": False,
+                "volatility_scaling_allowed": False,
+                "pyramiding_allowed": False,
+                "multiple_assets_in_portfolio": False,
+                "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
+                "variant_label": f"autonomous_neighborhood_batch_{batch_id}_{index}",
+                "family": family,
+                "family_name": family.replace("_", " ").title(),
+                "parameters": parameters,
+                "required_datasets": ["DS001", "DS002"],
+                "feature_formulas": [formula],
+                "long_rule": long_rule,
+                "short_rule": short_rule,
+                "features": [f"AUTO_NEIGHBORHOOD_{family.upper()}"],
+                "warmup_rule": "No signal before every causal input required by the rule is defined.",
+                "known_failure_modes": "Train-only neighborhood hypothesis; must pass every frozen robustness gate.",
+                "economic_sign_rationale": "Refines the strongest pre-2011 reversal and trend interactions without validation access.",
+                "priority_score": max(1, 100 - index),
+                "evidence_track": "pre_2011_evidence",
+                "selection_role": "autonomous_pre_registered_candidate",
+            }
+        )
+        candidate["canonical_hash"] = canonical_rule_hash(candidate)
+        assert_contract(candidate)
+        candidates.append(candidate)
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
+        raise RuntimeError("NEIGHBORHOOD_CANDIDATE_COUNT_OR_HASH_MISMATCH")
+    return tuple(candidates)
+
+
 def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, Any], ...]:
     """Generate a reproducible, pre-registered batch from causal templates."""
 
     if batch_id < 0 or count < 1:
         raise ValueError("INVALID_BATCH_ARGUMENT")
     package = base_package()
+    if batch_id >= 4:
+        return _neighborhood_reversal_candidates(package, batch_id, count)
     if batch_id >= 3:
         return _targeted_reversal_candidates(package, batch_id, count)
     templates = [
