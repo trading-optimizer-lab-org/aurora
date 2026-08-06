@@ -9,6 +9,7 @@ import json
 import numpy as np
 import pandas as pd
 
+from .earnings_events import earnings_streak_value
 from .registry import FidelityClass
 
 
@@ -39,6 +40,7 @@ class AnalystValue:
     observation_count: int
     reason: str = ""
     caveat: str = ""
+    variant_id: str = ""
 
     def record(self, formation_at: pd.Timestamp) -> dict[str, Any]:
         finite_value = _number(self.value)
@@ -62,6 +64,7 @@ class AnalystValue:
                     FidelityClass.VALIDATED_PROXY,
                 }
             ),
+            "variant_id": self.variant_id or self.formula_id,
             "formula_id": self.formula_id,
             "source_ids": "|".join(self.sources),
             "available_at": available,
@@ -176,6 +179,7 @@ def calculate_analyst_signals(
     companyfacts: pd.DataFrame,
     *,
     formation_at: str | pd.Timestamp,
+    earnings_events: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Calculate current signals without treating approximate IBES fields as exact."""
 
@@ -312,34 +316,51 @@ def calculate_analyst_signals(
             history,
             key=lambda row: pd.to_datetime(row.get("quarter"), errors="coerce"),
         )
-        latest_two = ordered_history[-2:]
-        surprises = [_number(row.get("surprisePercent")) for row in latest_two]
-        finite_surprises = [value for value in surprises if value is not None]
-        same_sign = (
-            len(finite_surprises) == 2
-            and all(value != 0 for value in finite_surprises)
-            and np.sign(finite_surprises[0]) == np.sign(finite_surprises[1])
+        symbol_events = (
+            earnings_events.loc[earnings_events["symbol"].eq(symbol)].copy()
+            if earnings_events is not None and not earnings_events.empty
+            else pd.DataFrame()
         )
-        streak = finite_surprises[-1] if same_sign else None
+        streak = earnings_streak_value(symbol_events, formation_at=formation)
+        if streak is None and earnings_events is None:
+            latest_two = ordered_history[-2:]
+            surprises = [_number(row.get("surprisePercent")) for row in latest_two]
+            finite_surprises = [value for value in surprises if value is not None]
+            same_sign = (
+                len(finite_surprises) == 2
+                and all(value != 0 for value in finite_surprises)
+                and np.sign(finite_surprises[0]) == np.sign(finite_surprises[1])
+            )
+            streak = finite_surprises[-1] if same_sign else None
         latest_quarter = (
-            pd.to_datetime(ordered_history[-1].get("quarter"), errors="coerce")
+            pd.to_datetime(symbol_events["period_end"], errors="coerce").max()
+            if not symbol_events.empty
+            else pd.to_datetime(ordered_history[-1].get("quarter"), errors="coerce")
             if ordered_history
             else None
         )
+        streak_available = (
+            pd.to_datetime(symbol_events["event_at"], errors="coerce", utc=True).max()
+            if not symbol_events.empty
+            else history_at
+        )
+        if pd.notna(streak_available) and getattr(streak_available, "tzinfo", None) is not None:
+            streak_available = pd.Timestamp(streak_available).tz_convert(None)
         values.append(
             AnalystValue(
                 symbol,
                 "EarningsStreak",
                 streak,
                 FidelityClass.UNVALIDATED_PROXY,
-                "openap_earnings_streak_yahoo_two_same_sign_surprises_proxy",
+                "openap_earnings_streak_two_same_sign_price_scaled_surprises",
                 ("yahoo_public",),
-                history_at,
+                streak_available,
                 latest_quarter,
-                len(ordered_history),
+                len(symbol_events) if not symbol_events.empty else len(ordered_history),
                 "two_consecutive_same_sign_surprises_required",
-                "Yahoo quarterly surprisePercent replaces the IBES six-month "
-                "price-scaled surprise",
+                "Yahoo reported and consensus EPS replace IBES fpi=6; the surprise "
+                "is scaled by the prior trading-session close and expires after six months",
+                "yahoo_earnings_actual_price_scaled_v1",
             )
         )
 

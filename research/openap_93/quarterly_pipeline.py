@@ -8,6 +8,7 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
+from .earnings_events import announcement_return, choose_earnings_event
 from .registry import FidelityClass
 
 
@@ -51,6 +52,7 @@ class QuarterlyValue:
     available_at: pd.Timestamp | None
     period_end: pd.Timestamp | None
     observation_count: int
+    variant_id: str = ""
     reason: str = ""
     caveat: str = ""
 
@@ -76,6 +78,7 @@ class QuarterlyValue:
                     FidelityClass.VALIDATED_PROXY,
                 }
             ),
+            "variant_id": self.variant_id or self.formula_id,
             "formula_id": self.formula_id,
             "source_ids": "|".join(self.sources),
             "available_at": available_at,
@@ -208,6 +211,7 @@ def calculate_quarterly_signals(
     ff3_daily: pd.DataFrame,
     *,
     formation_at: str | pd.Timestamp,
+    earnings_events: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Calculate current quarterly signals using only filings available at formation."""
 
@@ -298,19 +302,60 @@ def calculate_quarterly_signals(
             )
         )
 
-        ann_value, ann_n, ann_available, ann_period = _announcement_return(
-            firm, prices.loc[prices["symbol"].eq(symbol)], ff3_daily
+        symbol_events = (
+            earnings_events.loc[earnings_events["symbol"].eq(symbol)].copy()
+            if earnings_events is not None and not earnings_events.empty
+            else pd.DataFrame()
         )
+        ann_value = None
+        ann_n = 0
+        ann_available = None
+        ann_period = None
+        ann_source = ""
+        if not symbol_events.empty:
+            symbol_events["event_at"] = pd.to_datetime(
+                symbol_events["event_at"], errors="coerce", utc=True
+            )
+            formation_utc = formation.tz_localize("UTC")
+            symbol_events = symbol_events.loc[
+                symbol_events["event_at"].notna()
+                & symbol_events["event_at"].le(formation_utc)
+                & symbol_events["source_id"].ne("periodic_filing_date")
+            ].copy()
+            chosen_by_period: list[pd.Series] = []
+            for _, period_events in symbol_events.groupby("period_end", dropna=False):
+                chosen_by_period.append(choose_earnings_event(period_events))
+            if chosen_by_period:
+                chosen = pd.DataFrame(chosen_by_period).sort_values("event_at").iloc[-1]
+                measured = announcement_return(
+                    prices.loc[prices["symbol"].eq(symbol)],
+                    ff3_daily,
+                    event_at=chosen["event_at"],
+                )
+                ann_value = measured.value
+                ann_n = measured.sessions
+                ann_available = measured.window_end
+                ann_period = pd.to_datetime(chosen["period_end"], errors="coerce")
+                ann_source = str(chosen["source_id"])
         rows.append(
             QuarterlyValue(
                 signal="AnnouncementReturn", value=ann_value,
                 fidelity=FidelityClass.UNVALIDATED_PROXY,
-                formula_id="openap_announcement_abnormal_return_sec_filing_date_proxy",
-                sources=("sec_edgar", "yahoo_public", "kenneth_french"),
+                formula_id="openap_announcement_return_trading_sessions_minus2_plus1",
+                sources=tuple(
+                    source
+                    for source in (ann_source, "yahoo_public", "kenneth_french")
+                    if source
+                ),
                 available_at=ann_available,
                 period_end=ann_period,
                 observation_count=ann_n,
-                caveat="SEC filing date substitutes for the Compustat earnings announcement date",
+                variant_id=ann_source,
+                reason="no_causal_earnings_announcement_event",
+                caveat=(
+                    "SEC Item 2.02 is preferred; Yahoo reported earnings is the fallback. "
+                    "Periodic filing dates remain diagnostic-only."
+                ),
                 symbol=symbol,
             )
         )

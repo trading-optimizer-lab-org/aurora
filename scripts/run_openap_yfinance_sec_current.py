@@ -494,14 +494,17 @@ def _ticker_snapshots(ticker: Any, symbol: str, config: Mapping[str, Any], retri
 
     datasets = (
         "recommendations", "upgrades_downgrades", "earnings_estimate", "revenue_estimate",
-        "earnings_history", "eps_trend", "eps_revisions", "growth_estimates", "institutional_holders",
+        "earnings_history", "earnings_dates", "eps_trend", "eps_revisions", "growth_estimates", "institutional_holders",
         "mutualfund_holders", "insider_transactions",
     )
     for dataset in datasets:
         try:
-            value = getattr(ticker, dataset, None)
-            if callable(value):
-                value = value()
+            if dataset == "earnings_dates":
+                value = ticker.get_earnings_dates(limit=100)
+            else:
+                value = getattr(ticker, dataset, None)
+                if callable(value):
+                    value = value()
             payload = _dataframe_payload(value)
             analyst_rows.append({"symbol": symbol, "dataset": dataset, "retrieved_at": retrieved_at, "payload_json": json.dumps(payload, ensure_ascii=True)})
         except Exception as exc:
@@ -637,6 +640,7 @@ def _submission_rows(payload: Mapping[str, Any], cik: int) -> list[dict[str, Any
                 "accepted_at": item("acceptanceDateTime"),
                 "report_date": item("reportDate") or item("periodOfReport"),
                 "form": item("form"),
+                "items": item("items"),
                 "primary_document": item("primaryDocument"),
                 "is_xbrl": item("isXBRL"),
                 "entity_type": payload.get("entityType"),

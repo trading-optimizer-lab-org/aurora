@@ -34,6 +34,7 @@ from .analyst_pipeline import (
     EPS_FACT_TAGS,
     calculate_analyst_signals,
 )
+from .earnings_events import build_earnings_events
 from .event_pipeline import EVENT_IMPLEMENTED_SIGNALS, calculate_event_signals
 from .institutional_pipeline import (
     INSTITUTIONAL_IMPLEMENTED_SIGNALS,
@@ -72,6 +73,7 @@ REQUIRED_SIGNAL_COLUMNS = (
     "source_id",
     "source_url",
     "coverage_flag",
+    "variant_id",
     "formula_id",
     "openap_script",
     "natural_frequency",
@@ -255,10 +257,15 @@ def _load_base_frames(
             """,
             [formation_at],
         ).fetchdf()
+        submission_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info('sec_submissions')").fetchall()
+        }
+        items_expression = "u.items" if "items" in submission_columns else "NULL AS items"
         submissions = connection.execute(
-            """
+            f"""
             SELECT u.cik, u.accession_number, u.filing_date, u.accepted_at,
-                   u.report_date, u.form, u.sic, u.sic_description,
+                   u.report_date, u.form, {items_expression}, u.sic, u.sic_description,
                    u.source, u.source_mode
             FROM sec_submissions u
             INNER JOIN security_master m USING (cik)
@@ -1113,6 +1120,12 @@ def run_current_pipeline(
     output.mkdir(parents=True, exist_ok=True)
     public = _load_public_frames(normalized_public_inputs)
     base = _load_base_frames(database, formation, universe_symbols)
+    earnings_events = build_earnings_events(
+        base["master"],
+        base["submissions"],
+        base["analyst"],
+        base["prices"],
+    )
 
     results = [
         calculate_market_signals(
@@ -1145,12 +1158,14 @@ def run_current_pipeline(
             base["prices"],
             public["ff3_daily"],
             formation_at=formation,
+            earnings_events=earnings_events,
         ),
         calculate_analyst_signals(
             base["master"],
             base["analyst"],
             base["companyfacts"],
             formation_at=formation,
+            earnings_events=earnings_events,
         ),
         calculate_event_signals(
             base["master"], base["prices"], formation_at=formation
