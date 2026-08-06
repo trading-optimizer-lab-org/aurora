@@ -159,13 +159,20 @@ jobs:
           python -m pip install --require-hashes -r requirements/github-performance.lock
           python -m pip install --no-deps -e .
       - name: Download bounded raw Stooq window
+        env:
+          PHASE: ${{ inputs.phase }}
         run: |
           set -euo pipefail
+          source_mode="stooq-with-fallback"
+          if [[ "$PHASE" == "validation_diagnostic" ]]; then
+            source_mode="yahoo-fallback"
+          fi
           python scripts/download_sp500_stooq_window.py \
             --start "${{ matrix.start }}" \
             --end "${{ matrix.end }}" \
             --split "${{ needs.resolve_data_windows.outputs.split }}" \
             --window-id "${{ matrix.window_id }}" \
+            --source-mode "$source_mode" \
             --output-dir "$RUNNER_TEMP/stooq-window"
       - name: Upload immutable Stooq window
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

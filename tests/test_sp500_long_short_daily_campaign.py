@@ -2365,6 +2365,8 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "OPEN_VALIDATION_2011_2020_ONCE" in text
     assert "OPEN_VALIDATION_2011_2020_DIAGNOSTIC_STRAT0014" in text
     assert "train_prepared_run_id" in text
+    assert '--source-mode "$source_mode"' in text
+    assert 'source_mode="yahoo-fallback"' in text
     assert "train_selection_freeze.json" not in text or "train-results" in text
     assert "2021-01-01" not in text
     assert "C:\\" not in text
