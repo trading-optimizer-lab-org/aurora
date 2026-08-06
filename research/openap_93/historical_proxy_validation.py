@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from aurora.core.execution_policy import require_github_execution
+from .earnings_events import normalize_sec_item_202_events
 from .market_pipeline import calculate_indretbig_cross_section
 
 
@@ -192,19 +193,41 @@ def _historical_submissions(
     con: duckdb.DuckDBPyConnection,
     master: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Load filing SIC values used causally for historical industry membership."""
+    """Load causal filing metadata for SIC history and earnings events."""
 
     try:
+        available = {
+            str(row[0])
+            for row in con.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'sec_submissions'"
+            ).fetchall()
+        }
+        required = {"cik", "accepted_at"}
+        if not required.issubset(available):
+            raise RuntimeError("sec_submissions lacks causal identifiers")
+        optional = (
+            "accession_number", "filing_date", "report_date", "form", "items", "sic"
+        )
+        expressions = [
+            f"u.{column}" if column in available else f"NULL AS {column}"
+            for column in optional
+        ]
         frame = con.execute(
-            """
-            SELECT u.cik, m.symbol, u.accepted_at, u.sic
+            f"""
+            SELECT u.cik, m.symbol, u.accepted_at, {', '.join(expressions)}
             FROM sec_submissions u
             INNER JOIN security_master m USING (cik)
-            WHERE u.accepted_at IS NOT NULL AND u.sic IS NOT NULL
+            WHERE u.accepted_at IS NOT NULL
             """
         ).df()
     except Exception:
-        return pd.DataFrame(columns=["cik", "symbol", "accepted_at", "sic"])
+        return pd.DataFrame(
+            columns=[
+                "cik", "symbol", "accepted_at", "accession_number",
+                "filing_date", "report_date", "form", "items", "sic",
+            ]
+        )
     if frame.empty:
         return frame
     selected = set(master["symbol"].astype("string"))
@@ -212,7 +235,9 @@ def _historical_submissions(
     frame = frame.loc[frame["symbol"].isin(selected)].copy()
     frame["accepted_at"] = _naive_date(frame["accepted_at"])
     frame["sic"] = pd.to_numeric(frame["sic"], errors="coerce")
-    return frame.dropna(subset=["symbol", "accepted_at", "sic"])
+    for column in ("filing_date", "report_date"):
+        frame[column] = pd.to_datetime(frame[column], errors="coerce")
+    return frame.dropna(subset=["symbol", "accepted_at"])
 
 
 def _ff48_from_sic(sic: pd.Series, ff48_sic_codes: pd.DataFrame | None) -> pd.Series:
@@ -349,19 +374,16 @@ def _build_divseason(monthly: pd.DataFrame) -> pd.DataFrame:
 
 def _build_announcement_return(
     monthly: pd.DataFrame,
-    facts: pd.DataFrame,
+    submissions: pd.DataFrame,
     prices_daily: pd.DataFrame,
     ff3_daily: pd.DataFrame | None,
     master: pd.DataFrame,
 ) -> pd.DataFrame:
-    if facts.empty or prices_daily.empty:
+    if submissions.empty or prices_daily.empty:
         return pd.DataFrame()
-    earnings = facts.loc[
-        facts["tag"].isin(["NetIncomeLoss", "ProfitLoss"])
-        & facts["form"].astype("string").str.upper().isin(["10-Q", "10-K", "10-Q/A", "10-K/A"])
-    ].copy()
-    earnings = earnings.merge(master[["symbol", "cik"]], on="cik", how="inner")
-    earnings = earnings.dropna(subset=["filed", "symbol"])
+    earnings = normalize_sec_item_202_events(submissions, master)
+    if earnings.empty:
+        return pd.DataFrame()
     rows: list[dict[str, object]] = []
     prices_daily = prices_daily.copy()
     # Arrow-backed Parquet columns can arrive as datetime64[us], while CSV
@@ -389,14 +411,16 @@ def _build_announcement_return(
         if px.empty:
             continue
         event_rows: list[dict[str, object]] = []
-        for event_date in sorted(pd.to_datetime(events["filed"]).dropna().unique()):
+        for event_date in sorted(pd.to_datetime(events["event_at"], utc=True).dropna().unique()):
             event = pd.Timestamp(event_date)
-            # OpenAP uses the event trading day plus [-2, +1] trading days.
-            # A calendar window accidentally includes extra sessions around
-            # weekends and holidays and changes the signal.
-            event_position = int(px["date"].searchsorted(event, side="left"))
-            if event_position >= len(px):
+            event_ny = event.tz_convert("America/New_York")
+            event_day = event_ny.tz_localize(None).normalize()
+            eligible_dates = px["date"].gt(event_day) if event_ny.hour >= 16 else px["date"].ge(event_day)
+            eligible_positions = np.flatnonzero(eligible_dates.to_numpy())
+            if not len(eligible_positions):
                 continue
+            event_position = int(eligible_positions[0])
+            # OpenAP uses the event trading day plus [-2, +1] trading days.
             start_position = event_position - 2
             end_position = event_position + 1
             if start_position < 0 or end_position >= len(px):
@@ -417,6 +441,12 @@ def _build_announcement_return(
             event_frame.rename(columns={"available_at": "event_complete_at"}).sort_values("event_complete_at"),
             left_on="cutoff", right_on="event_complete_at", direction="backward",
         )
+        event_month_number = (
+            aligned["event_complete_at"].dt.year * 12
+            + aligned["event_complete_at"].dt.month
+        )
+        cutoff_month_number = aligned["cutoff"].dt.year * 12 + aligned["cutoff"].dt.month
+        aligned = aligned.loc[(cutoff_month_number - event_month_number).between(0, 6)]
         for item in aligned.dropna(subset=["proxy_value"]).itertuples(index=False):
             rows.append({
                 "symbol": symbol,
@@ -425,9 +455,12 @@ def _build_announcement_return(
                 "signal": "AnnouncementReturn",
                 "proxy_value": float(item.proxy_value),
                 "proxy_formula_id": "openap_announcement_return_trading_sessions_minus2_plus1",
-                "variant_id": "periodic_filing_date",
+                "variant_id": "sec_8k_item_202",
                 "reconstruction_status": "reconstructed",
-                "caveat": "SEC filing date replaces Compustat announcement date; event window is complete before formation",
+                "caveat": (
+                    "SEC 8-K Item 2.02 accepted timestamp proxies Compustat rdq; "
+                    "the four-session event window is complete before formation and expires after six months"
+                ),
             })
     if not rows:
         return pd.DataFrame()
@@ -520,7 +553,7 @@ def _build_earnings_streak(
     for symbol, group in monthly.groupby("symbol", sort=False):
         events = history.loc[
             history["symbol"].eq(symbol), ["available_at_proxy", "streak_value"]
-        ].copy()
+        ].dropna(subset=["streak_value"]).copy()
         if events.empty:
             continue
         events["available_at_proxy"] = pd.to_datetime(
@@ -535,6 +568,13 @@ def _build_earnings_streak(
             events.sort_values("available_at_proxy"),
             left_on="cutoff", right_on="available_at_proxy", direction="backward",
         )
+        event_month_number = (
+            aligned["available_at_proxy"].dt.year * 12
+            + aligned["available_at_proxy"].dt.month
+        )
+        cutoff_month_number = aligned["cutoff"].dt.year * 12 + aligned["cutoff"].dt.month
+        stale = (cutoff_month_number - event_month_number).gt(6)
+        aligned.loc[stale, "streak_value"] = np.nan
         aligned["symbol"] = symbol
         aligned["signal"] = "EarningsStreak"
         aligned["proxy_value"] = aligned["streak_value"]
@@ -770,7 +810,7 @@ def reconstruct_monthly_proxies(
         ff48_frame = pd.read_csv(ff48_sic_codes)
     parts = [
         _build_divseason(monthly),
-        _build_announcement_return(monthly, facts, prices_daily, ff3, master),
+        _build_announcement_return(monthly, submissions, prices_daily, ff3, master),
         _build_earnings_streak(monthly, earnings_frame),
         _build_indretbig(monthly, master, facts, submissions, ff48_frame),
         _build_delnetfin(monthly, master, facts),
