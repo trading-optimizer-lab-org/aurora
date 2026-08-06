@@ -5,6 +5,7 @@ import json
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from aurora.research.openap_93.forward_proxy_validation import (
     ForwardProxyGate,
@@ -154,5 +155,5 @@ def test_proxy_spreads_keep_formula_variants_separate() -> None:
 
     assert set(spreads["variant_id"]) == {"v1", "v2"}
     by_variant = spreads.set_index("variant_id")["proxy_spread_return"]
-    assert by_variant["v1"] == 0.09
-    assert by_variant["v2"] == -0.09
+    assert by_variant["v1"] == pytest.approx(0.09)
+    assert by_variant["v2"] == pytest.approx(-0.09)

@@ -284,6 +284,11 @@ def build_official_long_short_spreads(official: pd.DataFrame) -> pd.DataFrame:
 
 def build_proxy_spreads(proxy_panel: pd.DataFrame, monthly: pd.DataFrame) -> pd.DataFrame:
     panel = proxy_panel.copy()
+    if "variant_id" not in panel.columns:
+        if "proxy_formula_id" in panel.columns:
+            panel["variant_id"] = panel["proxy_formula_id"].astype("string")
+        else:
+            panel["variant_id"] = "default"
     panel["formation_month"] = pd.to_datetime(panel["formation_month"], errors="coerce").dt.to_period("M").dt.to_timestamp()
     panel["proxy_value"] = pd.to_numeric(panel["proxy_value"], errors="coerce")
     monthly_columns = {str(column).lower(): column for column in monthly.columns}
@@ -306,14 +311,16 @@ def build_proxy_spreads(proxy_panel: pd.DataFrame, monthly: pd.DataFrame) -> pd.
     else:
         return pd.DataFrame(
             columns=[
-                "signal", "formation_month", "proxy_spread_return",
+                "signal", "variant_id", "formation_month", "proxy_spread_return",
                 "proxy_low_count", "proxy_high_count",
             ]
         )
     panel = panel.dropna(subset=["signal", "formation_month", "proxy_value", "month_return"])
     panel = panel.loc[panel["signal"].isin(FIVE_PROXY_SIGNALS)]
     rows: list[dict[str, object]] = []
-    for (signal, month), group in panel.groupby(["signal", "formation_month"], sort=True):
+    for (signal, variant_id, month), group in panel.groupby(
+        ["signal", "variant_id", "formation_month"], sort=True
+    ):
         group = group.sort_values("proxy_value", kind="mergesort")
         n = max(1, len(group) // 10)
         low = pd.to_numeric(group["month_return"].iloc[:n], errors="coerce").mean()
@@ -322,6 +329,7 @@ def build_proxy_spreads(proxy_panel: pd.DataFrame, monthly: pd.DataFrame) -> pd.
             continue
         rows.append({
             "signal": signal,
+            "variant_id": variant_id,
             "formation_month": month,
             "proxy_spread_return": float(high - low),
             "proxy_low_count": int(n),
@@ -372,7 +380,9 @@ def _similarity_row(signal: str, merged: pd.DataFrame, period: str = "all") -> d
 
 
 def compare_official_and_proxy(official_spreads: pd.DataFrame, proxy_spreads: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    merged = official_spreads.merge(proxy_spreads, on=["signal", "formation_month"], how="inner")
+    merged = official_spreads.merge(
+        proxy_spreads, on=["signal", "formation_month"], how="inner"
+    )
     rows: list[dict[str, object]] = []
     periods = ("all", "1962-01-01:1999-12-31", "2000-01-01:2009-12-31", "2010-01-01:2019-12-31", "2020-01-01:2026-12-31")
     for signal in FIVE_PROXY_SIGNALS:

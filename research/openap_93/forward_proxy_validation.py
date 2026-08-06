@@ -233,6 +233,54 @@ def validate_frozen_variant(
     )
 
 
+def certify_forward_proxy_candidates(
+    candidates: pd.DataFrame,
+    official: pd.DataFrame,
+    *,
+    formula_hashes: dict[tuple[str, str], str],
+    source_manifest_hashes: dict[tuple[str, str], str],
+    train_end: str,
+    validation_start: str,
+    validation_end: str,
+    gate: ForwardProxyGate | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[ForwardProxyCertificate]]:
+    """Select variants on train and certify the frozen formulas on validation."""
+
+    active_gate = gate or ForwardProxyGate()
+    signals = sorted(str(value) for value in candidates["signal"].dropna().unique())
+    selected_rows: list[dict[str, object]] = []
+    validation_rows: list[dict[str, object]] = []
+    certificates: list[ForwardProxyCertificate] = []
+    for signal in signals:
+        selected = select_train_variant(
+            candidates,
+            official,
+            signal=signal,
+            train_end=train_end,
+        )
+        identity = (selected.signal, selected.variant_id)
+        if identity not in formula_hashes:
+            raise ValueError(f"missing formula hash for {identity}")
+        if identity not in source_manifest_hashes:
+            raise ValueError(f"missing source manifest hash for {identity}")
+        certificate = validate_frozen_variant(
+            selected,
+            candidates,
+            official,
+            validation_start=validation_start,
+            validation_end=validation_end,
+            formula_sha256=formula_hashes[identity],
+            source_manifest_sha256=source_manifest_hashes[identity],
+            gate=active_gate,
+        )
+        selected_rows.append(asdict(selected))
+        validation_record = asdict(certificate)
+        validation_record["certificate_sha256"] = certificate_sha256(certificate)
+        validation_rows.append(validation_record)
+        certificates.append(certificate)
+    return pd.DataFrame(selected_rows), pd.DataFrame(validation_rows), certificates
+
+
 def certificate_sha256(certificate: ForwardProxyCertificate) -> str:
     payload = json.dumps(
         asdict(certificate),
