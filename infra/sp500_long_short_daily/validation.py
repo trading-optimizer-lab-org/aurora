@@ -41,11 +41,80 @@ from aurora.infra.github_performance.shard_planner import sha256_file
 
 
 VALIDATION_ACK = "OPEN_VALIDATION_2011_2020_ONCE"
+DIAGNOSTIC_VALIDATION_ACK = "OPEN_VALIDATION_2011_2020_DIAGNOSTIC_STRAT0014"
 VALIDATION_START = pd.Timestamp("2011-01-01")
 
 
 class ValidationGateError(RuntimeError):
     """Raised before performance is exposed when the one-shot contract fails."""
+
+
+def build_diagnostic_train_freeze(
+    *,
+    source_train_results_dir: Path,
+    output_dir: Path,
+    strategy_id: str,
+    code_sha: str,
+) -> Path:
+    """Freeze one train-selected, SPA-failing candidate for diagnostic validation."""
+    source_root = Path(source_train_results_dir).resolve()
+    source_path = source_root / "train_selection_freeze.json"
+    raw_source = json.loads(source_path.read_text(encoding="utf-8"))
+    source_freeze = verify_train_freeze(
+        source_path,
+        code_sha=str(raw_source.get("code_sha", "")),
+    )
+    metrics_path = source_root / "candidate_metrics.csv"
+    if not metrics_path.is_file():
+        raise ValidationGateError("DIAGNOSTIC_TRAIN_METRICS_MISSING")
+    metrics = pd.read_csv(metrics_path)
+    selected = metrics.loc[metrics["strategy_id"].astype(str) == strategy_id]
+    if len(selected) != 1:
+        raise ValidationGateError(f"DIAGNOSTIC_STRATEGY_NOT_UNIQUE:{strategy_id}")
+    row = selected.iloc[0]
+    if str(row.get("status", "")) != "evaluated":
+        raise ValidationGateError(f"DIAGNOSTIC_STRATEGY_NOT_EVALUATED:{strategy_id}")
+    if str(row.get("hard_train_eligible", "")).lower() != "true":
+        raise ValidationGateError(f"DIAGNOSTIC_STRATEGY_NOT_TRAIN_ELIGIBLE:{strategy_id}")
+    candidate = _package().candidate_by_id().get(strategy_id)
+    if candidate is None or str(candidate["canonical_hash"]) != str(row["canonical_hash"]):
+        raise ValidationGateError(f"DIAGNOSTIC_CANDIDATE_HASH_MISMATCH:{strategy_id}")
+    output = Path(output_dir).resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    freeze: dict[str, Any] = {
+        "schema_version": "1",
+        "campaign_id": "sp500_long_short_daily_zero_cost_v1",
+        "selection_closed": True,
+        "validation_opened": False,
+        "locked_opened": False,
+        "train_end": "2010-12-31",
+        "validation_start": "2011-01-01",
+        "validation_end": "2020-12-31",
+        "locked_start": "2021-01-01",
+        "code_sha": code_sha,
+        "source_train_freeze_sha256": source_freeze["freeze_sha256"],
+        "source_train_code_sha": source_freeze["code_sha"],
+        "selection_basis": "owner_authorized_train_only_highest_gross_cagr_diagnostic",
+        "finalists": [
+            {
+                "strategy_id": strategy_id,
+                "canonical_hash": candidate["canonical_hash"],
+                "diagnostic_only": True,
+                "eligible_for_validation": False,
+                "train_metrics": {
+                    "cagr_pct": float(row["train_cagr_pct"]),
+                    "sharpe": float(row["train_sharpe"]),
+                    "calmar": float(row["train_calmar"]),
+                    "max_drawdown_pct": float(row["train_max_drawdown_pct"]),
+                    "spa_pvalue": float(row["spa_pvalue"]),
+                },
+            }
+        ],
+    }
+    freeze["freeze_sha256"] = canonical_json_hash(freeze)
+    path = output / "train_selection_freeze.json"
+    path.write_text(json.dumps(freeze, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
 
 
 def verify_train_freeze(path: Path, *, code_sha: str | None = None) -> Mapping[str, Any]:
@@ -255,8 +324,10 @@ def run_validation_once(
     output_dir: Path,
     validation_ack: str,
     code_sha: str | None = None,
+    allow_diagnostic: bool = False,
 ) -> Mapping[str, Any]:
-    if validation_ack != VALIDATION_ACK:
+    expected_ack = DIAGNOSTIC_VALIDATION_ACK if allow_diagnostic else VALIDATION_ACK
+    if validation_ack != expected_ack:
         raise ValidationGateError("VALIDATION_ACK_MISMATCH")
     train_root = Path(train_results_dir).resolve()
     output = Path(output_dir).resolve()
@@ -271,7 +342,7 @@ def run_validation_once(
         if bool(item.get("diagnostic_only"))
         or item.get("eligible_for_validation", True) is not True
     ]
-    if ineligible:
+    if ineligible and not allow_diagnostic:
         raise ValidationGateError(
             "INELIGIBLE_FROZEN_FINALISTS_VALIDATION_MUST_NOT_OPEN:" + ",".join(ineligible)
         )
@@ -339,8 +410,11 @@ def run_validation_once(
     rejected_benchmarks = int(
         ((metrics["unit_type"] == "benchmark") & (metrics["status"] == "rejected")).sum()
     )
+    diagnostic_only = bool(allow_diagnostic)
     if rejected_finalists or rejected_benchmarks:
         result_status = "TECHNICAL_FAILURE"
+    elif diagnostic_only:
+        result_status = "DIAGNOSTIC_VALIDATION_RESULT"
     elif passing:
         result_status = "POSITIVE_VALIDATED_RESULT"
     else:
@@ -356,6 +430,8 @@ def run_validation_once(
         "rejected_finalists": rejected_finalists,
         "rejected_benchmarks": rejected_benchmarks,
         "passing_finalists": passing,
+        "diagnostic_only": diagnostic_only,
+        "promotion_eligible": not diagnostic_only,
         "validation_start": "2011-01-01",
         "validation_end": "2020-12-31",
         "validation_opened": True,
@@ -388,6 +464,8 @@ def run_validation_once(
                 "",
                 f"- Frozen finalists: {len(finalists)}",
                 f"- Passing finalists: {passing}",
+                f"- Diagnostic only: {str(diagnostic_only).lower()}",
+                f"- Promotion eligible: {str(not diagnostic_only).lower()}",
                 f"- Rejected finalists: {rejected_finalists}",
                 "- Validation opened once: true",
                 "- Validation used for selection: false",

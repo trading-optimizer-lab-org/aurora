@@ -15,6 +15,7 @@ on:
           - train
           - full_train
           - validation_once
+          - validation_diagnostic
       execution_mode:
         description: Universal planner execution mode
         required: false
@@ -43,8 +44,18 @@ on:
         required: false
         default: ""
         type: string
+      train_prepared_run_id:
+        description: GitHub run containing immutable train prepared inputs
+        required: false
+        default: ""
+        type: string
       train_prepared_artifact:
         description: Immutable train prepared-input artifact name
+        required: false
+        default: ""
+        type: string
+      diagnostic_strategy_id:
+        description: Owner-authorized train candidate for diagnostic validation only
         required: false
         default: ""
         type: string
@@ -82,7 +93,7 @@ jobs:
               workload = "aurora.infra.sp500_long_short_daily.workload:SMOKE_WORKLOAD"
               label = "sp500-ls-smoke"
               split = "train"
-          elif phase == "validation_once":
+          elif phase in {"validation_once", "validation_diagnostic"}:
               start, end = dt.date(2011, 1, 1), dt.date(2020, 12, 31)
               workload = ""
               label = "sp500-ls-validation"
@@ -167,7 +178,7 @@ jobs:
 
   prepare_campaign_data:
     needs: [resolve_data_windows, stooq_windows]
-    if: inputs.phase != 'preflight' && inputs.phase != 'validation_once'
+    if: inputs.phase != 'preflight' && inputs.phase != 'validation_once' && inputs.phase != 'validation_diagnostic'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -302,7 +313,7 @@ jobs:
 
   validation_once:
     needs: [resolve_data_windows, stooq_windows]
-    if: inputs.phase == 'validation_once'
+    if: inputs.phase == 'validation_once' || inputs.phase == 'validation_diagnostic'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -323,17 +334,36 @@ jobs:
           python -m pip install --no-deps -e .
       - name: Verify one-shot inputs
         env:
+          PHASE: ${{ inputs.phase }}
           VALIDATION_ACK: ${{ inputs.validation_ack }}
           TRAIN_RUN_ID: ${{ inputs.train_run_id }}
           TRAIN_RESULTS_ARTIFACT: ${{ inputs.train_results_artifact }}
+          TRAIN_PREPARED_RUN_ID: ${{ inputs.train_prepared_run_id }}
           TRAIN_PREPARED_ARTIFACT: ${{ inputs.train_prepared_artifact }}
+          DIAGNOSTIC_STRATEGY_ID: ${{ inputs.diagnostic_strategy_id }}
         run: |
           set -euo pipefail
-          [[ "$VALIDATION_ACK" == "OPEN_VALIDATION_2011_2020_ONCE" ]] || {
-            echo "::error::VALIDATION_ACK_MISMATCH"
-            exit 2
-          }
+          if [[ "$PHASE" == "validation_diagnostic" ]]; then
+            [[ "$VALIDATION_ACK" == "OPEN_VALIDATION_2011_2020_DIAGNOSTIC_STRAT0014" ]] || {
+              echo "::error::DIAGNOSTIC_VALIDATION_ACK_MISMATCH"
+              exit 2
+            }
+            [[ "$DIAGNOSTIC_STRATEGY_ID" == "STRAT0014" ]] || {
+              echo "::error::DIAGNOSTIC_STRATEGY_NOT_AUTHORIZED"
+              exit 2
+            }
+          else
+            [[ "$VALIDATION_ACK" == "OPEN_VALIDATION_2011_2020_ONCE" ]] || {
+              echo "::error::VALIDATION_ACK_MISMATCH"
+              exit 2
+            }
+            [[ -z "$DIAGNOSTIC_STRATEGY_ID" ]] || {
+              echo "::error::DIAGNOSTIC_STRATEGY_FORBIDDEN_IN_OFFICIAL_VALIDATION"
+              exit 2
+            }
+          fi
           [[ "$TRAIN_RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::TRAIN_RUN_ID_REQUIRED"; exit 2; }
+          [[ "$TRAIN_PREPARED_RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::TRAIN_PREPARED_RUN_ID_REQUIRED"; exit 2; }
           [[ -n "$TRAIN_RESULTS_ARTIFACT" ]] || { echo "::error::TRAIN_RESULTS_ARTIFACT_REQUIRED"; exit 2; }
           [[ -n "$TRAIN_PREPARED_ARTIFACT" ]] || { echo "::error::TRAIN_PREPARED_ARTIFACT_REQUIRED"; exit 2; }
       - name: Download validation Stooq windows
@@ -355,28 +385,39 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TRAIN_RUN_ID: ${{ inputs.train_run_id }}
           TRAIN_RESULTS_ARTIFACT: ${{ inputs.train_results_artifact }}
+          TRAIN_PREPARED_RUN_ID: ${{ inputs.train_prepared_run_id }}
           TRAIN_PREPARED_ARTIFACT: ${{ inputs.train_prepared_artifact }}
         run: |
           set -euo pipefail
           gh run download "$TRAIN_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name "$TRAIN_RESULTS_ARTIFACT" --dir "$RUNNER_TEMP/train-results"
-          gh run download "$TRAIN_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+          gh run download "$TRAIN_PREPARED_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name "$TRAIN_PREPARED_ARTIFACT" --dir "$RUNNER_TEMP/train-prepared"
       - name: Open validation exactly once
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          PHASE: ${{ inputs.phase }}
           VALIDATION_ACK: ${{ inputs.validation_ack }}
+          DIAGNOSTIC_STRATEGY_ID: ${{ inputs.diagnostic_strategy_id }}
           SP500_STOOQ_HISTORY_CSV: ${{ runner.temp }}/stooq-merged/stooq_spy_us_history.csv
           SP500_STOOQ_HISTORY_MANIFEST: ${{ runner.temp }}/stooq-merged/stooq_sharded_manifest.json
         run: |
           set -euo pipefail
+          diagnostic_args=()
+          if [[ "$PHASE" == "validation_diagnostic" ]]; then
+            diagnostic_args=(--diagnostic-strategy-id "$DIAGNOSTIC_STRATEGY_ID")
+          fi
           python scripts/run_sp500_long_short_daily_validation.py \
             --train-results-dir "$RUNNER_TEMP/train-results" \
             --train-prepared-dir "$RUNNER_TEMP/train-prepared" \
             --validation-prepared-dir "$RUNNER_TEMP/validation-prepared" \
             --output-dir "$RUNNER_TEMP/validation-results" \
-            --validation-ack "$VALIDATION_ACK"
+            --validation-ack "$VALIDATION_ACK" \
+            "${diagnostic_args[@]}"
       - name: Independently verify validation boundaries and counts
+        env:
+          PHASE: ${{ inputs.phase }}
+          DIAGNOSTIC_STRATEGY_ID: ${{ inputs.diagnostic_strategy_id }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -392,6 +433,14 @@ jobs:
               raise SystemExit("TECHNICAL_FAILURE_LOCKED_BREACH")
           if summary["validation_used_for_selection"] is not False:
               raise SystemExit("VALIDATION_USED_FOR_SELECTION")
+          diagnostic = os.environ["PHASE"] == "validation_diagnostic"
+          if bool(summary.get("diagnostic_only")) != diagnostic:
+              raise SystemExit("VALIDATION_DIAGNOSTIC_FLAG_MISMATCH")
+          if diagnostic:
+              if summary.get("promotion_eligible") is not False:
+                  raise SystemExit("DIAGNOSTIC_PROMOTION_MUST_BE_FALSE")
+              if summary.get("result_status") != "DIAGNOSTIC_VALIDATION_RESULT":
+                  raise SystemExit("DIAGNOSTIC_RESULT_STATUS_MISMATCH")
           daily = pq.read_table(root / "validation_daily_returns.parquet").to_pandas()
           if len(daily):
               dates = pd.to_datetime(daily["date"])
@@ -400,12 +449,16 @@ jobs:
           metrics = pd.read_csv(root / "validation_candidate_and_benchmark_metrics.csv")
           if len(metrics) != summary["frozen_finalists"] + 5:
               raise SystemExit("VALIDATION_UNIT_COUNT_MISMATCH")
+          if diagnostic:
+              candidates = metrics.loc[metrics["unit_type"] == "candidate", "strategy_id"].tolist()
+              if candidates != [os.environ["DIAGNOSTIC_STRATEGY_ID"]]:
+                  raise SystemExit("DIAGNOSTIC_STRATEGY_MISMATCH")
           PY
       - name: Upload immutable one-shot validation artifact
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: sp500-ls-validation-once-${{ github.run_id }}
+          name: sp500-ls-${{ inputs.phase }}-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/validation-results
             ${{ runner.temp }}/validation-prepared/market_data_manifest.json
