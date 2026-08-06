@@ -33,7 +33,7 @@ def test_item_202_precedes_yahoo_and_periodic_filing_for_same_period() -> None:
     chosen = choose_earnings_event(events)
 
     assert chosen["source_id"] == "sec_8k_item_202"
-    assert pd.Timestamp(chosen["event_at"]) == pd.Timestamp("2026-01-29")
+    assert pd.Timestamp(chosen["event_at"]) == pd.Timestamp("2026-01-29", tz="UTC")
 
 
 def test_announcement_return_uses_exact_four_trading_sessions_minus2_plus1() -> None:
