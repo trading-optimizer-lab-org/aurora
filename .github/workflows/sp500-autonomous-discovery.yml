@@ -443,7 +443,7 @@ jobs:
           prepare_market_snapshot(
               Path(os.environ["RUNNER_TEMP_VALUE"]) / "validation-prepared",
               base_package(),
-              start="2010-01-01",
+              start="2011-01-01",
               end="2020-12-31",
               split="validation",
           )
@@ -536,7 +536,7 @@ jobs:
           prepare_market_snapshot(
               Path(os.environ["RUNNER_TEMP_VALUE"]) / "validation-prepared",
               base_package(),
-              start="2010-01-01",
+              start="2011-01-01",
               end="2020-12-31",
               split="validation",
           )

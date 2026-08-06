@@ -774,6 +774,15 @@ def test_exploratory_candidate_selection_is_exact_and_fail_closed() -> None:
     )
 
 
+def test_validation_workflow_requests_only_the_frozen_validation_period() -> None:
+    text = Path(".github/workflows/sp500-autonomous-discovery.yml").read_text(
+        encoding="utf-8"
+    )
+    assert text.count('start="2011-01-01"') >= 2
+    assert 'split="validation"' in text
+    assert 'start="2010-01-01"' not in text
+
+
 def test_block_sum_bootstrap_matches_original_sampling(monkeypatch) -> None:
     repetitions = 100
     monkeypatch.setattr(autonomous_statistics, "BOOTSTRAP_REPETITIONS", repetitions)
