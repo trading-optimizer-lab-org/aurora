@@ -164,10 +164,30 @@ def build_proxy_spreads(proxy_panel: pd.DataFrame, monthly: pd.DataFrame) -> pd.
     panel = proxy_panel.copy()
     panel["formation_month"] = pd.to_datetime(panel["formation_month"], errors="coerce").dt.to_period("M").dt.to_timestamp()
     panel["proxy_value"] = pd.to_numeric(panel["proxy_value"], errors="coerce")
-    realised = monthly[["symbol", "completed_month", "month_return"]].copy()
-    realised["formation_month"] = pd.to_datetime(realised["completed_month"], errors="coerce").dt.to_period("M").dt.to_timestamp()
-    realised["month_return"] = pd.to_numeric(realised["month_return"], errors="coerce")
-    panel = panel.merge(realised[["symbol", "formation_month", "month_return"]], on=["symbol", "formation_month"], how="inner")
+    monthly_columns = {str(column).lower(): column for column in monthly.columns}
+    if {"symbol", "completed_month", "month_return"}.issubset(monthly_columns):
+        realised = monthly[
+            [monthly_columns["symbol"], monthly_columns["completed_month"], monthly_columns["month_return"]]
+        ].copy()
+        realised.columns = ["symbol", "completed_month", "month_return"]
+        realised["formation_month"] = pd.to_datetime(
+            realised["completed_month"], errors="coerce"
+        ).dt.to_period("M").dt.to_timestamp()
+        realised["month_return"] = pd.to_numeric(realised["month_return"], errors="coerce")
+        panel = panel.merge(
+            realised[["symbol", "formation_month", "month_return"]],
+            on=["symbol", "formation_month"],
+            how="inner",
+        )
+    elif "realized_month_return" in panel.columns:
+        panel["month_return"] = pd.to_numeric(panel["realized_month_return"], errors="coerce")
+    else:
+        return pd.DataFrame(
+            columns=[
+                "signal", "formation_month", "proxy_spread_return",
+                "proxy_low_count", "proxy_high_count",
+            ]
+        )
     panel = panel.dropna(subset=["signal", "formation_month", "proxy_value", "month_return"])
     panel = panel.loc[panel["signal"].isin(FIVE_PROXY_SIGNALS)]
     rows: list[dict[str, object]] = []
@@ -251,7 +271,18 @@ def run_official_portfolio_similarity(
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     proxy = pd.read_parquet(proxy_panel)
-    monthly_frame = pd.read_parquet(monthly) if str(monthly).lower().endswith(".parquet") else pd.read_csv(monthly)
+    monthly_path = Path(monthly)
+    if monthly_path.exists() and monthly_path.stat().st_size > 0:
+        try:
+            monthly_frame = (
+                pd.read_parquet(monthly_path)
+                if str(monthly_path).lower().endswith(".parquet")
+                else pd.read_csv(monthly_path)
+            )
+        except pd.errors.EmptyDataError:
+            monthly_frame = pd.DataFrame()
+    else:
+        monthly_frame = pd.DataFrame()
     official = download_official_deciles(release=release, archive_path=official_deciles)
     official_spreads = build_official_spreads(official)
     proxy_spreads = build_proxy_spreads(proxy, monthly_frame)

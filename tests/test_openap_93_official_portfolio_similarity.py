@@ -54,6 +54,19 @@ def test_proxy_deciles_use_next_formation_month_return() -> None:
     assert spreads.iloc[0]["proxy_spread_return"] == pytest.approx(0.09)
 
 
+def test_proxy_deciles_can_use_realized_returns_kept_in_panel() -> None:
+    proxy = pd.DataFrame({
+        "symbol": ["A", "B", "C", "D"],
+        "formation_month": pd.to_datetime(["2020-02-01"] * 4),
+        "signal": ["DivSeason"] * 4,
+        "proxy_value": [1.0, 2.0, 9.0, 10.0],
+        "realized_month_return": [0.01, 0.02, 0.08, 0.10],
+    })
+    spreads = build_proxy_spreads(proxy, pd.DataFrame())
+    assert len(spreads) == 1
+    assert spreads.iloc[0]["proxy_spread_return"] == pytest.approx(0.09)
+
+
 def test_similarity_reports_high_match_without_claiming_identity() -> None:
     official = pd.DataFrame({
         "signal": ["DivSeason"] * 3,

@@ -643,6 +643,14 @@ def reconstruct_monthly_proxies(
     ]
     result = pd.concat([part for part in parts if not part.empty], ignore_index=True)
     result["cik"] = result["symbol"].map(master.set_index("symbol")["cik"])
+    # Keep the realized month return beside each signal.  This is the return
+    # earned in the formation month and lets downstream portfolio diagnostics
+    # work without re-querying the database or confusing it with the
+    # crosswalk-comparison table.
+    realised = monthly[["symbol", "completed_month", "month_return"]].copy()
+    realised["month_return"] = pd.to_numeric(realised["month_return"], errors="coerce")
+    result = result.merge(realised, on=["symbol", "completed_month"], how="left")
+    result = result.rename(columns={"month_return": "realized_month_return"})
     result["available_at"] = result["completed_month"].map(
         lambda value: pd.Timestamp(value) + pd.offsets.MonthEnd(0)
     )
@@ -910,6 +918,15 @@ def write_validation_outputs(
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     proxies.to_parquet(output / "proxy_reconstruction_panel.parquet", index=False)
+    realised_columns = ["symbol", "completed_month", "realized_month_return"]
+    if all(column in proxies.columns for column in realised_columns):
+        proxies[realised_columns].drop_duplicates(
+            ["symbol", "completed_month"]
+        ).to_csv(output / "proxy_realized_monthly.csv", index=False)
+    else:
+        pd.DataFrame(columns=realised_columns).to_csv(
+            output / "proxy_realized_monthly.csv", index=False
+        )
     monthly.to_csv(output / "proxy_validation_monthly.csv", index=False)
     summary.to_csv(output / "proxy_validation_summary.csv", index=False)
     audit = {

@@ -166,7 +166,7 @@ jobs:
             --min-pairs "${{ inputs.min_pairs || '30' }}"
           python scripts/run_openap_93_official_portfolio_similarity.py \
             --proxy-panel outputs/openap_five_proxy_historical_validation/proxy_reconstruction_panel.parquet \
-            --monthly outputs/openap_five_proxy_historical_validation/proxy_validation_monthly.csv \
+            --monthly outputs/openap_five_proxy_historical_validation/proxy_realized_monthly.csv \
             --output-dir outputs/openap_five_proxy_historical_validation/official_portfolio_similarity \
             --release 202510,202410,202408 \
             $([[ -n "${{ steps.locate.outputs.official }}" ]] && printf '%s' "--official-deciles ${{ steps.locate.outputs.official }}")
