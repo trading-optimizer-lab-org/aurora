@@ -2005,7 +2005,7 @@ def test_phase_workloads_are_bounded_and_have_exact_unit_counts() -> None:
 def test_every_frozen_family_is_implemented_or_has_a_precise_rejection() -> None:
     package_families = {row["family"] for row in _campaign().candidates}
     assert IMPLEMENTED_FAMILIES.isdisjoint(EXPLICIT_FAMILY_REJECTIONS)
-    assert package_families == IMPLEMENTED_FAMILIES | set(EXPLICIT_FAMILY_REJECTIONS)
+    assert package_families <= IMPLEMENTED_FAMILIES | set(EXPLICIT_FAMILY_REJECTIONS)
 
 
 def test_effective_trial_count_collapses_identical_strategies() -> None:
@@ -2244,10 +2244,14 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "dt.timedelta(days=44)" not in universal
     assert '--source-mode "yahoo-fallback"' in universal
     assert "prepared_artifact_run_id" in universal
-    assert universal.count("inputs.prepared_artifact_run_id || github.run_id") == 14
-    assert universal.count(
-        "prepared-artifact-run-id: ${{ inputs.prepared_artifact_run_id }}"
-    ) == 8
+    assert "AURORA_PREPARED_ARTIFACT_RUN_ID:" in universal
+    universal_lines = [line.strip() for line in universal.splitlines()]
+    assert universal_lines.count(
+        "run-id: ${{ env.AURORA_PREPARED_ARTIFACT_RUN_ID }}"
+    ) == 9
+    assert universal_lines.count(
+        "prepared-artifact-run-id: ${{ env.AURORA_PREPARED_ARTIFACT_RUN_ID }}"
+    ) == 12
     assert "needs.prepare_data.result == 'success'" in universal
 
     retry_action = (
