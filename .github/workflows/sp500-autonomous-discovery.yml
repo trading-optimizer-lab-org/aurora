@@ -18,6 +18,7 @@ on:
           - statistical_gate
           - freeze
           - validation_once
+          - exploratory_validation
           - verify
       batch_id:
         description: Deterministic autonomous batch identifier
@@ -74,6 +75,11 @@ on:
         type: string
       train_prepared_artifact:
         description: Frozen train prepared-input artifact
+        required: false
+        default: ""
+        type: string
+      exploratory_strategy_id:
+        description: Exact train candidate for owner-authorized exploratory validation
         required: false
         default: ""
         type: string
@@ -402,6 +408,7 @@ jobs:
           path: ${{ runner.temp }}/validation-reservation/reservation.json
           if-no-files-found: error
           retention-days: 90
+
       - name: Verify one-shot authorization
         env:
           VALIDATION_ACK: ${{ inputs.validation_ack }}
@@ -475,5 +482,98 @@ jobs:
         with:
           name: sp500-autonomous-validation-once-${{ github.run_id }}
           path: ${{ runner.temp }}/validation-results
+          if-no-files-found: error
+          retention-days: 90
+
+  exploratory_validation:
+    if: inputs.phase == 'exploratory_validation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Install locked runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Verify explicit exploratory authorization
+        env:
+          VALIDATION_ACK: ${{ inputs.validation_ack }}
+          TRAIN_RUN_ID: ${{ inputs.train_run_id }}
+          TRAIN_RESULTS_ARTIFACT: ${{ inputs.train_results_artifact }}
+          STRATEGY_ID: ${{ inputs.exploratory_strategy_id }}
+        run: |
+          set -euo pipefail
+          [[ "$VALIDATION_ACK" == "OPEN_EXPLORATORY_VALIDATION_2011_2020_OWNER_AUTHORIZED" ]]
+          [[ "$TRAIN_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ -n "$TRAIN_RESULTS_ARTIFACT" && -n "$STRATEGY_ID" ]]
+      - name: Download exact train result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "${{ inputs.train_run_id }}" --repo "$GITHUB_REPOSITORY" \
+            --name "${{ inputs.train_results_artifact }}" --dir "$RUNNER_TEMP/train-results"
+      - name: Prepare bounded validation data
+        env:
+          RUNNER_TEMP_VALUE: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from aurora.infra.sp500_autonomous_discovery.registry import base_package
+          from aurora.infra.sp500_long_short_daily.data import prepare_market_snapshot
+
+          prepare_market_snapshot(
+              Path(os.environ["RUNNER_TEMP_VALUE"]) / "validation-prepared",
+              base_package(),
+              start="2010-01-01",
+              end="2020-12-31",
+              split="validation",
+          )
+          PY
+      - name: Evaluate exact candidate without opening locked
+        run: |
+          set -euo pipefail
+          python scripts/run_sp500_autonomous_exploratory_validation.py \
+            --train-results-dir "$RUNNER_TEMP/train-results" \
+            --validation-prepared-dir "$RUNNER_TEMP/validation-prepared" \
+            --output-dir "$RUNNER_TEMP/exploratory-validation-results" \
+            --strategy-id "${{ inputs.exploratory_strategy_id }}" \
+            --validation-ack "${{ inputs.validation_ack }}"
+      - name: Verify validation and locked boundaries
+        env:
+          RUNNER_TEMP_VALUE: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary = json.loads(
+              (Path(os.environ["RUNNER_TEMP_VALUE"]) / "exploratory-validation-results" / "validation_summary.json")
+              .read_text(encoding="utf-8")
+          )
+          assert summary["validation_end"] == "2020-12-31"
+          assert summary["locked_start"] == "2021-01-01"
+          assert summary["locked_opened"] is False
+          assert summary["confirmatory_result"] is False
+          assert summary["official_validation_reservation_created"] is False
+          PY
+      - name: Upload exploratory validation result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-autonomous-exploratory-validation-${{ inputs.exploratory_strategy_id }}
+          path: ${{ runner.temp }}/exploratory-validation-results
           if-no-files-found: error
           retention-days: 90

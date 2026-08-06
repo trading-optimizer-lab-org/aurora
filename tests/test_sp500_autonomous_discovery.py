@@ -26,7 +26,9 @@ from aurora.infra.sp500_autonomous_discovery.workload import (
     refresh_autonomous_prepared_inputs,
 )
 from aurora.infra.sp500_autonomous_discovery.validation import (
+    EXPLORATORY_VALIDATION_ACK,
     ValidationGateError,
+    _candidate_from_registry,
     _verify_freeze,
 )
 from aurora.infra.sp500_long_short_daily.data import PreparedMarketData
@@ -756,6 +758,20 @@ def test_evaluate_batch_writes_auditable_rows(tmp_path) -> None:
     assert json.loads((tmp_path / "train_freeze_candidate.json").read_text(encoding="utf-8")) == freeze
     with pytest.raises(ValidationGateError, match="TRAIN_FREEZE_NOT_ELIGIBLE"):
         _verify_freeze(tmp_path / "train_selection_freeze.json", require_finalized=True)
+
+
+def test_exploratory_candidate_selection_is_exact_and_fail_closed() -> None:
+    first = _template()
+    second = dict(_template(), strategy_id="other")
+    assert _candidate_from_registry([first, second], "other")["strategy_id"] == "other"
+    with pytest.raises(
+        ValidationGateError,
+        match="EXPLORATORY_CANDIDATE_NOT_UNIQUE_IN_REGISTRY",
+    ):
+        _candidate_from_registry([first, second], "missing")
+    assert EXPLORATORY_VALIDATION_ACK == (
+        "OPEN_EXPLORATORY_VALIDATION_2011_2020_OWNER_AUTHORIZED"
+    )
 
 
 def test_block_sum_bootstrap_matches_original_sampling(monkeypatch) -> None:
