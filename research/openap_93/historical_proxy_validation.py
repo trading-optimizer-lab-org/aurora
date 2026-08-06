@@ -781,18 +781,30 @@ def reconstruct_monthly_proxies(
     else:
         result["variant_id"] = result["variant_id"].fillna(result["proxy_formula_id"])
     result["cik"] = result["symbol"].map(master.set_index("symbol")["cik"])
-    # Keep the realized month return beside each signal.  This is the return
-    # earned in the formation month and lets downstream portfolio diagnostics
-    # work without re-querying the database or confusing it with the
-    # crosswalk-comparison table.
-    realised = monthly[["symbol", "completed_month", "month_return"]].copy()
-    realised["month_return"] = pd.to_numeric(realised["month_return"], errors="coerce")
-    result = result.merge(realised, on=["symbol", "completed_month"], how="left")
-    result = result.rename(columns={"month_return": "realized_month_return"})
+    result = _attach_formation_month_returns(result, monthly)
     result["available_at"] = result["completed_month"].map(
         lambda value: pd.Timestamp(value) + pd.offsets.MonthEnd(0)
     )
     return result.sort_values(["signal", "formation_month", "symbol"]).reset_index(drop=True)
+
+
+def _attach_formation_month_returns(
+    proxies: pd.DataFrame,
+    monthly: pd.DataFrame,
+) -> pd.DataFrame:
+    """Attach the return earned after the signal becomes tradable."""
+    result = proxies.drop(columns=["realized_month_return"], errors="ignore").copy()
+    realised = monthly[["symbol", "completed_month", "month_return"]].copy()
+    realised["formation_month"] = pd.to_datetime(
+        realised["completed_month"], errors="coerce"
+    ).dt.to_period("M").dt.to_timestamp()
+    realised["month_return"] = pd.to_numeric(realised["month_return"], errors="coerce")
+    realised = realised.drop_duplicates(["symbol", "formation_month"], keep="last")
+    return result.merge(
+        realised[["symbol", "formation_month", "month_return"]],
+        on=["symbol", "formation_month"],
+        how="left",
+    ).rename(columns={"month_return": "realized_month_return"})
 
 
 def _rank_buckets(values: pd.Series, buckets: int = 5) -> pd.Series:
@@ -1056,13 +1068,19 @@ def write_validation_outputs(
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     proxies.to_parquet(output / "proxy_reconstruction_panel.parquet", index=False)
-    realised_columns = ["symbol", "completed_month", "realized_month_return"]
+    realised_columns = ["symbol", "formation_month", "realized_month_return"]
     if all(column in proxies.columns for column in realised_columns):
-        proxies[realised_columns].drop_duplicates(
-            ["symbol", "completed_month"]
-        ).to_csv(output / "proxy_realized_monthly.csv", index=False)
+        realised = proxies[realised_columns].drop_duplicates(
+            ["symbol", "formation_month"]
+        ).rename(
+            columns={
+                "formation_month": "completed_month",
+                "realized_month_return": "month_return",
+            }
+        )
+        realised.to_csv(output / "proxy_realized_monthly.csv", index=False)
     else:
-        pd.DataFrame(columns=realised_columns).to_csv(
+        pd.DataFrame(columns=["symbol", "completed_month", "month_return"]).to_csv(
             output / "proxy_realized_monthly.csv", index=False
         )
     monthly.to_csv(output / "proxy_validation_monthly.csv", index=False)
