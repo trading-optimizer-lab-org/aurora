@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 from aurora.core.execution_policy import require_github_execution
-from .earnings_events import normalize_sec_item_202_events
+from .earnings_events import build_earnings_events, normalize_sec_item_202_events
 from .market_pipeline import calculate_indretbig_cross_section
 
 
@@ -381,7 +381,17 @@ def _build_announcement_return(
 ) -> pd.DataFrame:
     if submissions.empty or prices_daily.empty:
         return pd.DataFrame()
-    earnings = normalize_sec_item_202_events(submissions, master)
+    if {"event_at", "source_id", "symbol"}.issubset(submissions.columns):
+        earnings = submissions.copy()
+        earnings = earnings.loc[
+            earnings["source_id"].isin(("sec_8k_item_202", "yahoo_earnings_actual"))
+        ].copy()
+        earnings["event_at"] = pd.to_datetime(
+            earnings["event_at"], errors="coerce", utc=True
+        )
+        earnings = earnings.dropna(subset=["symbol", "event_at", "source_id"])
+    else:
+        earnings = normalize_sec_item_202_events(submissions, master)
     if earnings.empty:
         return pd.DataFrame()
     rows: list[dict[str, object]] = []
@@ -406,7 +416,7 @@ def _build_announcement_return(
         prices_daily["mktrf"] = 0.0
         prices_daily["rf"] = 0.0
     prices_daily["abret"] = prices_daily["ret"] - prices_daily["mktrf"] - prices_daily["rf"]
-    for symbol, events in earnings.groupby("symbol"):
+    for (symbol, source_id), events in earnings.groupby(["symbol", "source_id"]):
         px = prices_daily.loc[prices_daily["symbol"].eq(symbol)].dropna(subset=["date", "abret"])
         if px.empty:
             continue
@@ -455,17 +465,120 @@ def _build_announcement_return(
                 "signal": "AnnouncementReturn",
                 "proxy_value": float(item.proxy_value),
                 "proxy_formula_id": "openap_announcement_return_trading_sessions_minus2_plus1",
-                "variant_id": "sec_8k_item_202",
+                "variant_id": str(source_id),
                 "reconstruction_status": "reconstructed",
                 "caveat": (
-                    "SEC 8-K Item 2.02 accepted timestamp proxies Compustat rdq; "
+                    f"{source_id} supplies the causal earnings timestamp; "
                     "the four-session event window is complete before formation and expires after six months"
                 ),
             })
     if not rows:
         return pd.DataFrame()
-    result = pd.DataFrame(rows).sort_values(["symbol", "completed_month"])
-    return result.drop_duplicates(["symbol", "completed_month"], keep="last")
+    result = pd.DataFrame(rows).sort_values(["symbol", "completed_month", "variant_id"])
+    return result.drop_duplicates(
+        ["symbol", "completed_month", "variant_id"], keep="last"
+    )
+
+
+def _build_earnings_streak_from_events(
+    monthly: pd.DataFrame,
+    earnings_events: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Reconstruct the prospective Yahoo EarningsStreak formula historically."""
+
+    if earnings_events is None or earnings_events.empty:
+        return pd.DataFrame()
+    required = {
+        "symbol",
+        "event_at",
+        "reported_eps",
+        "consensus_eps",
+        "prior_close",
+        "source_id",
+    }
+    if not required.issubset(earnings_events.columns):
+        return pd.DataFrame()
+    history = earnings_events.loc[
+        earnings_events["source_id"].eq("yahoo_earnings_actual")
+    ].copy()
+    history["event_at"] = pd.to_datetime(history["event_at"], errors="coerce", utc=True)
+    for column in ("reported_eps", "consensus_eps", "prior_close"):
+        history[column] = pd.to_numeric(history[column], errors="coerce")
+    history = history.loc[
+        history["event_at"].notna()
+        & history["reported_eps"].notna()
+        & history["consensus_eps"].notna()
+        & history["prior_close"].gt(0)
+    ].copy()
+    if history.empty:
+        return pd.DataFrame()
+    history["surprise"] = (
+        history["reported_eps"] - history["consensus_eps"]
+    ) / history["prior_close"]
+    history = history.sort_values(["symbol", "event_at"])
+    history["previous_surprise"] = history.groupby("symbol")["surprise"].shift(1)
+    same_sign = (
+        history["surprise"].ne(0)
+        & history["previous_surprise"].ne(0)
+        & (np.sign(history["surprise"]) == np.sign(history["previous_surprise"]))
+    )
+    history["streak_value"] = history["surprise"].where(same_sign)
+    history["available_at"] = history["event_at"].dt.tz_convert(None)
+
+    rows: list[pd.DataFrame] = []
+    for symbol, group in monthly.groupby("symbol", sort=False):
+        events = history.loc[
+            history["symbol"].eq(symbol), ["available_at", "streak_value"]
+        ].dropna(subset=["streak_value"])
+        if events.empty:
+            continue
+        cutoffs = group[["symbol", "completed_month", "formation_month"]].copy()
+        cutoffs["cutoff"] = pd.to_datetime(
+            cutoffs["completed_month"] + pd.offsets.MonthEnd(0), errors="coerce"
+        ).astype("datetime64[ns]")
+        aligned = pd.merge_asof(
+            cutoffs.sort_values("cutoff"),
+            events.sort_values("available_at"),
+            left_on="cutoff",
+            right_on="available_at",
+            direction="backward",
+        )
+        age_months = (
+            aligned["cutoff"].dt.year * 12
+            + aligned["cutoff"].dt.month
+            - aligned["available_at"].dt.year * 12
+            - aligned["available_at"].dt.month
+        )
+        aligned.loc[~age_months.between(0, 6), "streak_value"] = np.nan
+        aligned["signal"] = "EarningsStreak"
+        aligned["proxy_value"] = aligned["streak_value"]
+        aligned["proxy_formula_id"] = (
+            "openap_earnings_streak_two_same_sign_price_scaled_surprises"
+        )
+        aligned["variant_id"] = "yahoo_earnings_actual_price_scaled_v1"
+        aligned["reconstruction_status"] = np.where(
+            aligned["proxy_value"].notna(), "reconstructed", "insufficient_history"
+        )
+        aligned["caveat"] = (
+            "Historical Yahoo reported and consensus EPS use the same price-scaled, "
+            "two-same-sign causal formula as the prospective pipeline"
+        )
+        rows.append(
+            aligned[
+                [
+                    "symbol",
+                    "completed_month",
+                    "formation_month",
+                    "signal",
+                    "proxy_value",
+                    "proxy_formula_id",
+                    "variant_id",
+                    "reconstruction_status",
+                    "caveat",
+                ]
+            ]
+        )
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 
 def _build_earnings_streak(
@@ -484,7 +597,7 @@ def _build_earnings_streak(
     result["signal"] = "EarningsStreak"
     result["proxy_value"] = np.nan
     result["proxy_formula_id"] = "openap_earnings_streak_two_same_sign_price_scaled_surprises"
-    result["variant_id"] = "yahoo_earnings_actual_price_scaled_v1"
+    result["variant_id"] = "dolt_eps_period_end_plus_90d_price_scaled_v1"
     result["reconstruction_status"] = "unavailable_missing_historical_analyst_source"
     result["caveat"] = "No historical point-in-time analyst-surprise source is present"
     if earnings_history is None or earnings_history.empty:
@@ -579,7 +692,7 @@ def _build_earnings_streak(
         aligned["signal"] = "EarningsStreak"
         aligned["proxy_value"] = aligned["streak_value"]
         aligned["proxy_formula_id"] = "openap_earnings_streak_two_same_sign_price_scaled_surprises"
-        aligned["variant_id"] = "yahoo_earnings_actual_price_scaled_v1"
+        aligned["variant_id"] = "dolt_eps_period_end_plus_90d_price_scaled_v1"
         aligned["reconstruction_status"] = np.where(
             aligned["proxy_value"].notna(), "reconstructed", "insufficient_history"
         )
@@ -757,6 +870,7 @@ def reconstruct_monthly_proxies(
     *,
     ff3_daily: str | Path | None = None,
     earnings_history: str | Path | pd.DataFrame | None = None,
+    analyst_snapshots: str | Path | pd.DataFrame | None = None,
     ff48_sic_codes: str | Path | pd.DataFrame | None = None,
     start_month: pd.Timestamp | None = None,
     end_month: pd.Timestamp | None = None,
@@ -800,6 +914,14 @@ def reconstruct_monthly_proxies(
         earnings_frame = pd.read_parquet(earnings_history)
     else:
         earnings_frame = pd.read_csv(earnings_history)
+    if analyst_snapshots is None:
+        analyst_frame = pd.DataFrame()
+    elif isinstance(analyst_snapshots, pd.DataFrame):
+        analyst_frame = analyst_snapshots
+    elif str(analyst_snapshots).lower().endswith(".parquet"):
+        analyst_frame = pd.read_parquet(analyst_snapshots)
+    else:
+        analyst_frame = pd.read_csv(analyst_snapshots)
     if ff48_sic_codes is None:
         ff48_frame = None
     elif isinstance(ff48_sic_codes, pd.DataFrame):
@@ -808,9 +930,13 @@ def reconstruct_monthly_proxies(
         ff48_frame = pd.read_parquet(ff48_sic_codes)
     else:
         ff48_frame = pd.read_csv(ff48_sic_codes)
+    earnings_events = build_earnings_events(
+        master, submissions, analyst_frame, prices_daily
+    )
     parts = [
         _build_divseason(monthly),
-        _build_announcement_return(monthly, submissions, prices_daily, ff3, master),
+        _build_announcement_return(monthly, earnings_events, prices_daily, ff3, master),
+        _build_earnings_streak_from_events(monthly, earnings_events),
         _build_earnings_streak(monthly, earnings_frame),
         _build_indretbig(monthly, master, facts, submissions, ff48_frame),
         _build_delnetfin(monthly, master, facts),
@@ -1176,6 +1302,7 @@ def run_validation(
     crosswalk: str | Path | None = None,
     ff3_daily: str | Path | None = None,
     earnings_history: str | Path | None = None,
+    analyst_snapshots: str | Path | None = None,
     ff48_sic_codes: str | Path | None = None,
     min_pairs: int = 30,
 ) -> dict[str, object]:
@@ -1185,6 +1312,7 @@ def run_validation(
         base_db,
         ff3_daily=ff3_daily,
         earnings_history=earnings_history,
+        analyst_snapshots=analyst_snapshots,
         ff48_sic_codes=ff48_sic_codes,
         start_month=reference_frame["formation_month"].min(),
         end_month=reference_frame["formation_month"].max(),
@@ -1221,6 +1349,7 @@ def run_validation(
         "validation_used_for_selection": False,
         "partial": bool((summary["validation_status"] != "ok").any()),
         "earnings_history_used": bool(earnings_history),
+        "analyst_snapshots_used": bool(analyst_snapshots),
     }
     (Path(output_dir) / "proxy_validation_summary.json").write_text(
         json.dumps(payload, indent=2, default=str), encoding="utf-8"

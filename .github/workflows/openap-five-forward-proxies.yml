@@ -105,11 +105,13 @@ jobs:
           normalized=$(dirname "$ff3")
           probe=$(dirname "$(find inputs/public -type f -name 'sources.lock.json' -print -quit)")
           official=$(find inputs/official -type f -name 'official_long_short.csv' -print -quit)
+          analyst=$(find inputs/base -type f -name 'yahoo_analyst_current.parquet' -print -quit)
           test -s "$db"
           test -s "$reference"
           test -s "$ff3"
           test -s "$ff48"
           test -s "$official"
+          test -s "$analyst"
           test -s "$probe/sources.lock.json"
           echo "db=$db" >> "$GITHUB_OUTPUT"
           echo "reference=$reference" >> "$GITHUB_OUTPUT"
@@ -118,6 +120,7 @@ jobs:
           echo "normalized=$normalized" >> "$GITHUB_OUTPUT"
           echo "probe=$probe" >> "$GITHUB_OUTPUT"
           echo "official=$official" >> "$GITHUB_OUTPUT"
+          echo "analyst=$analyst" >> "$GITHUB_OUTPUT"
       - name: Download public historical earnings observations
         run: |
           mkdir -p inputs/earnings
@@ -132,6 +135,7 @@ jobs:
             --ff3-daily "${{ steps.locate.outputs.ff3 }}" \
             --ff48-sic-codes "${{ steps.locate.outputs.ff48 }}" \
             --earnings-history inputs/earnings/eps_history.csv \
+            --analyst-snapshots "${{ steps.locate.outputs.analyst }}" \
             --output-dir outputs/historical \
             --min-pairs 30
       - name: Select on train and validate frozen variants

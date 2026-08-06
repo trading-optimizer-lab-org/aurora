@@ -16,7 +16,8 @@ signals:
   EarningsStreak:
     formula_id: openap_earnings_streak_two_same_sign_price_scaled_surprises
     accepted_variants: [yahoo_earnings_actual_price_scaled_v1]
-    sources: [yahoo_public]
+    rejected_diagnostic_variants: [dolt_eps_period_end_plus_90d_price_scaled_v1]
+    sources: [yahoo_public, dolthub_public]
     code: [research/openap_93/earnings_events.py, research/openap_93/analyst_pipeline.py, research/openap_93/historical_proxy_validation.py]
   IndRetBig:
     formula_id: openap_indretbig_ff48_pit_shares_raw_close_v1
