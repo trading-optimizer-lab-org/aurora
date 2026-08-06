@@ -23,6 +23,7 @@ from aurora.infra.sp500_autonomous_discovery.statistics import evaluate_batch
 from aurora.infra.sp500_autonomous_discovery.workload import (
     freeze_rejection_reasons,
     freeze_selection_reason,
+    refresh_autonomous_prepared_inputs,
 )
 from aurora.infra.sp500_autonomous_discovery.validation import (
     ValidationGateError,
@@ -469,6 +470,33 @@ def test_trial_ledger_appends_to_prior_batch(tmp_path, monkeypatch) -> None:
     rows = registry.read_jsonl(tmp_path / "current" / "trial_ledger.jsonl")
     assert [row["global_trial_index"] for row in rows] == [1, 2, 3, 4]
     assert (tmp_path / "current" / "autonomous_trial_ledger.parquet").is_file()
+
+
+def test_reused_market_data_refreshes_batch_registry_without_mutating_snapshot(
+    tmp_path, monkeypatch
+) -> None:
+    prepared = tmp_path / "prepared"
+    prepared.mkdir()
+    snapshot = prepared / "spy_ledger.parquet"
+    snapshot.write_bytes(b"immutable-market-snapshot")
+    monkeypatch.setenv("AURORA_AUTONOMOUS_BATCH_ID", "11")
+    monkeypatch.setenv("AURORA_AUTONOMOUS_CANDIDATE_COUNT", "2")
+    monkeypatch.setenv("AURORA_AUTONOMOUS_PREVIOUS_TRIAL_COUNT", "312")
+    monkeypatch.delenv("AURORA_PRIOR_TRIAL_LEDGER_PATH", raising=False)
+
+    candidates = refresh_autonomous_prepared_inputs(prepared)
+
+    assert [row["strategy_id"] for row in candidates] == [
+        "AUTO-B0011-0000",
+        "AUTO-B0011-0001",
+    ]
+    assert snapshot.read_bytes() == b"immutable-market-snapshot"
+    ledger = registry.read_jsonl(prepared / "trial_ledger.jsonl")
+    assert [row["global_trial_index"] for row in ledger] == [313, 314]
+    assert pd.read_csv(prepared / "job_manifest.csv")["strategy_id"].tolist() == [
+        "AUTO-B0011-0000",
+        "AUTO-B0011-0001",
+    ]
 
 
 def test_trial_ledger_prepends_verified_312_historical_rows(

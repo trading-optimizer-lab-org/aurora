@@ -119,6 +119,78 @@ def _light_package(candidates: Sequence[Mapping[str, Any]]) -> CampaignPackage:
     )
 
 
+def refresh_autonomous_prepared_inputs(root: Path) -> tuple[dict[str, Any], ...]:
+    """Refresh batch-specific inputs while preserving immutable market data."""
+
+    root = Path(root).resolve()
+    batch_id = _batch_id()
+    count = _candidate_count(AutonomousDiscoveryWorkload.default_candidate_count)
+    prior_ledger_value = os.environ.get(
+        "AURORA_PRIOR_TRIAL_LEDGER_PATH", ""
+    ).strip()
+    pilot_source = os.environ.get(
+        "AURORA_AUTONOMOUS_PILOT_EVIDENCE_ROOT", ""
+    ).strip()
+    install_prior_autonomous_evidence(
+        root,
+        pilot_result_root=Path(pilot_source) if pilot_source else None,
+        prior_result_root=(
+            Path(prior_ledger_value).parent if prior_ledger_value else None
+        ),
+    )
+    candidates = generate_candidates(batch_id, count=count)
+    write_batch_registry(
+        root,
+        batch_id=batch_id,
+        candidates=candidates,
+        previous_trial_count=get_previous_trial_count(),
+    )
+    with (root / "dedupe_map.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as handle:
+        dedupe_rows = build_dedupe_map(candidates)
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "strategy_id",
+                "canonical_hash",
+                "canonical_strategy_id",
+                "deduped",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(dedupe_rows)
+    priced = [
+        {
+            **candidate,
+            "cost_score": cost_score(
+                family_timeout_rate=float(candidate.get("complexity_score", 1))
+                / 10.0,
+                concept_timeout_rate=float(candidate.get("complexity_score", 1))
+                / 20.0,
+            ),
+        }
+        for candidate in candidates
+    ]
+    with (root / "job_manifest.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as handle:
+        manifest_rows = assign_by_cost(priced, max(1, min(360, len(priced))))
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "job_id",
+                "strategy_id",
+                "canonical_hash",
+                "cost_score",
+                "estimated_cost_bucket",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(manifest_rows)
+    return candidates
+
+
 class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
     """Evaluate one pre-registered batch without accessing validation or locked data."""
 
@@ -159,51 +231,12 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
         return Path(root).resolve() / "candidate_registry.jsonl"
 
     def _prepare_dataset(self, root: Path) -> tuple[tuple[str, ...], str]:
-        batch_id = _batch_id()
-        count = _candidate_count(self.default_candidate_count)
         historical_source = os.environ.get(
             "AURORA_HISTORICAL_MULTIPLICITY_SOURCE", ""
         ).strip()
         if historical_source:
             install_historical_evidence(Path(historical_source), root)
-        prior_ledger_value = os.environ.get("AURORA_PRIOR_TRIAL_LEDGER_PATH", "").strip()
-        pilot_source = os.environ.get(
-            "AURORA_AUTONOMOUS_PILOT_EVIDENCE_ROOT", ""
-        ).strip()
-        install_prior_autonomous_evidence(
-            root,
-            pilot_result_root=Path(pilot_source) if pilot_source else None,
-            prior_result_root=(
-                Path(prior_ledger_value).parent if prior_ledger_value else None
-            ),
-        )
-        candidates = generate_candidates(batch_id, count=count)
-        write_batch_registry(
-            root,
-            batch_id=batch_id,
-            candidates=candidates,
-            previous_trial_count=get_previous_trial_count(),
-        )
-        with (Path(root) / "dedupe_map.csv").open("w", newline="", encoding="utf-8") as handle:
-            dedupe_rows = build_dedupe_map(candidates)
-            writer = csv.DictWriter(handle, fieldnames=["strategy_id", "canonical_hash", "canonical_strategy_id", "deduped"])
-            writer.writeheader()
-            writer.writerows(dedupe_rows)
-        priced = [
-            {
-                **candidate,
-                "cost_score": cost_score(
-                    family_timeout_rate=float(candidate.get("complexity_score", 1)) / 10.0,
-                    concept_timeout_rate=float(candidate.get("complexity_score", 1)) / 20.0,
-                ),
-            }
-            for candidate in candidates
-        ]
-        with (Path(root) / "job_manifest.csv").open("w", newline="", encoding="utf-8") as handle:
-            manifest_rows = assign_by_cost(priced, max(1, min(360, len(priced))))
-            writer = csv.DictWriter(handle, fieldnames=["job_id", "strategy_id", "canonical_hash", "cost_score", "estimated_cost_bucket"])
-            writer.writeheader()
-            writer.writerows(manifest_rows)
+        candidates = refresh_autonomous_prepared_inputs(root)
         package = _light_package(candidates)
         manifest = prepare_market_snapshot(
             root,

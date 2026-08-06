@@ -570,6 +570,14 @@ jobs:
           path: ${{ runner.temp }}/prepared
           github-token: ${{ github.token }}
           run-id: ${{ inputs.prepared_artifact_run_id || github.run_id }}
+      - name: Refresh autonomous batch inputs on reused market data
+        if: inputs.prepared_artifact_name != '' && contains(inputs.workload, 'sp500_autonomous_discovery')
+        env:
+          AURORA_PRIOR_TRIAL_LEDGER_PATH: ${{ runner.temp }}/prior-ledger/trial_ledger.jsonl
+        run: |
+          set -euo pipefail
+          python scripts/refresh_sp500_autonomous_prepared.py \
+            --prepared-root "$RUNNER_TEMP/prepared"
       - name: Prepare immutable data once
         if: inputs.prepared_artifact_name == '' && needs.sp500_data_plan.outputs.enabled != 'true'
         env:
