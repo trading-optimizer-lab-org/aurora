@@ -32,6 +32,7 @@ IMPLEMENTED_FAMILIES = frozenset(
         "quiet_bull_recovery_override_reversal",
         "recovery_trend_breakout_majority",
         "high_vol_crash_recovery_reversal",
+        "adaptive_recovery_edge_switch",
         "financial_conditions_regime",
         "monetary_inflation_regime",
         "overnight_futures_proxy",
@@ -945,6 +946,97 @@ def _price_score(
             & rolling_peak.notna()
             & recovery_return.notna()
         )
+    if family == "adaptive_recovery_edge_switch":
+        rsi_window = int(parameters["rsi_window"])
+        delta = close.diff()
+        gain = delta.clip(lower=0.0).ewm(
+            alpha=1.0 / rsi_window,
+            adjust=False,
+            min_periods=rsi_window,
+        ).mean()
+        loss = (-delta.clip(upper=0.0)).ewm(
+            alpha=1.0 / rsi_window,
+            adjust=False,
+            min_periods=rsi_window,
+        ).mean()
+        relative_strength = gain / loss.replace(0.0, np.nan)
+        rsi = 100.0 - 100.0 / (1.0 + relative_strength)
+        rsi = rsi.mask((loss == 0.0) & (gain > 0.0), 100.0)
+        rsi = rsi.mask((gain == 0.0) & (loss > 0.0), 0.0)
+        rsi = rsi.mask((gain == 0.0) & (loss == 0.0), 50.0)
+
+        rsi_trend_return = (
+            close / close.shift(int(parameters["rsi_trend_window"])) - 1.0
+        )
+        rsi_component = np.sign(rsi_trend_return)
+        rsi_component = rsi_component.where(
+            rsi > float(parameters["lower"]), 1.0
+        )
+        rsi_component = rsi_component.where(
+            rsi < float(parameters["upper"]), -1.0
+        )
+        reversal_return = (
+            close / close.shift(int(parameters["reversal_window"])) - 1.0
+        )
+        reversal_trend_return = (
+            close / close.shift(int(parameters["reversal_trend_window"])) - 1.0
+        )
+        reversal_component = np.sign(reversal_trend_return)
+        reversal_threshold = (
+            float(parameters["reversal_threshold_pct"]) / 100.0
+        )
+        reversal_component = reversal_component.where(
+            reversal_return.abs() < reversal_threshold,
+            -np.sign(reversal_return),
+        )
+        base_score = rsi_component + reversal_component
+
+        drawdown_lookback = int(parameters["drawdown_lookback"])
+        rolling_peak = close.rolling(
+            drawdown_lookback,
+            min_periods=drawdown_lookback,
+        ).max()
+        drawdown = close / rolling_peak - 1.0
+        recent_deep_drawdown = drawdown.rolling(
+            int(parameters["recovery_memory_window"]),
+            min_periods=1,
+        ).min() <= -(float(parameters["drawdown_trigger_pct"]) / 100.0)
+        recovery_return = (
+            close / close.shift(int(parameters["recovery_window"])) - 1.0
+        )
+        recovery_override = recent_deep_drawdown & (
+            recovery_return
+            > float(parameters["recovery_threshold_pct"]) / 100.0
+        )
+        base_score = base_score.where(~recovery_override, 1.0)
+        base_valid = (
+            rsi.notna()
+            & rsi_trend_return.notna()
+            & reversal_return.notna()
+            & reversal_trend_return.notna()
+            & rolling_peak.notna()
+            & recovery_return.notna()
+        )
+        base_decision = _state_from_score(base_score.where(base_valid))
+
+        # long_return on row t contains open(t)->open(t+1), so it is only
+        # observable from row t+1. The extra shift keeps the meta-rule causal.
+        base_position = base_decision.shift(1).ffill().fillna(1.0)
+        base_realized_return = (
+            base_position.astype(float) * ledger["long_return"].astype(float)
+        ).shift(1)
+        edge_window = int(parameters["edge_window"])
+        rolling_edge = np.expm1(
+            np.log1p(base_realized_return.clip(lower=-0.999999)).rolling(
+                edge_window,
+                min_periods=edge_window,
+            ).sum()
+        )
+        invert = rolling_edge < (
+            float(parameters["edge_threshold_pct"]) / 100.0
+        )
+        adaptive_decision = base_decision.where(~invert, -base_decision)
+        return adaptive_decision.astype(float).where(base_valid & rolling_edge.notna())
     if family == "trend_ensemble":
         components = []
         for horizon in parameters["horizons"]:
@@ -1388,6 +1480,7 @@ def candidate_decisions(
             "quiet_bull_recovery_override_reversal",
             "recovery_trend_breakout_majority",
             "high_vol_crash_recovery_reversal",
+            "adaptive_recovery_edge_switch",
             "realized_volatility_state",
         "overnight_futures_proxy",
         "volatility_conditioned_trend",

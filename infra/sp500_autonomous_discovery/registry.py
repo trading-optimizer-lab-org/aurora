@@ -1646,12 +1646,133 @@ def _high_vol_crash_recovery_candidates(
     return tuple(candidates)
 
 
+def _adaptive_recovery_edge_candidates(
+    package: CampaignPackage,
+    batch_id: int,
+    count: int,
+) -> tuple[dict[str, Any], ...]:
+    """Adapt the strongest recovery rule to its own recent causal edge."""
+
+    if count != 96:
+        raise ValueError("ADAPTIVE_RECOVERY_EDGE_REQUIRES_96_CANDIDATES")
+    usable = [
+        row
+        for row in package.candidates
+        if str(row.get("family")) in IMPLEMENTED_FAMILIES
+        and set(row.get("required_datasets", ())).issubset({"DS001", "DS002"})
+    ]
+    if not usable:
+        raise RuntimeError("NO_USABLE_CAUSAL_TEMPLATES")
+    base = next(
+        (row for row in usable if str(row.get("family")) == "short_horizon_reversal"),
+        usable[0],
+    )
+    generation = batch_id - 24
+    core_variants = (
+        {
+            "rsi_window": 4,
+            "lower": 28,
+            "upper": 72,
+            "rsi_trend_window": 220,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 0.825,
+            "reversal_trend_window": 40,
+            "drawdown_lookback": 252,
+            "drawdown_trigger_pct": 22.5,
+            "recovery_memory_window": 189,
+            "recovery_window": 20,
+            "recovery_threshold_pct": 2.25,
+        },
+        {
+            "rsi_window": 4,
+            "lower": 28,
+            "upper": 72,
+            "rsi_trend_window": 220,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 0.825,
+            "reversal_trend_window": 40,
+            "drawdown_lookback": 252,
+            "drawdown_trigger_pct": 22.5,
+            "recovery_memory_window": 63,
+            "recovery_window": 20,
+            "recovery_threshold_pct": 2.25,
+        },
+    )
+    parameters_list = [
+        {
+            **core,
+            "edge_window": edge_window,
+            "edge_threshold_pct": round(
+                edge_threshold_pct + generation * 0.5,
+                4,
+            ),
+        }
+        for core in core_variants
+        for edge_window in (10, 20, 40, 63, 126, 252)
+        for edge_threshold_pct in (-10.0, -5.0, -2.5, 0.0, 2.5, 5.0, 10.0, 15.0)
+    ]
+    candidates: list[dict[str, Any]] = []
+    for index, parameters in enumerate(parameters_list):
+        candidate = json.loads(json.dumps(base))
+        candidate.update(
+            {
+                "instrument": "SPY",
+                "cash_allowed": False,
+                "partial_exposure_allowed": False,
+                "leverage_allowed": False,
+                "volatility_scaling_allowed": False,
+                "pyramiding_allowed": False,
+                "multiple_assets_in_portfolio": False,
+                "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
+                "variant_label": (
+                    f"autonomous_adaptive_recovery_edge_batch_{batch_id}_{index}"
+                ),
+                "family": "adaptive_recovery_edge_switch",
+                "family_name": "Adaptive Recovery Edge Switch",
+                "parameters": parameters,
+                "required_datasets": ["DS001", "DS002"],
+                "feature_formulas": [
+                    "causal recovery reversal inverted only when its own fully observed trailing return is below threshold"
+                ],
+                "long_rule": (
+                    "recovery reversal long, or its inverse when trailing realized edge is weak"
+                ),
+                "short_rule": (
+                    "recovery reversal short, or its inverse when trailing realized edge is weak"
+                ),
+                "features": ["AUTO_ADAPTIVE_RECOVERY_EDGE_SWITCH"],
+                "warmup_rule": (
+                    "No signal before the recovery base and lagged edge window are both defined."
+                ),
+                "known_failure_modes": (
+                    "Train-only adaptive meta-rule; must pass every frozen robustness gate."
+                ),
+                "economic_sign_rationale": (
+                    "A signal can alternate between persistent and anti-persistent regimes; only settled returns may switch its orientation."
+                ),
+                "priority_score": max(1, 100 - index),
+                "evidence_track": "pre_2011_evidence",
+                "selection_role": "autonomous_pre_registered_candidate",
+            }
+        )
+        candidate["canonical_hash"] = canonical_rule_hash(candidate)
+        assert_contract(candidate)
+        candidates.append(candidate)
+    if len(candidates) != count or len(
+        {row["canonical_hash"] for row in candidates}
+    ) != count:
+        raise RuntimeError("ADAPTIVE_RECOVERY_EDGE_COUNT_OR_HASH_MISMATCH")
+    return tuple(candidates)
+
+
 def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, Any], ...]:
     """Generate a reproducible, pre-registered batch from causal templates."""
 
     if batch_id < 0 or count < 1:
         raise ValueError("INVALID_BATCH_ARGUMENT")
     package = base_package()
+    if batch_id >= 24:
+        return _adaptive_recovery_edge_candidates(package, batch_id, count)
     if batch_id >= 23:
         return _high_vol_crash_recovery_candidates(package, batch_id, count)
     if batch_id >= 22:
