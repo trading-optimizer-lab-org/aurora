@@ -1,0 +1,37 @@
+{
+  "authoritative_research_zip": {
+    "filename": "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_FINAL.zip",
+    "sha256": "a8db7fd9ab2422d81601104234a80185e317b6cc2fae07914c5bca6c7e421925"
+  },
+  "benchmark_count": 5,
+  "campaign_id": "sp500_long_short_daily_zero_cost_v1",
+  "candidate_count": 168,
+  "current_pr_head_when_v2_pack_built": "4ae22ae9c429d8b96905e781a1f3365b5c1f7f5d",
+  "evaluated_candidates": 65,
+  "final_results_artifact": {
+    "artifact_id": 8922049799,
+    "bytes": 4964835,
+    "filename": "sp500-ls-train-yahoo-fallback-r8-results.zip",
+    "github_artifact_name": "sp500-ls-train-yahoo-fallback-r8-results",
+    "run_id": 30985200320,
+    "sha256": "164ce2d50909c5224e5260fa185516e9ecee368d948201852f35a72fa0780775"
+  },
+  "frozen_finalists": 0,
+  "hansen_spa_pvalue": 0.5684315684315684,
+  "locked_opened": false,
+  "pbo": 0.373015873015873,
+  "pull_request": 114,
+  "rejected_candidates": 103,
+  "repository": "trading-optimizer-lab-org/aurora",
+  "scientific_commit": "e2d643609208c1d66b86a8800d1f9abd4415b60c",
+  "status": "NEGATIVE_RESULT",
+  "strongest_benchmark": "BENCHMARK::symmetric_momentum_12m",
+  "v2_required_use": {
+    "declared_trial_count_for_dsr_and_fdr": 168,
+    "evaluated_daily_return_series_for_combined_wrc_spa_pbo": 65,
+    "if_artifact_missing_or_hash_mismatch": "COMBINED_MULTIPLICITY_INCOMPLETE; no validation promotion permitted",
+    "rejected_candidates_policy": "retain as declared trials; never impute zero returns; use conservative p=1 only for familywise/FDR bookkeeping where a p-value vector is required"
+  },
+  "validation_opened": false,
+  "white_reality_check_pvalue": 0.7972027972027972
+}

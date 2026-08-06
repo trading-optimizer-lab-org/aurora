@@ -94,6 +94,7 @@ packages = [
     "aurora.infra.gtbi_v7_readiness",
     "aurora.infra.sp500_autonomous_discovery",
     "aurora.infra.sp500_long_short_daily",
+    "aurora.infra.sp500_long_short_daily_v2",
     "aurora.marketdata",
     "aurora.markets",
     "aurora.ml",
@@ -147,6 +148,7 @@ packages = [
 "aurora.infra.gtbi_v7_readiness" = "infra/gtbi_v7_readiness"
 "aurora.infra.sp500_autonomous_discovery" = "infra/sp500_autonomous_discovery"
 "aurora.infra.sp500_long_short_daily" = "infra/sp500_long_short_daily"
+"aurora.infra.sp500_long_short_daily_v2" = "infra/sp500_long_short_daily_v2"
 "aurora.marketdata" = "marketdata"
 "aurora.markets" = "markets"
 "aurora.ml" = "ml"

@@ -1,0 +1,67 @@
+{
+  "assertions": {
+    "all_candidates_always_directional": true,
+    "all_costs_exactly_zero": true,
+    "all_v2_hashes_unique": true,
+    "locked_opened": false,
+    "no_exact_v1_hash_collision": true,
+    "no_paid_dataset_dependency": true,
+    "no_performance_results_in_v2_pack": true,
+    "validation_used_for_design": false
+  },
+  "benchmark_count": 5,
+  "boundaries": {
+    "locked_opened": false,
+    "locked_start": "2021-01-01",
+    "train_end": "2010-12-31",
+    "validation_end": "2020-12-31",
+    "validation_start": "2011-01-01"
+  },
+  "campaign_id": "sp500_long_short_daily_zero_cost_v2_new_strategies",
+  "candidate_count": 144,
+  "candidate_pack_sha256": "7f4b24f4a4100eb93d813929a68c691ab9022206ccbd42baf71ccf272173ecda",
+  "canonicalization": "SHA-256 of sorted compact JSON economic_identity; excludes ID, priority and citation labels",
+  "cost_contract": {
+    "borrow_cost_bps": 0,
+    "commission_bps": 0,
+    "financing_bps": 0,
+    "market_impact_bps": 0,
+    "slippage_bps": 0,
+    "switching_cost_bps": 0
+  },
+  "created_for": "Incremental Aurora SPY daily causal +1/-1 zero-cost campaign after V1 negative result",
+  "created_on": "2026-08-05",
+  "cumulative_declared_trials": {
+    "total": 312,
+    "v1": 168,
+    "v2": 144
+  },
+  "data_inventory_sha256": "5af3047e67a51db2a3c2cff98fbe793ca7eb153d022ff7fed9fd8e816dd61b21",
+  "evidence_track_counts": {
+    "post_2010_research": 12,
+    "pre_2011_evidence": 132
+  },
+  "family_count": 24,
+  "feature_catalog_sha256": "3109f8bb4e046a070a4e6fd93174fb161a3af72ab240e663f6331c0586aa52ae",
+  "feature_count": 144,
+  "novelty_audit_sha256": "9c60081a865c3f67f9939d49389efefea67db8ae4bbf271c87494313c0abf308",
+  "position_contract": {
+    "absolute_exposure": 1.0,
+    "allowed_positions": [
+      -1,
+      1
+    ],
+    "cash_allowed": false,
+    "instrument": "SPY",
+    "leverage_allowed": false
+  },
+  "prior_campaign": {
+    "evaluated": 65,
+    "finalists": 0,
+    "rejected": 103,
+    "validation_opened": false
+  },
+  "research_library_sha256": "ad2254cefb8a0d35b4444f9f5f77a98e257fae36156aaf23035eebdd007be9de",
+  "schema_version": "2.0.0",
+  "variants_per_family": 6
+}

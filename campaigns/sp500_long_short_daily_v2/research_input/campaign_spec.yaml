@@ -1,0 +1,150 @@
+schema_version: 2.0.0
+campaign_id: sp500_long_short_daily_zero_cost_v2_new_strategies
+objective: Test 144 frozen new causal daily SPY +1/-1 strategies while carrying the
+  V1 search history into all binding multiple-testing controls.
+boundaries:
+  train_end: '2010-12-31'
+  validation_start: '2011-01-01'
+  validation_end: '2020-12-31'
+  locked_start: '2021-01-01'
+  locked_opened: false
+position_contract:
+  instrument: SPY
+  decision_time: after regular close t
+  execution_time: next tradable SPY open t+1
+  holding_period: open t+1 to open t+2
+  allowed_positions:
+  - -1
+  - 1
+  absolute_exposure: 1.0
+  cash_allowed: false
+  leverage_allowed: false
+  volatility_scaling_allowed: false
+  costs:
+    commission_bps: 0
+    slippage_bps: 0
+    borrow_cost_bps: 0
+    financing_bps: 0
+    switching_cost_bps: 0
+    market_impact_bps: 0
+  dividends: long receives; short owes; target ledger is total return
+counts:
+  research_records_total: 269
+  verified_primary_sources: 176
+  incremental_sources: 20
+  datasets_v2: 10
+  free_potentially_usable_datasets_v2: 9
+  families_v2: 24
+  candidates_v2: 144
+  features_v2: 144
+  benchmarks: 5
+  declared_trials_v1: 168
+  declared_trials_cumulative: 312
+evidence_tracks:
+  pre_2011_evidence_candidates: 132
+  post_2010_research_candidates: 12
+  validation_eligibility: pre_2011_evidence only
+inputs:
+  candidate_pack: candidate_strategy_pack.jsonl
+  candidate_manifest: candidate_pack_manifest.json
+  feature_catalog: feature_catalog.csv
+  data_inventory: data_source_inventory.csv
+  formula_contract: family_formula_contract.md
+  novelty_audit: canonical_novelty_audit.csv
+  prior_reference: prior_campaign_reference.json
+  prior_v1_research_zip: prior_campaign/SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_FINAL.zip
+  prior_v1_results_zip: prior_campaign/sp500-ls-train-yahoo-fallback-r8-results.zip
+random_seeds:
+  campaign: 20260805
+  tree: 20260805
+  bootstrap: 2026080501
+phases:
+- id: preflight
+  allowed_end: '2010-12-31'
+  performance_allowed: false
+  work: package/prior hashes, schemas, novelty, data adapters, locked firewall, reference
+    formulas
+- id: smoke
+  allowed_end: '2000-12-31'
+  performance_for_selection: false
+  candidates:
+  - V2STRAT0001
+  - V2STRAT0031
+  - V2STRAT0091
+  - V2STRAT0103
+  - V2STRAT0139
+  work: five representative candidates plus five benchmarks, reference-vs-optimized,
+    two clean reruns
+- id: pilot
+  allowed_end: '2010-12-31'
+  performance_for_selection: false
+  work: benchmark candidate/family/cost-balanced layouts and 1..min(4,vCPU) processes;
+    choose measured fastest exact plan
+- id: full_train
+  allowed_end: '2010-12-31'
+  work: 144 candidates, five benchmarks, folds, explicit rejections, checkpoints
+- id: merge_and_select
+  allowed_end: '2010-12-31'
+  work: exact coverage, cumulative V1+V2 WRC/SPA/FDR/DSR/PBO, ranking, Pareto, freeze
+- id: validation_once
+  allowed_start: '2011-01-01'
+  allowed_end: '2020-12-31'
+  ack_required: OPEN_VALIDATION_2011_2020_ONCE_V2
+  work: eligible pre-2011 finalists only; one shot
+- id: verify
+  allowed_end: '2020-12-31'
+  work: independent hashes, metrics, causal audit, final status
+multiplicity:
+  declared_trial_count_binding: 312
+  v1_evaluable_return_streams: 65
+  v1_rejected_declared_trials: 103
+  common_interval_min_sessions: 1500
+  bootstrap_replications_final: 5000
+  block_lengths:
+  - 5
+  - 10
+  - 15
+  - 20
+  - 60
+  methods:
+  - White Reality Check
+  - Hansen SPA
+  - FDR
+  - Deflated Sharpe Ratio
+  - CSCV/PBO
+benchmarks:
+- id: buy_and_hold_spy_total_return
+  rule: +1 every day on audited target ledger
+- id: always_long
+  rule: +1 every day; must equal buy-and-hold
+- id: always_short
+  rule: -1 every day; daily return must be negative of long
+- id: symmetric_sma_200
+  rule: +1 if audited TR close>SMA200, -1 if below, tie holds; execute next open
+- id: symmetric_momentum_12m
+  rule: +1 if 252-session audited TR momentum>0, -1 if below, tie holds; execute next
+    open
+selection:
+  maximum_finalists: 20
+  maximum_per_family: 1
+  ranking_file: train_selection_protocol.md
+  acceptance_file: acceptance_gates.md
+  post_2010_candidates_validation_eligible: false
+github_actions:
+  universal_workflow: .github/workflows/_aurora-future-run-v3.yml
+  recommended_v2_workflow: .github/workflows/sp500-long-short-daily-v2-campaign.yml
+  spec_path: config/sp500_long_short_daily_v2_train_v3.yaml
+  workload: aurora.infra.sp500_long_short_daily_v2.workload:TRAIN_WORKLOAD
+  max_concurrent_jobs: 360
+  max_vcpu_per_runner: 4
+  retention_days: 90
+forbidden:
+- read_or_request_2021_plus
+- cash_or_position_zero
+- leverage
+- nonzero_headline_costs
+- validation_driven_variants
+- silent_data_fallback
+- reset_multiplicity
+- modify_v1_artifact
+- post_2010_candidate_temporal_validation_claim

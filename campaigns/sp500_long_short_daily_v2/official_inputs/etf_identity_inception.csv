@@ -1,0 +1,17 @@
+symbol,role,official_sponsor_url,official_inception
+DIA,risk_panel,https://www.ssga.com/us/en/intermediary/etfs/spdr-dow-jones-industrial-average-etf-trust-dia,1998-01-14
+XLB,sector_panel,https://www.ssga.com/us/en/intermediary/etfs/the-materials-select-sector-spdr-fund-xlb,1998-12-16
+XLE,sector_panel,https://www.ssga.com/us/en/intermediary/etfs/the-energy-select-sector-spdr-fund-xle,1998-12-16
+XLF,sector_panel,https://www.ssga.com/us/en/intermediary/etfs/the-financial-select-sector-spdr-fund-xlf,1998-12-16
+XLI,sector_panel,https://www.ssga.com/us/en/intermediary/etfs/the-industrial-select-sector-spdr-fund-xli,1998-12-16
+XLK,sector_panel,https://www.ssga.com/us/en/intermediary/etfs/the-technology-select-sector-spdr-fund-xlk,1998-12-16
+XLP,sector_panel,https://www.ssga.com/us/en/intermediary/etfs/the-consumer-staples-select-sector-spdr-fund-xlp,1998-12-16
+XLU,sector_panel,https://www.ssga.com/us/en/intermediary/etfs/the-utilities-select-sector-spdr-fund-xlu,1998-12-16
+XLV,sector_panel,https://www.ssga.com/us/en/intermediary/etfs/the-health-care-select-sector-spdr-fund-xlv,1998-12-16
+XLY,sector_panel,https://www.ssga.com/us/en/intermediary/etfs/the-consumer-discretionary-select-sector-spdr-fund-xly,1998-12-16
+QQQ,risk_panel,https://www.invesco.com/qqq-etf/en/about.html,1999-03-10
+IWM,risk_panel,https://www.ishares.com/us/products/239710/ishares-russell-2000-etf,2000-05-22
+IEF,risk_panel,https://www.ishares.com/us/products/239456/ishares-710-year-treasury-bond-etf,2002-07-22
+TLT,risk_panel,https://www.ishares.com/us/products/239454/ishares-20-year-treasury-bond-etf,2002-07-22
+RSP,concentration_panel,https://www.invesco.com/us/financial-products/etfs/product-detail?productId=ETF-RSP,2003-04-24
+SPY,target_and_predictor,https://www.ssga.com/us/en/intermediary/etfs/spdr-sp-500-etf-trust-spy,1993-01-22

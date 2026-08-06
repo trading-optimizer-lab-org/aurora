@@ -1,0 +1,183 @@
+{
+  "assertions": {
+    "all_candidates_always_directional": true,
+    "all_costs_exactly_zero": true,
+    "all_v2_hashes_unique": true,
+    "locked_opened": false,
+    "no_exact_v1_hash_collision": true,
+    "no_paid_dataset_dependency": true,
+    "no_performance_results_in_v2_pack": true,
+    "validation_used_for_design": false
+  },
+  "built_on": "2026-08-05",
+  "campaign_id": "sp500_long_short_daily_zero_cost_v2_new_strategies",
+  "counts": {
+    "benchmarks": 5,
+    "candidates": 144,
+    "cumulative_declared_trials": 312,
+    "datasets": 10,
+    "families": 24,
+    "features": 144,
+    "free_potentially_usable": 9,
+    "incremental_sources": 20,
+    "post_2010_candidates": 12,
+    "pre_2011_candidates": 132,
+    "sources_total": 269,
+    "verified_primary": 176
+  },
+  "note": "No V2 performance result was calculated while building this package.",
+  "prior_campaign": {
+    "research_zip_sha256": "a8db7fd9ab2422d81601104234a80185e317b6cc2fae07914c5bca6c7e421925",
+    "results_zip_sha256": "164ce2d50909c5224e5260fa185516e9ecee368d948201852f35a72fa0780775",
+    "status": "NEGATIVE_RESULT",
+    "v1_declared": 168,
+    "v1_evaluated": 65,
+    "v1_finalists": 0,
+    "v1_locked_opened": false,
+    "v1_rejected": 103,
+    "v1_validation_opened": false
+  },
+  "status": "PACKAGE_BUILT_PRE_BACKTEST",
+  "top20_pre_backtest": [
+    {
+      "family": "overnight_intraday_tug",
+      "priority_score": 118,
+      "rank": 1,
+      "strategy_id": "V2STRAT0001",
+      "variant": "TUG_CONT_1"
+    },
+    {
+      "family": "semivariance_balance",
+      "priority_score": 116,
+      "rank": 2,
+      "strategy_id": "V2STRAT0031",
+      "variant": "SEMIVAR_BAL_5"
+    },
+    {
+      "family": "signed_volume_pressure",
+      "priority_score": 114,
+      "rank": 3,
+      "strategy_id": "V2STRAT0091",
+      "variant": "SIGNED_VOL_1"
+    },
+    {
+      "family": "autocorrelation_switch",
+      "priority_score": 112,
+      "rank": 4,
+      "strategy_id": "V2STRAT0061",
+      "variant": "AC_SWITCH_L1_W63"
+    },
+    {
+      "family": "overnight_intraday_tug",
+      "priority_score": 110,
+      "rank": 5,
+      "strategy_id": "V2STRAT0002",
+      "variant": "TUG_CONT_5"
+    },
+    {
+      "family": "variance_ratio_switch",
+      "priority_score": 110,
+      "rank": 6,
+      "strategy_id": "V2STRAT0055",
+      "variant": "VR_SWITCH_Q2_W126"
+    },
+    {
+      "family": "close_location_pressure",
+      "priority_score": 108,
+      "rank": 7,
+      "strategy_id": "V2STRAT0013",
+      "variant": "CLV_MEAN_1"
+    },
+    {
+      "family": "semivariance_balance",
+      "priority_score": 108,
+      "rank": 8,
+      "strategy_id": "V2STRAT0032",
+      "variant": "SEMIVAR_BAL_10"
+    },
+    {
+      "family": "gap_body_interaction",
+      "priority_score": 106,
+      "rank": 9,
+      "strategy_id": "V2STRAT0007",
+      "variant": "GAP_BODY_AGREE_1"
+    },
+    {
+      "family": "signed_volume_pressure",
+      "priority_score": 106,
+      "rank": 10,
+      "strategy_id": "V2STRAT0092",
+      "variant": "SIGNED_VOL_3"
+    },
+    {
+      "family": "range_volatility_ratio",
+      "priority_score": 104,
+      "rank": 11,
+      "strategy_id": "V2STRAT0025",
+      "variant": "PARK_RATIO_5_20"
+    },
+    {
+      "family": "autocorrelation_switch",
+      "priority_score": 104,
+      "rank": 12,
+      "strategy_id": "V2STRAT0062",
+      "variant": "AC_SWITCH_L2_W63"
+    },
+    {
+      "family": "overnight_intraday_tug",
+      "priority_score": 102,
+      "rank": 13,
+      "strategy_id": "V2STRAT0003",
+      "variant": "TUG_CONT_20"
+    },
+    {
+      "family": "variance_ratio_switch",
+      "priority_score": 102,
+      "rank": 14,
+      "strategy_id": "V2STRAT0056",
+      "variant": "VR_SWITCH_Q5_W126"
+    },
+    {
+      "family": "sector_etf_breadth",
+      "priority_score": 102,
+      "rank": 15,
+      "strategy_id": "V2STRAT0103",
+      "variant": "SECTOR_POSRET_20"
+    },
+    {
+      "family": "close_location_pressure",
+      "priority_score": 100,
+      "rank": 16,
+      "strategy_id": "V2STRAT0014",
+      "variant": "CLV_MEAN_3"
+    },
+    {
+      "family": "semivariance_balance",
+      "priority_score": 100,
+      "rank": 17,
+      "strategy_id": "V2STRAT0033",
+      "variant": "SEMIVAR_BAL_20"
+    },
+    {
+      "family": "momentum_consistency",
+      "priority_score": 100,
+      "rank": 18,
+      "strategy_id": "V2STRAT0085",
+      "variant": "POS_FRAC_5"
+    },
+    {
+      "family": "gap_body_interaction",
+      "priority_score": 98,
+      "rank": 19,
+      "strategy_id": "V2STRAT0008",
+      "variant": "GAP_BODY_AGREE_5"
+    },
+    {
+      "family": "range_body_pressure",
+      "priority_score": 98,
+      "rank": 20,
+      "strategy_id": "V2STRAT0019",
+      "variant": "BODY_RANGE_1"
+    }
+  ]
+}
