@@ -99,16 +99,17 @@ def _delnetfin_facts(*, omit: str | None = None) -> pd.DataFrame:
                 }
             )
     # Lower-priority alias must not override the preferred tag.
-    rows.append(
-        {
-            "tag": "OtherInvestments",
-            "value": 999.0,
-            "unit": "USD",
-            "period_end": pd.Timestamp("2024-12-31"),
-            "available_at": pd.Timestamp("2025-02-28"),
-            "form": "10-K",
-        }
-    )
+    if omit != "ivao":
+        rows.append(
+            {
+                "tag": "OtherInvestments",
+                "value": 999.0,
+                "unit": "USD",
+                "period_end": pd.Timestamp("2024-12-31"),
+                "available_at": pd.Timestamp("2025-02-28"),
+                "form": "10-K",
+            }
+        )
     return pd.DataFrame(rows)
 
 

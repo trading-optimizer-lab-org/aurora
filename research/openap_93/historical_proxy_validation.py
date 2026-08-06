@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from aurora.core.execution_policy import require_github_execution
+from .market_pipeline import calculate_indretbig_cross_section
 
 
 FIVE_PROXY_SIGNALS = (
@@ -139,6 +140,7 @@ def _monthly_prices(
         SELECT
             p.symbol,
             date_trunc('month', p.date)::DATE AS completed_month,
+            arg_max(p.close, p.date) AS month_end_raw_close,
             arg_max(p.adj_close, p.date) AS month_end_adj_close,
             sum(coalesce(p.dividends, 0.0)) AS month_dividends
         FROM prices_daily_clean p
@@ -154,6 +156,7 @@ def _monthly_prices(
     frame = con.execute(query, [start, start, end, end]).df()
     frame["completed_month"] = pd.to_datetime(frame["completed_month"], errors="coerce")
     frame["month_end_adj_close"] = pd.to_numeric(frame["month_end_adj_close"], errors="coerce")
+    frame["month_end_raw_close"] = pd.to_numeric(frame["month_end_raw_close"], errors="coerce")
     frame["month_dividends"] = pd.to_numeric(frame["month_dividends"], errors="coerce").fillna(0.0)
     frame = frame.dropna(subset=["symbol", "completed_month", "month_end_adj_close"])
     frame["month_return"] = frame.groupby("symbol")["month_end_adj_close"].pct_change()
@@ -560,10 +563,8 @@ def _build_indretbig(
         if optional in master.columns:
             master_columns.append(optional)
     frame = monthly.merge(master[master_columns], on="symbol", how="left")
+    # Current security-master SIC is not historical point-in-time evidence.
     frame["sic"] = np.nan
-    for column in ("sic_sec", "sic"):
-        if column in frame.columns:
-            frame["sic"] = frame["sic"].fillna(pd.to_numeric(frame[column], errors="coerce"))
     if submissions is not None and not submissions.empty:
         right = submissions[["symbol", "accepted_at", "sic"]].copy()
         right["symbol"] = right["symbol"].astype("string").str.upper()
@@ -587,14 +588,11 @@ def _build_indretbig(
                 right_on="accepted_at",
                 direction="backward",
             )
-            joined["sic"] = pd.to_numeric(joined["sic_filing"], errors="coerce").fillna(
-                pd.to_numeric(joined["sic"], errors="coerce")
-            )
+            joined["sic"] = pd.to_numeric(joined["sic_filing"], errors="coerce")
             causal_frames.append(joined.drop(columns=["accepted_at", "sic_filing"], errors="ignore"))
         frame = pd.concat(causal_frames, ignore_index=True)
     frame["industry_group"] = _ff48_from_sic(frame["sic"], ff48_sic_codes)
     frame["industry_group"] = frame["industry_group"].astype("string")
-    frame["industry_group"] = frame["industry_group"].fillna(frame["industry"])
     share_facts = facts.loc[facts["tag"].isin(
         ["EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"]
     )].copy()
@@ -618,22 +616,24 @@ def _build_indretbig(
     frame = pd.concat(share_frames, ignore_index=True)
     for completed_month, group in frame.groupby("completed_month", sort=True):
         group = group.copy()
-        group["market_equity"] = group["month_end_adj_close"] * group["shares"]
-        group["big"] = group.groupby("industry_group")["market_equity"].transform(
-            lambda s: s.ge(s.quantile(0.70))
+        calculated = calculate_indretbig_cross_section(
+            group.rename(
+                columns={
+                    "month_end_raw_close": "raw_close",
+                    "shares": "pit_shares",
+                }
+            )
         )
-        big_return = group.loc[group["big"]].groupby("industry_group")["month_return"].mean()
-        group["proxy_value"] = group["industry_group"].map(big_return)
-        group.loc[group["big"], "proxy_value"] = np.nan
+        group["proxy_value"] = calculated["indretbig"].to_numpy()
         group["signal"] = "IndRetBig"
         group["formation_month"] = group["completed_month"] + pd.offsets.MonthBegin(1)
-        group["proxy_formula_id"] = "openap_big_industry_return_ff48_sic_pit_proxy"
+        group["proxy_formula_id"] = "openap_indretbig_ff48_pit_shares_raw_close_v1"
         group["reconstruction_status"] = np.where(
             group["proxy_value"].notna(), "reconstructed", "insufficient_history"
         )
         group["caveat"] = (
-            "FF48 SIC from latest accepted SEC filing at cutoff when available; "
-            "SEC shares and SEC SIC replace CRSP market equity and CRSP SIC"
+            "FF48 SIC and shares use latest SEC observations accepted by cutoff; "
+            "unadjusted close forms market equity and adjusted returns include distributions"
         )
         rows.append(group[["symbol", "completed_month", "formation_month", "signal", "proxy_value", "proxy_formula_id", "reconstruction_status", "caveat"]])
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
@@ -659,11 +659,18 @@ def _build_delnetfin(monthly: pd.DataFrame, master: pd.DataFrame, facts: pd.Data
         issuer = facts.loc[facts["cik"].eq(cik)].copy() if pd.notna(cik) else pd.DataFrame()
         group = group.sort_values("completed_month").copy()
         group["cutoff"] = group["completed_month"] + pd.offsets.MonthEnd(0)
-        net_fin = _pit_values(issuer, short_inv, group["cutoff"]).fillna(0.0)
-        net_fin += _pit_values(issuer, long_inv, group["cutoff"]).fillna(0.0)
-        net_fin -= _pit_values(issuer, debt_current, group["cutoff"]).fillna(0.0)
-        net_fin -= _pit_values(issuer, debt_long, group["cutoff"]).fillna(0.0)
-        net_fin -= _pit_values(issuer, preferred, group["cutoff"]).fillna(0.0)
+        short_investments = _pit_values(issuer, short_inv, group["cutoff"])
+        long_investments = _pit_values(issuer, long_inv, group["cutoff"])
+        current_debt = _pit_values(issuer, debt_current, group["cutoff"])
+        long_debt = _pit_values(issuer, debt_long, group["cutoff"])
+        preferred_stock = _pit_values(issuer, preferred, group["cutoff"]).fillna(0.0)
+        net_fin = (
+            short_investments
+            + long_investments
+            - current_debt
+            - long_debt
+            - preferred_stock
+        )
         assets = _pit_values(issuer, ["Assets"], group["cutoff"])
         state = pd.DataFrame({
             "completed_month": group["completed_month"].to_numpy(),
@@ -692,9 +699,12 @@ def _build_delnetfin(monthly: pd.DataFrame, master: pd.DataFrame, facts: pd.Data
                 "formation_month": pd.Timestamp(completed_month) + pd.offsets.MonthBegin(1),
                 "signal": "DelNetFin",
                 "proxy_value": value,
-                "proxy_formula_id": "openap_delnetfin_sec_alias_official_scaling_proxy",
+                "proxy_formula_id": "openap_delnetfin_sec_exact_components_v1",
                 "reconstruction_status": "reconstructed" if pd.notna(value) else "insufficient_history",
-                "caveat": "SEC aliases replace Compustat components; formula uses 12-month lag and average assets",
+                "caveat": (
+                    "SEC aliases replace Compustat components; only preferred stock "
+                    "may fall back to zero; formula uses 12-month lag and average assets"
+                ),
             })
     return pd.DataFrame(result_rows)
 

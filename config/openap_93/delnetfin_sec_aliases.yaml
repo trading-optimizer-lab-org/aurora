@@ -1,0 +1,38 @@
+version: 1
+components:
+  ivst:
+    compustat_target: ivst
+    sec_tags: [ShortTermInvestments, MarketableSecuritiesCurrent]
+    expected_balance: debit
+    sign: 1
+    zero_fallback: false
+  ivao:
+    compustat_target: ivao
+    sec_tags: [LongTermInvestments, OtherInvestments]
+    expected_balance: debit
+    sign: 1
+    zero_fallback: false
+  dltt:
+    compustat_target: dltt
+    sec_tags: [LongTermDebtNoncurrent, LongTermDebt]
+    expected_balance: credit
+    sign: -1
+    zero_fallback: false
+  dlc:
+    compustat_target: dlc
+    sec_tags: [LongTermDebtCurrent, ShortTermBorrowings]
+    expected_balance: credit
+    sign: -1
+    zero_fallback: false
+  pstk:
+    compustat_target: pstk
+    sec_tags: [PreferredStockValue, PreferredStockCarryingValue]
+    expected_balance: credit
+    sign: -1
+    zero_fallback: true
+  at:
+    compustat_target: at
+    sec_tags: [Assets]
+    expected_balance: debit
+    sign: 0
+    zero_fallback: false

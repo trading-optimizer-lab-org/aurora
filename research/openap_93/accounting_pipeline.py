@@ -8,10 +8,12 @@ output carries the newest publication date among its required inputs.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from .registry import FidelityClass
 
@@ -34,6 +36,186 @@ ACCOUNTING_IMPLEMENTED_SIGNALS = frozenset(
         "hire",
     }
 )
+
+
+DELNETFIN_ALIAS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "config"
+    / "openap_93"
+    / "delnetfin_sec_aliases.yaml"
+)
+
+
+def load_delnetfin_aliases(path: str | Path | None = None) -> dict[str, dict[str, Any]]:
+    """Load the audited SEC-to-Compustat component precedence table."""
+
+    source = Path(path) if path is not None else DELNETFIN_ALIAS_PATH
+    payload = yaml.safe_load(source.read_text(encoding="utf-8"))
+    components = payload.get("components", {}) if isinstance(payload, dict) else {}
+    expected = {"ivst", "ivao", "dltt", "dlc", "pstk", "at"}
+    if set(components) != expected:
+        raise ValueError("DelNetFin alias table must define exactly six components")
+    return components
+
+
+def resolve_delnetfin_components(
+    facts: pd.DataFrame,
+    *,
+    period_end: str | pd.Timestamp,
+    as_of: str | pd.Timestamp,
+    aliases: dict[str, dict[str, Any]] | None = None,
+) -> pd.DataFrame:
+    """Resolve one exact annual DelNetFin observation without silent zeros."""
+
+    definitions = aliases or load_delnetfin_aliases()
+    target_period = pd.Timestamp(period_end).tz_localize(None).normalize()
+    cutoff = pd.Timestamp(as_of).tz_localize(None)
+    frame = facts.copy()
+    for column in ("tag", "value", "period_end", "available_at"):
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    frame["period_end"] = pd.to_datetime(frame["period_end"], errors="coerce").dt.normalize()
+    frame["available_at"] = pd.to_datetime(
+        frame["available_at"], errors="coerce", utc=True
+    ).dt.tz_localize(None)
+    frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+    if "unit" in frame.columns:
+        frame = frame.loc[frame["unit"].astype(str).str.upper().eq("USD")]
+    frame = frame.loc[
+        frame["period_end"].eq(target_period)
+        & frame["available_at"].le(cutoff)
+        & frame["value"].notna()
+    ].copy()
+    rows: list[dict[str, Any]] = []
+    for component, definition in definitions.items():
+        tags = tuple(str(tag) for tag in definition["sec_tags"])
+        candidates = frame.loc[frame["tag"].isin(tags)].copy()
+        if "form" in candidates.columns:
+            annual = candidates.loc[
+                candidates["form"].astype(str).str.upper().isin(
+                    {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
+                )
+            ]
+            if not annual.empty:
+                candidates = annual
+        candidates["alias_rank"] = candidates["tag"].map(
+            {tag: index for index, tag in enumerate(tags)}
+        )
+        candidates = candidates.sort_values(
+            ["alias_rank", "available_at"], ascending=[True, False]
+        )
+        if candidates.empty:
+            zero_fallback = bool(definition.get("zero_fallback", False))
+            rows.append(
+                {
+                    "component": component,
+                    "resolved_tag": "__zero_fallback__" if zero_fallback else "",
+                    "value": 0.0 if zero_fallback else np.nan,
+                    "available_at": pd.NaT,
+                    "period_end": target_period,
+                    "missing_reason": "" if zero_fallback else "required_component_missing",
+                }
+            )
+            continue
+        chosen = candidates.iloc[0]
+        rows.append(
+            {
+                "component": component,
+                "resolved_tag": str(chosen["tag"]),
+                "value": float(chosen["value"]),
+                "available_at": chosen["available_at"],
+                "period_end": target_period,
+                "missing_reason": "",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def calculate_delnetfin_from_components(
+    current: pd.DataFrame,
+    prior: pd.DataFrame,
+) -> float | None:
+    """Calculate the official annual change scaled by average total assets."""
+
+    expected = {"ivst", "ivao", "dltt", "dlc", "pstk", "at"}
+    if current.empty or prior.empty:
+        return None
+    if set(current["component"]) != expected or set(prior["component"]) != expected:
+        return None
+    current_periods = pd.to_datetime(current["period_end"], errors="coerce").dropna().unique()
+    prior_periods = pd.to_datetime(prior["period_end"], errors="coerce").dropna().unique()
+    if len(current_periods) != 1 or len(prior_periods) != 1:
+        return None
+    current_period = pd.Timestamp(current_periods[0])
+    prior_period = pd.Timestamp(prior_periods[0])
+    if current_period != prior_period + pd.DateOffset(years=1):
+        return None
+    current_values = pd.to_numeric(
+        current.set_index("component")["value"], errors="coerce"
+    )
+    prior_values = pd.to_numeric(
+        prior.set_index("component")["value"], errors="coerce"
+    )
+    if current_values.isna().any() or prior_values.isna().any():
+        return None
+    current_net = (
+        current_values["ivst"]
+        + current_values["ivao"]
+        - current_values["dltt"]
+        - current_values["dlc"]
+        - current_values["pstk"]
+    )
+    prior_net = (
+        prior_values["ivst"]
+        + prior_values["ivao"]
+        - prior_values["dltt"]
+        - prior_values["dlc"]
+        - prior_values["pstk"]
+    )
+    average_assets = 0.5 * (current_values["at"] + prior_values["at"])
+    if not np.isfinite(average_assets) or average_assets <= 0:
+        return None
+    result = (current_net - prior_net) / average_assets
+    return float(result) if np.isfinite(result) else None
+
+
+def _canonical_delnetfin_components(
+    values: pd.DataFrame,
+    available: pd.DataFrame,
+    periods: pd.DataFrame,
+    symbol: str,
+    lag: int,
+) -> pd.DataFrame:
+    concept_map = {
+        "ivst": "short_investments",
+        "ivao": "long_investments",
+        "dltt": "debt_long",
+        "dlc": "debt_current",
+        "pstk": "preferred_stock",
+        "at": "assets",
+    }
+    rows: list[dict[str, Any]] = []
+    asset_period = _latest_date(periods, symbol, (("assets", lag),))
+    for component, concept in concept_map.items():
+        value = _lookup(values, symbol, concept, lag)
+        period_end = _latest_date(periods, symbol, ((concept, lag),))
+        available_at = _latest_date(available, symbol, ((concept, lag),))
+        zero_fallback = component == "pstk" and value is None
+        rows.append(
+            {
+                "component": component,
+                "resolved_tag": concept if value is not None else (
+                    "__zero_fallback__" if zero_fallback else ""
+                ),
+                "value": 0.0 if zero_fallback else value,
+                "available_at": available_at,
+                "period_end": asset_period if zero_fallback else period_end,
+                "missing_reason": "" if value is not None or zero_fallback else (
+                    "required_component_missing"
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 @dataclass(frozen=True)
@@ -430,28 +612,45 @@ def calculate_accounting_signals(
 
         debt = debt_current + debt_long + preferred
         debt_lag = debt_current_lag + debt_long_lag + preferred_lag
-        short_inv = get("short_investments") or 0.0
-        short_inv_lag = get("short_investments", 1) or 0.0
-        long_inv = get("long_investments") or 0.0
-        long_inv_lag = get("long_investments", 1) or 0.0
-        net_fin = short_inv + long_inv - debt
-        net_fin_lag = short_inv_lag + long_inv_lag - debt_lag
+        delnetfin_current = _canonical_delnetfin_components(
+            values, available, periods, symbol, 0
+        )
+        delnetfin_prior = _canonical_delnetfin_components(
+            values, available, periods, symbol, 1
+        )
+        delnetfin_value = calculate_delnetfin_from_components(
+            delnetfin_current, delnetfin_prior
+        )
+        delnetfin_dependencies: list[tuple[str, int]] = [
+            (concept, lag)
+            for concept in (
+                "assets",
+                "short_investments",
+                "long_investments",
+                "debt_current",
+                "debt_long",
+            )
+            for lag in (0, 1)
+        ]
+        if get("preferred_stock") is not None:
+            delnetfin_dependencies.append(("preferred_stock", 0))
+        if get("preferred_stock", 1) is not None:
+            delnetfin_dependencies.append(("preferred_stock", 1))
         _append(
             rows,
             symbol=symbol,
             signal="DelNetFin",
-            value=_ratio(
-                net_fin - net_fin_lag,
-                float(np.mean([assets, assets_lag]))
-                if assets is not None and assets_lag is not None
-                else None,
-            ),
-            fidelity=FidelityClass.UNVALIDATED_PROXY,
-            formula_id="openap_delnetfin_sec_partial_components",
-            dependencies=(("assets", 0), ("assets", 1)),
+            value=delnetfin_value,
+            fidelity=FidelityClass.RECONSTRUCTED,
+            formula_id="openap_delnetfin_sec_exact_components_v1",
+            dependencies=tuple(delnetfin_dependencies),
             available=available,
             periods=periods,
-            caveat="SEC taxonomies do not expose every Compustat financing component consistently",
+            caveat=(
+                "Only preferred stock may use the official zero fallback; missing "
+                "investments, debt, or assets fail closed. Final score admission "
+                "requires a passing frozen forward-proxy certificate."
+            ),
         )
 
         accrual = _ratio(

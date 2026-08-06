@@ -1136,6 +1136,8 @@ def run_current_pipeline(
             public["liquidity_monthly"],
             public["vix_daily"],
             formation_at=formation,
+            concept_inputs=base["concepts"],
+            ff48_sic_codes=public["ff48_sic_codes"],
         ),
         calculate_accounting_signals(
             base["master"],

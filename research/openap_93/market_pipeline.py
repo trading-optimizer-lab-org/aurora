@@ -247,6 +247,68 @@ def _quantile_codes(values: pd.Series, bins: int) -> pd.Series:
     return result
 
 
+def map_sic_to_ff48(
+    sic: pd.Series,
+    ff48_sic_codes: pd.DataFrame | None,
+) -> pd.Series:
+    """Map point-in-time SIC codes to Kenneth French's public FF48 ranges."""
+
+    result = pd.Series(pd.NA, index=sic.index, dtype="Int64")
+    if ff48_sic_codes is None or ff48_sic_codes.empty:
+        return result
+    required = {"ff48", "sic_start", "sic_end"}
+    if not required.issubset(ff48_sic_codes.columns):
+        return result
+    numeric_sic = pd.to_numeric(sic, errors="coerce")
+    for row in ff48_sic_codes.itertuples(index=False):
+        start = int(row.sic_start)
+        end = int(row.sic_end)
+        mask = numeric_sic.between(start, end, inclusive="both")
+        result.loc[mask] = int(row.ff48)
+    return result
+
+
+def calculate_indretbig_cross_section(cross_section: pd.DataFrame) -> pd.DataFrame:
+    """Calculate OpenAP IndRetBig from explicit point-in-time inputs.
+
+    Market equity must use the unadjusted month-end close and shares known at
+    formation.  The signal is the arithmetic mean return of firms strictly
+    above the 70th market-equity percentile in the same FF48 industry, and is
+    assigned only to firms outside that big-firm group.
+    """
+
+    required = {
+        "symbol",
+        "industry_group",
+        "raw_close",
+        "pit_shares",
+        "month_return",
+    }
+    missing = sorted(required - set(cross_section.columns))
+    if missing:
+        raise ValueError(f"IndRetBig requires columns: {', '.join(missing)}")
+    frame = cross_section.copy()
+    frame["raw_close"] = pd.to_numeric(frame["raw_close"], errors="coerce")
+    frame["pit_shares"] = pd.to_numeric(frame["pit_shares"], errors="coerce")
+    frame["month_return"] = pd.to_numeric(frame["month_return"], errors="coerce")
+    valid_equity = frame["raw_close"].gt(0) & frame["pit_shares"].gt(0)
+    frame["market_equity"] = (
+        frame["raw_close"] * frame["pit_shares"]
+    ).where(valid_equity)
+    frame["industry_rank"] = frame.groupby("industry_group", dropna=False)[
+        "market_equity"
+    ].rank(method="average", pct=True)
+    frame["is_big_firm"] = frame["industry_rank"].gt(0.70)
+    big_returns = (
+        frame.loc[frame["is_big_firm"]]
+        .groupby("industry_group", dropna=False)["month_return"]
+        .mean()
+    )
+    frame["indretbig"] = frame["industry_group"].map(big_returns)
+    frame.loc[frame["is_big_firm"], "indretbig"] = np.nan
+    return frame
+
+
 def _append(
     rows: list[MarketSignalValue],
     *,
@@ -289,6 +351,8 @@ def calculate_market_signals(
     vix_daily: pd.DataFrame,
     *,
     formation_at: str | pd.Timestamp,
+    concept_inputs: pd.DataFrame | None = None,
+    ff48_sic_codes: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Calculate all supported market-family members of the required 93."""
 
@@ -300,6 +364,27 @@ def calculate_market_signals(
     vix = _period_frame(vix_daily)[["date", "vix_change"]]
     rows: list[MarketSignalValue] = []
     cross: list[dict[str, Any]] = []
+    pit_shares = pd.Series(dtype=float)
+    if concept_inputs is not None and not concept_inputs.empty:
+        share_rows = concept_inputs.loc[
+            concept_inputs["concept"].eq("shares")
+            & pd.to_numeric(concept_inputs["concept_lag"], errors="coerce").eq(0)
+        ].copy()
+        share_rows["available_at"] = pd.to_datetime(
+            share_rows["available_at"], errors="coerce", utc=True
+        ).dt.tz_localize(None)
+        share_rows = share_rows.loc[share_rows["available_at"].le(formation)]
+        pit_shares = (
+            share_rows.sort_values("available_at")
+            .drop_duplicates("symbol", keep="last")
+            .set_index("symbol")["value"]
+        )
+        pit_shares = pd.to_numeric(pit_shares, errors="coerce")
+    sic_column = "sic_sec" if "sic_sec" in master.columns else "sic"
+    if sic_column in master.columns:
+        ff48 = map_sic_to_ff48(master[sic_column], ff48_sic_codes)
+    else:
+        ff48 = pd.Series(pd.NA, index=master.index, dtype="Int64")
 
     for symbol, group in prices.groupby("symbol", sort=True):
         if symbol not in master.index:
@@ -552,7 +637,22 @@ def calculate_market_signals(
                 "age_months": age_months,
                 "first_date": first_date,
                 "price": float(daily["adj_close"].iloc[-1]),
+                "raw_close": float(
+                    pd.to_numeric(
+                        daily["close"] if "close" in daily.columns else pd.Series(dtype=float),
+                        errors="coerce",
+                    ).iloc[-1]
+                )
+                if "close" in daily.columns
+                and pd.notna(pd.to_numeric(daily["close"], errors="coerce").iloc[-1])
+                else np.nan,
+                "pit_shares": pit_shares.get(symbol, np.nan),
                 "industry": str(master.loc[symbol].get("industry") or ""),
+                "industry_group": (
+                    f"FF48-{int(ff48.loc[symbol])}"
+                    if symbol in ff48.index and pd.notna(ff48.loc[symbol])
+                    else pd.NA
+                ),
                 "market_cap": pd.to_numeric(
                     pd.Series([master.loc[symbol].get("marketCap")]), errors="coerce"
                 ).iloc[0],
@@ -581,13 +681,13 @@ def calculate_market_signals(
         )
         ipo = cross_frame["age_months"].between(3, 36).astype(float)
 
-        industry_rank = cross_frame.groupby("industry")["market_cap"].rank(pct=True)
-        big_returns = (
-            cross_frame.loc[industry_rank.gt(0.70)]
-            .groupby("industry")["last_month_return"]
-            .mean()
+        indretbig_input = cross_frame.reset_index().rename(
+            columns={"last_month_return": "month_return"}
         )
-        ind_ret_big = cross_frame["industry"].map(big_returns).where(industry_rank.lt(0.70))
+        indretbig_frame = calculate_indretbig_cross_section(indretbig_input).set_index(
+            "symbol"
+        )
+        ind_ret_big = indretbig_frame["indretbig"]
         positive_dividend_yield = cross_frame["predicted_dividend_yield"].where(
             cross_frame["predicted_dividend_yield"].gt(0)
         )
@@ -658,10 +758,13 @@ def calculate_market_signals(
                 rows,
                 signal="IndRetBig",
                 value=ind_ret_big.loc[symbol],
-                fidelity=FidelityClass.UNVALIDATED_PROXY,
-                formula_id="openap_big_industry_return_industry_label_proxy",
+                fidelity=FidelityClass.RECONSTRUCTED,
+                formula_id="openap_indretbig_ff48_pit_shares_raw_close_v1",
                 source_ids=("yahoo_public", "sec_edgar"),
-                caveat="Current Yahoo industry replaces historical FF48 classification",
+                caveat=(
+                    "FF48 uses the latest causal SEC SIC; final score admission still "
+                    "requires a passing frozen forward-proxy certificate"
+                ),
                 **common,
             )
 
