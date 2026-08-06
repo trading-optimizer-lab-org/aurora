@@ -135,4 +135,7 @@ def test_announcement_return_uses_official_minus_two_plus_one_window() -> None:
     # The official window is dates[1:5], not dates[2:6].
     expected = (100 / 99 - 1) + (101 / 100 - 1) + (103 / 101 - 1) + (106 / 103 - 1)
     assert result.iloc[0]["proxy_value"] == pytest.approx(expected)
-    assert result.iloc[0]["proxy_formula_id"].endswith("window_exact")
+    assert (
+        result.iloc[0]["proxy_formula_id"]
+        == "openap_announcement_return_trading_sessions_minus2_plus1"
+    )
