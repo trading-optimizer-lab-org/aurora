@@ -892,20 +892,22 @@ def download_yahoo_history(
     split: str,
     session: requests.Session | None = None,
     raw_dir: Path | None = None,
+    include_events: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, tuple[DownloadReceipt, ...]]:
-    """Download bounded raw OHLC, dividends and splits from Yahoo chart JSON."""
+    """Download bounded raw OHLC and optional corporate events from Yahoo chart JSON."""
 
     start_date, end_date = _bounded_dates(start, end, split=split)
     client = session or requests.Session()
     client.headers.update({"User-Agent": "Mozilla/5.0 AuroraResearch bounded-chart-json"})
-    params = {
+    params: dict[str, Any] = {
         "period1": _epoch_seconds(start_date),
         "period2": _epoch_seconds(end_date + pd.Timedelta(days=1)),
         "interval": "1d",
-        "events": "div,splits",
         "includeAdjustedClose": "true",
         "includePrePost": "false",
     }
+    if include_events:
+        params["events"] = "div,splits"
     payload: bytes | None = None
     selected_url: str | None = None
     errors: list[str] = []

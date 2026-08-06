@@ -807,7 +807,8 @@ def test_stooq_window_uses_documented_yahoo_fallback_for_provider_unavailability
         *args: object,
         **kwargs: object,
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, tuple[DownloadReceipt, ...]]:
-        del args, kwargs
+        del args
+        assert kwargs["include_events"] is False
         empty = pd.DataFrame(columns=["date"])
         return frame, empty, empty, (fallback_receipt,)
 
