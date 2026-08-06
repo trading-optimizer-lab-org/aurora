@@ -89,17 +89,17 @@ def test_earnings_streak_uses_conservative_availability_lag() -> None:
 
 
 def test_announcement_return_uses_official_minus_two_plus_one_window() -> None:
-    dates = pd.date_range("2020-01-06", periods=5, freq="B")
+    dates = pd.date_range("2020-01-06", periods=6, freq="B")
     prices = pd.DataFrame({
         "symbol": ["AAA"] * len(dates),
         "date": dates,
-        "adj_close": [100.0, 101.0, 103.0, 106.0, 110.0],
+        "adj_close": [99.0, 100.0, 101.0, 103.0, 106.0, 110.0],
     })
     facts = pd.DataFrame({
         "cik": [1],
         "tag": ["NetIncomeLoss"],
         "form": ["10-Q"],
-        "filed": [dates[2]],
+        "filed": [dates[3]],
     })
     monthly = pd.DataFrame({
         "symbol": ["AAA"],
@@ -108,7 +108,7 @@ def test_announcement_return_uses_official_minus_two_plus_one_window() -> None:
     })
     master = pd.DataFrame({"symbol": ["AAA"], "cik": [1]})
     result = _build_announcement_return(monthly, facts, prices, None, master)
-    # The official window is dates[0:4], not dates[1:5].
+    # The official window is dates[1:5], not dates[2:6].
     expected = (101 / 100 - 1) + (103 / 101 - 1) + (106 / 103 - 1) + (110 / 106 - 1)
     assert result.iloc[0]["proxy_value"] == pytest.approx(expected)
     assert result.iloc[0]["proxy_formula_id"].endswith("window_exact")
