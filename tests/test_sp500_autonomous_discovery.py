@@ -337,6 +337,29 @@ def test_batch_ten_adds_unique_strong_trend_overrides() -> None:
     )
 
 
+def test_batch_thirteen_refines_best_dual_reversal_without_repeats() -> None:
+    prior = (
+        *registry.generate_candidates(5, count=96),
+        *registry.generate_candidates(6, count=96),
+    )
+    batch_thirteen = registry.generate_candidates(13, count=96)
+    batch_fourteen = registry.generate_candidates(14, count=96)
+    assert len(batch_thirteen) == 96
+    assert len(batch_fourteen) == 96
+    assert {row["family"] for row in batch_thirteen} == {
+        "dual_reversal_trend_vote"
+    }
+    prior_hashes = {row["canonical_hash"] for row in prior}
+    assert not prior_hashes.intersection(
+        row["canonical_hash"] for row in batch_thirteen
+    )
+    assert not {row["canonical_hash"] for row in batch_thirteen}.intersection(
+        row["canonical_hash"] for row in batch_fourteen
+    )
+    assert all(row["position_values"] == [-1, 1] for row in batch_thirteen)
+    assert all(row["cash_allowed"] is False for row in batch_thirteen)
+
+
 def test_strong_trend_override_is_causal_and_fully_covered() -> None:
     index = pd.date_range("2000-01-03", periods=300, freq="B")
     close = pd.Series(np.linspace(100.0, 200.0, len(index)), index=index)

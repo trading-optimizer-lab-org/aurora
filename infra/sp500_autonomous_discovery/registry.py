@@ -848,12 +848,174 @@ def _strong_trend_override_candidates(
     return tuple(candidates)
 
 
+def _stability_refined_dual_reversal_candidates(
+    package: CampaignPackage,
+    batch_id: int,
+    count: int,
+) -> tuple[dict[str, Any], ...]:
+    """Search nearest untested rules around the strongest autonomous train rule."""
+
+    usable = [
+        row
+        for row in package.candidates
+        if str(row.get("family")) in IMPLEMENTED_FAMILIES
+        and set(row.get("required_datasets", ())).issubset({"DS001", "DS002"})
+    ]
+    if not usable:
+        raise RuntimeError("NO_USABLE_CAUSAL_TEMPLATES")
+    base = next(
+        (row for row in usable if str(row.get("family")) == "short_horizon_reversal"),
+        usable[0],
+    )
+    generation = batch_id - 13
+    anchor = {
+        "rsi_window": 4,
+        "lower": 28,
+        "rsi_trend_window": 180,
+        "reversal_window": 5,
+        "reversal_threshold_pct": 0.85,
+        "reversal_trend_window": 40,
+        "rsi_weight": 1,
+        "reversal_weight": 1,
+    }
+    known_parameters = {
+        json.dumps(row["parameters"], sort_keys=True, separators=(",", ":"))
+        for prior_batch in (5, 6)
+        for row in _combined_reversal_candidates(package, prior_batch, 96)
+        if str(row["family"]) == "dual_reversal_trend_vote"
+    }
+    grid = [
+        {
+            "rsi_window": rsi_window,
+            "lower": lower,
+            "upper": 100 - lower,
+            "rsi_trend_window": rsi_trend_window,
+            "reversal_window": reversal_window,
+            "reversal_threshold_pct": reversal_threshold_pct,
+            "reversal_trend_window": reversal_trend_window,
+            "rsi_weight": rsi_weight,
+            "reversal_weight": reversal_weight,
+        }
+        for rsi_window in (3, 4, 5, 6)
+        for lower in (24, 26, 28, 30, 32)
+        for rsi_trend_window in (140, 160, 180, 200, 220)
+        for reversal_window in (3, 4, 5, 6, 7)
+        for reversal_threshold_pct in (
+            0.65,
+            0.70,
+            0.75,
+            0.80,
+            0.825,
+            0.85,
+            0.875,
+            0.90,
+            0.95,
+            1.00,
+            1.05,
+        )
+        for reversal_trend_window in (20, 30, 40, 50, 60, 80)
+        for rsi_weight, reversal_weight in ((1, 1), (2, 1), (1, 2))
+    ]
+
+    def distance(parameters: Mapping[str, Any]) -> tuple[float, str]:
+        score = (
+            abs(int(parameters["rsi_window"]) - anchor["rsi_window"]) / 1.0
+            + abs(int(parameters["lower"]) - anchor["lower"]) / 2.0
+            + abs(
+                int(parameters["rsi_trend_window"])
+                - anchor["rsi_trend_window"]
+            )
+            / 20.0
+            + abs(
+                int(parameters["reversal_window"])
+                - anchor["reversal_window"]
+            )
+            / 1.0
+            + abs(
+                float(parameters["reversal_threshold_pct"])
+                - anchor["reversal_threshold_pct"]
+            )
+            / 0.025
+            + abs(
+                int(parameters["reversal_trend_window"])
+                - anchor["reversal_trend_window"]
+            )
+            / 10.0
+            + 4.0
+            * (
+                abs(int(parameters["rsi_weight"]) - anchor["rsi_weight"])
+                + abs(
+                    int(parameters["reversal_weight"])
+                    - anchor["reversal_weight"]
+                )
+            )
+        )
+        return score, json.dumps(parameters, sort_keys=True, separators=(",", ":"))
+
+    untested = [
+        parameters
+        for parameters in sorted(grid, key=distance)
+        if json.dumps(parameters, sort_keys=True, separators=(",", ":"))
+        not in known_parameters
+    ]
+    start = generation * count
+    parameters_list = untested[start : start + count]
+    if len(parameters_list) != count:
+        raise RuntimeError("STABILITY_REFINEMENT_GRID_EXHAUSTED")
+    candidates: list[dict[str, Any]] = []
+    for index, parameters in enumerate(parameters_list):
+        candidate = json.loads(json.dumps(base))
+        candidate.update(
+            {
+                "instrument": "SPY",
+                "cash_allowed": False,
+                "partial_exposure_allowed": False,
+                "leverage_allowed": False,
+                "volatility_scaling_allowed": False,
+                "pyramiding_allowed": False,
+                "multiple_assets_in_portfolio": False,
+                "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
+                "variant_label": (
+                    f"autonomous_stability_refinement_batch_{batch_id}_{index}"
+                ),
+                "family": "dual_reversal_trend_vote",
+                "family_name": "Stability Refined Dual Reversal Trend Vote",
+                "parameters": parameters,
+                "required_datasets": ["DS001", "DS002"],
+                "feature_formulas": [
+                    "nearest untested weighted causal RSI-trend and return-reversal-trend vote"
+                ],
+                "long_rule": "weighted score_t > 0",
+                "short_rule": "weighted score_t < 0",
+                "features": ["AUTO_STABILITY_REFINED_DUAL_REVERSAL_TREND_VOTE"],
+                "warmup_rule": "No signal before every causal input required by the rule is defined.",
+                "known_failure_modes": "Train-only stability refinement; must pass every frozen robustness gate.",
+                "economic_sign_rationale": "Refines the strongest all-positive-year train rule without changing its causal mechanism.",
+                "priority_score": max(1, 100 - index),
+                "evidence_track": "pre_2011_evidence",
+                "selection_role": "autonomous_pre_registered_candidate",
+            }
+        )
+        candidate["canonical_hash"] = canonical_rule_hash(candidate)
+        assert_contract(candidate)
+        candidates.append(candidate)
+    if len(candidates) != count or len(
+        {row["canonical_hash"] for row in candidates}
+    ) != count:
+        raise RuntimeError("STABILITY_REFINEMENT_COUNT_OR_HASH_MISMATCH")
+    return tuple(candidates)
+
+
 def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, Any], ...]:
     """Generate a reproducible, pre-registered batch from causal templates."""
 
     if batch_id < 0 or count < 1:
         raise ValueError("INVALID_BATCH_ARGUMENT")
     package = base_package()
+    if batch_id >= 13:
+        return _stability_refined_dual_reversal_candidates(
+            package, batch_id, count
+        )
     if batch_id >= 10:
         return _strong_trend_override_candidates(package, batch_id, count)
     if batch_id >= 9:
