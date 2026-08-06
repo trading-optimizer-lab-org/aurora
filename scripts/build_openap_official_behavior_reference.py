@@ -109,7 +109,11 @@ def main() -> None:
     args = parser.parse_args()
     require_github_execution("OpenAP official behavior reference")
     summary = build_reference(args.official_long_short, args.output_dir)
-    if abs(float(summary["similarity_min_pearson"]) - 1.0) > 1e-12 or abs(float(summary["similarity_min_spearman"]) - 1.0) > 1e-12:
+    pearson_min = summary["similarity_min_pearson"]
+    spearman_min = summary["similarity_min_spearman"]
+    if not isinstance(pearson_min, (int, float)) or not isinstance(spearman_min, (int, float)):
+        raise RuntimeError("Reference similarity summary is not numeric")
+    if abs(pearson_min - 1.0) > 1e-12 or abs(spearman_min - 1.0) > 1e-12:
         raise RuntimeError("Official source mirror did not reproduce the official returns exactly")
 
 
