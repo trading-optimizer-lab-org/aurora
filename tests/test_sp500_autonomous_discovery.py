@@ -456,6 +456,99 @@ def test_asymmetric_trend_override_is_causal_and_fully_covered() -> None:
     )
 
 
+def test_batch_nineteen_adds_unique_drawdown_recovery_overrides() -> None:
+    batch_eighteen = registry.generate_candidates(18, count=96)
+    batch_nineteen = registry.generate_candidates(19, count=96)
+    batch_twenty = registry.generate_candidates(20, count=96)
+
+    assert len(batch_nineteen) == 96
+    assert len({row["canonical_hash"] for row in batch_nineteen}) == 96
+    assert {row["family"] for row in batch_nineteen} == {
+        "drawdown_recovery_override_reversal"
+    }
+    assert not {row["canonical_hash"] for row in batch_eighteen}.intersection(
+        row["canonical_hash"] for row in batch_nineteen
+    )
+    assert not {row["canonical_hash"] for row in batch_nineteen}.intersection(
+        row["canonical_hash"] for row in batch_twenty
+    )
+    assert all(row["position_values"] == [-1, 1] for row in batch_nineteen)
+    assert all(row["cash_allowed"] is False for row in batch_nineteen)
+    assert all(row["leverage_allowed"] is False for row in batch_nineteen)
+
+
+def test_drawdown_recovery_override_is_causal_and_requires_prior_drawdown() -> None:
+    index = pd.date_range("2000-01-03", periods=520, freq="B")
+    first = np.linspace(100.0, 150.0, 260)
+    selloff = np.linspace(150.0, 105.0, 80)
+    recovery = np.linspace(105.0, 165.0, 180)
+    close = pd.Series(np.concatenate((first, selloff, recovery)), index=index)
+    ledger = pd.DataFrame(
+        {
+            "tr_close": close,
+            "tr_open": close,
+            "open": close,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "volume": 1000.0,
+            "long_return": close.pct_change().fillna(0.0),
+            "short_return": -close.pct_change().fillna(0.0),
+        },
+        index=index,
+    )
+    candidate = registry.generate_candidates(19, count=96)[0]
+    data = PreparedMarketData(
+        ledger=ledger,
+        series={},
+        available_dataset_ids=frozenset({"DS001", "DS002"}),
+        rejected_datasets={},
+        receipts=(),
+        split="train",
+    )
+    result = candidate_decisions(candidate, data)
+    assert set(result.decisions.unique()) <= {-1, 1}
+    assert result.missing_fraction == 0.0
+
+    parameters = candidate["parameters"]
+    peak = close.rolling(
+        int(parameters["drawdown_lookback"]),
+        min_periods=int(parameters["drawdown_lookback"]),
+    ).max()
+    drawdown = close / peak - 1.0
+    recent_deep_drawdown = drawdown.rolling(
+        int(parameters["recovery_memory_window"]),
+        min_periods=1,
+    ).min() <= -(float(parameters["drawdown_trigger_pct"]) / 100.0)
+    recovery_return = (
+        close / close.shift(int(parameters["recovery_window"])) - 1.0
+    )
+    override = recent_deep_drawdown & (
+        recovery_return
+        > float(parameters["recovery_threshold_pct"]) / 100.0
+    )
+    aligned_override = override.loc[result.decisions.index]
+    assert aligned_override.any()
+    assert (result.decisions.loc[aligned_override] == 1).all()
+
+    changed = ledger.copy()
+    changed.loc[index[-1], "tr_close"] *= 1.25
+    changed.loc[index[-1], "high"] = changed.loc[index[-1], "tr_close"] + 1.0
+    future_changed = candidate_decisions(
+        candidate,
+        PreparedMarketData(
+            ledger=changed,
+            series={},
+            available_dataset_ids=frozenset({"DS001", "DS002"}),
+            rejected_datasets={},
+            receipts=(),
+            split="train",
+        ),
+    )
+    pd.testing.assert_series_equal(
+        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
+    )
+
+
 def test_strong_trend_override_is_causal_and_fully_covered() -> None:
     index = pd.date_range("2000-01-03", periods=300, freq="B")
     close = pd.Series(np.linspace(100.0, 200.0, len(index)), index=index)

@@ -1156,12 +1156,130 @@ def _asymmetric_override_candidates(
     return tuple(candidates)
 
 
+def _drawdown_recovery_override_candidates(
+    package: CampaignPackage,
+    batch_id: int,
+    count: int,
+) -> tuple[dict[str, Any], ...]:
+    """Test causal recovery overrides around the strongest train rules."""
+
+    if count != 96:
+        raise ValueError("DRAWDOWN_RECOVERY_OVERRIDE_REQUIRES_96_CANDIDATES")
+    usable = [
+        row
+        for row in package.candidates
+        if str(row.get("family")) in IMPLEMENTED_FAMILIES
+        and set(row.get("required_datasets", ())).issubset({"DS001", "DS002"})
+    ]
+    if not usable:
+        raise RuntimeError("NO_USABLE_CAUSAL_TEMPLATES")
+    base = next(
+        (row for row in usable if str(row.get("family")) == "short_horizon_reversal"),
+        usable[0],
+    )
+    generation = batch_id - 19
+    core_variants = (
+        {
+            "rsi_window": 4,
+            "lower": 28,
+            "upper": 72,
+            "rsi_trend_window": 220,
+            "rsi_weight": 1,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 0.825,
+            "reversal_trend_window": 40,
+            "reversal_weight": 1,
+        },
+        {
+            "rsi_window": 4,
+            "lower": 26,
+            "upper": 74,
+            "rsi_trend_window": 180,
+            "rsi_weight": 1,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 0.875,
+            "reversal_trend_window": 40,
+            "reversal_weight": 1,
+        },
+    )
+    parameters_list = [
+        {
+            **core,
+            "drawdown_lookback": 252,
+            "drawdown_trigger_pct": drawdown_trigger_pct,
+            "recovery_memory_window": recovery_memory_window,
+            "recovery_window": recovery_window,
+            "recovery_threshold_pct": round(
+                recovery_threshold_pct + generation * 0.25,
+                4,
+            ),
+        }
+        for core in core_variants
+        for drawdown_trigger_pct in (12.5, 17.5, 22.5, 27.5)
+        for recovery_memory_window in (63, 126, 189)
+        for recovery_window in (20, 63)
+        for recovery_threshold_pct in (2.0, 5.0)
+    ]
+    candidates: list[dict[str, Any]] = []
+    for index, parameters in enumerate(parameters_list):
+        candidate = json.loads(json.dumps(base))
+        candidate.update(
+            {
+                "instrument": "SPY",
+                "cash_allowed": False,
+                "partial_exposure_allowed": False,
+                "leverage_allowed": False,
+                "volatility_scaling_allowed": False,
+                "pyramiding_allowed": False,
+                "multiple_assets_in_portfolio": False,
+                "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
+                "variant_label": (
+                    f"autonomous_drawdown_recovery_batch_{batch_id}_{index}"
+                ),
+                "family": "drawdown_recovery_override_reversal",
+                "family_name": "Drawdown Recovery Override Reversal",
+                "parameters": parameters,
+                "required_datasets": ["DS001", "DS002"],
+                "feature_formulas": [
+                    "causal dual reversal score forced long only after a prior deep drawdown and confirmed recovery"
+                ],
+                "long_rule": (
+                    "dual score_t > 0 or prior deep drawdown followed by causal recovery"
+                ),
+                "short_rule": "dual score_t < 0 outside a confirmed recovery",
+                "features": ["AUTO_DRAWDOWN_RECOVERY_OVERRIDE_REVERSAL"],
+                "warmup_rule": (
+                    "No signal before every causal input required by the rule is defined."
+                ),
+                "known_failure_modes": (
+                    "Train-only recovery refinement; must pass every frozen robustness gate."
+                ),
+                "economic_sign_rationale": (
+                    "Post-drawdown recoveries can persist after the reversal base would turn short."
+                ),
+                "priority_score": max(1, 100 - index),
+                "evidence_track": "pre_2011_evidence",
+                "selection_role": "autonomous_pre_registered_candidate",
+            }
+        )
+        candidate["canonical_hash"] = canonical_rule_hash(candidate)
+        assert_contract(candidate)
+        candidates.append(candidate)
+    if len(candidates) != count or len(
+        {row["canonical_hash"] for row in candidates}
+    ) != count:
+        raise RuntimeError("DRAWDOWN_RECOVERY_COUNT_OR_HASH_MISMATCH")
+    return tuple(candidates)
+
+
 def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, Any], ...]:
     """Generate a reproducible, pre-registered batch from causal templates."""
 
     if batch_id < 0 or count < 1:
         raise ValueError("INVALID_BATCH_ARGUMENT")
     package = base_package()
+    if batch_id >= 19:
+        return _drawdown_recovery_override_candidates(package, batch_id, count)
     if batch_id >= 16:
         return _asymmetric_override_candidates(package, batch_id, count)
     if batch_id >= 13:
