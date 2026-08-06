@@ -29,5 +29,5 @@ jobs:
       - name: Run focused contract tests
         run: >-
           python -m pytest
-          tests/test_openap_93_forward_proxy_validation.py
+          tests/test_openap_93_forward_proxy_*.py
           -q --tb=short
