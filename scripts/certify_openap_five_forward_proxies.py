@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 
 import pandas as pd
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT.parent) not in sys.path:
@@ -20,7 +21,7 @@ from aurora.research.openap_93.forward_proxy_validation import (  # noqa: E402
     ForwardProxyGate,
     certificate_sha256,
     certify_forward_proxy_candidates,
-    formula_identity_sha256,
+    formula_hashes_from_source_manifest,
 )
 from aurora.research.openap_93.official_portfolio_similarity import (  # noqa: E402
     build_official_long_short_spreads,
@@ -44,17 +45,13 @@ def _file_sha256(path: str | Path) -> str:
     return digest.hexdigest()
 
 
-def _text_sha256(value: str) -> str:
-    return sha256(value.encode("utf-8")).hexdigest()
-
-
 def run_certification(
     *,
     proxy_panel: str | Path,
     monthly_returns: str | Path,
     official_long_short: str | Path,
     output_dir: str | Path,
-    source_manifest: str | Path | None = None,
+    source_manifest: str | Path,
     train_end: str = "2010-12-31",
     validation_start: str = "2011-01-01",
     validation_end: str = "2020-12-31",
@@ -88,11 +85,26 @@ def run_certification(
         ).astype("string")
     if "proxy_formula_id" not in variant_metadata.columns:
         variant_metadata["proxy_formula_id"] = variant_metadata["variant_id"]
-    manifest_hash = (
-        _file_sha256(source_manifest)
-        if source_manifest is not None
-        else _text_sha256("public-source-manifest-not-supplied")
+    manifest_path = Path(source_manifest)
+    manifest_payload = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest_hash = _file_sha256(manifest_path)
+    implementation_hashes = formula_hashes_from_source_manifest(
+        manifest_path,
+        repository_root=ROOT,
     )
+    accepted_variants = {
+        str(signal): {str(value) for value in spec.get("accepted_variants", [])}
+        for signal, spec in manifest_payload.get("signals", {}).items()
+    }
+    candidates = candidates.loc[
+        candidates.apply(
+            lambda row: str(row["variant_id"])
+            in accepted_variants.get(str(row["signal"]), set()),
+            axis=1,
+        )
+    ].copy()
+    if candidates.empty:
+        raise RuntimeError("No source-approved forward-proxy candidate variants are available")
     identities = candidates[["signal", "variant_id"]].drop_duplicates()
     formula_hashes: dict[tuple[str, str], str] = {}
     source_hashes: dict[tuple[str, str], str] = {}
@@ -107,7 +119,12 @@ def run_certification(
                 ].astype(str)
             )
         )
-        formula_hashes[identity] = formula_identity_sha256("|".join(formulas))
+        expected_formula = str(manifest_payload["signals"][str(row.signal)]["formula_id"])
+        if formulas != [expected_formula]:
+            raise RuntimeError(
+                f"Formula identity mismatch for {identity}: {formulas} != {[expected_formula]}"
+            )
+        formula_hashes[identity] = implementation_hashes[str(row.signal)]
         source_hashes[identity] = manifest_hash
 
     selected, validation, certificates = certify_forward_proxy_candidates(
@@ -150,7 +167,7 @@ def main() -> None:
     parser.add_argument("--proxy-panel", required=True)
     parser.add_argument("--monthly-returns", required=True)
     parser.add_argument("--official-long-short", required=True)
-    parser.add_argument("--source-manifest", default=None)
+    parser.add_argument("--source-manifest", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--train-end", default="2010-12-31")
     parser.add_argument("--validation-start", default="2011-01-01")

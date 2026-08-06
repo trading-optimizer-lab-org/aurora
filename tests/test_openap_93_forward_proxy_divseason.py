@@ -71,4 +71,4 @@ def test_event_pipeline_labels_divseason_variant_and_excludes_monthly_payer() ->
 
     assert divseason["value"] is None or pd.isna(divseason["value"])
     assert divseason["reason_if_missing"] == "not_applicable:monthly_dividend_payer"
-    assert divseason["variant_id"] == "official_lags_frequency_inferred_v1"
+    assert divseason["variant_id"] == "openap_dividend_seasonality_frequency_inferred"

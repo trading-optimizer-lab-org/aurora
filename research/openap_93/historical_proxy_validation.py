@@ -424,7 +424,8 @@ def _build_announcement_return(
                 "formation_month": item.formation_month,
                 "signal": "AnnouncementReturn",
                 "proxy_value": float(item.proxy_value),
-                "proxy_formula_id": "openap_announcement_abnormal_return_sec_filing_date_window_exact",
+                "proxy_formula_id": "openap_announcement_return_trading_sessions_minus2_plus1",
+                "variant_id": "periodic_filing_date",
                 "reconstruction_status": "reconstructed",
                 "caveat": "SEC filing date replaces Compustat announcement date; event window is complete before formation",
             })
@@ -449,7 +450,8 @@ def _build_earnings_streak(
     result = monthly[["symbol", "completed_month", "formation_month"]].copy()
     result["signal"] = "EarningsStreak"
     result["proxy_value"] = np.nan
-    result["proxy_formula_id"] = "openap_earnings_streak_price_scaled_surprise_lag_proxy"
+    result["proxy_formula_id"] = "openap_earnings_streak_two_same_sign_price_scaled_surprises"
+    result["variant_id"] = "yahoo_earnings_actual_price_scaled_v1"
     result["reconstruction_status"] = "unavailable_missing_historical_analyst_source"
     result["caveat"] = "No historical point-in-time analyst-surprise source is present"
     if earnings_history is None or earnings_history.empty:
@@ -536,7 +538,8 @@ def _build_earnings_streak(
         aligned["symbol"] = symbol
         aligned["signal"] = "EarningsStreak"
         aligned["proxy_value"] = aligned["streak_value"]
-        aligned["proxy_formula_id"] = "openap_earnings_streak_price_scaled_surprise_lag_proxy"
+        aligned["proxy_formula_id"] = "openap_earnings_streak_two_same_sign_price_scaled_surprises"
+        aligned["variant_id"] = "yahoo_earnings_actual_price_scaled_v1"
         aligned["reconstruction_status"] = np.where(
             aligned["proxy_value"].notna(), "reconstructed", "insufficient_history"
         )
@@ -546,7 +549,7 @@ def _build_earnings_streak(
         )
         rows.append(aligned[[
             "symbol", "completed_month", "formation_month", "signal", "proxy_value",
-            "proxy_formula_id", "reconstruction_status", "caveat",
+            "proxy_formula_id", "variant_id", "reconstruction_status", "caveat",
         ]])
     return pd.concat(rows, ignore_index=True) if rows else result
 
@@ -773,6 +776,10 @@ def reconstruct_monthly_proxies(
         _build_delnetfin(monthly, master, facts),
     ]
     result = pd.concat([part for part in parts if not part.empty], ignore_index=True)
+    if "variant_id" not in result:
+        result["variant_id"] = result["proxy_formula_id"]
+    else:
+        result["variant_id"] = result["variant_id"].fillna(result["proxy_formula_id"])
     result["cik"] = result["symbol"].map(master.set_index("symbol")["cik"])
     # Keep the realized month return beside each signal.  This is the return
     # earned in the formation month and lets downstream portfolio diagnostics

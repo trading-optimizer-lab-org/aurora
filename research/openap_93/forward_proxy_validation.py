@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 import json
+from pathlib import Path
 from typing import Iterable
 
 import numpy as np
 import pandas as pd
+import yaml
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,33 @@ def formula_identity_sha256(formula_id: str) -> str:
     if not normalized:
         raise ValueError("formula_id cannot be empty")
     return sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def formula_hashes_from_source_manifest(
+    source_manifest: str | Path,
+    *,
+    repository_root: str | Path,
+) -> dict[str, str]:
+    """Bind each formula identity to the exact implementation files it uses."""
+
+    manifest_path = Path(source_manifest)
+    payload = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    root = Path(repository_root)
+    hashes: dict[str, str] = {}
+    for signal, spec in payload.get("signals", {}).items():
+        digest = sha256()
+        formula_id = str(spec.get("formula_id", "")).strip()
+        if not formula_id:
+            raise ValueError(f"source manifest has no formula_id for {signal}")
+        digest.update(formula_id.encode("utf-8"))
+        for relative in spec.get("code", []):
+            path = root / str(relative)
+            if not path.is_file():
+                raise ValueError(f"formula implementation file missing for {signal}: {path}")
+            digest.update(str(relative).replace("\\", "/").encode("utf-8"))
+            digest.update(path.read_bytes())
+        hashes[str(signal)] = digest.hexdigest()
+    return hashes
 
 
 def _coerce_month(frame: pd.DataFrame) -> pd.DataFrame:

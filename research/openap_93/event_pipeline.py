@@ -12,7 +12,7 @@ from .registry import FidelityClass
 
 EVENT_IMPLEMENTED_SIGNALS = frozenset({"AgeIPO", "DivInit", "DivOmit", "DivSeason"})
 
-DIVSEASON_VARIANT_ID = "official_lags_frequency_inferred_v1"
+DIVSEASON_VARIANT_ID = "openap_dividend_seasonality_frequency_inferred"
 
 
 def _dividend_periods(dividend_months: Any) -> list[pd.Period]:

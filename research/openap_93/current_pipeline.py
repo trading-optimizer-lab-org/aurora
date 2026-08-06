@@ -41,6 +41,7 @@ from .forward_proxy_validation import (
     apply_certificates,
     certificate_sha256,
     formula_identity_sha256,
+    formula_hashes_from_source_manifest,
 )
 from .institutional_pipeline import (
     INSTITUTIONAL_IMPLEMENTED_SIGNALS,
@@ -200,6 +201,7 @@ def apply_forward_proxy_certificates_to_signals(
     certificates: Iterable[ForwardProxyCertificate],
     *,
     source_manifest_sha256: str,
+    formula_hashes: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """Fail closed for the five forward proxies while leaving other signals unchanged."""
 
@@ -213,8 +215,15 @@ def apply_forward_proxy_certificates_to_signals(
     result["formula_id"] = result["formula_id"].fillna("").astype(str)
     blank_variant = result["variant_id"].str.strip().eq("")
     result.loc[blank_variant, "variant_id"] = result.loc[blank_variant, "formula_id"]
-    result["formula_sha256"] = result["formula_id"].map(
-        lambda value: formula_identity_sha256(value) if str(value).strip() else ""
+    known_formula_hashes = formula_hashes or {}
+    result["formula_sha256"] = result.apply(
+        lambda row: known_formula_hashes.get(
+            str(row["signal"]),
+            formula_identity_sha256(row["formula_id"])
+            if str(row["formula_id"]).strip()
+            else "",
+        ),
+        axis=1,
     )
     result["source_manifest_sha256"] = str(source_manifest_sha256)
     result["certificate_status"] = "not_required"
@@ -1310,10 +1319,19 @@ def run_current_pipeline(
         if forward_proxy_source_manifest is not None
         else ""
     )
+    proxy_formula_hashes = (
+        formula_hashes_from_source_manifest(
+            forward_proxy_source_manifest,
+            repository_root=Path(__file__).resolve().parents[2],
+        )
+        if forward_proxy_source_manifest is not None
+        else {}
+    )
     signals = apply_forward_proxy_certificates_to_signals(
         signals,
         certificates,
         source_manifest_sha256=source_manifest_hash,
+        formula_hashes=proxy_formula_hashes,
     )
     if selected_signals is not None:
         unknown = selected_signals - set(REQUIRED_93)

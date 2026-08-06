@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -12,6 +13,7 @@ from aurora.research.openap_93.forward_proxy_validation import (
     ForwardProxyGate,
     certify_forward_proxy_candidates,
     formula_identity_sha256,
+    formula_hashes_from_source_manifest,
 )
 from aurora.research.openap_93.current_pipeline import (
     apply_forward_proxy_certificates_to_signals,
@@ -243,3 +245,26 @@ def test_mismatched_formula_or_source_certificate_fails_closed() -> None:
     assert not bool(result["current_usable"])
     assert result["certificate_status"] == "certificate_identity_mismatch"
     assert result["effective_score_weight"] == 0.0
+
+
+def test_formula_hash_changes_when_implementation_file_changes(tmp_path: Path) -> None:
+    implementation = tmp_path / "formula.py"
+    implementation.write_text("VALUE = 1\n", encoding="utf-8")
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text(
+        "signals:\n"
+        "  DivSeason:\n"
+        "    formula_id: formula-v1\n"
+        "    code: [formula.py]\n",
+        encoding="utf-8",
+    )
+    before = formula_hashes_from_source_manifest(
+        manifest, repository_root=tmp_path
+    )["DivSeason"]
+
+    implementation.write_text("VALUE = 2\n", encoding="utf-8")
+    after = formula_hashes_from_source_manifest(
+        manifest, repository_root=tmp_path
+    )["DivSeason"]
+
+    assert before != after
