@@ -143,6 +143,23 @@ def test_batch_four_neighborhood_is_new_balanced_and_full() -> None:
     )
 
 
+def test_batch_five_combines_and_refines_without_repeating_batch_four() -> None:
+    batch_four = registry.generate_candidates(4, count=96)
+    batch_five = registry.generate_candidates(5, count=96)
+    assert len(batch_five) == 96
+    assert len({row["canonical_hash"] for row in batch_five}) == 96
+    assert sum(row["family"] == "dual_reversal_trend_vote" for row in batch_five) == 48
+    assert sum(row["family"] == "rsi_trend_blend" for row in batch_five) == 48
+    batch_four_rules = {
+        (row["family"], json.dumps(row["parameters"], sort_keys=True))
+        for row in batch_four
+    }
+    assert not batch_four_rules.intersection(
+        (row["family"], json.dumps(row["parameters"], sort_keys=True))
+        for row in batch_five
+    )
+
+
 def test_trial_ledger_is_cumulative_and_pre_registered(tmp_path, monkeypatch) -> None:
     candidates = tuple(_template() | {"strategy_id": f"candidate-{index}", "canonical_hash": canonical_rule_hash(_template() | {"strategy_id": f"candidate-{index}"})} for index in range(3))
     monkeypatch.setattr(registry, "base_package", lambda: SimpleNamespace(candidates=(), research=(), features=(), datasets=()))
@@ -479,6 +496,20 @@ def test_cached_price_signal_matches_uncached_signal() -> None:
         (
             "rsi_trend_blend",
             {"rsi_window": 2, "lower": 10, "upper": 90, "trend_window": 20},
+        ),
+        (
+            "dual_reversal_trend_vote",
+            {
+                "rsi_window": 5,
+                "lower": 25,
+                "upper": 75,
+                "rsi_trend_window": 225,
+                "reversal_window": 5,
+                "reversal_threshold_pct": 1.1,
+                "reversal_trend_window": 60,
+                "rsi_weight": 1,
+                "reversal_weight": 1,
+            },
         ),
         ("multi_horizon_reversal", {"horizons": [1, 2, 5]}),
         ("intraday_return_reversal", {"threshold_pct": 0.5}),

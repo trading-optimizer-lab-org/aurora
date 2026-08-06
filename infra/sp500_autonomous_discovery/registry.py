@@ -395,12 +395,125 @@ def _neighborhood_reversal_candidates(
     return tuple(candidates)
 
 
+def _combined_reversal_candidates(
+    package: CampaignPackage,
+    batch_id: int,
+    count: int,
+) -> tuple[dict[str, Any], ...]:
+    """Combine the two strongest train rules and refine the stable RSI region."""
+
+    usable = [
+        row
+        for row in package.candidates
+        if str(row.get("family")) in IMPLEMENTED_FAMILIES
+        and set(row.get("required_datasets", ())).issubset({"DS001", "DS002"})
+    ]
+    if not usable:
+        raise RuntimeError("NO_USABLE_CAUSAL_TEMPLATES")
+    base = next(
+        (row for row in usable if str(row.get("family")) == "short_horizon_reversal"),
+        usable[0],
+    )
+    generation = batch_id - 5
+    definitions: list[tuple[str, dict[str, Any], str, str, str]] = []
+    vote_grid = [
+        {
+            "rsi_window": rsi_window,
+            "lower": lower,
+            "upper": 100 - lower,
+            "rsi_trend_window": rsi_trend,
+            "reversal_window": reversal_window,
+            "reversal_threshold_pct": round(threshold + generation * 0.05, 4),
+            "reversal_trend_window": reversal_trend,
+            "rsi_weight": rsi_weight,
+            "reversal_weight": reversal_weight,
+        }
+        for rsi_window in (4, 5, 6, 7)
+        for lower in (20, 22, 25, 28, 30)
+        for rsi_trend in (180, 200, 225, 252)
+        for reversal_window in (3, 4, 5, 6)
+        for threshold in (0.8, 1.0, 1.1, 1.25, 1.4)
+        for reversal_trend in (40, 50, 60, 75, 100)
+        for rsi_weight, reversal_weight in ((1, 1), (2, 1), (1, 2))
+    ]
+    fine_rsi_grid = [
+        {
+            "rsi_window": window,
+            "lower": lower,
+            "upper": 100 - lower,
+            "trend_window": trend_window,
+        }
+        for trend_window in (205, 210, 215, 220, 230, 235, 240, 245, 250, 252, 260, 270)
+        for lower in (18, 20, 22, 24, 25, 26, 28, 30, 32)
+        for window in (3, 4, 5, 6, 7, 8)
+    ]
+
+    def spread(rows: list[dict[str, Any]], wanted: int) -> list[dict[str, Any]]:
+        return [rows[(index * len(rows)) // wanted] for index in range(wanted)]
+
+    for parameters in spread(vote_grid, count // 2):
+        definitions.append((
+            "dual_reversal_trend_vote",
+            parameters,
+            "weighted vote of causal RSI-trend and return-reversal-trend components",
+            "weighted score_t > 0",
+            "weighted score_t < 0",
+        ))
+    for parameters in spread(fine_rsi_grid, count - len(definitions)):
+        definitions.append((
+            "rsi_trend_blend",
+            parameters,
+            "use RSI reversal at extremes; otherwise use causal price trend",
+            "score_t > 0",
+            "score_t < 0",
+        ))
+
+    candidates: list[dict[str, Any]] = []
+    for index, (family, parameters, formula, long_rule, short_rule) in enumerate(definitions):
+        candidate = json.loads(json.dumps(base))
+        candidate.update(
+            {
+                "instrument": "SPY",
+                "cash_allowed": False,
+                "partial_exposure_allowed": False,
+                "leverage_allowed": False,
+                "volatility_scaling_allowed": False,
+                "pyramiding_allowed": False,
+                "multiple_assets_in_portfolio": False,
+                "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
+                "variant_label": f"autonomous_combined_batch_{batch_id}_{index}",
+                "family": family,
+                "family_name": family.replace("_", " ").title(),
+                "parameters": parameters,
+                "required_datasets": ["DS001", "DS002"],
+                "feature_formulas": [formula],
+                "long_rule": long_rule,
+                "short_rule": short_rule,
+                "features": [f"AUTO_COMBINED_{family.upper()}"],
+                "warmup_rule": "No signal before every causal input required by the rule is defined.",
+                "known_failure_modes": "Train-only combined hypothesis; must pass every frozen robustness gate.",
+                "economic_sign_rationale": "Combines independently pre-registered reversal and trend interactions without validation access.",
+                "priority_score": max(1, 100 - index),
+                "evidence_track": "pre_2011_evidence",
+                "selection_role": "autonomous_pre_registered_candidate",
+            }
+        )
+        candidate["canonical_hash"] = canonical_rule_hash(candidate)
+        assert_contract(candidate)
+        candidates.append(candidate)
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
+        raise RuntimeError("COMBINED_CANDIDATE_COUNT_OR_HASH_MISMATCH")
+    return tuple(candidates)
+
+
 def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, Any], ...]:
     """Generate a reproducible, pre-registered batch from causal templates."""
 
     if batch_id < 0 or count < 1:
         raise ValueError("INVALID_BATCH_ARGUMENT")
     package = base_package()
+    if batch_id >= 5:
+        return _combined_reversal_candidates(package, batch_id, count)
     if batch_id >= 4:
         return _neighborhood_reversal_candidates(package, batch_id, count)
     if batch_id >= 3:
