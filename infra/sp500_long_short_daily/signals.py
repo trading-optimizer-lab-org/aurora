@@ -27,9 +27,17 @@ IMPLEMENTED_FAMILIES = frozenset(
         "overnight_futures_proxy",
         "price_breakout",
         "price_trend_sma",
+        "internal_bar_strength_reversal",
+        "intraday_return_reversal",
+        "multi_horizon_reversal",
         "realized_volatility_state",
+        "return_threshold_reversal",
+        "reversal_trend_blend",
+        "rsi_reversal",
+        "rsi_trend_blend",
         "short_horizon_reversal",
         "simple_rule_ensemble",
+        "streak_reversal",
         "time_series_momentum",
         "trend_ensemble",
         "variance_risk_premium_proxy",
@@ -190,6 +198,37 @@ def _price_score(
         lookback = int(parameters["lookback"])
         cached_return = cached(f"return_{lookback}d")
         return -cached_return if cached_return is not None else -(close / close.shift(lookback) - 1.0)
+    if family == "multi_horizon_reversal":
+        horizons = [int(value) for value in parameters["horizons"]]
+        components = [close / close.shift(window) - 1.0 for window in horizons]
+        return -pd.concat(components, axis=1).mean(axis=1, skipna=False)
+    if family == "reversal_trend_blend":
+        reversal_window = int(parameters["reversal_window"])
+        trend_window = int(parameters["trend_window"])
+        threshold = float(parameters["reversal_threshold_pct"]) / 100.0
+        reversal_return = close / close.shift(reversal_window) - 1.0
+        trend_return = close / close.shift(trend_window) - 1.0
+        return (-reversal_return).where(reversal_return.abs() >= threshold, trend_return)
+    if family == "rsi_trend_blend":
+        window = int(parameters["rsi_window"])
+        trend_window = int(parameters["trend_window"])
+        delta = close.diff()
+        gain = delta.clip(lower=0.0).ewm(
+            alpha=1.0 / window,
+            adjust=False,
+            min_periods=window,
+        ).mean()
+        loss = (-delta.clip(upper=0.0)).ewm(
+            alpha=1.0 / window,
+            adjust=False,
+            min_periods=window,
+        ).mean()
+        rsi = 100.0 - 100.0 / (1.0 + gain / loss.replace(0.0, np.nan))
+        trend = close / close.shift(trend_window) - 1.0
+        score = trend.copy()
+        score.loc[rsi <= float(parameters["lower"])] = 1.0
+        score.loc[rsi >= float(parameters["upper"])] = -1.0
+        return score.where(rsi.notna() & trend.notna())
     if family == "trend_ensemble":
         components = []
         for horizon in parameters["horizons"]:
@@ -417,6 +456,84 @@ def _volume_reversal_decisions(candidate: Mapping[str, Any], data: PreparedMarke
     )
 
 
+def _targeted_reversal_decisions(
+    candidate: Mapping[str, Any],
+    data: PreparedMarketData,
+) -> pd.Series:
+    """Causal event rules for the targeted post-batch-2 train search."""
+
+    family = str(candidate["family"])
+    p = candidate["parameters"]
+    ledger = data.ledger
+    close = ledger["tr_close"].astype(float)
+    if family == "internal_bar_strength_reversal":
+        high = ledger["high"].astype(float)
+        low = ledger["low"].astype(float)
+        ibs = (close - low) / (high - low).replace(0.0, np.nan)
+        lower = float(p["lower"])
+        upper = float(p["upper"])
+        return _state_from_events(
+            ledger.index,
+            ibs <= lower,
+            ibs >= upper,
+            eligible=ibs.notna(),
+        )
+    if family == "intraday_return_reversal":
+        threshold = float(p["threshold_pct"]) / 100.0
+        intraday_return = close / ledger["tr_open"].astype(float) - 1.0
+        return _state_from_events(
+            ledger.index,
+            intraday_return <= -threshold,
+            intraday_return >= threshold,
+            eligible=intraday_return.notna(),
+        )
+    if family == "return_threshold_reversal":
+        lookback = int(p["lookback"])
+        threshold = float(p["threshold_pct"]) / 100.0
+        lag_return = close / close.shift(lookback) - 1.0
+        return _state_from_events(
+            ledger.index,
+            lag_return <= -threshold,
+            lag_return >= threshold,
+            eligible=lag_return.notna(),
+        )
+    if family == "rsi_reversal":
+        window = int(p["window"])
+        delta = close.diff()
+        gain = delta.clip(lower=0.0).ewm(
+            alpha=1.0 / window,
+            adjust=False,
+            min_periods=window,
+        ).mean()
+        loss = (-delta.clip(upper=0.0)).ewm(
+            alpha=1.0 / window,
+            adjust=False,
+            min_periods=window,
+        ).mean()
+        relative_strength = gain / loss.replace(0.0, np.nan)
+        rsi = 100.0 - 100.0 / (1.0 + relative_strength)
+        lower = float(p["lower"])
+        upper = float(p["upper"])
+        return _state_from_events(
+            ledger.index,
+            rsi <= lower,
+            rsi >= upper,
+            eligible=rsi.notna(),
+        )
+    if family == "streak_reversal":
+        required = int(p["streak"])
+        direction = np.sign(close.diff()).fillna(0.0)
+        groups = direction.ne(direction.shift()).cumsum()
+        streak = direction * direction.groupby(groups).cumcount().add(1)
+        return _state_from_events(
+            ledger.index,
+            streak <= -required,
+            streak >= required,
+            eligible=direction.ne(0.0),
+        )
+    raise CandidateRejected(f"NOT_A_TARGETED_REVERSAL_FAMILY:{family}")
+
+
 def _vix_extreme_decisions(candidate: Mapping[str, Any], data: PreparedMarketData) -> pd.Series:
     p = candidate["parameters"]
     vix = _series(data, "VIX")
@@ -516,6 +633,14 @@ def candidate_decisions(
         decisions = _price_breakout_decisions(candidate, data)
     elif family == "volume_conditioned_reversal":
         decisions = _volume_reversal_decisions(candidate, data)
+    elif family in {
+        "internal_bar_strength_reversal",
+        "intraday_return_reversal",
+        "return_threshold_reversal",
+        "rsi_reversal",
+        "streak_reversal",
+    }:
+        decisions = _targeted_reversal_decisions(candidate, data)
     elif family == "vix_extreme_reversal":
         decisions = _vix_extreme_decisions(candidate, data)
     elif family == "calendar_seasonality":
@@ -532,6 +657,9 @@ def candidate_decisions(
         "price_trend_sma",
         "time_series_momentum",
         "short_horizon_reversal",
+        "multi_horizon_reversal",
+        "reversal_trend_blend",
+        "rsi_trend_blend",
         "trend_ensemble",
         "dual_ma_cross",
         "realized_volatility_state",

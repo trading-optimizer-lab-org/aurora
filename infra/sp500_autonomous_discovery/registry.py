@@ -108,12 +108,181 @@ def _mutate(template: Mapping[str, Any], batch_id: int, index: int, rng: random.
     return candidate
 
 
+def _targeted_reversal_candidates(
+    package: CampaignPackage,
+    batch_id: int,
+    count: int,
+) -> tuple[dict[str, Any], ...]:
+    """Build a deterministic train-only grid after the broad search plateaued."""
+
+    usable = [
+        row
+        for row in package.candidates
+        if str(row.get("family")) in IMPLEMENTED_FAMILIES
+        and set(row.get("required_datasets", ())).issubset({"DS001", "DS002"})
+    ]
+    if not usable:
+        raise RuntimeError("NO_USABLE_CAUSAL_TEMPLATES")
+    base = next(
+        (row for row in usable if str(row.get("family")) == "short_horizon_reversal"),
+        usable[0],
+    )
+    cycle = max(0, batch_id - 3)
+    threshold_shift = 0.1 * cycle
+    definitions: list[tuple[str, dict[str, Any], str, str, str]] = []
+
+    for rsi_window, lower, upper, trend_window in (
+        (2, 10, 90, 20), (2, 10, 90, 50), (2, 10, 90, 100), (2, 10, 90, 200),
+        (2, 20, 80, 20), (2, 20, 80, 50), (2, 20, 80, 100), (2, 20, 80, 200),
+        (3, 20, 80, 20), (3, 20, 80, 50), (3, 20, 80, 100), (3, 20, 80, 200),
+    ):
+        definitions.append((
+            "rsi_trend_blend",
+            {
+                "rsi_window": rsi_window,
+                "lower": lower,
+                "upper": upper,
+                "trend_window": trend_window,
+            },
+            "use RSI reversal at extremes; otherwise use causal price trend",
+            "score_t > 0",
+            "score_t < 0",
+        ))
+    for window, lower, upper in (
+        (2, 5, 95), (2, 10, 90), (2, 15, 85), (2, 20, 80),
+        (3, 10, 90), (3, 15, 85), (3, 20, 80), (3, 25, 75),
+        (5, 15, 85), (5, 20, 80), (5, 25, 75), (5, 30, 70),
+    ):
+        definitions.append((
+            "rsi_reversal",
+            {"window": window, "lower": lower, "upper": upper},
+            f"Wilder_RSI_{window} through close t",
+            f"RSI_t <= {lower}",
+            f"RSI_t >= {upper}",
+        ))
+    for lower, upper in (
+        (0.05, 0.95), (0.10, 0.90), (0.15, 0.85), (0.20, 0.80),
+        (0.25, 0.75), (0.30, 0.70), (0.35, 0.65), (0.40, 0.60),
+        (0.10, 0.80), (0.20, 0.90), (0.15, 0.75), (0.25, 0.85),
+    ):
+        definitions.append((
+            "internal_bar_strength_reversal",
+            {"lower": lower, "upper": upper},
+            "IBS_t = (TR_CLOSE_t - LOW_t) / (HIGH_t - LOW_t)",
+            f"IBS_t <= {lower}",
+            f"IBS_t >= {upper}",
+        ))
+    for lookback, threshold in (
+        (1, 0.25), (1, 0.50), (1, 0.75), (1, 1.00),
+        (2, 0.50), (2, 1.00), (2, 1.50), (2, 2.00),
+        (3, 0.75), (3, 1.50), (5, 1.00), (5, 2.00),
+    ):
+        adjusted = round(threshold + threshold_shift, 4)
+        definitions.append((
+            "return_threshold_reversal",
+            {"lookback": lookback, "threshold_pct": adjusted},
+            f"lag_return_t = TR_CLOSE_t / TR_CLOSE[t-{lookback}] - 1",
+            f"lag_return_t <= -{adjusted}%",
+            f"lag_return_t >= {adjusted}%",
+        ))
+    for streak in range(2, 14):
+        definitions.append((
+            "streak_reversal",
+            {"streak": streak},
+            "streak_t = signed count of consecutive close-to-close moves through t",
+            f"streak_t <= -{streak}",
+            f"streak_t >= {streak}",
+        ))
+    for reversal_window, trend_window, threshold in (
+        (1, 20, 0.5), (1, 50, 0.5), (1, 100, 0.5), (1, 200, 0.5),
+        (2, 20, 1.0), (2, 50, 1.0), (2, 100, 1.0), (2, 200, 1.0),
+        (3, 20, 1.5), (3, 50, 1.5), (3, 100, 1.5), (3, 200, 1.5),
+    ):
+        adjusted = round(threshold + threshold_shift, 4)
+        definitions.append((
+            "reversal_trend_blend",
+            {
+                "reversal_window": reversal_window,
+                "trend_window": trend_window,
+                "reversal_threshold_pct": adjusted,
+            },
+            "use short-return reversal after an extreme move; otherwise use causal trend",
+            "effective score_t > 0",
+            "effective score_t < 0",
+        ))
+    for horizons in (
+        [1, 2], [1, 3], [1, 5], [2, 3], [2, 5], [3, 5],
+        [1, 2, 3], [1, 2, 5], [1, 3, 5], [2, 3, 5], [1, 2, 3, 5], [2, 3, 5, 10],
+    ):
+        definitions.append((
+            "multi_horizon_reversal",
+            {"horizons": horizons},
+            f"score_t = -mean(return_h through t for h in {horizons})",
+            "score_t > 0",
+            "score_t < 0",
+        ))
+    for threshold in (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.75, 1.0, 1.25, 1.5, 2.0):
+        adjusted = round(threshold + threshold_shift, 4)
+        definitions.append((
+            "intraday_return_reversal",
+            {"threshold_pct": adjusted},
+            "intraday_return_t = TR_CLOSE_t / TR_OPEN_t - 1",
+            f"intraday_return_t <= -{adjusted}%",
+            f"intraday_return_t >= {adjusted}%",
+        ))
+
+    candidates: list[dict[str, Any]] = []
+    hashes: set[str] = set()
+    for index, (family, parameters, formula, long_rule, short_rule) in enumerate(definitions):
+        if len(candidates) >= count:
+            break
+        candidate = json.loads(json.dumps(base))
+        candidate.update(
+            {
+                "instrument": "SPY",
+                "cash_allowed": False,
+                "partial_exposure_allowed": False,
+                "leverage_allowed": False,
+                "volatility_scaling_allowed": False,
+                "pyramiding_allowed": False,
+                "multiple_assets_in_portfolio": False,
+                "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
+                "variant_label": f"autonomous_targeted_batch_{batch_id}_{index}",
+                "family": family,
+                "family_name": family.replace("_", " ").title(),
+                "parameters": parameters,
+                "required_datasets": ["DS001", "DS002"],
+                "feature_formulas": [formula],
+                "long_rule": long_rule,
+                "short_rule": short_rule,
+                "features": [f"AUTO_TARGETED_{family.upper()}"],
+                "warmup_rule": "No signal before every causal input required by the rule is defined.",
+                "known_failure_modes": "Train-only hypothesis; must pass every frozen robustness gate.",
+                "economic_sign_rationale": "Tests whether documented short-horizon price pressure mean-reverts at the next open.",
+                "priority_score": max(1, 100 - index),
+                "evidence_track": "pre_2011_evidence",
+                "selection_role": "autonomous_pre_registered_candidate",
+            }
+        )
+        candidate["canonical_hash"] = canonical_rule_hash(candidate)
+        if candidate["canonical_hash"] in hashes:
+            continue
+        assert_contract(candidate)
+        hashes.add(str(candidate["canonical_hash"]))
+        candidates.append(candidate)
+    if len(candidates) != count:
+        raise RuntimeError(f"TARGETED_CANDIDATE_COUNT_MISMATCH:{len(candidates)}:{count}")
+    return tuple(candidates)
+
+
 def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, Any], ...]:
     """Generate a reproducible, pre-registered batch from causal templates."""
 
     if batch_id < 0 or count < 1:
         raise ValueError("INVALID_BATCH_ARGUMENT")
     package = base_package()
+    if batch_id >= 3:
+        return _targeted_reversal_candidates(package, batch_id, count)
     templates = [
         row for row in package.candidates
         if str(row.get("family")) in IMPLEMENTED_FAMILIES

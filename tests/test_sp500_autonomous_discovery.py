@@ -104,6 +104,24 @@ def test_real_candidate_grid_supports_full_96_candidate_batch() -> None:
     assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in candidates)
 
 
+def test_targeted_batch_three_is_distinct_causal_and_full() -> None:
+    candidates = registry.generate_candidates(3, count=96)
+    assert len(candidates) == 96
+    assert len({row["canonical_hash"] for row in candidates}) == 96
+    assert {
+        "rsi_reversal",
+        "internal_bar_strength_reversal",
+        "return_threshold_reversal",
+        "streak_reversal",
+        "reversal_trend_blend",
+        "rsi_trend_blend",
+        "multi_horizon_reversal",
+        "intraday_return_reversal",
+    }.issubset({row["family"] for row in candidates})
+    assert all(row["required_datasets"] == ["DS001", "DS002"] for row in candidates)
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in candidates)
+
+
 def test_trial_ledger_is_cumulative_and_pre_registered(tmp_path, monkeypatch) -> None:
     candidates = tuple(_template() | {"strategy_id": f"candidate-{index}", "canonical_hash": canonical_rule_hash(_template() | {"strategy_id": f"candidate-{index}"})} for index in range(3))
     monkeypatch.setattr(registry, "base_package", lambda: SimpleNamespace(candidates=(), research=(), features=(), datasets=()))
@@ -424,6 +442,79 @@ def test_cached_price_signal_matches_uncached_signal() -> None:
         uncached = candidate_decisions(candidate, data).decisions
         cached = candidate_decisions(candidate, data, feature_frame=features).decisions
         pd.testing.assert_series_equal(uncached, cached)
+
+
+@pytest.mark.parametrize(
+    ("family", "parameters"),
+    (
+        ("rsi_reversal", {"window": 2, "lower": 10, "upper": 90}),
+        ("internal_bar_strength_reversal", {"lower": 0.2, "upper": 0.8}),
+        ("return_threshold_reversal", {"lookback": 2, "threshold_pct": 1.0}),
+        ("streak_reversal", {"streak": 3}),
+        (
+            "reversal_trend_blend",
+            {"reversal_window": 2, "trend_window": 20, "reversal_threshold_pct": 1.0},
+        ),
+        (
+            "rsi_trend_blend",
+            {"rsi_window": 2, "lower": 10, "upper": 90, "trend_window": 20},
+        ),
+        ("multi_horizon_reversal", {"horizons": [1, 2, 5]}),
+        ("intraday_return_reversal", {"threshold_pct": 0.5}),
+    ),
+)
+def test_targeted_reversal_signals_are_causal_and_always_invested(
+    family: str,
+    parameters: dict[str, object],
+) -> None:
+    index = pd.date_range("2000-01-03", periods=80, freq="B")
+    close = pd.Series(
+        100.0 + np.sin(np.arange(len(index)) / 2.0) * 4.0 + np.arange(len(index)) * 0.05,
+        index=index,
+    )
+    ledger = pd.DataFrame(
+        {
+            "tr_close": close,
+            "tr_open": close.shift(1).fillna(close.iloc[0]) * 1.001,
+            "open": close.shift(1).fillna(close.iloc[0]) * 1.001,
+            "high": close + 1.5,
+            "low": close - 1.5,
+            "volume": 1000.0,
+            "long_return": close.pct_change().fillna(0.0),
+            "short_return": -close.pct_change().fillna(0.0),
+        },
+        index=index,
+    )
+    data = PreparedMarketData(
+        ledger=ledger,
+        series={},
+        available_dataset_ids=frozenset({"DS001", "DS002"}),
+        rejected_datasets={},
+        receipts=(),
+        split="train",
+    )
+    candidate = _template() | {
+        "family": family,
+        "required_datasets": ["DS001", "DS002"],
+        "parameters": parameters,
+    }
+    original = candidate_decisions(candidate, data).decisions
+    changed = ledger.copy()
+    changed.loc[index[-1], "tr_close"] *= 1.25
+    changed.loc[index[-1], "high"] = changed.loc[index[-1], "tr_close"] + 1.5
+    future_changed = candidate_decisions(
+        candidate,
+        PreparedMarketData(
+            ledger=changed,
+            series={},
+            available_dataset_ids=frozenset({"DS001", "DS002"}),
+            rejected_datasets={},
+            receipts=(),
+            split="train",
+        ),
+    ).decisions
+    assert set(original.unique()) <= {-1, 1}
+    pd.testing.assert_series_equal(original.iloc[:-1], future_changed.iloc[:-1])
 
 
 def test_workflow_is_github_only_and_bounded() -> None:
