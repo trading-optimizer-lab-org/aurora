@@ -121,11 +121,13 @@ def test_announcement_return_uses_official_minus_two_plus_one_window() -> None:
         "date": dates,
         "adj_close": [99.0, 100.0, 101.0, 103.0, 106.0, 110.0],
     })
-    facts = pd.DataFrame({
+    submissions = pd.DataFrame({
         "cik": [1],
-        "tag": ["NetIncomeLoss"],
-        "form": ["10-Q"],
-        "filed": [dates[3]],
+        "form": ["8-K"],
+        "items": ["2.02"],
+        "accepted_at": [pd.Timestamp(dates[3]).tz_localize("UTC")],
+        "report_date": [pd.Timestamp("2019-12-31")],
+        "accession_number": ["0000000001-20-000001"],
     })
     monthly = pd.DataFrame({
         "symbol": ["AAA"],
@@ -133,7 +135,7 @@ def test_announcement_return_uses_official_minus_two_plus_one_window() -> None:
         "formation_month": [pd.Timestamp("2020-02-01")],
     })
     master = pd.DataFrame({"symbol": ["AAA"], "cik": [1]})
-    result = _build_announcement_return(monthly, facts, prices, None, master)
+    result = _build_announcement_return(monthly, submissions, prices, None, master)
     # The official window is dates[1:5], not dates[2:6].
     expected = (100 / 99 - 1) + (101 / 100 - 1) + (103 / 101 - 1) + (106 / 103 - 1)
     assert result.iloc[0]["proxy_value"] == pytest.approx(expected)
@@ -141,3 +143,91 @@ def test_announcement_return_uses_official_minus_two_plus_one_window() -> None:
         result.iloc[0]["proxy_formula_id"]
         == "openap_announcement_return_trading_sessions_minus2_plus1"
     )
+    assert result.iloc[0]["variant_id"] == "sec_8k_item_202"
+
+
+def test_announcement_return_rejects_periodic_filing_date() -> None:
+    dates = pd.date_range("2020-01-06", periods=6, freq="B")
+    prices = pd.DataFrame(
+        {"symbol": ["AAA"] * 6, "date": dates, "adj_close": range(100, 106)}
+    )
+    submissions = pd.DataFrame(
+        {
+            "cik": [1],
+            "form": ["10-Q"],
+            "items": [""],
+            "accepted_at": [pd.Timestamp(dates[3]).tz_localize("UTC")],
+            "report_date": [pd.Timestamp("2019-12-31")],
+            "accession_number": ["periodic"],
+        }
+    )
+    monthly = pd.DataFrame(
+        {
+            "symbol": ["AAA"],
+            "completed_month": [pd.Timestamp("2020-01-31")],
+            "formation_month": [pd.Timestamp("2020-02-01")],
+        }
+    )
+    master = pd.DataFrame({"symbol": ["AAA"], "cik": [1]})
+
+    result = _build_announcement_return(monthly, submissions, prices, None, master)
+
+    assert result.empty
+
+
+def test_announcement_return_expires_after_six_months() -> None:
+    dates = pd.date_range("2020-01-02", "2020-08-31", freq="B")
+    prices = pd.DataFrame(
+        {
+            "symbol": ["AAA"] * len(dates),
+            "date": dates,
+            "adj_close": 100.0 + pd.Series(range(len(dates))) * 0.1,
+        }
+    )
+    event_date = pd.Timestamp("2020-01-09", tz="UTC")
+    submissions = pd.DataFrame(
+        {
+            "cik": [1],
+            "form": ["8-K"],
+            "items": ["2.02"],
+            "accepted_at": [event_date],
+            "report_date": [pd.Timestamp("2019-12-31")],
+            "accession_number": ["event"],
+        }
+    )
+    monthly = pd.DataFrame(
+        {
+            "symbol": ["AAA", "AAA"],
+            "completed_month": pd.to_datetime(["2020-01-31", "2020-08-31"]),
+            "formation_month": pd.to_datetime(["2020-02-01", "2020-09-01"]),
+        }
+    )
+    master = pd.DataFrame({"symbol": ["AAA"], "cik": [1]})
+
+    result = _build_announcement_return(monthly, submissions, prices, None, master)
+
+    assert result["formation_month"].tolist() == [pd.Timestamp("2020-02-01")]
+
+
+def test_earnings_streak_expires_after_six_months() -> None:
+    monthly = pd.DataFrame(
+        {
+            "symbol": ["AAA", "AAA"],
+            "completed_month": pd.to_datetime(["2020-03-31", "2020-10-31"]),
+            "formation_month": pd.to_datetime(["2020-04-01", "2020-11-01"]),
+        }
+    )
+    history = pd.DataFrame(
+        {
+            "act_symbol": ["AAA", "AAA"],
+            "period_end_date": pd.to_datetime(["2019-09-30", "2019-12-31"]),
+            "reported": [1.0, 1.2],
+            "estimate": [0.8, 1.0],
+        }
+    )
+
+    result = _build_earnings_streak(monthly, history)
+    by_month = result.set_index("formation_month")["proxy_value"]
+
+    assert pd.notna(by_month.loc[pd.Timestamp("2020-04-01")])
+    assert pd.isna(by_month.loc[pd.Timestamp("2020-11-01")])
