@@ -1994,12 +1994,122 @@ def _recovery_turn_month_candidates(
     return tuple(candidates)
 
 
+def _recovery_internal_bar_strength_candidates(
+    package: CampaignPackage,
+    batch_id: int,
+    count: int,
+) -> tuple[dict[str, Any], ...]:
+    """Combine recovery reversal with causal internal-bar-strength reversal."""
+
+    if count != 96:
+        raise ValueError("RECOVERY_INTERNAL_BAR_STRENGTH_REQUIRES_96_CANDIDATES")
+    usable = [
+        row
+        for row in package.candidates
+        if str(row.get("family")) in IMPLEMENTED_FAMILIES
+        and set(row.get("required_datasets", ())).issubset({"DS001", "DS002"})
+    ]
+    if not usable:
+        raise RuntimeError("NO_USABLE_CAUSAL_TEMPLATES")
+    base = next(
+        (row for row in usable if str(row.get("family")) == "short_horizon_reversal"),
+        usable[0],
+    )
+    generation = batch_id - 27
+    core_variants = (
+        {
+            "rsi_window": 4,
+            "lower": 28,
+            "upper": 72,
+            "rsi_trend_window": 220,
+            "rsi_weight": 1.0,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 0.825,
+            "reversal_trend_window": 40,
+            "reversal_weight": 1.0,
+            "drawdown_lookback": 252,
+            "drawdown_trigger_pct": 22.5,
+            "recovery_memory_window": recovery_memory_window,
+            "recovery_window": 20,
+            "recovery_threshold_pct": 2.25,
+        }
+        for recovery_memory_window in (63, 189)
+    )
+    parameters_list = [
+        {
+            **core,
+            "ibs_smooth_window": smooth_window,
+            "ibs_lower": lower,
+            "ibs_upper": round(1.0 - lower, 4),
+            "ibs_weight": round(weight + generation * 0.05, 4),
+        }
+        for core in core_variants
+        for smooth_window in (1, 2, 3, 5)
+        for lower in (0.1, 0.2, 0.3, 0.4)
+        for weight in (0.5, 1.5, 3.0)
+    ]
+    candidates: list[dict[str, Any]] = []
+    for index, parameters in enumerate(parameters_list):
+        candidate = json.loads(json.dumps(base))
+        candidate.update(
+            {
+                "instrument": "SPY",
+                "cash_allowed": False,
+                "partial_exposure_allowed": False,
+                "leverage_allowed": False,
+                "volatility_scaling_allowed": False,
+                "pyramiding_allowed": False,
+                "multiple_assets_in_portfolio": False,
+                "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
+                "variant_label": (
+                    f"autonomous_recovery_internal_bar_strength_batch_{batch_id}_{index}"
+                ),
+                "family": "recovery_internal_bar_strength_vote",
+                "family_name": "Recovery Internal-Bar-Strength Vote",
+                "parameters": parameters,
+                "required_datasets": ["DS001", "DS002"],
+                "feature_formulas": [
+                    "causal recovery reversal plus smoothed internal-bar-strength reversal"
+                ],
+                "long_rule": (
+                    "weighted recovery-reversal and low internal-bar-strength score is positive, or recovery is confirmed"
+                ),
+                "short_rule": (
+                    "weighted recovery-reversal and high internal-bar-strength score is negative outside recovery"
+                ),
+                "features": ["AUTO_RECOVERY_INTERNAL_BAR_STRENGTH_VOTE"],
+                "warmup_rule": (
+                    "No signal before recovery, RSI, reversal, and internal-bar-strength inputs are defined."
+                ),
+                "known_failure_modes": (
+                    "Intraday range reversal can decay or duplicate close-return reversal; every signal is deduplicated and must pass all frozen gates."
+                ),
+                "economic_sign_rationale": (
+                    "Closing near an intraday range extreme can reflect short-lived price pressure that mean-reverts at the next open."
+                ),
+                "priority_score": max(1, 100 - index),
+                "evidence_track": "pre_2011_evidence",
+                "selection_role": "autonomous_pre_registered_candidate",
+            }
+        )
+        candidate["canonical_hash"] = canonical_rule_hash(candidate)
+        assert_contract(candidate)
+        candidates.append(candidate)
+    if len(candidates) != count or len(
+        {row["canonical_hash"] for row in candidates}
+    ) != count:
+        raise RuntimeError("RECOVERY_INTERNAL_BAR_STRENGTH_COUNT_OR_HASH_MISMATCH")
+    return tuple(candidates)
+
+
 def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, Any], ...]:
     """Generate a reproducible, pre-registered batch from causal templates."""
 
     if batch_id < 0 or count < 1:
         raise ValueError("INVALID_BATCH_ARGUMENT")
     package = base_package()
+    if batch_id >= 27:
+        return _recovery_internal_bar_strength_candidates(package, batch_id, count)
     if batch_id >= 26:
         return _recovery_turn_month_candidates(package, batch_id, count)
     if batch_id >= 25:

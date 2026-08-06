@@ -942,6 +942,84 @@ def test_recovery_turn_month_rule_is_causal_and_fully_invested() -> None:
     )
 
 
+def test_batch_twenty_seven_adds_unique_recovery_ibs_rules() -> None:
+    batch_twenty_six = registry.generate_candidates(26, count=96)
+    batch_twenty_seven = registry.generate_candidates(27, count=96)
+    batch_twenty_eight = registry.generate_candidates(28, count=96)
+
+    assert len(batch_twenty_seven) == 96
+    assert len({row["canonical_hash"] for row in batch_twenty_seven}) == 96
+    assert {row["family"] for row in batch_twenty_seven} == {
+        "recovery_internal_bar_strength_vote"
+    }
+    assert not {row["canonical_hash"] for row in batch_twenty_six}.intersection(
+        row["canonical_hash"] for row in batch_twenty_seven
+    )
+    assert not {row["canonical_hash"] for row in batch_twenty_seven}.intersection(
+        row["canonical_hash"] for row in batch_twenty_eight
+    )
+    assert all(row["position_values"] == [-1, 1] for row in batch_twenty_seven)
+    assert all(row["cash_allowed"] is False for row in batch_twenty_seven)
+    assert all(row["leverage_allowed"] is False for row in batch_twenty_seven)
+
+
+def test_recovery_internal_bar_strength_rule_is_causal_and_fully_invested() -> None:
+    index = pd.date_range("2000-01-03", periods=800, freq="B")
+    close = pd.Series(
+        120.0
+        + np.linspace(0.0, 45.0, len(index))
+        + 8.0 * np.sin(np.arange(len(index)) * 0.17),
+        index=index,
+    )
+    open_price = close.shift(1).fillna(close.iloc[0])
+    high = np.maximum(open_price, close) + 1.0
+    low = np.minimum(open_price, close) - 1.0
+    ledger = pd.DataFrame(
+        {
+            "tr_close": close,
+            "tr_open": open_price,
+            "open": open_price,
+            "high": high,
+            "low": low,
+            "volume": 1000.0,
+            "long_return": open_price.shift(-1).div(open_price).sub(1.0),
+            "short_return": -open_price.shift(-1).div(open_price).sub(1.0),
+        },
+        index=index,
+    )
+    candidate = registry.generate_candidates(27, count=96)[0]
+    data = PreparedMarketData(
+        ledger=ledger,
+        series={},
+        available_dataset_ids=frozenset({"DS001", "DS002"}),
+        rejected_datasets={},
+        receipts=(),
+        split="train",
+    )
+    result = candidate_decisions(candidate, data)
+    assert set(result.decisions.unique()) <= {-1, 1}
+    assert result.missing_fraction == 0.0
+    assert result.first_evaluable_date is not None
+
+    changed = ledger.copy()
+    changed.loc[index[-1], "tr_close"] *= 0.70
+    changed.loc[index[-1], "high"] *= 1.20
+    future_changed = candidate_decisions(
+        candidate,
+        PreparedMarketData(
+            ledger=changed,
+            series={},
+            available_dataset_ids=frozenset({"DS001", "DS002"}),
+            rejected_datasets={},
+            receipts=(),
+            split="train",
+        ),
+    )
+    pd.testing.assert_series_equal(
+        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
+    )
+
+
 def test_recovery_overnight_tug_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("2000-01-03", periods=800, freq="B")
     close = pd.Series(
