@@ -42,6 +42,7 @@ def main() -> int:
             start="2011-01-01",
             end="2020-12-31",
             split="validation",
+            allow_diagnostic_yahoo_distributions=allow_diagnostic,
         )
     summary = run_validation_once(
         train_results_dir=train_results_dir,

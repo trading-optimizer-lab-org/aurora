@@ -11,7 +11,7 @@ import re
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -1927,11 +1927,14 @@ def prepare_market_snapshot(
     start: str,
     end: str,
     split: str,
+    allow_diagnostic_yahoo_distributions: bool = False,
 ) -> Mapping[str, Any]:
     """Acquire one immutable bounded snapshot on GitHub Actions."""
 
     require_github_only_execution("SP500_LONG_SHORT_DAILY_PREPARE")
     start_date, end_date = _bounded_dates(start, end, split=split)
+    if allow_diagnostic_yahoo_distributions and split != "validation":
+        raise DataGateError("DIAGNOSTIC_YAHOO_DISTRIBUTIONS_VALIDATION_ONLY")
     root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     raw_root = root / "raw"
@@ -1976,6 +1979,28 @@ def prepare_market_snapshot(
         _store_raw(raw_root, exact_path.name, exact_path.read_bytes())
         _store_raw(raw_root, totals_path.name, totals_path.read_bytes())
         distribution_receipts = [sponsor_receipt, totals_receipt]
+    elif allow_diagnostic_yahoo_distributions:
+        dividends = yahoo_dividends.copy()
+        sponsor_reconciliation = {
+            "diagnostic_only": True,
+            "official_sponsor_snapshot_used": False,
+            "source": "bounded_yahoo_chart_events",
+            "minimum_date": (
+                dividends["date"].min().date().isoformat() if len(dividends) else None
+            ),
+            "maximum_date": (
+                dividends["date"].max().date().isoformat() if len(dividends) else None
+            ),
+            "event_count": len(dividends),
+        }
+        distribution_receipts = [
+            replace(
+                yahoo_receipts[0],
+                dataset_id="DS001",
+                status="diagnostic_bounded_yahoo_distributions_not_official_sponsor",
+                reason="owner_authorized_diagnostic_validation_only;promotion_eligible=false",
+            )
+        ]
     else:
         sponsor_path = Path(
             os.environ.get("SP500_STATE_STREET_DISTRIBUTIONS_CSV", "").strip()

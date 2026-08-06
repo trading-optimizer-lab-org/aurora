@@ -2356,6 +2356,17 @@ def test_diagnostic_validation_evaluates_only_strat0014_without_promotion(
     assert pd.to_datetime(daily["date"]).max() <= pd.Timestamp("2020-12-31")
 
 
+def test_diagnostic_validation_script_marks_yahoo_distribution_source() -> None:
+    path = REPO_ROOT / "scripts" / "run_sp500_long_short_daily_validation.py"
+    text = path.read_text(encoding="utf-8")
+    assert "allow_diagnostic_yahoo_distributions=allow_diagnostic" in text
+    source = (
+        REPO_ROOT / "infra" / "sp500_long_short_daily" / "data.py"
+    ).read_text(encoding="utf-8")
+    assert "diagnostic_bounded_yahoo_distributions_not_official_sponsor" in source
+    assert "promotion_eligible=false" in source
+
+
 def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     path = REPO_ROOT / ".github" / "workflows" / "sp500-long-short-daily-campaign.yml"
     text = path.read_text(encoding="utf-8")
