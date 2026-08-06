@@ -8,8 +8,13 @@ import pandas as pd
 import pytest
 
 from aurora.research.openap_93.forward_proxy_validation import (
+    ForwardProxyCertificate,
     ForwardProxyGate,
     certify_forward_proxy_candidates,
+    formula_identity_sha256,
+)
+from aurora.research.openap_93.current_pipeline import (
+    apply_forward_proxy_certificates_to_signals,
 )
 from aurora.research.openap_93.official_portfolio_similarity import build_proxy_spreads
 
@@ -157,3 +162,84 @@ def test_proxy_spreads_keep_formula_variants_separate() -> None:
     by_variant = spreads.set_index("variant_id")["proxy_spread_return"]
     assert by_variant["v1"] == pytest.approx(0.09)
     assert by_variant["v2"] == pytest.approx(-0.09)
+
+
+def _passing_certificate(
+    *,
+    formula_sha256: str,
+    source_manifest_sha256: str,
+) -> ForwardProxyCertificate:
+    return ForwardProxyCertificate(
+        signal="DivSeason",
+        variant_id="formula-v1",
+        formula_sha256=formula_sha256,
+        source_manifest_sha256=source_manifest_sha256,
+        train_end="2010-12-31",
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+        common_months=120,
+        pearson=0.90,
+        spearman=0.91,
+        sign_agreement=0.80,
+        tracking_error=0.01,
+        passed=True,
+        locked_opened=False,
+        validation_used_for_selection=False,
+        backtest_enabled=False,
+        gate_version="openap-forward-proxy-v1",
+    )
+
+
+def test_current_signal_is_usable_only_with_matching_certificate_identity() -> None:
+    formula_hash = formula_identity_sha256("formula-v1")
+    source_hash = "source-manifest-v1"
+    signals = pd.DataFrame(
+        {
+            "signal": ["DivSeason", "AnnouncementReturn", "MomVol"],
+            "variant_id": ["formula-v1", "formula-v1", "ordinary-formula"],
+            "formula_id": ["formula-v1", "formula-v1", "ordinary-formula"],
+            "current_usable": [True, True, True],
+        }
+    )
+
+    result = apply_forward_proxy_certificates_to_signals(
+        signals,
+        [_passing_certificate(
+            formula_sha256=formula_hash,
+            source_manifest_sha256=source_hash,
+        )],
+        source_manifest_sha256=source_hash,
+    ).set_index("signal")
+
+    assert bool(result.loc["DivSeason", "current_usable"])
+    assert result.loc["DivSeason", "certificate_status"] == "certified"
+    assert not bool(result.loc["AnnouncementReturn", "current_usable"])
+    assert result.loc["AnnouncementReturn", "certificate_status"] == "missing_certificate"
+    assert result.loc["AnnouncementReturn", "effective_score_weight"] == 0.0
+    assert bool(result.loc["MomVol", "current_usable"])
+    assert result.loc["MomVol", "certificate_status"] == "not_required"
+
+
+def test_mismatched_formula_or_source_certificate_fails_closed() -> None:
+    signals = pd.DataFrame(
+        {
+            "signal": ["DivSeason"],
+            "variant_id": ["formula-v1"],
+            "formula_id": ["formula-v1"],
+            "current_usable": [True],
+        }
+    )
+    certificate = _passing_certificate(
+        formula_sha256=formula_identity_sha256("different-formula"),
+        source_manifest_sha256="different-source",
+    )
+
+    result = apply_forward_proxy_certificates_to_signals(
+        signals,
+        [certificate],
+        source_manifest_sha256="current-source",
+    ).iloc[0]
+
+    assert not bool(result["current_usable"])
+    assert result["certificate_status"] == "certificate_identity_mismatch"
+    assert result["effective_score_weight"] == 0.0
