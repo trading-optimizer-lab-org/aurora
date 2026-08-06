@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Iterable
@@ -18,6 +19,12 @@ import pandas as pd
 
 from aurora.core.execution_policy import require_github_execution
 from aurora.research.openap_93.historical_proxy_validation import FIVE_PROXY_SIGNALS
+
+
+# Published by the official OpenAP data page.  This is the compact monthly
+# reference file, so it is a useful fallback when Google's large decile ZIP
+# requires an interactive confirmation page in a GitHub runner.
+OFFICIAL_LS_FILE_ID = "10sOryk_ddjkXagaajTKUk1nwJs2ZLRiI"
 
 
 def _column(frame: pd.DataFrame, names: Iterable[str]) -> str | None:
@@ -49,6 +56,47 @@ def _read_official_archive(path: str | Path) -> pd.DataFrame:
     if source.suffix.lower() == ".parquet":
         return pd.read_parquet(source)
     return pd.read_csv(source)
+
+
+def _download_public_drive_file(file_id: str, destination: str | Path) -> Path:
+    """Download a public Google Drive file, handling large-file confirmation."""
+
+    import requests
+
+    target = Path(destination)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "Chrome/120 Safari/537.36"
+            )
+        }
+    )
+    urls = (
+        f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t",
+        f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t",
+    )
+    last_error = "unknown response"
+    for url in urls:
+        response = session.get(url, allow_redirects=True, stream=True, timeout=(30, 180))
+        response.raise_for_status()
+        first = next(response.iter_content(chunk_size=8192), b"")
+        content_type = response.headers.get("content-type", "").lower()
+        is_html = "text/html" in content_type or first.lstrip().lower().startswith(b"<!doctype html")
+        if is_html:
+            last_error = f"HTML response from {response.url}"
+            continue
+        with target.open("wb") as handle:
+            handle.write(first)
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    handle.write(chunk)
+        if target.stat().st_size > 0:
+            return target
+        last_error = "empty response"
+    raise RuntimeError(f"Unable to download public Google Drive file {file_id}: {last_error}")
 
 
 def normalise_official_deciles(frame: pd.DataFrame) -> pd.DataFrame:
@@ -91,6 +139,40 @@ def normalise_official_deciles(frame: pd.DataFrame) -> pd.DataFrame:
     return result.drop_duplicates(["signal", "formation_month", "decile"])
 
 
+def normalise_official_long_short(frame: pd.DataFrame) -> pd.DataFrame:
+    """Normalise the official OpenAP monthly long-short wide CSV."""
+
+    date_col = _column(frame, ("date", "yyyymm", "month", "formation_month"))
+    if not date_col:
+        raise ValueError(f"Official long-short file has no date column: {list(frame.columns)}")
+
+    signal_col = _column(frame, ("signalname", "signal", "predictor", "acronym"))
+    return_col = _column(frame, ("ret", "return", "portfolio_return", "exret", "lsret"))
+    if signal_col and return_col:
+        long_short = frame[[signal_col, date_col, return_col]].copy()
+        long_short.columns = ["signal", "formation_month", "official_return"]
+    else:
+        available = [signal for signal in FIVE_PROXY_SIGNALS if signal in frame.columns]
+        if not available:
+            lowered = {str(column).lower(): column for column in frame.columns}
+            available = [lowered[signal.lower()] for signal in FIVE_PROXY_SIGNALS if signal.lower() in lowered]
+        if not available:
+            raise ValueError("Official long-short file has none of the five requested signals")
+        long_short = frame[[date_col, *available]].melt(
+            id_vars=[date_col], var_name="signal", value_name="official_return"
+        )
+        long_short = long_short.rename(columns={date_col: "formation_month"})
+    long_short["signal"] = long_short["signal"].astype("string").str.strip()
+    long_short["formation_month"] = _month(long_short["formation_month"])
+    long_short["official_return"] = pd.to_numeric(long_short["official_return"], errors="coerce")
+    finite = long_short["official_return"].dropna().abs()
+    if not finite.empty and finite.quantile(0.95) > 2.0:
+        long_short["official_return"] = long_short["official_return"] / 100.0
+    long_short = long_short.loc[long_short["signal"].isin(FIVE_PROXY_SIGNALS)]
+    long_short = long_short.dropna(subset=["signal", "formation_month", "official_return"])
+    return long_short.drop_duplicates(["signal", "formation_month"])
+
+
 def download_official_deciles(
     *,
     release: str = "202510",
@@ -123,6 +205,21 @@ def download_official_deciles(
         except Exception as exc:  # pragma: no cover - exercised in GitHub
             errors.append(f"release {candidate}: {type(exc).__name__}: {exc}")
     raise RuntimeError("Unable to obtain official OpenAP deciles; " + " | ".join(errors))
+
+
+def download_official_long_short(*, output_dir: str | Path) -> pd.DataFrame:
+    """Download the official compact monthly OpenAP long-short reference."""
+
+    with tempfile.TemporaryDirectory(prefix="openap-official-") as temp_dir:
+        source = _download_public_drive_file(
+            OFFICIAL_LS_FILE_ID,
+            Path(temp_dir) / "PredictorLSretWide.csv",
+        )
+        raw = _read_official_archive(source)
+    result = normalise_official_long_short(raw)
+    if result.empty:
+        raise ValueError("Official long-short file contains no requested signals")
+    return result
 
 
 def _decile_spread(frame: pd.DataFrame, *, return_col: str) -> pd.DataFrame:
@@ -158,6 +255,15 @@ def build_official_spreads(official: pd.DataFrame) -> pd.DataFrame:
             "official_high_decile": float(group["decile"].iloc[-1]),
         })
     return pd.DataFrame(rows)
+
+
+def build_official_long_short_spreads(official: pd.DataFrame) -> pd.DataFrame:
+    """Represent official long-short returns in the common spread schema."""
+
+    return official.rename(columns={"official_return": "official_spread_return"}).assign(
+        official_low_decile=1.0,
+        official_high_decile=10.0,
+    )
 
 
 def build_proxy_spreads(proxy_panel: pd.DataFrame, monthly: pd.DataFrame) -> pd.DataFrame:
@@ -283,11 +389,25 @@ def run_official_portfolio_similarity(
             monthly_frame = pd.DataFrame()
     else:
         monthly_frame = pd.DataFrame()
-    official = download_official_deciles(release=release, archive_path=official_deciles)
-    official_spreads = build_official_spreads(official)
+    target_type = "decile_10_minus_1"
+    fallback_reason: str | None = None
+    try:
+        official = download_official_deciles(release=release, archive_path=official_deciles)
+        official_spreads = build_official_spreads(official)
+    except Exception as decile_error:
+        # The compact official long-short file is a published OpenAP output,
+        # not an Aurora estimate. It gives us a valid historical reference
+        # when the large decile archive is blocked by Drive confirmation.
+        official = download_official_long_short(output_dir=output)
+        official_spreads = build_official_long_short_spreads(official)
+        target_type = "official_long_short"
+        fallback_reason = f"{type(decile_error).__name__}: {decile_error}"
     proxy_spreads = build_proxy_spreads(proxy, monthly_frame)
     merged, summary = compare_official_and_proxy(official_spreads, proxy_spreads)
-    official.to_csv(output / "official_deciles_ew.csv", index=False)
+    if target_type == "decile_10_minus_1":
+        official.to_csv(output / "official_deciles_ew.csv", index=False)
+    else:
+        official.to_csv(output / "official_long_short.csv", index=False)
     official_spreads.to_csv(output / "official_decile_spreads.csv", index=False)
     proxy_spreads.to_csv(output / "proxy_decile_spreads.csv", index=False)
     merged.to_csv(output / "official_proxy_decile_spreads_joined.csv", index=False)
@@ -296,11 +416,17 @@ def run_official_portfolio_similarity(
     payload = {
         "signals": list(FIVE_PROXY_SIGNALS),
         "official_release": release,
+        "official_target_type": target_type,
+        "decile_download_fallback_reason": fallback_reason,
         "official_rows": int(len(official)),
         "official_spread_rows": int(len(official_spreads)),
         "proxy_spread_rows": int(len(proxy_spreads)),
         "joined_rows": int(len(merged)),
-        "comparison": "official OpenAP equal-weighted decile 10-minus-1 vs Aurora proxy decile 10-minus-1",
+        "comparison": (
+            "official OpenAP equal-weighted decile 10-minus-1 vs Aurora proxy decile 10-minus-1"
+            if target_type == "decile_10_minus_1"
+            else "official OpenAP monthly long-short return vs Aurora proxy decile 10-minus-1"
+        ),
         "locked_opened": False,
         "backtest_enabled": False,
         "validation_used_for_selection": False,

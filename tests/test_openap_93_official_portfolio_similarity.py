@@ -5,9 +5,11 @@ import pytest
 
 from research.openap_93.official_portfolio_similarity import (
     build_official_spreads,
+    build_official_long_short_spreads,
     build_proxy_spreads,
     compare_official_and_proxy,
     normalise_official_deciles,
+    normalise_official_long_short,
 )
 
 
@@ -35,6 +37,19 @@ def test_official_low_high_labels_do_not_collapse() -> None:
     spreads = build_official_spreads(official)
     assert set(official["decile"]) == {1.0, 10.0}
     assert spreads.iloc[0]["official_spread_return"] == pytest.approx(0.08)
+
+
+def test_official_long_short_wide_normalises_requested_signals() -> None:
+    raw = pd.DataFrame({
+        "yyyymm": [202001, 202002],
+        "DivSeason": [0.10, -0.02],
+        "AnnouncementReturn": [0.04, 0.03],
+        "Unrelated": [0.99, 0.99],
+    })
+    official = normalise_official_long_short(raw)
+    assert set(official["signal"]) == {"DivSeason", "AnnouncementReturn"}
+    spreads = build_official_long_short_spreads(official)
+    assert spreads["official_spread_return"].tolist() == pytest.approx([0.10, -0.02, 0.04, 0.03])
 
 
 def test_proxy_deciles_use_next_formation_month_return() -> None:
