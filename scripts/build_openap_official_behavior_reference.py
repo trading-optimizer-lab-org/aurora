@@ -53,15 +53,20 @@ def build_reference(source: str | Path, output_dir: str | Path) -> dict[str, obj
         left = pd.to_numeric(group["reference_return"], errors="coerce")
         right = pd.to_numeric(group["proxy_return"], errors="coerce")
         pair = pd.DataFrame({"left": left, "right": right}).dropna()
+        identical = bool(pair["left"].equals(pair["right"]))
+        pearson = 1.0 if identical else float(pair["left"].corr(pair["right"]))
+        spearman = 1.0 if identical else float(pair["left"].rank().corr(pair["right"].rank()))
+        mean_abs_error = float((pair["left"] - pair["right"]).abs().mean())
+        tracking_error = float((pair["left"] - pair["right"]).std(ddof=1)) if len(pair) > 1 else 0.0
         similarity_rows.append(
             {
                 "signal": str(signal),
                 "rows": int(len(pair)),
-                "pearson": float(pair["left"].corr(pair["right"])),
-                "spearman": float(pair["left"].rank().corr(pair["right"].rank())),
+                "pearson": pearson,
+                "spearman": spearman,
                 "sign_consistency": float((pair["left"].abs().eq(0) | (pair["left"].gt(0) == pair["right"].gt(0))).mean()),
-                "mean_abs_error": float((pair["left"] - pair["right"]).abs().mean()),
-                "tracking_error": float((pair["left"] - pair["right"]).std(ddof=1)) if len(pair) > 1 else 0.0,
+                "mean_abs_error": mean_abs_error,
+                "tracking_error": tracking_error,
                 "proxy_kind": "official_source_mirror",
                 "independent_reconstruction": False,
             }
@@ -104,7 +109,7 @@ def main() -> None:
     args = parser.parse_args()
     require_github_execution("OpenAP official behavior reference")
     summary = build_reference(args.official_long_short, args.output_dir)
-    if summary["similarity_min_pearson"] != 1.0 or summary["similarity_min_spearman"] != 1.0:
+    if abs(float(summary["similarity_min_pearson"]) - 1.0) > 1e-12 or abs(float(summary["similarity_min_spearman"]) - 1.0) > 1e-12:
         raise RuntimeError("Official source mirror did not reproduce the official returns exactly")
 
 
