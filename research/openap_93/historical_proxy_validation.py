@@ -792,8 +792,29 @@ def _attach_formation_month_returns(
     proxies: pd.DataFrame,
     monthly: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Attach the return earned after the signal becomes tradable."""
-    result = proxies.drop(columns=["realized_month_return"], errors="ignore").copy()
+    """Attach signal-month screen price and next-month realised return."""
+    result = proxies.drop(
+        columns=["realized_month_return", "screen_price"], errors="ignore"
+    ).copy()
+    screen_columns = ["symbol", "completed_month"]
+    if "month_end_raw_close" in monthly.columns:
+        screen_columns.append("month_end_raw_close")
+    screen = monthly[screen_columns].copy()
+    screen["completed_month"] = pd.to_datetime(
+        screen["completed_month"], errors="coerce"
+    ).dt.to_period("M").dt.to_timestamp()
+    if "month_end_raw_close" in screen.columns:
+        screen["screen_price"] = pd.to_numeric(
+            screen.pop("month_end_raw_close"), errors="coerce"
+        )
+    else:
+        screen["screen_price"] = np.nan
+    screen = screen.drop_duplicates(["symbol", "completed_month"], keep="last")
+    result["completed_month"] = pd.to_datetime(
+        result["completed_month"], errors="coerce"
+    ).dt.to_period("M").dt.to_timestamp()
+    result = result.merge(screen, on=["symbol", "completed_month"], how="left")
+
     realised = monthly[["symbol", "completed_month", "month_return"]].copy()
     realised["formation_month"] = pd.to_datetime(
         realised["completed_month"], errors="coerce"

@@ -142,6 +142,26 @@ def test_divseason_uses_all_zero_and_one_observations() -> None:
     assert spreads.iloc[0]["proxy_high_count"] == 5
 
 
+def test_divseason_applies_official_price_screen_before_portfolios() -> None:
+    proxy = pd.DataFrame(
+        {
+            "symbol": list("ABCDEF"),
+            "completed_month": pd.to_datetime(["2020-01-31"] * 6),
+            "formation_month": pd.to_datetime(["2020-02-01"] * 6),
+            "signal": ["DivSeason"] * 6,
+            "proxy_value": [0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            "screen_price": [4.0, 10.0, 10.0, 10.0, 10.0, 10.0],
+            "realized_month_return": [1.0, 0.0, 0.0, 0.1, 0.2, 0.3],
+        }
+    )
+
+    spreads = build_proxy_spreads(proxy, pd.DataFrame())
+
+    assert spreads.iloc[0]["proxy_spread_return"] == pytest.approx(0.2)
+    assert spreads.iloc[0]["proxy_low_count"] == 2
+    assert spreads.iloc[0]["proxy_high_count"] == 3
+
+
 def test_delnetfin_keeps_june_portfolios_for_twelve_months() -> None:
     june_signal = {"A": 1.0, "B": 2.0, "C": 9.0, "D": 10.0}
     july_signal = {"A": 10.0, "B": 9.0, "C": 2.0, "D": 1.0}

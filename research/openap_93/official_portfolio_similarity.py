@@ -1,8 +1,9 @@
-"""Compare Aurora proxy portfolios with official OpenAP decile portfolios.
+"""Compare Aurora proxy portfolios with official OpenAP portfolios.
 
 This is the historical comparison that remains possible without guessing a
 PERMNO-to-ticker identity map. Both sides are reduced to the same observable
-object: the equal-weighted top-decile minus bottom-decile monthly portfolio.
+object: the equal-weighted high-minus-low monthly portfolio produced by the
+official signal-specific portfolio rules.
 """
 
 from __future__ import annotations
@@ -290,6 +291,12 @@ def build_proxy_spreads(proxy_panel: pd.DataFrame, monthly: pd.DataFrame) -> pd.
         else:
             panel["variant_id"] = "default"
     panel["formation_month"] = pd.to_datetime(panel["formation_month"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+    if "completed_month" in panel.columns:
+        panel["completed_month"] = pd.to_datetime(
+            panel["completed_month"], errors="coerce"
+        ).dt.to_period("M").dt.to_timestamp()
+    else:
+        panel["completed_month"] = panel["formation_month"] - pd.offsets.MonthBegin(1)
     panel["proxy_value"] = pd.to_numeric(panel["proxy_value"], errors="coerce")
     monthly_columns = {str(column).lower(): column for column in monthly.columns}
     if {"symbol", "completed_month", "month_return"}.issubset(monthly_columns):
@@ -317,24 +324,90 @@ def build_proxy_spreads(proxy_panel: pd.DataFrame, monthly: pd.DataFrame) -> pd.
         )
     panel = panel.dropna(subset=["signal", "formation_month", "proxy_value", "month_return"])
     panel = panel.loc[panel["signal"].isin(FIVE_PROXY_SIGNALS)]
+    if "screen_price" in panel.columns:
+        panel["screen_price"] = pd.to_numeric(panel["screen_price"], errors="coerce")
+        price_screen = panel["signal"].isin({"DivSeason", "EarningsStreak"})
+        panel = panel.loc[
+            ~price_screen | panel["screen_price"].abs().gt(5.0)
+        ]
+
+    def assign_portfolios(group: pd.DataFrame, signal: str) -> pd.Series:
+        values = pd.to_numeric(group["proxy_value"], errors="coerce")
+        assignments = pd.Series("middle", index=group.index, dtype="string")
+        if signal == "DivSeason":
+            support = values.dropna().unique()
+            if len(support) < 2:
+                return pd.Series(pd.NA, index=group.index, dtype="string")
+            assignments.loc[values.eq(np.nanmin(support))] = "low"
+            assignments.loc[values.eq(np.nanmax(support))] = "high"
+            return assignments
+        low_break = values.quantile(0.20)
+        high_break = values.quantile(0.80)
+        if pd.isna(low_break) or pd.isna(high_break) or high_break <= low_break:
+            return pd.Series(pd.NA, index=group.index, dtype="string")
+        assignments.loc[values.le(low_break)] = "low"
+        assignments.loc[values.ge(high_break)] = "high"
+        return assignments
+
     rows: list[dict[str, object]] = []
-    for (signal, variant_id, month), group in panel.groupby(
-        ["signal", "variant_id", "formation_month"], sort=True
+    for (signal, variant_id), signal_panel in panel.groupby(
+        ["signal", "variant_id"], sort=True
     ):
-        group = group.sort_values("proxy_value", kind="mergesort")
-        n = max(1, len(group) // 10)
-        low = pd.to_numeric(group["month_return"].iloc[:n], errors="coerce").mean()
-        high = pd.to_numeric(group["month_return"].iloc[-n:], errors="coerce").mean()
-        if pd.isna(low) or pd.isna(high):
-            continue
-        rows.append({
-            "signal": signal,
-            "variant_id": variant_id,
-            "formation_month": month,
-            "proxy_spread_return": float(high - low),
-            "proxy_low_count": int(n),
-            "proxy_high_count": int(n),
-        })
+        signal_panel = signal_panel.copy()
+        if signal == "DelNetFin":
+            rebalances = signal_panel.loc[
+                signal_panel["completed_month"].dt.month.eq(6)
+            ].copy()
+            assignment_parts: list[pd.DataFrame] = []
+            for formation_month, group in rebalances.groupby("formation_month", sort=True):
+                assigned = group[["symbol"]].copy()
+                assigned["assignment"] = assign_portfolios(group, signal).to_numpy()
+                assigned["rebalance_month"] = formation_month
+                assignment_parts.append(assigned.dropna(subset=["assignment"]))
+            if not assignment_parts:
+                continue
+            assignments = pd.concat(assignment_parts, ignore_index=True)
+            held_parts: list[pd.DataFrame] = []
+            for month, returns in signal_panel.groupby("formation_month", sort=True):
+                eligible = assignments.loc[
+                    assignments["rebalance_month"].le(month)
+                    & assignments["rebalance_month"].ge(month - pd.DateOffset(months=11))
+                ].sort_values("rebalance_month").drop_duplicates("symbol", keep="last")
+                if eligible.empty:
+                    continue
+                held_parts.append(
+                    returns.merge(eligible[["symbol", "assignment"]], on="symbol", how="inner")
+                )
+            if not held_parts:
+                continue
+            assigned_panel = pd.concat(held_parts, ignore_index=True)
+        else:
+            assigned_parts = []
+            for _, group in signal_panel.groupby("formation_month", sort=True):
+                assigned = group.copy()
+                assigned["assignment"] = assign_portfolios(group, signal).to_numpy()
+                assigned_parts.append(assigned.dropna(subset=["assignment"]))
+            if not assigned_parts:
+                continue
+            assigned_panel = pd.concat(assigned_parts, ignore_index=True)
+
+        for month, group in assigned_panel.groupby("formation_month", sort=True):
+            low_returns = pd.to_numeric(
+                group.loc[group["assignment"].eq("low"), "month_return"], errors="coerce"
+            ).dropna()
+            high_returns = pd.to_numeric(
+                group.loc[group["assignment"].eq("high"), "month_return"], errors="coerce"
+            ).dropna()
+            if low_returns.empty or high_returns.empty:
+                continue
+            rows.append({
+                "signal": signal,
+                "variant_id": variant_id,
+                "formation_month": month,
+                "proxy_spread_return": float(high_returns.mean() - low_returns.mean()),
+                "proxy_low_count": int(len(low_returns)),
+                "proxy_high_count": int(len(high_returns)),
+            })
     return pd.DataFrame(rows)
 
 

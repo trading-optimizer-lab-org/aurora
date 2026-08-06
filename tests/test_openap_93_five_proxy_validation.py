@@ -33,12 +33,14 @@ def test_realized_return_is_aligned_to_formation_month_not_completed_month() -> 
             "symbol": ["AAA", "AAA"],
             "completed_month": pd.to_datetime(["2020-01-31", "2020-02-29"]),
             "month_return": [-0.25, 0.40],
+            "month_end_raw_close": [4.50, 9.00],
         }
     )
 
     result = _attach_formation_month_returns(proxies, monthly)
 
     assert result.iloc[0]["realized_month_return"] == pytest.approx(0.40)
+    assert result.iloc[0]["screen_price"] == pytest.approx(4.50)
 
 
 def test_missing_crosswalk_fails_closed_for_all_five() -> None:
