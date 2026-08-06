@@ -1,0 +1,81 @@
+name: OpenAP 93 High Fidelity Behavior Reference
+
+on:
+  workflow_dispatch:
+    inputs:
+      official_reference_run_id:
+        description: Run containing the staged official OpenAP long-short reference
+        required: true
+        default: "31076097192"
+        type: string
+      official_reference_artifact_name:
+        description: Artifact containing official_portfolio_similarity/official_long_short.csv
+        required: true
+        default: "openap-five-proxy-historical-validation-results"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  build_reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GITHUB_ACTIONS: "true"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Compile reference builder
+        run: python -m py_compile scripts/build_openap_official_behavior_reference.py
+      - name: Download staged official reference
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.official_reference_artifact_name }}
+          path: inputs/official_archive
+          run-id: ${{ inputs.official_reference_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Locate and build exact behavior reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=$(find inputs/official_archive -type f \
+            \( -name 'official_long_short.csv' -o -name 'PredictorLSretWide.csv' \) \
+            -print -quit)
+          test -n "$source"
+          python scripts/build_openap_official_behavior_reference.py \
+            --official-long-short "$source" \
+            --output-dir outputs/openap_official_behavior_reference
+      - name: Verify exact mirror and fail-closed invariants
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('outputs/openap_official_behavior_reference')
+          summary = json.loads((root / 'official_behavior_reference_summary.json').read_text())
+          assert summary['similarity_min_pearson'] == 1.0
+          assert summary['similarity_min_spearman'] == 1.0
+          assert summary['independent_reconstruction'] is False
+          assert summary['usable_for_stock_scoring'] is False
+          assert summary['locked_opened'] is False
+          assert summary['backtest_enabled'] is False
+          assert summary['validation_used_for_selection'] is False
+          assert summary['partial'] is False
+          PY
+      - name: Upload high-fidelity behavior reference
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-93-high-fidelity-behavior-reference-results
+          path: outputs/openap_official_behavior_reference/
+          if-no-files-found: error
+          retention-days: 30
