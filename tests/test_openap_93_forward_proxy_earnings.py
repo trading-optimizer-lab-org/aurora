@@ -9,6 +9,7 @@ from aurora.research.openap_93.earnings_events import (
     announcement_return,
     choose_earnings_event,
     earnings_streak_value,
+    normalize_periodic_filing_events,
     normalize_sec_item_202_events,
     normalize_yahoo_earnings_events,
 )
@@ -138,3 +139,22 @@ def test_sec_item_202_accepts_nullable_numeric_items_column() -> None:
     result = normalize_sec_item_202_events(submissions, master)
 
     assert result.empty
+
+
+def test_periodic_events_accept_submissions_with_existing_symbol_column() -> None:
+    master = pd.DataFrame({"symbol": ["AAA"], "cik": [1]})
+    submissions = pd.DataFrame(
+        {
+            "symbol": ["AAA"],
+            "cik": [1],
+            "accession_number": ["a"],
+            "form": ["10-Q"],
+            "items": [""],
+            "accepted_at": ["2026-02-05T12:00:00Z"],
+            "report_date": ["2025-12-31"],
+        }
+    )
+
+    result = normalize_periodic_filing_events(submissions, master)
+
+    assert result.iloc[0]["symbol"] == "AAA"

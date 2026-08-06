@@ -88,6 +88,7 @@ def normalize_sec_item_202_events(
     master["cik"] = pd.to_numeric(master["cik"], errors="coerce")
     frame = submissions.copy()
     frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce")
+    frame = frame.drop(columns=["symbol"], errors="ignore")
     frame["form"] = frame["form"].astype(str)
     item_202 = frame["items"].astype("string").fillna("").str.contains(
         r"(?:^|[,;\s])2\.02(?:$|[,;\s])", regex=True
@@ -130,6 +131,7 @@ def normalize_periodic_filing_events(
     master["cik"] = pd.to_numeric(master["cik"], errors="coerce")
     frame = submissions.copy()
     frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce")
+    frame = frame.drop(columns=["symbol"], errors="ignore")
     frame = frame.loc[frame["form"].astype(str).isin(["10-Q", "10-K"])].merge(
         master, on="cik", how="inner", validate="many_to_one"
     )
