@@ -5,6 +5,7 @@ import pytest
 
 from aurora.research.openap_93.historical_proxy_validation import (
     FIVE_PROXY_SIGNALS,
+    _attach_formation_month_returns,
     _build_announcement_return,
     _build_earnings_streak,
     _rank_buckets,
@@ -15,6 +16,29 @@ from aurora.research.openap_93.historical_proxy_validation import (
 def test_rank_buckets_are_cross_sectional_and_bounded() -> None:
     buckets = _rank_buckets(pd.Series([10.0, 20.0, 30.0, 40.0, 50.0]))
     assert buckets.tolist() == [1.0, 2.0, 3.0, 4.0, 5.0]
+
+
+def test_realized_return_is_aligned_to_formation_month_not_completed_month() -> None:
+    proxies = pd.DataFrame(
+        {
+            "symbol": ["AAA"],
+            "completed_month": pd.to_datetime(["2020-01-31"]),
+            "formation_month": pd.to_datetime(["2020-02-01"]),
+            "signal": ["DivSeason"],
+            "proxy_value": [1.0],
+        }
+    )
+    monthly = pd.DataFrame(
+        {
+            "symbol": ["AAA", "AAA"],
+            "completed_month": pd.to_datetime(["2020-01-31", "2020-02-29"]),
+            "month_return": [-0.25, 0.40],
+        }
+    )
+
+    result = _attach_formation_month_returns(proxies, monthly)
+
+    assert result.iloc[0]["realized_month_return"] == pytest.approx(0.40)
 
 
 def test_missing_crosswalk_fails_closed_for_all_five() -> None:
