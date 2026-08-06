@@ -160,6 +160,67 @@ def test_batch_five_combines_and_refines_without_repeating_batch_four() -> None:
     )
 
 
+def test_batch_six_uses_only_new_combined_rules() -> None:
+    batch_five = registry.generate_candidates(5, count=96)
+    batch_six = registry.generate_candidates(6, count=96)
+    assert len(batch_six) == 96
+    assert {row["family"] for row in batch_six} == {"dual_reversal_trend_vote"}
+    batch_five_rules = {
+        (row["family"], json.dumps(row["parameters"], sort_keys=True))
+        for row in batch_five
+    }
+    assert not batch_five_rules.intersection(
+        (row["family"], json.dumps(row["parameters"], sort_keys=True))
+        for row in batch_six
+    )
+
+
+def test_complete_rsi_definition_preserves_coverage_during_one_way_market() -> None:
+    index = pd.date_range("2000-01-03", periods=300, freq="B")
+    close = pd.Series(np.linspace(100.0, 200.0, len(index)), index=index)
+    ledger = pd.DataFrame(
+        {
+            "tr_close": close,
+            "tr_open": close,
+            "open": close,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "volume": 1000.0,
+            "long_return": close.pct_change().fillna(0.0),
+            "short_return": -close.pct_change().fillna(0.0),
+        },
+        index=index,
+    )
+    candidate = _template() | {
+        "family": "dual_reversal_trend_vote",
+        "required_datasets": ["DS001", "DS002"],
+        "parameters": {
+            "rsi_window": 5,
+            "lower": 25,
+            "upper": 75,
+            "rsi_trend_window": 225,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 1.1,
+            "reversal_trend_window": 60,
+            "rsi_weight": 1,
+            "reversal_weight": 1,
+        },
+    }
+    result = candidate_decisions(
+        candidate,
+        PreparedMarketData(
+            ledger=ledger,
+            series={},
+            available_dataset_ids=frozenset({"DS001", "DS002"}),
+            rejected_datasets={},
+            receipts=(),
+            split="train",
+        ),
+    )
+    assert result.first_evaluable_date == index[5].date().isoformat()
+    assert result.missing_fraction == 0.0
+
+
 def test_trial_ledger_is_cumulative_and_pre_registered(tmp_path, monkeypatch) -> None:
     candidates = tuple(_template() | {"strategy_id": f"candidate-{index}", "canonical_hash": canonical_rule_hash(_template() | {"strategy_id": f"candidate-{index}"})} for index in range(3))
     monkeypatch.setattr(registry, "base_package", lambda: SimpleNamespace(candidates=(), research=(), features=(), datasets=()))

@@ -451,7 +451,8 @@ def _combined_reversal_candidates(
     def spread(rows: list[dict[str, Any]], wanted: int) -> list[dict[str, Any]]:
         return [rows[(index * len(rows)) // wanted] for index in range(wanted)]
 
-    for parameters in spread(vote_grid, count // 2):
+    vote_count = count if generation >= 1 else count // 2
+    for parameters in spread(vote_grid, vote_count):
         definitions.append((
             "dual_reversal_trend_vote",
             parameters,

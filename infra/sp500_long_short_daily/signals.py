@@ -243,7 +243,11 @@ def _price_score(
             adjust=False,
             min_periods=rsi_window,
         ).mean()
-        rsi = 100.0 - 100.0 / (1.0 + gain / loss.replace(0.0, np.nan))
+        relative_strength = gain / loss.replace(0.0, np.nan)
+        rsi = 100.0 - 100.0 / (1.0 + relative_strength)
+        rsi = rsi.mask((loss == 0.0) & (gain > 0.0), 100.0)
+        rsi = rsi.mask((gain == 0.0) & (loss > 0.0), 0.0)
+        rsi = rsi.mask((gain == 0.0) & (loss == 0.0), 50.0)
         rsi_component = np.sign(
             close / close.shift(int(parameters["rsi_trend_window"])) - 1.0
         )
