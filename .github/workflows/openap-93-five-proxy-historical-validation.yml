@@ -1,9 +1,6 @@
 name: OpenAP Five Proxy Historical Validation
 
 on:
-  push:
-    branches:
-      - codex/openap-full-data-quality-fix
   workflow_dispatch:
     inputs:
       source_sha:

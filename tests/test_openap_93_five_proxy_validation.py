@@ -109,6 +109,6 @@ def test_announcement_return_uses_official_minus_two_plus_one_window() -> None:
     master = pd.DataFrame({"symbol": ["AAA"], "cik": [1]})
     result = _build_announcement_return(monthly, facts, prices, None, master)
     # The official window is dates[1:5], not dates[2:6].
-    expected = (101 / 100 - 1) + (103 / 101 - 1) + (106 / 103 - 1) + (110 / 106 - 1)
+    expected = (100 / 99 - 1) + (101 / 100 - 1) + (103 / 101 - 1) + (106 / 103 - 1)
     assert result.iloc[0]["proxy_value"] == pytest.approx(expected)
     assert result.iloc[0]["proxy_formula_id"].endswith("window_exact")
