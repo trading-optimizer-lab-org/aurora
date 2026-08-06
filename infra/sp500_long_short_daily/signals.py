@@ -26,6 +26,7 @@ IMPLEMENTED_FAMILIES = frozenset(
         "trend_guarded_dual_reversal",
         "volatility_regime_reversal",
         "overnight_tug_reversal_vote",
+        "strong_trend_override_reversal",
         "financial_conditions_regime",
         "monetary_inflation_regime",
         "overnight_futures_proxy",
@@ -444,6 +445,56 @@ def _price_score(
             & reversal_return.notna()
             & reversal_trend_return.notna()
             & tug.notna()
+        )
+    if family == "strong_trend_override_reversal":
+        rsi_window = int(parameters["rsi_window"])
+        delta = close.diff()
+        gain = delta.clip(lower=0.0).ewm(
+            alpha=1.0 / rsi_window,
+            adjust=False,
+            min_periods=rsi_window,
+        ).mean()
+        loss = (-delta.clip(upper=0.0)).ewm(
+            alpha=1.0 / rsi_window,
+            adjust=False,
+            min_periods=rsi_window,
+        ).mean()
+        relative_strength = gain / loss.replace(0.0, np.nan)
+        rsi = 100.0 - 100.0 / (1.0 + relative_strength)
+        rsi = rsi.mask((loss == 0.0) & (gain > 0.0), 100.0)
+        rsi = rsi.mask((gain == 0.0) & (loss > 0.0), 0.0)
+        rsi = rsi.mask((gain == 0.0) & (loss == 0.0), 50.0)
+
+        rsi_trend_return = (
+            close / close.shift(int(parameters["rsi_trend_window"])) - 1.0
+        )
+        rsi_component = np.sign(rsi_trend_return)
+        rsi_component = rsi_component.where(rsi > float(parameters["lower"]), 1.0)
+        rsi_component = rsi_component.where(rsi < float(parameters["upper"]), -1.0)
+
+        reversal_return = close / close.shift(int(parameters["reversal_window"])) - 1.0
+        reversal_trend_return = (
+            close / close.shift(int(parameters["reversal_trend_window"])) - 1.0
+        )
+        reversal_component = np.sign(reversal_trend_return)
+        threshold = float(parameters["reversal_threshold_pct"]) / 100.0
+        reversal_component = reversal_component.where(
+            reversal_return.abs() < threshold,
+            -np.sign(reversal_return),
+        )
+        score = rsi_component + reversal_component
+
+        override_return = close / close.shift(int(parameters["override_window"])) - 1.0
+        override_threshold = float(parameters["override_threshold_pct"]) / 100.0
+        score = score.where(override_return <= override_threshold, 1.0)
+        if str(parameters["override_mode"]) == "symmetric":
+            score = score.where(override_return >= -override_threshold, -1.0)
+        return score.where(
+            rsi.notna()
+            & rsi_trend_return.notna()
+            & reversal_return.notna()
+            & reversal_trend_return.notna()
+            & override_return.notna()
         )
     if family == "trend_ensemble":
         components = []
@@ -882,6 +933,7 @@ def candidate_decisions(
         "trend_guarded_dual_reversal",
         "volatility_regime_reversal",
         "overnight_tug_reversal_vote",
+        "strong_trend_override_reversal",
         "realized_volatility_state",
         "overnight_futures_proxy",
         "volatility_conditioned_trend",

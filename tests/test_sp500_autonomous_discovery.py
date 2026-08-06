@@ -324,6 +324,55 @@ def test_overnight_tug_rule_is_causal_and_fully_covered() -> None:
     assert result.missing_fraction == 0.0
 
 
+def test_batch_ten_adds_unique_strong_trend_overrides() -> None:
+    batch_nine = registry.generate_candidates(9, count=96)
+    batch_ten = registry.generate_candidates(10, count=96)
+    assert len(batch_ten) == 96
+    assert {row["family"] for row in batch_ten} == {"strong_trend_override_reversal"}
+    assert all(row["position_values"] == [-1, 1] for row in batch_ten)
+    assert all(row["cash_allowed"] is False for row in batch_ten)
+    assert not {row["canonical_hash"] for row in batch_nine}.intersection(
+        row["canonical_hash"] for row in batch_ten
+    )
+
+
+def test_strong_trend_override_is_causal_and_fully_covered() -> None:
+    index = pd.date_range("2000-01-03", periods=300, freq="B")
+    close = pd.Series(np.linspace(100.0, 200.0, len(index)), index=index)
+    ledger = pd.DataFrame(
+        {
+            "tr_close": close,
+            "tr_open": close,
+            "open": close,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "volume": 1000.0,
+            "long_return": close.pct_change().fillna(0.0),
+            "short_return": -close.pct_change().fillna(0.0),
+        },
+        index=index,
+    )
+    candidate = registry.generate_candidates(10, count=1)[0]
+    result = candidate_decisions(
+        candidate,
+        PreparedMarketData(
+            ledger=ledger,
+            series={},
+            available_dataset_ids=frozenset({"DS001", "DS002"}),
+            rejected_datasets={},
+            receipts=(),
+            split="train",
+        ),
+    )
+    expected_warmup = max(
+        int(candidate["parameters"]["rsi_trend_window"]),
+        int(candidate["parameters"]["reversal_trend_window"]),
+        int(candidate["parameters"]["override_window"]),
+    )
+    assert result.first_evaluable_date == index[expected_warmup].date().isoformat()
+    assert result.missing_fraction == 0.0
+
+
 def test_complete_rsi_definition_preserves_coverage_during_one_way_market() -> None:
     index = pd.date_range("2000-01-03", periods=300, freq="B")
     close = pd.Series(np.linspace(100.0, 200.0, len(index)), index=index)
