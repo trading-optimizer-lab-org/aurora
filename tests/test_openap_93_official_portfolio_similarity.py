@@ -102,6 +102,81 @@ def test_proxy_deciles_can_use_realized_returns_kept_in_panel() -> None:
     assert spreads.iloc[0]["proxy_spread_return"] == pytest.approx(0.09)
 
 
+def test_continuous_proxy_uses_openap_top_and_bottom_quintiles() -> None:
+    symbols = list("ABCDEFGHIJ")
+    proxy = pd.DataFrame(
+        {
+            "symbol": symbols,
+            "completed_month": pd.to_datetime(["2020-01-31"] * 10),
+            "formation_month": pd.to_datetime(["2020-02-01"] * 10),
+            "signal": ["AnnouncementReturn"] * 10,
+            "proxy_value": list(range(1, 11)),
+            "realized_month_return": [0.0, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.8, 1.0],
+        }
+    )
+
+    spreads = build_proxy_spreads(proxy, pd.DataFrame())
+
+    assert spreads.iloc[0]["proxy_spread_return"] == pytest.approx(0.8)
+    assert spreads.iloc[0]["proxy_low_count"] == 2
+    assert spreads.iloc[0]["proxy_high_count"] == 2
+
+
+def test_divseason_uses_all_zero_and_one_observations() -> None:
+    symbols = list("ABCDEFGHIJ")
+    proxy = pd.DataFrame(
+        {
+            "symbol": symbols,
+            "completed_month": pd.to_datetime(["2020-01-31"] * 10),
+            "formation_month": pd.to_datetime(["2020-02-01"] * 10),
+            "signal": ["DivSeason"] * 10,
+            "proxy_value": [0.0] * 5 + [1.0] * 5,
+            "realized_month_return": [0.0] * 5 + [0.1, 0.2, 0.3, 0.4, 0.5],
+        }
+    )
+
+    spreads = build_proxy_spreads(proxy, pd.DataFrame())
+
+    assert spreads.iloc[0]["proxy_spread_return"] == pytest.approx(0.3)
+    assert spreads.iloc[0]["proxy_low_count"] == 5
+    assert spreads.iloc[0]["proxy_high_count"] == 5
+
+
+def test_delnetfin_keeps_june_portfolios_for_twelve_months() -> None:
+    june_signal = {"A": 1.0, "B": 2.0, "C": 9.0, "D": 10.0}
+    july_signal = {"A": 10.0, "B": 9.0, "C": 2.0, "D": 1.0}
+    rows = []
+    for symbol in "ABCD":
+        rows.extend(
+            [
+                {
+                    "symbol": symbol,
+                    "completed_month": pd.Timestamp("2020-06-30"),
+                    "formation_month": pd.Timestamp("2020-07-01"),
+                    "signal": "DelNetFin",
+                    "proxy_value": june_signal[symbol],
+                    "realized_month_return": 0.1 if symbol == "D" else 0.0,
+                },
+                {
+                    "symbol": symbol,
+                    "completed_month": pd.Timestamp("2020-07-31"),
+                    "formation_month": pd.Timestamp("2020-08-01"),
+                    "signal": "DelNetFin",
+                    "proxy_value": july_signal[symbol],
+                    "realized_month_return": 0.1 if symbol == "D" else 0.0,
+                },
+            ]
+        )
+
+    spreads = build_proxy_spreads(pd.DataFrame(rows), pd.DataFrame())
+
+    assert spreads["formation_month"].tolist() == [
+        pd.Timestamp("2020-07-01"),
+        pd.Timestamp("2020-08-01"),
+    ]
+    assert spreads["proxy_spread_return"].tolist() == pytest.approx([0.1, 0.1])
+
+
 def test_similarity_reports_high_match_without_claiming_identity() -> None:
     official = pd.DataFrame({
         "signal": ["DivSeason"] * 3,
