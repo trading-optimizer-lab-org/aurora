@@ -1,0 +1,297 @@
+name: OpenAP Five Forward Proxies
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision to execute
+        required: true
+        default: HEAD
+        type: string
+      historical_run_id:
+        description: Successful five-proxy historical reconstruction run
+        required: true
+        default: "31086424858"
+        type: string
+      base_run_id:
+        description: Successful YFinance and SEC base database run
+        required: true
+        default: "30837929185"
+        type: string
+      public_inputs_run_id:
+        description: Successful OpenAP 93 public-input run
+        required: true
+        default: "30995267332"
+        type: string
+      formation_date:
+        description: Current snapshot date or today
+        required: true
+        default: today
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-five-forward-proxies
+  cancel-in-progress: false
+
+jobs:
+  framework_contract:
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: openap-five-forward-proxies-contract
+      retention_days: 1
+      forced_job_count: 1
+
+  certify:
+    needs: framework_contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      GITHUB_ACTIONS: "true"
+      train_end: "2010-12-31"
+      validation_start: "2011-01-01"
+      validation_end: "2020-12-31"
+    outputs:
+      certified_count: ${{ steps.summary.outputs.certified_count }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install exact project
+        run: python -m pip install --disable-pip-version-check -e . openassetpricing==0.0.2
+      - name: Download audited base database
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-yfinance-sec-current-score-results
+          path: inputs/base
+          run-id: ${{ inputs.base_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download audited public inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-93-max-free-full-results
+          path: inputs/public
+          run-id: ${{ inputs.public_inputs_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download audited official reference
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-five-proxy-historical-validation-results
+          path: inputs/official
+          run-id: ${{ inputs.historical_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Locate immutable reconstruction inputs
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          db=$(find inputs/base -type f -name 'openap_current.duckdb' -print -quit)
+          reference=$(find inputs/public -type f \( -name 'signed_predictors_dl_wide.zip' -o -name 'signed_predictors_dl_wide.csv' \) -print -quit)
+          ff3=$(find inputs/public -type f -name 'ff3_daily.parquet' -print -quit)
+          ff48=$(find inputs/public -type f -name 'ff48_sic_codes.parquet' -print -quit)
+          normalized=$(dirname "$ff3")
+          probe=$(dirname "$(find inputs/public -type f -name 'sources.lock.json' -print -quit)")
+          official=$(find inputs/official -type f -name 'official_long_short.csv' -print -quit)
+          test -s "$db"
+          test -s "$reference"
+          test -s "$ff3"
+          test -s "$ff48"
+          test -s "$official"
+          test -s "$probe/sources.lock.json"
+          echo "db=$db" >> "$GITHUB_OUTPUT"
+          echo "reference=$reference" >> "$GITHUB_OUTPUT"
+          echo "ff3=$ff3" >> "$GITHUB_OUTPUT"
+          echo "ff48=$ff48" >> "$GITHUB_OUTPUT"
+          echo "normalized=$normalized" >> "$GITHUB_OUTPUT"
+          echo "probe=$probe" >> "$GITHUB_OUTPUT"
+          echo "official=$official" >> "$GITHUB_OUTPUT"
+      - name: Download public historical earnings observations
+        run: |
+          mkdir -p inputs/earnings
+          curl --fail --location --retry 3 \
+            --output inputs/earnings/eps_history.csv \
+            https://www.dolthub.com/csv/post-no-preference/earnings/master/eps_history
+      - name: Reconstruct historical candidates with this exact revision
+        run: |
+          python scripts/run_openap_93_five_proxy_validation.py \
+            --base-db "${{ steps.locate.outputs.db }}" \
+            --reference "${{ steps.locate.outputs.reference }}" \
+            --ff3-daily "${{ steps.locate.outputs.ff3 }}" \
+            --ff48-sic-codes "${{ steps.locate.outputs.ff48 }}" \
+            --earnings-history inputs/earnings/eps_history.csv \
+            --output-dir outputs/historical \
+            --min-pairs 30
+      - name: Select on train and validate frozen variants
+        run: |
+          python scripts/certify_openap_five_forward_proxies.py \
+            --proxy-panel outputs/historical/proxy_reconstruction_panel.parquet \
+            --monthly-returns outputs/historical/proxy_realized_monthly.csv \
+            --official-long-short "${{ steps.locate.outputs.official }}" \
+            --source-manifest config/openap_93/five_forward_proxy_sources.yaml \
+            --output-dir outputs/certification \
+            --train-end "$train_end" \
+            --validation-start "$validation_start" \
+            --validation-end "$validation_end"
+      - name: Verify certification policy
+        id: summary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          summary = json.loads(Path('outputs/certification/forward_proxy_certification_summary.json').read_text())
+          assert summary['train_end'] == '2010-12-31'
+          assert summary['validation_start'] == '2011-01-01'
+          assert summary['validation_end'] == '2020-12-31'
+          assert summary['locked_opened'] is False
+          assert summary['validation_used_for_selection'] is False
+          assert summary['backtest_enabled'] is False
+          assert summary['partial'] is False
+          with open(Path.home() / 'certified_count.txt', 'w') as handle:
+              handle.write(str(summary['signals_certified']))
+          PY
+          echo "certified_count=$(cat "$HOME/certified_count.txt")" >> "$GITHUB_OUTPUT"
+      - name: Calculate current values for certified formulas only
+        if: ${{ steps.summary.outputs.certified_count != '0' }}
+        run: |
+          python scripts/run_openap_93_max_free.py \
+            --signals-config config/openap_93/signals_93.yaml \
+            build-current \
+            --base-db "${{ steps.locate.outputs.db }}" \
+            --public-inputs-dir "${{ steps.locate.outputs.normalized }}" \
+            --source-probe-dir "${{ steps.locate.outputs.probe }}" \
+            --output-dir outputs/current \
+            --formation-date "${{ inputs.formation_date }}" \
+            --signals DivSeason,AnnouncementReturn,EarningsStreak,IndRetBig,DelNetFin \
+            --forward-proxy-certificates outputs/certification/forward_proxy_certificates.jsonl \
+            --forward-proxy-source-manifest config/openap_93/five_forward_proxy_sources.yaml
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-five-forward-proxy-certification-${{ github.run_id }}
+          path: outputs/certification/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload certified current values
+        if: ${{ steps.summary.outputs.certified_count != '0' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-five-forward-proxy-current-${{ github.run_id }}
+          path: outputs/current/
+          if-no-files-found: error
+          retention-days: 30
+
+  current:
+    needs: [framework_contract, certify]
+    if: ${{ needs.certify.result == 'success' && needs.certify.outputs.certified_count != '0' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GITHUB_ACTIONS: "true"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install exact project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Download already certified current output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-five-forward-proxy-current-${{ github.run_id }}
+          path: outputs/current
+      - name: Verify current values use certificates
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          signals = pd.read_parquet('outputs/current/signals_93_current.parquet')
+          manifest = json.load(open('outputs/current/run_manifest.json', encoding='utf-8'))
+          assert set(signals['signal']) == {'DivSeason', 'AnnouncementReturn', 'EarningsStreak', 'IndRetBig', 'DelNetFin'}
+          assert (signals.loc[signals['current_usable'], 'certificate_status'] == 'certified').all()
+          assert manifest['locked_opened'] is False
+          assert manifest['validation_used_for_selection'] is False
+          PY
+
+  publish:
+    if: ${{ always() }}
+    needs: [certify, current]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GITHUB_ACTIONS: "true"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install exact project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Download certification output
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-five-forward-proxy-certification-${{ github.run_id }}
+          path: inputs/certification
+      - name: Download current output
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-five-forward-proxy-current-${{ github.run_id }}
+          path: inputs/current
+      - name: Assemble fail-closed final artifact
+        run: |
+          python scripts/finalize_openap_five_forward_proxies.py \
+            --certification-dir inputs/certification \
+            --current-dir inputs/current \
+            --source-manifest config/openap_93/five_forward_proxy_sources.yaml \
+            --output-dir outputs/final \
+            --certification-result "${{ needs.certify.result }}" \
+            --current-result "${{ needs.current.result }}"
+      - name: Verify final policy and deliverables
+        run: |
+          for file in \
+            forward_proxy_current_values.parquet \
+            forward_proxy_current_values.csv \
+            forward_proxy_candidate_metrics.csv \
+            forward_proxy_validation_metrics.csv \
+            forward_proxy_certificates.jsonl \
+            forward_proxy_score_ready.csv \
+            forward_proxy_missing_inputs.csv \
+            forward_proxy_source_audit.csv \
+            forward_proxy_summary.json; do
+            test -e "outputs/final/$file"
+          done
+          python - <<'PY'
+          import json
+          summary = json.load(open('outputs/final/forward_proxy_summary.json', encoding='utf-8'))
+          assert summary['locked_opened'] is False
+          assert summary['validation_used_for_selection'] is False
+          assert summary['backtest_enabled'] is False
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-five-forward-proxies-results
+          path: outputs/final/
+          if-no-files-found: error
+          retention-days: 90
