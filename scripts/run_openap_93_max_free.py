@@ -129,6 +129,12 @@ def build_current(args: argparse.Namespace) -> None:
         formation_at=_formation_date(args.formation_date),
         universe_symbols=_read_universe(args.universe_file),
         selected_signals=selected,
+        forward_proxy_certificates=(
+            args.forward_proxy_certificates or None
+        ),
+        forward_proxy_source_manifest=(
+            args.forward_proxy_source_manifest or None
+        ),
     )
 
 
@@ -161,6 +167,8 @@ def run_all(args: argparse.Namespace) -> None:
             formation_date=args.formation_date,
             universe_file=args.universe_file,
             signals=args.signals,
+            forward_proxy_certificates=args.forward_proxy_certificates,
+            forward_proxy_source_manifest=args.forward_proxy_source_manifest,
         )
     )
 
@@ -184,6 +192,8 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--formation-date", "--as-of", default="today")
     build.add_argument("--universe-file", default="")
     build.add_argument("--signals", default="")
+    build.add_argument("--forward-proxy-certificates", default="")
+    build.add_argument("--forward-proxy-source-manifest", default="")
     run = sub.add_parser("run")
     run.add_argument(
         "--base-db",
@@ -195,6 +205,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--signals", default="")
     run.add_argument("--offline", action="store_true")
     run.add_argument("--refresh", action="store_true")
+    run.add_argument("--forward-proxy-certificates", default="")
+    run.add_argument("--forward-proxy-source-manifest", default="")
     return parser
 
 

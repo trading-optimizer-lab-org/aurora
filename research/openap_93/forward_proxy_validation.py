@@ -60,6 +60,15 @@ class _Similarity:
     tracking_error: float
 
 
+def formula_identity_sha256(formula_id: str) -> str:
+    """Return the stable identity hash used by certificates and current rows."""
+
+    normalized = str(formula_id).strip()
+    if not normalized:
+        raise ValueError("formula_id cannot be empty")
+    return sha256(normalized.encode("utf-8")).hexdigest()
+
+
 def _coerce_month(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
     result["month"] = pd.to_datetime(result["month"], errors="raise").dt.to_period("M").dt.to_timestamp()
@@ -307,15 +316,17 @@ def apply_certificates(
     if missing := required.difference(current_rows.columns):
         raise ValueError(f"current columns missing: {sorted(missing)}")
 
-    certificate_map = {
-        (
+    certificate_map: dict[tuple[str, str, str, str], ForwardProxyCertificate] = {}
+    for certificate in certificates:
+        key = (
             certificate.signal,
             certificate.variant_id,
             certificate.formula_sha256,
             certificate.source_manifest_sha256,
-        ): certificate
-        for certificate in certificates
-    }
+        )
+        if key in certificate_map:
+            raise ValueError(f"duplicate forward-proxy certificate identity: {key}")
+        certificate_map[key] = certificate
     result = current_rows.copy()
     statuses: list[str] = []
     hashes: list[str | None] = []
@@ -337,6 +348,14 @@ def apply_certificates(
                 "certificate_identity_mismatch" if same_signal_variant else "missing_certificate"
             )
             hashes.append(None)
+            passed_flags.append(False)
+        elif (
+            certificate.locked_opened
+            or certificate.validation_used_for_selection
+            or certificate.backtest_enabled
+        ):
+            statuses.append("invalid_certificate_policy")
+            hashes.append(certificate_sha256(certificate))
             passed_flags.append(False)
         elif not certificate.passed:
             statuses.append("failed_validation_gate")

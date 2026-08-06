@@ -20,6 +20,7 @@ from aurora.research.openap_93.forward_proxy_validation import (  # noqa: E402
     ForwardProxyGate,
     certificate_sha256,
     certify_forward_proxy_candidates,
+    formula_identity_sha256,
 )
 from aurora.research.openap_93.official_portfolio_similarity import (  # noqa: E402
     build_official_long_short_spreads,
@@ -106,7 +107,7 @@ def run_certification(
                 ].astype(str)
             )
         )
-        formula_hashes[identity] = _text_sha256("|".join(formulas))
+        formula_hashes[identity] = formula_identity_sha256("|".join(formulas))
         source_hashes[identity] = manifest_hash
 
     selected, validation, certificates = certify_forward_proxy_candidates(

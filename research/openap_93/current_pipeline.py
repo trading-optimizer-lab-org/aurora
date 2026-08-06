@@ -36,6 +36,12 @@ from .analyst_pipeline import (
 )
 from .earnings_events import build_earnings_events
 from .event_pipeline import EVENT_IMPLEMENTED_SIGNALS, calculate_event_signals
+from .forward_proxy_validation import (
+    ForwardProxyCertificate,
+    apply_certificates,
+    certificate_sha256,
+    formula_identity_sha256,
+)
 from .institutional_pipeline import (
     INSTITUTIONAL_IMPLEMENTED_SIGNALS,
     calculate_institutional_signals,
@@ -82,6 +88,21 @@ REQUIRED_SIGNAL_COLUMNS = (
     "observation_count",
     "reason_if_missing",
     "caveat",
+    "formula_sha256",
+    "source_manifest_sha256",
+    "certificate_status",
+    "certificate_sha256",
+    "effective_score_weight",
+)
+
+FIVE_FORWARD_PROXY_SIGNALS = frozenset(
+    {
+        "DivSeason",
+        "AnnouncementReturn",
+        "EarningsStreak",
+        "IndRetBig",
+        "DelNetFin",
+    }
 )
 
 IMPLEMENTED_SIGNALS = frozenset(
@@ -148,6 +169,77 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def load_forward_proxy_certificates(
+    path: str | Path | None,
+) -> list[ForwardProxyCertificate]:
+    if path is None or not str(path).strip():
+        return []
+    source = Path(path)
+    if not source.is_file():
+        raise RuntimeError(f"Forward-proxy certificate file does not exist: {source}")
+    certificates: list[ForwardProxyCertificate] = []
+    for line_number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        recorded_hash = payload.pop("certificate_sha256", None)
+        certificate = ForwardProxyCertificate(**payload)
+        actual_hash = certificate_sha256(certificate)
+        if recorded_hash is not None and str(recorded_hash) != actual_hash:
+            raise RuntimeError(
+                f"Forward-proxy certificate hash mismatch on line {line_number}"
+            )
+        certificates.append(certificate)
+    return certificates
+
+
+def apply_forward_proxy_certificates_to_signals(
+    signals: pd.DataFrame,
+    certificates: Iterable[ForwardProxyCertificate],
+    *,
+    source_manifest_sha256: str,
+) -> pd.DataFrame:
+    """Fail closed for the five forward proxies while leaving other signals unchanged."""
+
+    result = signals.copy()
+    for required in ("signal", "formula_id", "current_usable"):
+        if required not in result.columns:
+            raise ValueError(f"signals column missing: {required}")
+    if "variant_id" not in result.columns:
+        result["variant_id"] = result["formula_id"]
+    result["variant_id"] = result["variant_id"].fillna("").astype(str)
+    result["formula_id"] = result["formula_id"].fillna("").astype(str)
+    blank_variant = result["variant_id"].str.strip().eq("")
+    result.loc[blank_variant, "variant_id"] = result.loc[blank_variant, "formula_id"]
+    result["formula_sha256"] = result["formula_id"].map(
+        lambda value: formula_identity_sha256(value) if str(value).strip() else ""
+    )
+    result["source_manifest_sha256"] = str(source_manifest_sha256)
+    result["certificate_status"] = "not_required"
+    result["certificate_sha256"] = None
+    result["effective_score_weight"] = np.where(
+        result["current_usable"].fillna(False).astype(bool), 1.0, 0.0
+    )
+
+    protected = result["signal"].isin(FIVE_FORWARD_PROXY_SIGNALS)
+    if not protected.any():
+        return result
+    protected_rows = result.loc[protected].copy()
+    protected_rows["base_score_weight"] = 1.0
+    protected_rows = apply_certificates(protected_rows, certificates)
+    for column in (
+        "variant_id",
+        "formula_sha256",
+        "source_manifest_sha256",
+        "certificate_status",
+        "certificate_sha256",
+        "current_usable",
+        "effective_score_weight",
+    ):
+        result.loc[protected, column] = protected_rows[column].to_numpy()
+    return result
 
 
 def _staleness_limit(frequency: str) -> int:
@@ -414,6 +506,9 @@ def _normalize_signal_results(
         )
     )
     frame["formula_id"] = frame["formula_id"].fillna("")
+    frame["variant_id"] = frame["variant_id"].fillna("").astype(str)
+    blank_variant = frame["variant_id"].str.strip().eq("")
+    frame.loc[blank_variant, "variant_id"] = frame.loc[blank_variant, "formula_id"]
     frame["observation_count"] = (
         pd.to_numeric(frame["observation_count"], errors="coerce").fillna(0).astype(int)
     )
@@ -689,6 +784,8 @@ def _integrate_features(
     )
     features["fidelity_class"] = base_fidelity
     features["is_current_for_natural_frequency"] = features["raw_value"].notna()
+    features["certificate_current_usable"] = True
+    features["effective_score_weight"] = 1.0
     updates = signals.rename(columns={"ticker": "symbol", "signal": "signalname"})
     updates["available_at"] = pd.to_datetime(
         updates["available_at"], errors="coerce", utc=True
@@ -706,6 +803,8 @@ def _integrate_features(
         ("source_input_age_days", "staleness_days"),
         ("is_current_for_natural_frequency", "is_current_for_natural_frequency"),
         ("value_status", "coverage_flag"),
+        ("certificate_current_usable", "current_usable"),
+        ("effective_score_weight", "effective_score_weight"),
     ):
         features.loc[common, target] = updates.loc[common, source].to_numpy()
     features = features.reset_index()
@@ -742,6 +841,10 @@ def _score_variant(features: pd.DataFrame, score_name: str, allowed: set[str]) -
         frame["fidelity_class"].isin(allowed)
         & frame["raw_value"].notna()
         & frame["is_current_for_natural_frequency"].fillna(False)
+        & frame["certificate_current_usable"].fillna(False)
+        & pd.to_numeric(frame["effective_score_weight"], errors="coerce")
+        .fillna(0.0)
+        .gt(0.0)
     )
     proxy_formula = frame["formula_fidelity_class"].isin(
         {FidelityClass.VALIDATED_PROXY.value, FidelityClass.UNVALIDATED_PROXY.value}
@@ -759,7 +862,12 @@ def _score_variant(features: pd.DataFrame, score_name: str, allowed: set[str]) -
     )
     potential = np.where(proxy_formula, frame["_proxy_weight"], frame["_exact_weight"])
     frame["potential_evidence_weight"] = np.where(formula_allowed, potential, 0.0)
-    frame["evidence_weight"] = np.where(numeric_allowed, potential, 0.0)
+    frame["evidence_weight"] = np.where(
+        numeric_allowed,
+        potential
+        * pd.to_numeric(frame["effective_score_weight"], errors="coerce").fillna(0.0),
+        0.0,
+    )
     frame["percentile"] = np.nan
     frame["score_percentile"] = np.nan
     for signal, index in frame.groupby("signalname").groups.items():
@@ -1111,6 +1219,8 @@ def run_current_pipeline(
     formation_at: str | pd.Timestamp,
     universe_symbols: set[str] | None = None,
     selected_signals: set[str] | None = None,
+    forward_proxy_certificates: str | Path | None = None,
+    forward_proxy_source_manifest: str | Path | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
     formation = pd.Timestamp(formation_at).tz_localize(None)
@@ -1189,6 +1299,21 @@ def run_current_pipeline(
     ]
     signals = _normalize_signal_results(
         results, base["master"], registry, formation, retrieved_at
+    )
+    certificates = load_forward_proxy_certificates(forward_proxy_certificates)
+    if forward_proxy_certificates is not None and forward_proxy_source_manifest is None:
+        raise RuntimeError(
+            "forward_proxy_source_manifest is required when certificates are supplied"
+        )
+    source_manifest_hash = (
+        _sha256(Path(forward_proxy_source_manifest))
+        if forward_proxy_source_manifest is not None
+        else ""
+    )
+    signals = apply_forward_proxy_certificates_to_signals(
+        signals,
+        certificates,
+        source_manifest_sha256=source_manifest_hash,
     )
     if selected_signals is not None:
         unknown = selected_signals - set(REQUIRED_93)
@@ -1284,6 +1409,15 @@ def run_current_pipeline(
             for fidelity in FidelityClass
         },
         "current_usable_signal_count": int(coverage["current_usable"].sum()),
+        "forward_proxy_certificates_loaded": len(certificates),
+        "forward_proxy_signals_certified": int(
+            signals.loc[
+                signals["signal"].isin(FIVE_FORWARD_PROXY_SIGNALS)
+                & signals["certificate_status"].eq("certified"),
+                "signal",
+            ].nunique()
+        ),
+        "forward_proxy_source_manifest_sha256": source_manifest_hash,
     }
     lineage = {
         "base_database": {
@@ -1385,5 +1519,7 @@ __all__ = [
     "build_coverage_report",
     "build_score_table",
     "build_validation_report",
+    "apply_forward_proxy_certificates_to_signals",
+    "load_forward_proxy_certificates",
     "run_current_pipeline",
 ]
