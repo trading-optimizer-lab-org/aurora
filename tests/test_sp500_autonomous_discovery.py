@@ -690,6 +690,82 @@ def test_recovery_trend_breakout_majority_is_causal_and_fully_invested() -> None
     )
 
 
+def test_batch_twenty_three_adds_unique_high_vol_crash_recovery_rules() -> None:
+    batch_twenty_two = registry.generate_candidates(22, count=96)
+    batch_twenty_three = registry.generate_candidates(23, count=96)
+    batch_twenty_four = registry.generate_candidates(24, count=96)
+
+    assert len(batch_twenty_three) == 96
+    assert len({row["canonical_hash"] for row in batch_twenty_three}) == 96
+    assert {row["family"] for row in batch_twenty_three} == {
+        "high_vol_crash_recovery_reversal"
+    }
+    assert not {row["canonical_hash"] for row in batch_twenty_two}.intersection(
+        row["canonical_hash"] for row in batch_twenty_three
+    )
+    assert not {row["canonical_hash"] for row in batch_twenty_three}.intersection(
+        row["canonical_hash"] for row in batch_twenty_four
+    )
+    assert all(row["position_values"] == [-1, 1] for row in batch_twenty_three)
+    assert all(row["cash_allowed"] is False for row in batch_twenty_three)
+    assert all(row["leverage_allowed"] is False for row in batch_twenty_three)
+
+
+def test_high_vol_crash_recovery_rule_is_causal_and_fully_invested() -> None:
+    index = pd.date_range("2000-01-03", periods=720, freq="B")
+    rising = np.linspace(100.0, 170.0, 400)
+    crash = np.linspace(170.0, 90.0, 100) * (
+        1.0 + 0.04 * np.sin(np.arange(100) * 2.1)
+    )
+    recovery = np.linspace(90.0, 180.0, 220)
+    close = pd.Series(np.concatenate((rising, crash, recovery)), index=index)
+    ledger = pd.DataFrame(
+        {
+            "tr_close": close,
+            "tr_open": close,
+            "open": close,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "volume": 1000.0,
+            "long_return": close.pct_change().fillna(0.0),
+            "short_return": -close.pct_change().fillna(0.0),
+        },
+        index=index,
+    )
+    candidate = registry.generate_candidates(23, count=96)[0]
+    data = PreparedMarketData(
+        ledger=ledger,
+        series={},
+        available_dataset_ids=frozenset({"DS001", "DS002"}),
+        rejected_datasets={},
+        receipts=(),
+        split="train",
+    )
+    result = candidate_decisions(candidate, data)
+    assert set(result.decisions.unique()) <= {-1, 1}
+    assert result.missing_fraction == 0.0
+    assert (result.decisions.iloc[430:480] == -1).any()
+    assert (result.decisions.iloc[-100:] == 1).any()
+
+    changed = ledger.copy()
+    changed.loc[index[-1], "tr_close"] *= 0.70
+    changed.loc[index[-1], "low"] = changed.loc[index[-1], "tr_close"] - 1.0
+    future_changed = candidate_decisions(
+        candidate,
+        PreparedMarketData(
+            ledger=changed,
+            series={},
+            available_dataset_ids=frozenset({"DS001", "DS002"}),
+            rejected_datasets={},
+            receipts=(),
+            split="train",
+        ),
+    )
+    pd.testing.assert_series_equal(
+        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
+    )
+
+
 def test_strong_trend_override_is_causal_and_fully_covered() -> None:
     index = pd.date_range("2000-01-03", periods=300, freq="B")
     close = pd.Series(np.linspace(100.0, 200.0, len(index)), index=index)
