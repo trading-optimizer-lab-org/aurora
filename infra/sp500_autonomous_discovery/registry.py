@@ -1006,12 +1006,143 @@ def _stability_refined_dual_reversal_candidates(
     return tuple(candidates)
 
 
+def _asymmetric_override_candidates(
+    package: CampaignPackage,
+    batch_id: int,
+    count: int,
+) -> tuple[dict[str, Any], ...]:
+    """Refine the stable reversal rule with independent bull and bear overrides."""
+
+    if count != 96:
+        raise ValueError("ASYMMETRIC_OVERRIDE_REQUIRES_96_CANDIDATES")
+    usable = [
+        row
+        for row in package.candidates
+        if str(row.get("family")) in IMPLEMENTED_FAMILIES
+        and set(row.get("required_datasets", ())).issubset({"DS001", "DS002"})
+    ]
+    if not usable:
+        raise RuntimeError("NO_USABLE_CAUSAL_TEMPLATES")
+    base = next(
+        (row for row in usable if str(row.get("family")) == "short_horizon_reversal"),
+        usable[0],
+    )
+    generation = batch_id - 16
+    core_variants = (
+        {
+            "rsi_window": 4,
+            "lower": 30,
+            "upper": 70,
+            "rsi_trend_window": 180,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 0.875,
+            "reversal_trend_window": 40,
+        },
+        {
+            "rsi_window": 4,
+            "lower": 29,
+            "upper": 71,
+            "rsi_trend_window": 180,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 0.875,
+            "reversal_trend_window": 40,
+        },
+        {
+            "rsi_window": 4,
+            "lower": 31,
+            "upper": 69,
+            "rsi_trend_window": 180,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 0.875,
+            "reversal_trend_window": 40,
+        },
+        {
+            "rsi_window": 4,
+            "lower": 30,
+            "upper": 70,
+            "rsi_trend_window": 160,
+            "reversal_window": 5,
+            "reversal_threshold_pct": 0.85,
+            "reversal_trend_window": 40,
+        },
+    )
+    positive_overrides = ((90, 2.0), (120, 2.0), (120, 3.0), (150, 3.0))
+    negative_overrides = (
+        (40, 3.0),
+        (60, 3.0),
+        (60, 5.0),
+        (90, 5.0),
+        (120, 5.0),
+        (120, 8.0),
+    )
+    parameters_list = [
+        {
+            **core,
+            "positive_override_window": positive_window,
+            "positive_override_threshold_pct": round(
+                positive_threshold + generation * 0.25, 4
+            ),
+            "negative_override_window": negative_window,
+            "negative_override_threshold_pct": round(
+                negative_threshold + generation * 0.5, 4
+            ),
+        }
+        for core in core_variants
+        for positive_window, positive_threshold in positive_overrides
+        for negative_window, negative_threshold in negative_overrides
+    ]
+    candidates: list[dict[str, Any]] = []
+    for index, parameters in enumerate(parameters_list):
+        candidate = json.loads(json.dumps(base))
+        candidate.update(
+            {
+                "instrument": "SPY",
+                "cash_allowed": False,
+                "partial_exposure_allowed": False,
+                "leverage_allowed": False,
+                "volatility_scaling_allowed": False,
+                "pyramiding_allowed": False,
+                "multiple_assets_in_portfolio": False,
+                "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
+                "variant_label": (
+                    f"autonomous_asymmetric_override_batch_{batch_id}_{index}"
+                ),
+                "family": "asymmetric_trend_override_reversal",
+                "family_name": "Asymmetric Trend Override Reversal",
+                "parameters": parameters,
+                "required_datasets": ["DS001", "DS002"],
+                "feature_formulas": [
+                    "causal dual reversal score with independent positive and negative trend overrides"
+                ],
+                "long_rule": "dual score_t > 0 or exceptional positive trend",
+                "short_rule": "dual score_t < 0 or exceptional negative trend",
+                "features": ["AUTO_ASYMMETRIC_TREND_OVERRIDE_REVERSAL"],
+                "warmup_rule": "No signal before every causal input required by the rule is defined.",
+                "known_failure_modes": "Train-only asymmetric refinement; must pass every frozen robustness gate.",
+                "economic_sign_rationale": "Different causal horizons capture recoveries and persistent bear trends without cash or leverage.",
+                "priority_score": max(1, 100 - index),
+                "evidence_track": "pre_2011_evidence",
+                "selection_role": "autonomous_pre_registered_candidate",
+            }
+        )
+        candidate["canonical_hash"] = canonical_rule_hash(candidate)
+        assert_contract(candidate)
+        candidates.append(candidate)
+    if len(candidates) != count or len(
+        {row["canonical_hash"] for row in candidates}
+    ) != count:
+        raise RuntimeError("ASYMMETRIC_OVERRIDE_COUNT_OR_HASH_MISMATCH")
+    return tuple(candidates)
+
+
 def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, Any], ...]:
     """Generate a reproducible, pre-registered batch from causal templates."""
 
     if batch_id < 0 or count < 1:
         raise ValueError("INVALID_BATCH_ARGUMENT")
     package = base_package()
+    if batch_id >= 16:
+        return _asymmetric_override_candidates(package, batch_id, count)
     if batch_id >= 13:
         return _stability_refined_dual_reversal_candidates(
             package, batch_id, count
