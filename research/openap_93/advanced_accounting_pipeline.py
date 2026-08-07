@@ -138,7 +138,13 @@ class AdvancedValue:
 
 
 def _naive_datetime(values: pd.Series) -> pd.Series:
-    return pd.to_datetime(values, errors="coerce", utc=True).dt.tz_localize(None)
+    # Pin the resolution because pandas can preserve microsecond-resolution
+    # timestamps from Parquet, while merge_asof requires identical key dtypes.
+    return (
+        pd.to_datetime(values, errors="coerce", utc=True)
+        .dt.tz_localize(None)
+        .astype("datetime64[ns]")
+    )
 
 
 def _finite(value: Any) -> float | None:
@@ -152,8 +158,8 @@ def _prepare_annual_facts(
 ) -> pd.DataFrame:
     facts = companyfacts.copy()
     facts["available_at"] = _naive_datetime(facts["available_at"])
-    facts["period_end"] = pd.to_datetime(facts["period_end"], errors="coerce")
-    facts["period_start"] = pd.to_datetime(facts["period_start"], errors="coerce")
+    facts["period_end"] = _naive_datetime(facts["period_end"])
+    facts["period_start"] = _naive_datetime(facts["period_start"])
     facts["value"] = pd.to_numeric(facts["value"], errors="coerce")
     facts = facts.loc[
         facts["available_at"].le(formation_at)
@@ -210,12 +216,14 @@ def _attach_sic(
 
 def _monthly_prices(prices: pd.DataFrame, formation_at: pd.Timestamp) -> pd.DataFrame:
     frame = prices.copy()
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame["date"] = _naive_datetime(frame["date"])
     frame = frame.loc[frame["date"].le(formation_at)].dropna(
         subset=["symbol", "date", "close", "adj_close"]
     )
     frame = frame.sort_values(["symbol", "date"])
-    frame["month"] = frame["date"].dt.to_period("M").dt.to_timestamp("M")
+    frame["month"] = _naive_datetime(
+        frame["date"].dt.to_period("M").dt.to_timestamp("M")
+    )
     monthly = (
         frame.groupby(["symbol", "month"], as_index=False)
         .agg(close=("close", "last"), adj_close=("adj_close", "last"), price_date=("date", "last"))
@@ -238,11 +246,15 @@ def _monthly_asof(
     annual_groups = {symbol: part for symbol, part in annual.groupby("symbol")}
     for symbol, left in prices.groupby("symbol", sort=False):
         right = annual_groups.get(symbol)
-        left = left.sort_values("month")
+        left = left.sort_values("month").copy()
+        left["month"] = _naive_datetime(left["month"])
         if right is None or right.empty:
             output.append(left)
             continue
-        right = right.sort_values("available_at").drop_duplicates("available_at", keep="last")
+        right = right.sort_values("available_at").drop_duplicates(
+            "available_at", keep="last"
+        ).copy()
+        right["available_at"] = _naive_datetime(right["available_at"])
         output.append(
             pd.merge_asof(
                 left,
