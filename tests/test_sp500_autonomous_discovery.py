@@ -1795,6 +1795,41 @@ def test_batch_forty_nine_requires_causal_drawdown_for_every_short() -> None:
     assert all(row["leverage_allowed"] is False for row in batch_forty_nine)
 
 
+def test_batch_fifty_refines_causal_drawdown_neighbourhood() -> None:
+    batch_forty_nine = registry.generate_candidates(49, count=96)
+    batch_fifty = registry.generate_candidates(50, count=96)
+    batch_fifty_one = registry.generate_candidates(51, count=96)
+
+    assert len(batch_fifty) == 96
+    assert len({row["canonical_hash"] for row in batch_fifty}) == 96
+    assert not {row["canonical_hash"] for row in batch_forty_nine}.intersection(
+        row["canonical_hash"] for row in batch_fifty
+    )
+    assert not {row["canonical_hash"] for row in batch_fifty}.intersection(
+        row["canonical_hash"] for row in batch_fifty_one
+    )
+    assert {
+        row["parameters"]["short_drawdown_gate_window"]
+        for row in batch_fifty
+    } == {189, 220, 252, 300}
+    assert {
+        row["parameters"]["short_drawdown_gate_threshold_pct"]
+        for row in batch_fifty
+    } == {1.5, 2.0, 3.0}
+    assert {
+        row["parameters"]["vxo_negative_gate_window"]
+        for row in batch_fifty
+    } == {30, 35, 40, 45}
+    assert {
+        row["parameters"]["vxo_negative_gate_threshold_pct"]
+        for row in batch_fifty
+    } == {0.5, 1.0}
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in batch_fifty)
+    assert all(row["position_values"] == [-1, 1] for row in batch_fifty)
+    assert all(row["cash_allowed"] is False for row in batch_fifty)
+    assert all(row["leverage_allowed"] is False for row in batch_fifty)
+
+
 def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("1997-01-02", periods=900, freq="B")
     close = pd.Series(

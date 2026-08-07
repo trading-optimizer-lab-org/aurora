@@ -2927,15 +2927,10 @@ def _recovery_calendar_volume_vxo_candidates(
             for recovery_threshold in (1.15, 1.2)
             for tug_weight in (0.25, 0.5)
         ]
-    else:
+    elif batch_id == 49:
         # Ordinary bull years still suffer from short states. Keep the strongest
         # VXO rule but permit a final short only after a causal drawdown from a
         # recent rolling high. The alternative state remains fully invested long.
-        generation = batch_id - 49
-        drawdown_thresholds = tuple(
-            round(value + generation * 0.25, 4)
-            for value in (0.0, 2.5, 5.0, 7.5)
-        )
         parameters_list = [
             {
                 **core,
@@ -2963,9 +2958,49 @@ def _recovery_calendar_volume_vxo_candidates(
                 "short_drawdown_gate_threshold_pct": drawdown_threshold,
             }
             for drawdown_window in (63, 126, 252)
-            for drawdown_threshold in drawdown_thresholds
+            for drawdown_threshold in (0.0, 2.5, 5.0, 7.5)
             for vxo_gate_window in (35, 40, 45, 50)
             for vxo_gate_threshold in (1.0, 2.0)
+        ]
+    else:
+        # Batch 49 improved every global statistic at a 252-session peak and a
+        # 2.5% drawdown boundary. Refine the previously unobserved neighbourhood
+        # around that boundary while retaining the same causal rule.
+        generation = batch_id - 50
+        drawdown_thresholds = tuple(
+            round(value + generation * 0.1, 4)
+            for value in (1.5, 2.0, 3.0)
+        )
+        parameters_list = [
+            {
+                **core,
+                "first_sessions": 2,
+                "last_sessions": 1,
+                "calendar_weight": 0.5,
+                "rsi_weight": 1.5,
+                "reversal_weight": 1.0,
+                "recovery_memory_window": 63,
+                "recovery_threshold_pct": 1.2,
+                "volume_z_threshold": 1.5,
+                "volume_reversal_weight": 0.25,
+                "vxo_change_lookback": 1,
+                "vxo_z_window": 10,
+                "vxo_z_threshold": 1.4,
+                "vxo_weight": 3.0,
+                "vxo_positive_weight": 2.5,
+                "vxo_negative_weight": 2.5,
+                "vxo_negative_gate_window": vxo_gate_window,
+                "vxo_negative_gate_threshold_pct": vxo_gate_threshold,
+                "vxo_mode": "continuation",
+                "tug_lookback": 2,
+                "tug_weight": 0.5,
+                "short_drawdown_gate_window": drawdown_window,
+                "short_drawdown_gate_threshold_pct": drawdown_threshold,
+            }
+            for drawdown_window in (189, 220, 252, 300)
+            for drawdown_threshold in drawdown_thresholds
+            for vxo_gate_window in (30, 35, 40, 45)
+            for vxo_gate_threshold in (0.5, 1.0)
         ]
     candidates: list[dict[str, Any]] = []
     source_ids = {
