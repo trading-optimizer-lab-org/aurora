@@ -250,3 +250,15 @@ def test_workflow_contract_is_github_only_and_complete() -> None:
     assert "coverage_universe_minimum_metrics: [80, 70, 60]" in config
     assert len(registry) == 92
     assert len(set(registry)) == 92
+
+
+def test_existing_snapshot_workflow_uses_ranges_and_checks_all_six_universes() -> None:
+    text = Path(".github/workflows/openap-six-scores-existing-snapshot.yml").read_text(encoding="utf-8")
+    assert "OpenAP Six Scores From Existing Snapshot" in text
+    assert "remotezip" in text
+    assert "openap_features_current.parquet" in text
+    assert "score-snapshot" in text
+    assert '"openap_1m_c80": 366' in text
+    assert '"openap_12m_c70": 1250' in text
+    assert '"openap_1m_c60": 2031' in text
+    assert "locked_opened" in text

@@ -1,0 +1,148 @@
+name: OpenAP Six Scores From Existing Snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_artifact_id:
+        description: Existing audited OpenAP result artifact id
+        required: true
+        default: "8866666560"
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-six-scores-existing-snapshot
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+  OPENAP_CONFIG: config/openap_yfinance_sec_current.yaml
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install validation dependencies
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Compile and test six-score contract
+        run: |
+          python -m py_compile research/openap_current_score.py
+          python -m py_compile scripts/run_openap_yfinance_sec_current.py
+          python -m pytest tests/test_openap_yfinance_sec_current.py -q
+
+  score:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install score and ranged-ZIP dependencies
+        run: python -m pip install --disable-pip-version-check -e . gdown remotezip requests pyarrow
+      - name: Download pinned OpenAP evidence files
+        run: |
+          mkdir -p inputs/openap
+          gdown 10sOryk_ddjkXagaajTKUk1nwJs2ZLRiI -O inputs/openap/PredictorLSretWide.csv
+          gdown 1nLQWwt1023NLrfhdQiCvIRbFkiW2z3fG -O inputs/openap/PredictorSummary.xlsx
+          test -s inputs/openap/PredictorLSretWide.csv
+          test -s inputs/openap/PredictorSummary.xlsx
+      - name: Extract only the feature Parquet by HTTP ranges
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_ARTIFACT_ID: ${{ inputs.source_artifact_id }}
+        run: |
+          mkdir -p inputs/snapshot
+          python - <<'PY'
+          import os
+          import shutil
+          from pathlib import Path
+
+          import requests
+          from remotezip import RemoteZip
+
+          repository = os.environ["GITHUB_REPOSITORY"]
+          artifact_id = os.environ["SOURCE_ARTIFACT_ID"]
+          response = requests.get(
+              f"https://api.github.com/repos/{repository}/actions/artifacts/{artifact_id}/zip",
+              headers={
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+              allow_redirects=False,
+              timeout=60,
+          )
+          response.raise_for_status()
+          signed_url = response.headers["Location"]
+          destination = Path("inputs/snapshot/openap_features_current.parquet")
+          with RemoteZip(signed_url) as archive:
+              matches = [name for name in archive.namelist() if name.endswith("openap_features_current.parquet")]
+              if len(matches) != 1:
+                  raise RuntimeError(f"Expected one feature Parquet, found {matches}")
+              with archive.open(matches[0]) as source, destination.open("wb") as target:
+                  shutil.copyfileobj(source, target, length=8 * 1024 * 1024)
+          if destination.stat().st_size == 0:
+              raise RuntimeError("Extracted feature snapshot is empty")
+          print(f"Extracted {destination.stat().st_size} bytes from artifact {artifact_id}")
+          PY
+      - name: Calculate six scores
+        env:
+          SOURCE_ARTIFACT_ID: ${{ inputs.source_artifact_id }}
+        run: |
+          python scripts/run_openap_yfinance_sec_current.py \
+            --config "$OPENAP_CONFIG" score-snapshot \
+            --feature-snapshot inputs/snapshot/openap_features_current.parquet \
+            --predictor-summary inputs/openap/PredictorSummary.xlsx \
+            --predictor-returns inputs/openap/PredictorLSretWide.csv \
+            --source-artifact-id "$SOURCE_ARTIFACT_ID" \
+            --output-dir outputs/final
+      - name: Validate exact six-score result
+        run: |
+          test -s outputs/final/openap_six_scores_current.parquet
+          test -s outputs/final/openap_six_scores_current.csv
+          test -s outputs/final/openap_six_scores_current_wide.csv
+          test -s outputs/final/openap_six_scores_universe_audit.csv
+          test -s outputs/final/openap_score_horizon_weights.csv
+          test -s outputs/final/openap_score_signal_registry_92.csv
+          test -s outputs/final/openap_aligned_predictor_correlation.parquet
+          test -s outputs/final/execution_summary.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          summary = json.loads(Path("outputs/final/execution_summary.json").read_text())
+          assert summary["input_predictors"] == 185
+          assert summary["eligible_score_signals"] == 92
+          assert summary["eligible_symbols"] == 2338
+          assert summary["score_variants"] == 6
+          assert summary["score_universe_sizes"] == {
+              "openap_1m_c80": 366,
+              "openap_12m_c80": 366,
+              "openap_1m_c70": 1250,
+              "openap_12m_c70": 1250,
+              "openap_1m_c60": 2031,
+              "openap_12m_c60": 2031,
+          }
+          assert summary["locked_opened"] is False
+          assert summary["backtest_enabled"] is False
+          assert summary["validation_used_for_selection"] is False
+          assert summary["partial"] is False
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: openap-six-scores-current-results
+          path: outputs/final/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

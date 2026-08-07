@@ -963,6 +963,98 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     write_summary(output / "execution_summary.json", summary)
 
 
+def score_snapshot(config: dict[str, Any], args: argparse.Namespace) -> None:
+    """Calculate the six current scores from an already audited feature snapshot."""
+
+    output = Path(args.output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    source_features = Path(args.feature_snapshot)
+    feature_frame = pd.read_parquet(source_features)
+    metadata = select_strict_predictors(pd.read_excel(args.predictor_summary, sheet_name="short"))
+    score_signals = _read_score_signal_registry(config)
+    returns = _read_predictor_returns(
+        Path(args.predictor_returns),
+        metadata["signalname"].astype(str).tolist(),
+    )
+    correlation = build_aligned_correlation_matrix(
+        metadata,
+        returns,
+        minimum_overlap=int(config["openap"]["minimum_overlap_months"]),
+    )
+    score_metadata = metadata.loc[metadata["signalname"].astype(str).isin(score_signals)].copy()
+    score_weights = build_horizon_evidence_weights(
+        score_metadata,
+        correlation,
+        horizons=tuple(int(item) for item in config["score"]["horizons_months"]),
+    )
+    scores = calculate_six_coverage_scores(
+        feature_frame,
+        score_weights,
+        eligible_signals=score_signals,
+        coverage_thresholds=tuple(int(item) for item in config["score"]["coverage_universe_minimum_metrics"]),
+        horizons=tuple(int(item) for item in config["score"]["horizons_months"]),
+    )
+    expected_score_ids = {
+        f"openap_{horizon}m_c{threshold}"
+        for horizon in config["score"]["horizons_months"]
+        for threshold in config["score"]["coverage_universe_minimum_metrics"]
+    }
+    actual_score_ids = set(scores["score_id"].astype(str))
+    if actual_score_ids != expected_score_ids:
+        raise OpenAPDataError(
+            f"Expected six score variants {sorted(expected_score_ids)}, found {sorted(actual_score_ids)}"
+        )
+
+    scores.to_parquet(output / "openap_six_scores_current.parquet", index=False, compression="zstd")
+    scores.to_csv(output / "openap_six_scores_current.csv", index=False)
+    score_wide = scores.pivot_table(
+        index=["as_of", "symbol", "total_metrics_available"],
+        columns="score_id",
+        values="score",
+        aggfunc="first",
+    ).reset_index()
+    score_wide.columns.name = None
+    score_wide.to_csv(output / "openap_six_scores_current_wide.csv", index=False)
+    score_universe_audit = scores.groupby("score_id", as_index=False).agg(
+        horizon_months=("horizon_months", "first"),
+        minimum_total_metrics=("minimum_total_metrics", "first"),
+        universe_size=("universe_size", "first"),
+        scored_symbols=("symbol", "nunique"),
+        minimum_weight_coverage_pct=("weight_coverage_pct", "min"),
+        median_weight_coverage_pct=("weight_coverage_pct", "median"),
+    )
+    score_universe_audit.to_csv(output / "openap_six_scores_universe_audit.csv", index=False)
+    score_weights.to_csv(output / "openap_score_horizon_weights.csv", index=False)
+    pd.DataFrame({"signalname": score_signals}).to_csv(
+        output / "openap_score_signal_registry_92.csv", index=False
+    )
+    correlation.to_parquet(output / "openap_aligned_predictor_correlation.parquet", compression="zstd")
+    write_summary(
+        output / "execution_summary.json",
+        {
+            "dataset_id": config["dataset_id"],
+            "completed_at": _utcnow(),
+            "source_artifact_id": str(args.source_artifact_id),
+            "source_feature_sha256": sha256_file(source_features),
+            "input_predictors": len(metadata),
+            "eligible_score_signals": len(score_signals),
+            "eligible_symbols": int(feature_frame["symbol"].nunique()),
+            "features_rows": len(feature_frame),
+            "score_variants": len(actual_score_ids),
+            "score_ids": sorted(actual_score_ids),
+            "score_universe_sizes": {
+                str(row.score_id): int(row.universe_size)
+                for row in score_universe_audit.itertuples(index=False)
+            },
+            "scores_rows": len(scores),
+            "locked_opened": False,
+            "backtest_enabled": False,
+            "validation_used_for_selection": False,
+            "partial": False,
+        },
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -986,6 +1078,12 @@ def build_parser() -> argparse.ArgumentParser:
     merge_parser.add_argument("--prepare-dir", required=True)
     merge_parser.add_argument("--sec-dir", required=True)
     merge_parser.add_argument("--output-dir", required=True)
+    snapshot_parser = subparsers.add_parser("score-snapshot")
+    snapshot_parser.add_argument("--feature-snapshot", required=True)
+    snapshot_parser.add_argument("--predictor-summary", required=True)
+    snapshot_parser.add_argument("--predictor-returns", required=True)
+    snapshot_parser.add_argument("--source-artifact-id", required=True)
+    snapshot_parser.add_argument("--output-dir", required=True)
     return parser
 
 
@@ -1001,6 +1099,8 @@ def main() -> int:
         sec_bulk(config, args)
     elif args.mode == "merge":
         merge(config, args)
+    elif args.mode == "score-snapshot":
+        score_snapshot(config, args)
     else:
         raise OpenAPDataError(f"Unsupported mode: {args.mode}")
     return 0
