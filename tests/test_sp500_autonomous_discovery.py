@@ -1717,6 +1717,49 @@ def test_batch_forty_seven_requires_causal_trend_for_every_short() -> None:
     assert all(row["leverage_allowed"] is False for row in batch_forty_seven)
 
 
+def test_batch_forty_eight_refines_negative_vxo_gate_neighbourhood() -> None:
+    batch_forty_seven = registry.generate_candidates(47, count=96)
+    batch_forty_eight = registry.generate_candidates(48, count=96)
+    batch_forty_nine = registry.generate_candidates(49, count=96)
+
+    assert len(batch_forty_eight) == 96
+    assert len({row["canonical_hash"] for row in batch_forty_eight}) == 96
+    assert not {row["canonical_hash"] for row in batch_forty_seven}.intersection(
+        row["canonical_hash"] for row in batch_forty_eight
+    )
+    assert not {row["canonical_hash"] for row in batch_forty_eight}.intersection(
+        row["canonical_hash"] for row in batch_forty_nine
+    )
+    assert {
+        row["parameters"]["vxo_negative_gate_window"]
+        for row in batch_forty_eight
+    } == {30, 35, 45, 50}
+    assert {
+        row["parameters"]["vxo_negative_gate_threshold_pct"]
+        for row in batch_forty_eight
+    } == {1.0, 2.0, 3.0}
+    assert {
+        row["parameters"]["vxo_negative_weight"]
+        for row in batch_forty_eight
+    } == {2.25, 2.5}
+    assert {
+        row["parameters"]["recovery_threshold_pct"]
+        for row in batch_forty_eight
+    } == {1.15, 1.2}
+    assert {
+        row["parameters"]["tug_weight"]
+        for row in batch_forty_eight
+    } == {0.25, 0.5}
+    assert all(
+        "short_gate_window" not in row["parameters"]
+        for row in batch_forty_eight
+    )
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in batch_forty_eight)
+    assert all(row["position_values"] == [-1, 1] for row in batch_forty_eight)
+    assert all(row["cash_allowed"] is False for row in batch_forty_eight)
+    assert all(row["leverage_allowed"] is False for row in batch_forty_eight)
+
+
 def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("1997-01-02", periods=900, freq="B")
     close = pd.Series(
