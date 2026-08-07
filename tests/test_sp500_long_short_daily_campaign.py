@@ -1636,6 +1636,29 @@ def test_cboe_first_dissemination_blocks_retrospective_backfill() -> None:
     assert aligned.loc[pd.Timestamp("2003-09-22")] == 20.0
 
 
+def test_vxo_first_dissemination_blocks_pre_launch_backfill() -> None:
+    sessions = pd.DatetimeIndex(
+        [
+            pd.Timestamp("1993-01-18"),
+            pd.Timestamp("1993-01-19"),
+            pd.Timestamp("1993-01-20"),
+        ]
+    )
+    releases = pd.DataFrame(
+        {
+            "release_date": [pd.Timestamp("1986-01-02")],
+            "value": [20.0],
+        }
+    )
+    aligned = _align_initial_releases(
+        releases,
+        sessions,
+        first_dissemination=pd.Timestamp("1993-01-19"),
+    )
+    assert pd.isna(aligned.loc[pd.Timestamp("1993-01-18")])
+    assert aligned.loc[pd.Timestamp("1993-01-19")] == 20.0
+
+
 def test_cboe_series_after_train_is_rejected_instead_of_backfilled() -> None:
     candidate = _campaign().candidate_by_id()["STRAT0019"]
     base = _long_fixture()

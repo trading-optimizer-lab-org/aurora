@@ -1265,6 +1265,94 @@ def test_recovery_calendar_volume_rule_is_causal_and_fully_invested() -> None:
     )
 
 
+def test_batch_thirty_two_adds_unique_causal_vxo_rules() -> None:
+    batch_thirty_one = registry.generate_candidates(31, count=96)
+    batch_thirty_two = registry.generate_candidates(32, count=96)
+    batch_thirty_three = registry.generate_candidates(33, count=96)
+
+    assert len(batch_thirty_two) == 96
+    assert len({row["canonical_hash"] for row in batch_thirty_two}) == 96
+    assert {row["family"] for row in batch_thirty_two} == {
+        "recovery_calendar_volume_vxo_vote"
+    }
+    assert all(row["required_datasets"] == ["DS001", "DS002", "DS005"] for row in batch_thirty_two)
+    assert {row["parameters"]["vxo_mode"] for row in batch_thirty_two} == {
+        "reversal",
+        "continuation",
+    }
+    assert not {row["canonical_hash"] for row in batch_thirty_one}.intersection(
+        row["canonical_hash"] for row in batch_thirty_two
+    )
+    assert not {row["canonical_hash"] for row in batch_thirty_two}.intersection(
+        row["canonical_hash"] for row in batch_thirty_three
+    )
+    assert all(row["position_values"] == [-1, 1] for row in batch_thirty_two)
+    assert all(row["cash_allowed"] is False for row in batch_thirty_two)
+    assert all(row["leverage_allowed"] is False for row in batch_thirty_two)
+
+
+def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
+    index = pd.date_range("1997-01-02", periods=900, freq="B")
+    close = pd.Series(
+        120.0
+        + np.linspace(0.0, 45.0, len(index))
+        + 8.0 * np.sin(np.arange(len(index)) * 0.17),
+        index=index,
+    )
+    open_price = close.shift(1).fillna(close.iloc[0])
+    volume = pd.Series(
+        1000.0 + 500.0 * (1.0 + np.sin(np.arange(len(index)) * 0.13)),
+        index=index,
+    )
+    vxo = pd.Series(
+        20.0 + 4.0 * np.sin(np.arange(len(index)) * 0.11),
+        index=index,
+    )
+    ledger = pd.DataFrame(
+        {
+            "tr_close": close,
+            "tr_open": open_price,
+            "open": open_price,
+            "high": np.maximum(open_price, close) + 1.0,
+            "low": np.minimum(open_price, close) - 1.0,
+            "volume": volume,
+            "long_return": open_price.shift(-1).div(open_price).sub(1.0),
+            "short_return": -open_price.shift(-1).div(open_price).sub(1.0),
+        },
+        index=index,
+    )
+    candidate = registry.generate_candidates(32, count=96)[0]
+    data = PreparedMarketData(
+        ledger=ledger,
+        series={"VXO": vxo},
+        available_dataset_ids=frozenset({"DS001", "DS002", "DS005"}),
+        rejected_datasets={},
+        receipts=(),
+        split="train",
+    )
+    result = candidate_decisions(candidate, data)
+    assert set(result.decisions.unique()) <= {-1, 1}
+    assert result.missing_fraction == 0.0
+    assert result.first_evaluable_date is not None
+
+    future_vxo = vxo.copy()
+    future_vxo.iloc[-1] *= 4.0
+    future_changed = candidate_decisions(
+        candidate,
+        PreparedMarketData(
+            ledger=ledger,
+            series={"VXO": future_vxo},
+            available_dataset_ids=frozenset({"DS001", "DS002", "DS005"}),
+            rejected_datasets={},
+            receipts=(),
+            split="train",
+        ),
+    )
+    pd.testing.assert_series_equal(
+        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
+    )
+
+
 def test_recovery_overnight_tug_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("2000-01-03", periods=800, freq="B")
     close = pd.Series(

@@ -39,6 +39,7 @@ IMPLEMENTED_FAMILIES = frozenset(
         "recovery_multi_horizon_reversal_vote",
         "recovery_volume_gated_reversal_vote",
         "recovery_calendar_volume_reversal_vote",
+        "recovery_calendar_volume_vxo_vote",
         "financial_conditions_regime",
         "monetary_inflation_regime",
         "overnight_futures_proxy",
@@ -1425,6 +1426,48 @@ def _price_score(
         return score.where(
             base_score.notna() & volume_z.notna() & lag_return.notna()
         )
+    if family == "recovery_calendar_volume_vxo_vote":
+        base_score = _price_score(
+            {
+                "family": "recovery_calendar_volume_reversal_vote",
+                "parameters": parameters,
+            },
+            data,
+            feature_frame=feature_frame,
+        )
+        vxo = _series(data, "VXO").astype(float)
+        vxo_change = np.log(
+            vxo / vxo.shift(int(parameters["vxo_change_lookback"]))
+        )
+        vxo_z = _rolling_zscore(
+            vxo_change,
+            int(parameters["vxo_z_window"]),
+        )
+        active = vxo_z.abs() >= float(parameters["vxo_z_threshold"])
+        direction = np.sign(vxo_change)
+        if str(parameters["vxo_mode"]) == "reversal":
+            direction = -direction
+        vxo_component = direction.where(active, 0.0)
+        score = base_score + float(parameters["vxo_weight"]) * vxo_component
+
+        rolling_peak = close.rolling(
+            int(parameters["drawdown_lookback"]),
+            min_periods=int(parameters["drawdown_lookback"]),
+        ).max()
+        drawdown = close / rolling_peak - 1.0
+        recent_deep_drawdown = drawdown.rolling(
+            int(parameters["recovery_memory_window"]),
+            min_periods=1,
+        ).min() <= -(float(parameters["drawdown_trigger_pct"]) / 100.0)
+        recovery_return = (
+            close / close.shift(int(parameters["recovery_window"])) - 1.0
+        )
+        recovery_override = recent_deep_drawdown & (
+            recovery_return
+            > float(parameters["recovery_threshold_pct"]) / 100.0
+        )
+        score = score.where(~recovery_override, 1.0)
+        return score.where(base_score.notna() & vxo_z.notna())
     if family == "trend_ensemble":
         components = []
         for horizon in parameters["horizons"]:
@@ -1875,6 +1918,7 @@ def candidate_decisions(
             "recovery_multi_horizon_reversal_vote",
             "recovery_volume_gated_reversal_vote",
             "recovery_calendar_volume_reversal_vote",
+            "recovery_calendar_volume_vxo_vote",
             "realized_volatility_state",
         "overnight_futures_proxy",
         "volatility_conditioned_trend",

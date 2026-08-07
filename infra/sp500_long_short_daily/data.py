@@ -1682,6 +1682,7 @@ def reconcile_official_distribution_audit(
 
 FRED_DATASETS: Mapping[str, tuple[str, str]] = {
     "DS004": ("VIXCLS", "VIX"),
+    "DS005": ("VXOCLS", "VXO"),
     "DS016": ("DGS10", "DGS10"),
     "DS017": ("DGS2", "DGS2"),
     "DS018": ("DGS3MO", "DGS3MO"),
@@ -1704,6 +1705,11 @@ FRED_DATASETS: Mapping[str, tuple[str, str]] = {
     "DS050": ("DTWEXBGS", "USD"),
     "DS051": ("DCOILWTICO", "WTI"),
     "DS052": ("GOLDAMGBD228NLBM", "GOLD"),
+}
+
+FRED_FIRST_DISSEMINATION: Mapping[str, pd.Timestamp] = {
+    "DS004": pd.Timestamp("2003-09-22"),
+    "DS005": pd.Timestamp("1993-01-19"),
 }
 
 
@@ -2092,7 +2098,7 @@ def prepare_market_snapshot(
                 session=client,
                 raw_dir=raw_root,
             )
-            first_dissemination = pd.Timestamp("2003-09-22") if dataset_id == "DS004" else None
+            first_dissemination = FRED_FIRST_DISSEMINATION.get(dataset_id)
             aligned = _align_initial_releases(
                 downloaded,
                 ledger.index,
