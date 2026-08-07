@@ -2818,7 +2818,7 @@ def _recovery_calendar_volume_vxo_candidates(
             for calendar_weight in (0.5, 0.75, 1.0, 1.25)
             for volume_weight in (0.0, 0.25)
         ]
-    else:
+    elif batch_id <= 46:
         # Batches 42-44 converged to duplicate decision streams. Stop a
         # falling-VXO continuation vote from forcing a short while a causal
         # price trend remains above a pre-registered boundary. Rising-VXO and
@@ -2856,6 +2856,47 @@ def _recovery_calendar_volume_vxo_candidates(
             for gate_threshold in gate_thresholds
             for negative_weight in (1.5, 2.0, 2.5, 3.0)
             for recovery_threshold in (1.2, 1.25)
+        ]
+    else:
+        # The negative-VXO gate passed global SPA but did not restore DSR or
+        # WRC. Require every final short state to agree with a causal price
+        # trend; otherwise remain fully invested long rather than enter cash.
+        generation = batch_id - 47
+        short_thresholds = tuple(
+            round(value + generation * 0.5, 4)
+            for value in (-5.0, 0.0, 5.0)
+        )
+        parameters_list = [
+            {
+                **core,
+                "first_sessions": 2,
+                "last_sessions": 1,
+                "calendar_weight": 0.5,
+                "rsi_weight": 1.5,
+                "reversal_weight": 1.0,
+                "recovery_memory_window": 63,
+                "recovery_threshold_pct": recovery_threshold,
+                "volume_z_threshold": 1.5,
+                "volume_reversal_weight": 0.25,
+                "vxo_change_lookback": 1,
+                "vxo_z_window": 10,
+                "vxo_z_threshold": 1.4,
+                "vxo_weight": 3.0,
+                "vxo_positive_weight": 2.5,
+                "vxo_negative_weight": 2.5,
+                "vxo_negative_gate_window": 20,
+                "vxo_negative_gate_threshold_pct": vxo_gate_threshold,
+                "vxo_mode": "continuation",
+                "tug_lookback": 2,
+                "tug_weight": tug_weight,
+                "short_gate_window": short_gate_window,
+                "short_gate_threshold_pct": short_threshold,
+            }
+            for short_gate_window in (20, 40, 63, 126)
+            for short_threshold in short_thresholds
+            for recovery_threshold in (1.1, 1.2)
+            for vxo_gate_threshold in (0.0, 2.0)
+            for tug_weight in (0.5, 1.0)
         ]
     candidates: list[dict[str, Any]] = []
     source_ids = {

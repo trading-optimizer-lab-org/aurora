@@ -1515,12 +1515,27 @@ def _price_score(
             > float(parameters["recovery_threshold_pct"]) / 100.0
         )
         score = score.where(~recovery_override, 1.0)
+
+        short_gate_valid = pd.Series(True, index=ledger.index)
+        if "short_gate_window" in parameters:
+            short_gate_return = (
+                close / close.shift(int(parameters["short_gate_window"])) - 1.0
+            )
+            short_gate_threshold = (
+                float(parameters["short_gate_threshold_pct"]) / 100.0
+            )
+            score = score.where(
+                (score >= 0.0) | (short_gate_return <= short_gate_threshold),
+                1.0,
+            )
+            short_gate_valid = short_gate_return.notna()
         return score.where(
             base_score.notna()
             & vxo_z.notna()
             & vxo_gate_valid
             & slow_trend_valid
             & tug_valid
+            & short_gate_valid
         )
     if family == "trend_ensemble":
         components = []

@@ -1675,6 +1675,48 @@ def test_batch_forty_five_gates_negative_vxo_vote_with_causal_trend() -> None:
     assert all(row["leverage_allowed"] is False for row in batch_forty_five)
 
 
+def test_batch_forty_seven_requires_causal_trend_for_every_short() -> None:
+    batch_forty_six = registry.generate_candidates(46, count=96)
+    batch_forty_seven = registry.generate_candidates(47, count=96)
+    batch_forty_eight = registry.generate_candidates(48, count=96)
+
+    assert len(batch_forty_seven) == 96
+    assert len({row["canonical_hash"] for row in batch_forty_seven}) == 96
+    assert not {row["canonical_hash"] for row in batch_forty_six}.intersection(
+        row["canonical_hash"] for row in batch_forty_seven
+    )
+    assert not {row["canonical_hash"] for row in batch_forty_seven}.intersection(
+        row["canonical_hash"] for row in batch_forty_eight
+    )
+    assert {row["parameters"]["short_gate_window"] for row in batch_forty_seven} == {
+        20,
+        40,
+        63,
+        126,
+    }
+    assert {row["parameters"]["short_gate_threshold_pct"] for row in batch_forty_seven} == {
+        -5.0,
+        0.0,
+        5.0,
+    }
+    assert {row["parameters"]["recovery_threshold_pct"] for row in batch_forty_seven} == {
+        1.1,
+        1.2,
+    }
+    assert {row["parameters"]["vxo_negative_gate_threshold_pct"] for row in batch_forty_seven} == {
+        0.0,
+        2.0,
+    }
+    assert {row["parameters"]["tug_weight"] for row in batch_forty_seven} == {
+        0.5,
+        1.0,
+    }
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in batch_forty_seven)
+    assert all(row["position_values"] == [-1, 1] for row in batch_forty_seven)
+    assert all(row["cash_allowed"] is False for row in batch_forty_seven)
+    assert all(row["leverage_allowed"] is False for row in batch_forty_seven)
+
+
 def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("1997-01-02", periods=900, freq="B")
     close = pd.Series(
@@ -1804,6 +1846,27 @@ def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> Non
     )
     pd.testing.assert_series_equal(
         gated_result.decisions.iloc[:-1], future_gated_result.decisions.iloc[:-1]
+    )
+
+    short_gated_candidate = registry.generate_candidates(47, count=96)[0]
+    short_gated_result = candidate_decisions(short_gated_candidate, data)
+    assert set(short_gated_result.decisions.unique()) <= {-1, 1}
+    assert short_gated_result.missing_fraction == 0.0
+    assert short_gated_result.first_evaluable_date is not None
+    future_short_gated_result = candidate_decisions(
+        short_gated_candidate,
+        PreparedMarketData(
+            ledger=future_ledger,
+            series={"VXO": vxo},
+            available_dataset_ids=frozenset({"DS001", "DS002", "DS005"}),
+            rejected_datasets={},
+            receipts=(),
+            split="train",
+        ),
+    )
+    pd.testing.assert_series_equal(
+        short_gated_result.decisions.iloc[:-1],
+        future_short_gated_result.decisions.iloc[:-1],
     )
 
 
