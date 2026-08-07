@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: Existing audited OpenAP workflow run id
+        description: Existing run containing the minimal audited feature snapshot
         required: true
-        default: "30837929185"
+        default: "31184509725"
       source_artifact_id:
         description: Existing audited OpenAP result artifact id
         required: true
@@ -65,14 +65,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p inputs/source inputs/snapshot
+          mkdir -p inputs/snapshot
           gh run download "${{ inputs.source_run_id }}" \
             --repo "$GITHUB_REPOSITORY" \
-            --name openap-yfinance-sec-current-score-results \
-            --dir inputs/source
-          cp inputs/source/openap_features_current.parquet inputs/snapshot/openap_features_current.parquet
+            --name "openap-feature-snapshot-${{ inputs.source_artifact_id }}" \
+            --dir inputs/snapshot
           test -s inputs/snapshot/openap_features_current.parquet
-          rm -rf inputs/source
       - name: Publish minimal audited feature snapshot
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
