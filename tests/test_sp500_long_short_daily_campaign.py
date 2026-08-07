@@ -43,6 +43,7 @@ from aurora.infra.sp500_long_short_daily.data import (
     _solve_stooq_browser_verification,
     download_stooq_history,
     download_alfred_initial_series,
+    load_cboe_vxo_history,
     load_sec_distribution_totals,
     load_state_street_distributions,
     reconcile_official_distribution_audit,
@@ -1657,6 +1658,60 @@ def test_vxo_first_dissemination_blocks_pre_launch_backfill() -> None:
     )
     assert pd.isna(aligned.loc[pd.Timestamp("1993-01-18")])
     assert aligned.loc[pd.Timestamp("1993-01-19")] == 20.0
+
+
+def test_cboe_vxo_train_capture_is_phase_bounded_and_causal() -> None:
+    path = (
+        _repo_campaign_root()
+        / "official_inputs"
+        / "cboe_vxo_daily_1993_2010.csv"
+    )
+    series, receipt = load_cboe_vxo_history(
+        path,
+        "1993-01-22",
+        "2010-12-31",
+        split="train",
+    )
+    assert series.index.min() == pd.Timestamp("1993-01-29")
+    assert series.index.max() == pd.Timestamp("2010-12-31")
+    assert len(series) == 4515
+    assert receipt.dataset_id == "DS005"
+    assert receipt.status == "loaded_phase_bounded_official_cboe_history"
+
+
+def test_cboe_vxo_validation_capture_contains_no_locked_rows() -> None:
+    path = (
+        _repo_campaign_root()
+        / "official_inputs"
+        / "cboe_vxo_daily_2011_2020.csv"
+    )
+    series, _ = load_cboe_vxo_history(
+        path,
+        "2011-01-01",
+        "2020-12-31",
+        split="validation",
+    )
+    assert series.index.min() == pd.Timestamp("2011-01-03")
+    assert series.index.max() == pd.Timestamp("2020-12-31")
+    assert len(series) == 2514
+    assert (series.index < pd.Timestamp("2021-01-01")).all()
+
+
+def test_cboe_vxo_loader_rejects_rows_beyond_requested_phase(tmp_path: Path) -> None:
+    path = tmp_path / "vxo.csv"
+    path.write_text(
+        "DATE,OPEN,HIGH,LOW,CLOSE\n"
+        "12/31/2010,20,20,20,20\n"
+        "01/03/2011,21,21,21,21\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(DataGateError, match="UNBOUNDED_SOURCE_RESPONSE"):
+        load_cboe_vxo_history(
+            path,
+            "1993-01-22",
+            "2010-12-31",
+            split="train",
+        )
 
 
 def test_cboe_series_after_train_is_rejected_instead_of_backfilled() -> None:
