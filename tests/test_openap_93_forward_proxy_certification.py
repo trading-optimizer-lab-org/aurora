@@ -200,6 +200,9 @@ def test_current_signal_is_usable_only_with_matching_certificate_identity() -> N
             "signal": ["DivSeason", "AnnouncementReturn", "MomVol"],
             "variant_id": ["formula-v1", "formula-v1", "ordinary-formula"],
             "formula_id": ["formula-v1", "formula-v1", "ordinary-formula"],
+            "value": [1.0, 1.0, 1.0],
+            "formation_at": ["2026-08-07", "2026-08-07", "2026-08-07"],
+            "available_at": ["2026-07-31", "2026-07-31", "2026-07-31"],
             "current_usable": [True, True, True],
         }
     )
@@ -231,6 +234,9 @@ def test_mismatched_formula_or_source_certificate_fails_closed() -> None:
             "signal": ["DivSeason"],
             "variant_id": ["formula-v1"],
             "formula_id": ["formula-v1"],
+            "value": [1.0],
+            "formation_at": ["2026-08-07"],
+            "available_at": ["2026-07-31"],
             "current_usable": [True],
         }
     )

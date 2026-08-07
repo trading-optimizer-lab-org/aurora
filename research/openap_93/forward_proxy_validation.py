@@ -375,6 +375,9 @@ def apply_certificates(
         "source_manifest_sha256",
         "current_usable",
         "base_score_weight",
+        "value",
+        "formation_at",
+        "available_at",
     }
     if missing := required.difference(current_rows.columns):
         raise ValueError(f"current columns missing: {sorted(missing)}")
@@ -404,7 +407,17 @@ def apply_certificates(
     advisory_variants: list[str] = []
     advisory_reasons: list[str] = []
     original_usable = result["current_usable"].fillna(False).astype(bool).to_numpy()
-    for row in result.itertuples(index=False):
+    values = pd.to_numeric(result["value"], errors="coerce")
+    formation = pd.to_datetime(result["formation_at"], errors="coerce", utc=True)
+    available = pd.to_datetime(result["available_at"], errors="coerce", utc=True)
+    advisory_candidate = (
+        values.notna()
+        & np.isfinite(values.to_numpy(dtype=float))
+        & formation.notna()
+        & available.notna()
+        & available.le(formation)
+    ).to_numpy(dtype=bool)
+    for row_index, row in enumerate(result.itertuples(index=False)):
         key = (
             str(row.signal),
             str(row.variant_id),
@@ -452,7 +465,7 @@ def apply_certificates(
             statuses.append("failed_validation_gate")
             hashes.append(certificate_sha256(certificate))
             passed_flags.append(False)
-            advisory_usable.append(bool(original_usable[len(advisory_usable)]))
+            advisory_usable.append(bool(advisory_candidate[row_index]))
             advisory_statuses.append("advisory_unvalidated")
             advisory_weights.append(_advisory_weight(certificate))
             advisory_pearson.append(_metric_or_nan(certificate.pearson))
@@ -465,7 +478,7 @@ def apply_certificates(
             statuses.append("certified")
             hashes.append(certificate_sha256(certificate))
             passed_flags.append(True)
-            advisory_usable.append(bool(original_usable[len(advisory_usable)]))
+            advisory_usable.append(bool(advisory_candidate[row_index]))
             advisory_statuses.append("certified")
             advisory_weights.append(1.0)
             advisory_pearson.append(_metric_or_nan(certificate.pearson))

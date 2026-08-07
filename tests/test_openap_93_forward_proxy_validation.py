@@ -175,6 +175,8 @@ def test_failed_certificate_contributes_zero_score_weight() -> None:
             "value": [1.0],
             "current_usable": [True],
             "base_score_weight": [0.8],
+            "formation_at": ["2026-08-07"],
+            "available_at": ["2026-07-31"],
         }
     )
 
@@ -183,6 +185,47 @@ def test_failed_certificate_contributes_zero_score_weight() -> None:
     assert result["current_usable"].eq(False).all()
     assert result["effective_score_weight"].eq(0.0).all()
     assert result["certificate_status"].eq("failed_validation_gate").all()
+
+
+def test_failed_certificate_keeps_causal_current_value_in_advisory_mode() -> None:
+    candidates, official = _monthly_inputs()
+    selected = select_train_variant(
+        candidates,
+        official,
+        signal="DivSeason",
+        train_end="2010-12-31",
+    )
+    certificate = validate_frozen_variant(
+        selected,
+        candidates,
+        official,
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+        formula_sha256="f" * 64,
+        source_manifest_sha256="s" * 64,
+        gate=ForwardProxyGate(minimum_pearson=1.01),
+    )
+    current = pd.DataFrame(
+        {
+            "ticker": ["AAA"],
+            "signal": ["DivSeason"],
+            "variant_id": ["faithful"],
+            "formula_sha256": ["f" * 64],
+            "source_manifest_sha256": ["s" * 64],
+            "value": [1.0],
+            "current_usable": [False],
+            "base_score_weight": [1.0],
+            "formation_at": ["2026-08-07"],
+            "available_at": ["2026-07-31"],
+        }
+    )
+
+    result = apply_certificates(current, [certificate]).iloc[0]
+
+    assert not bool(result["current_usable"])
+    assert bool(result["forward_advisory_usable"])
+    assert result["forward_advisory_status"] == "advisory_unvalidated"
+    assert result["forward_advisory_score_weight"] > 0.0
 
 
 def test_certificate_hash_changes_when_formula_or_source_changes() -> None:
