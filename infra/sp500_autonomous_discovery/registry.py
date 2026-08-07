@@ -2530,13 +2530,11 @@ def _recovery_calendar_volume_vxo_candidates(
             for vxo_weight in (0.5, 1.5, 3.0)
             for vxo_mode in ("reversal", "continuation")
         ]
-    else:
+    elif batch_id == 33:
         # Batch 32 established two train-only neighborhoods: an immediate VXO
         # continuation vote and a weaker five-session reversal vote. Explore
-        # their duration and activation boundary without repeating any observed
-        # rule. Later batches receive a deterministic threshold offset so their
-        # canonical trials also remain distinct.
-        generation = batch_id - 33
+        # their duration and activation boundary without repeating an observed
+        # rule.
         branches = (
             ("continuation", 1, (2.0, 3.0, 4.0)),
             ("reversal", 5, (0.25, 0.75, 1.25)),
@@ -2549,10 +2547,7 @@ def _recovery_calendar_volume_vxo_candidates(
                 "calendar_weight": 1.5,
                 "vxo_change_lookback": vxo_lookback,
                 "vxo_z_window": vxo_window,
-                "vxo_z_threshold": round(
-                    vxo_threshold + generation * 0.025,
-                    4,
-                ),
+                "vxo_z_threshold": vxo_threshold,
                 "vxo_weight": vxo_weight,
                 "vxo_mode": vxo_mode,
             }
@@ -2560,6 +2555,31 @@ def _recovery_calendar_volume_vxo_candidates(
             for vxo_window in (10, 15, 30, 40)
             for vxo_threshold in (1.2, 1.4, 1.6, 1.8)
             for vxo_weight in vxo_weights
+        ]
+    else:
+        # Batch 33 improved the train-only Sharpe from 1.40 to 1.53. Its four
+        # leaders were immediate VXO continuation rules around 10 or 40 days.
+        # Refine only those two neighborhoods with new activation boundaries;
+        # the small generation offset keeps later canonical trials distinct.
+        generation = batch_id - 34
+        parameters_list = [
+            {
+                **core,
+                "first_sessions": 2,
+                "last_sessions": 1,
+                "calendar_weight": 1.5,
+                "vxo_change_lookback": 1,
+                "vxo_z_window": vxo_window,
+                "vxo_z_threshold": round(
+                    vxo_threshold + generation * 0.0125,
+                    4,
+                ),
+                "vxo_weight": vxo_weight,
+                "vxo_mode": "continuation",
+            }
+            for vxo_window in (7, 10, 12, 35, 40, 45)
+            for vxo_threshold in (1.3, 1.45, 1.55, 1.7)
+            for vxo_weight in (2.5, 3.0, 3.5, 4.0)
         ]
     candidates: list[dict[str, Any]] = []
     source_ids = {

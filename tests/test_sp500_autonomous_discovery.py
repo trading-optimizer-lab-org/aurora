@@ -1250,6 +1250,42 @@ def test_batch_thirty_three_focuses_distinct_train_only_vxo_neighborhoods() -> N
     assert all(row["leverage_allowed"] is False for row in batch_thirty_three)
 
 
+def test_batch_thirty_four_refines_only_leading_vxo_continuation_regions() -> None:
+    batch_thirty_three = registry.generate_candidates(33, count=96)
+    batch_thirty_four = registry.generate_candidates(34, count=96)
+    batch_thirty_five = registry.generate_candidates(35, count=96)
+
+    assert len(batch_thirty_four) == 96
+    assert len({row["canonical_hash"] for row in batch_thirty_four}) == 96
+    assert not {row["canonical_hash"] for row in batch_thirty_three}.intersection(
+        row["canonical_hash"] for row in batch_thirty_four
+    )
+    assert not {row["canonical_hash"] for row in batch_thirty_four}.intersection(
+        row["canonical_hash"] for row in batch_thirty_five
+    )
+    assert {row["parameters"]["vxo_z_window"] for row in batch_thirty_four} == {
+        7,
+        10,
+        12,
+        35,
+        40,
+        45,
+    }
+    assert {row["parameters"]["vxo_z_threshold"] for row in batch_thirty_four} == {
+        1.3,
+        1.45,
+        1.55,
+        1.7,
+    }
+    assert {row["parameters"]["vxo_weight"] for row in batch_thirty_four} == {2.5, 3.0, 3.5, 4.0}
+    assert all(row["parameters"]["vxo_change_lookback"] == 1 for row in batch_thirty_four)
+    assert all(row["parameters"]["vxo_mode"] == "continuation" for row in batch_thirty_four)
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in batch_thirty_four)
+    assert all(row["position_values"] == [-1, 1] for row in batch_thirty_four)
+    assert all(row["cash_allowed"] is False for row in batch_thirty_four)
+    assert all(row["leverage_allowed"] is False for row in batch_thirty_four)
+
+
 def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("1997-01-02", periods=900, freq="B")
     close = pd.Series(
