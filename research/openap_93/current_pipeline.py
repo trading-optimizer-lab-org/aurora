@@ -1441,11 +1441,22 @@ def run_current_pipeline(
         openap_reference_sample=public["openap_reference_sample"],
     )
     coverage = build_coverage_report(signals, registry, validation)
-    score_table = build_score_table(
+    score_table_strict = build_score_table(
         base["features"],
         base["metadata"],
         signals,
-        forward_proxy_mode=forward_proxy_mode,
+        forward_proxy_mode="strict",
+    )
+    score_table_advisory = build_score_table(
+        base["features"],
+        base["metadata"],
+        signals,
+        forward_proxy_mode="advisory",
+    )
+    score_table = (
+        score_table_advisory
+        if forward_proxy_mode == "advisory"
+        else score_table_strict
     )
     institutional_audit, institutional_payload = _institutional_input_audit(public)
 
@@ -1453,6 +1464,18 @@ def run_current_pipeline(
     signals.to_csv(output / "signals_93_current.csv", index=False)
     score_table.to_parquet(output / "score_185_current.parquet", index=False, compression="zstd")
     score_table.to_csv(output / "score_185_current.csv", index=False)
+    score_table_strict.to_parquet(
+        output / "score_185_strict_current.parquet",
+        index=False,
+        compression="zstd",
+    )
+    score_table_strict.to_csv(output / "score_185_strict_current.csv", index=False)
+    score_table_advisory.to_parquet(
+        output / "score_185_advisory_current.parquet",
+        index=False,
+        compression="zstd",
+    )
+    score_table_advisory.to_csv(output / "score_185_advisory_current.csv", index=False)
     coverage.to_csv(output / "coverage_93.csv", index=False)
     validation.to_csv(output / "validation_per_signal.csv", index=False)
     institutional_audit.to_csv(output / "institutional_input_audit.csv", index=False)

@@ -228,6 +228,8 @@ Artifact `openap-five-forward-proxies-results` contains:
 - `forward_proxy_score_ready.csv`
 - `forward_proxy_advisory_current.csv`
 - `forward_proxy_advisory_current.parquet`
+- `forward_proxy_score_strict_current.csv`
+- `forward_proxy_score_advisory_current.csv`
 - `forward_proxy_missing_inputs.csv`
 - `forward_proxy_source_audit.csv`
 - `forward_proxy_summary.json`

@@ -93,3 +93,4 @@ def test_forward_proxy_workflow_keeps_advisory_current_values_when_no_signal_is_
     assert "forward_proxy_mode:" in text
     assert "forward_advisory_usable" in text
     assert "forward_proxy_advisory_current.csv" in text
+    assert "forward_proxy_score_advisory_current.csv" in text

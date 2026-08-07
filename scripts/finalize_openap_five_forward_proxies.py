@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import shutil
 
 import pandas as pd
 import yaml
@@ -66,6 +67,17 @@ def finalize(
         "".join(json.dumps(row, sort_keys=True, allow_nan=False) + "\n" for row in certificates),
         encoding="utf-8",
     )
+    for name in (
+        "score_185_current.csv",
+        "score_185_current.parquet",
+        "score_185_strict_current.csv",
+        "score_185_strict_current.parquet",
+        "score_185_advisory_current.csv",
+        "score_185_advisory_current.parquet",
+    ):
+        source = _first(current_root, name)
+        if source is not None:
+            shutil.copy2(source, output / name.replace("score_185_", "forward_proxy_score_"))
 
     if current.empty:
         current = pd.DataFrame(
