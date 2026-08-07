@@ -26,6 +26,7 @@ import pandas as pd
 
 from aurora.core.execution_policy import require_github_execution
 from .earnings_events import build_earnings_events, normalize_sec_item_202_events
+from .event_pipeline import DIVSEASON_VARIANT_ID, dividend_season_value
 from .market_pipeline import calculate_indretbig_cross_section
 
 
@@ -346,26 +347,18 @@ def _build_divseason(monthly: pd.DataFrame) -> pd.DataFrame:
     for symbol, group in monthly.groupby("symbol", sort=False):
         history = group.set_index("completed_month")["month_dividends"].sort_index()
         for completed_month in history.index:
-            trailing = history.loc[
-                (history.index >= completed_month - pd.DateOffset(months=11))
-                & (history.index <= completed_month)
-            ]
-            if trailing.sum() <= 0:
+            completed_history = history.loc[history.index <= completed_month]
+            paid_months = completed_history.loc[completed_history.gt(0)].index
+            value = dividend_season_value(paid_months, completed_month)
+            if value is None:
                 value = np.nan
-            else:
-                paid_months = trailing.loc[trailing.gt(0)].index
-                offsets = [
-                    (completed_month.year - p.year) * 12 + completed_month.month - p.month
-                    for p in paid_months
-                ]
-                value = float(any(offset in {2, 5, 8, 11} for offset in offsets))
             rows.append({
                 "symbol": symbol,
                 "completed_month": completed_month,
                 "formation_month": completed_month + pd.offsets.MonthBegin(1),
                 "signal": "DivSeason",
                 "proxy_value": value,
-                "proxy_formula_id": "openap_dividend_seasonality_frequency_inferred",
+                "proxy_formula_id": DIVSEASON_VARIANT_ID,
                 "reconstruction_status": "reconstructed" if pd.notna(value) else "insufficient_history",
                 "caveat": "Yahoo cash distributions replace CRSP cd3 distribution codes",
             })

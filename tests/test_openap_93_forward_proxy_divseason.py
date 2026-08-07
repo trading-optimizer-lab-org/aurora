@@ -8,6 +8,7 @@ from aurora.research.openap_93.event_pipeline import (
     dividend_season_value,
     infer_dividend_frequency,
 )
+from aurora.research.openap_93.historical_proxy_validation import _build_divseason
 
 
 @pytest.mark.parametrize(
@@ -72,3 +73,37 @@ def test_event_pipeline_labels_divseason_variant_and_excludes_monthly_payer() ->
     assert divseason["value"] is None or pd.isna(divseason["value"])
     assert divseason["reason_if_missing"] == "not_applicable:monthly_dividend_payer"
     assert divseason["variant_id"] == "openap_dividend_seasonality_frequency_inferred"
+
+
+@pytest.mark.parametrize(
+    ("paid_months", "completed_month", "expected"),
+    [
+        (["2023-01", "2024-01", "2025-01"], "2025-03", 0.0),
+        (["2023-01", "2024-01", "2025-01"], "2025-12", 1.0),
+        (["2024-01", "2024-07", "2025-01", "2025-07"], "2025-06", 1.0),
+        (["2025-01", "2025-02", "2025-03", "2025-04"], "2025-06", None),
+    ],
+)
+def test_historical_divseason_uses_same_frequency_specific_rule_as_current(
+    paid_months: list[str], completed_month: str, expected: float | None
+) -> None:
+    months = pd.period_range("2023-01", completed_month, freq="M").to_timestamp()
+    paid = {pd.Period(month, freq="M").to_timestamp() for month in paid_months}
+    monthly = pd.DataFrame(
+        {
+            "symbol": "TEST",
+            "completed_month": months,
+            "month_dividends": [1.0 if month in paid else 0.0 for month in months],
+        }
+    )
+
+    result = _build_divseason(monthly)
+    row = result.loc[
+        result["completed_month"].eq(pd.Period(completed_month, freq="M").to_timestamp())
+    ].iloc[0]
+
+    if expected is None:
+        assert pd.isna(row["proxy_value"])
+    else:
+        assert row["proxy_value"] == expected
+    assert row["proxy_formula_id"] == "openap_dividend_seasonality_frequency_inferred"
