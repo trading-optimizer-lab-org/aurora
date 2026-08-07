@@ -38,12 +38,13 @@ sec:
   user_agent_env: AU_SEC_EDGAR_USER_AGENT
   preserve_raw_archives: true
 score:
-  horizons_months: [1, 3, 6, 12, 36]
-  exact_source_multiplier: 1.0
-  proxy_source_multiplier: 0.55
-  maximum_metric_weight_multiple: 2.0
-  maximum_family_weight: 0.15
-  minimum_metrics_per_score: 5
+  horizons_months: [1, 12]
+  eligible_signal_registry: config/openap_current_score_92_signals.txt
+  expected_eligible_signals: 92
+  coverage_universe_minimum_metrics: [80, 70, 60]
+  evidence_source: reproduction_tstat
+  redundancy_source: full_official_return_correlation_matrix
+  correlation_cutoff_for_score: null
 execution:
   execution_location: github_actions
   local_runs_allowed: false

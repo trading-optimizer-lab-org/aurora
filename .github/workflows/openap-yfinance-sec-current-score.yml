@@ -82,11 +82,16 @@ jobs:
           test -s outputs/prepare/selected_185_predictors.parquet
           test -s outputs/prepare/security_master_seed.parquet
           test -s outputs/prepare/redundancy_groups.csv
+          test -s outputs/prepare/aligned_predictor_correlation.parquet
+          test -s outputs/prepare/score_horizon_weights.csv
+          test -s outputs/prepare/score_signal_registry_92.csv
           python - <<'PY'
           import json
           from pathlib import Path
           summary = json.loads(Path("outputs/prepare/prepare_summary.json").read_text())
           assert summary["selected_predictors"] == 185
+          assert summary["score_signals"] == 92
+          assert summary["score_horizons"] == [1, 12]
           assert summary["unique_symbols"] > 1000
           assert summary["locked_opened"] is False
           assert summary["backtest_enabled"] is False
@@ -270,6 +275,12 @@ jobs:
           test -s outputs/final/openap_current.duckdb
           test -s outputs/final/openap_features_current.parquet
           test -s outputs/final/openap_scores_current.parquet
+          test -s outputs/final/openap_six_scores_current.csv
+          test -s outputs/final/openap_six_scores_current_wide.csv
+          test -s outputs/final/openap_six_scores_universe_audit.csv
+          test -s outputs/final/openap_score_horizon_weights.csv
+          test -s outputs/final/openap_score_signal_registry_92.csv
+          test -s outputs/final/openap_aligned_predictor_correlation.parquet
           test -s outputs/final/coverage_185.csv
           test -s outputs/final/execution_summary.json
           python - <<'PY'
@@ -278,6 +289,12 @@ jobs:
           summary = json.loads(Path("outputs/final/execution_summary.json").read_text())
           assert summary["input_predictors"] == 185
           assert summary["coverage_rows"] == 185
+          assert summary["score_variants"] == 6
+          assert set(summary["score_ids"]) == {
+              "openap_1m_c80", "openap_12m_c80",
+              "openap_1m_c70", "openap_12m_c70",
+              "openap_1m_c60", "openap_12m_c60",
+          }
           assert summary["eligible_symbols"] > 1000
           assert summary["price_rows"] > 1_000_000
           assert summary["sec_companyfacts_rows"] > 100_000

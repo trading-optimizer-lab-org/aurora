@@ -230,6 +230,12 @@ def test_coverage_has_one_row_for_every_strict_predictor() -> None:
 
 def test_workflow_contract_is_github_only_and_complete() -> None:
     text = Path(".github/workflows/openap-yfinance-sec-current-score.yml").read_text(encoding="utf-8")
+    config = Path("config/openap_yfinance_sec_current.yaml").read_text(encoding="utf-8")
+    registry = [
+        line.strip()
+        for line in Path("config/openap_current_score_92_signals.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     assert "OpenAP Current Score YFinance SEC EDGAR" in text
     assert "YFINANCE_CHUNKS: \"48\"" in text
     assert "max-parallel: 16" in text
@@ -238,3 +244,9 @@ def test_workflow_contract_is_github_only_and_complete() -> None:
     assert "openap-yfinance-sec-current-score-results" in text
     assert "locked_opened" in text
     assert "backtest_enabled" in text
+    assert "openap_six_scores_current.csv" in text
+    assert "openap_six_scores_current_wide.csv" in text
+    assert "horizons_months: [1, 12]" in config
+    assert "coverage_universe_minimum_metrics: [80, 70, 60]" in config
+    assert len(registry) == 92
+    assert len(set(registry)) == 92

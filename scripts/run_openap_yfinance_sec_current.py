@@ -25,10 +25,12 @@ from aurora.research.openap_current_score import (
     FeatureValue,
     OpenAPDataError,
     assemble_feature_table,
+    build_aligned_correlation_matrix,
+    build_horizon_evidence_weights,
     build_redundancy_groups,
     calculate_accounting_features,
     calculate_price_features,
-    calculate_scores,
+    calculate_six_coverage_scores,
     coverage_report,
     latest_sec_concepts,
     select_strict_predictors,
@@ -56,7 +58,24 @@ def _read_config(path: str | Path) -> dict[str, Any]:
         raise OpenAPDataError("OpenAP current pipeline cannot allow local runs")
     if int(config.get("openap", {}).get("expected_predictors", 0)) != EXPECTED_PREDICTORS:
         raise OpenAPDataError("Config must require exactly 185 strict predictors")
+    score = config.get("score", {})
+    if score.get("horizons_months") != [1, 12]:
+        raise OpenAPDataError("Current OpenAP score must expose only 1M and 12M horizons")
+    if score.get("coverage_universe_minimum_metrics") != [80, 70, 60]:
+        raise OpenAPDataError("Current OpenAP score must expose C80, C70 and C60 universes")
+    if int(score.get("expected_eligible_signals", 0)) != 92:
+        raise OpenAPDataError("Current OpenAP score must freeze exactly 92 eligible signals")
     return config
+
+
+def _read_score_signal_registry(config: Mapping[str, Any]) -> list[str]:
+    path = Path(str(config["score"]["eligible_signal_registry"]))
+    names = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if len(names) != int(config["score"]["expected_eligible_signals"]):
+        raise OpenAPDataError(f"Expected 92 score signals, found {len(names)} in {path}")
+    if len(set(names)) != len(names):
+        raise OpenAPDataError(f"Duplicate score signals found in {path}")
+    return names
 
 
 def _download(url: str, destination: Path, *, headers: Mapping[str, str] | None = None, retries: int = 4) -> None:
@@ -165,6 +184,12 @@ def prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
     selected.to_parquet(output / "selected_185_predictors.parquet", index=False)
 
     returns = _read_predictor_returns(Path(args.predictor_returns), selected["signalname"].astype(str).tolist())
+    correlation = build_aligned_correlation_matrix(
+        selected,
+        returns,
+        minimum_overlap=int(config["openap"]["minimum_overlap_months"]),
+    )
+    correlation.to_parquet(output / "aligned_predictor_correlation.parquet", compression="zstd")
     groups = build_redundancy_groups(
         selected,
         returns,
@@ -172,6 +197,18 @@ def prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
         minimum_overlap=int(config["openap"]["minimum_overlap_months"]),
     )
     groups.to_csv(output / "redundancy_groups.csv", index=False)
+    score_signals = _read_score_signal_registry(config)
+    unknown_score_signals = sorted(set(score_signals).difference(selected["signalname"].astype(str)))
+    if unknown_score_signals:
+        raise OpenAPDataError(f"Score registry contains unknown signals: {unknown_score_signals}")
+    score_metadata = selected.loc[selected["signalname"].astype(str).isin(score_signals)].copy()
+    score_weights = build_horizon_evidence_weights(
+        score_metadata,
+        correlation,
+        horizons=tuple(int(item) for item in config["score"]["horizons_months"]),
+    )
+    score_weights.to_csv(output / "score_horizon_weights.csv", index=False)
+    pd.DataFrame({"signalname": score_signals}).to_csv(output / "score_signal_registry_92.csv", index=False)
 
     sec_payload_path = output / "company_tickers_exchange.json"
     _download(config["sec"]["ticker_exchange_url"], sec_payload_path, headers={"User-Agent": args.sec_user_agent})
@@ -196,6 +233,8 @@ def prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
             "unique_symbols": int(universe["symbol"].nunique()),
             "unique_ciks": int(universe["cik"].nunique()),
             "redundancy_groups": int(groups["redundancy_group"].nunique()),
+            "score_signals": len(score_signals),
+            "score_horizons": config["score"]["horizons_months"],
             "openap_commit": config["openap"]["commit"],
             "locked_opened": False,
             "backtest_enabled": False,
@@ -713,6 +752,8 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     sec_dir = Path(args.sec_dir)
     metadata = pd.read_parquet(prepare_dir / "selected_185_predictors.parquet")
     groups = pd.read_csv(prepare_dir / "redundancy_groups.csv")
+    score_weights = pd.read_csv(prepare_dir / "score_horizon_weights.csv")
+    score_signals = pd.read_csv(prepare_dir / "score_signal_registry_92.csv")["signalname"].astype(str).tolist()
     seed = pd.read_parquet(prepare_dir / "security_master_seed.parquet")
 
     price_paths = sorted(input_root.rglob("prices_*.parquet"))
@@ -801,11 +842,51 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         as_of=as_of.date().isoformat(),
         redundancy_groups=groups,
     )
-    scores = calculate_scores(feature_frame, minimum_metrics=int(config["score"]["minimum_metrics_per_score"]))
+    scores = calculate_six_coverage_scores(
+        feature_frame,
+        score_weights,
+        eligible_signals=score_signals,
+        coverage_thresholds=tuple(int(item) for item in config["score"]["coverage_universe_minimum_metrics"]),
+        horizons=tuple(int(item) for item in config["score"]["horizons_months"]),
+    )
+    expected_score_ids = {
+        f"openap_{horizon}m_c{threshold}"
+        for horizon in config["score"]["horizons_months"]
+        for threshold in config["score"]["coverage_universe_minimum_metrics"]
+    }
+    actual_score_ids = set(scores["score_id"].astype(str))
+    if actual_score_ids != expected_score_ids:
+        raise OpenAPDataError(
+            f"Expected six score variants {sorted(expected_score_ids)}, found {sorted(actual_score_ids)}"
+        )
     coverage = coverage_report(feature_frame, metadata)
     quality = pd.DataFrame(quality_rows)
     feature_frame.to_parquet(output / "openap_features_current.parquet", index=False, compression="zstd")
     scores.to_parquet(output / "openap_scores_current.parquet", index=False, compression="zstd")
+    scores.to_csv(output / "openap_six_scores_current.csv", index=False)
+    score_wide = scores.pivot_table(
+        index=["as_of", "symbol", "total_metrics_available"],
+        columns="score_id",
+        values="score",
+        aggfunc="first",
+    ).reset_index()
+    score_wide.columns.name = None
+    score_wide.to_csv(output / "openap_six_scores_current_wide.csv", index=False)
+    score_universe_audit = scores.groupby("score_id", as_index=False).agg(
+        horizon_months=("horizon_months", "first"),
+        minimum_total_metrics=("minimum_total_metrics", "first"),
+        universe_size=("universe_size", "first"),
+        scored_symbols=("symbol", "nunique"),
+        minimum_weight_coverage_pct=("weight_coverage_pct", "min"),
+        median_weight_coverage_pct=("weight_coverage_pct", "median"),
+    )
+    score_universe_audit.to_csv(output / "openap_six_scores_universe_audit.csv", index=False)
+    score_weights.to_csv(output / "openap_score_horizon_weights.csv", index=False)
+    pd.DataFrame({"signalname": score_signals}).to_csv(output / "openap_score_signal_registry_92.csv", index=False)
+    pd.read_parquet(prepare_dir / "aligned_predictor_correlation.parquet").to_parquet(
+        output / "openap_aligned_predictor_correlation.parquet",
+        compression="zstd",
+    )
     coverage.to_csv(output / "coverage_185.csv", index=False)
     quality.to_csv(output / "data_quality.csv", index=False)
     coverage.loc[coverage["coverage_status"].eq("proxy")].to_csv(output / "proxy_audit.csv", index=False)
@@ -854,6 +935,12 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "unavailable_predictors": unavailable_predictors,
         "coverage_rows": len(coverage),
         "scores_rows": len(scores),
+        "score_variants": len(actual_score_ids),
+        "score_ids": sorted(actual_score_ids),
+        "score_universe_sizes": {
+            str(row.score_id): int(row.universe_size)
+            for row in score_universe_audit.itertuples(index=False)
+        },
         "features_rows": len(feature_frame),
         "all_facts_have_available_at": bool(sec_summary["all_facts_have_available_at"]),
         "locked_opened": False,

@@ -23,10 +23,13 @@ import re
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import minimize
 
 
 EXPECTED_PREDICTORS = 185
 SUPPORTED_HORIZONS = (1, 3, 6, 12, 36)
+SCORE_HORIZONS = (1, 12)
+SCORE_COVERAGE_THRESHOLDS = (80, 70, 60)
 
 
 class OpenAPDataError(RuntimeError):
@@ -176,6 +179,110 @@ def build_redundancy_groups(
                 }
             )
     return pd.DataFrame(rows).sort_values(["redundancy_group", "signalname"])
+
+
+def build_aligned_correlation_matrix(
+    metadata: pd.DataFrame,
+    portfolio_returns: pd.DataFrame,
+    *,
+    minimum_overlap: int = 60,
+) -> pd.DataFrame:
+    """Return the full empirical correlation matrix after direction alignment."""
+
+    names = [name for name in metadata["signalname"].astype(str) if name in portfolio_returns.columns]
+    signs = metadata.set_index("signalname")["Sign"].apply(
+        lambda value: float(value) if pd.notna(value) else 1.0
+    )
+    aligned = portfolio_returns[names].apply(pd.to_numeric, errors="coerce")
+    aligned = aligned.mul(signs.reindex(names), axis=1)
+    return aligned.corr(min_periods=int(minimum_overlap))
+
+
+def _nearest_numerical_correlation(matrix: np.ndarray) -> np.ndarray:
+    """Project a pairwise correlation matrix to a numerically valid PSD matrix."""
+
+    clean = np.nan_to_num(np.asarray(matrix, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+    clean = (clean + clean.T) / 2.0
+    np.fill_diagonal(clean, 1.0)
+    eigenvalues, eigenvectors = np.linalg.eigh(clean)
+    numerical_floor = np.finfo(float).eps * max(1.0, float(np.max(np.abs(eigenvalues))))
+    projected = (eigenvectors * np.maximum(eigenvalues, numerical_floor)) @ eigenvectors.T
+    scale = np.sqrt(np.maximum(np.diag(projected), numerical_floor))
+    projected = projected / np.outer(scale, scale)
+    projected = (projected + projected.T) / 2.0
+    np.fill_diagonal(projected, 1.0)
+    return projected
+
+
+def build_horizon_evidence_weights(
+    metadata: pd.DataFrame,
+    correlation_matrix: pd.DataFrame,
+    *,
+    horizons: Sequence[int] = SCORE_HORIZONS,
+) -> pd.DataFrame:
+    """Combine reproduced t-stats and the full empirical correlation matrix.
+
+    For each horizon, non-negative weights maximise reproduced evidence per
+    unit of redundancy.  No correlation cutoff or hand-written family cap is
+    used: every observed pairwise correlation participates in the solution.
+    """
+
+    required = {"signalname", "portperiod", "tstat"}
+    missing = required.difference(metadata.columns)
+    if missing:
+        raise OpenAPDataError(f"Weight metadata missing columns: {sorted(missing)}")
+    rows: list[dict[str, Any]] = []
+    frame = metadata.copy()
+    frame["portperiod"] = pd.to_numeric(frame["portperiod"], errors="coerce")
+    frame["tstat"] = pd.to_numeric(frame["tstat"], errors="coerce")
+    for horizon in horizons:
+        subset = frame.loc[
+            frame["portperiod"].eq(int(horizon))
+            & frame["tstat"].gt(0)
+            & frame["signalname"].astype(str).isin(correlation_matrix.index.astype(str))
+        ].copy()
+        subset = subset.drop_duplicates("signalname").sort_values("signalname")
+        if subset.empty:
+            continue
+        names = subset["signalname"].astype(str).tolist()
+        evidence = subset["tstat"].to_numpy(dtype=float)
+        empirical = correlation_matrix.reindex(index=names, columns=names).to_numpy(dtype=float)
+        correlation = _nearest_numerical_correlation(empirical)
+        initial = evidence / evidence.sum()
+
+        def objective(weights: np.ndarray) -> float:
+            reward = float(weights @ evidence)
+            variance = float(weights @ correlation @ weights)
+            return -reward / math.sqrt(max(variance, np.finfo(float).eps))
+
+        result = minimize(
+            objective,
+            initial,
+            method="SLSQP",
+            bounds=[(0.0, 1.0)] * len(names),
+            constraints={"type": "eq", "fun": lambda weights: float(weights.sum() - 1.0)},
+        )
+        if result.success and np.isfinite(result.x).all() and float(result.x.sum()) > 0:
+            weights = np.maximum(result.x, 0.0)
+            method = "full_correlation_slsqp"
+        else:
+            inverse_solution = np.linalg.pinv(correlation) @ evidence
+            weights = np.maximum(inverse_solution, 0.0)
+            if not np.isfinite(weights).all() or float(weights.sum()) <= 0:
+                weights = initial
+            method = "full_correlation_pseudoinverse_fallback"
+        weights = weights / weights.sum()
+        for signal, tstat, weight in zip(names, evidence, weights, strict=True):
+            rows.append(
+                {
+                    "horizon_months": int(horizon),
+                    "signalname": signal,
+                    "tstat_reproduction": float(tstat),
+                    "score_weight": float(weight),
+                    "weight_method": method,
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def _safe_ratio(numerator: Any, denominator: Any) -> float | None:
@@ -585,6 +692,126 @@ def calculate_scores(features: pd.DataFrame, minimum_metrics: int = 5) -> pd.Dat
     return summary[["as_of", "symbol", "horizon_months", "score", "confidence", "metrics_used", "groups_used"]]
 
 
+def calculate_six_coverage_scores(
+    features: pd.DataFrame,
+    horizon_weights: pd.DataFrame,
+    *,
+    eligible_signals: Sequence[str],
+    coverage_thresholds: Sequence[int] = SCORE_COVERAGE_THRESHOLDS,
+    horizons: Sequence[int] = SCORE_HORIZONS,
+) -> pd.DataFrame:
+    """Create 1M and 12M rankings for C80, C70 and C60 universes.
+
+    C80, C70 and C60 refer to the number of available values among the same
+    frozen 92-signal registry.  Percentiles are recomputed inside each tier,
+    so every output is a genuinely separate cross-sectional ranking.
+    """
+
+    required = {"as_of", "symbol", "signalname", "raw_value", "status", "horizon_months"}
+    missing = required.difference(features.columns)
+    if missing:
+        raise OpenAPDataError(f"Six-score feature table missing columns: {sorted(missing)}")
+    weight_required = {"horizon_months", "signalname", "score_weight"}
+    weight_missing = weight_required.difference(horizon_weights.columns)
+    if weight_missing:
+        raise OpenAPDataError(f"Six-score weight table missing columns: {sorted(weight_missing)}")
+
+    registry = list(dict.fromkeys(str(signal) for signal in eligible_signals))
+    if not registry:
+        raise OpenAPDataError("Six-score registry cannot be empty")
+    valid_status = features["status"].isin(["exact", "proxy"])
+    frame = features.loc[features["signalname"].astype(str).isin(registry) & valid_status].copy()
+    frame["raw_value"] = pd.to_numeric(frame["raw_value"], errors="coerce")
+    frame["horizon_months"] = pd.to_numeric(frame["horizon_months"], errors="coerce")
+    if "sign" in frame.columns:
+        frame["sign"] = pd.to_numeric(frame["sign"], errors="coerce").fillna(1.0)
+    else:
+        frame["sign"] = 1.0
+    available = frame.loc[frame["raw_value"].notna(), ["symbol", "signalname"]].drop_duplicates()
+    available_counts = available.groupby("symbol")["signalname"].nunique().rename("total_metrics_available")
+    output_rows: list[pd.DataFrame] = []
+
+    weights = horizon_weights.loc[
+        horizon_weights["horizon_months"].isin([int(item) for item in horizons])
+        & horizon_weights["signalname"].astype(str).isin(registry)
+    ].copy()
+    weights["score_weight"] = pd.to_numeric(weights["score_weight"], errors="coerce")
+    weights = weights.loc[weights["score_weight"].gt(0)]
+    total_weight_by_horizon = weights.groupby("horizon_months")["score_weight"].sum().to_dict()
+
+    for threshold in coverage_thresholds:
+        minimum = int(threshold)
+        tier_symbols = available_counts.loc[available_counts.ge(minimum)].index
+        universe_size = int(len(tier_symbols))
+        if universe_size == 0:
+            continue
+        tier = frame.loc[
+            frame["symbol"].isin(tier_symbols)
+            & frame["horizon_months"].isin([int(item) for item in horizons])
+            & frame["raw_value"].notna()
+        ].copy()
+        tier["directed_value"] = tier["raw_value"] * tier["sign"]
+        tier["score_percentile"] = tier.groupby("signalname")["directed_value"].rank(
+            method="average", pct=True
+        ) * 100.0
+        tier = tier.merge(
+            weights[["horizon_months", "signalname", "score_weight"]],
+            on=["horizon_months", "signalname"],
+            how="inner",
+            validate="many_to_one",
+        )
+        if tier.empty:
+            continue
+        tier["weighted_component"] = tier["score_percentile"] * tier["score_weight"]
+        tier["is_exact"] = tier["status"].eq("exact").astype(int)
+        tier["is_proxy"] = tier["status"].eq("proxy").astype(int)
+        summary = tier.groupby(["as_of", "symbol", "horizon_months"], as_index=False).agg(
+            weighted_sum=("weighted_component", "sum"),
+            weight_used=("score_weight", "sum"),
+            metrics_used=("signalname", "nunique"),
+            exact_metrics_used=("is_exact", "sum"),
+            proxy_metrics_used=("is_proxy", "sum"),
+        )
+        summary["score"] = summary["weighted_sum"] / summary["weight_used"].replace(0, np.nan)
+        summary["weight_coverage_pct"] = summary.apply(
+            lambda row: 100.0
+            * float(row["weight_used"])
+            / float(total_weight_by_horizon.get(int(row["horizon_months"]), np.nan)),
+            axis=1,
+        )
+        summary["minimum_total_metrics"] = minimum
+        summary["total_eligible_metrics"] = len(registry)
+        summary["universe_size"] = universe_size
+        summary["total_metrics_available"] = summary["symbol"].map(available_counts).astype(int)
+        summary["score_id"] = summary["horizon_months"].apply(
+            lambda horizon: f"openap_{int(horizon)}m_c{minimum}"
+        )
+        output_rows.append(summary)
+
+    columns = [
+        "as_of",
+        "symbol",
+        "score_id",
+        "horizon_months",
+        "minimum_total_metrics",
+        "total_eligible_metrics",
+        "universe_size",
+        "total_metrics_available",
+        "score",
+        "weight_coverage_pct",
+        "metrics_used",
+        "exact_metrics_used",
+        "proxy_metrics_used",
+    ]
+    if not output_rows:
+        return pd.DataFrame(columns=columns)
+    result = pd.concat(output_rows, ignore_index=True)
+    return result[columns].sort_values(
+        ["minimum_total_metrics", "horizon_months", "score"],
+        ascending=[False, True, False],
+    ).reset_index(drop=True)
+
+
 def coverage_report(features: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFrame:
     """Summarise exact, proxy and unavailable coverage per predictor."""
 
@@ -629,10 +856,13 @@ __all__ = [
     "OpenAPDataError",
     "SEC_CONCEPT_ALIASES",
     "assemble_feature_table",
+    "build_aligned_correlation_matrix",
+    "build_horizon_evidence_weights",
     "build_redundancy_groups",
     "calculate_accounting_features",
     "calculate_price_features",
     "calculate_scores",
+    "calculate_six_coverage_scores",
     "classify_missing_signal",
     "coverage_report",
     "evidence_weight",
