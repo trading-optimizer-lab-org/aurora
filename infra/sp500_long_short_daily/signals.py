@@ -38,6 +38,7 @@ IMPLEMENTED_FAMILIES = frozenset(
         "recovery_internal_bar_strength_vote",
         "recovery_multi_horizon_reversal_vote",
         "recovery_volume_gated_reversal_vote",
+        "recovery_calendar_volume_reversal_vote",
         "financial_conditions_regime",
         "monetary_inflation_regime",
         "overnight_futures_proxy",
@@ -1359,6 +1360,71 @@ def _price_score(
         return score.where(
             base_score.notna() & volume_z.notna() & lag_return.notna()
         )
+    if family == "recovery_calendar_volume_reversal_vote":
+        base_score = _price_score(
+            {
+                "family": "drawdown_recovery_override_reversal",
+                "parameters": parameters,
+            },
+            data,
+            feature_frame=feature_frame,
+        )
+        volume = ledger["volume"].astype(float)
+        volume_z = _rolling_zscore(
+            np.log1p(volume),
+            int(parameters["volume_window"]),
+        )
+        lag_return = (
+            close / close.shift(int(parameters["volume_return_lookback"])) - 1.0
+        )
+        volume_component = pd.Series(0.0, index=ledger.index)
+        high_volume = volume_z >= float(parameters["volume_z_threshold"])
+        volume_component = volume_component.where(
+            ~(high_volume & (lag_return < 0.0)), 1.0
+        )
+        volume_component = volume_component.where(
+            ~(high_volume & (lag_return > 0.0)), -1.0
+        )
+
+        session_frame = pd.DataFrame(index=ledger.index)
+        session_frame["month"] = ledger.index.to_period("M")
+        session_frame["from_start"] = (
+            session_frame.groupby("month").cumcount() + 1
+        )
+        session_frame["from_end"] = (
+            session_frame.groupby("month").cumcount(ascending=False) + 1
+        )
+        next_position = session_frame[["from_start", "from_end"]].shift(-1)
+        turn_month = (
+            next_position["from_start"] <= int(parameters["first_sessions"])
+        ) | (next_position["from_end"] <= int(parameters["last_sessions"]))
+        score = (
+            base_score
+            + float(parameters["calendar_weight"]) * turn_month.astype(float)
+            + float(parameters["volume_reversal_weight"]) * volume_component
+        )
+
+        drawdown_lookback = int(parameters["drawdown_lookback"])
+        rolling_peak = close.rolling(
+            drawdown_lookback,
+            min_periods=drawdown_lookback,
+        ).max()
+        drawdown = close / rolling_peak - 1.0
+        recent_deep_drawdown = drawdown.rolling(
+            int(parameters["recovery_memory_window"]),
+            min_periods=1,
+        ).min() <= -(float(parameters["drawdown_trigger_pct"]) / 100.0)
+        recovery_return = (
+            close / close.shift(int(parameters["recovery_window"])) - 1.0
+        )
+        recovery_override = recent_deep_drawdown & (
+            recovery_return
+            > float(parameters["recovery_threshold_pct"]) / 100.0
+        )
+        score = score.where(~recovery_override, 1.0)
+        return score.where(
+            base_score.notna() & volume_z.notna() & lag_return.notna()
+        )
     if family == "trend_ensemble":
         components = []
         for horizon in parameters["horizons"]:
@@ -1808,6 +1874,7 @@ def candidate_decisions(
             "recovery_internal_bar_strength_vote",
             "recovery_multi_horizon_reversal_vote",
             "recovery_volume_gated_reversal_vote",
+            "recovery_calendar_volume_reversal_vote",
             "realized_volatility_state",
         "overnight_futures_proxy",
         "volatility_conditioned_trend",
