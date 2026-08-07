@@ -73,6 +73,14 @@ jobs:
           cp inputs/source/openap_features_current.parquet inputs/snapshot/openap_features_current.parquet
           test -s inputs/snapshot/openap_features_current.parquet
           rm -rf inputs/source
+      - name: Publish minimal audited feature snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: openap-feature-snapshot-${{ inputs.source_artifact_id }}
+          path: inputs/snapshot/openap_features_current.parquet
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
       - name: Calculate six scores
         env:
           SOURCE_ARTIFACT_ID: ${{ inputs.source_artifact_id }}
@@ -99,6 +107,7 @@ jobs:
           from pathlib import Path
 
           summary = json.loads(Path("outputs/final/execution_summary.json").read_text())
+          print(json.dumps(summary, indent=2, sort_keys=True))
           assert summary["input_predictors"] == 185
           assert summary["eligible_score_signals"] == 92
           assert summary["eligible_symbols"] == 2338
@@ -117,6 +126,7 @@ jobs:
           assert summary["partial"] is False
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() }}
         with:
           name: openap-six-scores-current-results
           path: outputs/final/
