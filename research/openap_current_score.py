@@ -772,7 +772,9 @@ def calculate_six_coverage_scores(
             exact_metrics_used=("is_exact", "sum"),
             proxy_metrics_used=("is_proxy", "sum"),
         )
-        summary["score"] = summary["weighted_sum"] / summary["weight_used"].replace(0, np.nan)
+        summary["score"] = (
+            summary["weighted_sum"] / summary["weight_used"].replace(0, np.nan)
+        ).clip(lower=0.0, upper=100.0)
         summary["weight_coverage_pct"] = summary.apply(
             lambda row: 100.0
             * float(row["weight_used"])
