@@ -2685,12 +2685,11 @@ def _recovery_calendar_volume_vxo_candidates(
             for positive_weight in (2.5, 3.5)
             for negative_weight in (1.25, 1.5, 1.75, 2.0, 2.25, 2.5)
         ]
-    else:
+    elif batch_id == 39:
         # Batch 38 produced the strongest common-interval differential with a
         # 1.25% recovery threshold and intermediate VXO weights. Add only a
         # small slow-trend vote and rebalance the two base votes to improve the
         # ordinary bull years that still trail the benchmark.
-        generation = batch_id - 39
         parameters_list = [
             {
                 **core,
@@ -2705,7 +2704,7 @@ def _recovery_calendar_volume_vxo_candidates(
                 "volume_reversal_weight": 0.25,
                 "vxo_change_lookback": 1,
                 "vxo_z_window": 10,
-                "vxo_z_threshold": round(1.4 + generation * 0.0125, 4),
+                "vxo_z_threshold": 1.4,
                 "vxo_weight": 3.0,
                 "vxo_positive_weight": 2.5,
                 "vxo_negative_weight": 2.0,
@@ -2717,6 +2716,39 @@ def _recovery_calendar_volume_vxo_candidates(
             for slow_trend_weight in (0.1, 0.25, 0.5, 0.75)
             for rsi_weight in (0.5, 1.0)
             for reversal_weight in (0.5, 1.0)
+            for calendar_weight in (1.0, 1.5)
+        ]
+    else:
+        # The slow-trend rebalance in batch 39 did not improve the global
+        # differential tests. Combine the strongest intermediate VXO rule
+        # with the already-supported causal overnight-minus-intraday tug,
+        # which can distinguish ordinary bull sessions from stress reversals.
+        generation = batch_id - 40
+        parameters_list = [
+            {
+                **core,
+                "first_sessions": 2,
+                "last_sessions": 1,
+                "calendar_weight": calendar_weight,
+                "rsi_weight": rsi_weight,
+                "reversal_weight": 1.0,
+                "recovery_memory_window": 63,
+                "recovery_threshold_pct": 1.25,
+                "volume_z_threshold": 1.5,
+                "volume_reversal_weight": 0.25,
+                "vxo_change_lookback": 1,
+                "vxo_z_window": 10,
+                "vxo_z_threshold": round(1.4 + generation * 0.0125, 4),
+                "vxo_weight": 3.0,
+                "vxo_positive_weight": 2.5,
+                "vxo_negative_weight": 2.0,
+                "vxo_mode": "continuation",
+                "tug_lookback": tug_lookback,
+                "tug_weight": tug_weight,
+            }
+            for tug_lookback in (1, 2, 3, 5)
+            for tug_weight in (0.25, 0.5, 1.0, 1.5)
+            for rsi_weight in (0.5, 1.0, 1.5)
             for calendar_weight in (1.0, 1.5)
         ]
     candidates: list[dict[str, Any]] = []
@@ -2758,7 +2790,7 @@ def _recovery_calendar_volume_vxo_candidates(
                 ],
                 "research_source_ids": sorted({*base.get("research_source_ids", ()), *source_ids}),
                 "feature_formulas": [
-                    "causal recovery/calendar/volume score plus an extreme VXO-change vote"
+                    "causal recovery/calendar/volume score plus extreme VXO-change and optional overnight-tug votes"
                 ],
                 "long_rule": (
                     "combined recovery, month-boundary, volume-pressure, and VXO score is positive"

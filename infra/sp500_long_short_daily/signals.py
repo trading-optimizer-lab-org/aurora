@@ -1473,6 +1473,18 @@ def _price_score(
             )
             slow_trend_valid = slow_trend_return.notna()
 
+        tug_valid = pd.Series(True, index=ledger.index)
+        if "tug_weight" in parameters:
+            adjusted_open = ledger["tr_open"].astype(float)
+            overnight = np.log(adjusted_open / close.shift(1))
+            intraday = np.log(close / adjusted_open)
+            tug = (overnight - intraday).rolling(
+                int(parameters["tug_lookback"]),
+                min_periods=int(parameters["tug_lookback"]),
+            ).sum()
+            score = score + float(parameters["tug_weight"]) * np.sign(tug)
+            tug_valid = tug.notna()
+
         rolling_peak = close.rolling(
             int(parameters["drawdown_lookback"]),
             min_periods=int(parameters["drawdown_lookback"]),
@@ -1490,7 +1502,9 @@ def _price_score(
             > float(parameters["recovery_threshold_pct"]) / 100.0
         )
         score = score.where(~recovery_override, 1.0)
-        return score.where(base_score.notna() & vxo_z.notna() & slow_trend_valid)
+        return score.where(
+            base_score.notna() & vxo_z.notna() & slow_trend_valid & tug_valid
+        )
     if family == "trend_ensemble":
         components = []
         for horizon in parameters["horizons"]:

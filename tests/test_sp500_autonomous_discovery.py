@@ -1506,6 +1506,52 @@ def test_batch_thirty_nine_rebalances_best_intermediate_vxo_rule() -> None:
     assert all(row["leverage_allowed"] is False for row in batch_thirty_nine)
 
 
+def test_batch_forty_adds_distinct_causal_overnight_tug_vote() -> None:
+    batch_thirty_nine = registry.generate_candidates(39, count=96)
+    batch_forty = registry.generate_candidates(40, count=96)
+    batch_forty_one = registry.generate_candidates(41, count=96)
+
+    assert len(batch_forty) == 96
+    assert len({row["canonical_hash"] for row in batch_forty}) == 96
+    assert not {row["canonical_hash"] for row in batch_thirty_nine}.intersection(
+        row["canonical_hash"] for row in batch_forty
+    )
+    assert not {row["canonical_hash"] for row in batch_forty}.intersection(
+        row["canonical_hash"] for row in batch_forty_one
+    )
+    assert {row["parameters"]["tug_lookback"] for row in batch_forty} == {
+        1,
+        2,
+        3,
+        5,
+    }
+    assert {row["parameters"]["tug_weight"] for row in batch_forty} == {
+        0.25,
+        0.5,
+        1.0,
+        1.5,
+    }
+    assert {row["parameters"]["rsi_weight"] for row in batch_forty} == {
+        0.5,
+        1.0,
+        1.5,
+    }
+    assert {row["parameters"]["calendar_weight"] for row in batch_forty} == {
+        1.0,
+        1.5,
+    }
+    assert all(row["parameters"]["reversal_weight"] == 1.0 for row in batch_forty)
+    assert all(row["parameters"]["recovery_threshold_pct"] == 1.25 for row in batch_forty)
+    assert all(row["parameters"]["vxo_z_window"] == 10 for row in batch_forty)
+    assert all(row["parameters"]["vxo_z_threshold"] == 1.4 for row in batch_forty)
+    assert all(row["parameters"]["vxo_positive_weight"] == 2.5 for row in batch_forty)
+    assert all(row["parameters"]["vxo_negative_weight"] == 2.0 for row in batch_forty)
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in batch_forty)
+    assert all(row["position_values"] == [-1, 1] for row in batch_forty)
+    assert all(row["cash_allowed"] is False for row in batch_forty)
+    assert all(row["leverage_allowed"] is False for row in batch_forty)
+
+
 def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("1997-01-02", periods=900, freq="B")
     close = pd.Series(
@@ -1584,6 +1630,38 @@ def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> Non
     assert set(slow_trend_result.decisions.unique()) <= {-1, 1}
     assert slow_trend_result.missing_fraction == 0.0
     assert slow_trend_result.first_evaluable_date is not None
+
+    tug_candidate = registry.generate_candidates(40, count=96)[0]
+    tug_result = candidate_decisions(tug_candidate, data)
+    assert set(tug_result.decisions.unique()) <= {-1, 1}
+    assert tug_result.missing_fraction == 0.0
+    assert tug_result.first_evaluable_date is not None
+
+    future_ledger = ledger.copy()
+    future_ledger.loc[index[-1], "tr_open"] *= 1.3
+    future_ledger.loc[index[-1], "tr_close"] *= 0.7
+    future_ledger.loc[index[-1], "high"] = max(
+        future_ledger.loc[index[-1], "tr_open"],
+        future_ledger.loc[index[-1], "tr_close"],
+    ) + 1.0
+    future_ledger.loc[index[-1], "low"] = min(
+        future_ledger.loc[index[-1], "tr_open"],
+        future_ledger.loc[index[-1], "tr_close"],
+    ) - 1.0
+    future_tug_result = candidate_decisions(
+        tug_candidate,
+        PreparedMarketData(
+            ledger=future_ledger,
+            series={"VXO": vxo},
+            available_dataset_ids=frozenset({"DS001", "DS002", "DS005"}),
+            rejected_datasets={},
+            receipts=(),
+            split="train",
+        ),
+    )
+    pd.testing.assert_series_equal(
+        tug_result.decisions.iloc[:-1], future_tug_result.decisions.iloc[:-1]
+    )
 
 
 def test_recovery_overnight_tug_rule_is_causal_and_fully_invested() -> None:
