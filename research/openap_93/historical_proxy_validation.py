@@ -423,9 +423,10 @@ def _build_announcement_return(
             if not len(eligible_positions):
                 continue
             event_position = int(eligible_positions[0])
-            # OpenAP uses the event trading day plus [-2, +1] trading days.
-            start_position = event_position - 2
-            end_position = event_position + 1
+            # OpenAP uses the prior trading day, event day, and next two
+            # trading days: [-1, +2].
+            start_position = event_position - 1
+            end_position = event_position + 2
             if start_position < 0 or end_position >= len(px):
                 continue
             window = px.iloc[start_position:end_position + 1]
@@ -457,7 +458,7 @@ def _build_announcement_return(
                 "formation_month": item.formation_month,
                 "signal": "AnnouncementReturn",
                 "proxy_value": float(item.proxy_value),
-                "proxy_formula_id": "openap_announcement_return_trading_sessions_minus2_plus1",
+                "proxy_formula_id": "openap_announcement_return_trading_sessions_minus1_plus2",
                 "variant_id": str(source_id),
                 "reconstruction_status": "reconstructed",
                 "caveat": (

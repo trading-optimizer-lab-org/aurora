@@ -116,7 +116,7 @@ def test_item_202_precedes_periodic_filing_date():
     chosen = choose_earnings_event(item_202, yahoo_event, ten_q)
     assert chosen.source_id == "sec_8k_item_202"
 
-def test_announcement_return_uses_four_trading_sessions_minus2_plus1():
+def test_announcement_return_uses_four_trading_sessions_minus1_plus2():
     assert announcement_return(fixture) == pytest.approx(0.04)
 
 def test_earnings_streak_requires_two_same_sign_consensus_surprises():
@@ -242,7 +242,8 @@ sign agreement, overlap, and all policy booleans.
 **Interfaces:**
 - Consumes: current values and frozen certificates.
 - Produces: score-ready current rows with `certificate_sha256`,
-  `effective_score_weight`, and a precise rejection reason.
+  `effective_score_weight`, and a precise rejection reason. It also produces
+  explicit future-only advisory rows with historical similarity metadata.
 
 - [ ] **Step 1: Write RED integration tests**
 
@@ -258,6 +259,13 @@ Do not change the score formula for the other predictors. Add the five values as
 signed cross-sectional percentiles only after certification.
 
 - [ ] **Step 4: Push and verify GREEN in GitHub**
+
+- [ ] **Step 5: Keep future advisory mode separate from strict score**
+
+Expose `forward_proxy_advisory_current.csv` and an explicit
+`--forward-proxy-mode advisory` option. Advisory weights are derived only from
+the frozen historical similarity certificate; they never silently promote a
+failed signal into the strict score.
 
 ### Task 8: GitHub-only end-to-end workflow
 

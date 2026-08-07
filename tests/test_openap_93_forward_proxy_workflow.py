@@ -90,3 +90,6 @@ def test_forward_proxy_workflow_keeps_advisory_current_values_when_no_signal_is_
     assert "if: ${{ steps.summary.outputs.certified_count != '0' }}" not in certify_block
     assert "if: ${{ needs.certify.result == 'success' }}" in text
     assert "signals['value'].notna().any()" in text
+    assert "forward_proxy_mode:" in text
+    assert "forward_advisory_usable" in text
+    assert "forward_proxy_advisory_current.csv" in text

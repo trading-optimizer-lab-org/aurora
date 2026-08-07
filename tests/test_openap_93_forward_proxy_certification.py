@@ -218,8 +218,11 @@ def test_current_signal_is_usable_only_with_matching_certificate_identity() -> N
     assert not bool(result.loc["AnnouncementReturn", "current_usable"])
     assert result.loc["AnnouncementReturn", "certificate_status"] == "missing_certificate"
     assert result.loc["AnnouncementReturn", "effective_score_weight"] == 0.0
+    assert not bool(result.loc["AnnouncementReturn", "forward_advisory_usable"])
+    assert result.loc["AnnouncementReturn", "forward_advisory_status"] == "unavailable_no_certificate"
     assert bool(result.loc["MomVol", "current_usable"])
     assert result.loc["MomVol", "certificate_status"] == "not_required"
+    assert bool(result.loc["MomVol", "forward_advisory_usable"])
 
 
 def test_mismatched_formula_or_source_certificate_fails_closed() -> None:

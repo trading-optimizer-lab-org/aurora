@@ -330,6 +330,40 @@ def certificate_sha256(certificate: ForwardProxyCertificate) -> str:
     return sha256(payload).hexdigest()
 
 
+def _advisory_weight(certificate: ForwardProxyCertificate) -> float:
+    """Convert historical similarity into an advisory-only confidence weight."""
+
+    try:
+        metrics = tuple(
+            float(value)
+            for value in (
+                certificate.pearson,
+                certificate.spearman,
+                certificate.sign_agreement,
+            )
+        )
+    except (TypeError, ValueError):
+        return 0.0
+    if not all(np.isfinite(value) for value in metrics):
+        return 0.0
+    correlation_floor = min(metrics[0], metrics[1])
+    sign_factor = max(0.0, min(1.0, metrics[2]))
+    coverage_factor = max(0.0, min(1.0, certificate.common_months / 60.0))
+    return float(
+        max(0.0, min(1.0, correlation_floor))
+        * sign_factor
+        * coverage_factor
+    )
+
+
+def _metric_or_nan(value: object) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+    return numeric if np.isfinite(numeric) else float("nan")
+
+
 def apply_certificates(
     current_rows: pd.DataFrame,
     certificates: Iterable[ForwardProxyCertificate],
@@ -360,6 +394,16 @@ def apply_certificates(
     statuses: list[str] = []
     hashes: list[str | None] = []
     passed_flags: list[bool] = []
+    advisory_usable: list[bool] = []
+    advisory_statuses: list[str] = []
+    advisory_weights: list[float] = []
+    advisory_pearson: list[float] = []
+    advisory_spearman: list[float] = []
+    advisory_sign_agreement: list[float] = []
+    advisory_common_months: list[int] = []
+    advisory_variants: list[str] = []
+    advisory_reasons: list[str] = []
+    original_usable = result["current_usable"].fillna(False).astype(bool).to_numpy()
     for row in result.itertuples(index=False):
         key = (
             str(row.signal),
@@ -378,6 +422,15 @@ def apply_certificates(
             )
             hashes.append(None)
             passed_flags.append(False)
+            advisory_usable.append(False)
+            advisory_statuses.append("unavailable_no_certificate")
+            advisory_weights.append(0.0)
+            advisory_pearson.append(float("nan"))
+            advisory_spearman.append(float("nan"))
+            advisory_sign_agreement.append(float("nan"))
+            advisory_common_months.append(0)
+            advisory_variants.append("")
+            advisory_reasons.append("no_matching_historical_certificate")
         elif (
             certificate.locked_opened
             or certificate.validation_used_for_selection
@@ -386,16 +439,42 @@ def apply_certificates(
             statuses.append("invalid_certificate_policy")
             hashes.append(certificate_sha256(certificate))
             passed_flags.append(False)
+            advisory_usable.append(False)
+            advisory_statuses.append("unavailable_invalid_certificate_policy")
+            advisory_weights.append(0.0)
+            advisory_pearson.append(_metric_or_nan(certificate.pearson))
+            advisory_spearman.append(_metric_or_nan(certificate.spearman))
+            advisory_sign_agreement.append(_metric_or_nan(certificate.sign_agreement))
+            advisory_common_months.append(int(certificate.common_months))
+            advisory_variants.append(certificate.variant_id)
+            advisory_reasons.append("certificate_policy_invalid")
         elif not certificate.passed:
             statuses.append("failed_validation_gate")
             hashes.append(certificate_sha256(certificate))
             passed_flags.append(False)
+            advisory_usable.append(bool(original_usable[len(advisory_usable)]))
+            advisory_statuses.append("advisory_unvalidated")
+            advisory_weights.append(_advisory_weight(certificate))
+            advisory_pearson.append(_metric_or_nan(certificate.pearson))
+            advisory_spearman.append(_metric_or_nan(certificate.spearman))
+            advisory_sign_agreement.append(_metric_or_nan(certificate.sign_agreement))
+            advisory_common_months.append(int(certificate.common_months))
+            advisory_variants.append(certificate.variant_id)
+            advisory_reasons.append("historical_similarity_below_certification_gate")
         else:
             statuses.append("certified")
             hashes.append(certificate_sha256(certificate))
             passed_flags.append(True)
+            advisory_usable.append(bool(original_usable[len(advisory_usable)]))
+            advisory_statuses.append("certified")
+            advisory_weights.append(1.0)
+            advisory_pearson.append(_metric_or_nan(certificate.pearson))
+            advisory_spearman.append(_metric_or_nan(certificate.spearman))
+            advisory_sign_agreement.append(_metric_or_nan(certificate.sign_agreement))
+            advisory_common_months.append(int(certificate.common_months))
+            advisory_variants.append(certificate.variant_id)
+            advisory_reasons.append("passed_certification_gate")
 
-    original_usable = result["current_usable"].fillna(False).astype(bool).to_numpy()
     passed_array = np.asarray(passed_flags, dtype=bool)
     result["certificate_status"] = statuses
     result["certificate_sha256"] = hashes
@@ -405,4 +484,13 @@ def apply_certificates(
         pd.to_numeric(result["base_score_weight"], errors="coerce").fillna(0.0),
         0.0,
     )
+    result["forward_advisory_usable"] = advisory_usable
+    result["forward_advisory_status"] = advisory_statuses
+    result["forward_advisory_score_weight"] = advisory_weights
+    result["forward_historical_pearson"] = advisory_pearson
+    result["forward_historical_spearman"] = advisory_spearman
+    result["forward_historical_sign_agreement"] = advisory_sign_agreement
+    result["forward_historical_common_months"] = advisory_common_months
+    result["forward_selected_variant"] = advisory_variants
+    result["forward_advisory_reason"] = advisory_reasons
     return result

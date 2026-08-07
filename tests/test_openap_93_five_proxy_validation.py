@@ -121,7 +121,7 @@ def test_earnings_streak_uses_conservative_availability_lag() -> None:
     assert result["caveat"].str.contains("90-day").all()
 
 
-def test_announcement_return_uses_official_minus_two_plus_one_window() -> None:
+def test_announcement_return_uses_official_minus1_plus2_window() -> None:
     dates = pd.date_range("2020-01-06", periods=6, freq="B")
     prices = pd.DataFrame({
         "symbol": ["AAA"] * len(dates),
@@ -143,12 +143,13 @@ def test_announcement_return_uses_official_minus_two_plus_one_window() -> None:
     })
     master = pd.DataFrame({"symbol": ["AAA"], "cik": [1]})
     result = _build_announcement_return(monthly, submissions, prices, None, master)
-    # The official window is dates[1:5], not dates[2:6].
-    expected = (100 / 99 - 1) + (101 / 100 - 1) + (103 / 101 - 1) + (106 / 103 - 1)
+    # The official window is dates[2:6]: prior session, event session, and
+    # the following two sessions.
+    expected = (101 / 100 - 1) + (103 / 101 - 1) + (106 / 103 - 1) + (110 / 106 - 1)
     assert result.iloc[0]["proxy_value"] == pytest.approx(expected)
     assert (
         result.iloc[0]["proxy_formula_id"]
-        == "openap_announcement_return_trading_sessions_minus2_plus1"
+        == "openap_announcement_return_trading_sessions_minus1_plus2"
     )
     assert result.iloc[0]["variant_id"] == "sec_8k_item_202"
 

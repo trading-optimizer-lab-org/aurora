@@ -68,12 +68,34 @@ def finalize(
     )
 
     if current.empty:
-        current = pd.DataFrame(columns=["ticker", "signal", "value", "current_usable", "certificate_status"])
+        current = pd.DataFrame(
+            columns=[
+                "ticker",
+                "signal",
+                "value",
+                "current_usable",
+                "certificate_status",
+                "forward_advisory_usable",
+                "forward_advisory_score_weight",
+            ]
+        )
     current.to_csv(output / "forward_proxy_current_values.csv", index=False)
     current.to_parquet(output / "forward_proxy_current_values.parquet", index=False, compression="zstd")
-    score_ready = current.loc[current.get("current_usable", False).fillna(False).astype(bool)].copy()
+    strict_mask = current["current_usable"].fillna(False).astype(bool)
+    advisory_mask = current.get(
+        "forward_advisory_usable",
+        pd.Series(False, index=current.index),
+    ).fillna(False).astype(bool)
+    score_ready = current.loc[strict_mask].copy()
+    advisory_ready = current.loc[advisory_mask].copy()
     score_ready.to_csv(output / "forward_proxy_score_ready.csv", index=False)
-    missing = current.loc[~current.get("current_usable", False).fillna(False).astype(bool)].copy()
+    advisory_ready.to_csv(output / "forward_proxy_advisory_current.csv", index=False)
+    advisory_ready.to_parquet(
+        output / "forward_proxy_advisory_current.parquet",
+        index=False,
+        compression="zstd",
+    )
+    missing = current.loc[~strict_mask].copy()
     missing.to_csv(output / "forward_proxy_missing_inputs.csv", index=False)
 
     manifest = yaml.safe_load(Path(source_manifest).read_text(encoding="utf-8"))
@@ -108,14 +130,23 @@ def finalize(
                 "current_rows": int(len(current_signal)),
                 "current_values_available": int(current_signal["value"].notna().sum()) if "value" in current_signal else 0,
                 "score_ready_rows": int(score_ready["signal"].eq(signal).sum()) if "signal" in score_ready else 0,
+                "advisory_rows": int(advisory_ready["signal"].eq(signal).sum()) if "signal" in advisory_ready else 0,
             }
         )
+    current_manifest_path = _first(current_root, "run_manifest.json")
+    current_manifest = (
+        json.loads(current_manifest_path.read_text(encoding="utf-8"))
+        if current_manifest_path is not None
+        else {}
+    )
     summary = {
         "signals": signal_summary,
         "signals_evaluated": int(len(validation)),
         "signals_certified": int(sum(bool(item["certified"]) for item in signal_summary)),
         "current_values_available": int(current.get("value", pd.Series(dtype=float)).notna().sum()),
         "score_ready_rows": int(len(score_ready)),
+        "advisory_rows": int(len(advisory_ready)),
+        "forward_proxy_mode": current_manifest.get("forward_proxy_mode", "strict"),
         "certification_job_result": certification_result,
         "current_job_result": current_result,
         "partial": certification_result != "success" or (
@@ -125,6 +156,7 @@ def finalize(
         "validation_used_for_selection": False,
         "backtest_enabled": False,
         "exact_replication_claimed": False,
+        "advisory_is_not_certification": True,
     }
     (output / "forward_proxy_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True, allow_nan=False), encoding="utf-8"

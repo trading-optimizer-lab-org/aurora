@@ -94,6 +94,15 @@ REQUIRED_SIGNAL_COLUMNS = (
     "certificate_status",
     "certificate_sha256",
     "effective_score_weight",
+    "forward_advisory_usable",
+    "forward_advisory_status",
+    "forward_advisory_score_weight",
+    "forward_historical_pearson",
+    "forward_historical_spearman",
+    "forward_historical_sign_agreement",
+    "forward_historical_common_months",
+    "forward_selected_variant",
+    "forward_advisory_reason",
 )
 
 FIVE_FORWARD_PROXY_SIGNALS = frozenset(
@@ -231,6 +240,15 @@ def apply_forward_proxy_certificates_to_signals(
     result["effective_score_weight"] = np.where(
         result["current_usable"].fillna(False).astype(bool), 1.0, 0.0
     )
+    result["forward_advisory_usable"] = result["current_usable"].fillna(False).astype(bool)
+    result["forward_advisory_status"] = "not_required"
+    result["forward_advisory_score_weight"] = result["effective_score_weight"]
+    result["forward_historical_pearson"] = np.nan
+    result["forward_historical_spearman"] = np.nan
+    result["forward_historical_sign_agreement"] = np.nan
+    result["forward_historical_common_months"] = 0
+    result["forward_selected_variant"] = ""
+    result["forward_advisory_reason"] = "not_a_forward_proxy_signal"
 
     protected = result["signal"].isin(FIVE_FORWARD_PROXY_SIGNALS)
     if not protected.any():
@@ -246,6 +264,15 @@ def apply_forward_proxy_certificates_to_signals(
         "certificate_sha256",
         "current_usable",
         "effective_score_weight",
+        "forward_advisory_usable",
+        "forward_advisory_status",
+        "forward_advisory_score_weight",
+        "forward_historical_pearson",
+        "forward_historical_spearman",
+        "forward_historical_sign_agreement",
+        "forward_historical_common_months",
+        "forward_selected_variant",
+        "forward_advisory_reason",
     ):
         result.loc[protected, column] = protected_rows[column].to_numpy()
     return result
@@ -769,7 +796,11 @@ def _integrate_features(
     base_features: pd.DataFrame,
     metadata: pd.DataFrame,
     signals: pd.DataFrame,
+    *,
+    forward_proxy_mode: str = "strict",
 ) -> pd.DataFrame:
+    if forward_proxy_mode not in {"strict", "advisory"}:
+        raise ValueError("forward_proxy_mode must be 'strict' or 'advisory'")
     features = base_features.copy()
     for column in ("raw_value", "source_input_age_days"):
         features[column] = pd.to_numeric(features[column], errors="coerce").astype(float)
@@ -796,12 +827,26 @@ def _integrate_features(
     features["certificate_current_usable"] = True
     features["effective_score_weight"] = 1.0
     updates = signals.rename(columns={"ticker": "symbol", "signal": "signalname"})
+    if "forward_advisory_usable" not in updates:
+        updates["forward_advisory_usable"] = updates["current_usable"]
+    if "forward_advisory_score_weight" not in updates:
+        updates["forward_advisory_score_weight"] = updates["effective_score_weight"]
     updates["available_at"] = pd.to_datetime(
         updates["available_at"], errors="coerce", utc=True
     ).dt.tz_convert(None)
     updates = updates.set_index(["symbol", "signalname"])
     features = features.set_index(["symbol", "signalname"])
     common = features.index.intersection(updates.index)
+    usable_column = (
+        "current_usable"
+        if forward_proxy_mode == "strict"
+        else "forward_advisory_usable"
+    )
+    weight_column = (
+        "effective_score_weight"
+        if forward_proxy_mode == "strict"
+        else "forward_advisory_score_weight"
+    )
     for target, source in (
         ("raw_value", "value"),
         ("fidelity_class", "fidelity_class"),
@@ -812,8 +857,8 @@ def _integrate_features(
         ("source_input_age_days", "staleness_days"),
         ("is_current_for_natural_frequency", "is_current_for_natural_frequency"),
         ("value_status", "coverage_flag"),
-        ("certificate_current_usable", "current_usable"),
-        ("effective_score_weight", "effective_score_weight"),
+        ("certificate_current_usable", usable_column),
+        ("effective_score_weight", weight_column),
     ):
         features.loc[common, target] = updates.loc[common, source].to_numpy()
     features = features.reset_index()
@@ -945,8 +990,15 @@ def build_score_table(
     base_features: pd.DataFrame,
     metadata: pd.DataFrame,
     signals: pd.DataFrame,
+    *,
+    forward_proxy_mode: str = "strict",
 ) -> pd.DataFrame:
-    integrated = _integrate_features(base_features, metadata, signals)
+    integrated = _integrate_features(
+        base_features,
+        metadata,
+        signals,
+        forward_proxy_mode=forward_proxy_mode,
+    )
     score_table = _score_identity(signals)
     for score_name, allowed in SCORE_VARIANTS.items():
         score_table = score_table.merge(
@@ -997,6 +1049,7 @@ def build_score_table(
     )
     score_table = score_table.merge(summary, on="symbol", how="left", validate="one_to_one")
     score_table = score_table.merge(oldest, on="symbol", how="left", validate="one_to_one")
+    score_table["forward_proxy_mode"] = forward_proxy_mode
     score_table["quality_flags"] = np.where(
         score_table["coverage_pct"].ge(70.0), "", "below_70pct_total_coverage"
     )
@@ -1230,9 +1283,12 @@ def run_current_pipeline(
     selected_signals: set[str] | None = None,
     forward_proxy_certificates: str | Path | None = None,
     forward_proxy_source_manifest: str | Path | None = None,
+    forward_proxy_mode: str = "strict",
 ) -> dict[str, Any]:
     started = time.monotonic()
     formation = pd.Timestamp(formation_at).tz_localize(None)
+    if forward_proxy_mode not in {"strict", "advisory"}:
+        raise ValueError("forward_proxy_mode must be 'strict' or 'advisory'")
     requested = set(selected_signals) if selected_signals is not None else set(REQUIRED_93)
     unknown = requested - set(REQUIRED_93)
     if unknown:
@@ -1385,7 +1441,12 @@ def run_current_pipeline(
         openap_reference_sample=public["openap_reference_sample"],
     )
     coverage = build_coverage_report(signals, registry, validation)
-    score_table = build_score_table(base["features"], base["metadata"], signals)
+    score_table = build_score_table(
+        base["features"],
+        base["metadata"],
+        signals,
+        forward_proxy_mode=forward_proxy_mode,
+    )
     institutional_audit, institutional_payload = _institutional_input_audit(public)
 
     signals.to_parquet(output / "signals_93_current.parquet", index=False, compression="zstd")
@@ -1467,6 +1528,7 @@ def run_current_pipeline(
             ].nunique()
         ),
         "forward_proxy_source_manifest_sha256": source_manifest_hash,
+        "forward_proxy_mode": forward_proxy_mode,
     }
     lineage = {
         "base_database": {

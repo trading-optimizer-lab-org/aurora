@@ -341,7 +341,7 @@ def calculate_quarterly_signals(
             QuarterlyValue(
                 signal="AnnouncementReturn", value=ann_value,
                 fidelity=FidelityClass.UNVALIDATED_PROXY,
-                formula_id="openap_announcement_return_trading_sessions_minus2_plus1",
+                formula_id="openap_announcement_return_trading_sessions_minus1_plus2",
                 sources=tuple(
                     source
                     for source in (ann_source, "yahoo_public", "kenneth_french")

@@ -73,10 +73,13 @@ def test_finalizer_keeps_only_certified_current_rows(tmp_path: Path, monkeypatch
     )
 
     score_ready = pd.read_csv(output / "forward_proxy_score_ready.csv")
+    advisory = pd.read_csv(output / "forward_proxy_advisory_current.csv")
     assert score_ready[["ticker", "signal"]].to_dict(orient="records") == [
         {"ticker": "A", "signal": "DivSeason"}
     ]
     assert summary["signals_certified"] == 1
     assert summary["score_ready_rows"] == 1
+    assert advisory.empty
+    assert summary["advisory_rows"] == 0
     assert summary["partial"] is False
     assert summary["locked_opened"] is False

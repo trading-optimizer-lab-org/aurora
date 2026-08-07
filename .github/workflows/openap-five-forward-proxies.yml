@@ -45,6 +45,14 @@ on:
           - EarningsStreak
           - IndRetBig
           - DelNetFin
+      forward_proxy_mode:
+        description: Strict score or explicit advisory score for failed forward proxies
+        required: false
+        default: strict
+        type: choice
+        options:
+          - strict
+          - advisory
 
 permissions:
   actions: read
@@ -307,7 +315,8 @@ jobs:
             --formation-date "${{ inputs.formation_date }}" \
             --signals DivSeason,AnnouncementReturn,EarningsStreak,IndRetBig,DelNetFin \
             --forward-proxy-certificates outputs/certification/forward_proxy_certificates.jsonl \
-            --forward-proxy-source-manifest config/openap_93/five_forward_proxy_sources.yaml
+            --forward-proxy-source-manifest config/openap_93/five_forward_proxy_sources.yaml \
+            --forward-proxy-mode "${{ inputs.forward_proxy_mode }}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openap-five-forward-proxy-certification-${{ github.run_id }}
@@ -356,6 +365,8 @@ jobs:
           assert signals['value'].notna().any()
           assert (signals.loc[signals['current_usable'], 'certificate_status'] == 'certified').all()
           assert not (signals['certificate_status'].eq('certified') & ~signals['current_usable']).any()
+          assert (signals.loc[signals['current_usable'], 'forward_advisory_usable']).all()
+          assert not (signals['current_usable'] & ~signals['forward_advisory_usable']).any()
           assert manifest['locked_opened'] is False
           assert manifest['validation_used_for_selection'] is False
           PY
@@ -408,6 +419,8 @@ jobs:
             forward_proxy_validation_metrics.csv \
             forward_proxy_certificates.jsonl \
             forward_proxy_score_ready.csv \
+            forward_proxy_advisory_current.csv \
+            forward_proxy_advisory_current.parquet \
             forward_proxy_missing_inputs.csv \
             forward_proxy_source_audit.csv \
             forward_proxy_summary.json; do

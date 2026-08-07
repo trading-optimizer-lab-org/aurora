@@ -110,7 +110,7 @@ def test_item_202_precedes_yahoo_and_periodic_filing_for_same_period() -> None:
     assert pd.Timestamp(chosen["event_at"]) == pd.Timestamp("2026-01-29", tz="UTC")
 
 
-def test_announcement_return_uses_exact_four_trading_sessions_minus2_plus1() -> None:
+def test_announcement_return_uses_exact_four_trading_sessions_minus1_plus2() -> None:
     prices = pd.DataFrame(
         {
             "date": pd.to_datetime(
@@ -129,10 +129,10 @@ def test_announcement_return_uses_exact_four_trading_sessions_minus2_plus1() -> 
 
     result = announcement_return(prices, factors, event_at="2020-01-06")
 
-    assert result.value == pytest.approx(0.04)
+    assert result.value == pytest.approx(0.53)
     assert result.sessions == 4
-    assert result.window_start == pd.Timestamp("2020-01-02")
-    assert result.window_end == pd.Timestamp("2020-01-07")
+    assert result.window_start == pd.Timestamp("2020-01-03")
+    assert result.window_end == pd.Timestamp("2020-01-08")
 
 
 def test_earnings_streak_requires_two_same_sign_price_scaled_surprises() -> None:

@@ -268,9 +268,11 @@ def announcement_return(
     if not indexes:
         return AnnouncementReturnResult(None, 0, None, None, event_session)
     event_index = indexes[0]
-    if event_index < 2 or event_index + 1 >= len(merged):
+    # OpenAP marks the prior trading session, announcement session, and the
+    # following two trading sessions: [-1, +2].
+    if event_index < 1 or event_index + 2 >= len(merged):
         return AnnouncementReturnResult(None, 0, None, None, event_session)
-    window = merged.iloc[event_index - 2 : event_index + 2]
+    window = merged.iloc[event_index - 1 : event_index + 3]
     abnormal = window["stock_return"] - window["mktrf"] - window["rf"]
     return AnnouncementReturnResult(
         value=float(abnormal.sum()),

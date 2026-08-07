@@ -135,6 +135,7 @@ def build_current(args: argparse.Namespace) -> None:
         forward_proxy_source_manifest=(
             args.forward_proxy_source_manifest or None
         ),
+        forward_proxy_mode=getattr(args, "forward_proxy_mode", "strict"),
     )
 
 
@@ -169,6 +170,7 @@ def run_all(args: argparse.Namespace) -> None:
             signals=args.signals,
             forward_proxy_certificates=args.forward_proxy_certificates,
             forward_proxy_source_manifest=args.forward_proxy_source_manifest,
+            forward_proxy_mode=getattr(args, "forward_proxy_mode", "strict"),
         )
     )
 
@@ -194,6 +196,12 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--signals", default="")
     build.add_argument("--forward-proxy-certificates", default="")
     build.add_argument("--forward-proxy-source-manifest", default="")
+    build.add_argument(
+        "--forward-proxy-mode",
+        choices=("strict", "advisory"),
+        default="strict",
+        help="strict uses certified proxies only; advisory exposes failed proxies with a confidence weight",
+    )
     run = sub.add_parser("run")
     run.add_argument(
         "--base-db",
@@ -207,6 +215,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--refresh", action="store_true")
     run.add_argument("--forward-proxy-certificates", default="")
     run.add_argument("--forward-proxy-source-manifest", default="")
+    run.add_argument(
+        "--forward-proxy-mode",
+        choices=("strict", "advisory"),
+        default="strict",
+        help="strict uses certified proxies only; advisory exposes failed proxies with a confidence weight",
+    )
     return parser
 
 

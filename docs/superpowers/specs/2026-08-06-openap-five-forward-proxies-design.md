@@ -59,7 +59,8 @@ lag sets and binary output cannot be optimized.
 ### AnnouncementReturn
 
 Aurora will use the latest completed earnings announcement and calculate the
-sum of daily stock excess returns over trading days `[-2, +1]` around the
+sum of daily stock excess returns over the four OpenAP trading sessions
+`[-1, +2]` around the
 announcement date. Excess return is stock total return minus `Mkt-RF` minus
 `RF` from Kenneth French's daily factors. The value remains active for no more
 than six months.
@@ -173,6 +174,20 @@ The current score consumes a signed cross-sectional percentile only when a
 frozen validation certificate exists and all gates pass. Otherwise the feature
 has `fidelity_class=unvalidated_proxy`, `current_usable=false`, and zero weight.
 
+Future snapshots have two deliberately separate paths:
+
+- `strict`: only certified rows enter the normal score.
+- `advisory`: a finite, causal row with a matching frozen variant is exposed in
+  `forward_proxy_advisory_current.csv`. Its weight is the product of the lower
+  historical Pearson/Spearman similarity, sign agreement, and a coverage cap
+  at 60 common months. This weight is advisory only and is never used unless
+  the caller explicitly requests `--forward-proxy-mode advisory`.
+
+An advisory row is not described as reliable. It carries its historical
+Pearson, Spearman, sign agreement, common-month count, selected variant, and a
+reason. A failed or missing certificate can therefore be monitored with recent
+data without silently turning a weak reconstruction into a certified score.
+
 The certificate binds:
 
 - signal and selected formula variant;
@@ -211,6 +226,8 @@ Artifact `openap-five-forward-proxies-results` contains:
 - `forward_proxy_validation_metrics.csv`
 - `forward_proxy_certificates.jsonl`
 - `forward_proxy_score_ready.csv`
+- `forward_proxy_advisory_current.csv`
+- `forward_proxy_advisory_current.parquet`
 - `forward_proxy_missing_inputs.csv`
 - `forward_proxy_source_audit.csv`
 - `forward_proxy_summary.json`
@@ -237,7 +254,7 @@ Tests are written before production changes and run in GitHub Actions. Required
 behavioral coverage includes:
 
 - every official formula on hand-calculated fixtures;
-- event windows use trading sessions `[-2, +1]`;
+- event windows use trading sessions `[-1, +2]`;
 - no value is available before its final required input;
 - `IndRetBig` uses PIT SIC, PIT shares, unadjusted close, and arithmetic means;
 - `DelNetFin` uses exact 12-month matching and average assets;
