@@ -26,10 +26,32 @@ def merge_reconstructions(
     source = Path(input_dir)
     output = Path(output_dir)
     panels = sorted(source.rglob("proxy_reconstruction_panel.parquet"))
+    audits = sorted(source.rglob("proxy_validation_audit.json"))
     returns = sorted(source.rglob("proxy_realized_monthly.csv"))
     if len(panels) != len(FIVE_PROXY_SIGNALS):
         raise RuntimeError(
             f"Expected {len(FIVE_PROXY_SIGNALS)} reconstruction panels, found {len(panels)}"
+        )
+    if len(audits) != len(FIVE_PROXY_SIGNALS):
+        raise RuntimeError(
+            f"Expected {len(FIVE_PROXY_SIGNALS)} reconstruction audits, found {len(audits)}"
+        )
+    audited_signals: list[str] = []
+    for path in audits:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        shard_signals = payload.get("signals", [])
+        if len(shard_signals) != 1:
+            raise RuntimeError(f"Reconstruction audit must identify one signal: {path}")
+        if payload.get("locked_opened") is not False:
+            raise RuntimeError(f"Reconstruction audit opened locked data: {path}")
+        if payload.get("validation_used_for_selection") is not False:
+            raise RuntimeError(f"Reconstruction audit used validation for selection: {path}")
+        audited_signals.append(str(shard_signals[0]))
+    expected = set(FIVE_PROXY_SIGNALS)
+    if set(audited_signals) != expected or len(audited_signals) != len(expected):
+        raise RuntimeError(
+            "Audited reconstruction signals do not match contract: "
+            f"{sorted(audited_signals)} != {sorted(expected)}"
         )
     frames = [pd.read_parquet(path) for path in panels]
     found = {
@@ -37,10 +59,9 @@ def merge_reconstructions(
         for frame in frames
         for signal in frame.get("signal", pd.Series(dtype="string")).dropna().unique()
     }
-    expected = set(FIVE_PROXY_SIGNALS)
-    if found != expected:
+    if not found.issubset(expected):
         raise RuntimeError(
-            f"Reconstructed signals do not match contract: {sorted(found)} != {sorted(expected)}"
+            f"Reconstructed panels contain signals outside contract: {sorted(found - expected)}"
         )
     panel = pd.concat(frames, ignore_index=True)
     identity = ["signal", "variant_id", "symbol", "formation_month"]
@@ -61,6 +82,8 @@ def merge_reconstructions(
         "signals": list(FIVE_PROXY_SIGNALS),
         "reconstruction_shards_expected": len(FIVE_PROXY_SIGNALS),
         "reconstruction_shards_found": len(panels),
+        "signals_with_rows": sorted(found),
+        "signals_without_rows": sorted(expected - found),
         "proxy_rows": int(len(panel)),
         "monthly_return_rows": int(len(monthly)),
         "partial": False,

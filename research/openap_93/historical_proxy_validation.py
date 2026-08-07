@@ -979,7 +979,27 @@ def reconstruct_monthly_proxies(
         parts.append(_build_delnetfin(monthly, master, facts))
     populated = [part for part in parts if not part.empty]
     if not populated:
-        raise RuntimeError(f"No proxy rows reconstructed for {list(requested)}")
+        # An unavailable public source is a scientific result, not a technical
+        # workflow failure.  Preserve an empty, schema-valid checkpoint so the
+        # remaining signals can still be certified while this one receives no
+        # certificate and therefore zero score weight.
+        return pd.DataFrame(
+            columns=[
+                "symbol",
+                "completed_month",
+                "formation_month",
+                "signal",
+                "proxy_value",
+                "proxy_formula_id",
+                "variant_id",
+                "reconstruction_status",
+                "caveat",
+                "cik",
+                "realized_month_return",
+                "screen_price",
+                "available_at",
+            ]
+        )
     result = pd.concat(populated, ignore_index=True)
     if "variant_id" not in result:
         result["variant_id"] = result["proxy_formula_id"]

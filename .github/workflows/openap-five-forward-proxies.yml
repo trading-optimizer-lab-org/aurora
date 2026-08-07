@@ -143,7 +143,7 @@ jobs:
           root = Path('outputs/reconstruction') / signal
           panel = pd.read_parquet(root / 'proxy_reconstruction_panel.parquet')
           audit = json.loads((root / 'proxy_validation_audit.json').read_text())
-          assert set(panel['signal']) == {signal}
+          assert set(panel['signal'].dropna()).issubset({signal})
           assert audit['signals'] == [signal]
           assert audit['locked_opened'] is False
           assert audit['validation_used_for_selection'] is False
