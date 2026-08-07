@@ -1233,79 +1233,113 @@ def run_current_pipeline(
 ) -> dict[str, Any]:
     started = time.monotonic()
     formation = pd.Timestamp(formation_at).tz_localize(None)
+    requested = set(selected_signals) if selected_signals is not None else set(REQUIRED_93)
+    unknown = requested - set(REQUIRED_93)
+    if unknown:
+        raise RuntimeError(f"Unknown requested signals: {sorted(unknown)}")
     retrieved_at = _utcnow()
     database = _find_database(base_database)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     public = _load_public_frames(normalized_public_inputs)
     base = _load_base_frames(database, formation, universe_symbols)
-    earnings_events = build_earnings_events(
-        base["master"],
-        base["submissions"],
-        base["analyst"],
-        base["prices"],
+    needs_earnings_events = bool(
+        requested & (QUARTERLY_IMPLEMENTED_SIGNALS | ANALYST_IMPLEMENTED_SIGNALS)
+    )
+    earnings_events = (
+        build_earnings_events(
+            base["master"],
+            base["submissions"],
+            base["analyst"],
+            base["prices"],
+        )
+        if needs_earnings_events
+        else pd.DataFrame()
     )
 
-    results = [
-        calculate_market_signals(
-            base["master"],
-            base["prices"],
-            public["ff3_daily"],
-            public["ff3_monthly"],
-            public["liquidity_monthly"],
-            public["vix_daily"],
-            formation_at=formation,
-            concept_inputs=base["concepts"],
-            ff48_sic_codes=public["ff48_sic_codes"],
-        ),
-        calculate_accounting_signals(
-            base["master"],
-            base["concepts"],
-            formation_at=formation,
-            gnp_deflator=_gnp_deflator(public["gnp_deflator"], formation),
-        ),
-        calculate_advanced_accounting_signals(
-            base["master"],
-            base["companyfacts"],
-            base["submissions"],
-            base["prices"],
-            public["gnp_deflator"],
-            public["ff48_sic_codes"],
-            formation_at=formation,
-        ),
-        calculate_quarterly_signals(
-            base["master"],
-            base["companyfacts"],
-            base["prices"],
-            public["ff3_daily"],
-            formation_at=formation,
-            earnings_events=earnings_events,
-        ),
-        calculate_analyst_signals(
-            base["master"],
-            base["analyst"],
-            base["companyfacts"],
-            formation_at=formation,
-            earnings_events=earnings_events,
-        ),
-        calculate_event_signals(
-            base["master"], base["prices"], formation_at=formation
-        ),
-        calculate_short_interest_signals(
-            base["master"], base["analyst"], formation_at=formation
-        ),
-        calculate_institutional_signals(
-            base["master"],
-            base["prices"],
-            base["companyfacts"],
-            base["concepts"],
-            base["analyst"],
-            public["sec_13f_filings"],
-            public["sec_13f_holdings"],
-            public["openfigi_cusip_map"],
-            formation_at=formation,
-        ),
-    ]
+    results: list[pd.DataFrame] = []
+    if selected_signals is None or requested & MARKET_IMPLEMENTED_SIGNALS:
+        results.append(
+            calculate_market_signals(
+                base["master"],
+                base["prices"],
+                public["ff3_daily"],
+                public["ff3_monthly"],
+                public["liquidity_monthly"],
+                public["vix_daily"],
+                formation_at=formation,
+                concept_inputs=base["concepts"],
+                ff48_sic_codes=public["ff48_sic_codes"],
+            )
+        )
+    if selected_signals is None or requested & ACCOUNTING_IMPLEMENTED_SIGNALS:
+        results.append(
+            calculate_accounting_signals(
+                base["master"],
+                base["concepts"],
+                formation_at=formation,
+                gnp_deflator=_gnp_deflator(public["gnp_deflator"], formation),
+            )
+        )
+    if selected_signals is None or requested & ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS:
+        results.append(
+            calculate_advanced_accounting_signals(
+                base["master"],
+                base["companyfacts"],
+                base["submissions"],
+                base["prices"],
+                public["gnp_deflator"],
+                public["ff48_sic_codes"],
+                formation_at=formation,
+            )
+        )
+    if selected_signals is None or requested & QUARTERLY_IMPLEMENTED_SIGNALS:
+        results.append(
+            calculate_quarterly_signals(
+                base["master"],
+                base["companyfacts"],
+                base["prices"],
+                public["ff3_daily"],
+                formation_at=formation,
+                earnings_events=earnings_events,
+            )
+        )
+    if selected_signals is None or requested & ANALYST_IMPLEMENTED_SIGNALS:
+        results.append(
+            calculate_analyst_signals(
+                base["master"],
+                base["analyst"],
+                base["companyfacts"],
+                formation_at=formation,
+                earnings_events=earnings_events,
+            )
+        )
+    if selected_signals is None or requested & EVENT_IMPLEMENTED_SIGNALS:
+        results.append(
+            calculate_event_signals(
+                base["master"], base["prices"], formation_at=formation
+            )
+        )
+    if selected_signals is None or requested & SHORT_INTEREST_IMPLEMENTED_SIGNALS:
+        results.append(
+            calculate_short_interest_signals(
+                base["master"], base["analyst"], formation_at=formation
+            )
+        )
+    if selected_signals is None or requested & INSTITUTIONAL_IMPLEMENTED_SIGNALS:
+        results.append(
+            calculate_institutional_signals(
+                base["master"],
+                base["prices"],
+                base["companyfacts"],
+                base["concepts"],
+                base["analyst"],
+                public["sec_13f_filings"],
+                public["sec_13f_holdings"],
+                public["openfigi_cusip_map"],
+                formation_at=formation,
+            )
+        )
     signals = _normalize_signal_results(
         results, base["master"], registry, formation, retrieved_at
     )
@@ -1334,9 +1368,6 @@ def run_current_pipeline(
         formula_hashes=proxy_formula_hashes,
     )
     if selected_signals is not None:
-        unknown = selected_signals - set(REQUIRED_93)
-        if unknown:
-            raise RuntimeError(f"Unknown requested signals: {sorted(unknown)}")
         signals = signals.loc[signals["signal"].isin(selected_signals)].copy()
     if selected_signals is None and signals["signal"].nunique() != 93:
         raise RuntimeError("The final current-signal table does not contain all 93 signals")
