@@ -2601,11 +2601,10 @@ def _recovery_calendar_volume_vxo_candidates(
             for volume_z_threshold in (1.0, 1.5, 2.0)
             for volume_weight in (0.25, 0.75)
         ]
-    else:
+    elif batch_id == 36:
         # Batch 35 showed that symmetric VXO weights and volume refinements do
         # not improve the global tests. Separate positive and negative VXO
         # shocks while retaining the same causal one-session input lag.
-        generation = batch_id - 36
         parameters_list = [
             {
                 **core,
@@ -2618,7 +2617,7 @@ def _recovery_calendar_volume_vxo_candidates(
                 "volume_reversal_weight": 0.25,
                 "vxo_change_lookback": 1,
                 "vxo_z_window": 10,
-                "vxo_z_threshold": round(vxo_threshold + generation * 0.0125, 4),
+                "vxo_z_threshold": vxo_threshold,
                 "vxo_weight": 3.0,
                 "vxo_positive_weight": positive_weight,
                 "vxo_negative_weight": negative_weight,
@@ -2629,6 +2628,35 @@ def _recovery_calendar_volume_vxo_candidates(
             for vxo_threshold in (1.4, 1.55)
             for positive_weight in (2.5, 3.5, 4.5, 5.5)
             for negative_weight in (0.0, 1.0)
+        ]
+    else:
+        # Batch 36 rejected asymmetric VXO shocks. Add an independent slow
+        # trend vote to improve ordinary bull years without removing the crash
+        # recovery and VXO protections that drive the leading train rule.
+        generation = batch_id - 37
+        parameters_list = [
+            {
+                **core,
+                "first_sessions": 2,
+                "last_sessions": 1,
+                "calendar_weight": calendar_weight,
+                "rsi_weight": rsi_weight,
+                "recovery_memory_window": 63,
+                "recovery_threshold_pct": 1.5,
+                "volume_z_threshold": 1.5,
+                "volume_reversal_weight": 0.25,
+                "vxo_change_lookback": 1,
+                "vxo_z_window": 10,
+                "vxo_z_threshold": round(1.55 + generation * 0.0125, 4),
+                "vxo_weight": 3.0,
+                "vxo_mode": "continuation",
+                "slow_trend_window": slow_trend_window,
+                "slow_trend_weight": slow_trend_weight,
+            }
+            for slow_trend_window in (63, 126, 189, 252)
+            for slow_trend_weight in (0.5, 1.0, 1.5, 2.0)
+            for rsi_weight in (0.5, 1.0, 1.5)
+            for calendar_weight in (1.0, 2.0)
         ]
     candidates: list[dict[str, Any]] = []
     source_ids = {

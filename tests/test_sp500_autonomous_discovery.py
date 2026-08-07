@@ -1376,6 +1376,49 @@ def test_batch_thirty_six_uses_distinct_asymmetric_vxo_shock_weights() -> None:
     assert all(row["leverage_allowed"] is False for row in batch_thirty_six)
 
 
+def test_batch_thirty_seven_adds_distinct_slow_trend_vote() -> None:
+    batch_thirty_six = registry.generate_candidates(36, count=96)
+    batch_thirty_seven = registry.generate_candidates(37, count=96)
+    batch_thirty_eight = registry.generate_candidates(38, count=96)
+
+    assert len(batch_thirty_seven) == 96
+    assert len({row["canonical_hash"] for row in batch_thirty_seven}) == 96
+    assert not {row["canonical_hash"] for row in batch_thirty_six}.intersection(
+        row["canonical_hash"] for row in batch_thirty_seven
+    )
+    assert not {row["canonical_hash"] for row in batch_thirty_seven}.intersection(
+        row["canonical_hash"] for row in batch_thirty_eight
+    )
+    assert {row["parameters"]["slow_trend_window"] for row in batch_thirty_seven} == {
+        63,
+        126,
+        189,
+        252,
+    }
+    assert {row["parameters"]["slow_trend_weight"] for row in batch_thirty_seven} == {
+        0.5,
+        1.0,
+        1.5,
+        2.0,
+    }
+    assert {row["parameters"]["rsi_weight"] for row in batch_thirty_seven} == {
+        0.5,
+        1.0,
+        1.5,
+    }
+    assert {row["parameters"]["calendar_weight"] for row in batch_thirty_seven} == {
+        1.0,
+        2.0,
+    }
+    assert all(row["parameters"]["vxo_z_window"] == 10 for row in batch_thirty_seven)
+    assert all(row["parameters"]["vxo_z_threshold"] == 1.55 for row in batch_thirty_seven)
+    assert all(row["parameters"]["vxo_weight"] == 3.0 for row in batch_thirty_seven)
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in batch_thirty_seven)
+    assert all(row["position_values"] == [-1, 1] for row in batch_thirty_seven)
+    assert all(row["cash_allowed"] is False for row in batch_thirty_seven)
+    assert all(row["leverage_allowed"] is False for row in batch_thirty_seven)
+
+
 def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("1997-01-02", periods=900, freq="B")
     close = pd.Series(
@@ -1448,6 +1491,12 @@ def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> Non
     assert set(asymmetric_result.decisions.unique()) <= {-1, 1}
     assert asymmetric_result.missing_fraction == 0.0
     assert asymmetric_result.first_evaluable_date is not None
+
+    slow_trend_candidate = registry.generate_candidates(37, count=96)[0]
+    slow_trend_result = candidate_decisions(slow_trend_candidate, data)
+    assert set(slow_trend_result.decisions.unique()) <= {-1, 1}
+    assert slow_trend_result.missing_fraction == 0.0
+    assert slow_trend_result.first_evaluable_date is not None
 
 
 def test_recovery_overnight_tug_rule_is_causal_and_fully_invested() -> None:

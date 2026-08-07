@@ -1463,6 +1463,16 @@ def _price_score(
         else:
             score = base_score + float(parameters["vxo_weight"]) * vxo_component
 
+        slow_trend_valid = pd.Series(True, index=ledger.index)
+        if "slow_trend_weight" in parameters:
+            slow_trend_return = (
+                close / close.shift(int(parameters["slow_trend_window"])) - 1.0
+            )
+            score = score + float(parameters["slow_trend_weight"]) * np.sign(
+                slow_trend_return
+            )
+            slow_trend_valid = slow_trend_return.notna()
+
         rolling_peak = close.rolling(
             int(parameters["drawdown_lookback"]),
             min_periods=int(parameters["drawdown_lookback"]),
@@ -1480,7 +1490,7 @@ def _price_score(
             > float(parameters["recovery_threshold_pct"]) / 100.0
         )
         score = score.where(~recovery_override, 1.0)
-        return score.where(base_score.notna() & vxo_z.notna())
+        return score.where(base_score.notna() & vxo_z.notna() & slow_trend_valid)
     if family == "trend_ensemble":
         components = []
         for horizon in parameters["horizons"]:
