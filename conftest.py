@@ -26,11 +26,25 @@ _PATH = str(_WORKTREE)
 try:
     import __editable___aurora_1_5_0_finder as _finder
     _finder.MAPPING['aurora'] = _PATH
-    # Evict any aurora modules that were loaded with the old MAPPING so the
-    # next import re-resolves through the corrected path.
-    for _name in list(sys.modules):
-        if _name == 'aurora' or _name.startswith('aurora.'):
-            del sys.modules[_name]
+    _aurora = sys.modules.get("aurora")
+    if _aurora is not None:
+        # Pytest may import this file as ``aurora.conftest`` after another
+        # checkout's editable install has already loaded the parent package.
+        # Keep the parent and current conftest alive while evicting stale
+        # children, otherwise pytest loses the module that is being imported.
+        _aurora.__path__ = [_PATH]
+        _aurora.__file__ = str(_WORKTREE / "__init__.py")
+        _current_conftest = __name__ if __name__.startswith("aurora.") else None
+        for _name, _module in list(sys.modules.items()):
+            if not _name.startswith("aurora.") or _name == _current_conftest:
+                continue
+            _module_file = getattr(_module, "__file__", None)
+            if _module_file is None:
+                continue
+            try:
+                Path(_module_file).resolve().relative_to(_WORKTREE)
+            except (OSError, ValueError):
+                del sys.modules[_name]
 except ImportError:
     # Editable finder not present (e.g. running from a wheel install). Fall
     # back to plain sys.path injection — harmless if aurora is already
