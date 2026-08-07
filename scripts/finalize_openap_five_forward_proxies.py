@@ -96,6 +96,7 @@ def finalize(
     signal_summary = []
     for signal in SIGNALS:
         metrics = validation_by_signal.get(signal, {})
+        current_signal = current.loc[current["signal"].eq(signal)] if "signal" in current else pd.DataFrame()
         signal_summary.append(
             {
                 "signal": signal,
@@ -104,7 +105,8 @@ def finalize(
                 "pearson": metrics.get("pearson"),
                 "spearman": metrics.get("spearman"),
                 "sign_agreement": metrics.get("sign_agreement"),
-                "current_rows": int(current["signal"].eq(signal).sum()) if "signal" in current else 0,
+                "current_rows": int(len(current_signal)),
+                "current_values_available": int(current_signal["value"].notna().sum()) if "value" in current_signal else 0,
                 "score_ready_rows": int(score_ready["signal"].eq(signal).sum()) if "signal" in score_ready else 0,
             }
         )
@@ -112,6 +114,7 @@ def finalize(
         "signals": signal_summary,
         "signals_evaluated": int(len(validation)),
         "signals_certified": int(sum(bool(item["certified"]) for item in signal_summary)),
+        "current_values_available": int(current.get("value", pd.Series(dtype=float)).notna().sum()),
         "score_ready_rows": int(len(score_ready)),
         "certification_job_result": certification_result,
         "current_job_result": current_result,

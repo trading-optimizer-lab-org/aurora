@@ -295,8 +295,7 @@ jobs:
               handle.write(str(summary['signals_certified']))
           PY
           echo "certified_count=$(cat "$HOME/certified_count.txt")" >> "$GITHUB_OUTPUT"
-      - name: Calculate current values for certified formulas only
-        if: ${{ steps.summary.outputs.certified_count != '0' }}
+      - name: Calculate current values for all five formulas
         run: |
           python scripts/run_openap_93_max_free.py \
             --signals-config config/openap_93/signals_93.yaml \
@@ -326,7 +325,7 @@ jobs:
 
   current:
     needs: [framework_contract, certify]
-    if: ${{ needs.certify.result == 'success' && needs.certify.outputs.certified_count != '0' }}
+    if: ${{ needs.certify.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -355,7 +354,9 @@ jobs:
           signals = pd.read_parquet('outputs/current/signals_93_current.parquet')
           manifest = json.load(open('outputs/current/run_manifest.json', encoding='utf-8'))
           assert set(signals['signal']) == {'DivSeason', 'AnnouncementReturn', 'EarningsStreak', 'IndRetBig', 'DelNetFin'}
+          assert signals['value'].notna().any()
           assert (signals.loc[signals['current_usable'], 'certificate_status'] == 'certified').all()
+          assert not (signals['certificate_status'].eq('certified') & ~signals['current_usable']).any()
           assert manifest['locked_opened'] is False
           assert manifest['validation_used_for_selection'] is False
           PY
