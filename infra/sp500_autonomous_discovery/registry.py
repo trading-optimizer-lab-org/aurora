@@ -59,9 +59,10 @@ def get_previous_trial_count() -> int:
 
 
 def _numeric_mutation(value: Any, rng: random.Random) -> Any:
-    if isinstance(value, list) and value and all(
-        isinstance(item, (int, float)) and not isinstance(item, bool)
-        for item in value
+    if (
+        isinstance(value, list)
+        and value
+        and all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in value)
     ):
         scale = rng.choice((0.75, 0.9, 1.0, 1.1, 1.25))
         mutated = [
@@ -80,7 +81,9 @@ def _numeric_mutation(value: Any, rng: random.Random) -> Any:
     return round(float(value) * scale, 8)
 
 
-def _mutate(template: Mapping[str, Any], batch_id: int, index: int, rng: random.Random) -> dict[str, Any]:
+def _mutate(
+    template: Mapping[str, Any], batch_id: int, index: int, rng: random.Random
+) -> dict[str, Any]:
     candidate = json.loads(json.dumps(template))
     candidate.update(
         {
@@ -132,104 +135,175 @@ def _targeted_reversal_candidates(
     definitions: list[tuple[str, dict[str, Any], str, str, str]] = []
 
     for rsi_window, lower, upper, trend_window in (
-        (2, 10, 90, 20), (2, 10, 90, 50), (2, 10, 90, 100), (2, 10, 90, 200),
-        (2, 20, 80, 20), (2, 20, 80, 50), (2, 20, 80, 100), (2, 20, 80, 200),
-        (3, 20, 80, 20), (3, 20, 80, 50), (3, 20, 80, 100), (3, 20, 80, 200),
+        (2, 10, 90, 20),
+        (2, 10, 90, 50),
+        (2, 10, 90, 100),
+        (2, 10, 90, 200),
+        (2, 20, 80, 20),
+        (2, 20, 80, 50),
+        (2, 20, 80, 100),
+        (2, 20, 80, 200),
+        (3, 20, 80, 20),
+        (3, 20, 80, 50),
+        (3, 20, 80, 100),
+        (3, 20, 80, 200),
     ):
-        definitions.append((
-            "rsi_trend_blend",
-            {
-                "rsi_window": rsi_window,
-                "lower": lower,
-                "upper": upper,
-                "trend_window": trend_window,
-            },
-            "use RSI reversal at extremes; otherwise use causal price trend",
-            "score_t > 0",
-            "score_t < 0",
-        ))
+        definitions.append(
+            (
+                "rsi_trend_blend",
+                {
+                    "rsi_window": rsi_window,
+                    "lower": lower,
+                    "upper": upper,
+                    "trend_window": trend_window,
+                },
+                "use RSI reversal at extremes; otherwise use causal price trend",
+                "score_t > 0",
+                "score_t < 0",
+            )
+        )
     for window, lower, upper in (
-        (2, 5, 95), (2, 10, 90), (2, 15, 85), (2, 20, 80),
-        (3, 10, 90), (3, 15, 85), (3, 20, 80), (3, 25, 75),
-        (5, 15, 85), (5, 20, 80), (5, 25, 75), (5, 30, 70),
+        (2, 5, 95),
+        (2, 10, 90),
+        (2, 15, 85),
+        (2, 20, 80),
+        (3, 10, 90),
+        (3, 15, 85),
+        (3, 20, 80),
+        (3, 25, 75),
+        (5, 15, 85),
+        (5, 20, 80),
+        (5, 25, 75),
+        (5, 30, 70),
     ):
-        definitions.append((
-            "rsi_reversal",
-            {"window": window, "lower": lower, "upper": upper},
-            f"Wilder_RSI_{window} through close t",
-            f"RSI_t <= {lower}",
-            f"RSI_t >= {upper}",
-        ))
+        definitions.append(
+            (
+                "rsi_reversal",
+                {"window": window, "lower": lower, "upper": upper},
+                f"Wilder_RSI_{window} through close t",
+                f"RSI_t <= {lower}",
+                f"RSI_t >= {upper}",
+            )
+        )
     for lower_fraction, upper_fraction in (
-        (0.05, 0.95), (0.10, 0.90), (0.15, 0.85), (0.20, 0.80),
-        (0.25, 0.75), (0.30, 0.70), (0.35, 0.65), (0.40, 0.60),
-        (0.10, 0.80), (0.20, 0.90), (0.15, 0.75), (0.25, 0.85),
+        (0.05, 0.95),
+        (0.10, 0.90),
+        (0.15, 0.85),
+        (0.20, 0.80),
+        (0.25, 0.75),
+        (0.30, 0.70),
+        (0.35, 0.65),
+        (0.40, 0.60),
+        (0.10, 0.80),
+        (0.20, 0.90),
+        (0.15, 0.75),
+        (0.25, 0.85),
     ):
-        definitions.append((
-            "internal_bar_strength_reversal",
-            {"lower": lower_fraction, "upper": upper_fraction},
-            "IBS_t = (TR_CLOSE_t - LOW_t) / (HIGH_t - LOW_t)",
-            f"IBS_t <= {lower_fraction}",
-            f"IBS_t >= {upper_fraction}",
-        ))
+        definitions.append(
+            (
+                "internal_bar_strength_reversal",
+                {"lower": lower_fraction, "upper": upper_fraction},
+                "IBS_t = (TR_CLOSE_t - LOW_t) / (HIGH_t - LOW_t)",
+                f"IBS_t <= {lower_fraction}",
+                f"IBS_t >= {upper_fraction}",
+            )
+        )
     for lookback, threshold in (
-        (1, 0.25), (1, 0.50), (1, 0.75), (1, 1.00),
-        (2, 0.50), (2, 1.00), (2, 1.50), (2, 2.00),
-        (3, 0.75), (3, 1.50), (5, 1.00), (5, 2.00),
+        (1, 0.25),
+        (1, 0.50),
+        (1, 0.75),
+        (1, 1.00),
+        (2, 0.50),
+        (2, 1.00),
+        (2, 1.50),
+        (2, 2.00),
+        (3, 0.75),
+        (3, 1.50),
+        (5, 1.00),
+        (5, 2.00),
     ):
         adjusted = round(threshold + threshold_shift, 4)
-        definitions.append((
-            "return_threshold_reversal",
-            {"lookback": lookback, "threshold_pct": adjusted},
-            f"lag_return_t = TR_CLOSE_t / TR_CLOSE[t-{lookback}] - 1",
-            f"lag_return_t <= -{adjusted}%",
-            f"lag_return_t >= {adjusted}%",
-        ))
+        definitions.append(
+            (
+                "return_threshold_reversal",
+                {"lookback": lookback, "threshold_pct": adjusted},
+                f"lag_return_t = TR_CLOSE_t / TR_CLOSE[t-{lookback}] - 1",
+                f"lag_return_t <= -{adjusted}%",
+                f"lag_return_t >= {adjusted}%",
+            )
+        )
     for streak in range(2, 14):
-        definitions.append((
-            "streak_reversal",
-            {"streak": streak},
-            "streak_t = signed count of consecutive close-to-close moves through t",
-            f"streak_t <= -{streak}",
-            f"streak_t >= {streak}",
-        ))
+        definitions.append(
+            (
+                "streak_reversal",
+                {"streak": streak},
+                "streak_t = signed count of consecutive close-to-close moves through t",
+                f"streak_t <= -{streak}",
+                f"streak_t >= {streak}",
+            )
+        )
     for reversal_window, trend_window, threshold in (
-        (1, 20, 0.5), (1, 50, 0.5), (1, 100, 0.5), (1, 200, 0.5),
-        (2, 20, 1.0), (2, 50, 1.0), (2, 100, 1.0), (2, 200, 1.0),
-        (3, 20, 1.5), (3, 50, 1.5), (3, 100, 1.5), (3, 200, 1.5),
+        (1, 20, 0.5),
+        (1, 50, 0.5),
+        (1, 100, 0.5),
+        (1, 200, 0.5),
+        (2, 20, 1.0),
+        (2, 50, 1.0),
+        (2, 100, 1.0),
+        (2, 200, 1.0),
+        (3, 20, 1.5),
+        (3, 50, 1.5),
+        (3, 100, 1.5),
+        (3, 200, 1.5),
     ):
         adjusted = round(threshold + threshold_shift, 4)
-        definitions.append((
-            "reversal_trend_blend",
-            {
-                "reversal_window": reversal_window,
-                "trend_window": trend_window,
-                "reversal_threshold_pct": adjusted,
-            },
-            "use short-return reversal after an extreme move; otherwise use causal trend",
-            "effective score_t > 0",
-            "effective score_t < 0",
-        ))
+        definitions.append(
+            (
+                "reversal_trend_blend",
+                {
+                    "reversal_window": reversal_window,
+                    "trend_window": trend_window,
+                    "reversal_threshold_pct": adjusted,
+                },
+                "use short-return reversal after an extreme move; otherwise use causal trend",
+                "effective score_t > 0",
+                "effective score_t < 0",
+            )
+        )
     for horizons in (
-        [1, 2], [1, 3], [1, 5], [2, 3], [2, 5], [3, 5],
-        [1, 2, 3], [1, 2, 5], [1, 3, 5], [2, 3, 5], [1, 2, 3, 5], [2, 3, 5, 10],
+        [1, 2],
+        [1, 3],
+        [1, 5],
+        [2, 3],
+        [2, 5],
+        [3, 5],
+        [1, 2, 3],
+        [1, 2, 5],
+        [1, 3, 5],
+        [2, 3, 5],
+        [1, 2, 3, 5],
+        [2, 3, 5, 10],
     ):
-        definitions.append((
-            "multi_horizon_reversal",
-            {"horizons": horizons},
-            f"score_t = -mean(return_h through t for h in {horizons})",
-            "score_t > 0",
-            "score_t < 0",
-        ))
+        definitions.append(
+            (
+                "multi_horizon_reversal",
+                {"horizons": horizons},
+                f"score_t = -mean(return_h through t for h in {horizons})",
+                "score_t > 0",
+                "score_t < 0",
+            )
+        )
     for threshold in (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.75, 1.0, 1.25, 1.5, 2.0):
         adjusted = round(threshold + threshold_shift, 4)
-        definitions.append((
-            "intraday_return_reversal",
-            {"threshold_pct": adjusted},
-            "intraday_return_t = TR_CLOSE_t / TR_OPEN_t - 1",
-            f"intraday_return_t <= -{adjusted}%",
-            f"intraday_return_t >= {adjusted}%",
-        ))
+        definitions.append(
+            (
+                "intraday_return_reversal",
+                {"threshold_pct": adjusted},
+                "intraday_return_t = TR_CLOSE_t / TR_OPEN_t - 1",
+                f"intraday_return_t <= -{adjusted}%",
+                f"intraday_return_t >= {adjusted}%",
+            )
+        )
 
     candidates: list[dict[str, Any]] = []
     hashes: set[str] = set()
@@ -295,14 +369,32 @@ def _neighborhood_reversal_candidates(
         usable[0],
     )
     prior_reversal = {
-        (1, 20, 0.5), (1, 50, 0.5), (1, 100, 0.5), (1, 200, 0.5),
-        (2, 20, 1.0), (2, 50, 1.0), (2, 100, 1.0), (2, 200, 1.0),
-        (3, 20, 1.5), (3, 50, 1.5), (3, 100, 1.5), (3, 200, 1.5),
+        (1, 20, 0.5),
+        (1, 50, 0.5),
+        (1, 100, 0.5),
+        (1, 200, 0.5),
+        (2, 20, 1.0),
+        (2, 50, 1.0),
+        (2, 100, 1.0),
+        (2, 200, 1.0),
+        (3, 20, 1.5),
+        (3, 50, 1.5),
+        (3, 100, 1.5),
+        (3, 200, 1.5),
     }
     prior_rsi = {
-        (2, 10, 90, 20), (2, 10, 90, 50), (2, 10, 90, 100), (2, 10, 90, 200),
-        (2, 20, 80, 20), (2, 20, 80, 50), (2, 20, 80, 100), (2, 20, 80, 200),
-        (3, 20, 80, 20), (3, 20, 80, 50), (3, 20, 80, 100), (3, 20, 80, 200),
+        (2, 10, 90, 20),
+        (2, 10, 90, 50),
+        (2, 10, 90, 100),
+        (2, 10, 90, 200),
+        (2, 20, 80, 20),
+        (2, 20, 80, 50),
+        (2, 20, 80, 100),
+        (2, 20, 80, 200),
+        (3, 20, 80, 20),
+        (3, 20, 80, 50),
+        (3, 20, 80, 100),
+        (3, 20, 80, 200),
     }
     generation = batch_id - 4
     trend_windows = [30, 40, 60, 80, 100, 126, 150, 180, 200, 225]
@@ -332,30 +424,34 @@ def _neighborhood_reversal_candidates(
 
     definitions: list[tuple[str, dict[str, Any], str, str, str]] = []
     for reversal_window, trend_window, threshold in spread(reversal_grid, count // 2):
-        definitions.append((
-            "reversal_trend_blend",
-            {
-                "reversal_window": reversal_window,
-                "trend_window": trend_window,
-                "reversal_threshold_pct": threshold,
-            },
-            "use short-return reversal after an extreme move; otherwise use causal trend",
-            "effective score_t > 0",
-            "effective score_t < 0",
-        ))
+        definitions.append(
+            (
+                "reversal_trend_blend",
+                {
+                    "reversal_window": reversal_window,
+                    "trend_window": trend_window,
+                    "reversal_threshold_pct": threshold,
+                },
+                "use short-return reversal after an extreme move; otherwise use causal trend",
+                "effective score_t > 0",
+                "effective score_t < 0",
+            )
+        )
     for window, lower, upper, trend_window in spread(rsi_grid, count - len(definitions)):
-        definitions.append((
-            "rsi_trend_blend",
-            {
-                "rsi_window": window,
-                "lower": lower,
-                "upper": upper,
-                "trend_window": trend_window,
-            },
-            "use RSI reversal at extremes; otherwise use causal price trend",
-            "score_t > 0",
-            "score_t < 0",
-        ))
+        definitions.append(
+            (
+                "rsi_trend_blend",
+                {
+                    "rsi_window": window,
+                    "lower": lower,
+                    "upper": upper,
+                    "trend_window": trend_window,
+                },
+                "use RSI reversal at extremes; otherwise use causal price trend",
+                "score_t > 0",
+                "score_t < 0",
+            )
+        )
 
     candidates: list[dict[str, Any]] = []
     for index, (family, parameters, formula, long_rule, short_rule) in enumerate(definitions):
@@ -453,21 +549,25 @@ def _combined_reversal_candidates(
 
     vote_count = count if generation >= 1 else count // 2
     for parameters in spread(vote_grid, vote_count):
-        definitions.append((
-            "dual_reversal_trend_vote",
-            parameters,
-            "weighted vote of causal RSI-trend and return-reversal-trend components",
-            "weighted score_t > 0",
-            "weighted score_t < 0",
-        ))
+        definitions.append(
+            (
+                "dual_reversal_trend_vote",
+                parameters,
+                "weighted vote of causal RSI-trend and return-reversal-trend components",
+                "weighted score_t > 0",
+                "weighted score_t < 0",
+            )
+        )
     for parameters in spread(fine_rsi_grid, count - len(definitions)):
-        definitions.append((
-            "rsi_trend_blend",
-            parameters,
-            "use RSI reversal at extremes; otherwise use causal price trend",
-            "score_t > 0",
-            "score_t < 0",
-        ))
+        definitions.append(
+            (
+                "rsi_trend_blend",
+                parameters,
+                "use RSI reversal at extremes; otherwise use causal price trend",
+                "score_t > 0",
+                "score_t < 0",
+            )
+        )
 
     candidates: list[dict[str, Any]] = []
     for index, (family, parameters, formula, long_rule, short_rule) in enumerate(definitions):
@@ -921,33 +1021,15 @@ def _stability_refined_dual_reversal_candidates(
         score = (
             abs(int(parameters["rsi_window"]) - anchor["rsi_window"]) / 1.0
             + abs(int(parameters["lower"]) - anchor["lower"]) / 2.0
-            + abs(
-                int(parameters["rsi_trend_window"])
-                - anchor["rsi_trend_window"]
-            )
-            / 20.0
-            + abs(
-                int(parameters["reversal_window"])
-                - anchor["reversal_window"]
-            )
-            / 1.0
-            + abs(
-                float(parameters["reversal_threshold_pct"])
-                - anchor["reversal_threshold_pct"]
-            )
+            + abs(int(parameters["rsi_trend_window"]) - anchor["rsi_trend_window"]) / 20.0
+            + abs(int(parameters["reversal_window"]) - anchor["reversal_window"]) / 1.0
+            + abs(float(parameters["reversal_threshold_pct"]) - anchor["reversal_threshold_pct"])
             / 0.025
-            + abs(
-                int(parameters["reversal_trend_window"])
-                - anchor["reversal_trend_window"]
-            )
-            / 10.0
+            + abs(int(parameters["reversal_trend_window"]) - anchor["reversal_trend_window"]) / 10.0
             + 4.0
             * (
                 abs(int(parameters["rsi_weight"]) - anchor["rsi_weight"])
-                + abs(
-                    int(parameters["reversal_weight"])
-                    - anchor["reversal_weight"]
-                )
+                + abs(int(parameters["reversal_weight"]) - anchor["reversal_weight"])
             )
         )
         return score, json.dumps(parameters, sort_keys=True, separators=(",", ":"))
@@ -955,8 +1037,7 @@ def _stability_refined_dual_reversal_candidates(
     untested = [
         parameters
         for parameters in sorted(grid, key=distance)
-        if json.dumps(parameters, sort_keys=True, separators=(",", ":"))
-        not in known_parameters
+        if json.dumps(parameters, sort_keys=True, separators=(",", ":")) not in known_parameters
     ]
     start = generation * count
     parameters_list = untested[start : start + count]
@@ -975,9 +1056,7 @@ def _stability_refined_dual_reversal_candidates(
                 "pyramiding_allowed": False,
                 "multiple_assets_in_portfolio": False,
                 "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
-                "variant_label": (
-                    f"autonomous_stability_refinement_batch_{batch_id}_{index}"
-                ),
+                "variant_label": (f"autonomous_stability_refinement_batch_{batch_id}_{index}"),
                 "family": "dual_reversal_trend_vote",
                 "family_name": "Stability Refined Dual Reversal Trend Vote",
                 "parameters": parameters,
@@ -999,9 +1078,7 @@ def _stability_refined_dual_reversal_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("STABILITY_REFINEMENT_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -1100,13 +1177,9 @@ def _asymmetric_override_candidates(
         {
             **core,
             "positive_override_window": positive_window,
-            "positive_override_threshold_pct": round(
-                positive_threshold + positive_step, 4
-            ),
+            "positive_override_threshold_pct": round(positive_threshold + positive_step, 4),
             "negative_override_window": negative_window,
-            "negative_override_threshold_pct": round(
-                negative_threshold + negative_step, 4
-            ),
+            "negative_override_threshold_pct": round(negative_threshold + negative_step, 4),
         }
         for core in core_variants
         for positive_window, positive_threshold in positive_overrides
@@ -1125,9 +1198,7 @@ def _asymmetric_override_candidates(
                 "pyramiding_allowed": False,
                 "multiple_assets_in_portfolio": False,
                 "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
-                "variant_label": (
-                    f"autonomous_asymmetric_override_batch_{batch_id}_{index}"
-                ),
+                "variant_label": (f"autonomous_asymmetric_override_batch_{batch_id}_{index}"),
                 "family": "asymmetric_trend_override_reversal",
                 "family_name": "Asymmetric Trend Override Reversal",
                 "parameters": parameters,
@@ -1149,9 +1220,7 @@ def _asymmetric_override_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("ASYMMETRIC_OVERRIDE_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -1233,9 +1302,7 @@ def _drawdown_recovery_override_candidates(
                 "pyramiding_allowed": False,
                 "multiple_assets_in_portfolio": False,
                 "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
-                "variant_label": (
-                    f"autonomous_drawdown_recovery_batch_{batch_id}_{index}"
-                ),
+                "variant_label": (f"autonomous_drawdown_recovery_batch_{batch_id}_{index}"),
                 "family": "drawdown_recovery_override_reversal",
                 "family_name": "Drawdown Recovery Override Reversal",
                 "parameters": parameters,
@@ -1265,9 +1332,7 @@ def _drawdown_recovery_override_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("DRAWDOWN_RECOVERY_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -1358,9 +1423,7 @@ def _quiet_bull_recovery_override_candidates(
                 "pyramiding_allowed": False,
                 "multiple_assets_in_portfolio": False,
                 "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
-                "variant_label": (
-                    f"autonomous_quiet_bull_recovery_batch_{batch_id}_{index}"
-                ),
+                "variant_label": (f"autonomous_quiet_bull_recovery_batch_{batch_id}_{index}"),
                 "family": "quiet_bull_recovery_override_reversal",
                 "family_name": "Quiet Bull Recovery Override Reversal",
                 "parameters": parameters,
@@ -1368,9 +1431,7 @@ def _quiet_bull_recovery_override_candidates(
                 "feature_formulas": [
                     "causal dual reversal score forced long during confirmed recovery or a quiet rising market"
                 ],
-                "long_rule": (
-                    "dual score_t > 0, confirmed recovery, or quiet rising market"
-                ),
+                "long_rule": ("dual score_t > 0, confirmed recovery, or quiet rising market"),
                 "short_rule": "dual score_t < 0 outside both long overrides",
                 "features": ["AUTO_QUIET_BULL_RECOVERY_OVERRIDE_REVERSAL"],
                 "warmup_rule": (
@@ -1390,9 +1451,7 @@ def _quiet_bull_recovery_override_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("QUIET_BULL_RECOVERY_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -1484,9 +1543,7 @@ def _recovery_trend_breakout_majority_candidates(
                 "pyramiding_allowed": False,
                 "multiple_assets_in_portfolio": False,
                 "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
-                "variant_label": (
-                    f"autonomous_recovery_trend_breakout_batch_{batch_id}_{index}"
-                ),
+                "variant_label": (f"autonomous_recovery_trend_breakout_batch_{batch_id}_{index}"),
                 "family": "recovery_trend_breakout_majority",
                 "family_name": "Recovery Trend Breakout Majority",
                 "parameters": parameters,
@@ -1514,9 +1571,7 @@ def _recovery_trend_breakout_majority_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("RECOVERY_TREND_BREAKOUT_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -1607,9 +1662,7 @@ def _high_vol_crash_recovery_candidates(
                 "pyramiding_allowed": False,
                 "multiple_assets_in_portfolio": False,
                 "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
-                "variant_label": (
-                    f"autonomous_high_vol_crash_recovery_batch_{batch_id}_{index}"
-                ),
+                "variant_label": (f"autonomous_high_vol_crash_recovery_batch_{batch_id}_{index}"),
                 "family": "high_vol_crash_recovery_reversal",
                 "family_name": "High Vol Crash Recovery Reversal",
                 "parameters": parameters,
@@ -1639,9 +1692,7 @@ def _high_vol_crash_recovery_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("HIGH_VOL_CRASH_RECOVERY_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -1724,9 +1775,7 @@ def _adaptive_recovery_edge_candidates(
                 "pyramiding_allowed": False,
                 "multiple_assets_in_portfolio": False,
                 "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
-                "variant_label": (
-                    f"autonomous_adaptive_recovery_edge_batch_{batch_id}_{index}"
-                ),
+                "variant_label": (f"autonomous_adaptive_recovery_edge_batch_{batch_id}_{index}"),
                 "family": "adaptive_recovery_edge_switch",
                 "family_name": "Adaptive Recovery Edge Switch",
                 "parameters": parameters,
@@ -1758,9 +1807,7 @@ def _adaptive_recovery_edge_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("ADAPTIVE_RECOVERY_EDGE_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -1840,9 +1887,7 @@ def _recovery_overnight_tug_candidates(
                 "pyramiding_allowed": False,
                 "multiple_assets_in_portfolio": False,
                 "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
-                "variant_label": (
-                    f"autonomous_recovery_overnight_tug_batch_{batch_id}_{index}"
-                ),
+                "variant_label": (f"autonomous_recovery_overnight_tug_batch_{batch_id}_{index}"),
                 "family": "recovery_overnight_tug_vote",
                 "family_name": "Recovery Overnight Tug Vote",
                 "parameters": parameters,
@@ -1874,9 +1919,7 @@ def _recovery_overnight_tug_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("RECOVERY_OVERNIGHT_TUG_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -1945,9 +1988,7 @@ def _recovery_turn_month_candidates(
                 "pyramiding_allowed": False,
                 "multiple_assets_in_portfolio": False,
                 "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
-                "variant_label": (
-                    f"autonomous_recovery_turn_month_batch_{batch_id}_{index}"
-                ),
+                "variant_label": (f"autonomous_recovery_turn_month_batch_{batch_id}_{index}"),
                 "family": "recovery_turn_month_vote",
                 "family_name": "Recovery Turn-Month Vote",
                 "parameters": parameters,
@@ -1987,9 +2028,7 @@ def _recovery_turn_month_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("RECOVERY_TURN_MONTH_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -2095,9 +2134,7 @@ def _recovery_internal_bar_strength_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("RECOVERY_INTERNAL_BAR_STRENGTH_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -2168,9 +2205,7 @@ def _recovery_multi_horizon_candidates(
                 "pyramiding_allowed": False,
                 "multiple_assets_in_portfolio": False,
                 "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
-                "variant_label": (
-                    f"autonomous_recovery_multi_horizon_batch_{batch_id}_{index}"
-                ),
+                "variant_label": (f"autonomous_recovery_multi_horizon_batch_{batch_id}_{index}"),
                 "family": "recovery_multi_horizon_reversal_vote",
                 "family_name": "Recovery Multi-Horizon Reversal Vote",
                 "parameters": parameters,
@@ -2202,9 +2237,7 @@ def _recovery_multi_horizon_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("RECOVERY_MULTI_HORIZON_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -2278,9 +2311,7 @@ def _recovery_volume_gated_candidates(
                 "pyramiding_allowed": False,
                 "multiple_assets_in_portfolio": False,
                 "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
-                "variant_label": (
-                    f"autonomous_recovery_volume_gated_batch_{batch_id}_{index}"
-                ),
+                "variant_label": (f"autonomous_recovery_volume_gated_batch_{batch_id}_{index}"),
                 "family": "recovery_volume_gated_reversal_vote",
                 "family_name": "Recovery Volume-Gated Reversal Vote",
                 "parameters": parameters,
@@ -2315,9 +2346,7 @@ def _recovery_volume_gated_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("RECOVERY_VOLUME_GATED_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -2402,16 +2431,12 @@ def _recovery_calendar_volume_candidates(
                 "pyramiding_allowed": False,
                 "multiple_assets_in_portfolio": False,
                 "strategy_id": f"AUTO-B{batch_id:04d}-{index:04d}",
-                "variant_label": (
-                    f"autonomous_recovery_calendar_volume_batch_{batch_id}_{index}"
-                ),
+                "variant_label": (f"autonomous_recovery_calendar_volume_batch_{batch_id}_{index}"),
                 "family": "recovery_calendar_volume_reversal_vote",
                 "family_name": "Recovery Calendar-Volume Reversal Vote",
                 "parameters": parameters,
                 "required_datasets": ["DS001", "DS002"],
-                "research_source_ids": sorted(
-                    {*base.get("research_source_ids", ()), *source_ids}
-                ),
+                "research_source_ids": sorted({*base.get("research_source_ids", ()), *source_ids}),
                 "feature_formulas": [
                     "causal recovery reversal plus next-session month-boundary and abnormal-volume reversal votes"
                 ],
@@ -2439,9 +2464,7 @@ def _recovery_calendar_volume_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("RECOVERY_CALENDAR_VOLUME_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -2467,7 +2490,6 @@ def _recovery_calendar_volume_vxo_candidates(
         (row for row in usable if str(row.get("family")) == "short_horizon_reversal"),
         usable[0],
     )
-    generation = batch_id - 32
     core = {
         "rsi_window": 4,
         "lower": 28,
@@ -2489,24 +2511,56 @@ def _recovery_calendar_volume_vxo_candidates(
         "volume_reversal_weight": 0.5,
         "vxo_z_window": 20,
     }
-    parameters_list = [
-        {
-            **core,
-            "first_sessions": first_sessions,
-            "last_sessions": last_sessions,
-            "calendar_weight": calendar_weight,
-            "vxo_change_lookback": vxo_lookback,
-            "vxo_z_threshold": round(vxo_threshold + generation * 0.025, 4),
-            "vxo_weight": vxo_weight,
-            "vxo_mode": vxo_mode,
-        }
-        for first_sessions, last_sessions in ((2, 1), (3, 2))
-        for calendar_weight in (0.5, 1.5)
-        for vxo_lookback in (1, 5)
-        for vxo_threshold in (0.75, 1.5)
-        for vxo_weight in (0.5, 1.5, 3.0)
-        for vxo_mode in ("reversal", "continuation")
-    ]
+    if batch_id == 32:
+        parameters_list = [
+            {
+                **core,
+                "first_sessions": first_sessions,
+                "last_sessions": last_sessions,
+                "calendar_weight": calendar_weight,
+                "vxo_change_lookback": vxo_lookback,
+                "vxo_z_threshold": vxo_threshold,
+                "vxo_weight": vxo_weight,
+                "vxo_mode": vxo_mode,
+            }
+            for first_sessions, last_sessions in ((2, 1), (3, 2))
+            for calendar_weight in (0.5, 1.5)
+            for vxo_lookback in (1, 5)
+            for vxo_threshold in (0.75, 1.5)
+            for vxo_weight in (0.5, 1.5, 3.0)
+            for vxo_mode in ("reversal", "continuation")
+        ]
+    else:
+        # Batch 32 established two train-only neighborhoods: an immediate VXO
+        # continuation vote and a weaker five-session reversal vote. Explore
+        # their duration and activation boundary without repeating any observed
+        # rule. Later batches receive a deterministic threshold offset so their
+        # canonical trials also remain distinct.
+        generation = batch_id - 33
+        branches = (
+            ("continuation", 1, (2.0, 3.0, 4.0)),
+            ("reversal", 5, (0.25, 0.75, 1.25)),
+        )
+        parameters_list = [
+            {
+                **core,
+                "first_sessions": 2,
+                "last_sessions": 1,
+                "calendar_weight": 1.5,
+                "vxo_change_lookback": vxo_lookback,
+                "vxo_z_window": vxo_window,
+                "vxo_z_threshold": round(
+                    vxo_threshold + generation * 0.025,
+                    4,
+                ),
+                "vxo_weight": vxo_weight,
+                "vxo_mode": vxo_mode,
+            }
+            for vxo_mode, vxo_lookback, vxo_weights in branches
+            for vxo_window in (10, 15, 30, 40)
+            for vxo_threshold in (1.2, 1.4, 1.6, 1.8)
+            for vxo_weight in vxo_weights
+        ]
     candidates: list[dict[str, Any]] = []
     source_ids = {
         "SRC0047",
@@ -2544,9 +2598,7 @@ def _recovery_calendar_volume_vxo_candidates(
                     "usable_after_repair",
                     "usable_after_repair",
                 ],
-                "research_source_ids": sorted(
-                    {*base.get("research_source_ids", ()), *source_ids}
-                ),
+                "research_source_ids": sorted({*base.get("research_source_ids", ()), *source_ids}),
                 "feature_formulas": [
                     "causal recovery/calendar/volume score plus an extreme VXO-change vote"
                 ],
@@ -2574,9 +2626,7 @@ def _recovery_calendar_volume_vxo_candidates(
         candidate["canonical_hash"] = canonical_rule_hash(candidate)
         assert_contract(candidate)
         candidates.append(candidate)
-    if len(candidates) != count or len(
-        {row["canonical_hash"] for row in candidates}
-    ) != count:
+    if len(candidates) != count or len({row["canonical_hash"] for row in candidates}) != count:
         raise RuntimeError("RECOVERY_CALENDAR_VOLUME_VXO_COUNT_OR_HASH_MISMATCH")
     return tuple(candidates)
 
@@ -2606,9 +2656,7 @@ def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, An
     if batch_id >= 23:
         return _high_vol_crash_recovery_candidates(package, batch_id, count)
     if batch_id >= 22:
-        return _recovery_trend_breakout_majority_candidates(
-            package, batch_id, count
-        )
+        return _recovery_trend_breakout_majority_candidates(package, batch_id, count)
     if batch_id >= 21:
         return _quiet_bull_recovery_override_candidates(package, batch_id, count)
     if batch_id >= 19:
@@ -2616,9 +2664,7 @@ def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, An
     if batch_id >= 16:
         return _asymmetric_override_candidates(package, batch_id, count)
     if batch_id >= 13:
-        return _stability_refined_dual_reversal_candidates(
-            package, batch_id, count
-        )
+        return _stability_refined_dual_reversal_candidates(package, batch_id, count)
     if batch_id >= 10:
         return _strong_trend_override_candidates(package, batch_id, count)
     if batch_id >= 9:
@@ -2634,7 +2680,8 @@ def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, An
     if batch_id >= 3:
         return _targeted_reversal_candidates(package, batch_id, count)
     templates = [
-        row for row in package.candidates
+        row
+        for row in package.candidates
         if str(row.get("family")) in IMPLEMENTED_FAMILIES
         and set(row.get("required_datasets", ())).issubset({"DS001", "DS002"})
     ]
@@ -2664,16 +2711,16 @@ def generate_candidates(batch_id: int, *, count: int = 96) -> tuple[dict[str, An
 def write_jsonl(path: Path, rows: Iterable[Mapping[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "".join(json.dumps(dict(row), sort_keys=True, separators=(",", ":")) + "\n" for row in rows),
+        "".join(
+            json.dumps(dict(row), sort_keys=True, separators=(",", ":")) + "\n" for row in rows
+        ),
         encoding="utf-8",
     )
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -2691,18 +2738,26 @@ def write_batch_registry(
     feature_rows = list(package.features)
     dataset_rows = list(package.datasets)
     with (root / "research_registry.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=sorted({key for row in research_rows for key in row}))
+        writer = csv.DictWriter(
+            handle, fieldnames=sorted({key for row in research_rows for key in row})
+        )
         writer.writeheader()
         writer.writerows(research_rows)
     with (root / "feature_registry.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=sorted({key for row in feature_rows for key in row}))
+        writer = csv.DictWriter(
+            handle, fieldnames=sorted({key for row in feature_rows for key in row})
+        )
         writer.writeheader()
         writer.writerows(feature_rows)
     with (root / "dataset_registry.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=sorted({key for row in dataset_rows for key in row}))
+        writer = csv.DictWriter(
+            handle, fieldnames=sorted({key for row in dataset_rows for key in row})
+        )
         writer.writeheader()
         writer.writerows(dataset_rows)
-    previous_trial_count = previous_trial_count if previous_trial_count is not None else get_previous_trial_count()
+    previous_trial_count = (
+        previous_trial_count if previous_trial_count is not None else get_previous_trial_count()
+    )
     new_ledger_rows = [
         {
             "batch_id": batch_id,
@@ -2722,18 +2777,14 @@ def write_batch_registry(
         else []
     )
     historical_path = Path(root) / HISTORICAL_DIR / "historical_trial_ledger.jsonl"
-    historical_rows = (
-        load_historical_trial_ledger(root) if historical_path.is_file() else []
-    )
+    historical_rows = load_historical_trial_ledger(root) if historical_path.is_file() else []
     combined_prior: dict[int, dict[str, Any]] = {}
     for row in (*historical_rows, *prior_ledger_rows):
         index = int(row.get("global_trial_index", 0))
         if index < 1 or index > previous_trial_count:
             continue
         existing = combined_prior.get(index)
-        if existing is not None and str(existing.get("strategy_id")) != str(
-            row.get("strategy_id")
-        ):
+        if existing is not None and str(existing.get("strategy_id")) != str(row.get("strategy_id")):
             raise ValueError(f"PRIOR_TRIAL_LEDGER_INDEX_COLLISION:{index}")
         combined_prior[index] = dict(row)
     status_lookup = load_prior_autonomous_status(root)
@@ -2769,7 +2820,8 @@ def write_batch_registry(
         "previous_trial_count": previous_trial_count,
         "global_trial_count_after_batch": previous_trial_count + len(candidates),
         "pre_registered_before_performance": True,
-        "canonical_hashes_unique": len({row["canonical_hash"] for row in candidates}) == len(candidates),
+        "canonical_hashes_unique": len({row["canonical_hash"] for row in candidates})
+        == len(candidates),
         "train_end": TRAIN_END,
         "validation_start": VALIDATION_START,
         "validation_end": VALIDATION_END,

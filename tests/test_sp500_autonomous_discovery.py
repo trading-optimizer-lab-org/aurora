@@ -137,12 +137,10 @@ def test_batch_four_neighborhood_is_new_balanced_and_full() -> None:
     assert sum(row["family"] == "reversal_trend_blend" for row in batch_four) == 48
     assert sum(row["family"] == "rsi_trend_blend" for row in batch_four) == 48
     batch_three_rules = {
-        (row["family"], json.dumps(row["parameters"], sort_keys=True))
-        for row in batch_three
+        (row["family"], json.dumps(row["parameters"], sort_keys=True)) for row in batch_three
     }
     assert not batch_three_rules.intersection(
-        (row["family"], json.dumps(row["parameters"], sort_keys=True))
-        for row in batch_four
+        (row["family"], json.dumps(row["parameters"], sort_keys=True)) for row in batch_four
     )
 
 
@@ -154,12 +152,10 @@ def test_batch_five_combines_and_refines_without_repeating_batch_four() -> None:
     assert sum(row["family"] == "dual_reversal_trend_vote" for row in batch_five) == 48
     assert sum(row["family"] == "rsi_trend_blend" for row in batch_five) == 48
     batch_four_rules = {
-        (row["family"], json.dumps(row["parameters"], sort_keys=True))
-        for row in batch_four
+        (row["family"], json.dumps(row["parameters"], sort_keys=True)) for row in batch_four
     }
     assert not batch_four_rules.intersection(
-        (row["family"], json.dumps(row["parameters"], sort_keys=True))
-        for row in batch_five
+        (row["family"], json.dumps(row["parameters"], sort_keys=True)) for row in batch_five
     )
 
 
@@ -169,12 +165,10 @@ def test_batch_six_uses_only_new_combined_rules() -> None:
     assert len(batch_six) == 96
     assert {row["family"] for row in batch_six} == {"dual_reversal_trend_vote"}
     batch_five_rules = {
-        (row["family"], json.dumps(row["parameters"], sort_keys=True))
-        for row in batch_five
+        (row["family"], json.dumps(row["parameters"], sort_keys=True)) for row in batch_five
     }
     assert not batch_five_rules.intersection(
-        (row["family"], json.dumps(row["parameters"], sort_keys=True))
-        for row in batch_six
+        (row["family"], json.dumps(row["parameters"], sort_keys=True)) for row in batch_six
     )
 
 
@@ -348,13 +342,9 @@ def test_batch_thirteen_refines_best_dual_reversal_without_repeats() -> None:
     batch_fourteen = registry.generate_candidates(14, count=96)
     assert len(batch_thirteen) == 96
     assert len(batch_fourteen) == 96
-    assert {row["family"] for row in batch_thirteen} == {
-        "dual_reversal_trend_vote"
-    }
+    assert {row["family"] for row in batch_thirteen} == {"dual_reversal_trend_vote"}
     prior_hashes = {row["canonical_hash"] for row in prior}
-    assert not prior_hashes.intersection(
-        row["canonical_hash"] for row in batch_thirteen
-    )
+    assert not prior_hashes.intersection(row["canonical_hash"] for row in batch_thirteen)
     assert not {row["canonical_hash"] for row in batch_thirteen}.intersection(
         row["canonical_hash"] for row in batch_fourteen
     )
@@ -369,9 +359,7 @@ def test_batch_sixteen_adds_unique_asymmetric_trend_overrides() -> None:
     assert len(batch_sixteen) == 96
     assert len(batch_seventeen) == 96
     assert len(batch_eighteen) == 96
-    assert {row["family"] for row in batch_sixteen} == {
-        "asymmetric_trend_override_reversal"
-    }
+    assert {row["family"] for row in batch_sixteen} == {"asymmetric_trend_override_reversal"}
     assert not {row["canonical_hash"] for row in batch_sixteen}.intersection(
         row["canonical_hash"] for row in batch_seventeen
     )
@@ -396,9 +384,7 @@ def test_batch_eighteen_searches_the_stable_override_neighborhood() -> None:
         and row["negative_override_threshold_pct"] == 3.0
         for row in parameter_rows
     )
-    assert {
-        row["negative_override_window"] for row in parameter_rows
-    } == {90, 120, 150}
+    assert {row["negative_override_window"] for row in parameter_rows} == {90, 120, 150}
 
 
 def test_asymmetric_trend_override_is_causal_and_fully_covered() -> None:
@@ -451,9 +437,7 @@ def test_asymmetric_trend_override_is_causal_and_fully_covered() -> None:
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_batch_nineteen_adds_unique_drawdown_recovery_overrides() -> None:
@@ -463,9 +447,7 @@ def test_batch_nineteen_adds_unique_drawdown_recovery_overrides() -> None:
 
     assert len(batch_nineteen) == 96
     assert len({row["canonical_hash"] for row in batch_nineteen}) == 96
-    assert {row["family"] for row in batch_nineteen} == {
-        "drawdown_recovery_override_reversal"
-    }
+    assert {row["family"] for row in batch_nineteen} == {"drawdown_recovery_override_reversal"}
     assert not {row["canonical_hash"] for row in batch_eighteen}.intersection(
         row["canonical_hash"] for row in batch_nineteen
     )
@@ -519,12 +501,9 @@ def test_drawdown_recovery_override_is_causal_and_requires_prior_drawdown() -> N
         int(parameters["recovery_memory_window"]),
         min_periods=1,
     ).min() <= -(float(parameters["drawdown_trigger_pct"]) / 100.0)
-    recovery_return = (
-        close / close.shift(int(parameters["recovery_window"])) - 1.0
-    )
+    recovery_return = close / close.shift(int(parameters["recovery_window"])) - 1.0
     override = recent_deep_drawdown & (
-        recovery_return
-        > float(parameters["recovery_threshold_pct"]) / 100.0
+        recovery_return > float(parameters["recovery_threshold_pct"]) / 100.0
     )
     aligned_override = override.loc[result.decisions.index]
     assert aligned_override.any()
@@ -544,9 +523,7 @@ def test_drawdown_recovery_override_is_causal_and_requires_prior_drawdown() -> N
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_batch_twenty_one_adds_unique_quiet_bull_recovery_overrides() -> None:
@@ -556,9 +533,7 @@ def test_batch_twenty_one_adds_unique_quiet_bull_recovery_overrides() -> None:
 
     assert len(batch_twenty_one) == 96
     assert len({row["canonical_hash"] for row in batch_twenty_one}) == 96
-    assert {row["family"] for row in batch_twenty_one} == {
-        "quiet_bull_recovery_override_reversal"
-    }
+    assert {row["family"] for row in batch_twenty_one} == {"quiet_bull_recovery_override_reversal"}
     assert not {row["canonical_hash"] for row in batch_twenty}.intersection(
         row["canonical_hash"] for row in batch_twenty_one
     )
@@ -614,9 +589,7 @@ def test_quiet_bull_recovery_override_is_causal_and_fully_invested() -> None:
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_batch_twenty_two_adds_unique_recovery_trend_breakout_majorities() -> None:
@@ -626,9 +599,7 @@ def test_batch_twenty_two_adds_unique_recovery_trend_breakout_majorities() -> No
 
     assert len(batch_twenty_two) == 96
     assert len({row["canonical_hash"] for row in batch_twenty_two}) == 96
-    assert {row["family"] for row in batch_twenty_two} == {
-        "recovery_trend_breakout_majority"
-    }
+    assert {row["family"] for row in batch_twenty_two} == {"recovery_trend_breakout_majority"}
     assert not {row["canonical_hash"] for row in batch_twenty_one}.intersection(
         row["canonical_hash"] for row in batch_twenty_two
     )
@@ -685,9 +656,7 @@ def test_recovery_trend_breakout_majority_is_causal_and_fully_invested() -> None
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_batch_twenty_three_adds_unique_high_vol_crash_recovery_rules() -> None:
@@ -697,9 +666,7 @@ def test_batch_twenty_three_adds_unique_high_vol_crash_recovery_rules() -> None:
 
     assert len(batch_twenty_three) == 96
     assert len({row["canonical_hash"] for row in batch_twenty_three}) == 96
-    assert {row["family"] for row in batch_twenty_three} == {
-        "high_vol_crash_recovery_reversal"
-    }
+    assert {row["family"] for row in batch_twenty_three} == {"high_vol_crash_recovery_reversal"}
     assert not {row["canonical_hash"] for row in batch_twenty_two}.intersection(
         row["canonical_hash"] for row in batch_twenty_three
     )
@@ -714,9 +681,7 @@ def test_batch_twenty_three_adds_unique_high_vol_crash_recovery_rules() -> None:
 def test_high_vol_crash_recovery_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("2000-01-03", periods=720, freq="B")
     rising = np.linspace(100.0, 170.0, 400)
-    crash = np.linspace(170.0, 90.0, 100) * (
-        1.0 + 0.04 * np.sin(np.arange(100) * 2.1)
-    )
+    crash = np.linspace(170.0, 90.0, 100) * (1.0 + 0.04 * np.sin(np.arange(100) * 2.1))
     recovery = np.linspace(90.0, 180.0, 220)
     close = pd.Series(np.concatenate((rising, crash, recovery)), index=index)
     ledger = pd.DataFrame(
@@ -761,9 +726,7 @@ def test_high_vol_crash_recovery_rule_is_causal_and_fully_invested() -> None:
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_batch_twenty_four_adds_unique_adaptive_recovery_edge_rules() -> None:
@@ -773,9 +736,7 @@ def test_batch_twenty_four_adds_unique_adaptive_recovery_edge_rules() -> None:
 
     assert len(batch_twenty_four) == 96
     assert len({row["canonical_hash"] for row in batch_twenty_four}) == 96
-    assert {row["family"] for row in batch_twenty_four} == {
-        "adaptive_recovery_edge_switch"
-    }
+    assert {row["family"] for row in batch_twenty_four} == {"adaptive_recovery_edge_switch"}
     assert not {row["canonical_hash"] for row in batch_twenty_three}.intersection(
         row["canonical_hash"] for row in batch_twenty_four
     )
@@ -793,9 +754,7 @@ def test_adaptive_recovery_edge_rule_is_causal_and_fully_invested() -> None:
     chop = 180.0 + 12.0 * np.sin(np.arange(300) * 0.55)
     decline = np.linspace(180.0, 95.0, 150)
     recovery = np.linspace(95.0, 170.0, 150)
-    close = pd.Series(
-        np.concatenate((trend, chop, decline, recovery)), index=index
-    )
+    close = pd.Series(np.concatenate((trend, chop, decline, recovery)), index=index)
     ledger = pd.DataFrame(
         {
             "tr_close": close,
@@ -837,9 +796,7 @@ def test_adaptive_recovery_edge_rule_is_causal_and_fully_invested() -> None:
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_batch_twenty_five_adds_unique_recovery_overnight_tug_rules() -> None:
@@ -849,9 +806,7 @@ def test_batch_twenty_five_adds_unique_recovery_overnight_tug_rules() -> None:
 
     assert len(batch_twenty_five) == 96
     assert len({row["canonical_hash"] for row in batch_twenty_five}) == 96
-    assert {row["family"] for row in batch_twenty_five} == {
-        "recovery_overnight_tug_vote"
-    }
+    assert {row["family"] for row in batch_twenty_five} == {"recovery_overnight_tug_vote"}
     assert not {row["canonical_hash"] for row in batch_twenty_four}.intersection(
         row["canonical_hash"] for row in batch_twenty_five
     )
@@ -870,9 +825,7 @@ def test_batch_twenty_six_adds_unique_recovery_turn_month_rules() -> None:
 
     assert len(batch_twenty_six) == 96
     assert len({row["canonical_hash"] for row in batch_twenty_six}) == 96
-    assert {row["family"] for row in batch_twenty_six} == {
-        "recovery_turn_month_vote"
-    }
+    assert {row["family"] for row in batch_twenty_six} == {"recovery_turn_month_vote"}
     assert not {row["canonical_hash"] for row in batch_twenty_five}.intersection(
         row["canonical_hash"] for row in batch_twenty_six
     )
@@ -891,9 +844,7 @@ def test_batch_twenty_six_adds_unique_recovery_turn_month_rules() -> None:
 def test_recovery_turn_month_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("2000-01-03", periods=800, freq="B")
     close = pd.Series(
-        120.0
-        + np.linspace(0.0, 45.0, len(index))
-        + 8.0 * np.sin(np.arange(len(index)) * 0.17),
+        120.0 + np.linspace(0.0, 45.0, len(index)) + 8.0 * np.sin(np.arange(len(index)) * 0.17),
         index=index,
     )
     open_price = close.shift(1).fillna(close.iloc[0])
@@ -937,9 +888,7 @@ def test_recovery_turn_month_rule_is_causal_and_fully_invested() -> None:
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_batch_twenty_seven_adds_unique_recovery_ibs_rules() -> None:
@@ -949,9 +898,7 @@ def test_batch_twenty_seven_adds_unique_recovery_ibs_rules() -> None:
 
     assert len(batch_twenty_seven) == 96
     assert len({row["canonical_hash"] for row in batch_twenty_seven}) == 96
-    assert {row["family"] for row in batch_twenty_seven} == {
-        "recovery_internal_bar_strength_vote"
-    }
+    assert {row["family"] for row in batch_twenty_seven} == {"recovery_internal_bar_strength_vote"}
     assert not {row["canonical_hash"] for row in batch_twenty_six}.intersection(
         row["canonical_hash"] for row in batch_twenty_seven
     )
@@ -966,9 +913,7 @@ def test_batch_twenty_seven_adds_unique_recovery_ibs_rules() -> None:
 def test_recovery_internal_bar_strength_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("2000-01-03", periods=800, freq="B")
     close = pd.Series(
-        120.0
-        + np.linspace(0.0, 45.0, len(index))
-        + 8.0 * np.sin(np.arange(len(index)) * 0.17),
+        120.0 + np.linspace(0.0, 45.0, len(index)) + 8.0 * np.sin(np.arange(len(index)) * 0.17),
         index=index,
     )
     open_price = close.shift(1).fillna(close.iloc[0])
@@ -1015,9 +960,7 @@ def test_recovery_internal_bar_strength_rule_is_causal_and_fully_invested() -> N
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_batch_twenty_eight_adds_unique_recovery_multi_horizon_rules() -> None:
@@ -1027,9 +970,7 @@ def test_batch_twenty_eight_adds_unique_recovery_multi_horizon_rules() -> None:
 
     assert len(batch_twenty_eight) == 96
     assert len({row["canonical_hash"] for row in batch_twenty_eight}) == 96
-    assert {row["family"] for row in batch_twenty_eight} == {
-        "recovery_multi_horizon_reversal_vote"
-    }
+    assert {row["family"] for row in batch_twenty_eight} == {"recovery_multi_horizon_reversal_vote"}
     assert not {row["canonical_hash"] for row in batch_twenty_seven}.intersection(
         row["canonical_hash"] for row in batch_twenty_eight
     )
@@ -1044,9 +985,7 @@ def test_batch_twenty_eight_adds_unique_recovery_multi_horizon_rules() -> None:
 def test_recovery_multi_horizon_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("2000-01-03", periods=800, freq="B")
     close = pd.Series(
-        120.0
-        + np.linspace(0.0, 45.0, len(index))
-        + 8.0 * np.sin(np.arange(len(index)) * 0.17),
+        120.0 + np.linspace(0.0, 45.0, len(index)) + 8.0 * np.sin(np.arange(len(index)) * 0.17),
         index=index,
     )
     open_price = close.shift(1).fillna(close.iloc[0])
@@ -1090,9 +1029,7 @@ def test_recovery_multi_horizon_rule_is_causal_and_fully_invested() -> None:
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_batch_twenty_nine_adds_unique_recovery_volume_rules() -> None:
@@ -1102,9 +1039,7 @@ def test_batch_twenty_nine_adds_unique_recovery_volume_rules() -> None:
 
     assert len(batch_twenty_nine) == 96
     assert len({row["canonical_hash"] for row in batch_twenty_nine}) == 96
-    assert {row["family"] for row in batch_twenty_nine} == {
-        "recovery_volume_gated_reversal_vote"
-    }
+    assert {row["family"] for row in batch_twenty_nine} == {"recovery_volume_gated_reversal_vote"}
     assert not {row["canonical_hash"] for row in batch_twenty_eight}.intersection(
         row["canonical_hash"] for row in batch_twenty_nine
     )
@@ -1123,9 +1058,7 @@ def test_batch_twenty_nine_adds_unique_recovery_volume_rules() -> None:
 def test_recovery_volume_gated_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("2000-01-03", periods=800, freq="B")
     close = pd.Series(
-        120.0
-        + np.linspace(0.0, 45.0, len(index))
-        + 8.0 * np.sin(np.arange(len(index)) * 0.17),
+        120.0 + np.linspace(0.0, 45.0, len(index)) + 8.0 * np.sin(np.arange(len(index)) * 0.17),
         index=index,
     )
     open_price = close.shift(1).fillna(close.iloc[0])
@@ -1174,9 +1107,7 @@ def test_recovery_volume_gated_rule_is_causal_and_fully_invested() -> None:
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_batch_thirty_adds_unique_recovery_calendar_volume_rules() -> None:
@@ -1186,9 +1117,7 @@ def test_batch_thirty_adds_unique_recovery_calendar_volume_rules() -> None:
 
     assert len(batch_thirty) == 96
     assert len({row["canonical_hash"] for row in batch_thirty}) == 96
-    assert {row["family"] for row in batch_thirty} == {
-        "recovery_calendar_volume_reversal_vote"
-    }
+    assert {row["family"] for row in batch_thirty} == {"recovery_calendar_volume_reversal_vote"}
     assert not {row["canonical_hash"] for row in batch_twenty_nine}.intersection(
         row["canonical_hash"] for row in batch_thirty
     )
@@ -1209,9 +1138,7 @@ def test_batch_thirty_adds_unique_recovery_calendar_volume_rules() -> None:
 def test_recovery_calendar_volume_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("2000-01-03", periods=800, freq="B")
     close = pd.Series(
-        120.0
-        + np.linspace(0.0, 45.0, len(index))
-        + 8.0 * np.sin(np.arange(len(index)) * 0.17),
+        120.0 + np.linspace(0.0, 45.0, len(index)) + 8.0 * np.sin(np.arange(len(index)) * 0.17),
         index=index,
     )
     open_price = close.shift(1).fillna(close.iloc[0])
@@ -1260,9 +1187,7 @@ def test_recovery_calendar_volume_rule_is_causal_and_fully_invested() -> None:
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_batch_thirty_two_adds_unique_causal_vxo_rules() -> None:
@@ -1272,9 +1197,7 @@ def test_batch_thirty_two_adds_unique_causal_vxo_rules() -> None:
 
     assert len(batch_thirty_two) == 96
     assert len({row["canonical_hash"] for row in batch_thirty_two}) == 96
-    assert {row["family"] for row in batch_thirty_two} == {
-        "recovery_calendar_volume_vxo_vote"
-    }
+    assert {row["family"] for row in batch_thirty_two} == {"recovery_calendar_volume_vxo_vote"}
     assert all(row["required_datasets"] == ["DS001", "DS002", "DS005"] for row in batch_thirty_two)
     assert {row["parameters"]["vxo_mode"] for row in batch_thirty_two} == {
         "reversal",
@@ -1291,12 +1214,46 @@ def test_batch_thirty_two_adds_unique_causal_vxo_rules() -> None:
     assert all(row["leverage_allowed"] is False for row in batch_thirty_two)
 
 
+def test_batch_thirty_three_focuses_distinct_train_only_vxo_neighborhoods() -> None:
+    batch_thirty_two = registry.generate_candidates(32, count=96)
+    batch_thirty_three = registry.generate_candidates(33, count=96)
+    batch_thirty_four = registry.generate_candidates(34, count=96)
+
+    assert len(batch_thirty_three) == 96
+    assert len({row["canonical_hash"] for row in batch_thirty_three}) == 96
+    assert not {row["canonical_hash"] for row in batch_thirty_two}.intersection(
+        row["canonical_hash"] for row in batch_thirty_three
+    )
+    assert not {row["canonical_hash"] for row in batch_thirty_three}.intersection(
+        row["canonical_hash"] for row in batch_thirty_four
+    )
+    assert {
+        (
+            row["parameters"]["vxo_mode"],
+            row["parameters"]["vxo_change_lookback"],
+        )
+        for row in batch_thirty_three
+    } == {("continuation", 1), ("reversal", 5)}
+    assert {row["parameters"]["vxo_z_window"] for row in batch_thirty_three} == {10, 15, 30, 40}
+    assert {row["parameters"]["vxo_z_threshold"] for row in batch_thirty_three} == {
+        1.2,
+        1.4,
+        1.6,
+        1.8,
+    }
+    assert all(row["parameters"]["first_sessions"] == 2 for row in batch_thirty_three)
+    assert all(row["parameters"]["last_sessions"] == 1 for row in batch_thirty_three)
+    assert all(row["parameters"]["calendar_weight"] == 1.5 for row in batch_thirty_three)
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in batch_thirty_three)
+    assert all(row["position_values"] == [-1, 1] for row in batch_thirty_three)
+    assert all(row["cash_allowed"] is False for row in batch_thirty_three)
+    assert all(row["leverage_allowed"] is False for row in batch_thirty_three)
+
+
 def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("1997-01-02", periods=900, freq="B")
     close = pd.Series(
-        120.0
-        + np.linspace(0.0, 45.0, len(index))
-        + 8.0 * np.sin(np.arange(len(index)) * 0.17),
+        120.0 + np.linspace(0.0, 45.0, len(index)) + 8.0 * np.sin(np.arange(len(index)) * 0.17),
         index=index,
     )
     open_price = close.shift(1).fillna(close.iloc[0])
@@ -1348,17 +1305,13 @@ def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> Non
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_recovery_overnight_tug_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("2000-01-03", periods=800, freq="B")
     close = pd.Series(
-        120.0
-        + np.linspace(0.0, 45.0, len(index))
-        + 8.0 * np.sin(np.arange(len(index)) * 0.17),
+        120.0 + np.linspace(0.0, 45.0, len(index)) + 8.0 * np.sin(np.arange(len(index)) * 0.17),
         index=index,
     )
     open_price = close.shift(1).fillna(close.iloc[0]) * (
@@ -1405,9 +1358,7 @@ def test_recovery_overnight_tug_rule_is_causal_and_fully_invested() -> None:
             split="train",
         ),
     )
-    pd.testing.assert_series_equal(
-        result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1]
-    )
+    pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
 
 
 def test_strong_trend_override_is_causal_and_fully_covered() -> None:
@@ -1494,8 +1445,21 @@ def test_complete_rsi_definition_preserves_coverage_during_one_way_market() -> N
 
 
 def test_trial_ledger_is_cumulative_and_pre_registered(tmp_path, monkeypatch) -> None:
-    candidates = tuple(_template() | {"strategy_id": f"candidate-{index}", "canonical_hash": canonical_rule_hash(_template() | {"strategy_id": f"candidate-{index}"})} for index in range(3))
-    monkeypatch.setattr(registry, "base_package", lambda: SimpleNamespace(candidates=(), research=(), features=(), datasets=()))
+    candidates = tuple(
+        _template()
+        | {
+            "strategy_id": f"candidate-{index}",
+            "canonical_hash": canonical_rule_hash(
+                _template() | {"strategy_id": f"candidate-{index}"}
+            ),
+        }
+        for index in range(3)
+    )
+    monkeypatch.setattr(
+        registry,
+        "base_package",
+        lambda: SimpleNamespace(candidates=(), research=(), features=(), datasets=()),
+    )
     registry.write_batch_registry(
         tmp_path,
         batch_id=4,
@@ -1505,7 +1469,9 @@ def test_trial_ledger_is_cumulative_and_pre_registered(tmp_path, monkeypatch) ->
     rows = registry.read_jsonl(tmp_path / "trial_ledger.jsonl")
     assert [row["global_trial_index"] for row in rows] == [313, 314, 315]
     assert all(row["pre_registered_before_performance"] is True for row in rows)
-    manifest = json.loads((tmp_path / "candidate_registry_manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (tmp_path / "candidate_registry_manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["global_trial_count_after_batch"] == 315
     assert manifest["trial_ledger_rows"] == 3
 
@@ -1572,9 +1538,7 @@ def test_reused_market_data_refreshes_batch_registry_without_mutating_snapshot(
     ]
 
 
-def test_trial_ledger_prepends_verified_312_historical_rows(
-    tmp_path, monkeypatch
-) -> None:
+def test_trial_ledger_prepends_verified_312_historical_rows(tmp_path, monkeypatch) -> None:
     historical = [
         {
             "batch_id": "V1" if index <= 168 else "V2",
@@ -1587,10 +1551,7 @@ def test_trial_ledger_prepends_verified_312_historical_rows(
         for index in range(1, 313)
     ]
     historical_path = (
-        tmp_path
-        / "current"
-        / "historical_multiplicity"
-        / "historical_trial_ledger.jsonl"
+        tmp_path / "current" / "historical_multiplicity" / "historical_trial_ledger.jsonl"
     )
     registry.write_jsonl(historical_path, historical)
     prior = [
@@ -1608,9 +1569,7 @@ def test_trial_ledger_prepends_verified_312_historical_rows(
     monkeypatch.setenv("AURORA_PRIOR_TRIAL_LEDGER_PATH", str(prior_path))
     candidate = _template() | {
         "strategy_id": "candidate-314",
-        "canonical_hash": canonical_rule_hash(
-            _template() | {"strategy_id": "candidate-314"}
-        ),
+        "canonical_hash": canonical_rule_hash(_template() | {"strategy_id": "candidate-314"}),
     }
     monkeypatch.setattr(
         registry,
@@ -1633,7 +1592,12 @@ def test_historical_ledger_preserves_all_312_canonical_trials() -> None:
     v2_ids = [f"V2-{index:03d}" for index in range(144)]
     cumulative = pd.DataFrame(
         [
-            {"campaign": campaign, "strategy_id": identifier, "status": "evaluated", "fdr_pvalue": 0.5}
+            {
+                "campaign": campaign,
+                "strategy_id": identifier,
+                "status": "evaluated",
+                "fdr_pvalue": 0.5,
+            }
             for campaign, identifiers in (("V1", v1_ids), ("V2", v2_ids))
             for identifier in identifiers
         ]
@@ -1653,9 +1617,7 @@ def test_historical_ledger_preserves_all_312_canonical_trials() -> None:
             ]
         )
 
-    rows = build_historical_trial_ledger(
-        cumulative, metrics(v1_ids), metrics(v2_ids)
-    )
+    rows = build_historical_trial_ledger(cumulative, metrics(v1_ids), metrics(v2_ids))
     assert len(rows) == 312
     assert [row["global_trial_index"] for row in rows] == list(range(1, 313))
     assert len({row["canonical_hash"] for row in rows}) == 312
@@ -1677,7 +1639,9 @@ def test_trial_ledger_requires_prior_source_after_first_batch(tmp_path, monkeypa
         )
 
 
-def _metric_row(strategy_id: str, values: np.ndarray, *, family: str = "price_trend_sma") -> dict[str, object]:
+def _metric_row(
+    strategy_id: str, values: np.ndarray, *, family: str = "price_trend_sma"
+) -> dict[str, object]:
     dates = pd.date_range("2000-01-03", periods=len(values), freq="B")
     return {
         "unit_key": strategy_id,
@@ -1689,9 +1653,18 @@ def _metric_row(strategy_id: str, values: np.ndarray, *, family: str = "price_tr
         "train_dates": [item.isoformat() for item in dates],
         "train_returns": values.tolist(),
         "train_positions": [1 if index % 2 else -1 for index in range(len(values))],
-        "annual_metrics_json": json.dumps([
-            {"year": 2000, "sessions": len(values), "return_pct": 5.0, "cagr_pct": 5.0, "sharpe": 1.0, "positive": True}
-        ]),
+        "annual_metrics_json": json.dumps(
+            [
+                {
+                    "year": 2000,
+                    "sessions": len(values),
+                    "return_pct": 5.0,
+                    "cagr_pct": 5.0,
+                    "sharpe": 1.0,
+                    "positive": True,
+                }
+            ]
+        ),
     }
 
 
@@ -1709,7 +1682,9 @@ def test_evaluate_batch_writes_auditable_rows(tmp_path) -> None:
     assert summary["validation_used_for_selection"] is False
     freeze = _verify_freeze(tmp_path / "train_selection_freeze.json")
     assert freeze["locked_opened"] is False
-    assert json.loads((tmp_path / "train_freeze_candidate.json").read_text(encoding="utf-8")) == freeze
+    assert (
+        json.loads((tmp_path / "train_freeze_candidate.json").read_text(encoding="utf-8")) == freeze
+    )
     with pytest.raises(ValidationGateError, match="TRAIN_FREEZE_NOT_ELIGIBLE"):
         _verify_freeze(tmp_path / "train_selection_freeze.json", require_finalized=True)
 
@@ -1723,15 +1698,11 @@ def test_exploratory_candidate_selection_is_exact_and_fail_closed() -> None:
         match="EXPLORATORY_CANDIDATE_NOT_UNIQUE_IN_REGISTRY",
     ):
         _candidate_from_registry([first, second], "missing")
-    assert EXPLORATORY_VALIDATION_ACK == (
-        "OPEN_EXPLORATORY_VALIDATION_2011_2020_OWNER_AUTHORIZED"
-    )
+    assert EXPLORATORY_VALIDATION_ACK == ("OPEN_EXPLORATORY_VALIDATION_2011_2020_OWNER_AUTHORIZED")
 
 
 def test_validation_workflow_requests_only_the_frozen_validation_period() -> None:
-    text = Path(".github/workflows/sp500-autonomous-discovery.yml").read_text(
-        encoding="utf-8"
-    )
+    text = Path(".github/workflows/sp500-autonomous-discovery.yml").read_text(encoding="utf-8")
     assert text.count('start="2011-01-01"') >= 2
     assert 'split="validation"' in text
     assert 'start="2010-01-01"' not in text
@@ -1748,25 +1719,19 @@ def test_validation_workflow_requests_only_the_frozen_validation_period() -> Non
 
 def test_exploratory_validation_can_reuse_verified_stooq_windows() -> None:
     workflow = yaml.safe_load(
-        Path(".github/workflows/sp500-autonomous-discovery.yml").read_text(
-            encoding="utf-8"
-        )
+        Path(".github/workflows/sp500-autonomous-discovery.yml").read_text(encoding="utf-8")
     )
     inputs = workflow[True]["workflow_dispatch"]["inputs"]
     assert inputs["validation_stooq_run_id"]["default"] == ""
 
     steps = workflow["jobs"]["exploratory_validation"]["steps"]
     download = next(
-        step
-        for step in steps
-        if step["name"] == "Download reusable validation Stooq windows"
+        step for step in steps if step["name"] == "Download reusable validation Stooq windows"
     )
     merge = next(
         step for step in steps if step["name"] == "Merge reusable validation Stooq windows"
     )
-    prepare = next(
-        step for step in steps if step["name"] == "Prepare bounded validation data"
-    )
+    prepare = next(step for step in steps if step["name"] == "Prepare bounded validation data")
     assert "sp500-ls-stooq-window-${VALIDATION_STOOQ_RUN_ID}-*" in download["run"]
     assert "--expected-windows 82" in merge["run"]
     assert "--requested-start 2011-01-01" in merge["run"]
@@ -1791,7 +1756,7 @@ def test_block_sum_bootstrap_matches_original_sampling(monkeypatch) -> None:
             starts = rng.integers(0, len(raw), size=blocks)
             sampled = np.empty((blocks * autonomous_statistics.BLOCK_LENGTH, raw.shape[1]))
             for offset in range(autonomous_statistics.BLOCK_LENGTH):
-                sampled[offset::autonomous_statistics.BLOCK_LENGTH] = centered[
+                sampled[offset :: autonomous_statistics.BLOCK_LENGTH] = centered[
                     (starts + offset) % len(raw)
                 ]
             means = sampled[: len(raw)].mean(axis=0)
@@ -1805,9 +1770,7 @@ def test_block_sum_bootstrap_matches_original_sampling(monkeypatch) -> None:
 
 def test_freeze_reason_and_rejections_are_semantically_consistent() -> None:
     assert freeze_selection_reason([]) == "no candidate passed all frozen train gates"
-    assert freeze_selection_reason([{"strategy_id": "winner"}]) == (
-        "all frozen train gates passed"
-    )
+    assert freeze_selection_reason([{"strategy_id": "winner"}]) == ("all frozen train gates passed")
     assert freeze_rejection_reasons(
         [
             {"strategy_id": "ok", "status": "evaluated", "rejection_reason": None},
@@ -1845,7 +1808,9 @@ def test_feature_store_is_causal_and_keyed() -> None:
         },
         index=index,
     )
-    store = FeatureStore(dataset_sha256="data", code_sha="code", start="2020-01-01", end="2020-12-31")
+    store = FeatureStore(
+        dataset_sha256="data", code_sha="code", start="2020-01-01", end="2020-12-31"
+    )
     features = store.get_or_build("SPY", frame)
     assert features.index.equals(index)
     assert features.loc[index[0], "return_20d"] != features.loc[index[-1], "return_20d"]
@@ -2003,9 +1968,7 @@ def test_workflow_is_github_only_and_bounded() -> None:
     assert "OPEN_VALIDATION_2011_2020_ONCE_AUTONOMOUS" in text
     assert "sp500-autonomous-validation-once" in text
     assert "cancel-in-progress: false" in text
-    reusable_text = open(
-        ".github/workflows/_aurora-future-run-v3.yml", encoding="utf-8"
-    ).read()
+    reusable_text = open(".github/workflows/_aurora-future-run-v3.yml", encoding="utf-8").read()
     assert "autonomous_prior_ledger_artifact_name" in reusable_text
     assert 'or "sp500_autonomous_discovery" in workload' in reusable_text
     reusable = yaml.safe_load(reusable_text)
@@ -2039,15 +2002,11 @@ def test_workflow_is_github_only_and_bounded() -> None:
     )
     assert refresh_index < refreshed_upload_index
     refreshed_upload = prepare_data_steps[refreshed_upload_index]
-    assert refreshed_upload["with"]["name"] == (
-        "${{ env.AURORA_PREPARED_ARTIFACT_NAME }}"
-    )
+    assert refreshed_upload["with"]["name"] == ("${{ env.AURORA_PREPARED_ARTIFACT_NAME }}")
     for job in reusable["jobs"].values():
         for step in job.get("steps", []):
             if step.get("name") == "Download prepared inputs":
-                assert step["with"]["run-id"] == (
-                    "${{ env.AURORA_PREPARED_ARTIFACT_RUN_ID }}"
-                )
+                assert step["with"]["run-id"] == ("${{ env.AURORA_PREPARED_ARTIFACT_RUN_ID }}")
         if "uses" in job and "prepared-artifact-run-id" in job.get("with", {}):
             assert job["with"]["prepared-artifact-run-id"] == (
                 "${{ env.AURORA_PREPARED_ARTIFACT_RUN_ID }}"
@@ -2058,9 +2017,7 @@ def test_workflow_is_github_only_and_bounded() -> None:
         ("plan", "Build adaptive balanced plan"),
     ):
         step = next(
-            item
-            for item in reusable["jobs"][job_name]["steps"]
-            if item.get("name") == step_name
+            item for item in reusable["jobs"][job_name]["steps"] if item.get("name") == step_name
         )
         assert step["env"]["AURORA_PREPARED_ROOT"] == "${{ runner.temp }}/prepared"
     sp500_prepare_steps = reusable["jobs"]["sp500_prepare_data"]["steps"]
@@ -2076,9 +2033,7 @@ def test_workflow_is_github_only_and_bounded() -> None:
     )
     assert prior_ledger_index < prepare_index
     prior_ledger_step = sp500_prepare_steps[prior_ledger_index]
-    assert prior_ledger_step["with"]["run-id"] == (
-        "${{ inputs.autonomous_prior_ledger_run_id }}"
-    )
+    assert prior_ledger_step["with"]["run-id"] == ("${{ inputs.autonomous_prior_ledger_run_id }}")
     historical_step = next(
         item
         for item in sp500_prepare_steps
@@ -2093,10 +2048,19 @@ def test_workflow_is_github_only_and_bounded() -> None:
     )
     assert pilot_step["with"]["run-id"] == "31036879593"
     prepare_step = next(
-        item
-        for item in sp500_prepare_steps
-        if item.get("name") == "Prepare immutable SPY data"
+        item for item in sp500_prepare_steps if item.get("name") == "Prepare immutable SPY data"
     )
     assert "AURORA_HISTORICAL_MULTIPLICITY_SOURCE" in prepare_step["env"]
-    for phase in ("preflight", "research", "data_build", "pilot", "search_batch", "merge_batch", "statistical_gate", "freeze", "validation_once", "verify"):
+    for phase in (
+        "preflight",
+        "research",
+        "data_build",
+        "pilot",
+        "search_batch",
+        "merge_batch",
+        "statistical_gate",
+        "freeze",
+        "validation_once",
+        "verify",
+    ):
         assert f"- {phase}" in text
