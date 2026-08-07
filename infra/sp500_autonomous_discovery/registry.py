@@ -2782,7 +2782,7 @@ def _recovery_calendar_volume_vxo_candidates(
             for calendar_weight in (0.75, 1.0, 1.25, 1.5)
             for vxo_threshold in vxo_thresholds
         ]
-    else:
+    elif batch_id <= 44:
         # Batch 41 moved away from the batch-40 optimum. Keep its two-session
         # tug fixed and vary only recovery activation, falling-VXO weight, and
         # the two secondary votes that can repair ordinary bull years.
@@ -2817,6 +2817,45 @@ def _recovery_calendar_volume_vxo_candidates(
             for negative_weight in (1.5, 1.75, 2.25, 2.5)
             for calendar_weight in (0.5, 0.75, 1.0, 1.25)
             for volume_weight in (0.0, 0.25)
+        ]
+    else:
+        # Batches 42-44 converged to duplicate decision streams. Stop a
+        # falling-VXO continuation vote from forcing a short while a causal
+        # price trend remains above a pre-registered boundary. Rising-VXO and
+        # crash-recovery behavior remain unchanged.
+        generation = batch_id - 45
+        gate_thresholds = tuple(
+            round(value + generation * 0.25, 4)
+            for value in (-2.0, 0.0, 2.0)
+        )
+        parameters_list = [
+            {
+                **core,
+                "first_sessions": 2,
+                "last_sessions": 1,
+                "calendar_weight": 0.5,
+                "rsi_weight": 1.5,
+                "reversal_weight": 1.0,
+                "recovery_memory_window": 63,
+                "recovery_threshold_pct": recovery_threshold,
+                "volume_z_threshold": 1.5,
+                "volume_reversal_weight": 0.25,
+                "vxo_change_lookback": 1,
+                "vxo_z_window": 10,
+                "vxo_z_threshold": 1.4,
+                "vxo_weight": 3.0,
+                "vxo_positive_weight": 2.5,
+                "vxo_negative_weight": negative_weight,
+                "vxo_negative_gate_window": gate_window,
+                "vxo_negative_gate_threshold_pct": gate_threshold,
+                "vxo_mode": "continuation",
+                "tug_lookback": 2,
+                "tug_weight": 0.5,
+            }
+            for gate_window in (20, 40, 63, 126)
+            for gate_threshold in gate_thresholds
+            for negative_weight in (1.5, 2.0, 2.5, 3.0)
+            for recovery_threshold in (1.2, 1.25)
         ]
     candidates: list[dict[str, Any]] = []
     source_ids = {

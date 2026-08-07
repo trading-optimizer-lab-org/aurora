@@ -1636,6 +1636,45 @@ def test_batch_forty_two_rebalances_recovery_and_negative_vxo_vote() -> None:
     assert all(row["leverage_allowed"] is False for row in batch_forty_two)
 
 
+def test_batch_forty_five_gates_negative_vxo_vote_with_causal_trend() -> None:
+    batch_forty_four = registry.generate_candidates(44, count=96)
+    batch_forty_five = registry.generate_candidates(45, count=96)
+    batch_forty_six = registry.generate_candidates(46, count=96)
+
+    assert len(batch_forty_five) == 96
+    assert len({row["canonical_hash"] for row in batch_forty_five}) == 96
+    assert not {row["canonical_hash"] for row in batch_forty_four}.intersection(
+        row["canonical_hash"] for row in batch_forty_five
+    )
+    assert not {row["canonical_hash"] for row in batch_forty_five}.intersection(
+        row["canonical_hash"] for row in batch_forty_six
+    )
+    assert {row["parameters"]["vxo_negative_gate_window"] for row in batch_forty_five} == {
+        20,
+        40,
+        63,
+        126,
+    }
+    assert {
+        row["parameters"]["vxo_negative_gate_threshold_pct"]
+        for row in batch_forty_five
+    } == {-2.0, 0.0, 2.0}
+    assert {row["parameters"]["vxo_negative_weight"] for row in batch_forty_five} == {
+        1.5,
+        2.0,
+        2.5,
+        3.0,
+    }
+    assert {row["parameters"]["recovery_threshold_pct"] for row in batch_forty_five} == {
+        1.2,
+        1.25,
+    }
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in batch_forty_five)
+    assert all(row["position_values"] == [-1, 1] for row in batch_forty_five)
+    assert all(row["cash_allowed"] is False for row in batch_forty_five)
+    assert all(row["leverage_allowed"] is False for row in batch_forty_five)
+
+
 def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("1997-01-02", periods=900, freq="B")
     close = pd.Series(
@@ -1745,6 +1784,26 @@ def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> Non
     )
     pd.testing.assert_series_equal(
         tug_result.decisions.iloc[:-1], future_tug_result.decisions.iloc[:-1]
+    )
+
+    gated_candidate = registry.generate_candidates(45, count=96)[0]
+    gated_result = candidate_decisions(gated_candidate, data)
+    assert set(gated_result.decisions.unique()) <= {-1, 1}
+    assert gated_result.missing_fraction == 0.0
+    assert gated_result.first_evaluable_date is not None
+    future_gated_result = candidate_decisions(
+        gated_candidate,
+        PreparedMarketData(
+            ledger=future_ledger,
+            series={"VXO": vxo},
+            available_dataset_ids=frozenset({"DS001", "DS002", "DS005"}),
+            rejected_datasets={},
+            receipts=(),
+            split="train",
+        ),
+    )
+    pd.testing.assert_series_equal(
+        gated_result.decisions.iloc[:-1], future_gated_result.decisions.iloc[:-1]
     )
 
 

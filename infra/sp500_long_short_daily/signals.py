@@ -1448,6 +1448,19 @@ def _price_score(
         if str(parameters["vxo_mode"]) == "reversal":
             direction = -direction
         vxo_component = direction.where(active, 0.0)
+        vxo_gate_valid = pd.Series(True, index=ledger.index)
+        if "vxo_negative_gate_window" in parameters:
+            gate_return = (
+                close / close.shift(int(parameters["vxo_negative_gate_window"])) - 1.0
+            )
+            gate_threshold = (
+                float(parameters["vxo_negative_gate_threshold_pct"]) / 100.0
+            )
+            vxo_component = vxo_component.where(
+                (vxo_component >= 0.0) | (gate_return <= gate_threshold),
+                0.0,
+            )
+            vxo_gate_valid = gate_return.notna()
         if "vxo_positive_weight" in parameters or "vxo_negative_weight" in parameters:
             positive_weight = float(
                 parameters.get("vxo_positive_weight", parameters["vxo_weight"])
@@ -1503,7 +1516,11 @@ def _price_score(
         )
         score = score.where(~recovery_override, 1.0)
         return score.where(
-            base_score.notna() & vxo_z.notna() & slow_trend_valid & tug_valid
+            base_score.notna()
+            & vxo_z.notna()
+            & vxo_gate_valid
+            & slow_trend_valid
+            & tug_valid
         )
     if family == "trend_ensemble":
         components = []
