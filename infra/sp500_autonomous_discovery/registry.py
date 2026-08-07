@@ -2657,11 +2657,10 @@ def _recovery_calendar_volume_vxo_candidates(
             for rsi_weight in (0.5, 1.0, 1.5)
             for calendar_weight in (1.0, 2.0)
         ]
-    else:
+    elif batch_id == 38:
         # The global differential statistic peaks between the symmetric
         # three-vote VXO rule and the one-vote asymmetric rule. Interpolate
         # that unobserved boundary while keeping the remaining core fixed.
-        generation = batch_id - 38
         parameters_list = [
             {
                 **core,
@@ -2674,7 +2673,7 @@ def _recovery_calendar_volume_vxo_candidates(
                 "volume_reversal_weight": 0.25,
                 "vxo_change_lookback": 1,
                 "vxo_z_window": vxo_window,
-                "vxo_z_threshold": round(vxo_threshold + generation * 0.0125, 4),
+                "vxo_z_threshold": vxo_threshold,
                 "vxo_weight": 3.0,
                 "vxo_positive_weight": positive_weight,
                 "vxo_negative_weight": negative_weight,
@@ -2685,6 +2684,40 @@ def _recovery_calendar_volume_vxo_candidates(
             for vxo_threshold in (1.4, 1.55)
             for positive_weight in (2.5, 3.5)
             for negative_weight in (1.25, 1.5, 1.75, 2.0, 2.25, 2.5)
+        ]
+    else:
+        # Batch 38 produced the strongest common-interval differential with a
+        # 1.25% recovery threshold and intermediate VXO weights. Add only a
+        # small slow-trend vote and rebalance the two base votes to improve the
+        # ordinary bull years that still trail the benchmark.
+        generation = batch_id - 39
+        parameters_list = [
+            {
+                **core,
+                "first_sessions": 2,
+                "last_sessions": 1,
+                "calendar_weight": calendar_weight,
+                "rsi_weight": rsi_weight,
+                "reversal_weight": reversal_weight,
+                "recovery_memory_window": 63,
+                "recovery_threshold_pct": 1.25,
+                "volume_z_threshold": 1.5,
+                "volume_reversal_weight": 0.25,
+                "vxo_change_lookback": 1,
+                "vxo_z_window": 10,
+                "vxo_z_threshold": round(1.4 + generation * 0.0125, 4),
+                "vxo_weight": 3.0,
+                "vxo_positive_weight": 2.5,
+                "vxo_negative_weight": 2.0,
+                "vxo_mode": "continuation",
+                "slow_trend_window": slow_trend_window,
+                "slow_trend_weight": slow_trend_weight,
+            }
+            for slow_trend_window in (63, 126, 252)
+            for slow_trend_weight in (0.1, 0.25, 0.5, 0.75)
+            for rsi_weight in (0.5, 1.0)
+            for reversal_weight in (0.5, 1.0)
+            for calendar_weight in (1.0, 1.5)
         ]
     candidates: list[dict[str, Any]] = []
     source_ids = {
