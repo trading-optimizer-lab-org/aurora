@@ -52,6 +52,15 @@ def test_forward_proxy_workflow_checkpoints_each_signal_before_certification() -
     assert "needs: [framework_contract, reconstruct]" in text
 
 
+def test_forward_proxy_workflow_can_resume_individual_signal_checkpoints() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "resume_run_id:" in text
+    assert "Resume prior checkpoint when available" in text
+    assert "openap-five-reconstruction-${{ matrix.signal }}-${{ inputs.resume_run_id }}" in text
+    assert "if: ${{ steps.resume.outcome != 'success' }}" in text
+
+
 def test_forward_proxy_workflow_publishes_complete_final_artifact() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 

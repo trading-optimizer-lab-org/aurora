@@ -28,6 +28,11 @@ on:
         required: true
         default: today
         type: string
+      resume_run_id:
+        description: Prior run whose successful per-signal checkpoints may be reused
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: read
@@ -74,7 +79,19 @@ jobs:
           cache: pip
       - name: Install exact project
         run: python -m pip install --disable-pip-version-check -e . openassetpricing==0.0.2
+      - name: Resume prior checkpoint when available
+        id: resume
+        if: ${{ inputs.resume_run_id != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-five-reconstruction-${{ matrix.signal }}-${{ inputs.resume_run_id }}
+          path: outputs/reconstruction/${{ matrix.signal }}
+          run-id: ${{ inputs.resume_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
       - name: Download audited base database
+        if: ${{ steps.resume.outcome != 'success' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-yfinance-sec-current-score-results
@@ -83,6 +100,7 @@ jobs:
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
       - name: Download audited public inputs
+        if: ${{ steps.resume.outcome != 'success' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-93-max-free-full-results
@@ -92,6 +110,7 @@ jobs:
           github-token: ${{ github.token }}
       - name: Locate immutable reconstruction inputs
         id: locate
+        if: ${{ steps.resume.outcome != 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -116,12 +135,14 @@ jobs:
           echo "probe=$probe" >> "$GITHUB_OUTPUT"
           echo "analyst=$analyst" >> "$GITHUB_OUTPUT"
       - name: Download public historical earnings observations
+        if: ${{ steps.resume.outcome != 'success' }}
         run: |
           mkdir -p inputs/earnings
           curl --fail --location --retry 3 \
             --output inputs/earnings/eps_history.csv \
             https://www.dolthub.com/csv/post-no-preference/earnings/master/eps_history
       - name: Reconstruct and checkpoint ${{ matrix.signal }}
+        if: ${{ steps.resume.outcome != 'success' }}
         run: |
           python scripts/run_openap_93_five_proxy_validation.py \
             --base-db "${{ steps.locate.outputs.db }}" \
