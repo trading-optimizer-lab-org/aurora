@@ -1529,6 +1529,22 @@ def _price_score(
                 1.0,
             )
             short_gate_valid = short_gate_return.notna()
+
+        short_drawdown_gate_valid = pd.Series(True, index=ledger.index)
+        if "short_drawdown_gate_window" in parameters:
+            short_drawdown_peak = close.rolling(
+                int(parameters["short_drawdown_gate_window"]),
+                min_periods=int(parameters["short_drawdown_gate_window"]),
+            ).max()
+            short_drawdown = close / short_drawdown_peak - 1.0
+            short_drawdown_threshold = (
+                -float(parameters["short_drawdown_gate_threshold_pct"]) / 100.0
+            )
+            score = score.where(
+                (score >= 0.0) | (short_drawdown <= short_drawdown_threshold),
+                1.0,
+            )
+            short_drawdown_gate_valid = short_drawdown.notna()
         return score.where(
             base_score.notna()
             & vxo_z.notna()
@@ -1536,6 +1552,7 @@ def _price_score(
             & slow_trend_valid
             & tug_valid
             & short_gate_valid
+            & short_drawdown_gate_valid
         )
     if family == "trend_ensemble":
         components = []
