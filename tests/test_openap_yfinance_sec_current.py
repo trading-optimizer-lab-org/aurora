@@ -11,9 +11,11 @@ from aurora.research.openap_current_score import (
     OpenAPDataError,
     assemble_feature_table,
     build_redundancy_groups,
+    build_horizon_evidence_weights,
     calculate_accounting_features,
     calculate_price_features,
     calculate_scores,
+    calculate_six_coverage_scores,
     coverage_report,
     latest_sec_concepts,
     select_strict_predictors,
@@ -137,6 +139,80 @@ def test_score_gives_one_vote_to_redundancy_group() -> None:
     scores = calculate_scores(features)
     assert not scores.empty
     assert scores.loc[scores["symbol"].eq("AAA"), "groups_used"].iloc[0] == 184
+
+
+def test_horizon_weights_use_tstats_and_full_correlation_matrix() -> None:
+    metadata = pd.DataFrame(
+        {
+            "signalname": ["a", "b", "c"],
+            "portperiod": [1, 1, 1],
+            "tstat": [3.0, 3.0, 3.0],
+        }
+    )
+    correlation = pd.DataFrame(
+        [[1.0, 0.99, 0.0], [0.99, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        index=["a", "b", "c"],
+        columns=["a", "b", "c"],
+    )
+    weights = build_horizon_evidence_weights(metadata, correlation, horizons=(1,))
+    by_signal = weights.set_index("signalname")["score_weight"]
+    assert weights["score_weight"].sum() == pytest.approx(1.0)
+    assert by_signal["c"] > by_signal["a"]
+    assert by_signal["c"] > by_signal["b"]
+    assert by_signal["a"] == pytest.approx(by_signal["b"], rel=1e-4)
+
+
+def test_six_scores_apply_total_92_metric_coverage_tiers() -> None:
+    signals = [f"signal_{index:03d}" for index in range(92)]
+    metadata = pd.DataFrame(
+        {
+            "signalname": signals,
+            "portperiod": [1] * 44 + [12] * 48,
+            "tstat": 3.0,
+        }
+    )
+    correlation = pd.DataFrame(np.eye(92), index=signals, columns=signals)
+    weights = build_horizon_evidence_weights(metadata, correlation, horizons=(1, 12))
+    rows = []
+    available_by_symbol = {"C92": 92, "C75": 75, "C65": 65, "C55": 55}
+    for symbol, available in available_by_symbol.items():
+        for index, signal in enumerate(signals):
+            rows.append(
+                {
+                    "as_of": "2026-08-07",
+                    "symbol": symbol,
+                    "signalname": signal,
+                    "raw_value": float(index + len(symbol)) if index < available else np.nan,
+                    "status": "exact",
+                    "horizon_months": int(metadata.loc[index, "portperiod"]),
+                }
+            )
+    features = pd.DataFrame(rows)
+    scores = calculate_six_coverage_scores(
+        features,
+        weights,
+        eligible_signals=signals,
+        coverage_thresholds=(80, 70, 60),
+        horizons=(1, 12),
+    )
+    assert set(scores["score_id"]) == {
+        "openap_1m_c80",
+        "openap_12m_c80",
+        "openap_1m_c70",
+        "openap_12m_c70",
+        "openap_1m_c60",
+        "openap_12m_c60",
+    }
+    universe_sizes = scores.groupby("minimum_total_metrics")["universe_size"].first().to_dict()
+    assert universe_sizes == {60: 3, 70: 2, 80: 1}
+    symbols_by_tier = {
+        threshold: set(group["symbol"])
+        for threshold, group in scores.groupby("minimum_total_metrics")
+    }
+    assert symbols_by_tier[80] == {"C92"}
+    assert symbols_by_tier[70] == {"C92", "C75"}
+    assert symbols_by_tier[60] == {"C92", "C75", "C65"}
+    assert scores["score"].between(0.0, 100.0).all()
 
 
 def test_coverage_has_one_row_for_every_strict_predictor() -> None:
