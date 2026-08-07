@@ -1593,6 +1593,49 @@ def test_batch_forty_one_refines_unseen_overnight_tug_boundary() -> None:
     assert all(row["leverage_allowed"] is False for row in batch_forty_one)
 
 
+def test_batch_forty_two_rebalances_recovery_and_negative_vxo_vote() -> None:
+    batch_forty_one = registry.generate_candidates(41, count=96)
+    batch_forty_two = registry.generate_candidates(42, count=96)
+    batch_forty_three = registry.generate_candidates(43, count=96)
+
+    assert len(batch_forty_two) == 96
+    assert len({row["canonical_hash"] for row in batch_forty_two}) == 96
+    assert not {row["canonical_hash"] for row in batch_forty_one}.intersection(
+        row["canonical_hash"] for row in batch_forty_two
+    )
+    assert not {row["canonical_hash"] for row in batch_forty_two}.intersection(
+        row["canonical_hash"] for row in batch_forty_three
+    )
+    assert {row["parameters"]["recovery_threshold_pct"] for row in batch_forty_two} == {
+        1.1,
+        1.2,
+        1.3,
+    }
+    assert {row["parameters"]["vxo_negative_weight"] for row in batch_forty_two} == {
+        1.5,
+        1.75,
+        2.25,
+        2.5,
+    }
+    assert {row["parameters"]["calendar_weight"] for row in batch_forty_two} == {
+        0.5,
+        0.75,
+        1.0,
+        1.25,
+    }
+    assert {row["parameters"]["volume_reversal_weight"] for row in batch_forty_two} == {
+        0.0,
+        0.25,
+    }
+    assert all(row["parameters"]["tug_lookback"] == 2 for row in batch_forty_two)
+    assert all(row["parameters"]["tug_weight"] == 0.5 for row in batch_forty_two)
+    assert all(row["parameters"]["vxo_positive_weight"] == 2.5 for row in batch_forty_two)
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in batch_forty_two)
+    assert all(row["position_values"] == [-1, 1] for row in batch_forty_two)
+    assert all(row["cash_allowed"] is False for row in batch_forty_two)
+    assert all(row["leverage_allowed"] is False for row in batch_forty_two)
+
+
 def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("1997-01-02", periods=900, freq="B")
     close = pd.Series(

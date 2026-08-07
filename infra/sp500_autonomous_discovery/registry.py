@@ -2750,15 +2750,11 @@ def _recovery_calendar_volume_vxo_candidates(
             for rsi_weight in (0.5, 1.0, 1.5)
             for calendar_weight in (1.0, 1.5)
         ]
-    else:
+    elif batch_id == 41:
         # Batch 40 materially improved the global SPA statistic around a
         # two-session tug with weight 0.5. Refine the adjacent, previously
         # unobserved weights and vote boundaries without repeating batch 40.
-        generation = batch_id - 41
-        vxo_thresholds = (
-            round(1.35 + generation * 0.01, 4),
-            round(1.45 + generation * 0.01, 4),
-        )
+        vxo_thresholds = (1.35, 1.45)
         parameters_list = [
             {
                 **core,
@@ -2785,6 +2781,42 @@ def _recovery_calendar_volume_vxo_candidates(
             for rsi_weight in (1.25, 1.5, 1.75)
             for calendar_weight in (0.75, 1.0, 1.25, 1.5)
             for vxo_threshold in vxo_thresholds
+        ]
+    else:
+        # Batch 41 moved away from the batch-40 optimum. Keep its two-session
+        # tug fixed and vary only recovery activation, falling-VXO weight, and
+        # the two secondary votes that can repair ordinary bull years.
+        generation = batch_id - 42
+        recovery_thresholds = tuple(
+            round(value + generation * 0.025, 4)
+            for value in (1.1, 1.2, 1.3)
+        )
+        parameters_list = [
+            {
+                **core,
+                "first_sessions": 2,
+                "last_sessions": 1,
+                "calendar_weight": calendar_weight,
+                "rsi_weight": 1.5,
+                "reversal_weight": 1.0,
+                "recovery_memory_window": 63,
+                "recovery_threshold_pct": recovery_threshold,
+                "volume_z_threshold": 1.5,
+                "volume_reversal_weight": volume_weight,
+                "vxo_change_lookback": 1,
+                "vxo_z_window": 10,
+                "vxo_z_threshold": 1.4,
+                "vxo_weight": 3.0,
+                "vxo_positive_weight": 2.5,
+                "vxo_negative_weight": negative_weight,
+                "vxo_mode": "continuation",
+                "tug_lookback": 2,
+                "tug_weight": 0.5,
+            }
+            for recovery_threshold in recovery_thresholds
+            for negative_weight in (1.5, 1.75, 2.25, 2.5)
+            for calendar_weight in (0.5, 0.75, 1.0, 1.25)
+            for volume_weight in (0.0, 0.25)
         ]
     candidates: list[dict[str, Any]] = []
     source_ids = {
