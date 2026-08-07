@@ -1448,7 +1448,20 @@ def _price_score(
         if str(parameters["vxo_mode"]) == "reversal":
             direction = -direction
         vxo_component = direction.where(active, 0.0)
-        score = base_score + float(parameters["vxo_weight"]) * vxo_component
+        if "vxo_positive_weight" in parameters or "vxo_negative_weight" in parameters:
+            positive_weight = float(
+                parameters.get("vxo_positive_weight", parameters["vxo_weight"])
+            )
+            negative_weight = float(
+                parameters.get("vxo_negative_weight", parameters["vxo_weight"])
+            )
+            weighted_vxo_component = (
+                vxo_component.clip(lower=0.0) * positive_weight
+                + vxo_component.clip(upper=0.0) * negative_weight
+            )
+            score = base_score + weighted_vxo_component
+        else:
+            score = base_score + float(parameters["vxo_weight"]) * vxo_component
 
         rolling_peak = close.rolling(
             int(parameters["drawdown_lookback"]),

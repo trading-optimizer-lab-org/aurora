@@ -1331,6 +1331,51 @@ def test_batch_thirty_five_refines_recovery_and_volume_around_vxo_leader() -> No
     assert all(row["leverage_allowed"] is False for row in batch_thirty_five)
 
 
+def test_batch_thirty_six_uses_distinct_asymmetric_vxo_shock_weights() -> None:
+    batch_thirty_five = registry.generate_candidates(35, count=96)
+    batch_thirty_six = registry.generate_candidates(36, count=96)
+    batch_thirty_seven = registry.generate_candidates(37, count=96)
+
+    assert len(batch_thirty_six) == 96
+    assert len({row["canonical_hash"] for row in batch_thirty_six}) == 96
+    assert not {row["canonical_hash"] for row in batch_thirty_five}.intersection(
+        row["canonical_hash"] for row in batch_thirty_six
+    )
+    assert not {row["canonical_hash"] for row in batch_thirty_six}.intersection(
+        row["canonical_hash"] for row in batch_thirty_seven
+    )
+    assert {row["parameters"]["recovery_memory_window"] for row in batch_thirty_six} == {
+        42,
+        63,
+        84,
+    }
+    assert {row["parameters"]["recovery_threshold_pct"] for row in batch_thirty_six} == {
+        1.25,
+        1.5,
+    }
+    assert {row["parameters"]["vxo_z_threshold"] for row in batch_thirty_six} == {
+        1.4,
+        1.55,
+    }
+    assert {row["parameters"]["vxo_positive_weight"] for row in batch_thirty_six} == {
+        2.5,
+        3.5,
+        4.5,
+        5.5,
+    }
+    assert {row["parameters"]["vxo_negative_weight"] for row in batch_thirty_six} == {
+        0.0,
+        1.0,
+    }
+    assert all(row["parameters"]["vxo_change_lookback"] == 1 for row in batch_thirty_six)
+    assert all(row["parameters"]["vxo_z_window"] == 10 for row in batch_thirty_six)
+    assert all(row["parameters"]["vxo_mode"] == "continuation" for row in batch_thirty_six)
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in batch_thirty_six)
+    assert all(row["position_values"] == [-1, 1] for row in batch_thirty_six)
+    assert all(row["cash_allowed"] is False for row in batch_thirty_six)
+    assert all(row["leverage_allowed"] is False for row in batch_thirty_six)
+
+
 def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("1997-01-02", periods=900, freq="B")
     close = pd.Series(
@@ -1387,6 +1432,22 @@ def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> Non
         ),
     )
     pd.testing.assert_series_equal(result.decisions.iloc[:-1], future_changed.decisions.iloc[:-1])
+
+    symmetric_candidate = json.loads(json.dumps(candidate))
+    symmetric_candidate["parameters"]["vxo_positive_weight"] = symmetric_candidate["parameters"][
+        "vxo_weight"
+    ]
+    symmetric_candidate["parameters"]["vxo_negative_weight"] = symmetric_candidate["parameters"][
+        "vxo_weight"
+    ]
+    symmetric_result = candidate_decisions(symmetric_candidate, data)
+    pd.testing.assert_series_equal(result.decisions, symmetric_result.decisions)
+
+    asymmetric_candidate = registry.generate_candidates(36, count=96)[0]
+    asymmetric_result = candidate_decisions(asymmetric_candidate, data)
+    assert set(asymmetric_result.decisions.unique()) <= {-1, 1}
+    assert asymmetric_result.missing_fraction == 0.0
+    assert asymmetric_result.first_evaluable_date is not None
 
 
 def test_recovery_overnight_tug_rule_is_causal_and_fully_invested() -> None:

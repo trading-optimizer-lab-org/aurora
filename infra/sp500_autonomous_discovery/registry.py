@@ -2576,13 +2576,10 @@ def _recovery_calendar_volume_vxo_candidates(
             for vxo_threshold in (1.3, 1.45, 1.55, 1.7)
             for vxo_weight in (2.5, 3.0, 3.5, 4.0)
         ]
-    else:
+    elif batch_id == 35:
         # Batch 34 confirmed the ten-session continuation region and passed
         # every candidate-level gate. Keep that VXO rule fixed while varying
         # only the recovery memory and volume confirmation around its optimum.
-        # Later batches receive a small train-only threshold offset so their
-        # canonical trials remain distinct if this neighborhood is revisited.
-        generation = batch_id - 35
         parameters_list = [
             {
                 **core,
@@ -2595,7 +2592,7 @@ def _recovery_calendar_volume_vxo_candidates(
                 "volume_reversal_weight": volume_weight,
                 "vxo_change_lookback": 1,
                 "vxo_z_window": 10,
-                "vxo_z_threshold": round(1.55 + generation * 0.0125, 4),
+                "vxo_z_threshold": 1.55,
                 "vxo_weight": 3.0,
                 "vxo_mode": "continuation",
             }
@@ -2603,6 +2600,35 @@ def _recovery_calendar_volume_vxo_candidates(
             for recovery_threshold in (1.5, 2.0, 2.5, 3.0)
             for volume_z_threshold in (1.0, 1.5, 2.0)
             for volume_weight in (0.25, 0.75)
+        ]
+    else:
+        # Batch 35 showed that symmetric VXO weights and volume refinements do
+        # not improve the global tests. Separate positive and negative VXO
+        # shocks while retaining the same causal one-session input lag.
+        generation = batch_id - 36
+        parameters_list = [
+            {
+                **core,
+                "first_sessions": 2,
+                "last_sessions": 1,
+                "calendar_weight": 1.5,
+                "recovery_memory_window": recovery_memory_window,
+                "recovery_threshold_pct": recovery_threshold,
+                "volume_z_threshold": 1.5,
+                "volume_reversal_weight": 0.25,
+                "vxo_change_lookback": 1,
+                "vxo_z_window": 10,
+                "vxo_z_threshold": round(vxo_threshold + generation * 0.0125, 4),
+                "vxo_weight": 3.0,
+                "vxo_positive_weight": positive_weight,
+                "vxo_negative_weight": negative_weight,
+                "vxo_mode": "continuation",
+            }
+            for recovery_memory_window in (42, 63, 84)
+            for recovery_threshold in (1.25, 1.5)
+            for vxo_threshold in (1.4, 1.55)
+            for positive_weight in (2.5, 3.5, 4.5, 5.5)
+            for negative_weight in (0.0, 1.0)
         ]
     candidates: list[dict[str, Any]] = []
     source_ids = {
