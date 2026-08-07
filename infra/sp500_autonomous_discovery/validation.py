@@ -276,6 +276,7 @@ def run_exploratory_validation(
         "result_status": "EXPLORATORY_VALIDATION_RESULT",
         "strategy_id": strategy_id,
         "candidate_status": row["status"],
+        "candidate_rejection_reason": row.get("rejection_reason"),
         "confirmatory_result": False,
         "owner_authorized_exploratory": True,
         "official_validation_reservation_created": False,

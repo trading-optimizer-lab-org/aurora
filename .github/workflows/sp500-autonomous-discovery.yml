@@ -602,6 +602,7 @@ jobs:
           assert summary["official_validation_reservation_created"] is False
           PY
       - name: Upload exploratory validation result
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: sp500-autonomous-exploratory-validation-${{ inputs.exploratory_strategy_id }}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from aurora.infra.sp500_autonomous_discovery.validation import (
@@ -25,6 +26,7 @@ def main() -> int:
         strategy_id=args.strategy_id,
         validation_ack=args.validation_ack,
     )
+    print(json.dumps(summary, indent=2, sort_keys=True))
     return 0 if summary["candidate_status"] == "evaluated" else 3
 
 

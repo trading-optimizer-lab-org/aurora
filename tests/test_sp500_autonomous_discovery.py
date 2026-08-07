@@ -2463,12 +2463,16 @@ def test_exploratory_validation_can_reuse_verified_stooq_windows() -> None:
         step for step in steps if step["name"] == "Merge reusable validation Stooq windows"
     )
     prepare = next(step for step in steps if step["name"] == "Prepare bounded validation data")
+    upload = next(
+        step for step in steps if step["name"] == "Upload exploratory validation result"
+    )
     assert "sp500-ls-stooq-window-${VALIDATION_STOOQ_RUN_ID}-*" in download["run"]
     assert "--expected-windows 82" in merge["run"]
     assert "--requested-start 2011-01-01" in merge["run"]
     assert "--requested-end 2020-12-31" in merge["run"]
     assert "SP500_STOOQ_HISTORY_CSV" in prepare["run"]
     assert "SP500_STOOQ_HISTORY_MANIFEST" in prepare["run"]
+    assert upload["if"] == "always()"
 
 
 def test_block_sum_bootstrap_matches_original_sampling(monkeypatch) -> None:
