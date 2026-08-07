@@ -30,6 +30,7 @@ from aurora.infra.sp500_autonomous_discovery.validation import (
     ValidationGateError,
     _candidate_from_registry,
     _verify_freeze,
+    exploratory_validation_package,
 )
 from aurora.infra.sp500_long_short_daily.data import PreparedMarketData
 from aurora.infra.sp500_long_short_daily.signals import candidate_decisions
@@ -2430,6 +2431,23 @@ def test_exploratory_candidate_selection_is_exact_and_fail_closed() -> None:
     ):
         _candidate_from_registry([first, second], "missing")
     assert EXPLORATORY_VALIDATION_ACK == ("OPEN_EXPLORATORY_VALIDATION_2011_2020_OWNER_AUTHORIZED")
+
+
+def test_exploratory_validation_package_uses_exact_candidate_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = dict(_template(), strategy_id="vxo-candidate", required_datasets=["DS001", "DS005"])
+    candidate["canonical_hash"] = canonical_rule_hash(candidate)
+    (tmp_path / "candidate_registry.jsonl").write_text(
+        json.dumps(candidate) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "aurora.infra.sp500_autonomous_discovery.validation.base_package",
+        lambda: registry.base_package(),
+    )
+    package = exploratory_validation_package(tmp_path, "vxo-candidate")
+    assert package.candidates == (candidate,)
+    assert package.required_dataset_ids() == ("DS001", "DS005")
 
 
 def test_validation_workflow_requests_only_the_frozen_validation_period() -> None:

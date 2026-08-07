@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -173,6 +174,16 @@ def _candidate_from_registry(
     if len(matches) != 1:
         raise ValidationGateError("EXPLORATORY_CANDIDATE_NOT_UNIQUE_IN_REGISTRY")
     return matches[0]
+
+
+def exploratory_validation_package(
+    train_results_dir: Path, strategy_id: str
+) -> Any:
+    """Return the base package scoped to the exact exploratory candidate."""
+
+    registry = read_batch_registry(Path(train_results_dir))
+    candidate = _candidate_from_registry(registry, strategy_id)
+    return replace(base_package(), candidates=(candidate,))
 
 
 def run_exploratory_validation(

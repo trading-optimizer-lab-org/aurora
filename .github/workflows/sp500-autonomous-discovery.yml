@@ -552,6 +552,7 @@ jobs:
         env:
           RUNNER_TEMP_VALUE: ${{ runner.temp }}
           VALIDATION_STOOQ_RUN_ID: ${{ inputs.validation_stooq_run_id }}
+          STRATEGY_ID: ${{ inputs.exploratory_strategy_id }}
         run: |
           set -euo pipefail
           if [[ -n "$VALIDATION_STOOQ_RUN_ID" ]]; then
@@ -561,12 +562,13 @@ jobs:
           python - <<'PY'
           import os
           from pathlib import Path
-          from aurora.infra.sp500_autonomous_discovery.registry import base_package
+          from aurora.infra.sp500_autonomous_discovery.validation import exploratory_validation_package
           from aurora.infra.sp500_long_short_daily.data import prepare_market_snapshot
 
+          root = Path(os.environ["RUNNER_TEMP_VALUE"])
           prepare_market_snapshot(
-              Path(os.environ["RUNNER_TEMP_VALUE"]) / "validation-prepared",
-              base_package(),
+              root / "validation-prepared",
+              exploratory_validation_package(root / "train-results", os.environ["STRATEGY_ID"]),
               start="2011-01-01",
               end="2020-12-31",
               split="validation",
