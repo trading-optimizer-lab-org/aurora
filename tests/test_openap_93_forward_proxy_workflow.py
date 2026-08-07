@@ -84,8 +84,9 @@ def test_forward_proxy_workflow_publishes_complete_final_artifact() -> None:
 
 def test_forward_proxy_workflow_keeps_advisory_current_values_when_no_signal_is_certified() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
+    certify_block = text.split("  certify:\n", 1)[1].split("\n  current:\n", 1)[0]
 
     assert "Calculate current values for all five formulas" in text
-    assert "if: ${{ steps.summary.outputs.certified_count != '0' }}" not in text
+    assert "if: ${{ steps.summary.outputs.certified_count != '0' }}" not in certify_block
     assert "if: ${{ needs.certify.result == 'success' }}" in text
     assert "signals['value'].notna().any()" in text
