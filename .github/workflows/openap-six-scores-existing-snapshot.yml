@@ -113,12 +113,12 @@ jobs:
           assert summary["eligible_symbols"] == 2338
           assert summary["score_variants"] == 6
           assert summary["score_universe_sizes"] == {
-              "openap_1m_c80": 366,
-              "openap_12m_c80": 366,
-              "openap_1m_c70": 1250,
-              "openap_12m_c70": 1250,
-              "openap_1m_c60": 2031,
-              "openap_12m_c60": 2031,
+              "openap_1m_c80": 214,
+              "openap_12m_c80": 214,
+              "openap_1m_c70": 656,
+              "openap_12m_c70": 656,
+              "openap_1m_c60": 1354,
+              "openap_12m_c60": 1354,
           }
           assert summary["locked_opened"] is False
           assert summary["backtest_enabled"] is False

@@ -15,7 +15,7 @@ El sistema publica dos horizontes dentro de tres universos de calidad de datos:
 
 Los umbrales 80, 70 y 60 cuentan disponibilidad sobre el registro común de 92 métricas. No exigen esa cantidad dentro de cada horizonte. El score 1M usa sólo señales cuyo horizonte oficial OpenAP es un mes; el score 12M usa sólo señales cuyo horizonte oficial es doce meses.
 
-La fotografía auditada que fijó el contrato contenía 366 acciones en C80, 1.250 en C70 y 2.031 en C60. Cada ejecución recalcula y publica los conteos reales.
+La fotografía auditada del artifact `8866666560` contiene 214 acciones en C80, 656 en C70 y 1.354 en C60. Son conteos comprobados directamente sobre las 92 señales con estado `exact` o `proxy` y valor actual no nulo. Cada ejecución recalcula y publica los conteos reales.
 
 ## Registro de señales
 

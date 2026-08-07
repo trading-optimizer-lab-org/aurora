@@ -258,7 +258,7 @@ def test_existing_snapshot_workflow_downloads_and_checks_all_six_universes() -> 
     assert "gh run download" in text
     assert "openap_features_current.parquet" in text
     assert "score-snapshot" in text
-    assert '"openap_1m_c80": 366' in text
-    assert '"openap_12m_c70": 1250' in text
-    assert '"openap_1m_c60": 2031' in text
+    assert '"openap_1m_c80": 214' in text
+    assert '"openap_12m_c70": 656' in text
+    assert '"openap_1m_c60": 1354' in text
     assert "locked_opened" in text
