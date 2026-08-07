@@ -1286,6 +1286,51 @@ def test_batch_thirty_four_refines_only_leading_vxo_continuation_regions() -> No
     assert all(row["leverage_allowed"] is False for row in batch_thirty_four)
 
 
+def test_batch_thirty_five_refines_recovery_and_volume_around_vxo_leader() -> None:
+    batch_thirty_four = registry.generate_candidates(34, count=96)
+    batch_thirty_five = registry.generate_candidates(35, count=96)
+    batch_thirty_six = registry.generate_candidates(36, count=96)
+
+    assert len(batch_thirty_five) == 96
+    assert len({row["canonical_hash"] for row in batch_thirty_five}) == 96
+    assert not {row["canonical_hash"] for row in batch_thirty_four}.intersection(
+        row["canonical_hash"] for row in batch_thirty_five
+    )
+    assert not {row["canonical_hash"] for row in batch_thirty_five}.intersection(
+        row["canonical_hash"] for row in batch_thirty_six
+    )
+    assert {row["parameters"]["recovery_memory_window"] for row in batch_thirty_five} == {
+        42,
+        63,
+        84,
+        126,
+    }
+    assert {row["parameters"]["recovery_threshold_pct"] for row in batch_thirty_five} == {
+        1.5,
+        2.0,
+        2.5,
+        3.0,
+    }
+    assert {row["parameters"]["volume_z_threshold"] for row in batch_thirty_five} == {
+        1.0,
+        1.5,
+        2.0,
+    }
+    assert {row["parameters"]["volume_reversal_weight"] for row in batch_thirty_five} == {
+        0.25,
+        0.75,
+    }
+    assert all(row["parameters"]["vxo_change_lookback"] == 1 for row in batch_thirty_five)
+    assert all(row["parameters"]["vxo_z_window"] == 10 for row in batch_thirty_five)
+    assert all(row["parameters"]["vxo_z_threshold"] == 1.55 for row in batch_thirty_five)
+    assert all(row["parameters"]["vxo_weight"] == 3.0 for row in batch_thirty_five)
+    assert all(row["parameters"]["vxo_mode"] == "continuation" for row in batch_thirty_five)
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in batch_thirty_five)
+    assert all(row["position_values"] == [-1, 1] for row in batch_thirty_five)
+    assert all(row["cash_allowed"] is False for row in batch_thirty_five)
+    assert all(row["leverage_allowed"] is False for row in batch_thirty_five)
+
+
 def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("1997-01-02", periods=900, freq="B")
     close = pd.Series(
