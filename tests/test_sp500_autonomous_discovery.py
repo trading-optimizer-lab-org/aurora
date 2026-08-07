@@ -1552,6 +1552,47 @@ def test_batch_forty_adds_distinct_causal_overnight_tug_vote() -> None:
     assert all(row["leverage_allowed"] is False for row in batch_forty)
 
 
+def test_batch_forty_one_refines_unseen_overnight_tug_boundary() -> None:
+    batch_forty = registry.generate_candidates(40, count=96)
+    batch_forty_one = registry.generate_candidates(41, count=96)
+    batch_forty_two = registry.generate_candidates(42, count=96)
+
+    assert len(batch_forty_one) == 96
+    assert len({row["canonical_hash"] for row in batch_forty_one}) == 96
+    assert not {row["canonical_hash"] for row in batch_forty}.intersection(
+        row["canonical_hash"] for row in batch_forty_one
+    )
+    assert not {row["canonical_hash"] for row in batch_forty_one}.intersection(
+        row["canonical_hash"] for row in batch_forty_two
+    )
+    assert {row["parameters"]["tug_lookback"] for row in batch_forty_one} == {2}
+    assert {row["parameters"]["tug_weight"] for row in batch_forty_one} == {
+        0.3,
+        0.4,
+        0.6,
+        0.7,
+    }
+    assert {row["parameters"]["rsi_weight"] for row in batch_forty_one} == {
+        1.25,
+        1.5,
+        1.75,
+    }
+    assert {row["parameters"]["calendar_weight"] for row in batch_forty_one} == {
+        0.75,
+        1.0,
+        1.25,
+        1.5,
+    }
+    assert {row["parameters"]["vxo_z_threshold"] for row in batch_forty_one} == {
+        1.35,
+        1.45,
+    }
+    assert all(row["locked_boundary"] == ">=2021-01-01 unopened" for row in batch_forty_one)
+    assert all(row["position_values"] == [-1, 1] for row in batch_forty_one)
+    assert all(row["cash_allowed"] is False for row in batch_forty_one)
+    assert all(row["leverage_allowed"] is False for row in batch_forty_one)
+
+
 def test_recovery_calendar_volume_vxo_rule_is_causal_and_fully_invested() -> None:
     index = pd.date_range("1997-01-02", periods=900, freq="B")
     close = pd.Series(

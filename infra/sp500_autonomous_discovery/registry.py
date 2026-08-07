@@ -2718,12 +2718,11 @@ def _recovery_calendar_volume_vxo_candidates(
             for reversal_weight in (0.5, 1.0)
             for calendar_weight in (1.0, 1.5)
         ]
-    else:
+    elif batch_id == 40:
         # The slow-trend rebalance in batch 39 did not improve the global
         # differential tests. Combine the strongest intermediate VXO rule
         # with the already-supported causal overnight-minus-intraday tug,
         # which can distinguish ordinary bull sessions from stress reversals.
-        generation = batch_id - 40
         parameters_list = [
             {
                 **core,
@@ -2738,7 +2737,7 @@ def _recovery_calendar_volume_vxo_candidates(
                 "volume_reversal_weight": 0.25,
                 "vxo_change_lookback": 1,
                 "vxo_z_window": 10,
-                "vxo_z_threshold": round(1.4 + generation * 0.0125, 4),
+                "vxo_z_threshold": 1.4,
                 "vxo_weight": 3.0,
                 "vxo_positive_weight": 2.5,
                 "vxo_negative_weight": 2.0,
@@ -2750,6 +2749,42 @@ def _recovery_calendar_volume_vxo_candidates(
             for tug_weight in (0.25, 0.5, 1.0, 1.5)
             for rsi_weight in (0.5, 1.0, 1.5)
             for calendar_weight in (1.0, 1.5)
+        ]
+    else:
+        # Batch 40 materially improved the global SPA statistic around a
+        # two-session tug with weight 0.5. Refine the adjacent, previously
+        # unobserved weights and vote boundaries without repeating batch 40.
+        generation = batch_id - 41
+        vxo_thresholds = (
+            round(1.35 + generation * 0.01, 4),
+            round(1.45 + generation * 0.01, 4),
+        )
+        parameters_list = [
+            {
+                **core,
+                "first_sessions": 2,
+                "last_sessions": 1,
+                "calendar_weight": calendar_weight,
+                "rsi_weight": rsi_weight,
+                "reversal_weight": 1.0,
+                "recovery_memory_window": 63,
+                "recovery_threshold_pct": 1.25,
+                "volume_z_threshold": 1.5,
+                "volume_reversal_weight": 0.25,
+                "vxo_change_lookback": 1,
+                "vxo_z_window": 10,
+                "vxo_z_threshold": vxo_threshold,
+                "vxo_weight": 3.0,
+                "vxo_positive_weight": 2.5,
+                "vxo_negative_weight": 2.0,
+                "vxo_mode": "continuation",
+                "tug_lookback": 2,
+                "tug_weight": tug_weight,
+            }
+            for tug_weight in (0.3, 0.4, 0.6, 0.7)
+            for rsi_weight in (1.25, 1.5, 1.75)
+            for calendar_weight in (0.75, 1.0, 1.25, 1.5)
+            for vxo_threshold in vxo_thresholds
         ]
     candidates: list[dict[str, Any]] = []
     source_ids = {
