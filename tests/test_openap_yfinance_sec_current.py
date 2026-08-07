@@ -252,10 +252,10 @@ def test_workflow_contract_is_github_only_and_complete() -> None:
     assert len(set(registry)) == 92
 
 
-def test_existing_snapshot_workflow_uses_ranges_and_checks_all_six_universes() -> None:
+def test_existing_snapshot_workflow_streams_and_checks_all_six_universes() -> None:
     text = Path(".github/workflows/openap-six-scores-existing-snapshot.yml").read_text(encoding="utf-8")
     assert "OpenAP Six Scores From Existing Snapshot" in text
-    assert "remotezip" in text
+    assert "stream-unzip" in text
     assert "openap_features_current.parquet" in text
     assert "score-snapshot" in text
     assert '"openap_1m_c80": 366' in text

@@ -61,14 +61,14 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install score and ranged-ZIP dependencies
-        run: python -m pip install --disable-pip-version-check -e . gdown remotezip requests pyarrow
+      - name: Install score and streaming-ZIP dependencies
+        run: python -m pip install --disable-pip-version-check -e . gdown stream-unzip requests pyarrow
       - name: Download pinned OpenAP evidence files
         run: |
           mkdir -p inputs/openap
           gdown 10sOryk_ddjkXagaajTKUk1nwJs2ZLRiI -O inputs/openap/PredictorLSretWide.csv
           gdown 1nLQWwt1023NLrfhdQiCvIRbFkiW2z3fG -O inputs/openap/PredictorSummary.xlsx
-      - name: Extract only the feature Parquet by HTTP ranges
+      - name: Stream artifact and keep only the feature Parquet
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_ARTIFACT_ID: "8866666560"
@@ -76,10 +76,9 @@ jobs:
           mkdir -p inputs/snapshot
           python - <<'PY'
           import os
-          import shutil
           from pathlib import Path
           import requests
-          from remotezip import RemoteZip
+          from stream_unzip import stream_unzip
 
           artifact_id = os.environ["SOURCE_ARTIFACT_ID"]
           response = requests.get(
@@ -94,12 +93,24 @@ jobs:
           )
           response.raise_for_status()
           destination = Path("inputs/snapshot/openap_features_current.parquet")
-          with RemoteZip(response.headers["Location"]) as archive:
-              matches = [name for name in archive.namelist() if name.endswith("openap_features_current.parquet")]
-              if len(matches) != 1:
-                  raise RuntimeError(f"Expected one feature Parquet, found {matches}")
-              with archive.open(matches[0]) as source, destination.open("wb") as target:
-                  shutil.copyfileobj(source, target, length=8 * 1024 * 1024)
+          download = requests.get(response.headers["Location"], stream=True, timeout=(60, 600))
+          download.raise_for_status()
+          found = False
+          for raw_name, _, uncompressed_chunks in stream_unzip(
+              chunk for chunk in download.iter_content(8 * 1024 * 1024) if chunk
+          ):
+              name = raw_name.decode("utf-8")
+              if name.endswith("openap_features_current.parquet"):
+                  with destination.open("wb") as target:
+                      for chunk in uncompressed_chunks:
+                          target.write(chunk)
+                  found = True
+                  break
+              for _ in uncompressed_chunks:
+                  pass
+          download.close()
+          if not found:
+              raise RuntimeError("Feature Parquet was not found in the source artifact")
           print(f"Extracted {destination.stat().st_size} bytes from artifact {artifact_id}")
           PY
       - name: Calculate six scores
