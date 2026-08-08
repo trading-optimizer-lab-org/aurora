@@ -58,7 +58,7 @@ PUBLIC_SOURCES: tuple[SourceSpec, ...] = (
     SourceSpec("sec_13f", "sec.gov", "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01mar2026-31may2026_form13f.zip", "https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets", "US government public data", "official_bulk_zip", False, False, "authorized_public_rate_limited", 1),
     SourceSpec("openfigi_public", "api.openfigi.com", OPENFIGI_MAPPING_URL, "https://www.openfigi.com/api/documentation", "OpenFIGI public API terms", "official_public_api", False, False, "authorized_public_rate_limited", 2),
     SourceSpec("bea_public", "apps.bea.gov", "https://apps.bea.gov/industry/xls/io-annual/IxI_TR_1997-2024_Summary.xlsx", "https://apps.bea.gov/terms-of-service/index.htm", "US government public data", "official_bulk_file", False, False, "authorized_public", 1),
-    SourceSpec("patentsview_public", "search.patentsview.org", "https://search.patentsview.org/docs/", "https://patentsview.org/terms", "USPTO public patent data; current API registration policy applies", "api_key_or_bulk_migration", True, False, "not_eligible_no_account_or_key", 2),
+    SourceSpec("patentsview_public", "data.uspto.gov", "https://data.uspto.gov/bulkdata/datasets/pvannual", "https://www.uspto.gov/terms-use-uspto-websites", "USPTO public research data", "official_bulk_download", False, False, "authorized_public", 1),
     SourceSpec("pastor_stambaugh", "faculty.chicagobooth.edu", "https://faculty.chicagobooth.edu/-/media/faculty/lubos-pastor/data/liq_data_1962_2024.txt", "https://faculty.chicagobooth.edu/lubos-pastor/research", "Academic public download", "public_file", False, False, "authorized_public", 1),
 )
 
