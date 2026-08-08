@@ -516,7 +516,8 @@ def _evolutionary_proposals(method: str, seed: int, records: list[dict[str, Any]
     out = list(population)
     while len(out) < MAX_UNIQUE_EVALUATIONS:
         if method == "M4_DIFFERENTIAL_EVOLUTION":
-            a, b, c = population[rng.integers(0, len(population), 3)]
+            indices = rng.integers(0, len(population), 3)
+            a, b, c = (population[int(index)] for index in indices)
             donor = np.clip(a + 0.7 * (b - c), 0.0, 0.999999)
             mask = rng.random(GENOME_DIM) < 0.7
             mask[rng.integers(0, GENOME_DIM)] = True

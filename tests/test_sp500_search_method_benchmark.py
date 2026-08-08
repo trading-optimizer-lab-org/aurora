@@ -9,6 +9,7 @@ from aurora.infra.sp500_search_method_benchmark.benchmark import (
     METHODS,
     SEEDS,
     _genome_canonical,
+    _static_proposals,
     _warm_start,
     canonical_hash,
     parse_causal_dates,
@@ -71,6 +72,13 @@ def test_common_warm_start_is_identical_for_all_methods():
     warm = _warm_start(SEEDS[0])
     assert warm.shape == (32, 15)
     assert all(np.array_equal(warm, _warm_start(SEEDS[0])) for _ in METHODS)
+
+
+def test_differential_evolution_proposals_are_deterministic_and_use_the_full_budget():
+    first = _static_proposals("M4_DIFFERENTIAL_EVOLUTION", SEEDS[0])
+    second = _static_proposals("M4_DIFFERENTIAL_EVOLUTION", SEEDS[0])
+    assert first.shape == (256, 15)
+    assert np.array_equal(first, second)
 
 
 def test_methods_share_the_same_representable_space():
