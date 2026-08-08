@@ -1543,6 +1543,49 @@ def _is_number(value: Any) -> bool:
         return False
 
 
+def _trim_cross_sectional_feature(
+    values_by_symbol: dict[str, dict[str, FeatureValue]],
+    signalname: str,
+    *,
+    lower_quantile: float = 0.01,
+    upper_quantile: float = 0.99,
+) -> dict[str, int | float | None]:
+    """Apply OpenAP's cross-sectional trim without fabricating replacement values."""
+
+    observed = pd.Series(
+        {
+            symbol: float(values[signalname].raw_value)
+            for symbol, values in values_by_symbol.items()
+            if signalname in values and _is_number(values[signalname].raw_value)
+        },
+        dtype=float,
+    )
+    if observed.empty:
+        return {"observed": 0, "trimmed": 0, "lower": None, "upper": None}
+    lower = float(observed.quantile(lower_quantile, interpolation="nearest"))
+    upper = float(observed.quantile(upper_quantile, interpolation="nearest"))
+    trimmed = 0
+    for symbol, value in observed.items():
+        if lower <= float(value) <= upper:
+            continue
+        original = values_by_symbol[symbol][signalname]
+        values_by_symbol[symbol][signalname] = FeatureValue(
+            signalname,
+            None,
+            "unavailable",
+            original.source,
+            original.formula_id,
+            f"OpenAP cross-sectional 1/99 trim; pre-trim value={float(value):.12g}",
+        )
+        trimmed += 1
+    return {
+        "observed": int(len(observed)),
+        "trimmed": int(trimmed),
+        "lower": lower,
+        "upper": upper,
+    }
+
+
 def _hashes_by_chunk(paths: Iterable[Path]) -> dict[int, str]:
     result: dict[int, str] = {}
     for path in paths:
@@ -2745,6 +2788,11 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "Factor-residual volatility is unavailable; total realized volatility is disclosed as a proxy",
         )
 
+    volume_trend_trim_audit = _trim_cross_sectional_feature(
+        values_by_symbol,
+        "VolumeTrend",
+    )
+
     feature_frame = assemble_feature_table(
         metadata,
         values_by_symbol,
@@ -3689,6 +3737,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "ranking_score_mode": str(config["score"]["ranking_score_mode"]),
         "redundancy_audit_source_status": redundancy_audit_source_status,
         "features_rows": len(feature_frame),
+        "volume_trend_cross_sectional_trim": volume_trend_trim_audit,
         "all_facts_have_available_at": all_facts_have_available_at,
         "locked_opened": False,
         "backtest_enabled": False,

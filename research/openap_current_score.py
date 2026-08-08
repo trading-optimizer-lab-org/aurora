@@ -641,18 +641,37 @@ def calculate_price_features(
     result["LRreversal"] = exact("LRreversal", _return_between(monthly, 36, 13), "return_month_36_to_13")
     if len(close) >= 252:
         result["High52"] = exact("High52", _safe_ratio(current, close.iloc[-252:].max()), "price_over_52w_high")
-    recent_returns = returns.dropna().iloc[-21:]
+    completed_daily = daily
+    if as_of is not None:
+        as_of_period = pd.Timestamp(as_of).tz_localize(None).to_period("M")
+        completed_daily = daily.loc[
+            pd.to_datetime(daily["date"], errors="coerce").dt.to_period("M")
+            < as_of_period
+        ].copy()
+    completed_returns = completed_daily["adj_close"].pct_change()
+    if not completed_daily.empty:
+        completed_periods = pd.to_datetime(
+            completed_daily["date"], errors="coerce"
+        ).dt.to_period("M")
+        latest_completed_period = completed_periods.max()
+        recent_returns = completed_returns.loc[
+            completed_periods.eq(latest_completed_period)
+        ].dropna()
+    else:
+        recent_returns = pd.Series(dtype=float)
     if not recent_returns.empty:
         result["MaxRet"] = exact("MaxRet", float(recent_returns.max()), "max_daily_return_last_month")
         result["RealizedVol"] = proxy(
             "RealizedVol",
-            float(recent_returns.std(ddof=1)),
-            "total_daily_return_std_last_month_proxy",
-            "Official OpenAP RealizedVol uses CAPM residual volatility",
+            float(recent_returns.std(ddof=1)) if len(recent_returns) >= 15 else None,
+            "openap_daily_return_std_completed_month_min15",
+            "Official formula reconstructed; Yahoo adjusted returns replace CRSP excess returns",
         )
         result["ReturnSkew"] = exact("ReturnSkew", float(recent_returns.skew()), "daily_return_skew_last_month")
     monthly_volume = (
-        daily.assign(date=pd.to_datetime(daily["date"], errors="coerce"))
+        completed_daily.assign(
+            date=pd.to_datetime(completed_daily["date"], errors="coerce")
+        )
         .dropna(subset=["date"])
         .set_index("date")["volume"]
         .resample("ME")
@@ -682,12 +701,41 @@ def calculate_price_features(
             "openap_sharevol_binary_3m_turnover",
             "Calculated during merge only after share-count validation",
         )
-        result["VolSD"] = proxy("VolSD", float(volume.iloc[-252:].std(ddof=1)), "volume_std_252d", "Uses raw share volume before SEC turnover scaling")
-        x = np.arange(min(252, len(volume)), dtype=float)
-        y = np.log1p(volume.iloc[-len(x):].to_numpy(dtype=float))
-        valid = np.isfinite(y)
-        slope = float(np.polyfit(x[valid], y[valid], 1)[0]) if valid.sum() >= 30 else None
-        result["VolumeTrend"] = proxy("VolumeTrend", slope, "log_volume_trend_252d", "Yahoo volume replaces CRSP volume")
+        volume_window_36m = monthly_volume.tail(36)
+        vol_sd = (
+            float(volume_window_36m.std(ddof=1))
+            if len(volume_window_36m) >= 24
+            else None
+        )
+        result["VolSD"] = proxy(
+            "VolSD",
+            vol_sd,
+            "openap_monthly_volume_rolling_std_36m_min24",
+            "Official formula reconstructed; Yahoo consolidated volume replaces CRSP volume",
+        )
+
+        volume_window_60m = monthly_volume.tail(60)
+        if len(volume_window_60m) >= 30:
+            month_number = (
+                volume_window_60m.index.year.astype(float) * 12.0
+                + volume_window_60m.index.month.astype(float)
+                - 1.0
+            )
+            y = volume_window_60m.to_numpy(dtype=float)
+            valid = np.isfinite(month_number) & np.isfinite(y)
+            if valid.sum() >= 30 and float(np.nanmean(y[valid])) != 0.0:
+                beta = float(np.polyfit(month_number[valid], y[valid], 1)[0])
+                volume_trend = beta / float(np.nanmean(y[valid]))
+            else:
+                volume_trend = None
+        else:
+            volume_trend = None
+        result["VolumeTrend"] = proxy(
+            "VolumeTrend",
+            volume_trend,
+            "openap_monthly_volume_ols_trend_60m_min30_over_mean",
+            "Official time-series formula reconstructed before cross-sectional 1/99 trim; Yahoo consolidated volume replaces CRSP volume",
+        )
         result["std_turn"] = FeatureValue(
             "std_turn",
             None,
@@ -700,17 +748,13 @@ def calculate_price_features(
         if len(volume) >= sessions:
             zero_days = float((volume.iloc[-sessions:] <= 0).mean())
             result[name] = proxy(name, zero_days, f"zero_volume_share_{sessions}d", "Yahoo reports consolidated volume, not CRSP zero-trade adjustment")
-    ma_lengths = (3, 5, 10, 20, 50, 100, 200, 400, 600, 800, 1000)
-    ma_values = []
-    for length in ma_lengths:
-        if len(close) >= length:
-            ma_values.append(float(close.iloc[-length:].mean() / current))
-    trend = float(-np.mean(ma_values)) if len(ma_values) == len(ma_lengths) else None
-    result["TrendFactor"] = proxy(
+    result["TrendFactor"] = FeatureValue(
         "TrendFactor",
-        trend,
-        "mean_negative_ma_to_price_3_5_10_20_50_100_200_400_600_800_1000",
-        "OpenAP estimates rolling cross-sectional coefficients; this is the same 11-MA state but not that fitted regression",
+        None,
+        "unavailable",
+        "requires_historical_cross_sectional_panel",
+        "openap_11ma_cross_sectional_regression_12m_lagged_betas",
+        "The prior negative mean of 11 MA ratios is not the official predictor and is not scoreable",
     )
     # Exact lag sets from the pinned OpenAP predictor implementations.  The
     # signal date predicts the following month, hence the seasonal observation

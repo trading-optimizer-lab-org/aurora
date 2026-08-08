@@ -748,7 +748,7 @@ def test_companyfacts_clamp_acceptance_timestamp_before_filing_date() -> None:
     assert pd.Timestamp(rows[0]["available_at"]) == pd.Timestamp("2026-02-06T00:00:00Z")
 
 
-def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
+def test_price_features_are_real_and_trendfactor_is_fail_closed() -> None:
     dates = pd.bdate_range("2004-01-01", periods=5500)
     frame = pd.DataFrame(
         {
@@ -762,8 +762,11 @@ def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
     )
     result = calculate_price_features(frame)
     assert result["Mom12m"].status == "exact"
-    assert result["TrendFactor"].status == "proxy"
-    assert result["TrendFactor"].raw_value is not None
+    assert result["TrendFactor"].status == "unavailable"
+    assert result["TrendFactor"].raw_value is None
+    assert result["TrendFactor"].formula_id == (
+        "openap_11ma_cross_sectional_regression_12m_lagged_betas"
+    )
     assert result["MomSeasonShort"].status == "exact"
     assert result["MomSeasonShort"].formula_id == "openap_ret_lag_11"
     assert result["Mom12mOffSeason"].raw_value is not None
@@ -837,6 +840,69 @@ def test_monthly_price_features_exclude_the_current_partial_month() -> None:
     assert result["STreversal"].raw_value == pytest.approx(
         completed.pct_change().iloc[-1]
     )
+
+
+def test_official_volume_and_realized_volatility_windows() -> None:
+    dates = pd.bdate_range("2019-01-01", "2026-08-10")
+    sequence = np.arange(len(dates), dtype=float)
+    price = 75.0 * np.exp(sequence / 6000.0 + np.sin(sequence / 13.0) / 50.0)
+    volume = 500_000.0 + sequence * 250.0 + (sequence % 17) * 2_000.0
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "adj_close": price,
+            "close": price,
+            "high": price * 1.01,
+            "low": price * 0.99,
+            "volume": volume,
+        }
+    )
+
+    result = calculate_price_features(frame, as_of=pd.Timestamp("2026-08-10"))
+    completed = frame.loc[frame["date"].dt.to_period("M") < pd.Period("2026-08")]
+    periods = completed["date"].dt.to_period("M")
+    returns = completed["adj_close"].pct_change()
+    expected_realized = returns.loc[periods.eq(periods.max())].dropna().std(ddof=1)
+    monthly_volume = completed.set_index("date")["volume"].resample("ME").sum()
+    expected_vol_sd = monthly_volume.tail(36).std(ddof=1)
+    trend_window = monthly_volume.tail(60)
+    x = trend_window.index.year * 12.0 + trend_window.index.month - 1.0
+    expected_volume_trend = np.polyfit(x, trend_window.to_numpy(), 1)[0] / trend_window.mean()
+
+    assert result["RealizedVol"].formula_id == (
+        "openap_daily_return_std_completed_month_min15"
+    )
+    assert result["RealizedVol"].raw_value == pytest.approx(expected_realized)
+    assert result["VolSD"].formula_id == (
+        "openap_monthly_volume_rolling_std_36m_min24"
+    )
+    assert result["VolSD"].raw_value == pytest.approx(expected_vol_sd)
+    assert result["VolumeTrend"].formula_id == (
+        "openap_monthly_volume_ols_trend_60m_min30_over_mean"
+    )
+    assert result["VolumeTrend"].raw_value == pytest.approx(expected_volume_trend)
+
+
+def test_volume_trend_cross_sectional_trim_matches_openap_contract() -> None:
+    values = {
+        f"S{index:03d}": {
+            "VolumeTrend": FeatureValue(
+                "VolumeTrend",
+                float(index),
+                "proxy",
+                "yfinance",
+                "openap_monthly_volume_ols_trend_60m_min30_over_mean",
+            )
+        }
+        for index in range(101)
+    }
+
+    audit = current_runner._trim_cross_sectional_feature(values, "VolumeTrend")
+
+    assert audit == {"observed": 101, "trimmed": 2, "lower": 1.0, "upper": 99.0}
+    assert values["S000"]["VolumeTrend"].raw_value is None
+    assert values["S100"]["VolumeTrend"].raw_value is None
+    assert values["S050"]["VolumeTrend"].raw_value == 50.0
 
 
 def test_daily_price_features_exclude_an_open_us_session() -> None:
