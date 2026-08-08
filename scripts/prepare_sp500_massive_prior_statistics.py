@@ -12,7 +12,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from aurora.infra.sp500_autonomous_discovery.contracts import LOCKED_START, TRAIN_END
+from aurora.infra.sp500_autonomous_discovery.contracts import (
+    LOCKED_START,
+    MULTIPLICITY_DATE_UNIT,
+    TRAIN_END,
+)
 from aurora.infra.sp500_autonomous_discovery.massive_train import (
     BootstrapAccumulator,
     PboAccumulator,
@@ -25,6 +29,26 @@ _MATRIX: pd.DataFrame | None = None
 _BENCHMARK: np.ndarray | None = None
 _OUTPUT: Path | None = None
 _BOOTSTRAP_WEIGHTS: np.ndarray | None = None
+
+def _normalise_multiplicity_dates(values: object) -> pd.DatetimeIndex:
+    """Return dates in the one unit used by the massive-run interchange file."""
+    dates = pd.DatetimeIndex(pd.to_datetime(values, errors="raise"))
+    return dates.as_unit(MULTIPLICITY_DATE_UNIT)
+
+
+def _write_multiplicity_common_dates(
+    path: Path, values: object
+) -> pd.DatetimeIndex:
+    """Write and immediately verify the common interval as int64 nanoseconds."""
+    dates = _normalise_multiplicity_dates(values)
+    np.save(path, dates.asi8.astype(np.int64, copy=False))
+    raw = np.load(path, allow_pickle=False)
+    roundtrip = pd.DatetimeIndex(
+        pd.to_datetime(raw, unit=MULTIPLICITY_DATE_UNIT, errors="raise")
+    ).as_unit(MULTIPLICITY_DATE_UNIT)
+    if not roundtrip.equals(dates):
+        raise RuntimeError("PRIOR_MULTIPLICITY_DATE_SERIALIZATION_BREACH")
+    return dates
 
 
 def _load_evaluated_returns(prior: Path, ledger: pd.DataFrame) -> pd.DataFrame:
@@ -143,15 +167,18 @@ def main() -> int:
         raise RuntimeError("PRIOR_MULTIPLICITY_COMMON_INTERVAL_TOO_SHORT")
     _BENCHMARK = benchmark.reindex(_MATRIX.index).to_numpy(dtype=float)
     _BOOTSTRAP_WEIGHTS = BootstrapAccumulator.create(len(_MATRIX)).weights
-    np.save(prepared / "multiplicity_common_dates.npy", _MATRIX.index.asi8)
+    common_dates = _write_multiplicity_common_dates(
+        prepared / "multiplicity_common_dates.npy", _MATRIX.index
+    )
     prepared_manifest_path = prepared / "massive_train_manifest.json"
     prepared_manifest = json.loads(prepared_manifest_path.read_text(encoding="utf-8"))
     prepared_manifest["multiplicity_common_interval"] = {
-        "sessions": len(_MATRIX),
-        "start": _MATRIX.index.min().date().isoformat(),
-        "end": _MATRIX.index.max().date().isoformat(),
+        "sessions": len(common_dates),
+        "start": common_dates.min().date().isoformat(),
+        "end": common_dates.max().date().isoformat(),
         "evaluated_prior_streams": expected_streams,
         "dates_file": "multiplicity_common_dates.npy",
+        "numpy_datetime_unit": MULTIPLICITY_DATE_UNIT,
     }
     prepared_manifest_path.write_text(
         json.dumps(prepared_manifest, indent=2, sort_keys=True) + "\n",

@@ -32,6 +32,10 @@ from aurora.scripts.merge_sp500_massive_train import (
 )
 from aurora.scripts.prepare_sp500_massive_prior_statistics import (
     _load_evaluated_returns,
+    _write_multiplicity_common_dates,
+)
+from aurora.scripts.run_sp500_massive_train_shard import (
+    _load_multiplicity_common_dates,
 )
 
 
@@ -179,6 +183,56 @@ def test_prior_multiplicity_loader_includes_v1_v2_and_autonomous(tmp_path: Path)
     assert len(wide.dropna(axis=0, how="any")) == 2
 
 
+def test_multiplicity_common_dates_roundtrip_uses_explicit_nanoseconds(
+    tmp_path: Path,
+) -> None:
+    dates = pd.bdate_range("2004-05-03", "2010-12-30")
+    path = tmp_path / "multiplicity_common_dates.npy"
+    written = _write_multiplicity_common_dates(path, dates)
+    raw = np.load(path, allow_pickle=False)
+    assert raw.dtype == np.int64
+    assert raw[0] == pd.Timestamp(dates[0]).value
+    assert raw[-1] == pd.Timestamp(dates[-1]).value
+    assert written.dtype == "datetime64[ns]"
+
+
+def test_multiplicity_common_dates_loader_rejects_missing_or_wrong_unit(
+    tmp_path: Path,
+) -> None:
+    dates = pd.date_range("2004-05-03", periods=1500, freq="B")
+    manifest = {
+        "multiplicity_common_interval": {
+            "sessions": len(dates),
+            "start": dates[0].date().isoformat(),
+            "end": dates[-1].date().isoformat(),
+            "numpy_datetime_unit": "ns",
+        }
+    }
+    (tmp_path / "massive_train_manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    np.save(
+        tmp_path / "multiplicity_common_dates.npy",
+        dates.as_unit("ns").asi8,
+    )
+    loaded = _load_multiplicity_common_dates(tmp_path, dates)
+    assert loaded.equals(dates.as_unit("ns"))
+
+    np.save(
+        tmp_path / "multiplicity_common_dates.npy",
+        dates.as_unit("us").asi8,
+    )
+    with pytest.raises(RuntimeError, match="MASSIVE_MULTIPLICITY_COMMON_INTERVAL_BREACH"):
+        _load_multiplicity_common_dates(tmp_path, dates)
+
+    manifest["multiplicity_common_interval"].pop("numpy_datetime_unit")
+    (tmp_path / "massive_train_manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    with pytest.raises(RuntimeError, match="MASSIVE_MULTIPLICITY_DATETIME_UNIT_BREACH"):
+        _load_multiplicity_common_dates(tmp_path, dates)
+
+
 def _fake_worker(root: Path, name: str, candidate: str, digest: bytes, cagr: float) -> None:
     target = root / name
     target.mkdir(parents=True)
@@ -263,6 +317,9 @@ def test_massive_workflow_is_github_only_360_parallel_and_seven_waves() -> None:
     wave_text = wave_path.read_text(encoding="utf-8")
     caller = yaml.safe_load(caller_text)
     wave = yaml.safe_load(wave_text)
+    caller_jobs = caller["jobs"]
+    assert caller_jobs["massive_wave_0"]["needs"] == "massive_prepare"
+    assert "needs.massive_prepare.result == 'success'" in caller_jobs["massive_wave_0"]["if"]
     jobs = wave["jobs"]
     assert len(jobs["shard_a"]["strategy"]["matrix"]["shard"]) == 256
     assert len(jobs["shard_b"]["strategy"]["matrix"]["shard"]) == 104

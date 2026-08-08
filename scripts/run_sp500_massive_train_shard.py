@@ -20,6 +20,7 @@ import pandas as pd
 
 from aurora.infra.sp500_autonomous_discovery.contracts import (
     LOCKED_START,
+    MULTIPLICITY_DATE_UNIT,
     PREVIOUS_TRIAL_COUNT,
     TRAIN_END,
 )
@@ -57,7 +58,6 @@ _MAX_CANDIDATES = 0
 _PRIOR_HASHES: frozenset[str] = frozenset()
 _BOOTSTRAP_WEIGHTS: np.ndarray | None = None
 
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--prepared-root", type=Path, required=True)
@@ -81,6 +81,40 @@ def _feature_frame(prepared_root: Path, data: Any) -> pd.DataFrame:
         start=str(data.ledger.index.min().date()),
         end=TRAIN_END,
     ).get_or_build("SPY", data.ledger)
+
+
+def _load_multiplicity_common_dates(
+    prepared: Path, evaluation_dates: pd.DatetimeIndex
+) -> pd.DatetimeIndex:
+    """Load the prepared interval without guessing the NumPy datetime unit."""
+    manifest = json.loads(
+        (prepared / "massive_train_manifest.json").read_text(encoding="utf-8")
+    )
+    interval = manifest.get("multiplicity_common_interval", {})
+    if interval.get("numpy_datetime_unit") != MULTIPLICITY_DATE_UNIT:
+        raise RuntimeError("MASSIVE_MULTIPLICITY_DATETIME_UNIT_BREACH")
+    raw = np.load(
+        prepared / "multiplicity_common_dates.npy", allow_pickle=False
+    )
+    if raw.ndim != 1 or raw.dtype.kind not in "iu":
+        raise RuntimeError("MASSIVE_MULTIPLICITY_DATE_SHAPE_BREACH")
+    dates = pd.DatetimeIndex(
+        pd.to_datetime(raw, unit=MULTIPLICITY_DATE_UNIT, errors="raise")
+    ).as_unit(MULTIPLICITY_DATE_UNIT)
+    train_end = pd.Timestamp(TRAIN_END)
+    if (
+        len(dates) < 1500
+        or not dates.is_monotonic_increasing
+        or dates.has_duplicates
+        or not dates.isin(evaluation_dates).all()
+        or dates.max() > train_end
+        or dates.min() > dates.max()
+        or interval.get("sessions") != len(dates)
+        or interval.get("start") != dates.min().date().isoformat()
+        or interval.get("end") != dates.max().date().isoformat()
+    ):
+        raise RuntimeError("MASSIVE_MULTIPLICITY_COMMON_INTERVAL_BREACH")
+    return dates
 
 
 def _evaluate(candidate: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -342,16 +376,9 @@ def main() -> int:
     )
     _EVALUATION_DATES = _DATA.ledger.index[mask]
     _BENCHMARK = _DATA.ledger.loc[_EVALUATION_DATES, "long_return"].to_numpy(dtype=float)
-    common_dates_ns = np.load(
-        prepared / "multiplicity_common_dates.npy", allow_pickle=False
-    ).astype(np.int64, copy=False)
-    _MULTIPLICITY_DATES = pd.DatetimeIndex(pd.to_datetime(common_dates_ns))
-    if (
-        len(_MULTIPLICITY_DATES) < 1500
-        or not _MULTIPLICITY_DATES.isin(_EVALUATION_DATES).all()
-        or _MULTIPLICITY_DATES.max() > pd.Timestamp(TRAIN_END)
-    ):
-        raise RuntimeError("MASSIVE_MULTIPLICITY_COMMON_INTERVAL_BREACH")
+    _MULTIPLICITY_DATES = _load_multiplicity_common_dates(
+        prepared, _EVALUATION_DATES
+    )
     _MULTIPLICITY_BENCHMARK = _DATA.ledger.loc[
         _MULTIPLICITY_DATES, "long_return"
     ].to_numpy(dtype=float)
