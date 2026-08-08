@@ -381,7 +381,7 @@ def _surrogate_point(records: Sequence[Mapping[str, Any]], rng: np.random.Genera
     weights = np.exp(-np.sum((pool[:, None, :] - x[None, :, :]) ** 2, axis=2) / (2.0 * length**2))
     weights /= np.sum(weights, axis=1, keepdims=True) + 1e-12
     mean = weights @ y
-    uncertainty = np.sqrt(np.maximum(0.0, weights @ ((y[None, :] - mean[:, None]) ** 2)))
+    uncertainty = np.sqrt(np.maximum(0.0, np.sum(weights * ((y[None, :] - mean[:, None]) ** 2), axis=1)))
     acquisition = mean + 0.75 * uncertainty
     local = ranked[0]["genome"] if ranked else _random_point(rng)
     local_pool = np.clip(np.asarray(local) + rng.normal(0, 0.10, (128, GENOME_DIM)), 0, 0.999999)
