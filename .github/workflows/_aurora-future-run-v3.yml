@@ -65,6 +65,31 @@ on:
         required: false
         default: 0
         type: number
+      autonomous_batch_id:
+        description: Deterministic autonomous-discovery batch identifier
+        required: false
+        default: 0
+        type: number
+      autonomous_candidate_count:
+        description: Pre-registered candidate count for an autonomous batch
+        required: false
+        default: 96
+        type: number
+      autonomous_previous_trial_count:
+        description: Monotonic count of all candidates tested before this batch
+        required: false
+        default: 312
+        type: number
+      autonomous_prior_ledger_artifact_name:
+        description: Prior batch results artifact carrying the cumulative trial ledger
+        required: false
+        default: ""
+        type: string
+      autonomous_prior_ledger_run_id:
+        description: Run containing the prior cumulative trial ledger artifact
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       spec_path:
@@ -129,6 +154,31 @@ on:
         required: false
         default: 0
         type: number
+      autonomous_batch_id:
+        description: Deterministic autonomous-discovery batch identifier
+        required: false
+        default: 0
+        type: number
+      autonomous_candidate_count:
+        description: Pre-registered candidate count for an autonomous batch
+        required: false
+        default: 96
+        type: number
+      autonomous_previous_trial_count:
+        description: Monotonic count of all candidates tested before this batch
+        required: false
+        default: 312
+        type: number
+      autonomous_prior_ledger_artifact_name:
+        description: Prior batch results artifact carrying the cumulative trial ledger
+        required: false
+        default: ""
+        type: string
+      autonomous_prior_ledger_run_id:
+        description: Run containing the prior cumulative trial ledger artifact
+        required: false
+        default: ""
+        type: string
     outputs:
       selected_jobs:
         description: Exact standard-runner shard count selected by the plan
@@ -149,8 +199,11 @@ env:
   TZ: UTC
   LC_ALL: C.UTF-8
   LANG: C.UTF-8
-  AURORA_PREPARED_ARTIFACT_NAME: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}', inputs.run_label, github.run_id) }}
-  AURORA_WHEELHOUSE_ARTIFACT_NAME: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}', inputs.run_label, github.run_id) }}
+  AURORA_AUTONOMOUS_BATCH_ID: ${{ inputs.autonomous_batch_id }}
+  AURORA_AUTONOMOUS_CANDIDATE_COUNT: ${{ inputs.autonomous_candidate_count }}
+  AURORA_AUTONOMOUS_PREVIOUS_TRIAL_COUNT: ${{ inputs.autonomous_previous_trial_count }}
+  AURORA_PREPARED_ARTIFACT_NAME: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+  AURORA_WHEELHOUSE_ARTIFACT_NAME: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
 
 jobs:
   validate:
@@ -295,7 +348,10 @@ jobs:
 
           workload = os.environ["WORKLOAD"]
           enabled = (
-              "sp500_long_short_daily" in workload
+              (
+                  "sp500_long_short_daily" in workload
+                  or "sp500_autonomous_discovery" in workload
+              )
               and not os.environ["PREPARED_ARTIFACT_NAME"]
           )
           if "SMOKE_WORKLOAD" in workload:
@@ -360,6 +416,14 @@ jobs:
           python-version: "3.12"
           wheelhouse-path: ${{ runner.temp }}/wheelhouse
           dependency-lock-path: requirements/github-performance.lock
+      - name: Download prior autonomous trial ledger
+        if: inputs.autonomous_prior_ledger_artifact_name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.autonomous_prior_ledger_artifact_name }}
+          path: ${{ runner.temp }}/prior-ledger
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.autonomous_prior_ledger_run_id }}
       - name: Download bounded raw Stooq window
         run: |
           set -euo pipefail
@@ -401,6 +465,14 @@ jobs:
           python-version: "3.12"
           wheelhouse-path: ${{ runner.temp }}/wheelhouse
           dependency-lock-path: requirements/github-performance.lock
+      - name: Download prior autonomous trial ledger
+        if: inputs.autonomous_prior_ledger_artifact_name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.autonomous_prior_ledger_artifact_name }}
+          path: ${{ runner.temp }}/prior-ledger
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.autonomous_prior_ledger_run_id }}
       - name: Download every Stooq window
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -421,6 +493,7 @@ jobs:
           SP500_STOOQ_HISTORY_MANIFEST: ${{ runner.temp }}/stooq-merged/stooq_sharded_manifest.json
           SPEC_PATH: ${{ inputs.spec_path }}
           WORKLOAD: ${{ inputs.workload }}
+          AURORA_PRIOR_TRIAL_LEDGER_PATH: ${{ runner.temp }}/prior-ledger/trial_ledger.jsonl
         run: |
           set -euo pipefail
           aurora github prepare \
@@ -464,6 +537,14 @@ jobs:
           python-version: "3.12"
           wheelhouse-path: ${{ runner.temp }}/wheelhouse
           dependency-lock-path: requirements/github-performance.lock
+      - name: Download prior autonomous trial ledger
+        if: inputs.autonomous_prior_ledger_artifact_name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.autonomous_prior_ledger_artifact_name }}
+          path: ${{ runner.temp }}/prior-ledger
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.autonomous_prior_ledger_run_id }}
       - name: Download shared immutable inputs
         if: inputs.prepared_artifact_name != '' || needs.sp500_data_plan.outputs.enabled == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -477,6 +558,7 @@ jobs:
         env:
           SPEC_PATH: ${{ inputs.spec_path }}
           WORKLOAD: ${{ inputs.workload }}
+          AURORA_PRIOR_TRIAL_LEDGER_PATH: ${{ runner.temp }}/prior-ledger/trial_ledger.jsonl
         run: |
           set -euo pipefail
           aurora github prepare \
@@ -598,6 +680,7 @@ jobs:
       - name: Run bounded smoke
         env:
           WORKLOAD: ${{ inputs.workload }}
+          AURORA_PREPARED_ROOT: ${{ runner.temp }}/prepared
         run: |
           set -euo pipefail
           aurora github smoke \
@@ -660,6 +743,7 @@ jobs:
       - name: Resolve exact profile or measure fresh pilot
         env:
           WORKLOAD: ${{ inputs.workload }}
+          AURORA_PREPARED_ROOT: ${{ runner.temp }}/prepared
         run: |
           set -euo pipefail
           profile_args=()
@@ -776,6 +860,7 @@ jobs:
       - name: Build adaptive balanced plan
         env:
           WORKLOAD: ${{ inputs.workload }}
+          AURORA_PREPARED_ROOT: ${{ runner.temp }}/prepared
           EXECUTION_MODE: ${{ inputs.execution_mode }}
           FORCED_JOB_COUNT: ${{ inputs.forced_job_count }}
           ARTIFACT_PREFIX: ${{ inputs.run_label }}

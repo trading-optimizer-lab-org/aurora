@@ -1,3 +1,5 @@
+# mypy: disable-error-code="index"
+
 """GitHub-only OpenAP current data and score pipeline."""
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any, Iterable, Mapping
+from urllib.parse import urlsplit
 import zipfile
 
 import numpy as np
@@ -22,18 +25,25 @@ from aurora.core.execution_policy import (
     require_github_actions_or_explicit_local_permission,
 )
 from aurora.research.openap_current_score import (
+    ACCOUNTING_PROXY_LIMITS,
     EXPECTED_PREDICTORS,
     FeatureValue,
     OpenAPDataError,
     SEC_CONCEPT_ALIASES,
+    apply_accounting_input_freshness,
     assemble_feature_table,
     build_redundancy_groups,
     calculate_accounting_features,
     calculate_aggregate_scores,
     calculate_price_features,
     calculate_scores,
+    clean_price_history,
     coverage_report,
+    exclude_incomplete_us_session,
+    latest_completed_us_session_date,
     latest_sec_concept_inputs,
+    redundancy_correlation_audit,
+    refine_current_redundancy_groups,
     sec_concepts_from_inputs,
     select_strict_predictors,
     sha256_file,
@@ -42,10 +52,49 @@ from aurora.research.openap_current_score import (
 
 
 EXCLUDE_SECURITY_RE = re.compile(
-    r"\b(?:ETF|ETN|FUND|DEPOSITARY|ADR|ADS|WARRANT|RIGHT|UNIT|PREFERRED|PREF|SPAC|ACQUISITION CORP)\b",
+    r"\b(?:ETF|ETN|EXCHANGE[- ]TRADED|MUTUAL FUND|CLOSED[- ]END FUND|INVESTMENT TRUST|"
+    r"DEPOSITARY|ADR|ADS|WARRANTS?|RIGHTS?|UNITS|PREFERRED|PREF|SPAC|BLANK CHECK|"
+    r"ACQUISITION (?:CORP|CO|COMPANY)|ACQUISITION LTD)\b",
     re.IGNORECASE,
 )
+PREFERRED_SYMBOL_RE = re.compile(r"-P[A-Z]$", re.IGNORECASE)
+UNIT_SYMBOL_RE = re.compile(r"-(?:UN|U)$", re.IGNORECASE)
+WARRANT_SYMBOL_RE = re.compile(r"-(?:WT|WS)$", re.IGNORECASE)
+FOREIGN_SEC_FORMS = frozenset({"20-F", "40-F", "6-K", "F-1", "F-3", "F-4"})
+INVESTMENT_COMPANY_FORMS = frozenset({"N-1A", "N-2", "N-CSR", "N-CSRS", "NPORT-P", "NPORT-NP"})
+ANNUAL_FILING_FORMS = frozenset({"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"})
+US_STATE_OR_COUNTRY_CODES = frozenset(
+    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS "
+    "MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV "
+    "WI WY DC PR VI GU AS MP US USA".split()
+)
 ALLOWED_EXCHANGE_RE = re.compile(r"NASDAQ|NYSE|NEW YORK STOCK EXCHANGE|CBOE", re.IGNORECASE)
+_SEC_DIRECT_API_BLOCKED = False
+YFINANCE_METADATA_FIELDS = (
+    "longName",
+    "shortName",
+    "quoteType",
+    "exchange",
+    "marketCap",
+    "sharesOutstanding",
+    "floatShares",
+    "sector",
+    "industry",
+    "country",
+    "currency",
+    "currentPrice",
+    "regularMarketPrice",
+    "averageDailyVolume3Month",
+    "averageVolume10days",
+    "firstTradeDateEpochUtc",
+    "sharesShort",
+    "sharesShortPriorMonth",
+    "shortRatio",
+    "shortPercentOfFloat",
+    "dateShortInterest",
+    "sharesPercentSharesOut",
+    "heldPercentInstitutions",
+)
 
 
 def _utcnow() -> str:
@@ -86,12 +135,51 @@ def _download(url: str, destination: Path, *, headers: Mapping[str, str] | None 
             time.sleep(2 ** attempt)
 
 
-def _sec_headers(user_agent: str) -> dict[str, str]:
-    return {
+def _sec_headers(user_agent: str, *, url: str | None = None) -> dict[str, str]:
+    headers = {
         "User-Agent": user_agent,
-        "Accept": "application/json,text/plain,*/*",
+        "Accept": "application/zip,application/json,text/plain,*/*",
         "Accept-Encoding": "gzip, deflate",
+        "Connection": "close",
+        "Referer": "https://www.sec.gov/",
     }
+    email_match = re.search(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", user_agent, re.IGNORECASE)
+    if email_match:
+        headers["From"] = email_match.group(0)
+    if url:
+        headers["Host"] = urlsplit(url).netloc
+    return headers
+
+
+def _download_sec_archive(
+    urls: Iterable[str],
+    destination: Path,
+    *,
+    user_agent: str,
+    retries_per_url: int = 7,
+) -> str:
+    """Download one SEC ZIP through the first working official SEC hostname."""
+
+    candidates = list(dict.fromkeys(str(url).strip() for url in urls if str(url).strip()))
+    if not candidates:
+        raise OpenAPDataError("No SEC bulk archive URL configured")
+    errors: list[str] = []
+    for url in candidates:
+        try:
+            _download(
+                url,
+                destination,
+                headers=_sec_headers(user_agent, url=url),
+                retries=retries_per_url,
+            )
+            if not zipfile.is_zipfile(destination):
+                raise OpenAPDataError(f"SEC response is not a ZIP archive: {url}")
+            return url
+        except Exception as exc:
+            destination.unlink(missing_ok=True)
+            destination.with_suffix(destination.suffix + ".part").unlink(missing_ok=True)
+            errors.append(f"{url}: {type(exc).__name__}: {exc}")
+    raise OpenAPDataError("All official SEC bulk archive URLs failed: " + " | ".join(errors))
 
 
 def _select_chunk_rows(
@@ -245,6 +333,13 @@ def prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
         minimum_overlap=int(config["openap"]["minimum_overlap_months"]),
     )
     groups.to_csv(output / "redundancy_groups.csv", index=False)
+    redundancy_correlation_audit(
+        selected,
+        returns,
+        groups,
+        threshold=float(config["openap"]["correlation_threshold"]),
+        minimum_overlap=int(config["openap"]["minimum_overlap_months"]),
+    ).to_csv(output / "redundancy_correlation_audit.csv", index=False)
 
     sec_payload_path = output / "company_tickers_exchange.json"
     sec_source_url = str(config["sec"]["ticker_exchange_url"])
@@ -267,10 +362,16 @@ def prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
         universe = _sec_exchange_csv_rows(sec_payload_path)
     universe.to_csv(output / "security_master_seed.csv", index=False)
     universe.to_parquet(output / "security_master_seed.parquet", index=False)
+    cik_universe = (
+        universe.sort_values(["cik", "symbol"])
+        .drop_duplicates("cik", keep="first")[["cik", "symbol"]]
+        .reset_index(drop=True)
+    )
+    cik_universe.to_parquet(output / "sec_cik_universe.parquet", index=False)
 
     source_rows = [
-        {"source": "PredictorSummary.xlsx", "sha256": sha256_file(args.predictor_summary), "role": "selection_and_evidence"},
-        {"source": "PredictorLSretWide.csv", "sha256": sha256_file(args.predictor_returns), "role": "redundancy_groups"},
+        {"source": "PredictorSummary.xlsx", "source_url": f"https://drive.google.com/uc?id={config['openap']['predictor_summary_gdrive_id']}", "source_mode": "openap_official_gdrive", "sha256": sha256_file(args.predictor_summary), "role": "selection_and_evidence"},
+        {"source": "PredictorLSretWide.csv", "source_url": f"https://drive.google.com/uc?id={config['openap']['predictor_returns_gdrive_id']}", "source_mode": "openap_official_gdrive", "sha256": sha256_file(args.predictor_returns), "role": "redundancy_groups"},
         {
             "source": sec_payload_path.name,
             "source_url": sec_source_url,
@@ -289,6 +390,7 @@ def prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
             "universe_rows": len(universe),
             "unique_symbols": int(universe["symbol"].nunique()),
             "unique_ciks": int(universe["cik"].nunique()),
+            "sec_cik_rows": len(cik_universe),
             "redundancy_groups": int(groups["redundancy_group"].nunique()),
             "openap_commit": config["openap"]["commit"],
             "ticker_universe_source_mode": sec_source_mode,
@@ -383,12 +485,9 @@ def _ticker_snapshots(ticker: Any, symbol: str, config: Mapping[str, Any], retri
     status_rows: list[dict[str, Any]] = []
     try:
         info = ticker.get_info() or {}
-        wanted = (
-            "longName", "shortName", "quoteType", "exchange", "marketCap", "sharesOutstanding",
-            "floatShares", "sector", "industry", "country", "currency", "currentPrice",
-            "regularMarketPrice", "averageDailyVolume3Month", "averageVolume10days", "firstTradeDateEpochUtc",
+        metadata.update(
+            {key: _json_safe(info.get(key)) for key in YFINANCE_METADATA_FIELDS}
         )
-        metadata.update({key: _json_safe(info.get(key)) for key in wanted})
     except Exception as exc:
         metadata["status"] = "metadata_error"
         metadata["error"] = str(exc)[:500]
@@ -412,18 +511,22 @@ def _ticker_snapshots(ticker: Any, symbol: str, config: Mapping[str, Any], retri
         try:
             expirations = list(ticker.options or [])
             if expirations:
-                target = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(days=int(config["yfinance"].get("target_option_days", 30)))
-                expiration = min(expirations, key=lambda item: abs((pd.Timestamp(item) - target).days))
-                chain = ticker.option_chain(expiration)
-                for option_type, frame in (("call", chain.calls), ("put", chain.puts)):
-                    if frame is None or frame.empty:
-                        continue
-                    current = frame.copy()
-                    current["symbol"] = symbol
-                    current["option_type"] = option_type
-                    current["expiration"] = expiration
-                    current["retrieved_at"] = retrieved_at
-                    options_frames.append(current)
+                target = pd.Timestamp.now(tz="UTC").tz_localize(None) + pd.Timedelta(days=int(config["yfinance"].get("target_option_days", 30)))
+                candidates = sorted(
+                    expirations,
+                    key=lambda item: abs((pd.Timestamp(item) - target).days),
+                )[: int(config["yfinance"].get("maximum_option_expiries", 3))]
+                for expiration in candidates:
+                    chain = ticker.option_chain(expiration)
+                    for option_type, frame in (("call", chain.calls), ("put", chain.puts)):
+                        if frame is None or frame.empty:
+                            continue
+                        current = frame.copy()
+                        current["symbol"] = symbol
+                        current["option_type"] = option_type
+                        current["expiration"] = expiration
+                        current["retrieved_at"] = retrieved_at
+                        options_frames.append(current)
         except Exception as exc:
             status_rows.append({"symbol": symbol, "surface": "options", "status": "error", "error": str(exc)[:500]})
     options = pd.concat(options_frames, ignore_index=True) if options_frames else pd.DataFrame()
@@ -536,6 +639,14 @@ def _submission_rows(payload: Mapping[str, Any], cik: int) -> list[dict[str, Any
                 "form": item("form"),
                 "primary_document": item("primaryDocument"),
                 "is_xbrl": item("isXBRL"),
+                "entity_type": payload.get("entityType"),
+                "sic": payload.get("sic"),
+                "sic_description": payload.get("sicDescription"),
+                "fiscal_year_end": payload.get("fiscalYearEnd"),
+                "state_of_incorporation": payload.get("stateOfIncorporation"),
+                "business_state_or_country": (
+                    (payload.get("addresses") or {}).get("business") or {}
+                ).get("stateOrCountry"),
                 "source": "sec_submissions_bulk",
             }
         )
@@ -604,14 +715,18 @@ def _request_sec_json(
     fallback_url: str,
     *,
     headers: Mapping[str, str],
-    retries: int = 3,
+    retries: int = 6,
 ) -> tuple[Mapping[str, Any], str, str]:
     """Fetch SEC JSON directly, then through a public read-through fallback."""
 
     import requests
 
+    global _SEC_DIRECT_API_BLOCKED
     errors: list[str] = []
     for source_mode, url in (("sec_official_api", direct_url), ("sec_via_jina_readthrough", fallback_url)):
+        if source_mode == "sec_official_api" and _SEC_DIRECT_API_BLOCKED:
+            errors.append("sec_official_api:skipped_after_earlier_401_or_403")
+            continue
         for attempt in range(retries):
             try:
                 response = requests.get(
@@ -619,6 +734,8 @@ def _request_sec_json(
                     headers=dict(headers) if source_mode == "sec_official_api" else {"Accept": "text/plain"},
                     timeout=(20, 120),
                 )
+                if source_mode == "sec_official_api" and response.status_code in {401, 403}:
+                    _SEC_DIRECT_API_BLOCKED = True
                 response.raise_for_status()
                 if source_mode == "sec_official_api":
                     payload = response.json()
@@ -629,6 +746,8 @@ def _request_sec_json(
                 return payload, source_mode, url
             except Exception as exc:
                 errors.append(f"{source_mode}:{type(exc).__name__}:{exc}")
+                if source_mode == "sec_official_api" and _SEC_DIRECT_API_BLOCKED:
+                    break
                 if attempt + 1 < retries:
                     time.sleep(2 ** attempt)
         if source_mode == "sec_official_api":
@@ -642,7 +761,9 @@ def _companyfacts_rows(
     *,
     source_url: str,
     source_mode: str,
+    accepted_at_by_accession: Mapping[str, Any] | None = None,
     observations_per_tag: int = 24,
+    annual_observations_per_tag: int = 8,
 ) -> list[dict[str, Any]]:
     wanted_tags = {
         alias
@@ -677,10 +798,43 @@ def _companyfacts_rows(
                         str(observation.get("fp") or ""),
                     )
                     by_period[key] = observation
-                for observation in list(by_period.values())[-observations_per_tag:]:
+                deduplicated = list(by_period.values())
+                annual = [
+                    observation
+                    for observation in deduplicated
+                    if str(observation.get("fp") or "").upper() == "FY"
+                    or str(observation.get("form") or "").upper()
+                    in ANNUAL_FILING_FORMS
+                ][-annual_observations_per_tag:]
+                selected_observations: dict[
+                    tuple[str, str, str, str], Mapping[str, Any]
+                ] = {}
+                for observation in deduplicated[-observations_per_tag:] + annual:
+                    key = (
+                        str(observation.get("end") or ""),
+                        str(observation.get("start") or ""),
+                        str(observation.get("form") or ""),
+                        str(observation.get("fp") or ""),
+                    )
+                    selected_observations[key] = observation
+                for observation in selected_observations.values():
                     filed = pd.to_datetime(observation.get("filed"), errors="coerce", utc=True)
                     if pd.isna(filed):
                         continue
+                    accession = str(observation.get("accn") or "")
+                    accepted = pd.to_datetime(
+                        (accepted_at_by_accession or {}).get(accession),
+                        errors="coerce",
+                        utc=True,
+                    )
+                    if pd.isna(accepted):
+                        accepted = filed + pd.Timedelta(days=1)
+                        available_quality = "conservative_filing_date_plus_one_day"
+                    elif accepted.normalize() < filed.normalize():
+                        accepted = filed + pd.Timedelta(days=1)
+                        available_quality = "sec_acceptance_before_filing_clamped_plus_one_day"
+                    else:
+                        available_quality = "sec_acceptance_timestamp"
                     rows.append(
                         {
                             "cik": cik,
@@ -695,10 +849,10 @@ def _companyfacts_rows(
                             "fp": observation.get("fp"),
                             "form": observation.get("form"),
                             "filed": observation.get("filed"),
-                            "accession_number": observation.get("accn"),
+                            "accession_number": accession,
                             "frame": observation.get("frame"),
-                            "available_at": filed + pd.Timedelta(days=1),
-                            "available_at_quality": "conservative_filing_date_plus_one_day",
+                            "available_at": accepted,
+                            "available_at_quality": available_quality,
                             "source": source_url,
                             "source_mode": source_mode,
                         }
@@ -734,6 +888,52 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
             submissions_direct = str(config["sec"]["submissions_api_template"]).format(cik=cik_text)
             submissions_fallback = str(config["sec"]["submissions_fallback_template"]).format(cik=cik_text)
             companyfacts_payload: Mapping[str, Any] | None = None
+            accepted_at_by_accession: dict[str, Any] = {}
+            try:
+                submissions_payload, source_mode, source_url = _request_sec_json(
+                    submissions_direct,
+                    submissions_fallback,
+                    headers=headers,
+                )
+                raw_bytes = _canonical_json_bytes(submissions_payload)
+                archive.writestr(f"submissions/CIK{cik_text}.json", raw_bytes)
+                rows = _submission_rows(submissions_payload, cik)
+                for item in rows:
+                    item["source"] = source_url
+                    item["source_mode"] = source_mode
+                    accession = str(item.get("accession_number") or "")
+                    accepted = item.get("accepted_at")
+                    if accession and accepted:
+                        accepted_at_by_accession[accession] = accepted
+                submission_rows.extend(rows)
+                source_counts[source_mode] = source_counts.get(source_mode, 0) + 1
+                status_rows.append(
+                    {
+                        "cik": cik,
+                        "symbol": str(row.symbol),
+                        "surface": "submissions",
+                        "status": "ok",
+                        "rows": len(rows),
+                        "source_mode": source_mode,
+                        "source_url": source_url,
+                        "canonical_json_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                        "error": "",
+                    }
+                )
+            except Exception as exc:
+                status_rows.append(
+                    {
+                        "cik": cik,
+                        "symbol": str(row.symbol),
+                        "surface": "submissions",
+                        "status": "error",
+                        "rows": 0,
+                        "source_mode": "unavailable",
+                        "source_url": submissions_direct,
+                        "canonical_json_sha256": "",
+                        "error": str(exc)[:1000],
+                    }
+                )
             try:
                 companyfacts_payload, source_mode, source_url = _request_sec_json(
                     companyfacts_direct,
@@ -747,6 +947,7 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
                     cik,
                     source_url=source_url,
                     source_mode=source_mode,
+                    accepted_at_by_accession=accepted_at_by_accession,
                 )
                 fact_rows.extend(rows)
                 source_counts[source_mode] = source_counts.get(source_mode, 0) + 1
@@ -778,47 +979,6 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
                     }
                 )
 
-            try:
-                submissions_payload, source_mode, source_url = _request_sec_json(
-                    submissions_direct,
-                    submissions_fallback,
-                    headers=headers,
-                )
-                raw_bytes = _canonical_json_bytes(submissions_payload)
-                archive.writestr(f"submissions/CIK{cik_text}.json", raw_bytes)
-                rows = _submission_rows(submissions_payload, cik)
-                for item in rows:
-                    item["source"] = source_url
-                    item["source_mode"] = source_mode
-                submission_rows.extend(rows)
-                source_counts[source_mode] = source_counts.get(source_mode, 0) + 1
-                status_rows.append(
-                    {
-                        "cik": cik,
-                        "symbol": str(row.symbol),
-                        "surface": "submissions",
-                        "status": "ok",
-                        "rows": len(rows),
-                        "source_mode": source_mode,
-                        "source_url": source_url,
-                        "canonical_json_sha256": hashlib.sha256(raw_bytes).hexdigest(),
-                        "error": "",
-                    }
-                )
-            except Exception as exc:
-                status_rows.append(
-                    {
-                        "cik": cik,
-                        "symbol": str(row.symbol),
-                        "surface": "submissions",
-                        "status": "error",
-                        "rows": 0,
-                        "source_mode": "unavailable",
-                        "source_url": submissions_direct,
-                        "canonical_json_sha256": "",
-                        "error": str(exc)[:1000],
-                    }
-                )
             time.sleep(interval)
 
     facts = _normalise_fact_batch(pd.DataFrame(fact_rows)) if fact_rows else pd.DataFrame(
@@ -826,7 +986,11 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     submissions = pd.DataFrame(submission_rows)
     if submissions.empty:
-        submissions = pd.DataFrame(columns=["cik", "accession_number", "filing_date", "accepted_at", "report_date", "form", "primary_document", "is_xbrl", "source", "source_mode"])
+        submissions = pd.DataFrame(columns=[
+            "cik", "accession_number", "filing_date", "accepted_at", "report_date",
+            "form", "primary_document", "is_xbrl", "entity_type", "sic",
+            "sic_description", "fiscal_year_end", "source", "source_mode",
+        ])
     else:
         submissions["accepted_at"] = pd.to_datetime(submissions["accepted_at"], errors="coerce", utc=True)
     facts_path = lake_dir / f"sec_companyfacts_{chunk_index:03d}.parquet"
@@ -838,6 +1002,7 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
     summary = {
             "chunk_index": chunk_index,
             "total_chunks": total_chunks,
+            "source_layout": "official_api_shards_with_audited_readthrough",
             "ciks_expected": int(selected["cik"].nunique()),
             "companyfacts_ciks_ok": int(status.loc[(status["surface"] == "companyfacts") & (status["status"] == "ok"), "cik"].nunique()),
             "submissions_ciks_ok": int(status.loc[(status["surface"] == "submissions") & (status["status"] == "ok"), "cik"].nunique()),
@@ -867,11 +1032,20 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
     lake_dir.mkdir(parents=True, exist_ok=True)
     universe = pd.read_parquet(args.security_master)
     ciks = set(pd.to_numeric(universe["cik"], errors="coerce").dropna().astype(int).tolist())
-    headers = _sec_headers(args.sec_user_agent)
     companyfacts_zip = raw_dir / "companyfacts.zip"
     submissions_zip = raw_dir / "submissions.zip"
-    _download(config["sec"]["companyfacts_bulk_url"], companyfacts_zip, headers=headers)
-    _download(config["sec"]["submissions_bulk_url"], submissions_zip, headers=headers)
+    companyfacts_source_url = _download_sec_archive(
+        [config["sec"]["companyfacts_bulk_url"]]
+        + list(config["sec"].get("companyfacts_bulk_fallback_urls", [])),
+        companyfacts_zip,
+        user_agent=args.sec_user_agent,
+    )
+    submissions_source_url = _download_sec_archive(
+        [config["sec"]["submissions_bulk_url"]]
+        + list(config["sec"].get("submissions_bulk_fallback_urls", [])),
+        submissions_zip,
+        user_agent=args.sec_user_agent,
+    )
 
     submission_rows: list[dict[str, Any]] = []
     with zipfile.ZipFile(submissions_zip) as archive:
@@ -888,12 +1062,15 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
     if submissions.empty:
         raise OpenAPDataError("SEC submissions bulk produced no selected rows")
     submissions["accepted_at"] = pd.to_datetime(submissions["accepted_at"], errors="coerce", utc=True)
-    submissions.to_parquet(lake_dir / "sec_submissions.parquet", index=False, compression="zstd")
-    accepted_map = {
-        (int(row.cik), str(row.accession_number)): row.accepted_at
-        for row in submissions.itertuples()
-        if pd.notna(row.accession_number) and pd.notna(row.accepted_at)
-    }
+    submissions_path = lake_dir / "sec_submissions_000.parquet"
+    submissions.to_parquet(submissions_path, index=False, compression="zstd")
+    accepted_map: dict[int, dict[str, Any]] = {}
+    for row in submissions.itertuples():
+        if pd.isna(row.accession_number) or pd.isna(row.accepted_at):
+            continue
+        accepted_map.setdefault(int(row.cik), {})[
+            str(row.accession_number)
+        ] = row.accepted_at
 
     def fact_batches() -> Iterable[pd.DataFrame]:
         buffer: list[dict[str, Any]] = []
@@ -906,71 +1083,77 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
                     payload = json.loads(archive.read(member).decode("utf-8", errors="replace"))
                 except Exception:
                     continue
-                entity_name = str(payload.get("entityName") or "")
-                facts = payload.get("facts", {})
-                if not isinstance(facts, Mapping):
-                    continue
-                for taxonomy, concepts in facts.items():
-                    if not isinstance(concepts, Mapping):
-                        continue
-                    for tag, definition in concepts.items():
-                        units = definition.get("units", {}) if isinstance(definition, Mapping) else {}
-                        if not isinstance(units, Mapping):
-                            continue
-                        for unit, observations in units.items():
-                            if not isinstance(observations, list):
-                                continue
-                            for observation in observations:
-                                if not isinstance(observation, Mapping):
-                                    continue
-                                accession = str(observation.get("accn") or "")
-                                filed = str(observation.get("filed") or "")
-                                accepted = accepted_map.get((cik, accession))
-                                quality = "sec_acceptance_timestamp"
-                                if pd.isna(accepted) or accepted is None:
-                                    accepted = pd.to_datetime(filed, errors="coerce", utc=True) + pd.Timedelta(days=1)
-                                    quality = "conservative_filing_date_plus_one_day"
-                                buffer.append(
-                                    {
-                                        "cik": cik,
-                                        "entity_name": entity_name,
-                                        "taxonomy": taxonomy,
-                                        "tag": tag,
-                                        "unit": unit,
-                                        "value": observation.get("val"),
-                                        "period_start": observation.get("start"),
-                                        "period_end": observation.get("end"),
-                                        "fy": observation.get("fy"),
-                                        "fp": observation.get("fp"),
-                                        "form": observation.get("form"),
-                                        "filed": filed,
-                                        "accession_number": accession,
-                                        "frame": observation.get("frame"),
-                                        "available_at": accepted,
-                                        "available_at_quality": quality,
-                                        "source": f"zip://companyfacts.zip#{member}",
-                                    }
-                                )
-                                if len(buffer) >= 100_000:
-                                    yield _normalise_fact_batch(pd.DataFrame(buffer))
-                                    buffer = []
+                buffer.extend(
+                    _companyfacts_rows(
+                        payload,
+                        cik,
+                        source_url=f"zip://companyfacts.zip#{member}",
+                        source_mode="sec_official_bulk_archive",
+                        accepted_at_by_accession=accepted_map.get(cik, {}),
+                    )
+                )
+                if len(buffer) >= 100_000:
+                    yield _normalise_fact_batch(pd.DataFrame(buffer))
+                    buffer = []
         if buffer:
             yield _normalise_fact_batch(pd.DataFrame(buffer))
 
-    fact_count = _write_parquet_batches(lake_dir / "sec_companyfacts.parquet", fact_batches())
+    companyfacts_path = lake_dir / "sec_companyfacts_000.parquet"
+    fact_count = _write_parquet_batches(companyfacts_path, fact_batches())
+    fact_index = pd.read_parquet(
+        companyfacts_path, columns=["cik", "available_at"]
+    )
+    fact_ciks = set(
+        fact_index["cik"].dropna().astype(int).unique().tolist()
+    )
+    all_facts_have_available_at = bool(
+        not fact_index.empty and fact_index["available_at"].notna().all()
+    )
+    submission_ciks = set(
+        pd.to_numeric(submissions["cik"], errors="coerce")
+        .dropna()
+        .astype(int)
+        .unique()
+        .tolist()
+    )
+    status_rows = []
+    for cik in sorted(ciks):
+        for surface, available in (
+            ("companyfacts", cik in fact_ciks),
+            ("submissions", cik in submission_ciks),
+        ):
+            status_rows.append(
+                {
+                    "chunk_index": 0,
+                    "cik": cik,
+                    "surface": surface,
+                    "status": "ok" if available else "missing",
+                    "source_mode": "sec_official_bulk_archive",
+                    "error": "" if available else "CIK absent from official bulk archive",
+                }
+            )
+    pd.DataFrame(status_rows).to_csv(output / "sec_status_000.csv", index=False)
     manifest = {
+        "chunk_index": 0,
+        "total_chunks": 1,
+        "source_layout": "official_bulk_archive",
         "retrieved_at": _utcnow(),
         "universe_ciks": len(ciks),
+        "ciks_expected": len(ciks),
+        "companyfacts_ciks_ok": len(fact_ciks),
+        "submissions_ciks_ok": len(submission_ciks),
         "submissions_rows": len(submissions),
         "companyfacts_rows": fact_count,
         "companyfacts_zip_bytes": companyfacts_zip.stat().st_size,
         "companyfacts_zip_sha256": sha256_file(companyfacts_zip),
+        "companyfacts_source_url": companyfacts_source_url,
         "submissions_zip_bytes": submissions_zip.stat().st_size,
         "submissions_zip_sha256": sha256_file(submissions_zip),
-        "all_facts_have_available_at": True,
+        "submissions_source_url": submissions_source_url,
+        "all_facts_have_available_at": all_facts_have_available_at,
         "locked_opened": False,
     }
-    write_summary(output / "sec_bulk_summary.json", manifest)
+    write_summary(output / "sec_summary_000.json", manifest)
 
 
 def _read_jsonl_files(paths: Iterable[Path]) -> pd.DataFrame:
@@ -984,15 +1167,131 @@ def _read_jsonl_files(paths: Iterable[Path]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _options_features(frame: pd.DataFrame, stock_volume: float | None, realized_vol: float | None) -> dict[str, FeatureValue]:
+def _options_features(
+    frame: pd.DataFrame,
+    stock_volume: float | None,
+    realized_vol: float | None,
+    *,
+    stock_price: float | None = None,
+    as_of: pd.Timestamp | None = None,
+    config: Mapping[str, Any] | None = None,
+    audit: dict[str, Any] | None = None,
+) -> dict[str, FeatureValue]:
     if frame.empty:
+        if audit is not None:
+            audit.update({"option_contracts_raw": 0, "option_contracts_usable": 0})
         return {}
     data = frame.copy()
-    for column in ("impliedVolatility", "volume", "openInterest", "strike"):
+    raw_contracts = len(data)
+    settings = (config or {}).get("yfinance", config or {})
+    for column in ("impliedVolatility", "volume", "openInterest", "strike", "bid", "ask"):
         if column in data:
             data[column] = pd.to_numeric(data[column], errors="coerce")
+    now = pd.Timestamp(as_of or pd.Timestamp.now(tz="UTC")).tz_localize(None)
+    expiration_source = data.get("expiration", pd.Series(pd.NaT, index=data.index))
+    trade_source = data.get("lastTradeDate", pd.Series(pd.NaT, index=data.index))
+    data["expiration"] = pd.to_datetime(expiration_source, errors="coerce").dt.tz_localize(None)
+    data["lastTradeDate"] = pd.to_datetime(trade_source, errors="coerce", utc=True).dt.tz_localize(None)
+    data["days_to_expiry"] = (data["expiration"] - now.normalize()).dt.days
+    valid = (
+        data["days_to_expiry"].between(
+            int(settings.get("minimum_option_days", 14)),
+            int(settings.get("maximum_option_days", 60)),
+        )
+        & data["impliedVolatility"].between(
+            float(settings.get("minimum_implied_volatility", 0.01)),
+            float(settings.get("maximum_implied_volatility", 5.0)),
+        )
+        & data["lastTradeDate"].ge(
+            now - pd.Timedelta(days=int(settings.get("maximum_option_staleness_days", 14)))
+        )
+    )
+    if {"bid", "ask"}.issubset(data.columns):
+        valid &= data["bid"].fillna(0).ge(0) & data["ask"].fillna(0).ge(data["bid"].fillna(0))
+    if stock_price is not None and _is_number(stock_price):
+        moneyness = data["strike"] / float(stock_price)
+        valid &= moneyness.between(
+            float(settings.get("minimum_option_moneyness", 0.80)),
+            float(settings.get("maximum_option_moneyness", 1.20)),
+        )
+    data = data.loc[valid].copy()
+    if data.empty:
+        if audit is not None:
+            audit.update({"option_contracts_raw": raw_contracts, "option_contracts_usable": 0})
+        return {}
+    target_days = int(settings.get("target_option_days", 30))
+    minimum_per_side = int(settings.get("minimum_option_contracts_per_side", 1))
+    minimum_total = int(settings.get("minimum_option_contracts_total", 2))
+    expiry_depth = (
+        data.assign(
+            is_call=data["option_type"].eq("call").astype(int),
+            is_put=data["option_type"].eq("put").astype(int),
+        )
+        .groupby("expiration", as_index=False)
+        .agg(
+            days_to_expiry=("days_to_expiry", "first"),
+            contracts=("option_type", "size"),
+            calls=("is_call", "sum"),
+            puts=("is_put", "sum"),
+        )
+    )
+    expiry_depth["distance"] = (expiry_depth["days_to_expiry"] - target_days).abs()
+    qualifying_expiries = expiry_depth.loc[
+        expiry_depth["calls"].ge(minimum_per_side)
+        & expiry_depth["puts"].ge(minimum_per_side)
+        & expiry_depth["contracts"].ge(minimum_total)
+    ].sort_values(["distance", "expiration"])
+    if qualifying_expiries.empty:
+        if audit is not None:
+            audit.update(
+                {
+                    "option_contracts_raw": raw_contracts,
+                    "option_contracts_usable": len(data),
+                    "option_calls_usable": int(data["option_type"].eq("call").sum()),
+                    "option_puts_usable": int(data["option_type"].eq("put").sum()),
+                    "option_depth_pass": False,
+                    "option_rejection_reason": "insufficient_contract_depth",
+                }
+            )
+        return {}
+    nearest_expiry = qualifying_expiries.iloc[0]["expiration"]
+    data = data.loc[data["expiration"].eq(nearest_expiry)]
+    if audit is not None:
+        audit.update(
+            {
+                "option_contracts_raw": raw_contracts,
+                "option_contracts_usable": len(data),
+                "option_expiry_used": pd.Timestamp(nearest_expiry).date().isoformat(),
+            }
+        )
     calls = data.loc[data["option_type"].eq("call")]
     puts = data.loc[data["option_type"].eq("put")]
+    if (
+        len(calls) < minimum_per_side
+        or len(puts) < minimum_per_side
+        or len(data) < minimum_total
+    ):
+        if audit is not None:
+            audit.update(
+                {
+                    "option_contracts_raw": raw_contracts,
+                    "option_contracts_usable": len(data),
+                    "option_calls_usable": len(calls),
+                    "option_puts_usable": len(puts),
+                    "option_depth_pass": False,
+                    "option_rejection_reason": "insufficient_contract_depth",
+                }
+            )
+        return {}
+    if audit is not None:
+        audit.update(
+            {
+                "option_calls_usable": len(calls),
+                "option_puts_usable": len(puts),
+                "option_depth_pass": True,
+                "option_rejection_reason": "",
+            }
+        )
     call_iv = calls["impliedVolatility"].median() if "impliedVolatility" in calls else np.nan
     put_iv = puts["impliedVolatility"].median() if "impliedVolatility" in puts else np.nan
     total_volume = data["volume"].sum(min_count=1) if "volume" in data else np.nan
@@ -1000,10 +1299,19 @@ def _options_features(frame: pd.DataFrame, stock_volume: float | None, realized_
     values: dict[str, FeatureValue] = {
         "CPVolSpread": FeatureValue("CPVolSpread", float(call_iv - put_iv) if pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "median_call_iv_minus_put_iv", "Current chain replaces OptionMetrics filters"),
         "OptionVolume1": FeatureValue("OptionVolume1", _safe_numeric_ratio(total_volume, stock_volume), "proxy", "yfinance_current_option_chain", "option_volume_over_stock_volume", "Current nearest-expiry chain only"),
-        "OptionVolume2": FeatureValue("OptionVolume2", _safe_numeric_ratio(total_oi, stock_volume), "proxy", "yfinance_current_option_chain", "option_oi_over_stock_volume", "Open interest proxy for total option activity"),
+        "OptionVolume2": FeatureValue(
+            "OptionVolume2",
+            _safe_numeric_ratio(total_oi, stock_volume)
+            if pd.notna(total_oi) and float(total_oi) > 0
+            else None,
+            "proxy",
+            "yfinance_current_option_chain",
+            "option_oi_over_stock_volume",
+            "Open interest proxy for total option activity",
+        ),
         "SmileSlope": FeatureValue("SmileSlope", float(put_iv - call_iv) if pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "put_iv_minus_call_iv", "Median IV spread replaces matched-delta smile slope"),
         "skew1": FeatureValue("skew1", float(put_iv - call_iv) if pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "put_iv_minus_call_iv", "Current-chain smirk proxy"),
-        "RIVolSpread": FeatureValue("RIVolSpread", float(realized_vol - (call_iv + put_iv) / 2) if realized_vol is not None and pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "realized_minus_median_implied_vol", "Current-chain proxy"),
+        "RIVolSpread": FeatureValue("RIVolSpread", float(realized_vol * math.sqrt(252.0) - (call_iv + put_iv) / 2) if realized_vol is not None and pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "annualized_realized_minus_median_implied_vol", "Current-chain proxy with compatible annualized units"),
     }
     return values
 
@@ -1041,6 +1349,140 @@ def _safe_numeric_ratio(left: Any, right: Any) -> float | None:
     if not np.isfinite(left_value) or not np.isfinite(right_value) or right_value == 0:
         return None
     return left_value / right_value
+
+
+def _resolve_current_shares_outstanding(
+    sec_shares: Any,
+    yahoo_shares: Any,
+    *,
+    maximum_ratio: float = 2.0,
+) -> FeatureValue:
+    """Resolve current shares without trusting an implausible SEC class/unit value."""
+
+    sec_value = float(sec_shares) if _is_number(sec_shares) and float(sec_shares) > 0 else None
+    yahoo_value = (
+        float(yahoo_shares)
+        if _is_number(yahoo_shares) and float(yahoo_shares) > 0
+        else None
+    )
+    if sec_value is not None and yahoo_value is not None:
+        ratio = max(sec_value, yahoo_value) / min(sec_value, yahoo_value)
+        if ratio <= float(maximum_ratio):
+            return FeatureValue(
+                "shares_outstanding",
+                sec_value,
+                "exact",
+                "sec_edgar_cross_validated",
+                "latest_instant_shares",
+                f"SEC/Yahoo ratio={ratio:.4f}",
+            )
+        return FeatureValue(
+            "shares_outstanding",
+            yahoo_value,
+            "proxy",
+            "yfinance_current_shares",
+            "yfinance_shares_after_sec_mismatch",
+            f"SEC/Yahoo mismatch ratio={ratio:.4f}; rejected SEC value {sec_value:g}",
+        )
+    if yahoo_value is not None:
+        return FeatureValue(
+            "shares_outstanding",
+            yahoo_value,
+            "proxy",
+            "yfinance_current_shares",
+            "yfinance_current_shares",
+            "SEC shares unavailable; Yahoo snapshot used",
+        )
+    if sec_value is not None:
+        return FeatureValue(
+            "shares_outstanding",
+            sec_value,
+            "proxy",
+            "sec_edgar_unvalidated_shares",
+            "latest_instant_shares_unvalidated",
+            "Yahoo shares unavailable; SEC value could not be cross-validated",
+        )
+    return FeatureValue(
+        "shares_outstanding",
+        None,
+        "unavailable",
+        "missing_shares_outstanding",
+        "",
+        "Neither SEC nor Yahoo supplied a positive current share count",
+    )
+
+
+def _share_turnover_features(
+    prices: pd.DataFrame,
+    resolved_shares: FeatureValue | None,
+) -> dict[str, FeatureValue]:
+    """Calculate OpenAP-style turnover features only in dimensionless units."""
+
+    missing = {
+        "ShareVol": FeatureValue(
+            "ShareVol", None, "unavailable", "missing_shares_outstanding", "", "Share count required"
+        ),
+        "std_turn": FeatureValue(
+            "std_turn", None, "unavailable", "missing_shares_outstanding", "", "Share count required"
+        ),
+    }
+    if (
+        prices.empty
+        or resolved_shares is None
+        or not _is_number(resolved_shares.raw_value)
+        or float(resolved_shares.raw_value) <= 0
+    ):
+        return missing
+    data = prices.copy()
+    data["date"] = pd.to_datetime(data["date"], errors="coerce")
+    data["volume"] = pd.to_numeric(data["volume"], errors="coerce")
+    monthly_volume = (
+        data.dropna(subset=["date", "volume"])
+        .set_index("date")["volume"]
+        .resample("ME")
+        .sum(min_count=1)
+        .dropna()
+    )
+    if monthly_volume.empty:
+        return missing
+    shares = float(resolved_shares.raw_value)
+    monthly_turnover = monthly_volume / shares
+    three_month_turnover = (
+        float(monthly_volume.iloc[-3:].sum()) / (3.0 * shares)
+        if len(monthly_volume) >= 3
+        else None
+    )
+    sharevol = None
+    if three_month_turnover is not None:
+        if three_month_turnover > 0.10:
+            sharevol = 1.0
+        elif three_month_turnover < 0.05:
+            sharevol = 0.0
+    status = "exact" if resolved_shares.status == "exact" else "proxy"
+    note = resolved_shares.note
+    std_turn = (
+        float(monthly_turnover.iloc[-36:].std(ddof=1))
+        if len(monthly_turnover) >= 36
+        else None
+    )
+    return {
+        "ShareVol": FeatureValue(
+            "ShareVol",
+            sharevol,
+            status,
+            resolved_shares.source,
+            "openap_sharevol_binary_3m_turnover",
+            note,
+        ),
+        "std_turn": FeatureValue(
+            "std_turn",
+            std_turn,
+            "proxy" if std_turn is not None else "unavailable",
+            resolved_shares.source,
+            "monthly_turnover_std_36m" if std_turn is not None else "",
+            "Current shares applied to historical monthly volume; " + note,
+        ),
+    }
 
 
 def _analyst_features(rows: pd.DataFrame) -> dict[str, FeatureValue]:
@@ -1110,6 +1552,556 @@ def _hashes_by_chunk(paths: Iterable[Path]) -> dict[int, str]:
     return result
 
 
+def _scorable_feature_counts(features: pd.DataFrame) -> pd.DataFrame:
+    """Count only feature values that can actually contribute to the score."""
+
+    columns = ["symbol", "computed_features", "exact_features", "proxy_features"]
+    if features.empty:
+        return pd.DataFrame(columns=columns)
+    frame = features.copy()
+    usable = (
+        frame["status"].isin(["exact", "proxy"])
+        & pd.to_numeric(frame["evidence_weight"], errors="coerce").gt(0)
+        & pd.to_numeric(frame["score_percentile"], errors="coerce").notna()
+    )
+    frame["computed_features"] = usable.astype(int)
+    frame["exact_features"] = (usable & frame["status"].eq("exact")).astype(int)
+    frame["proxy_features"] = (usable & frame["status"].eq("proxy")).astype(int)
+    return (
+        frame.groupby("symbol", as_index=False)[
+            ["computed_features", "exact_features", "proxy_features"]
+        ]
+        .sum()
+        .reindex(columns=columns)
+    )
+
+
+DATABASE_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
+    "prices_daily_raw": ("symbol", "date"),
+    "prices_daily_clean": ("symbol", "date"),
+    "security_master": ("symbol",),
+    "sec_companyfacts": ("fact_identity",),
+    "sec_submissions": ("cik", "accession_number", "form", "filing_date"),
+    "sec_concept_inputs_current": ("symbol", "concept", "concept_lag"),
+    "openap_features_current": ("as_of", "symbol", "signalname"),
+    "openap_scores_current": ("as_of", "symbol", "horizon_months"),
+    "openap_overall_scores_current": ("as_of", "symbol", "horizon_months"),
+    "openap_scores_aggregate_current": ("as_of", "symbol"),
+    "openap_score_contributions_current": (
+        "as_of", "symbol", "horizon_months", "signalname"
+    ),
+    "openap_current_leaderboard": ("as_of", "symbol"),
+    "openap_current_deployable_leaderboard": ("as_of", "symbol"),
+    "selected_predictors": ("signalname",),
+    "redundancy_groups": ("signalname",),
+    "current_redundancy_groups": ("signalname",),
+    "overall_redundancy_groups": ("signalname",),
+    "coverage_185": ("signalname",),
+    "price_quality_current": ("symbol",),
+    "data_quality_current": ("symbol",),
+    "yahoo_options_usable": ("contractSymbol",),
+    "source_manifest": ("source",),
+    "yfinance_source_manifest": ("chunk_index",),
+    "sec_source_manifest": ("chunk_index",),
+}
+
+DATABASE_REQUIRED_NON_NULL: dict[str, tuple[str, ...]] = {
+    "prices_daily_raw": ("symbol", "date", "adj_close"),
+    "prices_daily_clean": ("symbol", "date", "adj_close"),
+    "security_master": (
+        "symbol", "cik", "eligible_common_stock", "ranking_eligible",
+        "sec_companyfacts_available", "sec_submissions_available",
+    ),
+    "sec_companyfacts": (
+        "fact_identity", "cik", "taxonomy", "tag", "unit", "value",
+        "period_end", "filed", "accession_number", "available_at",
+    ),
+    "sec_submissions": ("cik", "accession_number", "form", "filing_date"),
+    "sec_concept_inputs_current": ("symbol", "concept", "concept_lag", "available_at"),
+    "openap_features_current": (
+        "as_of", "symbol", "signalname", "status", "value_status",
+        "official_filter_status",
+    ),
+    "openap_scores_current": (
+        "as_of", "symbol", "horizon_months", "metrics_expected", "groups_expected",
+    ),
+    "openap_overall_scores_current": (
+        "as_of", "symbol", "horizon_months", "metrics_expected", "groups_expected",
+    ),
+    "openap_scores_aggregate_current": (
+        "as_of", "symbol", "score_validation_status", "required_horizons",
+    ),
+    "openap_score_contributions_current": (
+        "as_of", "symbol", "horizon_months", "signalname",
+        "redundancy_group", "group_economic_family", "score_weight",
+        "raw_score_contribution",
+        "directional_contribution_vs_neutral",
+    ),
+    "openap_current_leaderboard": (
+        "as_of", "symbol", "aggregate_score", "aggregate_confidence",
+        "ranking_eligible", "clean_price_staleness_days", "issuer_market_cap",
+        "issuer_market_cap_source",
+    ),
+    "openap_current_deployable_leaderboard": (
+        "as_of", "symbol", "aggregate_score", "aggregate_confidence",
+        "ranking_eligible", "deployment_eligible", "issuer_market_cap",
+        "issuer_market_cap_source",
+    ),
+    "selected_predictors": ("signalname", "tstat", "Sign"),
+    "redundancy_groups": ("signalname",),
+    "current_redundancy_groups": ("signalname",),
+    "overall_redundancy_groups": ("signalname",),
+    "coverage_185": ("signalname",),
+    "price_quality_current": ("symbol",),
+    "data_quality_current": ("symbol",),
+    "yahoo_options_raw": ("contractSymbol",),
+    "yahoo_options_usable": ("contractSymbol",),
+    "source_manifest": ("source",),
+    "yfinance_source_manifest": ("chunk_index",),
+    "sec_source_manifest": ("chunk_index",),
+}
+
+
+def _database_layer(table_name: str) -> str:
+    if table_name.endswith("_raw"):
+        return "raw"
+    if table_name.endswith("_clean") or table_name.endswith("_usable"):
+        return "clean"
+    if "manifest" in table_name or "status" in table_name:
+        return "provenance"
+    if "audit" in table_name or "quality" in table_name or "coverage" in table_name:
+        return "audit"
+    return "derived"
+
+
+def finalize_database_contract(
+    connection: Any,
+    output: Path,
+    *,
+    required_tables: set[str] | None = None,
+) -> tuple[int, int, int]:
+    """Create physical indexes and a complete contract for every DB object."""
+
+    objects = connection.execute(
+        "SELECT table_name, table_type FROM information_schema.tables "
+        "WHERE table_schema = 'main' ORDER BY table_name"
+    ).fetchall()
+    object_names = {str(row[0]) for row in objects}
+    object_types = {str(row[0]): str(row[1]) for row in objects}
+    contract_check_rows: list[dict[str, Any]] = []
+    contract_tables = (
+        set(required_tables)
+        if required_tables is not None
+        else set(DATABASE_UNIQUE_KEYS) | set(DATABASE_REQUIRED_NON_NULL)
+    )
+    for table_name in sorted(contract_tables):
+        if table_name not in object_names:
+            contract_check_rows.append(
+                {
+                    "table_name": table_name,
+                    "check_type": "required_table",
+                    "columns": "",
+                    "issue_count": 1,
+                    "passed": False,
+                }
+            )
+            continue
+        actual_columns = {
+            str(row[1])
+            for row in connection.execute(f"PRAGMA table_info('{table_name}')").fetchall()
+        }
+        required = DATABASE_REQUIRED_NON_NULL.get(table_name, ())
+        missing_required = sorted(set(required).difference(actual_columns))
+        if missing_required:
+            contract_check_rows.append(
+                {
+                    "table_name": table_name,
+                    "check_type": "required_columns",
+                    "columns": ",".join(missing_required),
+                    "issue_count": len(missing_required),
+                    "passed": False,
+                }
+            )
+        elif required:
+            predicate = " OR ".join(f'"{column}" IS NULL' for column in required)
+            null_count = int(
+                connection.execute(
+                    f'SELECT COUNT(*) FROM "{table_name}" WHERE {predicate}'
+                ).fetchone()[0]
+            )
+            contract_check_rows.append(
+                {
+                    "table_name": table_name,
+                    "check_type": "required_non_null",
+                    "columns": ",".join(required),
+                    "issue_count": null_count,
+                    "passed": null_count == 0,
+                }
+            )
+        unique_columns = DATABASE_UNIQUE_KEYS.get(table_name, ())
+        missing_unique = sorted(set(unique_columns).difference(actual_columns))
+        if missing_unique:
+            contract_check_rows.append(
+                {
+                    "table_name": table_name,
+                    "check_type": "unique_key_columns",
+                    "columns": ",".join(missing_unique),
+                    "issue_count": len(missing_unique),
+                    "passed": False,
+                }
+            )
+        elif unique_columns:
+            quoted = ", ".join(f'"{column}"' for column in unique_columns)
+            duplicate_count = int(
+                connection.execute(
+                    f'SELECT COALESCE(SUM(n - 1), 0) FROM ('
+                    f'SELECT {quoted}, COUNT(*) AS n FROM "{table_name}" '
+                    f'GROUP BY {quoted} HAVING COUNT(*) > 1)'
+                ).fetchone()[0]
+            )
+            contract_check_rows.append(
+                {
+                    "table_name": table_name,
+                    "check_type": "unique_key",
+                    "columns": ",".join(unique_columns),
+                    "issue_count": duplicate_count,
+                    "passed": duplicate_count == 0,
+                }
+            )
+    for table_name, columns in sorted(DATABASE_REQUIRED_NON_NULL.items()):
+        if table_name not in object_names:
+            continue
+        if object_types.get(table_name) != "BASE TABLE":
+            contract_check_rows.append(
+                {
+                    "table_name": table_name,
+                    "check_type": "physical_not_null_constraint",
+                    "columns": ",".join(columns),
+                    "issue_count": 1,
+                    "passed": False,
+                }
+            )
+            continue
+        existing_failures = [
+            row
+            for row in contract_check_rows
+            if row["table_name"] == table_name
+            and row["check_type"] in {"required_columns", "required_non_null"}
+            and not row["passed"]
+        ]
+        if existing_failures:
+            continue
+        failed_columns: list[str] = []
+        for column in columns:
+            try:
+                connection.execute(
+                    f'ALTER TABLE "{table_name}" ALTER COLUMN "{column}" SET NOT NULL'
+                )
+            except Exception:
+                failed_columns.append(column)
+        table_info = connection.execute(f"PRAGMA table_info('{table_name}')").fetchall()
+        physically_required = {
+            str(row[1]) for row in table_info if bool(row[3])
+        }
+        missing_constraints = sorted(set(columns).difference(physically_required))
+        failed_columns = sorted(set(failed_columns) | set(missing_constraints))
+        contract_check_rows.append(
+            {
+                "table_name": table_name,
+                "check_type": "physical_not_null_constraint",
+                "columns": ",".join(columns),
+                "issue_count": len(failed_columns),
+                "passed": not failed_columns,
+            }
+        )
+
+    contract_checks = pd.DataFrame(contract_check_rows)
+    contract_checks.to_csv(output / "database_contract_checks.csv", index=False)
+    connection.register("database_contract_checks_frame", contract_checks)
+    connection.execute(
+        "CREATE OR REPLACE TABLE database_contract_checks AS "
+        "SELECT * FROM database_contract_checks_frame"
+    )
+    connection.unregister("database_contract_checks_frame")
+
+    index_rows: list[dict[str, Any]] = []
+    for table_name, columns in DATABASE_UNIQUE_KEYS.items():
+        if table_name not in object_names:
+            continue
+        failed_unique_check = any(
+            row["table_name"] == table_name
+            and row["check_type"] in {"unique_key_columns", "unique_key"}
+            and not row["passed"]
+            for row in contract_check_rows
+        )
+        if failed_unique_check:
+            continue
+        index_name = "ux_" + re.sub(r"[^a-zA-Z0-9_]", "_", table_name)
+        quoted_columns = ", ".join(f'"{column}"' for column in columns)
+        connection.execute(
+            f'CREATE UNIQUE INDEX IF NOT EXISTS "{index_name}" '
+            f'ON "{table_name}" ({quoted_columns})'
+        )
+        index_rows.append(
+            {
+                "index_name": index_name,
+                "table_name": table_name,
+                "columns": ",".join(columns),
+                "unique": True,
+            }
+        )
+    index_contract = pd.DataFrame(index_rows)
+    index_contract.to_csv(output / "index_contract.csv", index=False)
+    connection.execute(
+        "CREATE OR REPLACE TABLE index_contract AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "index_contract.csv")],
+    )
+
+    objects = connection.execute(
+        "SELECT table_name, table_type FROM information_schema.tables "
+        "WHERE table_schema = 'main' ORDER BY table_name"
+    ).fetchall()
+    if "schema_contract" not in {str(row[0]) for row in objects}:
+        objects.append(("schema_contract", "BASE TABLE"))
+    schema_rows = []
+    for table_name, table_type in objects:
+        name = str(table_name)
+        table_info = (
+            connection.execute(f"PRAGMA table_info('{name}')").fetchall()
+            if str(table_type) == "BASE TABLE" and name != "schema_contract"
+            else []
+        )
+        physical_not_null = sorted(str(row[1]) for row in table_info if bool(row[3]))
+        schema_rows.append(
+            {
+                "table_name": name,
+                "table_type": str(table_type),
+                "data_layer": _database_layer(name),
+                "consumer_safe": bool(
+                    not name.endswith("_raw")
+                    and name not in {"sec_companyfacts", "yahoo_current_snapshots"}
+                ),
+                "unique_key": ",".join(DATABASE_UNIQUE_KEYS.get(name, ())),
+                "required_non_null": ",".join(DATABASE_REQUIRED_NON_NULL.get(name, ())),
+                "physical_not_null": ",".join(physical_not_null),
+            }
+        )
+    schema_contract = pd.DataFrame(schema_rows)
+    schema_contract.to_csv(output / "schema_contract.csv", index=False)
+    connection.execute(
+        "CREATE OR REPLACE TABLE schema_contract AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "schema_contract.csv")],
+    )
+    contract_violations = int(
+        contract_checks.loc[~contract_checks["passed"], "issue_count"].sum()
+    )
+    return len(schema_contract), len(index_contract), contract_violations
+
+
+def repair_failed_companyfacts_from_bulk(
+    connection: Any,
+    config: Mapping[str, Any],
+    output: Path,
+) -> dict[str, Any]:
+    """Repair API/Jina failures from the official SEC bulk archive once."""
+
+    audit_columns = ["cik", "status", "rows", "error"]
+
+    def persist_audit(rows: list[dict[str, Any]]) -> pd.DataFrame:
+        audit_frame = pd.DataFrame(rows, columns=audit_columns)
+        audit_frame.to_csv(output / "sec_bulk_repair_audit.csv", index=False)
+        connection.register("sec_bulk_repair_audit_frame", audit_frame)
+        connection.execute(
+            "CREATE OR REPLACE TABLE sec_bulk_repair_audit AS "
+            "SELECT * FROM sec_bulk_repair_audit_frame"
+        )
+        connection.unregister("sec_bulk_repair_audit_frame")
+        return audit_frame
+
+    failed = connection.execute(
+        "SELECT DISTINCT cik FROM sec_download_status "
+        "WHERE surface = 'companyfacts' AND status <> 'ok' ORDER BY cik"
+    ).df()
+    if failed.empty or not bool(config["sec"].get("repair_failed_from_bulk", True)):
+        persist_audit([])
+        return {
+            "requested": int(len(failed)),
+            "repaired": 0,
+            "still_missing": int(len(failed)),
+            "bulk_sha256": "",
+        }
+    bulk_path = output / ".companyfacts_repair.zip"
+    try:
+        _download(
+            str(config["sec"]["companyfacts_bulk_url"]),
+            bulk_path,
+            headers=_sec_headers(str(config["sec"]["default_user_agent"])),
+            retries=4,
+        )
+    except Exception as exc:
+        persist_audit(
+            [
+                {
+                    "cik": int(cik),
+                    "status": "bulk_download_failed",
+                    "rows": 0,
+                    "error": f"{type(exc).__name__}:{exc}",
+                }
+                for cik in failed["cik"].astype(int)
+            ]
+        )
+        bulk_path.unlink(missing_ok=True)
+        return {
+            "requested": int(len(failed)),
+            "repaired": 0,
+            "still_missing": int(len(failed)),
+            "bulk_sha256": "",
+        }
+    bulk_hash = sha256_file(bulk_path)
+    repair_rows: list[dict[str, Any]] = []
+    audit_rows: list[dict[str, Any]] = []
+    with zipfile.ZipFile(bulk_path) as archive:
+        member_map = {Path(name).name: name for name in archive.namelist()}
+        for cik_value in failed["cik"].astype(int):
+            member = member_map.get(f"CIK{cik_value:010d}.json")
+            if not member:
+                audit_rows.append(
+                    {
+                        "cik": cik_value,
+                        "status": "not_present_in_official_bulk",
+                        "rows": 0,
+                        "error": "",
+                    }
+                )
+                continue
+            payload = json.loads(archive.read(member))
+            submissions = connection.execute(
+                "SELECT accession_number, accepted_at FROM sec_submissions WHERE cik = ?",
+                [cik_value],
+            ).df()
+            accepted = {
+                str(row.accession_number): row.accepted_at
+                for row in submissions.itertuples()
+                if str(row.accession_number or "") and pd.notna(row.accepted_at)
+            }
+            rows = _companyfacts_rows(
+                payload,
+                cik_value,
+                source_url=str(config["sec"]["companyfacts_bulk_url"]),
+                source_mode="sec_official_bulk_repair",
+                accepted_at_by_accession=accepted,
+            )
+            repair_rows.extend(rows)
+            audit_rows.append(
+                {
+                    "cik": cik_value,
+                    "status": "repaired" if rows else "bulk_file_without_required_facts",
+                    "rows": len(rows),
+                    "error": "",
+                }
+            )
+    if repair_rows:
+        repair_frame = pd.DataFrame(repair_rows)
+        connection.register("sec_bulk_repair_rows", repair_frame)
+        connection.execute(
+            "INSERT INTO sec_companyfacts BY NAME SELECT * FROM sec_bulk_repair_rows"
+        )
+        connection.unregister("sec_bulk_repair_rows")
+        connection.execute(
+            "CREATE OR REPLACE TABLE sec_companyfacts AS SELECT DISTINCT * FROM sec_companyfacts"
+        )
+    audit = persist_audit(audit_rows)
+    repaired_ciks = audit.loc[audit["status"].eq("repaired"), "cik"].astype(int).tolist()
+    if repaired_ciks:
+        connection.execute(
+            "UPDATE sec_download_status SET status = 'repaired_bulk', "
+            "source_mode = 'sec_official_bulk_repair', error = '' "
+            "WHERE surface = 'companyfacts' AND cik IN (SELECT * FROM unnest(?))",
+            [repaired_ciks],
+        )
+    bulk_path.unlink(missing_ok=True)
+    repaired = len(repaired_ciks)
+    return {
+        "requested": int(len(failed)),
+        "repaired": repaired,
+        "still_missing": int(len(failed) - repaired),
+        "bulk_sha256": bulk_hash,
+    }
+
+
+def _sec_issuer_flags(submissions: pd.DataFrame) -> pd.DataFrame:
+    """Summarise SEC filing evidence used to exclude foreign/fund issuers."""
+
+    columns = [
+        "cik", "sec_foreign_filer", "sec_investment_company",
+        "sec_us_domicile_evidence", "sec_forms_seen",
+        "sec_state_of_incorporation", "sec_business_state_or_country",
+    ]
+    if submissions.empty:
+        return pd.DataFrame(columns=columns)
+    frame = submissions.copy()
+    frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce").astype("Int64")
+    frame["form"] = frame.get("form", "").astype("string").fillna("").str.upper()
+    for column in ("state_of_incorporation", "business_state_or_country"):
+        frame[column] = (
+            frame.get(column, pd.Series("", index=frame.index))
+            .astype("string")
+            .fillna("")
+            .str.upper()
+            .str.strip()
+        )
+    rows = []
+    for cik, group in frame.dropna(subset=["cik"]).groupby("cik"):
+        forms = sorted(set(group["form"].dropna().astype(str)) - {""})
+        incorporation = next(
+            (value for value in group["state_of_incorporation"] if value), ""
+        )
+        business = next(
+            (value for value in group["business_state_or_country"] if value), ""
+        )
+        rows.append(
+            {
+                "cik": int(cik),
+                "sec_foreign_filer": bool(set(forms) & FOREIGN_SEC_FORMS),
+                "sec_investment_company": bool(set(forms) & INVESTMENT_COMPANY_FORMS),
+                "sec_us_domicile_evidence": bool(
+                    incorporation in US_STATE_OR_COUNTRY_CODES
+                    or business in US_STATE_OR_COUNTRY_CODES
+                ),
+                "sec_forms_seen": "|".join(forms),
+                "sec_state_of_incorporation": incorporation,
+                "sec_business_state_or_country": business,
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _sec_surface_availability(status: pd.DataFrame) -> pd.DataFrame:
+    """Return one fail-closed SEC availability row per issuer."""
+
+    columns = ["cik", "sec_companyfacts_available", "sec_submissions_available"]
+    if status.empty:
+        return pd.DataFrame(columns=columns)
+    frame = status.copy()
+    frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce").astype("Int64")
+    frame["surface"] = frame["surface"].astype("string").fillna("").str.lower()
+    frame["available"] = frame["status"].isin(["ok", "repaired_bulk"])
+    frame = frame.dropna(subset=["cik"])
+    rows: list[dict[str, Any]] = []
+    for cik, group in frame.groupby("cik"):
+        by_surface = group.groupby("surface")["available"].any().to_dict()
+        rows.append(
+            {
+                "cik": int(cik),
+                "sec_companyfacts_available": bool(
+                    by_surface.get("companyfacts", False)
+                ),
+                "sec_submissions_available": bool(by_surface.get("submissions", False)),
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
 def _classify_security_eligibility(
     frame: pd.DataFrame,
     *,
@@ -1132,6 +2124,7 @@ def _classify_security_eligibility(
         "company_name_sec", pd.Series(index=out.index, dtype="string")
     ).astype("string")
     name = yahoo_name.fillna(sec_name).fillna("")
+    symbol = out["symbol"].astype("string").fillna("").str.upper()
     price_rows = pd.to_numeric(
         out.get("price_rows", pd.Series(index=out.index, dtype="float64")),
         errors="coerce",
@@ -1144,20 +2137,38 @@ def _classify_security_eligibility(
         days=int(maximum_price_age_days)
     )
     excluded_name = name.str.contains(EXCLUDE_SECURITY_RE, regex=True, na=False)
+    excluded_symbol = (
+        symbol.str.contains(PREFERRED_SYMBOL_RE, regex=True, na=False)
+        | symbol.str.contains(UNIT_SYMBOL_RE, regex=True, na=False)
+        | symbol.str.contains(WARRANT_SYMBOL_RE, regex=True, na=False)
+    )
+    foreign_filer = out.get(
+        "sec_foreign_filer", pd.Series(False, index=out.index)
+    ).fillna(False).astype(bool)
+    investment_company = out.get(
+        "sec_investment_company", pd.Series(False, index=out.index)
+    ).fillna(False).astype(bool)
+    sec_us_domicile = out.get(
+        "sec_us_domicile_evidence", pd.Series(False, index=out.index)
+    ).fillna(False).astype(bool)
     reasons = np.select(
         [
-            excluded_name,
+            excluded_name | excluded_symbol,
+            foreign_filer,
+            investment_company,
             quote_type.ne("EQUITY"),
-            country.eq(""),
-            country.ne("United States"),
+            country.eq("") & ~sec_us_domicile,
+            country.ne("") & country.ne("United States"),
             price_rows.le(0),
             last_price.isna(),
             last_price.lt(cutoff),
         ],
         [
             "excluded_name_or_instrument",
+            "excluded_foreign_sec_filer",
+            "excluded_investment_company",
             "yahoo_quote_type_not_equity",
-            "yahoo_country_unavailable",
+            "country_unavailable_without_sec_us_evidence",
             "yahoo_country_not_united_states",
             "price_history_unavailable",
             "latest_price_date_unavailable",
@@ -1169,7 +2180,165 @@ def _classify_security_eligibility(
     out["eligible_common_stock"] = out["eligibility_reason"].eq(
         "eligible_us_common_stock"
     )
+    out["issuer_share_class_count"] = 1
+    out["issuer_primary_security"] = True
+    if "cik" in out:
+        candidates = out.loc[out["eligible_common_stock"]].copy()
+        candidates["_cap"] = pd.to_numeric(
+            candidates.get("marketCap", pd.Series(np.nan, index=candidates.index)),
+            errors="coerce",
+        ).fillna(-1)
+        candidates["_plain_symbol"] = ~candidates["symbol"].astype(str).str.contains(
+            "-", regex=False
+        )
+        class_counts = candidates.groupby("cik")["symbol"].transform("nunique")
+        out.loc[candidates.index, "issuer_share_class_count"] = class_counts.astype(int)
+        primary = (
+            candidates.sort_values(
+                ["cik", "_plain_symbol", "_cap", "symbol"],
+                ascending=[True, False, False, True],
+            )
+            .drop_duplicates("cik", keep="first")
+            .index
+        )
+        out.loc[candidates.index, "issuer_primary_security"] = False
+        out.loc[primary, "issuer_primary_security"] = True
     return out
+
+
+def _add_issuer_market_cap_context(
+    frame: pd.DataFrame,
+    *,
+    similarity_ratio_max: float = 1.25,
+) -> pd.DataFrame:
+    """Attach one issuer-level market cap without dropping valid share classes.
+
+    Yahoo sometimes reports the same consolidated market cap for every class
+    and sometimes reports class-specific values.  Similar values are treated
+    as repeated consolidated figures; materially different values are summed.
+    """
+
+    out = frame.copy()
+    out["issuer_market_cap"] = np.nan
+    out["issuer_market_cap_source"] = "missing_yfinance_market_cap"
+    eligible = out.get(
+        "eligible_common_stock", pd.Series(False, index=out.index)
+    ).fillna(False).astype(bool)
+    for cik, group in out.loc[eligible].groupby("cik", dropna=False):
+        caps = pd.to_numeric(group.get("marketCap"), errors="coerce")
+        caps = caps.loc[caps.gt(0)].dropna()
+        if caps.empty:
+            continue
+        if len(caps) == 1:
+            issuer_cap = float(caps.iloc[0])
+            source = "yfinance_single_class_market_cap"
+        elif float(caps.max() / caps.min()) <= float(similarity_ratio_max):
+            issuer_cap = float(caps.max())
+            source = "yfinance_repeated_consolidated_market_cap"
+        else:
+            issuer_cap = float(caps.sum())
+            source = "yfinance_summed_share_class_market_caps"
+        out.loc[group.index, "issuer_market_cap"] = issuer_cap
+        out.loc[group.index, "issuer_market_cap_source"] = source
+    return out
+
+
+def create_options_quality_tables(
+    connection: Any,
+    *,
+    as_of: pd.Timestamp,
+    config: Mapping[str, Any],
+) -> None:
+    """Quarantine malformed Yahoo contracts and expose one canonical row each."""
+
+    option_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info('yahoo_options_raw')"
+        ).fetchall()
+    }
+    required_option_columns = {
+        "contractSymbol", "symbol", "option_type", "expiration",
+        "lastTradeDate", "strike", "bid", "ask", "impliedVolatility",
+        "retrieved_at",
+    }
+    if not required_option_columns.issubset(option_columns):
+        connection.execute(
+            "CREATE OR REPLACE TABLE yahoo_options_quality AS "
+            "SELECT *, 'missing_required_columns' AS quality_status "
+            "FROM yahoo_options_raw"
+        )
+        connection.execute(
+            "CREATE OR REPLACE TABLE yahoo_options_usable AS "
+            "SELECT * EXCLUDE (quality_status) FROM yahoo_options_quality WHERE false"
+        )
+        return
+
+    occ_pattern = r"^([A-Z0-9]{1,6})([0-9]{6})([CP])([0-9]{8})$"
+    connection.execute(
+        f"""
+        CREATE OR REPLACE TABLE yahoo_options_quality AS
+        SELECT o.*,
+          CASE
+            WHEN NOT regexp_full_match(upper(o.contractSymbol), '{occ_pattern}')
+              THEN 'invalid_contract_symbol'
+            WHEN regexp_extract(upper(o.contractSymbol), '{occ_pattern}', 1)
+                 <> regexp_replace(upper(o.symbol), '[^A-Z0-9]', '', 'g')
+              THEN 'contract_underlying_mismatch'
+            WHEN try_strptime(
+                   regexp_extract(upper(o.contractSymbol), '{occ_pattern}', 2),
+                   '%y%m%d'
+                 )::DATE <> try_cast(o.expiration AS DATE)
+              THEN 'contract_expiration_mismatch'
+            WHEN regexp_extract(upper(o.contractSymbol), '{occ_pattern}', 3)
+                 <> CASE WHEN lower(o.option_type) = 'call' THEN 'C' ELSE 'P' END
+              THEN 'contract_type_mismatch'
+            WHEN abs(
+                   try_cast(regexp_extract(upper(o.contractSymbol), '{occ_pattern}', 4) AS DOUBLE)
+                   / 1000.0 - o.strike
+                 ) > 0.001
+              THEN 'contract_strike_mismatch'
+            WHEN try_cast(o.expiration AS DATE) IS NULL THEN 'invalid_expiration'
+            WHEN date_diff('day', CAST(? AS DATE), try_cast(o.expiration AS DATE))
+                 NOT BETWEEN ? AND ? THEN 'dte_outside_policy'
+            WHEN o.bid < 0 OR o.ask < o.bid THEN 'crossed_or_negative_quote'
+            WHEN o.impliedVolatility NOT BETWEEN ? AND ? THEN 'invalid_implied_volatility'
+            WHEN try_cast(o.lastTradeDate AS TIMESTAMPTZ)
+                 < CAST(? AS TIMESTAMPTZ) - (? * INTERVAL '1 day') THEN 'stale_trade'
+            WHEN s.current_price IS NULL OR s.current_price <= 0 THEN 'missing_stock_price'
+            WHEN o.strike / s.current_price NOT BETWEEN ? AND ? THEN 'moneyness_outside_policy'
+            ELSE 'usable_candidate'
+          END AS quality_status
+        FROM yahoo_options_raw o
+        LEFT JOIN security_master s USING (symbol)
+        """,
+        [
+            as_of.date().isoformat(),
+            int(config["yfinance"]["minimum_option_days"]),
+            int(config["yfinance"]["maximum_option_days"]),
+            float(config["yfinance"]["minimum_implied_volatility"]),
+            float(config["yfinance"]["maximum_implied_volatility"]),
+            as_of.isoformat(),
+            int(config["yfinance"]["maximum_option_staleness_days"]),
+            float(config["yfinance"]["minimum_option_moneyness"]),
+            float(config["yfinance"]["maximum_option_moneyness"]),
+        ],
+    )
+    connection.execute(
+        """
+        CREATE OR REPLACE TABLE yahoo_options_usable AS
+        SELECT * EXCLUDE (quality_status)
+        FROM yahoo_options_quality
+        WHERE quality_status = 'usable_candidate'
+        QUALIFY
+          try_cast(expiration AS DATE)
+            = min(try_cast(expiration AS DATE)) OVER (PARTITION BY symbol)
+          AND row_number() OVER (
+            PARTITION BY contractSymbol
+            ORDER BY try_cast(retrieved_at AS TIMESTAMPTZ) DESC, symbol
+          ) = 1
+        """
+    )
 
 
 def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
@@ -1182,6 +2351,15 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     sec_dir = Path(args.sec_dir)
     metadata = pd.read_parquet(prepare_dir / "selected_185_predictors.parquet")
     groups = pd.read_csv(prepare_dir / "redundancy_groups.csv")
+    redundancy_audit_path = prepare_dir / "redundancy_correlation_audit.csv"
+    if redundancy_audit_path.exists():
+        redundancy_audit = pd.read_csv(redundancy_audit_path)
+        redundancy_audit_source_status = "source_artifact"
+    else:
+        redundancy_audit = groups[["signalname", "redundancy_group"]].copy()
+        redundancy_audit["correlation"] = np.nan
+        redundancy_audit["audit_status"] = "missing_from_legacy_source_artifact"
+        redundancy_audit_source_status = "reconstructed_manifest_only"
     seed = pd.read_parquet(prepare_dir / "security_master_seed.parquet")
     source_manifest = pd.read_csv(prepare_dir / "source_manifest.csv")
 
@@ -1192,35 +2370,122 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     yahoo_status_paths = sorted(input_root.rglob("status_*.csv"))
     summary_paths = sorted(input_root.rglob("summary_*.json"))
     expected_chunks = int(config["execution"]["yfinance_chunks"])
-    if len(price_paths) != expected_chunks:
-        raise OpenAPDataError(f"Expected {expected_chunks} YFinance price chunks, found {len(price_paths)}")
+    yahoo_surface_counts = {
+        "prices": len(price_paths),
+        "metadata": len(metadata_paths),
+        "options": len(option_paths),
+        "analyst": len(analyst_paths),
+        "status": len(yahoo_status_paths),
+        "summary": len(summary_paths),
+    }
+    incomplete_yahoo = {
+        name: count for name, count in yahoo_surface_counts.items()
+        if count != expected_chunks
+    }
+    if incomplete_yahoo:
+        raise OpenAPDataError(
+            f"Expected {expected_chunks} YFinance chunks per surface, found {incomplete_yahoo}"
+        )
 
     db_path = output / "openap_current.duckdb"
     connection = duckdb.connect(str(db_path))
     quoted_prices = ",".join(repr(str(path)) for path in price_paths)
     quoted_metadata = ",".join(repr(str(path)) for path in metadata_paths)
-    connection.execute(f"CREATE OR REPLACE TABLE prices_daily AS SELECT * FROM read_parquet([{quoted_prices}], union_by_name=true)")
+    connection.execute(f"CREATE OR REPLACE TABLE prices_daily_raw AS SELECT * FROM read_parquet([{quoted_prices}], union_by_name=true)")
+    connection.execute("CREATE OR REPLACE VIEW prices_daily AS SELECT * FROM prices_daily_raw")
     connection.execute(f"CREATE OR REPLACE TABLE yahoo_current_snapshots AS SELECT * FROM read_parquet([{quoted_metadata}], union_by_name=true)")
     valid_options = [path for path in option_paths if path.stat().st_size > 0]
     if valid_options:
         quoted_options = ",".join(repr(str(path)) for path in valid_options)
-        connection.execute(f"CREATE OR REPLACE TABLE yahoo_options_current AS SELECT * FROM read_parquet([{quoted_options}], union_by_name=true)")
+        connection.execute(f"CREATE OR REPLACE TABLE yahoo_options_raw AS SELECT * FROM read_parquet([{quoted_options}], union_by_name=true)")
     else:
-        connection.execute("CREATE OR REPLACE TABLE yahoo_options_current(symbol VARCHAR, option_type VARCHAR, expiration VARCHAR, retrieved_at VARCHAR)")
+        connection.execute(
+            "CREATE OR REPLACE TABLE yahoo_options_raw("
+            "contractSymbol VARCHAR, lastTradeDate TIMESTAMPTZ, strike DOUBLE, "
+            "lastPrice DOUBLE, bid DOUBLE, ask DOUBLE, change DOUBLE, percentChange DOUBLE, "
+            "volume DOUBLE, openInterest DOUBLE, impliedVolatility DOUBLE, inTheMoney BOOLEAN, "
+            "contractSize VARCHAR, currency VARCHAR, symbol VARCHAR, option_type VARCHAR, "
+            "expiration VARCHAR, retrieved_at VARCHAR)"
+        )
+    connection.execute("CREATE OR REPLACE VIEW yahoo_options_current AS SELECT * FROM yahoo_options_raw")
     sec_fact_paths = sorted(sec_dir.rglob("sec_companyfacts_*.parquet"))
     sec_submission_paths = sorted(sec_dir.rglob("sec_submissions_*.parquet"))
     sec_status_paths = sorted(sec_dir.rglob("sec_status_*.csv"))
     sec_summary_paths = sorted(sec_dir.rglob("sec_summary_*.json"))
-    expected_sec_chunks = int(config["execution"].get("sec_chunks", expected_chunks))
-    if len(sec_fact_paths) != expected_sec_chunks or len(sec_submission_paths) != expected_sec_chunks:
+    preliminary_sec_summaries = [
+        json.loads(path.read_text(encoding="utf-8")) for path in sec_summary_paths
+    ]
+    sec_layouts = {
+        str(item.get("source_layout") or "sharded_api")
+        for item in preliminary_sec_summaries
+    }
+    if len(sec_layouts) != 1:
+        raise OpenAPDataError(f"Mixed SEC source layouts: {sorted(sec_layouts)}")
+    sec_layout = next(iter(sec_layouts), "missing")
+    if sec_layout == "official_bulk_archive":
+        expected_sec_chunks = 1
+    elif sec_layout == "official_api_shards_with_audited_readthrough":
+        declared_totals = {
+            int(item.get("total_chunks", 0)) for item in preliminary_sec_summaries
+        }
+        if len(declared_totals) != 1 or next(iter(declared_totals), 0) <= 0:
+            raise OpenAPDataError(
+                f"Invalid SEC shard total declarations: {sorted(declared_totals)}"
+            )
+        expected_sec_chunks = next(iter(declared_totals))
+        chunk_indexes = sorted(
+            int(item.get("chunk_index", -1)) for item in preliminary_sec_summaries
+        )
+        if chunk_indexes != list(range(expected_sec_chunks)):
+            raise OpenAPDataError(
+                "Incomplete SEC shard index set: "
+                f"expected=0..{expected_sec_chunks - 1}, found={chunk_indexes}"
+            )
+    else:
+        expected_sec_chunks = int(config["execution"].get("sec_chunks", expected_chunks))
+    sec_surface_counts = {
+        "companyfacts": len(sec_fact_paths),
+        "submissions": len(sec_submission_paths),
+        "status": len(sec_status_paths),
+        "summary": len(sec_summary_paths),
+    }
+    incomplete_sec = {
+        name: count for name, count in sec_surface_counts.items()
+        if count != expected_sec_chunks
+    }
+    if incomplete_sec:
         raise OpenAPDataError(
-            f"Expected {expected_sec_chunks} SEC chunks, found "
-            f"facts={len(sec_fact_paths)} submissions={len(sec_submission_paths)}"
+            f"Expected {expected_sec_chunks} SEC chunks per surface, found {incomplete_sec}"
         )
     quoted_sec_facts = ",".join(repr(str(path)) for path in sec_fact_paths)
     quoted_sec_submissions = ",".join(repr(str(path)) for path in sec_submission_paths)
-    connection.execute(f"CREATE OR REPLACE TABLE sec_companyfacts AS SELECT * FROM read_parquet([{quoted_sec_facts}], union_by_name=true)")
-    connection.execute(f"CREATE OR REPLACE TABLE sec_submissions AS SELECT * FROM read_parquet([{quoted_sec_submissions}], union_by_name=true)")
+    connection.execute(
+        f"CREATE OR REPLACE TABLE sec_companyfacts AS "
+        f"SELECT DISTINCT * FROM read_parquet([{quoted_sec_facts}], union_by_name=true)"
+    )
+    connection.execute(
+        f"CREATE OR REPLACE TABLE sec_submissions AS "
+        f"SELECT DISTINCT * FROM read_parquet([{quoted_sec_submissions}], union_by_name=true)"
+    )
+    quoted_yahoo_status = ",".join(repr(str(path)) for path in yahoo_status_paths)
+    quoted_sec_status = ",".join(repr(str(path)) for path in sec_status_paths)
+    connection.execute(
+        f"CREATE OR REPLACE TABLE yfinance_download_status AS "
+        f"SELECT * FROM read_csv_auto([{quoted_yahoo_status}], union_by_name=true, filename=true)"
+    )
+    connection.execute(
+        f"CREATE OR REPLACE TABLE sec_download_status AS "
+        f"SELECT * FROM read_csv_auto([{quoted_sec_status}], union_by_name=true, filename=true)"
+    )
+    sec_bulk_repair = repair_failed_companyfacts_from_bulk(
+        connection, config, output
+    )
+    connection.execute("ALTER TABLE sec_companyfacts ADD COLUMN fact_identity VARCHAR")
+    connection.execute(
+        "UPDATE sec_companyfacts SET fact_identity = md5(concat_ws('|', "
+        "CAST(cik AS VARCHAR), taxonomy, tag, unit, COALESCE(period_start, ''), "
+        "period_end, accession_number))"
+    )
 
     yahoo_meta = connection.execute("SELECT * FROM yahoo_current_snapshots").df()
     if not yahoo_meta.empty:
@@ -1231,53 +2496,191 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     ).df()
     security_master = seed.merge(yahoo_meta, on="symbol", how="left", suffixes=("_sec", "_yahoo"))
     security_master = security_master.merge(price_coverage, on="symbol", how="left")
-    as_of = pd.Timestamp.utcnow().tz_localize(None)
+    sec_issuer_flags = _sec_issuer_flags(connection.execute("SELECT * FROM sec_submissions").df())
+    security_master = security_master.merge(sec_issuer_flags, on="cik", how="left")
+    sec_availability = _sec_surface_availability(
+        connection.execute("SELECT cik, surface, status FROM sec_download_status").df()
+    )
+    security_master = security_master.merge(sec_availability, on="cik", how="left")
+    for column in (
+        "sec_companyfacts_available", "sec_submissions_available",
+        "sec_us_domicile_evidence",
+    ):
+        security_master[column] = security_master[column].fillna(False).astype(bool)
+    as_of = pd.Timestamp.now(tz="UTC").tz_localize(None)
     security_master = _classify_security_eligibility(
         security_master,
         as_of=as_of,
+        maximum_price_age_days=int(config["universe"]["maximum_price_age_days"]),
     )
-    security_master.to_parquet(output / "security_master.parquet", index=False, compression="zstd")
-    security_master.loc[~security_master["eligible_common_stock"]].to_csv(
-        output / "security_universe_exclusions.csv",
-        index=False,
+    security_master = _add_issuer_market_cap_context(
+        security_master,
+        similarity_ratio_max=float(
+            config["universe"]["issuer_market_cap_similarity_ratio_max"]
+        ),
     )
-
     analysts = _read_jsonl_files(analyst_paths)
+    if analysts.empty:
+        analysts = pd.DataFrame(columns=["symbol", "dataset", "retrieved_at", "payload_json"])
+    analysts.to_parquet(
+        output / "yahoo_analyst_current.parquet",
+        index=False,
+        compression="zstd",
+    )
     values_by_symbol: dict[str, dict[str, FeatureValue]] = {}
     quality_rows: list[dict[str, Any]] = []
     sec_concept_input_frames: list[pd.DataFrame] = []
-    eligible = security_master.loc[security_master["eligible_common_stock"]].copy()
+    for row in security_master.loc[security_master["eligible_common_stock"]].itertuples():
+        symbol = str(row.symbol)
+        prices = connection.execute(
+            "SELECT * FROM prices_daily WHERE symbol = ? ORDER BY date", [symbol]
+        ).df()
+        completed_prices, incomplete_rows, completed_cutoff = (
+            exclude_incomplete_us_session(prices, as_of=as_of)
+        )
+        clean_prices, price_quality = clean_price_history(completed_prices)
+        price_quality["incomplete_session_rows_excluded"] = incomplete_rows
+        price_quality["latest_completed_session_date"] = completed_cutoff
+        current_price = (
+            float(clean_prices["adj_close"].iloc[-1]) if not clean_prices.empty else np.nan
+        )
+        recent = clean_prices.tail(21)
+        average_volume = pd.to_numeric(recent.get("volume"), errors="coerce").mean()
+        average_dollar_volume = (
+            pd.to_numeric(recent.get("volume"), errors="coerce")
+            * pd.to_numeric(recent.get("adj_close"), errors="coerce")
+        ).mean()
+        quality_rows.append(
+            {
+                "symbol": symbol,
+                **price_quality,
+                "current_price": current_price,
+                "average_volume_21d": average_volume,
+                "average_dollar_volume_21d": average_dollar_volume,
+            }
+        )
+    price_quality_frame = pd.DataFrame(quality_rows)
+    security_master = security_master.merge(price_quality_frame, on="symbol", how="left")
+    last_clean_price_dates = pd.to_datetime(
+        security_master.get("last_clean_price_date"), errors="coerce"
+    ).dt.normalize()
+    as_of_date = pd.Timestamp(as_of).tz_localize(None).normalize()
+    security_master["clean_price_staleness_days"] = (
+        as_of_date - last_clean_price_dates
+    ).dt.days
+    market_cap = pd.to_numeric(
+        security_master.get("issuer_market_cap"), errors="coerce"
+    )
+    rank_conditions = [
+        market_cap.lt(float(config["universe"]["minimum_market_cap_usd"])) | market_cap.isna(),
+        pd.to_numeric(security_master.get("current_price"), errors="coerce").lt(float(config["universe"]["minimum_price_usd"])),
+        pd.to_numeric(security_master.get("average_volume_21d"), errors="coerce").lt(float(config["universe"]["minimum_average_volume_21d"])) | pd.to_numeric(security_master.get("average_volume_21d"), errors="coerce").isna(),
+        pd.to_numeric(security_master.get("average_dollar_volume_21d"), errors="coerce").lt(float(config["universe"]["minimum_average_dollar_volume_21d"])) | pd.to_numeric(security_master.get("average_dollar_volume_21d"), errors="coerce").isna(),
+        pd.to_numeric(security_master.get("clean_price_rows"), errors="coerce").lt(float(config["universe"]["minimum_clean_price_rows"])),
+        pd.to_numeric(security_master.get("clean_price_staleness_days"), errors="coerce").gt(
+            int(config["universe"]["maximum_price_age_days"])
+        ) | pd.to_numeric(security_master.get("clean_price_staleness_days"), errors="coerce").isna(),
+        ~security_master.get("price_quality_pass", pd.Series(False, index=security_master.index)).fillna(False).astype(bool),
+        ~security_master["sec_submissions_available"],
+        ~security_master["sec_companyfacts_available"],
+    ]
+    security_master["ranking_rejection_reason"] = np.select(
+        rank_conditions,
+        [
+            "market_cap_below_minimum_or_missing",
+            "price_below_minimum",
+            "average_volume_below_minimum",
+            "average_dollar_volume_below_minimum",
+            "insufficient_clean_price_history",
+            "stale_or_missing_latest_price",
+            "price_quality_failed",
+            "sec_submissions_unavailable",
+            "sec_companyfacts_unavailable",
+        ],
+        default="",
+    )
+    security_master["ranking_eligible"] = (
+        security_master["eligible_common_stock"]
+        & security_master["ranking_rejection_reason"].eq("")
+    )
+    security_master.to_parquet(output / "security_master.parquet", index=False, compression="zstd")
+    security_master.loc[~security_master["ranking_eligible"]].to_csv(
+        output / "security_universe_exclusions.csv",
+        index=False,
+    )
+    eligible = security_master.loc[security_master["ranking_eligible"]].copy()
+    quality_rows = []
     for row in eligible.itertuples():
         symbol = str(row.symbol)
         cik = int(row.cik)
         prices = connection.execute("SELECT * FROM prices_daily WHERE symbol = ? ORDER BY date", [symbol]).df()
-        values = calculate_price_features(prices)
-        market_cap = getattr(row, "marketCap", None)
+        prices, _, _ = exclude_incomplete_us_session(prices, as_of=as_of)
+        prices, price_quality = clean_price_history(prices)
+        values = calculate_price_features(prices, as_of=as_of)
+        market_cap = getattr(row, "issuer_market_cap", None)
+        market_cap_source = getattr(
+            row, "issuer_market_cap_source", "missing_yfinance_market_cap"
+        )
         if not _is_number(market_cap):
             market_cap = None
         facts = connection.execute("SELECT * FROM sec_companyfacts WHERE cik = ?", [cik]).df()
         concept_inputs = latest_sec_concept_inputs(facts, as_of)
+        accounting_inputs = concept_inputs.loc[
+            concept_inputs["concept_lag"].eq(0)
+            & ~concept_inputs["concept"].isin(["shares", "employees"])
+        ] if not concept_inputs.empty else concept_inputs
         if not concept_inputs.empty:
             concept_inputs.insert(0, "cik", cik)
             concept_inputs.insert(0, "symbol", symbol)
             sec_concept_input_frames.append(concept_inputs)
         concepts = sec_concepts_from_inputs(concept_inputs)
+        sec_shares = concepts.get("shares", [None])[0] if concepts.get("shares") else None
+        resolved_shares = _resolve_current_shares_outstanding(
+            sec_shares,
+            getattr(row, "sharesOutstanding", None),
+        )
         if market_cap is None and not prices.empty:
-            shares = concepts.get("shares", [None])[0] if concepts.get("shares") else None
-            if _is_number(shares):
-                market_cap = float(prices["adj_close"].iloc[-1]) * float(str(shares))
-        values.update(calculate_accounting_features(concepts, market_cap=market_cap))
+            if _is_number(resolved_shares.raw_value):
+                market_cap = float(prices["adj_close"].iloc[-1]) * float(resolved_shares.raw_value)
+                market_cap_source = resolved_shares.source
+        accounting_values = calculate_accounting_features(
+            concepts, market_cap=market_cap
+        )
+        accounting_values = apply_accounting_input_freshness(
+            accounting_values,
+            concept_inputs,
+            as_of=as_of,
+            maximum_age_days=int(
+                config["score"]["maximum_accounting_input_age_days_for_ranking"]
+            ),
+        )
+        values.update(accounting_values)
         if market_cap is not None:
-            values["Size"] = FeatureValue("Size", float(market_cap), "exact", "yfinance_sec", "current_market_cap")
-        shares = concepts.get("shares", [None])[0] if concepts.get("shares") else None
-        if _is_number(shares) and "ShareVol" in values and values["ShareVol"].raw_value is not None:
-            values["ShareVol"] = FeatureValue("ShareVol", _safe_numeric_ratio(values["ShareVol"].raw_value, shares), "exact", "yfinance_sec", "mean_share_volume_over_sec_shares")
-        if _is_number(shares) and "std_turn" in values and values["std_turn"].raw_value is not None:
-            values["std_turn"] = FeatureValue("std_turn", _safe_numeric_ratio(values["std_turn"].raw_value, shares), "proxy", "yfinance_sec", "volume_std_over_sec_shares", "Uses current shares for the full window")
+            values["Size"] = FeatureValue(
+                "Size",
+                float(market_cap),
+                "proxy",
+                market_cap_source,
+                "current_market_cap",
+                "Current snapshot; not the official lagged portfolio-formation market cap",
+            )
+        values.update(_share_turnover_features(prices, resolved_shares))
         symbol_options = connection.execute("SELECT * FROM yahoo_options_current WHERE symbol = ?", [symbol]).df()
         stock_volume = float(prices["volume"].tail(21).mean()) if not prices.empty else None
         realized = values.get("RealizedVol").raw_value if values.get("RealizedVol") else None
-        values.update(_options_features(symbol_options, stock_volume, realized))
+        stock_price = float(prices["adj_close"].iloc[-1]) if not prices.empty else None
+        option_audit: dict[str, Any] = {}
+        values.update(
+            _options_features(
+                symbol_options,
+                stock_volume,
+                realized,
+                stock_price=stock_price,
+                as_of=as_of,
+                config=config,
+                audit=option_audit,
+            )
+        )
         symbol_analysts = analysts.loc[analysts["symbol"].eq(symbol)] if not analysts.empty else pd.DataFrame()
         values.update(_analyst_features(symbol_analysts))
         values_by_symbol[symbol] = values
@@ -1285,14 +2688,32 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             {
                 "symbol": symbol,
                 "cik": cik,
+                **price_quality,
                 "price_rows": len(prices),
                 "first_price_date": prices["date"].min() if not prices.empty else None,
                 "last_price_date": prices["date"].max() if not prices.empty else None,
                 "last_sec_available_at": facts["available_at"].max() if not facts.empty else None,
+                "last_sec_input_available_at": (
+                    concept_inputs["available_at"].max()
+                    if not concept_inputs.empty
+                    else None
+                ),
+                "last_accounting_input_available_at": (
+                    accounting_inputs["available_at"].max()
+                    if not accounting_inputs.empty
+                    else None
+                ),
+                "resolved_shares": resolved_shares.raw_value,
+                "resolved_shares_status": resolved_shares.status,
+                "resolved_shares_source": resolved_shares.source,
+                "resolved_shares_note": resolved_shares.note,
+                "issuer_market_cap": market_cap,
+                "issuer_market_cap_source": market_cap_source,
                 "sec_fact_rows": len(facts),
                 "computed_features": sum(item.raw_value is not None for item in values.values()),
                 "exact_features": sum(item.status == "exact" and item.raw_value is not None for item in values.values()),
                 "proxy_features": sum(item.status == "proxy" and item.raw_value is not None for item in values.values()),
+                **option_audit,
             }
         )
 
@@ -1329,24 +2750,219 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         values_by_symbol,
         as_of=as_of.date().isoformat(),
         redundancy_groups=groups,
+        security_context=eligible,
+        exact_source_multiplier=float(config["score"]["exact_source_multiplier"]),
+        proxy_source_multiplier=float(config["score"]["proxy_source_multiplier"]),
+        minimum_nonmodal_fraction=float(
+            config["score"]["minimum_cross_sectional_nonmodal_fraction"]
+        ),
+        minimum_cross_sectional_observations=int(
+            config["score"]["minimum_cross_sectional_observations"]
+        ),
+        minimum_cross_sectional_coverage_fraction=float(
+            config["score"]["minimum_cross_sectional_coverage_fraction"]
+        ),
     )
-    scores = calculate_scores(feature_frame, minimum_metrics=int(config["score"]["minimum_metrics_per_score"]))
-    aggregate_scores = calculate_aggregate_scores(scores)
+    feature_frame, current_redundancy_audit = refine_current_redundancy_groups(
+        feature_frame,
+        threshold=float(config["openap"].get("current_redundancy_threshold", 0.995)),
+        minimum_overlap=int(config["openap"].get("current_redundancy_minimum_overlap", 100)),
+    )
+    scores = calculate_scores(
+        feature_frame,
+        minimum_metrics=int(config["score"]["minimum_metrics_per_score"]),
+        maximum_metric_weight_multiple=float(config["score"]["maximum_metric_weight_multiple"]),
+        maximum_family_weight=float(config["score"]["maximum_family_weight"]),
+    )
+    horizon_score_contributions = scores.attrs.get(
+        "score_contributions", pd.DataFrame()
+    )
+    overall_features = feature_frame.copy()
+    overall_features["horizon_months"] = 0
+    overall_features, overall_redundancy_audit = refine_current_redundancy_groups(
+        overall_features,
+        threshold=float(config["openap"].get("current_redundancy_threshold", 0.995)),
+        minimum_overlap=int(config["openap"].get("current_redundancy_minimum_overlap", 100)),
+    )
+    overall_scores = calculate_scores(
+        overall_features,
+        minimum_metrics=int(config["score"]["minimum_metrics_per_score"]),
+        maximum_metric_weight_multiple=float(config["score"]["maximum_metric_weight_multiple"]),
+        maximum_family_weight=float(config["score"]["maximum_family_weight"]),
+    )
+    overall_score_contributions = overall_scores.attrs.get(
+        "score_contributions", pd.DataFrame()
+    )
+    overall_scores = overall_scores.loc[overall_scores["horizon_months"].eq(0)].copy()
+    score_contributions = pd.concat(
+        [horizon_score_contributions, overall_score_contributions],
+        ignore_index=True,
+    )
+    aggregate_scores = calculate_aggregate_scores(
+        overall_scores,
+        minimum_horizons=int(config["score"]["minimum_horizons_for_ranking"]),
+        required_horizons=config["score"]["required_ranking_horizons"],
+        minimum_confidence=float(config["score"]["minimum_aggregate_confidence"]),
+    )
     coverage = coverage_report(feature_frame, metadata)
     quality = pd.DataFrame(quality_rows)
+    scorable_counts = _scorable_feature_counts(feature_frame)
+    quality = quality.drop(
+        columns=["computed_features", "exact_features", "proxy_features"],
+        errors="ignore",
+    ).merge(scorable_counts, on="symbol", how="left")
+    for column in ("computed_features", "exact_features", "proxy_features"):
+        quality[column] = quality[column].fillna(0).astype(int)
+    for column, default in (
+        ("option_contracts_raw", 0),
+        ("option_contracts_usable", 0),
+        ("option_calls_usable", 0),
+        ("option_puts_usable", 0),
+        ("option_depth_pass", False),
+        ("option_rejection_reason", "no_usable_option_snapshot"),
+    ):
+        if column not in quality:
+            quality[column] = default
+        else:
+            quality[column] = quality[column].fillna(default)
     score_context = quality[
         [
             "symbol",
             "last_price_date",
             "last_sec_available_at",
+            "last_sec_input_available_at",
+            "last_accounting_input_available_at",
+            "price_rows",
             "computed_features",
             "exact_features",
             "proxy_features",
         ]
     ].copy()
     score_context["missing_features"] = EXPECTED_PREDICTORS - score_context["computed_features"]
+    score_context["sec_input_age_days"] = (
+        pd.Timestamp(as_of).tz_localize(None).normalize()
+        - pd.to_datetime(score_context["last_sec_input_available_at"], errors="coerce", utc=True)
+        .dt.tz_localize(None)
+        .dt.normalize()
+    ).dt.days
+    score_context["accounting_input_age_days"] = (
+        pd.Timestamp(as_of).tz_localize(None).normalize()
+        - pd.to_datetime(
+            score_context["last_accounting_input_available_at"],
+            errors="coerce",
+            utc=True,
+        )
+        .dt.tz_localize(None)
+        .dt.normalize()
+    ).dt.days
     scores = scores.merge(score_context, on="symbol", how="left")
+    overall_scores = overall_scores.merge(score_context, on="symbol", how="left")
     aggregate_scores = aggregate_scores.merge(score_context, on="symbol", how="left")
+    aggregate_scores = aggregate_scores.merge(
+        security_master[[
+            "symbol",
+            "marketCap",
+            "issuer_market_cap",
+            "issuer_market_cap_source",
+            "current_price",
+            "average_volume_21d",
+            "average_dollar_volume_21d",
+            "clean_price_staleness_days",
+            "ranking_eligible",
+        ]],
+        on="symbol",
+        how="left",
+        suffixes=("", "_universe"),
+    )
+    aggregate_scores["ranking_eligible"] = (
+        aggregate_scores["ranking_eligible"].fillna(False)
+        & aggregate_scores["ranking_eligible_universe"].fillna(False)
+    )
+    aggregate_scores = aggregate_scores.drop(columns=["ranking_eligible_universe"])
+    minimum_features = int(config["score"]["minimum_computed_features_for_ranking"])
+    maximum_missing = int(config["score"]["maximum_missing_features_for_ranking"])
+    maximum_sec_age = int(config["score"]["maximum_sec_age_days_for_ranking"])
+    maximum_accounting_age = int(
+        config["score"]["maximum_accounting_input_age_days_for_ranking"]
+    )
+    semantic_rejections = [
+        pd.to_numeric(aggregate_scores["computed_features"], errors="coerce").lt(minimum_features),
+        pd.to_numeric(aggregate_scores["missing_features"], errors="coerce").gt(maximum_missing),
+        pd.to_numeric(aggregate_scores["sec_input_age_days"], errors="coerce").gt(maximum_sec_age)
+        | pd.to_numeric(aggregate_scores["sec_input_age_days"], errors="coerce").isna(),
+        pd.to_numeric(
+            aggregate_scores["accounting_input_age_days"], errors="coerce"
+        ).gt(maximum_accounting_age)
+        | pd.to_numeric(
+            aggregate_scores["accounting_input_age_days"], errors="coerce"
+        ).isna(),
+    ]
+    semantic_reasons = [
+        "insufficient_computed_features",
+        "too_many_missing_features",
+        "stale_or_missing_sec_inputs",
+        "stale_or_missing_accounting_inputs",
+    ]
+    prior_reason = aggregate_scores["ranking_rejection_reason"].fillna("").astype(str)
+    semantic_reason = pd.Series(
+        np.select(semantic_rejections, semantic_reasons, default=""),
+        index=aggregate_scores.index,
+    )
+    aggregate_scores["ranking_rejection_reason"] = prior_reason.where(
+        prior_reason.ne(""), semantic_reason
+    )
+    aggregate_scores["ranking_eligible"] &= semantic_reason.eq("")
+    aggregate_scores["research_universe_score"] = aggregate_scores["aggregate_score"]
+    aggregate_scores["aggregate_score"] = np.nan
+    qualified_index = aggregate_scores.index[aggregate_scores["ranking_eligible"]]
+    qualified_raw = pd.to_numeric(
+        aggregate_scores.loc[qualified_index, "aggregate_raw_score"], errors="coerce"
+    )
+    qualified_count = int(qualified_raw.notna().sum())
+    if qualified_count == 1:
+        aggregate_scores.loc[qualified_index, "aggregate_score"] = 50.0
+    elif qualified_count > 1:
+        aggregate_scores.loc[qualified_index, "aggregate_score"] = (
+            100.0
+            * (qualified_raw.rank(method="average", na_option="keep") - 1.0)
+            / (qualified_count - 1)
+        )
+    aggregate_scores["score_is_probability"] = False
+    aggregate_scores["score_scale"] = "cross_sectional_percentile_0_100"
+
+    deployment = config["deployment"]
+    deployment_conditions = [
+        pd.to_numeric(
+            aggregate_scores["issuer_market_cap"], errors="coerce"
+        ).lt(
+            float(deployment["minimum_market_cap_usd"])
+        ),
+        pd.to_numeric(
+            aggregate_scores["average_dollar_volume_21d"], errors="coerce"
+        ).lt(float(deployment["minimum_average_dollar_volume_21d"])),
+        pd.to_numeric(aggregate_scores["price_rows"], errors="coerce").lt(
+            int(deployment["minimum_clean_price_rows"])
+        ),
+    ]
+    aggregate_scores["deployment_rejection_reason"] = np.select(
+        deployment_conditions,
+        [
+            "deployment_market_cap_below_minimum",
+            "deployment_liquidity_below_minimum",
+            "deployment_price_history_too_short",
+        ],
+        default="",
+    )
+    aggregate_scores["deployment_eligible"] = (
+        aggregate_scores["ranking_eligible"]
+        & aggregate_scores["deployment_rejection_reason"].eq("")
+    )
+    leaderboard = aggregate_scores.loc[aggregate_scores["ranking_eligible"]].sort_values(
+        ["aggregate_score", "aggregate_confidence"], ascending=[False, False]
+    )
+    deployable_leaderboard = leaderboard.loc[
+        leaderboard["deployment_eligible"]
+    ].copy()
     sec_concept_inputs = (
         pd.concat(sec_concept_input_frames, ignore_index=True)
         if sec_concept_input_frames
@@ -1357,10 +2973,24 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     feature_frame.to_parquet(output / "openap_features_current.parquet", index=False, compression="zstd")
     scores.to_parquet(output / "openap_scores_current.parquet", index=False, compression="zstd")
+    overall_scores.to_parquet(
+        output / "openap_overall_scores_current.parquet",
+        index=False,
+        compression="zstd",
+    )
     aggregate_scores.to_parquet(
         output / "openap_scores_aggregate_current.parquet",
         index=False,
         compression="zstd",
+    )
+    score_contributions.to_parquet(
+        output / "openap_score_contributions_current.parquet",
+        index=False,
+        compression="zstd",
+    )
+    leaderboard.to_csv(output / "openap_current_leaderboard.csv", index=False)
+    deployable_leaderboard.to_csv(
+        output / "openap_current_deployable_leaderboard.csv", index=False
     )
     sec_concept_inputs.to_parquet(
         output / "sec_concept_inputs_current.parquet",
@@ -1369,22 +2999,119 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     coverage.to_csv(output / "coverage_185.csv", index=False)
     quality.to_csv(output / "data_quality.csv", index=False)
-    coverage.loc[coverage["coverage_status"].eq("proxy")].to_csv(output / "proxy_audit.csv", index=False)
+    price_quality_frame.to_csv(output / "price_quality_current.csv", index=False)
+    coverage.loc[coverage["coverage_status"].isin(["proxy", "mixed"])].to_csv(output / "proxy_audit.csv", index=False)
+    coverage.loc[coverage["coverage_status"].eq("mixed")].to_csv(output / "mixed_fidelity_audit.csv", index=False)
     coverage.loc[coverage["coverage_status"].eq("unavailable")].to_csv(output / "unavailable_predictors.csv", index=False)
     metadata.to_csv(output / "selected_185_predictors.csv", index=False)
     groups.to_csv(output / "redundancy_groups.csv", index=False)
+    redundancy_audit.to_csv(output / "redundancy_correlation_audit.csv", index=False)
+    current_redundancy_audit.to_csv(
+        output / "current_redundancy_groups.csv", index=False
+    )
+    overall_redundancy_audit.to_csv(
+        output / "overall_redundancy_groups.csv", index=False
+    )
 
     connection.execute("CREATE OR REPLACE TABLE security_master AS SELECT * FROM read_parquet(?)", [str(output / "security_master.parquet")])
     connection.execute("CREATE OR REPLACE TABLE openap_features_current AS SELECT * FROM read_parquet(?)", [str(output / "openap_features_current.parquet")])
     connection.execute("CREATE OR REPLACE TABLE openap_scores_current AS SELECT * FROM read_parquet(?)", [str(output / "openap_scores_current.parquet")])
     connection.execute(
+        "CREATE OR REPLACE TABLE openap_overall_scores_current AS SELECT * FROM read_parquet(?)",
+        [str(output / "openap_overall_scores_current.parquet")],
+    )
+    connection.execute(
         "CREATE OR REPLACE TABLE openap_scores_aggregate_current AS SELECT * FROM read_parquet(?)",
         [str(output / "openap_scores_aggregate_current.parquet")],
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE openap_score_contributions_current AS SELECT * FROM read_parquet(?)",
+        [str(output / "openap_score_contributions_current.parquet")],
     )
     connection.execute(
         "CREATE OR REPLACE TABLE sec_concept_inputs_current AS SELECT * FROM read_parquet(?)",
         [str(output / "sec_concept_inputs_current.parquet")],
     )
+    connection.execute(
+        "CREATE OR REPLACE TABLE yahoo_analyst_current AS SELECT * FROM read_parquet(?)",
+        [str(output / "yahoo_analyst_current.parquet")],
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE price_quality_current AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "price_quality_current.csv")],
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE data_quality_current AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "data_quality.csv")],
+    )
+    latest_completed_session = latest_completed_us_session_date(as_of)
+    connection.execute(
+        """
+        CREATE OR REPLACE TABLE prices_daily_clean AS
+        SELECT p.*
+        FROM prices_daily_raw p
+        INNER JOIN price_quality_current q USING (symbol)
+        WHERE q.price_quality_pass
+          AND p.adj_close > 0
+          AND (p.open IS NULL OR p.open > 0)
+          AND (p.high IS NULL OR p.high > 0)
+          AND (p.low IS NULL OR p.low > 0)
+          AND (p.close IS NULL OR p.close > 0)
+          AND (
+            p.open IS NULL OR p.high IS NULL OR p.low IS NULL OR p.close IS NULL
+            OR (
+              p.high >= greatest(p.open, p.close, p.low)
+              AND p.low <= least(p.open, p.close, p.high)
+            )
+          )
+          AND (q.history_reset_after IS NULL OR p.date > q.history_reset_after)
+          AND CAST(p.date AS DATE) <= CAST(? AS DATE)
+        """,
+        [latest_completed_session.date().isoformat()],
+    )
+    connection.execute("CREATE OR REPLACE VIEW prices_daily AS SELECT * FROM prices_daily_clean")
+
+    create_options_quality_tables(connection, as_of=as_of, config=config)
+    connection.execute("CREATE OR REPLACE VIEW yahoo_options_current AS SELECT * FROM yahoo_options_usable")
+    option_quality_summary = connection.execute(
+        "SELECT quality_status, COUNT(*) AS rows FROM yahoo_options_quality GROUP BY quality_status ORDER BY quality_status"
+    ).df()
+    option_quality_summary.to_csv(output / "options_quality_summary.csv", index=False)
+    connection.execute(
+        "CREATE OR REPLACE TABLE options_quality_summary AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "options_quality_summary.csv")],
+    )
+    connection.execute("SELECT * FROM yfinance_download_status").df().to_csv(
+        output / "yfinance_download_status.csv", index=False
+    )
+    connection.execute("SELECT * FROM sec_download_status").df().to_csv(
+        output / "sec_download_status.csv", index=False
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE openap_current_leaderboard AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "openap_current_leaderboard.csv")],
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE openap_current_deployable_leaderboard AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "openap_current_deployable_leaderboard.csv")],
+    )
+    for table_name, file_name in (
+        ("selected_predictors", "selected_185_predictors.csv"),
+        ("redundancy_groups", "redundancy_groups.csv"),
+        ("redundancy_correlation_audit", "redundancy_correlation_audit.csv"),
+        ("current_redundancy_groups", "current_redundancy_groups.csv"),
+        ("overall_redundancy_groups", "overall_redundancy_groups.csv"),
+        ("coverage_185", "coverage_185.csv"),
+        ("data_quality_current", "data_quality.csv"),
+        ("proxy_audit", "proxy_audit.csv"),
+        ("mixed_fidelity_audit", "mixed_fidelity_audit.csv"),
+        ("unavailable_predictors", "unavailable_predictors.csv"),
+        ("security_universe_exclusions", "security_universe_exclusions.csv"),
+    ):
+        connection.execute(
+            f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto(?)",
+            [str(output / file_name)],
+        )
     duplicate_prices = int(
         connection.execute(
             "SELECT COALESCE(SUM(row_count - 1), 0) FROM "
@@ -1392,9 +3119,57 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "GROUP BY symbol, date HAVING COUNT(*) > 1)"
         ).fetchone()[0]
     )
+    raw_price_rows_db = int(
+        connection.execute("SELECT COUNT(*) FROM prices_daily_raw").fetchone()[0]
+    )
+    sec_companyfacts_rows_db = int(
+        connection.execute("SELECT COUNT(*) FROM sec_companyfacts").fetchone()[0]
+    )
+    clean_price_rows_db = int(
+        connection.execute("SELECT COUNT(*) FROM prices_daily_clean").fetchone()[0]
+    )
+    raw_nonpositive_price_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM prices_daily_raw WHERE adj_close <= 0"
+        ).fetchone()[0]
+    )
+    options_raw_rows = int(
+        connection.execute("SELECT COUNT(*) FROM yahoo_options_raw").fetchone()[0]
+    )
+    options_usable_rows = int(
+        connection.execute("SELECT COUNT(*) FROM yahoo_options_usable").fetchone()[0]
+    )
+    raw_duplicate_option_contract_rows = int(
+        connection.execute(
+            "SELECT COALESCE(SUM(n - 1), 0) FROM ("
+            "SELECT contractSymbol, COUNT(*) n FROM yahoo_options_raw "
+            "GROUP BY contractSymbol HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+    )
+    quarantined_option_identity_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM yahoo_options_quality WHERE quality_status IN ("
+            "'invalid_contract_symbol','contract_underlying_mismatch',"
+            "'contract_expiration_mismatch','contract_type_mismatch',"
+            "'contract_strike_mismatch')"
+        ).fetchone()[0]
+    )
+    duplicate_usable_option_contracts = int(
+        connection.execute(
+            "SELECT COALESCE(SUM(n - 1), 0) FROM ("
+            "SELECT contractSymbol, COUNT(*) n FROM yahoo_options_usable "
+            "GROUP BY contractSymbol HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+    )
     future_price_rows = int(
         connection.execute(
             "SELECT COUNT(*) FROM prices_daily WHERE CAST(date AS DATE) > CURRENT_DATE"
+        ).fetchone()[0]
+    )
+    incomplete_clean_price_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM prices_daily_clean WHERE CAST(date AS DATE) > CAST(? AS DATE)",
+            [latest_completed_session.date().isoformat()],
         ).fetchone()[0]
     )
     facts_without_available_at = int(
@@ -1407,10 +3182,381 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "SELECT COUNT(*) FROM sec_concept_inputs_current WHERE available_at IS NULL"
         ).fetchone()[0]
     )
+    future_concept_inputs = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_concept_inputs_current "
+            "WHERE CAST(period_end AS DATE) > CAST(? AS DATE)",
+            [as_of.date().isoformat()],
+        ).fetchone()[0]
+    )
+    concept_inputs_before_period_end = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_concept_inputs_current "
+            "WHERE CAST(available_at AS TIMESTAMP) < CAST(period_end AS TIMESTAMP)"
+        ).fetchone()[0]
+    )
+    concept_inputs_before_filed = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_concept_inputs_current "
+            "WHERE filed IS NOT NULL AND CAST(available_at AS TIMESTAMP) < CAST(filed AS TIMESTAMP)"
+        ).fetchone()[0]
+    )
+    invalid_concept_units = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_concept_inputs_current WHERE "
+            "(concept = 'shares' AND lower(unit) <> 'shares') OR "
+            "(concept = 'employees' AND lower(unit) NOT IN ('employee','employees','person','persons')) OR "
+            "(concept NOT IN ('shares','employees') AND upper(unit) <> 'USD')"
+        ).fetchone()[0]
+    )
+    duplicate_companyfacts = int(
+        connection.execute(
+            "SELECT COALESCE(SUM(n - 1), 0) FROM ("
+            "SELECT cik, taxonomy, tag, unit, period_start, period_end, accession_number, COUNT(*) n "
+            "FROM sec_companyfacts GROUP BY ALL HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+    )
+    duplicate_submissions = int(
+        connection.execute(
+            "SELECT COALESCE(SUM(n - 1), 0) FROM ("
+            "SELECT cik, accession_number, form, filing_date, COUNT(*) n "
+            "FROM sec_submissions GROUP BY ALL HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+    )
+    blank_required_identifiers = int(
+        connection.execute(
+            "SELECT "
+            "(SELECT COUNT(*) FROM security_master WHERE trim(symbol) = '') + "
+            "(SELECT COUNT(*) FROM sec_companyfacts WHERE "
+            "trim(taxonomy) = '' OR trim(tag) = '' OR trim(unit) = '' "
+            "OR trim(accession_number) = '') + "
+            "(SELECT COUNT(*) FROM sec_submissions WHERE "
+            "trim(accession_number) = '' OR trim(form) = '') + "
+            "(SELECT COUNT(*) FROM openap_features_current WHERE "
+            "trim(symbol) = '' OR trim(signalname) = '')"
+        ).fetchone()[0]
+    )
+    inconsistent_feature_status = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current "
+            "WHERE raw_value IS NULL AND status IN ('exact','proxy')"
+        ).fetchone()[0]
+    )
+    ineligible_leaderboard_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_current_leaderboard WHERE NOT ranking_eligible"
+        ).fetchone()[0]
+    )
+    stale_leaderboard_prices = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_current_leaderboard "
+            "WHERE clean_price_staleness_days IS NULL OR clean_price_staleness_days > ?",
+            [int(config["universe"]["maximum_price_age_days"])],
+        ).fetchone()[0]
+    )
+    unsupported_official_filters = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current "
+            "WHERE official_filter_status LIKE 'unsupported:%'"
+        ).fetchone()[0]
+    )
+    weak_bucket_scores = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_overall_scores_current "
+            "WHERE metrics_used < minimum_metrics_required AND score IS NOT NULL"
+        ).fetchone()[0]
+    )
+    family_weight_cap_violations = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_overall_scores_current "
+            "WHERE horizon_evidence_sufficient "
+            "AND maximum_family_weight_actual > ? + 1e-12",
+            [float(config["score"]["maximum_family_weight"])],
+        ).fetchone()[0]
+    )
+    required_horizons = [int(value) for value in config["score"]["required_ranking_horizons"]]
+    required_horizon_denominator_variants = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT horizon_months FROM openap_overall_scores_current "
+            f"WHERE horizon_months IN ({','.join(map(str, required_horizons))}) "
+            "GROUP BY horizon_months HAVING COUNT(DISTINCT (metrics_expected, groups_expected)) <> 1)"
+        ).fetchone()[0]
+    )
+    ranking_sec_download_failures = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_download_status d "
+            "INNER JOIN security_master s ON d.cik = s.cik "
+            "WHERE s.ranking_eligible "
+            "AND d.status NOT IN ('ok','repaired_bulk')"
+        ).fetchone()[0]
+    )
+    sec_download_errors = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_download_status "
+            "WHERE status NOT IN ('ok','repaired_bulk')"
+        ).fetchone()[0]
+    )
+    sec_direct_downloads = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_download_status "
+            "WHERE status = 'ok' AND source_mode = 'sec_official_api'"
+        ).fetchone()[0]
+    )
+    sec_jina_fallback_downloads = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_download_status "
+            "WHERE status = 'ok' AND source_mode = 'sec_via_jina_readthrough'"
+        ).fetchone()[0]
+    )
+    uninformative_weighted_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current "
+            "WHERE value_status = 'uninformative_cross_section' "
+            "AND (status <> 'unavailable' OR evidence_weight <> 0)"
+        ).fetchone()[0]
+    )
+    weighted_constant_predictors = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT signalname FROM openap_features_current "
+            "WHERE status IN ('exact','proxy') AND evidence_weight > 0 AND raw_value IS NOT NULL "
+            "GROUP BY signalname HAVING COUNT(*) >= 3 AND COUNT(DISTINCT raw_value) <= 1)"
+        ).fetchone()[0]
+    )
+    minimum_cross_sectional_count = max(
+        int(config["score"]["minimum_cross_sectional_observations"]),
+        int(
+            math.ceil(
+                len(values_by_symbol)
+                * float(
+                    config["score"]["minimum_cross_sectional_coverage_fraction"]
+                )
+            )
+        ),
+    )
+    undercovered_weighted_predictors = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT signalname, COUNT(*) FILTER (WHERE raw_value IS NOT NULL) n "
+            "FROM openap_features_current "
+            "WHERE status IN ('exact','proxy') AND evidence_weight > 0 "
+            "GROUP BY signalname HAVING n < ?) ",
+            [minimum_cross_sectional_count],
+        ).fetchone()[0]
+    )
+    stale_sec_leaderboard_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_current_leaderboard "
+            "WHERE sec_input_age_days IS NULL OR sec_input_age_days > ?",
+            [int(config["score"]["maximum_sec_age_days_for_ranking"])],
+        ).fetchone()[0]
+    )
+    stale_accounting_leaderboard_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_current_leaderboard "
+            "WHERE accounting_input_age_days IS NULL OR accounting_input_age_days > ?",
+            [
+                int(
+                    config["score"][
+                        "maximum_accounting_input_age_days_for_ranking"
+                    ]
+                )
+            ],
+        ).fetchone()[0]
+    )
+    stale_weighted_feature_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current "
+            "WHERE source_input_age_days > ? AND evidence_weight > 0",
+            [
+                int(
+                    config["score"][
+                        "maximum_accounting_input_age_days_for_ranking"
+                    ]
+                )
+            ],
+        ).fetchone()[0]
+    )
+    undercovered_leaderboard_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_current_leaderboard "
+            "WHERE computed_features < ? OR missing_features > ? OR aggregate_confidence < ?",
+            [
+                int(config["score"]["minimum_computed_features_for_ranking"]),
+                int(config["score"]["maximum_missing_features_for_ranking"]),
+                float(config["score"]["minimum_aggregate_confidence"]),
+            ],
+        ).fetchone()[0]
+    )
+    forbidden_exact_signals = tuple(sorted(ACCOUNTING_PROXY_LIMITS)) + ("Size",)
+    placeholders = ",".join("?" for _ in forbidden_exact_signals)
+    exact_formula_policy_violations = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current "
+            f"WHERE status = 'exact' AND signalname IN ({placeholders})",
+            list(forbidden_exact_signals),
+        ).fetchone()[0]
+    )
+    mixed_unit_turnover_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current WHERE formula_id IN "
+            "('mean_volume_21d','volume_std_proxy_252d','mean_share_volume_over_sec_shares',"
+            "'volume_std_over_sec_shares')"
+        ).fetchone()[0]
+    )
+    shallow_option_feature_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current f "
+            "LEFT JOIN data_quality_current q USING (symbol) "
+            "WHERE f.source = 'yfinance_current_option_chain' "
+            "AND f.raw_value IS NOT NULL AND NOT COALESCE(q.option_depth_pass, FALSE)"
+        ).fetchone()[0]
+    )
+    overall_score_scale_violations = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT as_of, MIN(aggregate_score) lo, MAX(aggregate_score) hi, "
+            "COUNT(aggregate_score) n FROM openap_current_leaderboard GROUP BY as_of) "
+            "WHERE n > 1 AND (ABS(lo) > 1e-9 OR ABS(hi - 100.0) > 1e-9)"
+        ).fetchone()[0]
+    )
+    score_contribution_mismatches = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT s.as_of, s.symbol, s.horizon_months, s.raw_score, "
+            "SUM(c.raw_score_contribution) contribution_sum "
+            "FROM openap_overall_scores_current s "
+            "JOIN openap_score_contributions_current c USING (as_of, symbol, horizon_months) "
+            "WHERE s.horizon_months = 0 AND s.raw_score IS NOT NULL "
+            "GROUP BY s.as_of, s.symbol, s.horizon_months, s.raw_score) "
+            "WHERE ABS(raw_score - contribution_sum) > 1e-8"
+        ).fetchone()[0]
+    )
+    feature_count_mismatches = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT q.symbol, q.computed_features, q.exact_features, q.proxy_features, "
+            "COUNT(*) FILTER (WHERE f.status IN ('exact','proxy') "
+            "AND f.evidence_weight > 0 AND f.score_percentile IS NOT NULL) actual_computed, "
+            "COUNT(*) FILTER (WHERE f.status = 'exact' "
+            "AND f.evidence_weight > 0 AND f.score_percentile IS NOT NULL) actual_exact, "
+            "COUNT(*) FILTER (WHERE f.status = 'proxy' "
+            "AND f.evidence_weight > 0 AND f.score_percentile IS NOT NULL) actual_proxy "
+            "FROM data_quality_current q "
+            "LEFT JOIN openap_features_current f USING (symbol) "
+            "GROUP BY q.symbol, q.computed_features, q.exact_features, q.proxy_features) "
+            "WHERE computed_features <> actual_computed "
+            "OR exact_features <> actual_exact OR proxy_features <> actual_proxy"
+        ).fetchone()[0]
+    )
+    missing_issuer_market_cap_leaderboard_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_current_leaderboard "
+            "WHERE issuer_market_cap IS NULL OR issuer_market_cap <= 0"
+        ).fetchone()[0]
+    )
+    issue_counts = {
+        "duplicate_price_rows": duplicate_prices,
+        "future_price_rows": future_price_rows,
+        "incomplete_clean_price_rows": incomplete_clean_price_rows,
+        "facts_without_available_at": facts_without_available_at,
+        "concept_inputs_without_available_at": concept_inputs_without_available_at,
+        "future_concept_inputs": future_concept_inputs,
+        "concept_inputs_before_period_end": concept_inputs_before_period_end,
+        "concept_inputs_before_filed": concept_inputs_before_filed,
+        "invalid_concept_units": invalid_concept_units,
+        "duplicate_companyfacts": duplicate_companyfacts,
+        "duplicate_submissions": duplicate_submissions,
+        "blank_required_identifiers": blank_required_identifiers,
+        "inconsistent_feature_status": inconsistent_feature_status,
+        "ineligible_leaderboard_rows": ineligible_leaderboard_rows,
+        "stale_leaderboard_prices": stale_leaderboard_prices,
+        "unsupported_official_filters": unsupported_official_filters,
+        "weak_bucket_scores": weak_bucket_scores,
+        "family_weight_cap_violations": family_weight_cap_violations,
+        "required_horizon_denominator_variants": required_horizon_denominator_variants,
+        "ranking_sec_download_failures": ranking_sec_download_failures,
+        "uninformative_weighted_rows": uninformative_weighted_rows,
+        "weighted_constant_predictors": weighted_constant_predictors,
+        "undercovered_weighted_predictors": undercovered_weighted_predictors,
+        "stale_sec_leaderboard_rows": stale_sec_leaderboard_rows,
+        "stale_accounting_leaderboard_rows": stale_accounting_leaderboard_rows,
+        "stale_weighted_feature_rows": stale_weighted_feature_rows,
+        "undercovered_leaderboard_rows": undercovered_leaderboard_rows,
+        "exact_formula_policy_violations": exact_formula_policy_violations,
+        "mixed_unit_turnover_rows": mixed_unit_turnover_rows,
+        "shallow_option_feature_rows": shallow_option_feature_rows,
+        "overall_score_scale_violations": overall_score_scale_violations,
+        "score_contribution_mismatches": score_contribution_mismatches,
+        "feature_count_mismatches": feature_count_mismatches,
+        "missing_issuer_market_cap_leaderboard_rows": (
+            missing_issuer_market_cap_leaderboard_rows
+        ),
+        "duplicate_usable_option_contracts": duplicate_usable_option_contracts,
+    }
+    warning_counts = {
+        "nonranking_sec_download_errors": max(
+            sec_download_errors - ranking_sec_download_failures, 0
+        ),
+        "sec_jina_fallback_downloads": sec_jina_fallback_downloads,
+        "raw_nonpositive_price_rows_quarantined": raw_nonpositive_price_rows,
+        "stale_sec_inputs_over_warning_age": int(
+            connection.execute(
+                "SELECT COUNT(*) FROM openap_scores_aggregate_current "
+                "WHERE sec_input_age_days > ?",
+                [int(config["score"]["sec_freshness_warning_days"])],
+            ).fetchone()[0]
+        ),
+        "stale_accounting_inputs_over_warning_age": int(
+            connection.execute(
+                "SELECT COUNT(*) FROM openap_scores_aggregate_current "
+                "WHERE accounting_input_age_days > ?",
+                [int(config["score"]["accounting_freshness_warning_days"])],
+            ).fetchone()[0]
+        ),
+        "nondeployable_research_leaderboard_rows": int(
+            connection.execute(
+                "SELECT COUNT(*) FROM openap_current_leaderboard "
+                "WHERE NOT deployment_eligible"
+            ).fetchone()[0]
+        ),
+        "legacy_redundancy_audit_missing": int(
+            redundancy_audit_source_status != "source_artifact"
+        ),
+        "secondary_common_share_classes_retained": int(
+            (
+                security_master["eligible_common_stock"]
+                & ~security_master["issuer_primary_security"]
+            ).sum()
+        ),
+        "raw_duplicate_option_contract_rows_quarantined": (
+            raw_duplicate_option_contract_rows
+        ),
+        "invalid_option_identity_rows_quarantined": (
+            quarantined_option_identity_rows
+        ),
+    }
+    issues = pd.DataFrame(
+        [
+            {"check_name": name, "severity": "error", "issue_count": count, "passed": count == 0}
+            for name, count in issue_counts.items()
+        ]
+        + [
+            {"check_name": name, "severity": "warning", "issue_count": count, "passed": count == 0}
+            for name, count in warning_counts.items()
+        ]
+    )
+    issues.to_csv(output / "data_quality_issues.csv", index=False)
+    connection.execute(
+        "CREATE OR REPLACE TABLE data_quality_issues AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "data_quality_issues.csv")],
+    )
     connection.close()
 
     exact_predictors = int((coverage["coverage_status"] == "exact").sum())
     proxy_predictors = int((coverage["coverage_status"] == "proxy").sum())
+    mixed_predictors = int((coverage["coverage_status"] == "mixed").sum())
     unavailable_predictors = int((coverage["coverage_status"] == "unavailable").sum())
     summaries = [json.loads(path.read_text(encoding="utf-8")) for path in summary_paths]
     if len(sec_summary_paths) != expected_sec_chunks:
@@ -1456,10 +3602,40 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "CREATE OR REPLACE TABLE sec_source_manifest AS SELECT * FROM read_csv_auto(?)",
         [str(output / "sec_source_manifest.csv")],
     )
+    (
+        schema_contract_rows,
+        database_index_rows,
+        database_contract_violations,
+    ) = finalize_database_contract(
+        connection, output
+    )
+    issues = pd.concat(
+        [
+            issues,
+            pd.DataFrame(
+                [
+                    {
+                        "check_name": "database_contract_violations",
+                        "severity": "error",
+                        "issue_count": database_contract_violations,
+                        "passed": database_contract_violations == 0,
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    issues.to_csv(output / "data_quality_issues.csv", index=False)
+    connection.register("data_quality_issues_frame", issues)
+    connection.execute(
+        "CREATE OR REPLACE TABLE data_quality_issues AS "
+        "SELECT * FROM data_quality_issues_frame"
+    )
+    connection.unregister("data_quality_issues_frame")
     connection.close()
     sec_companyfacts_rows = sum(int(item.get("companyfacts_rows", 0)) for item in sec_summaries)
     sec_submissions_rows = sum(int(item.get("submissions_rows", 0)) for item in sec_summaries)
-    all_facts_have_available_at = all(bool(item.get("all_facts_have_available_at")) for item in sec_summaries)
+    all_facts_have_available_at = facts_without_available_at == 0
     summary = {
         "dataset_id": config["dataset_id"],
         "completed_at": _utcnow(),
@@ -1468,16 +3644,50 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "eligible_symbols": len(values_by_symbol),
         "security_master_rows": len(security_master),
         "security_exclusion_rows": int((~security_master["eligible_common_stock"]).sum()),
+        "common_stock_exclusion_rows": int((~security_master["eligible_common_stock"]).sum()),
+        "multi_share_class_issuer_count": int(
+            security_master.loc[
+                security_master["eligible_common_stock"]
+                & security_master["issuer_share_class_count"].gt(1),
+                "cik",
+            ].nunique()
+        ),
+        "secondary_common_share_classes_retained": int(
+            (
+                security_master["eligible_common_stock"]
+                & ~security_master["issuer_primary_security"]
+            ).sum()
+        ),
+        "ranking_exclusion_rows": int((~security_master["ranking_eligible"]).sum()),
         "price_rows": int(sum(int(item.get("price_rows", 0)) for item in summaries)),
-        "sec_companyfacts_rows": sec_companyfacts_rows,
+        "raw_price_rows_in_database": raw_price_rows_db,
+        "clean_price_rows_in_database": clean_price_rows_db,
+        "options_raw_rows": options_raw_rows,
+        "options_usable_rows": options_usable_rows,
+        "raw_duplicate_option_contract_rows": raw_duplicate_option_contract_rows,
+        "quarantined_option_identity_rows": quarantined_option_identity_rows,
+        "duplicate_usable_option_contracts": duplicate_usable_option_contracts,
+        "sec_companyfacts_rows": sec_companyfacts_rows_db,
+        "sec_companyfacts_rows_before_bulk_repair": sec_companyfacts_rows,
+        "sec_bulk_repair_requested": sec_bulk_repair["requested"],
+        "sec_bulk_repair_completed": sec_bulk_repair["repaired"],
+        "sec_bulk_repair_still_missing": sec_bulk_repair["still_missing"],
+        "sec_bulk_repair_sha256": sec_bulk_repair["bulk_sha256"],
         "sec_submissions_rows": sec_submissions_rows,
         "exact_predictors_with_any_value": exact_predictors,
         "proxy_predictors_with_any_value": proxy_predictors,
+        "mixed_predictors_with_exact_and_proxy_rows": mixed_predictors,
         "unavailable_predictors": unavailable_predictors,
         "coverage_rows": len(coverage),
         "scores_rows": len(scores),
+        "overall_scores_rows": len(overall_scores),
         "aggregate_scores_rows": len(aggregate_scores),
+        "leaderboard_rows": len(leaderboard),
+        "deployable_leaderboard_rows": len(deployable_leaderboard),
+        "score_contribution_rows": len(score_contributions),
         "score_horizons": sorted(scores["horizon_months"].dropna().astype(int).unique().tolist()),
+        "ranking_score_mode": str(config["score"]["ranking_score_mode"]),
+        "redundancy_audit_source_status": redundancy_audit_source_status,
         "features_rows": len(feature_frame),
         "all_facts_have_available_at": all_facts_have_available_at,
         "locked_opened": False,
@@ -1485,29 +3695,63 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "validation_used_for_selection": False,
         "partial": False,
         "raw_sec_archives_preserved_in_run": True,
+        "raw_sec_archives_in_final_artifact": False,
+        "raw_sec_archive_retention_days": int(config["execution"]["artifact_retention_days"]),
         "sec_chunks_found": len(sec_summary_paths),
+        "sec_source_layout": sec_layout,
         "duplicate_price_rows": duplicate_prices,
         "future_price_rows": future_price_rows,
         "facts_without_available_at": facts_without_available_at,
         "sec_concept_input_rows": len(sec_concept_inputs),
         "concept_inputs_without_available_at": concept_inputs_without_available_at,
+        "future_concept_inputs": future_concept_inputs,
+        "concept_inputs_before_period_end": concept_inputs_before_period_end,
+        "concept_inputs_before_filed": concept_inputs_before_filed,
+        "invalid_concept_units": invalid_concept_units,
+        "duplicate_companyfacts": duplicate_companyfacts,
+        "duplicate_submissions": duplicate_submissions,
+        "blank_required_identifiers": blank_required_identifiers,
+        "inconsistent_feature_status": inconsistent_feature_status,
+        "ineligible_leaderboard_rows": ineligible_leaderboard_rows,
+        "stale_leaderboard_prices": stale_leaderboard_prices,
+        "unsupported_official_filters": unsupported_official_filters,
+        "weak_bucket_scores": weak_bucket_scores,
+        "family_weight_cap_violations": family_weight_cap_violations,
+        "required_horizon_denominator_variants": required_horizon_denominator_variants,
+        "ranking_sec_download_failures": ranking_sec_download_failures,
+        "uninformative_weighted_rows": uninformative_weighted_rows,
+        "weighted_constant_predictors": weighted_constant_predictors,
+        "undercovered_weighted_predictors": undercovered_weighted_predictors,
+        "stale_sec_leaderboard_rows": stale_sec_leaderboard_rows,
+        "stale_accounting_leaderboard_rows": stale_accounting_leaderboard_rows,
+        "stale_weighted_feature_rows": stale_weighted_feature_rows,
+        "undercovered_leaderboard_rows": undercovered_leaderboard_rows,
+        "exact_formula_policy_violations": exact_formula_policy_violations,
+        "mixed_unit_turnover_rows": mixed_unit_turnover_rows,
+        "shallow_option_feature_rows": shallow_option_feature_rows,
+        "overall_score_scale_violations": overall_score_scale_violations,
+        "score_contribution_mismatches": score_contribution_mismatches,
+        "sec_download_errors": sec_download_errors,
+        "sec_direct_downloads": sec_direct_downloads,
+        "sec_jina_fallback_downloads": sec_jina_fallback_downloads,
+        "score_validation_status": str(config["score"]["validation_status"]),
+        "prediction_probability_claimed": False,
         "source_manifest_rows": len(source_manifest),
         "yfinance_source_manifest_rows": len(yahoo_source_manifest),
         "sec_source_manifest_rows": len(sec_source_manifest),
+        "schema_contract_rows": schema_contract_rows,
+        "database_index_rows": database_index_rows,
+        "database_contract_violations": database_contract_violations,
         "pipeline_git_sha": os.environ.get("GITHUB_SHA", ""),
         "config_sha256": sha256_file(args.config),
     }
-    if (
-        duplicate_prices
-        or future_price_rows
-        or facts_without_available_at
-        or concept_inputs_without_available_at
-    ):
+    if any(issue_counts.values()) or database_contract_violations:
         raise OpenAPDataError(
             "Data-quality gate failed: "
-            f"duplicate_prices={duplicate_prices}, future_prices={future_price_rows}, "
-            f"facts_without_available_at={facts_without_available_at}, "
-            f"concept_inputs_without_available_at={concept_inputs_without_available_at}"
+            + ", ".join(
+                [f"{name}={count}" for name, count in issue_counts.items() if count]
+                + ([f"database_contract_violations={database_contract_violations}"] if database_contract_violations else [])
+            )
         )
     if len(coverage) != EXPECTED_PREDICTORS or len(feature_frame) != len(values_by_symbol) * EXPECTED_PREDICTORS:
         raise OpenAPDataError("Final feature or coverage row counts do not reconcile")
@@ -1546,6 +3790,10 @@ def build_parser() -> argparse.ArgumentParser:
     sec_parser.add_argument("--chunk-index", type=int, required=True)
     sec_parser.add_argument("--total-chunks", type=int, required=True)
     sec_parser.add_argument("--output-dir", required=True)
+    sec_bulk_parser = subparsers.add_parser("sec-bulk")
+    sec_bulk_parser.add_argument("--security-master", required=True)
+    sec_bulk_parser.add_argument("--sec-user-agent", required=True)
+    sec_bulk_parser.add_argument("--output-dir", required=True)
     merge_parser = subparsers.add_parser("merge")
     merge_parser.add_argument("--input-root", required=True)
     merge_parser.add_argument("--prepare-dir", required=True)
@@ -1564,6 +3812,8 @@ def main() -> int:
         yfinance_chunk(config, args)
     elif args.mode == "sec-chunk":
         sec_chunk(config, args)
+    elif args.mode == "sec-bulk":
+        sec_bulk(config, args)
     elif args.mode == "merge":
         merge(config, args)
     else:

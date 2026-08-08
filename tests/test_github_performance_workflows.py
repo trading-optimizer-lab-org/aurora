@@ -672,6 +672,11 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
         "workload",
         "run_label",
         "retention_days",
+        "autonomous_batch_id",
+        "autonomous_candidate_count",
+        "autonomous_previous_trial_count",
+        "autonomous_prior_ledger_artifact_name",
+        "autonomous_prior_ledger_run_id",
     }
     assert inputs["fault_injection_shard_id"]["default"] == ""
     assert inputs["fault_injection_after_units"]["default"] == 0
@@ -801,10 +806,10 @@ def test_reusable_workflow_can_reuse_exact_prepared_artifact() -> None:
     assert "inputs.prepared_artifact_name" in str(
         workflow["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
     )
-    assert "github.run_attempt" not in str(
+    assert "github.run_attempt" in str(
         workflow["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
     )
-    assert "github.run_attempt" not in str(
+    assert "github.run_attempt" in str(
         workflow["env"]["AURORA_WHEELHOUSE_ARTIFACT_NAME"]
     )
 

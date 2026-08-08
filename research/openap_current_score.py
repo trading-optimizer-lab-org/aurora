@@ -27,6 +27,7 @@ import pandas as pd
 
 EXPECTED_PREDICTORS = 185
 SUPPORTED_HORIZONS = (1, 3, 6, 12, 36)
+DEFAULT_REQUIRED_SCORE_BUCKETS = (0,)
 
 
 class OpenAPDataError(RuntimeError):
@@ -41,6 +42,7 @@ class FeatureValue:
     source: str
     formula_id: str
     note: str = ""
+    available_at: str | None = None
 
 
 def sha256_file(path: str | Path) -> str:
@@ -86,7 +88,13 @@ def _quality_multiplier(value: object) -> float:
     return 0.70
 
 
-def evidence_weight(row: Mapping[str, Any], status: str) -> float:
+def evidence_weight(
+    row: Mapping[str, Any],
+    status: str,
+    *,
+    exact_source_multiplier: float = 1.0,
+    proxy_source_multiplier: float = 0.55,
+) -> float:
     """Return a bounded evidence weight without treating missing t-stats as zero."""
 
     reproduction = abs(float(row.get("tstat") or 0.0))
@@ -97,7 +105,10 @@ def evidence_weight(row: Mapping[str, Any], status: str) -> float:
     except (TypeError, ValueError):
         original_factor = 0.70
     reproduction_factor = min(reproduction, 8.0) / 8.0
-    source_factor = {"exact": 1.0, "proxy": 0.55}.get(status, 0.0)
+    source_factor = {
+        "exact": float(exact_source_multiplier),
+        "proxy": float(proxy_source_multiplier),
+    }.get(status, 0.0)
     return (
         max(reproduction_factor, 0.10)
         * max(original_factor, 0.10)
@@ -111,6 +122,120 @@ def signed_percentile(values: pd.Series, sign: float) -> pd.Series:
 
     numeric = pd.to_numeric(values, errors="coerce") * float(sign)
     return numeric.rank(method="average", pct=True) * 100.0
+
+
+def _reference_percentile(values: pd.Series, reference: pd.Series) -> pd.Series:
+    """Rank values against an explicit breakpoint universe.
+
+    OpenAP may calculate breakpoints using NYSE stocks while assigning every
+    eligible stock to those breakpoints.  Pandas' regular rank cannot express
+    that distinction, so this helper uses the midpoint empirical CDF of the
+    reference sample.
+    """
+
+    numeric = pd.to_numeric(values, errors="coerce")
+    reference_values = np.sort(
+        pd.to_numeric(reference, errors="coerce").dropna().to_numpy(dtype=float)
+    )
+    result = pd.Series(np.nan, index=values.index, dtype=float)
+    if not len(reference_values):
+        return result
+    valid = numeric.notna()
+    observed = numeric.loc[valid].to_numpy(dtype=float)
+    left = np.searchsorted(reference_values, observed, side="left")
+    right = np.searchsorted(reference_values, observed, side="right")
+    result.loc[valid] = 100.0 * (left + right) / (2.0 * len(reference_values))
+    return result.clip(0.0, 100.0)
+
+
+def _normalise_exchange(value: object) -> int | None:
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).upper()
+    if "NASDAQ" in text:
+        return 3
+    if "NYSE AMERICAN" in text or "AMEX" in text:
+        return 2
+    if "NYSE" in text or "NEW YORK STOCK EXCHANGE" in text:
+        return 1
+    return None
+
+
+def official_filter_mask(
+    definition: Mapping[str, Any],
+    context: pd.DataFrame,
+) -> tuple[pd.Series, str]:
+    """Apply the finite set of official SignalDoc filters used by the strict 185.
+
+    Unsupported expressions fail closed.  This is intentionally not a generic
+    expression evaluator: accepting arbitrary R text would make silent filter
+    drift much easier than a small audited mapping.
+    """
+
+    expression = str(definition.get("filterstr") or "").strip()
+    mask = pd.Series(True, index=context.index, dtype=bool)
+    if not expression or expression.lower() in {"nan", "none", "na"}:
+        return mask, "none"
+    compact = re.sub(r"\s+", "", expression.lower())
+    price = pd.to_numeric(context.get("current_price"), errors="coerce")
+    exchange_code = context.get("exchange_code", pd.Series(index=context.index, dtype="Int64"))
+    common = context.get("eligible_common_stock", pd.Series(False, index=context.index)).fillna(False).astype(bool)
+    market_cap = pd.to_numeric(context.get("market_cap"), errors="coerce")
+    nyse20 = pd.to_numeric(context.get("nyse_market_cap_p20"), errors="coerce")
+
+    clauses: list[str] = []
+    start = 0
+    depth = 0
+    for index, character in enumerate(compact):
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth < 0:
+                return (
+                    pd.Series(False, index=context.index, dtype=bool),
+                    "unsupported:unbalanced_parentheses",
+                )
+        elif character == "," and depth == 0:
+            if compact[start:index]:
+                clauses.append(compact[start:index])
+            start = index + 1
+    if depth != 0:
+        return (
+            pd.Series(False, index=context.index, dtype=bool),
+            "unsupported:unbalanced_parentheses",
+        )
+    if compact[start:]:
+        clauses.append(compact[start:])
+    supported = {
+        "abs(prc)>1",
+        "abs(prc)>5",
+        "shrcd<=11",
+        "shrcd%in%c(10,11)",
+        "exchcd==1",
+        "exchcd%in%c(1,2)",
+        "exchcd%in%c(1,2,3)",
+        "me>me_nyse20",
+    }
+    unknown = sorted(set(clauses).difference(supported))
+    if unknown:
+        return pd.Series(False, index=context.index, dtype=bool), "unsupported:" + "|".join(unknown)
+    for clause in clauses:
+        if clause == "abs(prc)>1":
+            mask &= price.abs().gt(1.0)
+        elif clause == "abs(prc)>5":
+            mask &= price.abs().gt(5.0)
+        elif clause in {"shrcd<=11", "shrcd%in%c(10,11)"}:
+            mask &= common
+        elif clause == "exchcd==1":
+            mask &= exchange_code.eq(1)
+        elif clause == "exchcd%in%c(1,2)":
+            mask &= exchange_code.isin([1, 2])
+        elif clause == "exchcd%in%c(1,2,3)":
+            mask &= exchange_code.isin([1, 2, 3])
+        elif clause == "me>me_nyse20":
+            mask &= market_cap.gt(nyse20)
+    return mask.fillna(False), "applied"
 
 
 def _connected_components(nodes: Sequence[str], edges: Sequence[tuple[str, str]]) -> list[list[str]]:
@@ -145,7 +270,14 @@ def build_redundancy_groups(
     threshold: float = 0.80,
     minimum_overlap: int = 60,
 ) -> pd.DataFrame:
-    """Group near-identical and mirror predictors after direction alignment."""
+    """Group genuinely redundant predictors without transitive chaining.
+
+    Directions are aligned first.  Two predictors may share a group only when
+    their aligned returns are positively correlated, belong to the same
+    economic family, and clear the threshold against every existing member.
+    Strong inverse relationships are useful diversification evidence, not
+    duplicates, so they deliberately remain separate.
+    """
 
     names = metadata["signalname"].astype(str).tolist()
     signs = metadata.set_index("signalname")["Sign"].apply(
@@ -156,14 +288,29 @@ def build_redundancy_groups(
     aligned = aligned.mul(signs.reindex(available), axis=1)
     corr = aligned.corr(min_periods=int(minimum_overlap))
     count = aligned.notna().astype("int16").T.dot(aligned.notna().astype("int16"))
-    edges: list[tuple[str, str]] = []
-    for index, left in enumerate(available):
-        for right in available[index + 1 :]:
-            value = corr.at[left, right]
-            overlap = int(count.at[left, right])
-            if overlap >= minimum_overlap and pd.notna(value) and abs(float(value)) >= threshold:
-                edges.append((left, right))
-    components = _connected_components(names, edges)
+    family_column = "Cat.Economic" if "Cat.Economic" in metadata else "Cat.Data"
+    families = metadata.set_index("signalname")[family_column].fillna("unknown").astype(str)
+    components: list[list[str]] = []
+    for signal in names:
+        placed = False
+        if signal in available:
+            for component in components:
+                comparable = [member for member in component if member in available]
+                if not comparable:
+                    continue
+                if any(families.get(member, "unknown") != families.get(signal, "unknown") for member in comparable):
+                    continue
+                if all(
+                    int(count.at[signal, member]) >= minimum_overlap
+                    and pd.notna(corr.at[signal, member])
+                    and float(corr.at[signal, member]) >= threshold
+                    for member in comparable
+                ):
+                    component.append(signal)
+                    placed = True
+                    break
+        if not placed:
+            components.append([signal])
     rows: list[dict[str, Any]] = []
     for group_index, component in enumerate(components, start=1):
         group_id = f"redundancy_{group_index:03d}"
@@ -176,6 +323,149 @@ def build_redundancy_groups(
                 }
             )
     return pd.DataFrame(rows).sort_values(["redundancy_group", "signalname"])
+
+
+def redundancy_correlation_audit(
+    metadata: pd.DataFrame,
+    portfolio_returns: pd.DataFrame,
+    groups: pd.DataFrame,
+    *,
+    threshold: float = 0.80,
+    minimum_overlap: int = 60,
+) -> pd.DataFrame:
+    """Record strong positive and inverse relationships without conflating them."""
+
+    names = [name for name in metadata["signalname"].astype(str) if name in portfolio_returns]
+    signs = metadata.set_index("signalname")["Sign"].fillna(1.0).astype(float)
+    family_column = "Cat.Economic" if "Cat.Economic" in metadata else "Cat.Data"
+    families = metadata.set_index("signalname")[family_column].fillna("unknown").astype(str)
+    raw = portfolio_returns[names].apply(pd.to_numeric, errors="coerce")
+    aligned = raw.mul(signs.reindex(names), axis=1)
+    raw_corr = raw.corr(min_periods=minimum_overlap)
+    aligned_corr = aligned.corr(min_periods=minimum_overlap)
+    overlap = aligned.notna().astype("int16").T.dot(aligned.notna().astype("int16"))
+    group_map = groups.set_index("signalname")["redundancy_group"].astype(str).to_dict()
+    rows = []
+    for index, left in enumerate(names):
+        for right in names[index + 1 :]:
+            value = aligned_corr.at[left, right]
+            observations = int(overlap.at[left, right])
+            if observations < minimum_overlap or pd.isna(value) or abs(float(value)) < threshold:
+                continue
+            rows.append(
+                {
+                    "signal_left": left,
+                    "signal_right": right,
+                    "raw_correlation": raw_corr.at[left, right],
+                    "aligned_correlation": value,
+                    "overlap_months": observations,
+                    "same_economic_family": families.get(left) == families.get(right),
+                    "relationship": "duplicate_candidate" if float(value) >= threshold else "inverse_diversifier",
+                    "same_redundancy_group": group_map.get(left) == group_map.get(right),
+                }
+            )
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "signal_left", "signal_right", "raw_correlation", "aligned_correlation",
+            "overlap_months", "same_economic_family", "relationship",
+            "same_redundancy_group",
+        ],
+    )
+
+
+def refine_current_redundancy_groups(
+    features: pd.DataFrame,
+    *,
+    threshold: float = 0.995,
+    minimum_overlap: int = 100,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Merge historical groups that collapse to the same current signal.
+
+    Historical long-short return correlation remains the primary grouping.
+    This second layer catches implementation duplicates introduced by a shared
+    current formula or by near-identical signed cross-sectional percentiles.
+    Complete-link merging prevents transitive chains from swallowing distinct
+    signals.
+    """
+
+    if features.empty:
+        return features.copy(), pd.DataFrame()
+    result = features.copy()
+    signal_rows = result.drop_duplicates("signalname").set_index("signalname")
+    names = sorted(signal_rows.index.astype(str))
+    initial = {
+        str(group): sorted(part["signalname"].astype(str).unique())
+        for group, part in result.groupby("redundancy_group")
+    }
+    components = [members for _, members in sorted(initial.items())]
+    pivot = result.pivot(index="symbol", columns="signalname", values="percentile")
+    corr = pivot.corr(min_periods=int(minimum_overlap))
+    overlap = pivot.notna().astype("int16").T.dot(pivot.notna().astype("int16"))
+    formula = signal_rows["formula_id"].fillna("").astype(str).to_dict()
+    horizon = signal_rows["horizon_months"].to_dict()
+
+    def pair_reason(left: str, right: str) -> str | None:
+        if horizon.get(left) != horizon.get(right):
+            return None
+        left_formula = formula.get(left, "")
+        right_formula = formula.get(right, "")
+        if left_formula and left_formula == right_formula:
+            return "same_formula_id"
+        if left not in corr.index or right not in corr.columns:
+            return None
+        value = corr.at[left, right]
+        if (
+            int(overlap.at[left, right]) >= int(minimum_overlap)
+            and pd.notna(value)
+            and float(value) >= float(threshold)
+        ):
+            return "current_percentile_correlation"
+        return None
+
+    merged = True
+    while merged:
+        merged = False
+        for left_index in range(len(components)):
+            if merged:
+                break
+            for right_index in range(left_index + 1, len(components)):
+                left_group = components[left_index]
+                right_group = components[right_index]
+                reasons = [
+                    pair_reason(left, right)
+                    for left in left_group
+                    for right in right_group
+                ]
+                if reasons and all(reason is not None for reason in reasons):
+                    components[left_index] = sorted(left_group + right_group)
+                    components.pop(right_index)
+                    merged = True
+                    break
+
+    mapping: dict[str, str] = {}
+    audit_rows: list[dict[str, Any]] = []
+    historical_map = signal_rows["redundancy_group"].astype(str).to_dict()
+    for index, members in enumerate(components, start=1):
+        group_id = f"current_redundancy_{index:03d}"
+        historical_groups = sorted({historical_map[name] for name in members})
+        for name in members:
+            mapping[name] = group_id
+            audit_rows.append(
+                {
+                    "signalname": name,
+                    "historical_redundancy_group": historical_map[name],
+                    "current_redundancy_group": group_id,
+                    "current_group_size": len(members),
+                    "merged_historical_groups": "|".join(historical_groups),
+                    "current_merge_applied": len(historical_groups) > 1,
+                }
+            )
+    result["historical_redundancy_group"] = result["redundancy_group"]
+    result["redundancy_group"] = result["signalname"].map(mapping)
+    return result, pd.DataFrame(audit_rows).sort_values(
+        ["current_redundancy_group", "signalname"]
+    )
 
 
 def _safe_ratio(numerator: Any, denominator: Any) -> float | None:
@@ -209,7 +499,102 @@ def _monthly_close(frame: pd.DataFrame) -> pd.Series:
     return values.set_index("date")["adj_close"].resample("ME").last().dropna()
 
 
-def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
+def clean_price_history(
+    frame: pd.DataFrame,
+    *,
+    maximum_absolute_daily_return: float = 3.0,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Quarantine impossible rows and discard history before the last split-like break."""
+
+    data = frame.copy()
+    data["date"] = pd.to_datetime(data.get("date"), errors="coerce")
+    numeric_columns = ("open", "high", "low", "close", "adj_close", "volume")
+    for column in numeric_columns:
+        if column in data:
+            data[column] = pd.to_numeric(data[column], errors="coerce")
+    data = data.dropna(subset=["date", "adj_close"]).sort_values("date")
+    duplicate_rows = int(data.duplicated(["date"], keep=False).sum())
+    data = data.drop_duplicates("date", keep="last")
+    positive = data["adj_close"].gt(0)
+    ohlc_valid = pd.Series(True, index=data.index)
+    if {"open", "high", "low", "close"}.issubset(data.columns):
+        ohlc = data[["open", "high", "low", "close"]]
+        complete = ohlc.notna().all(axis=1)
+        ohlc_valid = ~complete | (
+            ohlc.gt(0).all(axis=1)
+            & data["high"].ge(data[["open", "close", "low"]].max(axis=1))
+            & data["low"].le(data[["open", "close", "high"]].min(axis=1))
+        )
+    base_valid = positive & ohlc_valid
+    provisional = data.loc[base_valid].copy()
+    returns = provisional["adj_close"].pct_change()
+    severe = returns.abs().gt(float(maximum_absolute_daily_return)) | returns.le(-0.95)
+    last_break_date = provisional.loc[severe, "date"].max() if severe.any() else pd.NaT
+    clean = provisional.loc[~severe].copy()
+    if pd.notna(last_break_date):
+        clean = clean.loc[clean["date"].gt(last_break_date)].copy()
+    recent_cutoff = data["date"].max() - pd.Timedelta(days=400) if not data.empty else pd.NaT
+    recent_severe = int((severe & provisional["date"].ge(recent_cutoff)).sum()) if pd.notna(recent_cutoff) else 0
+    quality = {
+        "raw_price_rows": int(len(data)),
+        "clean_price_rows": int(len(clean)),
+        "first_clean_price_date": clean["date"].min() if not clean.empty else pd.NaT,
+        "last_clean_price_date": clean["date"].max() if not clean.empty else pd.NaT,
+        "duplicate_price_dates": duplicate_rows,
+        "nonpositive_price_rows": int((~positive).sum()),
+        "invalid_ohlc_rows": int((~ohlc_valid).sum()),
+        "extreme_return_rows": int(severe.sum()),
+        "recent_extreme_return_rows": recent_severe,
+        "history_reset_after": last_break_date,
+        "price_quality_pass": bool(len(clean) >= 252 and recent_severe == 0),
+    }
+    return clean, quality
+
+
+def latest_completed_us_session_date(as_of: pd.Timestamp) -> pd.Timestamp:
+    """Return the latest US regular session that is safe to treat as closed.
+
+    YFinance can expose today's daily bar while the regular session is still
+    trading.  A fifteen-minute buffer after the 16:00 New York close avoids
+    feeding a partial close or partial volume into daily characteristics.
+    """
+
+    timestamp = pd.Timestamp(as_of)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    new_york = timestamp.tz_convert("America/New_York")
+    session_day = new_york.normalize()
+    closed_today = (
+        new_york.weekday() < 5
+        and (new_york.hour, new_york.minute) >= (16, 15)
+    )
+    if not closed_today:
+        session_day = session_day - pd.offsets.BDay(1)
+    return session_day.tz_localize(None).normalize()
+
+
+def exclude_incomplete_us_session(
+    frame: pd.DataFrame,
+    *,
+    as_of: pd.Timestamp,
+) -> tuple[pd.DataFrame, int, pd.Timestamp]:
+    """Drop any daily rows later than the latest safely completed session."""
+
+    cutoff = latest_completed_us_session_date(as_of)
+    if frame.empty or "date" not in frame:
+        return frame.copy(), 0, cutoff
+    dates = pd.to_datetime(frame["date"], errors="coerce").dt.tz_localize(None)
+    keep = dates.dt.normalize().le(cutoff)
+    return frame.loc[keep.fillna(False)].copy(), int((~keep.fillna(False)).sum()), cutoff
+
+
+def calculate_price_features(
+    frame: pd.DataFrame,
+    *,
+    as_of: pd.Timestamp | None = None,
+) -> dict[str, FeatureValue]:
     """Calculate current price and trading characteristics.
 
     Signals that need the original CRSP cross-sectional regression, industry
@@ -219,22 +604,22 @@ def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
     required = {"date", "adj_close", "volume"}
     if required.difference(frame.columns):
         return {}
-    daily = frame.copy()
-    daily["date"] = pd.to_datetime(daily["date"], errors="coerce")
-    for column in ("adj_close", "volume", "high", "low", "close"):
-        if column in daily:
-            daily[column] = pd.to_numeric(daily[column], errors="coerce")
-    daily = daily.dropna(subset=["date", "adj_close"]).sort_values("date")
+    source = frame
+    if as_of is not None:
+        source, _, _ = exclude_incomplete_us_session(source, as_of=as_of)
+    daily, _ = clean_price_history(source)
     if daily.empty:
         return {}
     close = daily["adj_close"]
     returns = close.pct_change()
     monthly = _monthly_close(daily)
+    if as_of is not None and not monthly.empty:
+        as_of_period = pd.Timestamp(as_of).tz_localize(None).to_period("M")
+        monthly = monthly.loc[monthly.index.to_period("M") < as_of_period]
     month_returns = monthly.pct_change()
     current = float(close.iloc[-1])
     volume = pd.to_numeric(daily["volume"], errors="coerce")
     dollar_volume = close * volume
-    turnover_proxy = volume
 
     def exact(name: str, value: float | None, formula: str, note: str = "") -> FeatureValue:
         return FeatureValue(name, value, "exact", "yfinance", formula, note)
@@ -252,28 +637,65 @@ def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
     result["Mom6m"] = exact("Mom6m", _return_between(monthly, 6, 1), "return_month_6_to_1")
     result["Mom12m"] = exact("Mom12m", _return_between(monthly, 12, 1), "return_month_12_to_1")
     result["IntMom"] = exact("IntMom", _return_between(monthly, 12, 7), "return_month_12_to_7")
-    result["MRreversal"] = exact("MRreversal", _return_between(monthly, 36, 13), "return_month_36_to_13")
-    result["LRreversal"] = exact("LRreversal", _return_between(monthly, 60, 36), "return_month_60_to_36")
+    result["MRreversal"] = exact("MRreversal", _return_between(monthly, 18, 13), "return_month_18_to_13")
+    result["LRreversal"] = exact("LRreversal", _return_between(monthly, 36, 13), "return_month_36_to_13")
     if len(close) >= 252:
         result["High52"] = exact("High52", _safe_ratio(current, close.iloc[-252:].max()), "price_over_52w_high")
     recent_returns = returns.dropna().iloc[-21:]
     if not recent_returns.empty:
         result["MaxRet"] = exact("MaxRet", float(recent_returns.max()), "max_daily_return_last_month")
-        result["RealizedVol"] = exact("RealizedVol", float(recent_returns.std(ddof=1)), "daily_return_std_last_month")
+        result["RealizedVol"] = proxy(
+            "RealizedVol",
+            float(recent_returns.std(ddof=1)),
+            "total_daily_return_std_last_month_proxy",
+            "Official OpenAP RealizedVol uses CAPM residual volatility",
+        )
         result["ReturnSkew"] = exact("ReturnSkew", float(recent_returns.skew()), "daily_return_skew_last_month")
-    if len(dollar_volume.dropna()) >= 21:
-        result["DolVol"] = exact("DolVol", float(np.log1p(dollar_volume.iloc[-21:].mean())), "log_mean_dollar_volume_21d")
-        illiq = (returns.abs() / dollar_volume.replace(0, np.nan)).iloc[-21:].mean()
-        result["Illiquidity"] = exact("Illiquidity", float(illiq) if pd.notna(illiq) else None, "amihud_21d")
+    monthly_volume = (
+        daily.assign(date=pd.to_datetime(daily["date"], errors="coerce"))
+        .dropna(subset=["date"])
+        .set_index("date")["volume"]
+        .resample("ME")
+        .sum(min_count=1)
+        .dropna()
+    )
+    if len(monthly) >= 3 and len(monthly_volume) >= 3:
+        lagged_dollar_volume = float(monthly.iloc[-3] * monthly_volume.iloc[-3])
+        result["DolVol"] = exact(
+            "DolVol",
+            float(np.log(lagged_dollar_volume)) if lagged_dollar_volume > 0 else None,
+            "log_monthly_dollar_volume_lag_2",
+        )
+    if len(dollar_volume.dropna()) >= 252:
+        illiq = (returns.abs() / dollar_volume.replace(0, np.nan)).iloc[-252:].mean()
+        result["Illiquidity"] = exact(
+            "Illiquidity",
+            float(illiq) if pd.notna(illiq) else None,
+            "amihud_252d",
+        )
     if len(volume.dropna()) >= 252:
-        result["ShareVol"] = proxy("ShareVol", float(volume.iloc[-21:].mean()), "mean_volume_21d", "Shares outstanding PIT is completed from SEC during merge")
+        result["ShareVol"] = FeatureValue(
+            "ShareVol",
+            None,
+            "unavailable",
+            "requires_validated_shares_outstanding",
+            "openap_sharevol_binary_3m_turnover",
+            "Calculated during merge only after share-count validation",
+        )
         result["VolSD"] = proxy("VolSD", float(volume.iloc[-252:].std(ddof=1)), "volume_std_252d", "Uses raw share volume before SEC turnover scaling")
         x = np.arange(min(252, len(volume)), dtype=float)
         y = np.log1p(volume.iloc[-len(x):].to_numpy(dtype=float))
         valid = np.isfinite(y)
         slope = float(np.polyfit(x[valid], y[valid], 1)[0]) if valid.sum() >= 30 else None
         result["VolumeTrend"] = proxy("VolumeTrend", slope, "log_volume_trend_252d", "Yahoo volume replaces CRSP volume")
-        result["std_turn"] = proxy("std_turn", float(turnover_proxy.iloc[-252:].std(ddof=1)), "volume_std_proxy_252d", "Final value is rescaled by SEC shares")
+        result["std_turn"] = FeatureValue(
+            "std_turn",
+            None,
+            "unavailable",
+            "requires_validated_shares_outstanding",
+            "monthly_turnover_std_36m",
+            "Calculated during merge only after share-count validation",
+        )
     for name, sessions in (("zerotrade1M", 21), ("zerotrade6M", 126), ("zerotrade12M", 252)):
         if len(volume) >= sessions:
             zero_days = float((volume.iloc[-sessions:] <= 0).mean())
@@ -290,43 +712,89 @@ def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
         "mean_negative_ma_to_price_3_5_10_20_50_100_200_400_600_800_1000",
         "OpenAP estimates rolling cross-sectional coefficients; this is the same 11-MA state but not that fitted regression",
     )
-    if len(monthly) >= 193:
-        current_month = monthly.index[-1].month
-        same_month = month_returns.loc[month_returns.index.month == current_month].dropna()
-        result["MomSeason"] = exact("MomSeason", float(same_month.iloc[-5:].mean()) if len(same_month) >= 5 else None, "same_calendar_month_return_history")
-        result["MomSeasonShort"] = exact(
-            "MomSeasonShort",
-            float(same_month.iloc[-2]) if len(same_month) >= 2 else None,
-            "same_calendar_month_return_previous_year",
-        )
-        result["MomSeason06YrPlus"] = exact("MomSeason06YrPlus", float(same_month.iloc[:-5].mean()) if len(same_month) > 5 else None, "same_month_history_excluding_recent_5y")
-        result["MomSeason11YrPlus"] = exact("MomSeason11YrPlus", float(same_month.iloc[:-10].mean()) if len(same_month) > 10 else None, "same_month_history_excluding_recent_10y")
-        result["MomSeason16YrPlus"] = exact("MomSeason16YrPlus", float(same_month.iloc[:-15].mean()) if len(same_month) > 15 else None, "same_month_history_excluding_recent_15y")
-        def off_season_average(older: int, newer: int) -> float | None:
-            window = month_returns.iloc[-older:-newer] if newer else month_returns.iloc[-older:]
-            window = window.loc[window.index.month != current_month].dropna()
-            return float(window.mean()) if not window.empty else None
+    # Exact lag sets from the pinned OpenAP predictor implementations.  The
+    # signal date predicts the following month, hence the seasonal observation
+    # from one year earlier is lag 11 rather than a calendar-month slice.
+    monthly_with_gaps = (
+        daily.assign(date=pd.to_datetime(daily["date"], errors="coerce"))
+        .dropna(subset=["date"])
+        .set_index("date")["adj_close"]
+        .resample("ME")
+        .last()
+    )
+    if as_of is not None and not monthly_with_gaps.empty:
+        as_of_period = pd.Timestamp(as_of).tz_localize(None).to_period("M")
+        monthly_with_gaps = monthly_with_gaps.loc[
+            monthly_with_gaps.index.to_period("M") < as_of_period
+        ]
+    monthly_returns = monthly_with_gaps.pct_change(fill_method=None).reset_index(drop=True)
 
-        result["Mom12mOffSeason"] = exact(
-            "Mom12mOffSeason",
-            off_season_average(12, 0),
-            "average_other_calendar_month_returns_previous_year",
-        )
-        result["MomOffSeason"] = exact(
-            "MomOffSeason",
-            off_season_average(60, 24),
-            "average_other_calendar_month_returns_years_2_to_5",
-        )
-        result["MomOffSeason06YrPlus"] = exact(
-            "MomOffSeason06YrPlus",
-            off_season_average(120, 60),
-            "average_other_calendar_month_returns_years_6_to_10",
-        )
-        result["MomOffSeason16YrPlus"] = exact(
-            "MomOffSeason16YrPlus",
-            off_season_average(240, 180),
-            "average_other_calendar_month_returns_years_16_to_20",
-        )
+    def lag_average(lags: Sequence[int]) -> float | None:
+        if not lags or any(len(monthly_returns) <= lag for lag in lags):
+            return None
+        values = [monthly_returns.iloc[-(lag + 1)] for lag in lags]
+        if any(pd.isna(value) for value in values):
+            return None
+        return float(np.mean(values))
+
+    result["MomSeasonShort"] = exact(
+        "MomSeasonShort",
+        lag_average([11]),
+        "openap_ret_lag_11",
+        "Pinned OpenAP MomSeasonShort.py",
+    )
+    result["MomSeason"] = exact(
+        "MomSeason",
+        lag_average([23, 35, 47, 59]),
+        "openap_mean_ret_lags_23_35_47_59",
+        "Pinned OpenAP MomSeason.py",
+    )
+    result["MomSeason06YrPlus"] = exact(
+        "MomSeason06YrPlus",
+        lag_average(list(range(71, 121, 12))),
+        "openap_mean_ret_lags_71_to_119_step_12",
+        "Pinned OpenAP MomSeason06YrPlus.py",
+    )
+    result["MomSeason11YrPlus"] = exact(
+        "MomSeason11YrPlus",
+        lag_average(list(range(131, 181, 12))),
+        "openap_mean_ret_lags_131_to_179_step_12",
+        "Pinned OpenAP MomSeason11YrPlus.py",
+    )
+    result["MomSeason16YrPlus"] = exact(
+        "MomSeason16YrPlus",
+        lag_average(list(range(191, 241, 12))),
+        "openap_mean_ret_lags_191_to_239_step_12",
+        "Pinned OpenAP MomSeason16YrPlus.py",
+    )
+
+    def off_season_lags(first: int, stop: int) -> list[int]:
+        return [lag for lag in range(first, stop) if (lag + 1) % 12 != 0]
+
+    result["Mom12mOffSeason"] = exact(
+        "Mom12mOffSeason",
+        lag_average(off_season_lags(1, 11)),
+        "openap_mean_ret_lags_1_to_10_excluding_seasonal",
+        "Pinned OpenAP Mom12mOffSeason.py",
+    )
+    result["MomOffSeason"] = exact(
+        "MomOffSeason",
+        lag_average(off_season_lags(12, 60)),
+        "openap_mean_ret_lags_12_to_59_excluding_seasonal",
+        "Pinned OpenAP MomOffSeason.py",
+    )
+    result["MomOffSeason06YrPlus"] = exact(
+        "MomOffSeason06YrPlus",
+        lag_average(off_season_lags(60, 120)),
+        "openap_mean_ret_lags_60_to_119_excluding_seasonal",
+        "Pinned OpenAP MomOffSeason06YrPlus.py",
+    )
+    result["MomOffSeason16YrPlus"] = exact(
+        "MomOffSeason16YrPlus",
+        lag_average(off_season_lags(180, 240)),
+        "openap_mean_ret_lags_180_to_239_excluding_seasonal",
+        "Pinned OpenAP MomOffSeason16YrPlus.py",
+    )
     return result
 
 
@@ -344,6 +812,8 @@ SEC_CONCEPT_ALIASES: dict[str, tuple[str, ...]] = {
     "cogs": ("CostOfRevenue", "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization"),
     "net_income": ("NetIncomeLoss", "ProfitLoss"),
     "operating_cash_flow": ("NetCashProvidedByUsedInOperatingActivities",),
+    "financing_cash_flow": ("NetCashProvidedByUsedInFinancingActivities",),
+    "investing_cash_flow": ("NetCashProvidedByUsedInInvestingActivities",),
     "capex": ("PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsForAdditionsToPropertyPlantAndEquipment"),
     "depreciation": ("DepreciationDepletionAndAmortization", "Depreciation"),
     "rd": ("ResearchAndDevelopmentExpense",),
@@ -360,13 +830,183 @@ SEC_CONCEPT_ALIASES: dict[str, tuple[str, ...]] = {
     "deferred_tax": ("DeferredIncomeTaxExpenseBenefit",),
     "dividends": ("PaymentsOfDividends", "PaymentsOfDividendsCommonStock"),
     "repurchases": ("PaymentsForRepurchaseOfCommonStock",),
-    "share_issuance": ("ProceedsFromStockOptionsExercised", "ProceedsFromIssuanceOfCommonStock"),
+    "share_issuance": (
+        "ProceedsFromStockOptionsExercised",
+        "ProceedsFromIssuanceOfCommonStock",
+        "ProceedsFromIssuanceOrSaleOfEquity",
+    ),
     "debt_issuance": ("ProceedsFromIssuanceOfLongTermDebt", "ProceedsFromIssuanceOfDebt"),
     "debt_reduction": ("RepaymentsOfLongTermDebt", "RepaymentsOfDebt"),
     "shares": ("EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"),
     "employees": ("EntityNumberOfEmployees",),
     "backlog": ("OrderBacklog",),
 }
+
+
+# These current two-source calculations are useful, but differ materially from
+# the point-in-time OpenAP construction, its formation-date denominator, or an
+# official sample filter.  Keeping this policy central prevents a new formula
+# from silently being advertised as an exact replication.
+ACCOUNTING_PROXY_LIMITS: dict[str, str] = {
+    "AM": "Uses current rather than portfolio-formation market equity",
+    "BM": "Uses current rather than lagged December market equity",
+    "EP": "Uses current rather than six-month-lagged market equity",
+    "CF": "Uses current rather than portfolio-formation market equity",
+    "cfp": "Uses current rather than portfolio-formation market equity",
+    "SP": "Uses current rather than portfolio-formation market equity",
+    "GP": "Official financial-company exclusion is not reproducible point in time",
+    "Cash": "Uses annual rather than quarterly cash and assets",
+    "CashProd": "Official cash-productivity definition is not fully reproduced",
+    "BookLeverage": "Missing official deferred-tax and preferred-stock denominator",
+    "Leverage": "Uses current market equity and incomplete preferred-stock adjustments",
+    "ChAssetTurnover": "Annual observations are available, but official sample timing is incomplete",
+    "ChTax": "Uses annual rather than four-quarter tax change",
+    "InvGrowth": "Missing GNP deflation and official industry filters",
+    "DelCOA": "SEC aliases do not reproduce every official current operating-asset component",
+    "DelCOL": "SEC aliases do not reproduce every official current operating-liability component",
+    "DelEqu": "Annual SEC mapping does not reproduce every official equity adjustment",
+    "DelFINL": "Preferred-stock and financing-liability mappings are incomplete",
+    "DelLTI": "Long-term investments and advances are not mapped completely",
+    "DelNetFin": "Net financial asset components are incomplete",
+    "RD": "Uses current rather than portfolio-formation market equity",
+    "AdExp": "Uses current rather than portfolio-formation market equity",
+    "SurpriseRD": "Required annual comparability and official eligibility rules are incomplete",
+    "Investment": "Missing firm-specific 36-month normalization",
+    "GrSaleToGrInv": "Historical comparability and official construction remain incomplete",
+    "PayoutYield": "Uses current market cap and incomplete payout components",
+    "NetPayoutYield": "Uses current market cap and incomplete payout components",
+    "NetEquityFinance": "Stock-sale and repurchase cash-flow mapping is incomplete",
+    "CompositeDebtIssuance": "Five-year comparable total-debt history is not complete for every issuer",
+    "DebtIssuance": "Long-term debt issuance mapping is not consistent across issuers",
+    "NetDebtFinance": "Missing complete issuance, reduction and current-debt-change formula",
+    "NetDebtPrice": "Missing preferred stock, arrears, treasury stock and official filters",
+    "OPLeverage": "Official operating-leverage formula and sample timing are incomplete",
+    "OperProf": "Official smallest-size-tercile exclusion is not applied",
+    "XFIN": "Complete equity and debt financing cash-flow mapping is unavailable",
+    "ShareIss1Y": "Uses annual SEC growth rather than shares from months t-18 to t-6",
+    "ShareIss5Y": "Uses annual SEC observations rather than official monthly formation dates",
+    "tang": "Official manufacturing and asset-tercile filters are not applied",
+}
+
+
+ACCOUNTING_FEATURE_DEPENDENCIES: dict[str, tuple[tuple[str, int], ...]] = {
+    "AM": (("assets", 0),),
+    "BM": (("equity", 0),),
+    "EP": (("net_income", 0),),
+    "CF": (("net_income", 0), ("depreciation", 0)),
+    "cfp": (("operating_cash_flow", 0),),
+    "SP": (("revenue", 0),),
+    "GP": (("revenue", 0), ("cogs", 0), ("assets", 0)),
+    "RoE": (("net_income", 0), ("equity", 0)),
+    "Cash": (("cash", 0), ("assets", 0)),
+    "CashProd": (("assets", 0), ("cash", 0)),
+    "BookLeverage": (("liabilities", 0), ("assets", 0)),
+    "Leverage": (("liabilities", 0),),
+    "AssetGrowth": (("assets", 0), ("assets", 1)),
+    "ChAssetTurnover": (("revenue", 0), ("assets", 0), ("revenue", 1), ("assets", 1)),
+    "ChEQ": (("equity", 0), ("equity", 1)),
+    "ChInv": (("inventory", 0), ("inventory", 1), ("assets", 1)),
+    "InvGrowth": (("inventory", 0), ("inventory", 1)),
+    "ChNWC": (("current_assets", 0), ("current_assets", 1), ("current_liabilities", 0), ("current_liabilities", 1), ("assets", 1)),
+    "ChTax": (("tax", 0), ("tax", 1), ("assets", 1)),
+    "Accruals": (("net_income", 0), ("operating_cash_flow", 0), ("assets", 1)),
+    "TotalAccruals": (("net_income", 0), ("operating_cash_flow", 0), ("assets", 1)),
+    "PctAcc": (("net_income", 0), ("operating_cash_flow", 0)),
+    "DelCOA": (("current_assets", 0), ("current_assets", 1), ("cash", 0), ("cash", 1), ("assets", 0), ("assets", 1)),
+    "DelCOL": (("current_liabilities", 0), ("current_liabilities", 1), ("debt_current", 0), ("debt_current", 1), ("assets", 0), ("assets", 1)),
+    "DelEqu": (("equity", 0), ("equity", 1), ("assets", 0), ("assets", 1)),
+    "DelFINL": (("debt_current", 0), ("debt_current", 1), ("debt_long", 0), ("debt_long", 1), ("preferred_stock", 0), ("preferred_stock", 1), ("assets", 0), ("assets", 1)),
+    "DelLTI": (("long_investments", 0), ("long_investments", 1), ("assets", 0), ("assets", 1)),
+    "DelNetFin": (("short_investments", 0), ("short_investments", 1), ("long_investments", 0), ("long_investments", 1), ("debt_current", 0), ("debt_current", 1), ("debt_long", 0), ("debt_long", 1), ("preferred_stock", 0), ("preferred_stock", 1), ("assets", 0), ("assets", 1)),
+    "NOA": (("assets", 0), ("cash", 0), ("debt_current", 0), ("debt_long", 0)),
+    "RD": (("rd", 0),),
+    "RDcap": (("rd", 0), ("assets", 0)),
+    "AdExp": (("advertising", 0),),
+    "GrAdExp": (("advertising", 0), ("advertising", 1)),
+    "SurpriseRD": (("rd", 0), ("rd", 1), ("revenue", 0), ("assets", 0), ("assets", 1)),
+    "grcapx": (("capex", 0), ("capex", 2)),
+    "grcapx3y": (("capex", 0), ("capex", 1), ("capex", 2), ("capex", 3)),
+    "InvestPPEInv": (("ppe", 0), ("ppe", 1), ("inventory", 0), ("inventory", 1), ("assets", 1)),
+    "Investment": (("capex", 0), ("revenue", 0)),
+    "GrSaleToGrInv": (("revenue", 0), ("revenue", 1), ("revenue", 2), ("inventory", 0), ("inventory", 1), ("inventory", 2)),
+    "PayoutYield": (("dividends", 0), ("repurchases", 0)),
+    "NetPayoutYield": (("dividends", 0), ("repurchases", 0), ("share_issuance", 0)),
+    "NetEquityFinance": (("share_issuance", 0), ("repurchases", 0), ("assets", 0), ("assets", 1)),
+    "CompositeDebtIssuance": (("debt_current", 0), ("debt_current", 5), ("debt_long", 0), ("debt_long", 5)),
+    "DebtIssuance": (("debt_issuance", 0),),
+    "NetDebtFinance": (("debt_long", 0), ("debt_long", 1), ("assets", 1)),
+    "NetDebtPrice": (("debt_current", 0), ("debt_long", 0), ("cash", 0)),
+    "OPLeverage": (("sga", 0), ("cogs", 0), ("assets", 0)),
+    "OperProf": (("revenue", 0), ("cogs", 0), ("sga", 0), ("interest", 0), ("equity", 0)),
+    "XFIN": (("share_issuance", 0), ("dividends", 0), ("repurchases", 0), ("debt_issuance", 0), ("debt_reduction", 0), ("assets", 0)),
+    "ShareIss1Y": (("shares", 0), ("shares", 1)),
+    "ShareIss5Y": (("shares", 0), ("shares", 5)),
+    "tang": (("cash", 0), ("receivables", 0), ("inventory", 0), ("ppe", 0), ("assets", 0)),
+    "OrderBacklog": (("backlog", 0), ("assets", 0)),
+    "OrderBacklogChg": (("backlog", 0), ("backlog", 1)),
+    "hire": (("employees", 0), ("employees", 1)),
+}
+
+
+def apply_accounting_input_freshness(
+    values: Mapping[str, FeatureValue],
+    concept_inputs: pd.DataFrame,
+    *,
+    as_of: pd.Timestamp,
+    maximum_age_days: int,
+) -> dict[str, FeatureValue]:
+    """Attach causal input dates and fail closed for stale SEC formulas."""
+
+    output = dict(values)
+    if concept_inputs.empty:
+        return output
+    lookup = concept_inputs.copy()
+    lookup["available_at"] = pd.to_datetime(
+        lookup["available_at"], errors="coerce", utc=True
+    ).dt.tz_localize(None)
+    dates = {
+        (str(row.concept), int(row.concept_lag)): row.available_at
+        for row in lookup.dropna(subset=["concept", "concept_lag"]).itertuples()
+    }
+    as_of_date = pd.Timestamp(as_of).tz_localize(None).normalize()
+    for signalname, dependencies in ACCOUNTING_FEATURE_DEPENDENCIES.items():
+        current = output.get(signalname)
+        if current is None or current.raw_value is None:
+            continue
+        required_dates = [dates.get(dependency) for dependency in dependencies]
+        if any(pd.isna(value) or value is None for value in required_dates):
+            output[signalname] = FeatureValue(
+                signalname,
+                None,
+                "unavailable",
+                "missing_sec_dependency_timestamp",
+                current.formula_id,
+                "A required SEC concept date is unavailable",
+            )
+            continue
+        available_at = max(pd.Timestamp(value) for value in required_dates)
+        age_days = int((as_of_date - available_at.normalize()).days)
+        if age_days > int(maximum_age_days):
+            output[signalname] = FeatureValue(
+                signalname,
+                None,
+                "unavailable",
+                "stale_sec_accounting_input",
+                current.formula_id,
+                f"Newest complete input set is {age_days} days old",
+                available_at.isoformat(),
+            )
+            continue
+        output[signalname] = FeatureValue(
+            current.signalname,
+            current.raw_value,
+            current.status,
+            current.source,
+            current.formula_id,
+            current.note,
+            available_at.isoformat(),
+        )
+    return output
 
 
 def latest_sec_concept_inputs(facts: pd.DataFrame, as_of: pd.Timestamp) -> pd.DataFrame:
@@ -404,26 +1044,54 @@ def latest_sec_concept_inputs(facts: pd.DataFrame, as_of: pd.Timestamp) -> pd.Da
     frame = facts.copy()
     frame["available_at"] = pd.to_datetime(frame["available_at"], errors="coerce", utc=True).dt.tz_localize(None)
     frame["period_end"] = pd.to_datetime(frame["period_end"], errors="coerce")
+    filed = pd.to_datetime(
+        frame.get("filed", pd.Series(pd.NaT, index=frame.index)),
+        errors="coerce",
+        utc=True,
+    ).dt.tz_localize(None)
     if "period_start" in frame:
         frame["period_start"] = pd.to_datetime(frame["period_start"], errors="coerce")
     frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
-    frame = frame.loc[frame["available_at"].le(pd.Timestamp(as_of))].dropna(subset=["period_end", "value"])
+    as_of_timestamp = pd.Timestamp(as_of).tz_localize(None)
+    causal_filing = filed.isna() | frame["available_at"].ge(filed)
+    causal_period = frame["available_at"].dt.normalize().ge(frame["period_end"].dt.normalize())
+    frame = frame.loc[
+        frame["available_at"].le(as_of_timestamp)
+        & frame["period_end"].le(as_of_timestamp.normalize())
+        & causal_filing
+        & causal_period
+    ].dropna(subset=["period_end", "value"])
     selected_rows: list[pd.DataFrame] = []
     for concept, aliases in SEC_CONCEPT_ALIASES.items():
         subset = frame.loc[frame["tag"].isin(aliases)].copy()
         if subset.empty:
             continue
+        unit = subset.get("unit", pd.Series(index=subset.index, dtype="string")).astype(str)
+        if concept == "shares":
+            subset = subset.loc[unit.str.lower().eq("shares")]
+        elif concept == "employees":
+            subset = subset.loc[unit.str.lower().isin({"employee", "employees", "person", "persons"})]
+        else:
+            subset = subset.loc[unit.str.upper().eq("USD")]
+        if subset.empty:
+            continue
         if "form" in subset:
-            annual_form = subset["form"].astype(str).str.upper().isin({"10-K", "20-F", "40-F"})
+            annual_form = subset["form"].astype(str).str.upper().isin(
+                {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
+            )
         else:
             annual_form = pd.Series(False, index=subset.index)
         if "fp" in subset:
             fiscal_year = subset["fp"].astype(str).str.upper().eq("FY")
         else:
             fiscal_year = pd.Series(False, index=subset.index)
-        annual = subset.loc[annual_form | fiscal_year].copy()
-        if not annual.empty:
-            subset = annual
+        # Shares and employees are instant observations.  Preferring a 10-K
+        # can select a stale or even class-specific value over a newer 10-Q.
+        # Flow and accounting concepts remain annual to preserve comparability.
+        if concept not in {"shares", "employees"}:
+            annual = subset.loc[annual_form | fiscal_year].copy()
+            if not annual.empty:
+                subset = annual
         subset["alias_rank"] = subset["tag"].map({name: index for index, name in enumerate(aliases)})
         subset = subset.sort_values(
             ["period_end", "available_at", "alias_rank"],
@@ -517,6 +1185,7 @@ def calculate_accounting_features(
     revenue = value("revenue")
     net_income = value("net_income")
     ocf = value("operating_cash_flow")
+    depreciation = value("depreciation")
     cash = value("cash")
     ca = value("current_assets")
     cl = value("current_liabilities")
@@ -550,7 +1219,11 @@ def calculate_accounting_features(
     result["AM"] = exact("AM", _safe_ratio(assets, market_cap), "assets_over_market_cap")
     result["BM"] = exact("BM", _safe_ratio(equity, market_cap), "book_equity_over_market_cap")
     result["EP"] = exact("EP", _safe_ratio(net_income, market_cap), "net_income_over_market_cap")
-    result["CF"] = exact("CF", _safe_ratio(ocf, market_cap), "operating_cash_flow_over_market_cap")
+    result["CF"] = exact(
+        "CF",
+        _safe_ratio(sum_required(net_income, depreciation), market_cap),
+        "net_income_plus_depreciation_over_market_cap",
+    )
     result["cfp"] = exact("cfp", _safe_ratio(ocf, market_cap), "operating_cash_flow_over_market_cap")
     result["SP"] = exact("SP", _safe_ratio(revenue, market_cap), "revenue_over_market_cap")
     gross_profit = (revenue - cogs) if revenue is not None and cogs is not None else None
@@ -563,7 +1236,11 @@ def calculate_accounting_features(
         "market_cap_minus_assets_over_cash",
     )
     result["BookLeverage"] = exact("BookLeverage", _safe_ratio(liabilities, assets), "liabilities_over_assets")
-    result["Leverage"] = exact("Leverage", _safe_ratio(debt, market_cap), "debt_over_market_cap")
+    result["Leverage"] = exact(
+        "Leverage",
+        _safe_ratio(liabilities, market_cap),
+        "liabilities_over_market_cap",
+    )
     result["AssetGrowth"] = exact("AssetGrowth", growth("assets"), "assets_growth_1y")
     current_asset_turnover = _safe_ratio(revenue, assets)
     lag_asset_turnover = _safe_ratio(value("revenue", 1), assets_lag)
@@ -582,8 +1259,18 @@ def calculate_accounting_features(
     result["ChNWC"] = exact("ChNWC", _safe_ratio(nwc_change, assets_lag), "net_working_capital_change_over_lag_assets")
     result["ChTax"] = exact("ChTax", _safe_ratio(delta("tax"), assets_lag), "tax_change_over_lag_assets")
     accruals = (net_income - ocf) if net_income is not None and ocf is not None else None
-    result["Accruals"] = exact("Accruals", _safe_ratio(accruals, assets_lag), "net_income_minus_ocf_over_lag_assets")
-    result["TotalAccruals"] = exact("TotalAccruals", _safe_ratio(accruals, assets_lag), "total_accruals_over_lag_assets")
+    result["Accruals"] = proxy(
+        "Accruals",
+        _safe_ratio(accruals, assets_lag),
+        "net_income_minus_ocf_over_lag_assets_proxy",
+        "OpenAP Accruals requires the full balance-sheet accrual formula",
+    )
+    result["TotalAccruals"] = proxy(
+        "TotalAccruals",
+        _safe_ratio(accruals, assets_lag),
+        "net_income_minus_ocf_over_lag_assets_proxy",
+        "OpenAP TotalAccruals requires complete operating, investing and financing cash-flow components",
+    )
     result["PctAcc"] = exact("PctAcc", _safe_ratio(accruals, abs(net_income) if net_income is not None else None), "accruals_over_abs_earnings")
     current_operating_assets = difference(ca, cash)
     lag_operating_assets = difference(value("current_assets", 1), value("cash", 1))
@@ -641,7 +1328,14 @@ def calculate_accounting_features(
     result["NOA"] = proxy("NOA", _safe_ratio(noa_proxy, assets), "net_operating_assets_proxy", "SEC taxonomy cannot reproduce every financing component exactly")
     result["dNoa"] = proxy("dNoa", None, "change_in_noa_proxy", "Requires lagged canonical financing components")
     result["RD"] = exact("RD", _safe_ratio(rd, market_cap), "rd_over_market_cap")
-    result["RDS"] = exact("RDS", _safe_ratio(rd, revenue), "rd_over_sales")
+    result["RDS"] = FeatureValue(
+        "RDS",
+        None,
+        "unavailable",
+        "missing_dirty_surplus_components",
+        "dirty_surplus_unimplemented",
+        "R&D over sales is a different signal and must not substitute for Dirty Surplus",
+    )
     result["RDcap"] = proxy("RDcap", _safe_ratio(rd, assets), "rd_over_assets_proxy", "Official signal capitalizes R&D recursively")
     result["AdExp"] = exact("AdExp", _safe_ratio(value("advertising"), market_cap), "advertising_over_market_cap")
     result["GrAdExp"] = exact("GrAdExp", growth("advertising"), "advertising_growth_1y")
@@ -668,8 +1362,19 @@ def calculate_accounting_features(
         else None,
         "rd_intensity_and_growth_four_condition_indicator",
     )
-    result["grcapx"] = exact("grcapx", growth("capex"), "capex_growth_1y")
-    result["grcapx3y"] = exact("grcapx3y", growth("capex", 3), "capex_growth_3y")
+    result["grcapx"] = exact(
+        "grcapx",
+        growth("capex", 2),
+        "capex_growth_vs_two_years_ago",
+    )
+    result["grcapx3y"] = exact(
+        "grcapx3y",
+        _safe_ratio(
+            value("capex"),
+            sum_required(value("capex", 1), value("capex", 2), value("capex", 3)),
+        ),
+        "capex_over_prior_three_year_capex",
+    )
     result["InvestPPEInv"] = exact(
         "InvestPPEInv",
         _safe_ratio(sum_required(delta("ppe"), delta("inventory")), assets_lag),
@@ -776,7 +1481,28 @@ def calculate_accounting_features(
     result["tang"] = exact("tang", _safe_ratio(tangible, assets), "berger_tangibility_over_assets")
     result["OrderBacklog"] = exact("OrderBacklog", _safe_ratio(value("backlog"), assets), "order_backlog_over_assets")
     result["OrderBacklogChg"] = exact("OrderBacklogChg", growth("backlog"), "order_backlog_growth_1y")
-    result["hire"] = exact("hire", growth("employees"), "employee_growth_1y")
+    result["hire"] = exact(
+        "hire",
+        _safe_ratio(
+            difference(value("employees"), value("employees", 1)),
+            average_required(value("employees"), value("employees", 1)),
+        ),
+        "employee_change_over_two_year_average",
+    )
+
+    # These values remain useful as current two-source approximations, but the
+    # official formula, lag, deflator or universe filter is incomplete.  They
+    # must never inflate the exact-replication count.
+    for signalname, limitation in ACCOUNTING_PROXY_LIMITS.items():
+        current = result[signalname]
+        result[signalname] = FeatureValue(
+            signalname,
+            current.raw_value,
+            "proxy",
+            current.source,
+            current.formula_id,
+            limitation,
+        )
     return result
 
 
@@ -838,13 +1564,8 @@ UNIMPLEMENTED_REQUIREMENTS: dict[str, tuple[str, str]] = {
     "IntanSP": ("rolling_cross_sectional_regression", "Requires the paper's monthly five-year cross-sectional regression"),
     "MS": ("official_code_required", "Requires the full low-BM Mohanram score construction and cross-sectional eligibility filter"),
     "MeanRankRevGrowth": ("five_year_cross_sectional_ranks", "Requires annual revenue-growth ranks for five historical cross-sections"),
-    "Mom12mOffSeason": ("seasonality_formula_pending", "Price history exists, but the exact off-season month selection is not yet frozen"),
     "Mom6mJunk": ("credit_rating_history", "Requires a causal issuer credit-rating history"),
-    "MomOffSeason": ("seasonality_formula_pending", "Price history exists, but the exact two-to-five-year off-season window is not yet frozen"),
-    "MomOffSeason06YrPlus": ("seasonality_formula_pending", "Price history exists, but the exact six-to-ten-year off-season window is not yet frozen"),
-    "MomOffSeason16YrPlus": ("seasonality_formula_pending", "Price history exists, but the exact sixteen-to-twenty-year off-season window is not yet frozen"),
     "MomRev": ("cross_sectional_double_sort", "Requires current cross-sectional Mom6m and Mom36m quintiles"),
-    "MomSeasonShort": ("seasonality_formula_pending", "Requires the same calendar-month return from the previous year"),
     "MomVol": ("historical_turnover_sort", "Requires independent momentum and six-month turnover portfolio sorts"),
     "NetEquityFinance": ("equity_cash_flow_mapping", "Requires consistently mapped stock sale and repurchase cash flows"),
     "NumEarnIncrease": ("quarterly_income_history", "Requires up to eight consecutive year-over-year quarterly income comparisons"),
@@ -895,6 +1616,12 @@ def assemble_feature_table(
     *,
     as_of: str,
     redundancy_groups: pd.DataFrame | None = None,
+    security_context: pd.DataFrame | None = None,
+    exact_source_multiplier: float = 1.0,
+    proxy_source_multiplier: float = 0.55,
+    minimum_nonmodal_fraction: float = 0.01,
+    minimum_cross_sectional_observations: int = 1,
+    minimum_cross_sectional_coverage_fraction: float = 0.0,
 ) -> pd.DataFrame:
     """Produce one audited long row per symbol and strict predictor."""
 
@@ -914,6 +1641,11 @@ def assemble_feature_table(
                 status, source, note = computed.status, computed.source, computed.note
                 raw_value = computed.raw_value
                 formula_id = computed.formula_id
+            source_available_at = computed.available_at if computed is not None else None
+            implementation_status = status
+            value_status = "available" if raw_value is not None and pd.notna(raw_value) else "missing"
+            if value_status == "missing":
+                status = "unavailable"
             sign = float(definition.get("Sign")) if pd.notna(definition.get("Sign")) else 1.0
             horizon_raw = pd.to_numeric(pd.Series([definition.get("portperiod")]), errors="coerce").iloc[0]
             horizon = int(horizon_raw) if pd.notna(horizon_raw) else 1
@@ -927,110 +1659,594 @@ def assemble_feature_table(
                     "raw_value": raw_value,
                     "sign": sign,
                     "status": status,
+                    "implementation_status": implementation_status,
+                    "value_status": value_status,
                     "source": source,
                     "formula_id": formula_id,
                     "note": note,
+                    "source_available_at": source_available_at,
+                    "source_input_age_days": (
+                        (
+                            pd.Timestamp(as_of).tz_localize(None).normalize()
+                            - pd.to_datetime(source_available_at, errors="coerce")
+                            .tz_localize(None)
+                            .normalize()
+                        ).days
+                        if source_available_at is not None
+                        and pd.notna(pd.to_datetime(source_available_at, errors="coerce"))
+                        else np.nan
+                    ),
                     "horizon_months": horizon,
+                    "official_portfolio_period_months": horizon,
+                    "official_start_month": definition.get("startmonth"),
+                    "official_stock_weight": definition.get("sweight"),
+                    "official_ls_quantile": definition.get("q_cut"),
+                    "official_quantile_filter": definition.get("q_filt"),
+                    "official_filter_expression": definition.get("filterstr"),
+                    "horizon_semantics": "official_portfolio_refresh_period_not_tested_forecast_horizon",
                     "data_family": definition.get("Cat.Data"),
                     "economic_family": definition.get("Cat.Economic"),
                     "tstat_reproduction": definition.get("tstat"),
                     "tstat_study": definition.get("T.Stat"),
                     "redundancy_group": group_map.get(str(signal), f"single_{signal}"),
-                    "evidence_weight": evidence_weight(definition, status),
+                    "evidence_weight": evidence_weight(
+                        definition,
+                        status,
+                        exact_source_multiplier=exact_source_multiplier,
+                        proxy_source_multiplier=proxy_source_multiplier,
+                    ),
                 }
             )
     frame = pd.DataFrame(rows)
+    frame["potential_evidence_weight"] = frame["evidence_weight"]
     frame["percentile"] = np.nan
+    frame["score_percentile"] = np.nan
+    frame["official_filter_pass"] = True
+    frame["official_filter_status"] = "none"
+    frame["official_portfolio_bucket"] = "unavailable"
+    context = pd.DataFrame(index=sorted(values_by_symbol))
+    if security_context is not None and not security_context.empty:
+        context = security_context.copy()
+        if "symbol" in context:
+            context = context.drop_duplicates("symbol").set_index("symbol")
+        context.index = context.index.astype(str)
+        context = context.reindex(sorted(values_by_symbol))
+    if "exchange_code" not in context:
+        exchange_source = context.get(
+            "exchange_sec",
+            context.get("exchange", pd.Series(index=context.index, dtype="string")),
+        )
+        context["exchange_code"] = exchange_source.map(_normalise_exchange)
+    if "market_cap" not in context:
+        context["market_cap"] = pd.to_numeric(
+            context.get("marketCap", pd.Series(index=context.index, dtype=float)),
+            errors="coerce",
+        )
+    if "current_price" not in context:
+        context["current_price"] = np.nan
+    if "eligible_common_stock" not in context:
+        context["eligible_common_stock"] = True
+    nyse_caps = pd.to_numeric(
+        context.loc[context["exchange_code"].eq(1), "market_cap"], errors="coerce"
+    ).dropna()
+    context["nyse_market_cap_p20"] = (
+        float(nyse_caps.quantile(0.20)) if not nyse_caps.empty else np.nan
+    )
+
     for signal, index in frame.groupby("signalname").groups.items():
-        sign = float(frame.loc[index, "sign"].iloc[0])
-        frame.loc[index, "percentile"] = signed_percentile(frame.loc[index, "raw_value"], sign)
+        definition = meta.loc[signal]
+        signal_index = pd.Index(index)
+        symbols = frame.loc[signal_index, "symbol"].astype(str)
+        signal_context = context.reindex(symbols).copy()
+        signal_context.index = signal_index
+        filter_mask, filter_status = official_filter_mask(definition, signal_context)
+        available = frame.loc[signal_index, "raw_value"].notna()
+        eligible = available & filter_mask
+        frame.loc[signal_index, "official_filter_pass"] = filter_mask.to_numpy(dtype=bool)
+        frame.loc[signal_index, "official_filter_status"] = filter_status
+        excluded = available & ~filter_mask
+        if excluded.any():
+            excluded_index = signal_index[excluded.to_numpy()]
+            frame.loc[excluded_index, "status"] = "unavailable"
+            frame.loc[excluded_index, "value_status"] = "official_filter_excluded"
+            frame.loc[excluded_index, "evidence_weight"] = 0.0
+        sign = float(frame.loc[signal_index, "sign"].iloc[0])
+        aligned = pd.to_numeric(frame.loc[signal_index, "raw_value"], errors="coerce") * sign
+        q_filter = str(definition.get("q_filt") or "").strip().upper()
+        if q_filter == "NYSE":
+            reference_mask = eligible & signal_context["exchange_code"].eq(1)
+        else:
+            reference_mask = eligible
+        required_cross_section = max(
+            int(minimum_cross_sectional_observations),
+            int(
+                math.ceil(
+                    len(signal_index)
+                    * float(minimum_cross_sectional_coverage_fraction)
+                )
+            ),
+        )
+        if (
+            int(eligible.sum()) < required_cross_section
+            or int(reference_mask.sum()) < required_cross_section
+        ):
+            affected = signal_index[eligible.to_numpy()]
+            frame.loc[affected, "status"] = "unavailable"
+            frame.loc[affected, "value_status"] = (
+                "insufficient_cross_sectional_coverage"
+            )
+            frame.loc[affected, "evidence_weight"] = 0.0
+            frame.loc[signal_index, "official_filter_status"] = (
+                frame.loc[signal_index, "official_filter_status"].astype(str)
+                + f"|cross_section_below_{required_cross_section}"
+            )
+            continue
+        percentiles = _reference_percentile(aligned.where(eligible), aligned.where(reference_mask))
+        frame.loc[signal_index, "percentile"] = percentiles
+
+        form = str(definition.get("Cat.Form") or "continuous").strip().lower()
+        q_raw = pd.to_numeric(pd.Series([definition.get("q_cut")]), errors="coerce").iloc[0]
+        q_cut = float(q_raw) if pd.notna(q_raw) else 0.20
+        if form == "continuous":
+            reference_values = aligned.where(reference_mask).dropna()
+            if reference_values.empty:
+                low = pd.Series(False, index=signal_index)
+                high = pd.Series(False, index=signal_index)
+            else:
+                low_break = float(reference_values.quantile(q_cut))
+                high_break = float(reference_values.quantile(1.0 - q_cut))
+                if low_break >= high_break:
+                    low = pd.Series(False, index=signal_index)
+                    high = pd.Series(False, index=signal_index)
+                else:
+                    low = aligned.le(low_break) & eligible
+                    high = aligned.ge(high_break) & eligible
+            frame.loc[signal_index[low.fillna(False).to_numpy()], "official_portfolio_bucket"] = "short"
+            frame.loc[signal_index[high.fillna(False).to_numpy()], "official_portfolio_bucket"] = "long"
+            middle = eligible & ~(low.fillna(False) | high.fillna(False))
+            frame.loc[signal_index[middle.to_numpy()], "official_portfolio_bucket"] = "neutral"
+            score_percentile = percentiles.where(low | high, 50.0).where(eligible)
+        else:
+            frame.loc[signal_index[eligible.to_numpy()], "official_portfolio_bucket"] = "discrete"
+            score_percentile = percentiles.where(eligible)
+        frame.loc[signal_index, "score_percentile"] = score_percentile
+
+        informative_values = aligned.where(eligible).dropna()
+        if len(informative_values) >= 3:
+            modal_count = int(informative_values.value_counts(dropna=False).iloc[0])
+            nonmodal_fraction = 1.0 - modal_count / len(informative_values)
+            minimum_fraction = max(
+                float(minimum_nonmodal_fraction),
+                2.0 / len(informative_values),
+            )
+            if informative_values.nunique(dropna=True) <= 1 or nonmodal_fraction < minimum_fraction:
+                affected = signal_index[eligible.to_numpy()]
+                frame.loc[affected, "status"] = "unavailable"
+                frame.loc[affected, "value_status"] = "uninformative_cross_section"
+                frame.loc[affected, "evidence_weight"] = 0.0
+                frame.loc[affected, "percentile"] = np.nan
+                frame.loc[affected, "score_percentile"] = np.nan
+                frame.loc[affected, "official_portfolio_bucket"] = "uninformative"
     return frame
 
 
-def calculate_scores(features: pd.DataFrame, minimum_metrics: int = 5) -> pd.DataFrame:
-    """Aggregate metric percentiles with one bounded vote per redundancy group."""
+def calculate_scores(
+    features: pd.DataFrame,
+    minimum_metrics: int = 5,
+    *,
+    maximum_metric_weight_multiple: float = 2.0,
+    maximum_family_weight: float = 0.15,
+) -> pd.DataFrame:
+    """Aggregate comparable scores with one fixed vote per redundancy group.
 
-    usable = features.loc[
-        features["status"].isin(["exact", "proxy"])
-        & features["percentile"].notna()
-        & features["evidence_weight"].gt(0)
-    ].copy()
-    if usable.empty:
-        return pd.DataFrame(
-            columns=["as_of", "symbol", "horizon_months", "score", "confidence", "metrics_used", "groups_used"]
-        )
-    usable["metric_weight"] = pd.to_numeric(usable["evidence_weight"], errors="coerce").fillna(0.0)
-    group_weight_sum = usable.groupby(["symbol", "horizon_months", "redundancy_group"])["metric_weight"].transform("sum")
-    usable["within_group_weight"] = usable["metric_weight"] / group_weight_sum.replace(0, np.nan)
-    usable["group_score_component"] = usable["percentile"] * usable["within_group_weight"]
-    groups = usable.groupby(["as_of", "symbol", "horizon_months", "redundancy_group"], as_index=False).agg(
-        group_score=("group_score_component", "sum"),
-        group_evidence=("metric_weight", "mean"),
-        metrics_in_group=("signalname", "nunique"),
+    Every symbol uses the same denominator within a score bucket.  Missing or
+    officially filtered observations contribute a neutral 50 and lower
+    confidence instead of silently changing the basket of metrics.
+    """
+
+    potential_column = (
+        "potential_evidence_weight"
+        if "potential_evidence_weight" in features
+        else "evidence_weight"
     )
-    groups["weighted_score"] = groups["group_score"] * groups["group_evidence"]
+    formula_available = features.groupby("signalname")["formula_id"].transform(
+        lambda values: values.fillna("").astype(str).str.len().gt(0).any()
+    )
+    eligible_metric_rows = features.loc[
+        features["implementation_status"].isin(["exact", "proxy"])
+        & pd.to_numeric(features[potential_column], errors="coerce").gt(0)
+        & formula_available
+    ].copy()
+    if eligible_metric_rows.empty:
+        return pd.DataFrame(
+            columns=[
+                "as_of", "symbol", "horizon_months", "raw_score", "score", "confidence",
+                "metrics_used", "metrics_expected", "groups_used", "groups_expected",
+                "maximum_family_weight_actual",
+            ]
+        )
+    canonical_signals = set(eligible_metric_rows["signalname"].astype(str))
+    canonical = features.loc[
+        features["signalname"].astype(str).isin(canonical_signals)
+    ].copy()
+    signal_potential_weight = (
+        eligible_metric_rows.assign(
+            _potential=pd.to_numeric(
+                eligible_metric_rows[potential_column], errors="coerce"
+            ).fillna(0.0)
+        )
+        .groupby("signalname")["_potential"]
+        .max()
+    )
+
+    canonical["potential_weight"] = (
+        canonical["signalname"].map(signal_potential_weight).fillna(0.0)
+    )
+    metric_meta = canonical.groupby(
+        ["horizon_months", "signalname", "redundancy_group"], as_index=False
+    ).agg(
+        potential_weight=("potential_weight", "max"),
+        economic_family=("economic_family", lambda values: "|".join(sorted(set(map(str, values))))),
+    )
+    median_weight = metric_meta.groupby("horizon_months")["potential_weight"].transform("median")
+    metric_meta["potential_weight"] = np.minimum(
+        metric_meta["potential_weight"],
+        median_weight * float(maximum_metric_weight_multiple),
+    )
+    group_weight_sum = metric_meta.groupby(
+        ["horizon_months", "redundancy_group"]
+    )["potential_weight"].transform("sum")
+    metric_meta["within_group_weight"] = (
+        metric_meta["potential_weight"] / group_weight_sum.replace(0, np.nan)
+    )
+    group_family = (
+        metric_meta.groupby(
+            ["horizon_months", "redundancy_group", "economic_family"],
+            as_index=False,
+        )["potential_weight"]
+        .sum()
+        .sort_values(
+            ["horizon_months", "redundancy_group", "potential_weight", "economic_family"],
+            ascending=[True, True, False, True],
+        )
+        .drop_duplicates(["horizon_months", "redundancy_group"], keep="first")
+        .rename(columns={"economic_family": "group_economic_family"})
+    )
+    group_meta = metric_meta.groupby(
+        ["horizon_months", "redundancy_group"], as_index=False
+    ).agg(
+        group_evidence=("potential_weight", "mean"),
+        metrics_expected=("signalname", "nunique"),
+    )
+    group_meta = group_meta.merge(
+        group_family[
+            ["horizon_months", "redundancy_group", "group_economic_family"]
+        ],
+        on=["horizon_months", "redundancy_group"],
+        how="left",
+    ).rename(columns={"group_economic_family": "economic_family"})
+    family_evidence = group_meta.groupby(
+        ["horizon_months", "economic_family"], as_index=False
+    )["group_evidence"].sum()
+    family_targets: list[pd.DataFrame] = []
+    for horizon, horizon_families in family_evidence.groupby("horizon_months"):
+        part = horizon_families.copy()
+        raw = part.set_index("economic_family")["group_evidence"].astype(float)
+        if raw.le(0).all():
+            part["family_target_weight"] = 0.0
+            family_targets.append(part)
+            continue
+        cap = float(maximum_family_weight)
+        if cap <= 0 or cap > 1:
+            raise OpenAPDataError("maximum_family_weight must be in (0, 1]")
+        positive = raw.loc[raw.gt(0)]
+        if len(positive) * cap < 1.0 - 1e-12:
+            target = pd.Series(0.0, index=raw.index, dtype=float)
+            target.loc[positive.index] = 1.0 / len(positive)
+            part["family_target_weight"] = part["economic_family"].map(target).fillna(0.0)
+            family_targets.append(part)
+            continue
+        target = pd.Series(0.0, index=raw.index, dtype=float)
+        remaining = list(positive.index)
+        remaining_weight = 1.0
+        while remaining:
+            denominator = float(raw.loc[remaining].sum())
+            proposal = (
+                raw.loc[remaining] / denominator * remaining_weight
+                if denominator > 0
+                else pd.Series(remaining_weight / len(remaining), index=remaining)
+            )
+            over = proposal.loc[proposal.gt(cap + 1e-12)].index.tolist()
+            if not over:
+                target.loc[remaining] = proposal
+                break
+            target.loc[over] = cap
+            remaining_weight -= cap * len(over)
+            remaining = [family for family in remaining if family not in over]
+        part["family_target_weight"] = part["economic_family"].map(target).fillna(0.0)
+        family_targets.append(part)
+    family_weights = pd.concat(family_targets, ignore_index=True)
+    group_meta = group_meta.merge(
+        family_weights[
+            ["horizon_months", "economic_family", "group_evidence", "family_target_weight"]
+        ].rename(columns={"group_evidence": "family_evidence"}),
+        on=["horizon_months", "economic_family"],
+        how="left",
+    )
+    group_meta["fixed_group_weight"] = (
+        group_meta["family_target_weight"]
+        * group_meta["group_evidence"]
+        / group_meta["family_evidence"].replace(0, np.nan)
+    ).fillna(0.0)
+
+    working = canonical.merge(
+        metric_meta[
+            ["horizon_months", "signalname", "redundancy_group", "within_group_weight"]
+        ],
+        on=["horizon_months", "signalname", "redundancy_group"],
+        how="inner",
+    )
+    observed = (
+        working["status"].isin(["exact", "proxy"])
+        & working["score_percentile"].notna()
+        & pd.to_numeric(working["evidence_weight"], errors="coerce").gt(0)
+    )
+    working["observed"] = observed
+    working["comparable_percentile"] = pd.to_numeric(
+        working["score_percentile"], errors="coerce"
+    ).where(observed, 50.0)
+    working["group_score_component"] = (
+        working["comparable_percentile"] * working["within_group_weight"]
+    )
+    working["observed_weight_component"] = (
+        working["within_group_weight"] * observed.astype(float)
+    )
+    groups = working.groupby(
+        ["as_of", "symbol", "horizon_months", "redundancy_group"], as_index=False
+    ).agg(
+        group_score=("group_score_component", "sum"),
+        observed_group_fraction=("observed_weight_component", "sum"),
+        metrics_used=("observed", "sum"),
+    )
+    groups = groups.merge(
+        group_meta[
+            [
+                "horizon_months", "redundancy_group", "fixed_group_weight",
+                "family_target_weight", "metrics_expected",
+            ]
+        ],
+        on=["horizon_months", "redundancy_group"],
+        how="left",
+    )
+    groups["weighted_score"] = groups["group_score"] * groups["fixed_group_weight"]
+    groups["observed_group_weight"] = (
+        groups["fixed_group_weight"] * groups["observed_group_fraction"]
+    )
+    groups["group_used"] = groups["metrics_used"].gt(0)
     summary = groups.groupby(["as_of", "symbol", "horizon_months"], as_index=False).agg(
         weighted_sum=("weighted_score", "sum"),
-        total_weight=("group_evidence", "sum"),
-        groups_used=("redundancy_group", "nunique"),
-        metrics_used=("metrics_in_group", "sum"),
+        fixed_total_weight=("fixed_group_weight", "sum"),
+        observed_total_weight=("observed_group_weight", "sum"),
+        groups_used=("group_used", "sum"),
+        groups_expected=("redundancy_group", "nunique"),
+        metrics_used=("metrics_used", "sum"),
+        metrics_expected=("metrics_expected", "sum"),
+        maximum_family_weight_actual=("family_target_weight", "max"),
     )
-    summary["score"] = summary["weighted_sum"] / summary["total_weight"].replace(0, np.nan)
-    summary["confidence"] = np.minimum(100.0, 100.0 * summary["groups_used"] / 25.0)
-    available_by_horizon = (
-        usable.groupby("horizon_months")["signalname"].nunique().clip(upper=int(minimum_metrics)).astype(int)
+    summary["raw_score"] = summary["weighted_sum"] / summary["fixed_total_weight"].replace(0, np.nan)
+    summary["confidence"] = (
+        100.0
+        * summary["observed_total_weight"]
+        / summary["fixed_total_weight"].replace(0, np.nan)
+    ).clip(0.0, 100.0)
+    insufficient = summary["metrics_used"].lt(int(minimum_metrics))
+    summary.loc[insufficient, "raw_score"] = np.nan
+    summary.loc[insufficient, "confidence"] = 0.0
+    summary["score"] = summary.groupby(
+        ["as_of", "horizon_months"], group_keys=False
+    )["raw_score"].transform(
+        lambda values: (
+            pd.Series(50.0, index=values.index)
+            if values.notna().sum() == 1
+            else 100.0
+            * (values.rank(method="average", na_option="keep") - 1.0)
+            / max(values.notna().sum() - 1, 1)
+        )
     )
-    required = summary["horizon_months"].map(available_by_horizon).fillna(int(minimum_metrics)).astype(int)
-    summary.loc[summary["metrics_used"].lt(required), ["score", "confidence"]] = np.nan
 
     symbols = sorted(features["symbol"].astype(str).unique())
     as_of_values = sorted(features["as_of"].astype(str).unique())
+    output_horizons = sorted(
+        set(SUPPORTED_HORIZONS)
+        | set(pd.to_numeric(canonical["horizon_months"], errors="coerce").dropna().astype(int))
+    )
     grid = pd.MultiIndex.from_product(
-        [as_of_values, symbols, SUPPORTED_HORIZONS],
+        [as_of_values, symbols, output_horizons],
         names=["as_of", "symbol", "horizon_months"],
     ).to_frame(index=False)
     result = grid.merge(summary, on=["as_of", "symbol", "horizon_months"], how="left")
-    result[["metrics_used", "groups_used"]] = result[["metrics_used", "groups_used"]].fillna(0).astype(int)
+    count_columns = ["metrics_used", "metrics_expected", "groups_used", "groups_expected"]
+    result[count_columns] = result[count_columns].fillna(0).astype(int)
     result["confidence"] = result["confidence"].fillna(0.0)
-    return result[["as_of", "symbol", "horizon_months", "score", "confidence", "metrics_used", "groups_used"]]
+    result["minimum_metrics_required"] = int(minimum_metrics)
+    result["horizon_evidence_sufficient"] = result["metrics_used"].ge(int(minimum_metrics))
+    result["score_bucket_semantics"] = np.where(
+        result["horizon_months"].eq(0),
+        "all_predictors_current_cross_sectional_score",
+        "official_portfolio_refresh_period_diagnostic_not_validated_forecast_horizon",
+    )
+    contribution_frame = working.merge(
+        group_meta[
+            [
+                "horizon_months", "redundancy_group", "fixed_group_weight",
+                "economic_family",
+            ]
+        ].rename(
+            columns={"economic_family": "group_economic_family"}
+        ),
+        on=["horizon_months", "redundancy_group"],
+        how="left",
+    )
+    contribution_frame["score_weight"] = (
+        contribution_frame["within_group_weight"]
+        * contribution_frame["fixed_group_weight"]
+    )
+    contribution_frame = contribution_frame.merge(
+        summary[
+            ["as_of", "symbol", "horizon_months", "fixed_total_weight"]
+        ],
+        on=["as_of", "symbol", "horizon_months"],
+        how="left",
+    )
+    contribution_frame["score_weight"] = (
+        contribution_frame["score_weight"]
+        / contribution_frame["fixed_total_weight"].replace(0, np.nan)
+    )
+    contribution_frame["raw_score_contribution"] = (
+        contribution_frame["comparable_percentile"]
+        * contribution_frame["score_weight"]
+    )
+    contribution_frame["directional_contribution_vs_neutral"] = (
+        contribution_frame["comparable_percentile"] - 50.0
+    ) * contribution_frame["score_weight"]
+    contribution_frame["observed_score_weight"] = (
+        contribution_frame["score_weight"]
+        * contribution_frame["observed"].astype(float)
+    )
+    contribution_columns = [
+        "as_of", "symbol", "horizon_months", "signalname",
+        "redundancy_group", "economic_family", "group_economic_family",
+        "raw_value", "status",
+        "source", "formula_id", "source_available_at", "source_input_age_days",
+        "score_percentile", "observed",
+        "within_group_weight", "fixed_group_weight", "score_weight",
+        "observed_score_weight", "raw_score_contribution",
+        "directional_contribution_vs_neutral",
+    ]
+    output = result[
+        [
+            "as_of", "symbol", "horizon_months", "raw_score", "score", "confidence",
+            "metrics_used", "metrics_expected", "groups_used", "groups_expected",
+            "minimum_metrics_required", "horizon_evidence_sufficient",
+            "maximum_family_weight_actual", "score_bucket_semantics",
+        ]
+    ].copy()
+    output.attrs["score_contributions"] = contribution_frame[contribution_columns].copy()
+    return output
 
 
-def calculate_aggregate_scores(scores: pd.DataFrame) -> pd.DataFrame:
-    """Combine independent horizon scores without treating missing horizons as zero."""
+def calculate_aggregate_scores(
+    scores: pd.DataFrame,
+    *,
+    minimum_horizons: int | None = None,
+    required_horizons: Sequence[int] = DEFAULT_REQUIRED_SCORE_BUCKETS,
+    minimum_confidence: float = 30.0,
+) -> pd.DataFrame:
+    """Combine only score buckets with enough independent evidence.
+
+    ``portperiod`` is OpenAP's portfolio refresh period, not a separately
+    validated forecast horizon.  The compatibility column remains named
+    ``horizon_months``.  The current ranking passes a synthetic bucket 0 that
+    contains all predictors together; official refresh-period buckets remain
+    diagnostic only.
+    """
 
     columns = [
         "as_of",
         "symbol",
+        "aggregate_raw_score",
         "aggregate_score",
         "aggregate_confidence",
         "horizons_used",
+        "all_horizons_present",
+        "required_horizons",
+        "ranking_eligible",
+        "ranking_rejection_reason",
+        "score_validation_status",
     ]
     if scores.empty:
         return pd.DataFrame(columns=columns)
     frame = scores.copy()
+    required = tuple(sorted({int(value) for value in required_horizons}))
+    if minimum_horizons is not None and minimum_horizons != len(required):
+        raise OpenAPDataError(
+            "minimum_horizons must match the explicit required_horizons length"
+        )
     frame["score"] = pd.to_numeric(frame["score"], errors="coerce")
+    if "raw_score" not in frame:
+        frame["raw_score"] = frame["score"]
+    frame["raw_score"] = pd.to_numeric(frame["raw_score"], errors="coerce")
     frame["confidence"] = pd.to_numeric(frame["confidence"], errors="coerce").fillna(0.0)
-    usable = frame.loc[frame["score"].notna() & frame["confidence"].gt(0)].copy()
+    required_frame = frame.loc[frame["horizon_months"].isin(required)].copy()
+    usable = required_frame.loc[
+        required_frame["score"].notna() & required_frame["confidence"].gt(0)
+    ].copy()
     usable["horizon_weight"] = usable["confidence"] / 100.0
     usable["weighted_score"] = usable["score"] * usable["horizon_weight"]
+    usable["weighted_raw_score"] = usable["raw_score"] * usable["horizon_weight"]
     if usable.empty:
         result = frame[["as_of", "symbol"]].drop_duplicates()
+        result["aggregate_raw_score"] = np.nan
         result["aggregate_score"] = np.nan
         result["aggregate_confidence"] = 0.0
         result["horizons_used"] = 0
+        result["all_horizons_present"] = False
+        result["required_horizons"] = "|".join(map(str, required))
+        result["ranking_eligible"] = False
+        result["ranking_rejection_reason"] = "no_usable_horizons"
+        result["score_validation_status"] = "unvalidated_current_snapshot_only"
         return result[columns]
     result = usable.groupby(["as_of", "symbol"], as_index=False).agg(
         weighted_sum=("weighted_score", "sum"),
+        weighted_raw_sum=("weighted_raw_score", "sum"),
         total_weight=("horizon_weight", "sum"),
         mean_confidence=("confidence", "mean"),
         horizons_used=("horizon_months", "nunique"),
     )
     result["aggregate_score"] = result["weighted_sum"] / result["total_weight"].replace(0, np.nan)
-    result["aggregate_confidence"] = result["mean_confidence"] * result["horizons_used"] / len(SUPPORTED_HORIZONS)
+    result["aggregate_raw_score"] = (
+        result["weighted_raw_sum"] / result["total_weight"].replace(0, np.nan)
+    )
+    result["aggregate_confidence"] = (
+        result["mean_confidence"] * result["horizons_used"] / max(len(required), 1)
+    )
     grid = frame[["as_of", "symbol"]].drop_duplicates()
     result = grid.merge(result, on=["as_of", "symbol"], how="left")
     result["aggregate_confidence"] = result["aggregate_confidence"].fillna(0.0)
     result["horizons_used"] = result["horizons_used"].fillna(0).astype(int)
+    present = (
+        usable.assign(present=True)
+        .pivot_table(
+            index=["as_of", "symbol"],
+            columns="horizon_months",
+            values="present",
+            aggfunc="any",
+            fill_value=False,
+        )
+        .reset_index()
+    )
+    for horizon in required:
+        if horizon not in present:
+            present[horizon] = False
+    present["all_horizons_present"] = present[list(required)].all(axis=1)
+    result = result.drop(columns=["all_horizons_present"], errors="ignore").merge(
+        present[["as_of", "symbol", "all_horizons_present"]],
+        on=["as_of", "symbol"],
+        how="left",
+    )
+    result["all_horizons_present"] = result["all_horizons_present"].fillna(False)
+    result["required_horizons"] = "|".join(map(str, required))
+    result["ranking_eligible"] = result["all_horizons_present"] & result["aggregate_confidence"].ge(float(minimum_confidence))
+    result["ranking_rejection_reason"] = np.select(
+        [
+            result["horizons_used"].eq(0),
+            ~result["all_horizons_present"],
+            result["aggregate_confidence"].lt(float(minimum_confidence)),
+        ],
+        ["no_usable_horizons", "incomplete_horizons", "aggregate_confidence_too_low"],
+        default="",
+    )
+    result["score_validation_status"] = "unvalidated_current_snapshot_only"
     return result[columns]
 
 
@@ -1045,7 +2261,9 @@ def coverage_report(features: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFr
         proxy_values = int((has_value & group["status"].eq("proxy")).sum())
         values = exact_values + proxy_values
         dominant = "unavailable"
-        if exact_values:
+        if exact_values and proxy_values:
+            dominant = "mixed"
+        elif exact_values:
             dominant = "exact"
         elif proxy_values:
             dominant = "proxy"
@@ -1084,6 +2302,7 @@ def write_summary(path: str | Path, payload: Mapping[str, Any]) -> None:
 
 __all__ = [
     "EXPECTED_PREDICTORS",
+    "DEFAULT_REQUIRED_SCORE_BUCKETS",
     "FeatureValue",
     "OpenAPDataError",
     "SEC_CONCEPT_ALIASES",
@@ -1096,8 +2315,12 @@ __all__ = [
     "classify_missing_signal",
     "coverage_report",
     "evidence_weight",
+    "exclude_incomplete_us_session",
     "latest_sec_concepts",
     "latest_sec_concept_inputs",
+    "latest_completed_us_session_date",
+    "official_filter_mask",
+    "refine_current_redundancy_groups",
     "sec_concepts_from_inputs",
     "select_strict_predictors",
     "sha256_file",

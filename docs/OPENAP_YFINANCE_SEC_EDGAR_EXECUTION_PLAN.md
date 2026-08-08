@@ -53,7 +53,7 @@ Este trabajo prepara datos y calcula el score actual. No abre locked ni ejecuta 
 |---|---|
 | SEC EDGAR | Fundamentales oficiales y fecha real en la que cada dato fue conocido |
 | YFinance | Precios, volumen, dividendos, splits y fotografia actual del mercado |
-| Open Asset Pricing | Definiciones, signo, horizonte y evidencia de los 185 predictores |
+| Open Asset Pricing | Definiciones, signo, periodo oficial de cartera y evidencia de los 185 predictores |
 
 Si Yahoo y SEC discrepan en un fundamental, prevalece SEC. Yahoo no sustituira un dato SEC ausente salvo que el predictor quede marcado expresamente como proxy.
 
@@ -100,7 +100,7 @@ Los datos voluminosos se guardaran en Parquet. DuckDB actuara como catalogo y mo
    - nombre oficial;
    - formula oficial;
    - direccion economica;
-   - horizonte predictivo;
+   - periodo oficial de mantenimiento de cartera, sin presentarlo como horizonte predictivo validado;
    - t-stat de reproduccion;
    - t-stat del estudio, si existe;
    - datos necesarios;
@@ -204,7 +204,7 @@ Para cada accion elegible:
 
 1. Usar la formula oficial de OpenAP.
 2. Aplicar el signo oficial para que un valor alto tenga la misma interpretacion economica.
-3. Respetar el horizonte oficial.
+3. Respetar el periodo oficial de mantenimiento y no reinterpretarlo como horizonte predictivo.
 4. Aplicar retrasos causales de publicacion.
 5. No rellenar un dato ausente con cero.
 6. Clasificar cada resultado:
@@ -263,17 +263,20 @@ El grupo aporta un voto, no tres.
    - evidencia del estudio original;
    - calidad de los datos;
    - disponibilidad exacta o proxy;
-   - estabilidad;
-   - costes y liquidez.
+   - calidad de la fuente y fidelidad de la formula.
+   La estabilidad historica y los costes no se inventan en una fotografia
+   actual: quedan como auditorias separadas hasta disponer de validacion
+   temporal causal.
 6. Limitar el peso máximo de una sola metrica y de una sola familia.
-7. Generar scores separados por horizonte:
-   - 1 mes;
-   - 3 meses;
-   - 6 meses;
-   - 12 meses;
-   - 36 meses.
-8. Transformar cada score final a una escala de 0 a 100.
+7. Mantener los periodos oficiales 1, 3, 6, 12 y 36 como diagnostico del
+   periodo de mantenimiento de cartera de OpenAP. No llamarlos horizontes
+   predictivos validados.
+8. Calcular un score operativo conjunto con los 185 predictores y convertirlo
+   en percentil transversal real de 0 a 100. Con mas de una accion elegible,
+   el peor valor es 0 y el mejor 100.
 9. Generar un nivel de confianza separado. Un score de 90 no significa 90 por ciento de probabilidad de subida.
+10. Conservar tambien `raw_score`, el desglose de contribuciones por predictor,
+    grupo redundante y familia, y una vista operable separada por liquidez.
 
 ### Fase 9. Auditoria Y Control De Calidad
 
@@ -302,6 +305,11 @@ El proceso fallara si:
 - se detectan datos posteriores a la fecha de corte;
 - una formula usa información anterior a `available_at`;
 - se etiqueta como exacto un proxy;
+- una señal constante o casi constante conserva peso;
+- una acción del ranking tiene menos de 60 predictores calculados, mas de 125
+  ausentes, confianza inferior a 50 o inputs SEC de mas de 183 dias;
+- las contribuciones no reconstruyen exactamente el `raw_score`;
+- el score operativo no cubre realmente la escala transversal 0 a 100;
 - el resultado final no conserva trazabilidad hasta sus entradas.
 
 ### Fase 10. Publicar La Fotografia Actual
@@ -309,6 +317,10 @@ El proceso fallara si:
 Outputs finales:
 
 - `openap_scores_current.parquet`;
+- `openap_overall_scores_current.parquet`;
+- `openap_score_contributions_current.parquet`;
+- `openap_current_leaderboard.csv`;
+- `openap_current_deployable_leaderboard.csv`;
 - `openap_features_current.parquet`;
 - `security_master.parquet`;
 - `coverage_185.csv`;
@@ -320,8 +332,9 @@ Outputs finales:
 
 Cada accion mostrara:
 
-- score por horizonte;
-- score agregado;
+- score operativo conjunto en percentil 0-100;
+- `raw_score` previo al ranking transversal;
+- diagnosticos por periodo oficial de mantenimiento;
 - confianza;
 - predictores exactos disponibles;
 - proxies utilizados;
@@ -362,7 +375,7 @@ La descarga masiva se considera un run pesado.
 9. Implementar proxies autorizados y auditados.
 10. Marcar no calculables.
 11. Agrupar señales redundantes y espejo.
-12. Calcular scores por horizonte y confianza.
+12. Calcular score operativo, diagnosticos por periodo y confianza.
 13. Ejecutar validaciones de calidad.
 14. Publicar DuckDB, Parquet y reportes.
 
@@ -377,14 +390,20 @@ El trabajo se considerara completo cuando:
 - los 185 predictores tengan estado y motivo;
 - ningún proxy figure como calculo exacto;
 - los grupos redundantes aporten un solo voto;
-- exista score independiente por horizonte;
+- exista score operativo conjunto y los periodos oficiales queden etiquetados
+  como diagnosticos, no como horizontes predictivos validados;
 - exista nivel de confianza;
 - los outputs puedan reconstruirse desde sus fuentes y hashes;
 - no se haya usado información futura;
 - la fecha de corte quede registrada;
 - el informe final detalle cobertura, fallos y limitaciones.
 
-## 10. Estado De Ejecucion Verificado
+## 10. Estado Historico Sustituido
+
+La siguiente fotografia corresponde a una version anterior. Se conserva solo
+como trazabilidad y no debe utilizarse como base del ranking actual. La
+reconstruccion semantica v2 debe sustituir estas cifras cuando pase todos los
+gates nuevos.
 
 Ejecucion final:
 
@@ -418,7 +437,9 @@ Resultados:
 | Scores agregados | 4.124 |
 | Grupos redundantes finales | 150 |
 
-Los 20.620 scores equivalen a 4.124 acciones por cinco horizontes: 1, 3, 6, 12 y 36 meses. No hay duplicados por accion y horizonte.
+Los 20.620 registros historicos eran cinco diagnosticos por accion asociados a
+periodos de mantenimiento. No demostraban cinco horizontes predictivos
+independientes.
 
 ## 11. Verificacion De Aceptacion
 
@@ -438,9 +459,14 @@ Los 20.620 scores equivalen a 4.124 acciones por cinco horizontes: 1, 3, 6, 12 y
 
 ## 12. Limitaciones De Uso
 
-Este resultado es una fotografia transversal actual, no un backtest ni una recomendacion de inversión. Un score alto significa atractivo relativo frente al universo en ese horizonte; no significa probabilidad de subida.
+Este resultado es una fotografia transversal actual, no un backtest ni una recomendacion de inversion. Un score alto significa atractivo relativo frente al universo en la fecha de calculo; no significa probabilidad de subida.
 
-La cobertura gratuita es incompleta. La confianza mediana de los scores por horizonte es 8 sobre 100 y algunos líderes brutos tienen confianza baja porque faltan señales de analistas, microestructura, opciones historicas y otros datos propietarios. Antes de utilizar un ranking debe exigirse un umbral de confianza y revisar `coverage_185.csv`, `proxy_audit.csv` y los campos `exact_features`, `proxy_features` y `missing_features`.
+La cobertura gratuita es incompleta. La fotografia historica anterior tenia una
+confianza mediana de 8 sobre 100. La version v2 no permite entrar al ranking con
+confianza inferior a 50, menos de 60 predictores calculados, mas de 125 ausentes
+o inputs SEC de mas de 183 dias. Aun asi deben revisarse `coverage_185.csv`,
+`proxy_audit.csv` y los campos `exact_features`, `proxy_features` y
+`missing_features`.
 
 ## 13. Outputs Verificados
 
@@ -448,6 +474,8 @@ La cobertura gratuita es incompleta. La confianza mediana de los scores por hori
 - `openap_features_current.parquet`.
 - `openap_scores_current.parquet`.
 - `openap_scores_aggregate_current.parquet`.
+- `openap_score_contributions_current.parquet`.
+- `openap_current_deployable_leaderboard.csv`.
 - `sec_concept_inputs_current.parquet`.
 - `security_master.parquet`.
 - `security_universe_exclusions.csv`.
