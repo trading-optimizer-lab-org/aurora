@@ -94,6 +94,8 @@ jobs:
           manifest = json.loads((root / "benchmark_dataset_manifest.json").read_text())
           if manifest["loaded_last_date"] > "2010-12-31":
               raise SystemExit("DATA_AFTER_TRAIN_END")
+          if manifest["loaded_last_date"] != "2010-12-31":
+              raise SystemExit("UNEXPECTED_TRAIN_END_DATE")
           if manifest["locked_start_unopened"] != "2021-01-01":
               raise SystemExit("LOCKED_BOUNDARY_MISMATCH")
           if manifest["validation_start_unopened"] != "2011-01-01":
@@ -102,6 +104,10 @@ jobs:
           dates = pd.to_datetime(table["date"], errors="raise")
           if dates.max() > pd.Timestamp("2010-12-31"):
               raise SystemExit("PARQUET_DATE_BOUNDARY_BREACH")
+          if dates.max() != pd.Timestamp("2010-12-31"):
+              raise SystemExit("PARQUET_TRAIN_END_DATE_MISMATCH")
+          if manifest["date_parser"] != "strict_explicit_numeric_unit_seconds":
+              raise SystemExit("DATE_PARSER_CONTRACT_MISMATCH")
           print("preflight ok", dates.min().date(), dates.max().date())
           PY
       - name: Build immutable search-space manifest

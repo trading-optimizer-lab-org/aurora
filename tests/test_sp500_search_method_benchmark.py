@@ -4,6 +4,7 @@ import json
 
 import numpy as np
 import pandas as pd
+import aurora.infra.sp500_search_method_benchmark.benchmark as benchmark_module
 from aurora.infra.sp500_search_method_benchmark.benchmark import (
     METHODS,
     SEEDS,
@@ -27,6 +28,43 @@ def test_numeric_dates_require_explicit_unit_and_preserve_expected_boundary():
         assert str(exc) == "NUMERIC_DATE_REQUIRES_EXPLICIT_UNIT"
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("numeric dates must not be guessed")
+
+
+def test_prepare_uses_explicit_fast_source_path_and_date_firewall(monkeypatch, tmp_path):
+    calls = {}
+
+    def fake_prepare_market_snapshot(root, package, **kwargs):
+        calls.update(kwargs)
+        index = pd.bdate_range("1993-01-22", "2010-12-31")
+        close = pd.Series(100.0, index=index)
+        prices = pd.DataFrame(
+            {
+                "open": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "volume": 100_000.0,
+            },
+            index=index,
+        )
+        ledger, _ = build_total_return_ledger(prices)
+        write_fixture_snapshot(root, ledger, split="train")
+        return {
+            "minimum_date": "1993-01-22",
+            "maximum_date": "2010-12-31",
+            "locked_opened": False,
+            "receipts": [],
+        }
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(benchmark_module, "prepare_market_snapshot", fake_prepare_market_snapshot)
+    benchmark_module.prepare_benchmark_data(tmp_path / "prepared")
+
+    manifest = json.loads((tmp_path / "prepared" / "benchmark_dataset_manifest.json").read_text())
+    assert calls["skip_independent_price_sources"] is True
+    assert manifest["date_parser"] == "strict_explicit_numeric_unit_seconds"
+    assert manifest["locked_start_unopened"] == "2021-01-01"
+    assert manifest["loaded_last_date"] == "2010-12-31"
 
 
 def test_common_warm_start_is_identical_for_all_methods():
