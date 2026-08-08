@@ -2,6 +2,7 @@ name: SP500 Search Method Benchmark Expanded
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   actions: read
