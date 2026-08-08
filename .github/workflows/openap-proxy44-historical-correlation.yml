@@ -8,11 +8,6 @@ on:
         required: true
         default: "30837929185"
         type: string
-      official_reference_run_id:
-        description: Run containing the staged official OpenAP long-short returns
-        required: true
-        default: "31076097192"
-        type: string
 
 permissions:
   actions: read
@@ -63,21 +58,31 @@ jobs:
           run-id: ${{ inputs.base_run_id }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
-      - name: Download official OpenAP reference
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: openap-five-proxy-historical-validation-results
-          path: inputs/official
-          run-id: ${{ inputs.official_reference_run_id }}
-          repository: trading-optimizer-lab-org/aurora
-          github-token: ${{ github.token }}
+      - name: Download complete official OpenAP long-short reference
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from aurora.research.openap_93.official_portfolio_similarity import download_official_long_short
+          from aurora.research.openap_proxy_real_correlation import CANONICAL_PROXY_SIGNALS
+
+          output = Path("inputs/official")
+          output.mkdir(parents=True, exist_ok=True)
+          frame = download_official_long_short(
+              output_dir=output,
+              signal_names=CANONICAL_PROXY_SIGNALS,
+          )
+          frame.to_csv(output / "PredictorLSretWide.csv", index=False)
+          found = set(frame["signal"])
+          missing = set(CANONICAL_PROXY_SIGNALS).difference(found)
+          assert not missing, f"Official OpenAP reference missing canonical proxies: {sorted(missing)}"
+          PY
       - name: Locate inputs
         id: locate
         shell: bash
         run: |
           set -euo pipefail
           db=$(find inputs/base -type f -name '*.duckdb' -print -quit)
-          official=$(find inputs/official -type f \( -name 'official_long_short.csv' -o -name 'PredictorLSretWide.csv' \) -print -quit)
+          official=$(find inputs/official -type f -name 'PredictorLSretWide.csv' -print -quit)
           test -n "$db"
           test -n "$official"
           echo "db=$db" >> "$GITHUB_OUTPUT"

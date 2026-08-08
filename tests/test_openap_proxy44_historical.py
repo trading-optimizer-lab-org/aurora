@@ -68,3 +68,5 @@ def test_full_workflow_runs_historical_audit_only_in_github() -> None:
     assert "run_openap_proxy44_historical.py" in workflow
     assert "openap_proxy44_correlation.csv" in workflow
     assert "canonical_proxy_count'] == 44" in workflow
+    assert "download_official_long_short" in workflow
+    assert "openap-five-proxy-historical-validation-results" not in workflow
