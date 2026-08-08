@@ -61,6 +61,7 @@ def download_window(
             end,
             split=split,
             raw_dir=output_dir,
+            include_events=False,
         )
         frame = frame.loc[:, ["date", "open", "high", "low", "close", "volume"]]
         payload = frame.to_csv(index=False, lineterminator="\n").encode("utf-8")

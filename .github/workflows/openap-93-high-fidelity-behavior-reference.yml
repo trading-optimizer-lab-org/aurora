@@ -19,6 +19,19 @@ permissions:
   contents: read
 
 jobs:
+  framework_contract:
+    # Keep the framework declaration available without changing this
+    # read-only reference workflow's execution path.
+    if: ${{ false }}
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: openap-93-reference-framework-contract
+      retention_days: 1
+      execution_mode: optimized
+      forced_job_count: 1
+
   build_reference:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

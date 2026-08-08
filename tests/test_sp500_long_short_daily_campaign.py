@@ -70,8 +70,10 @@ from aurora.infra.sp500_long_short_daily.statistics import (
     reality_check_and_spa,
 )
 from aurora.infra.sp500_long_short_daily.validation import (
+    DIAGNOSTIC_VALIDATION_ACK,
     VALIDATION_ACK,
     ValidationGateError,
+    build_diagnostic_train_freeze,
     combine_phase_snapshots,
     run_validation_once,
     verify_train_freeze,
@@ -805,7 +807,8 @@ def test_stooq_window_uses_documented_yahoo_fallback_for_provider_unavailability
         *args: object,
         **kwargs: object,
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, tuple[DownloadReceipt, ...]]:
-        del args, kwargs
+        del args
+        assert kwargs["include_events"] is False
         empty = pd.DataFrame(columns=["date"])
         return frame, empty, empty, (fallback_receipt,)
 
@@ -2117,6 +2120,72 @@ def test_validation_refuses_diagnostic_representatives_before_loading_data(tmp_p
         )
 
 
+def test_authorized_diagnostic_freeze_is_traceable_and_validation_stays_locked(
+    tmp_path: Path,
+) -> None:
+    candidate = _campaign().candidate_by_id()["STRAT0014"]
+    source = tmp_path / "source-train-results"
+    source.mkdir()
+    source_freeze = {
+        "schema_version": "1",
+        "selection_closed": True,
+        "validation_opened": False,
+        "locked_opened": False,
+        "train_end": "2010-12-31",
+        "validation_start": "2011-01-01",
+        "validation_end": "2020-12-31",
+        "locked_start": "2021-01-01",
+        "code_sha": "TRAIN_SOURCE_SHA",
+        "finalists": [],
+    }
+    source_freeze["freeze_sha256"] = canonical_json_hash(source_freeze)
+    (source / "train_selection_freeze.json").write_text(
+        json.dumps(source_freeze), encoding="utf-8"
+    )
+    pd.DataFrame(
+        [
+            {
+                "strategy_id": "STRAT0014",
+                "canonical_hash": candidate["canonical_hash"],
+                "status": "evaluated",
+                "hard_train_eligible": True,
+                "train_cagr_pct": 15.484,
+                "train_sharpe": 0.7704,
+                "train_calmar": 0.5864,
+                "train_max_drawdown_pct": -26.4051,
+                "spa_pvalue": 0.9240759,
+            }
+        ]
+    ).to_csv(source / "candidate_metrics.csv", index=False)
+
+    diagnostic = tmp_path / "diagnostic-freeze"
+    path = build_diagnostic_train_freeze(
+        source_train_results_dir=source,
+        output_dir=diagnostic,
+        strategy_id="STRAT0014",
+        code_sha="LOCAL_TEST_ONLY",
+    )
+    freeze = verify_train_freeze(path, code_sha="LOCAL_TEST_ONLY")
+    assert freeze["source_train_freeze_sha256"] == source_freeze["freeze_sha256"]
+    assert freeze["locked_start"] == "2021-01-01"
+    assert freeze["locked_opened"] is False
+    assert freeze["finalists"] == [
+        {
+            "strategy_id": "STRAT0014",
+            "canonical_hash": candidate["canonical_hash"],
+            "diagnostic_only": True,
+            "eligible_for_validation": False,
+            "train_metrics": {
+                "cagr_pct": 15.484,
+                "sharpe": 0.7704,
+                "calmar": 0.5864,
+                "max_drawdown_pct": -26.4051,
+                "spa_pvalue": 0.9240759,
+            },
+        }
+    ]
+
+
 def test_phase_snapshots_combine_without_opening_locked() -> None:
     train = _long_fixture()
     validation_dates = pd.bdate_range("2011-01-03", "2020-12-31")
@@ -2214,13 +2283,102 @@ def test_one_shot_validation_outputs_only_frozen_candidate_and_2011_2020(
     assert (output / "final_manifest.json").is_file()
 
 
+def test_diagnostic_validation_evaluates_only_strat0014_without_promotion(
+    tmp_path: Path,
+) -> None:
+    candidate = _campaign().candidate_by_id()["STRAT0014"]
+    train_data = _long_fixture()
+    train_root = tmp_path / "train-prepared"
+    write_fixture_snapshot(train_root, train_data.ledger)
+
+    dates = pd.bdate_range("2011-01-03", "2020-12-31")
+    close = 100.0 * np.exp(np.arange(len(dates)) * 0.0002)
+    prices = pd.DataFrame(
+        {
+            "date": dates,
+            "open": close,
+            "high": close * 1.01,
+            "low": close * 0.99,
+            "close": close,
+            "volume": 1_000_000,
+        }
+    )
+    validation_ledger, _ = build_total_return_ledger(prices)
+    validation_root = tmp_path / "validation-prepared"
+    write_fixture_snapshot(validation_root, validation_ledger, split="validation")
+
+    freeze = {
+        "schema_version": "1",
+        "selection_closed": True,
+        "validation_opened": False,
+        "locked_opened": False,
+        "train_end": "2010-12-31",
+        "validation_start": "2011-01-01",
+        "validation_end": "2020-12-31",
+        "locked_start": "2021-01-01",
+        "code_sha": "LOCAL_TEST_ONLY",
+        "finalists": [
+            {
+                "strategy_id": "STRAT0014",
+                "canonical_hash": candidate["canonical_hash"],
+                "diagnostic_only": True,
+                "eligible_for_validation": False,
+                "train_metrics": {"sharpe": 0.7704, "calmar": 0.5864},
+            }
+        ],
+    }
+    freeze["freeze_sha256"] = canonical_json_hash(freeze)
+    train_results = tmp_path / "train-results"
+    train_results.mkdir()
+    (train_results / "train_selection_freeze.json").write_text(
+        json.dumps(freeze), encoding="utf-8"
+    )
+
+    output = tmp_path / "validation-output"
+    summary = run_validation_once(
+        train_results_dir=train_results,
+        train_prepared_dir=train_root,
+        validation_prepared_dir=validation_root,
+        output_dir=output,
+        validation_ack=DIAGNOSTIC_VALIDATION_ACK,
+        code_sha="LOCAL_TEST_ONLY",
+        allow_diagnostic=True,
+    )
+    metrics = pd.read_csv(output / "validation_candidate_and_benchmark_metrics.csv")
+    daily = pd.read_parquet(output / "validation_daily_returns.parquet")
+    assert set(metrics.loc[metrics["unit_type"] == "candidate", "strategy_id"]) == {
+        "STRAT0014"
+    }
+    assert summary["result_status"] == "DIAGNOSTIC_VALIDATION_RESULT"
+    assert summary["diagnostic_only"] is True
+    assert summary["promotion_eligible"] is False
+    assert summary["locked_opened"] is False
+    assert pd.to_datetime(daily["date"]).max() <= pd.Timestamp("2020-12-31")
+
+
+def test_diagnostic_validation_script_marks_yahoo_distribution_source() -> None:
+    path = REPO_ROOT / "scripts" / "run_sp500_long_short_daily_validation.py"
+    text = path.read_text(encoding="utf-8")
+    assert "allow_diagnostic_yahoo_distributions=allow_diagnostic" in text
+    source = (
+        REPO_ROOT / "infra" / "sp500_long_short_daily" / "data.py"
+    ).read_text(encoding="utf-8")
+    assert "diagnostic_bounded_yahoo_distributions_not_official_sponsor" in source
+    assert "promotion_eligible=false" in source
+
+
 def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     path = REPO_ROOT / ".github" / "workflows" / "sp500-long-short-daily-campaign.yml"
     text = path.read_text(encoding="utf-8")
     parsed = yaml.safe_load(text)
     assert parsed
     assert "validation_once" in text
+    assert "validation_diagnostic" in text
     assert "OPEN_VALIDATION_2011_2020_ONCE" in text
+    assert "OPEN_VALIDATION_2011_2020_DIAGNOSTIC_STRAT0014" in text
+    assert "train_prepared_run_id" in text
+    assert '--source-mode "$source_mode"' in text
+    assert 'source_mode="yahoo-fallback"' in text
     assert "train_selection_freeze.json" not in text or "train-results" in text
     assert "2021-01-01" not in text
     assert "C:\\" not in text
