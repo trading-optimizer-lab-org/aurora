@@ -169,6 +169,33 @@ def test_sec_direct_403_opens_process_circuit_and_uses_audited_fallback(
     assert sum(urlsplit(url).hostname == "data.sec.gov" for url in calls) == 1
 
 
+def test_sec_readthrough_failure_is_bounded_per_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, tuple[int, int]]] = []
+    sleeps: list[int] = []
+
+    def fake_get(url: str, **kwargs: object) -> object:
+        calls.append((url, kwargs["timeout"]))
+        raise requests.Timeout("read-through unavailable")
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(current_runner.time, "sleep", sleeps.append)
+    monkeypatch.setattr(current_runner, "_SEC_DIRECT_API_BLOCKED", True)
+
+    with pytest.raises(OpenAPDataError, match="SEC JSON unavailable"):
+        _request_sec_json(
+            "https://data.sec.gov/api/xbrl/companyfacts/CIK0000000001.json",
+            "https://r.jina.ai/http://data.sec.gov/api/xbrl/companyfacts/CIK0000000001.json",
+            headers={"User-Agent": "test@example.com"},
+        )
+
+    assert len(calls) == 2
+    assert all(url.startswith("https://r.jina.ai/") for url, _ in calls)
+    assert all(timeout == current_runner.SEC_API_FALLBACK_TIMEOUT for _, timeout in calls)
+    assert sleeps == [1]
+
+
 def test_sec_surface_availability_fails_closed_per_issuer() -> None:
     status = pd.DataFrame(
         [

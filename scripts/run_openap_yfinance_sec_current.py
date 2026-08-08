@@ -70,6 +70,9 @@ US_STATE_OR_COUNTRY_CODES = frozenset(
 )
 ALLOWED_EXCHANGE_RE = re.compile(r"NASDAQ|NYSE|NEW YORK STOCK EXCHANGE|CBOE", re.IGNORECASE)
 _SEC_DIRECT_API_BLOCKED = False
+SEC_API_FALLBACK_RETRIES = 2
+SEC_API_FALLBACK_TIMEOUT = (20, 60)
+SEC_API_RETRY_BACKOFF_MAX_SECONDS = 8
 YFINANCE_METADATA_FIELDS = (
     "longName",
     "shortName",
@@ -716,8 +719,14 @@ def _request_sec_json(
     *,
     headers: Mapping[str, str],
     retries: int = 6,
+    fallback_retries: int = SEC_API_FALLBACK_RETRIES,
 ) -> tuple[Mapping[str, Any], str, str]:
-    """Fetch SEC JSON directly, then through a public read-through fallback."""
+    """Fetch SEC JSON directly, then through a bounded read-through fallback.
+
+    A shared runner can receive a persistent SEC 403.  The read-through is
+    therefore deliberately bounded per issuer and surface: failures become
+    auditable missing data instead of holding an entire shard indefinitely.
+    """
 
     import requests
 
@@ -727,12 +736,14 @@ def _request_sec_json(
         if source_mode == "sec_official_api" and _SEC_DIRECT_API_BLOCKED:
             errors.append("sec_official_api:skipped_after_earlier_401_or_403")
             continue
-        for attempt in range(retries):
+        attempt_limit = retries if source_mode == "sec_official_api" else fallback_retries
+        timeout = (20, 120) if source_mode == "sec_official_api" else SEC_API_FALLBACK_TIMEOUT
+        for attempt in range(attempt_limit):
             try:
                 response = requests.get(
                     url,
                     headers=dict(headers) if source_mode == "sec_official_api" else {"Accept": "text/plain"},
-                    timeout=(20, 120),
+                    timeout=timeout,
                 )
                 if source_mode == "sec_official_api" and response.status_code in {401, 403}:
                     _SEC_DIRECT_API_BLOCKED = True
@@ -748,8 +759,8 @@ def _request_sec_json(
                 errors.append(f"{source_mode}:{type(exc).__name__}:{exc}")
                 if source_mode == "sec_official_api" and _SEC_DIRECT_API_BLOCKED:
                     break
-                if attempt + 1 < retries:
-                    time.sleep(2 ** attempt)
+                if attempt + 1 < attempt_limit:
+                    time.sleep(min(2 ** attempt, SEC_API_RETRY_BACKOFF_MAX_SECONDS))
         if source_mode == "sec_official_api":
             continue
     raise OpenAPDataError("SEC JSON unavailable: " + " | ".join(errors[-4:]))
