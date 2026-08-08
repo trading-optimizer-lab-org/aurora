@@ -1,0 +1,157 @@
+name: OpenAP Proxy Real Correlation Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Existing OpenAP current-score run containing the Aurora feature snapshot
+        required: true
+        default: "31185612446"
+      official_stock_panel_url:
+        description: Optional official OpenAP firm-level panel or zip URL
+        required: false
+        default: "https://drive.google.com/uc?id=1avFIMjz_7LoF3p3nO26eqLW5KdRTOdhW&export=download"
+      proxy_panel_url:
+        description: Historical Aurora proxy panel URL with PERMNO, month and signal values
+        required: false
+        default: ""
+      identity_bridge_url:
+        description: Historical ticker to PERMNO bridge URL
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: openap-proxy-real-correlation-audit
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+  GITHUB_ACTIONS: "true"
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -e . pytest pyarrow pandas numpy scipy
+      - name: Compile and test auditor
+        run: |
+          python -m py_compile research/openap_proxy_real_correlation.py scripts/run_openap_proxy_real_correlation.py
+          python -m pytest tests/test_openap_proxy_real_correlation.py -q
+      - name: Enforce GitHub-only contract
+        run: |
+          grep -q "require_github_actions_or_explicit_local_permission" scripts/run_openap_proxy_real_correlation.py
+          grep -q "local_runs_allowed: false" config/openap_proxy_real_correlation.yaml
+          grep -q "no_positional_join: true" config/openap_proxy_real_correlation.yaml
+
+  audit:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -e . pandas pyarrow numpy scipy requests gdown
+      - name: Download the existing Aurora current feature snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p inputs/aurora_snapshot
+          gh run download "${{ inputs.source_run_id }}" --repo "${{ github.repository }}" \
+            --name "openap-feature-snapshot-8866666560" --dir inputs/aurora_snapshot
+      - name: Build the observed proxy inventory
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          candidates = list(Path("inputs/aurora_snapshot").rglob("*.parquet"))
+          if not candidates:
+              raise SystemExit("No se encontró el snapshot Parquet de Aurora")
+          snapshot = candidates[0]
+          target = Path("inputs/aurora_snapshot/openap_features_current.parquet")
+          if snapshot != target:
+              target.write_bytes(snapshot.read_bytes())
+              snapshot = target
+          frame = pd.read_parquet(snapshot, columns=["signalname", "status"])
+          names = sorted(
+              frame.loc[frame["status"].astype(str).str.lower().eq("proxy"), "signalname"]
+              .dropna()
+              .astype(str)
+              .unique()
+              .tolist()
+          )
+          Path("inputs/proxy_signal_list.txt").write_text("\n".join(names) + "\n", encoding="utf-8")
+          print(f"Observed proxy signals: {len(names)}")
+          print(f"Expected proxy signals: 44")
+          if len(names) != 44:
+              print("WARNING: observed proxy count differs from configured 44")
+          PY
+      - name: Download official OpenAP stock-level panel
+        if: ${{ inputs.official_stock_panel_url != '' && inputs.proxy_panel_url != '' && inputs.identity_bridge_url != '' }}
+        run: |
+          mkdir -p inputs/openap
+          python - <<'PY'
+          import os, requests
+          from pathlib import Path
+          url = os.environ["OFFICIAL_URL"]
+          out = Path("inputs/openap/signed_predictors_dl_wide.zip")
+          with requests.get(url, stream=True, timeout=(30, 300)) as response:
+              response.raise_for_status()
+              with out.open("wb") as handle:
+                  for chunk in response.iter_content(1024 * 1024):
+                      if chunk:
+                          handle.write(chunk)
+          if out.stat().st_size < 1_000_000:
+              raise SystemExit("Official OpenAP download is implausibly small")
+          PY
+        env:
+          OFFICIAL_URL: ${{ inputs.official_stock_panel_url }}
+      - name: Download optional historical proxy panel and identifier bridge
+        env:
+          PROXY_URL: ${{ inputs.proxy_panel_url }}
+          BRIDGE_URL: ${{ inputs.identity_bridge_url }}
+        run: |
+          if [ -n "$PROXY_URL" ]; then curl --fail --location --retry 3 "$PROXY_URL" --output inputs/proxy_panel.parquet; fi
+          if [ -n "$BRIDGE_URL" ]; then curl --fail --location --retry 3 "$BRIDGE_URL" --output inputs/identity_bridge.csv; fi
+      - name: Run fail-closed audit
+        run: |
+          python scripts/run_openap_proxy_real_correlation.py \
+            --official-panel inputs/openap/signed_predictors_dl_wide.zip \
+            --proxy-panel inputs/proxy_panel.parquet \
+            --identity-bridge inputs/identity_bridge.csv \
+            --proxy-snapshot inputs/aurora_snapshot/openap_features_current.parquet \
+            --proxy-signal-list inputs/proxy_signal_list.txt \
+            --output-dir outputs/proxy_real_audit
+      - name: Validate audit invariants
+        run: |
+          test -s outputs/proxy_real_audit/proxy_real_summary.json
+          test -s outputs/proxy_real_audit/proxy_real_correlation.csv
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          summary = json.loads(Path("outputs/proxy_real_audit/proxy_real_summary.json").read_text())
+          assert summary["locked_opened"] is False
+          assert summary["validation_used_for_selection"] is False
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: openap-proxy-real-correlation-results
+          path: outputs/proxy_real_audit/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
