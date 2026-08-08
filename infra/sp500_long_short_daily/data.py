@@ -2024,6 +2024,8 @@ def prepare_market_snapshot(
             sponsor_path.read_bytes(),
         )
         distribution_receipts = [sponsor_receipt]
+    price_adjudication: Mapping[str, Any]
+    reconciliation: Mapping[str, Any]
     if skip_independent_price_sources:
         # Explicit benchmark-only fast path. The bounded Yahoo series and
         # official distribution audit remain in force; only optional provider
