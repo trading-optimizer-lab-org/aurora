@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
 from aurora.research.openap_proxy44_historical import (
     HISTORICALLY_RECONSTRUCTED_PROXY_SIGNALS,
@@ -58,3 +59,12 @@ def test_coverage_has_exactly_one_row_for_every_canonical_proxy() -> None:
     assert coverage.loc[coverage["signal"].eq("TrendFactor"), "status"].iloc[0] == "reconstructed"
     assert coverage.loc[coverage["signal"].eq("OptionVolume1"), "status"].iloc[0] == "not_reconstructible"
 
+
+def test_full_workflow_runs_historical_audit_only_in_github() -> None:
+    workflow = Path(
+        ".github/workflows/openap-proxy44-historical-correlation.yml"
+    ).read_text(encoding="utf-8")
+    assert "GITHUB_ACTIONS: \"true\"" in workflow
+    assert "run_openap_proxy44_historical.py" in workflow
+    assert "openap_proxy44_correlation.csv" in workflow
+    assert "canonical_proxy_count'] == 44" in workflow
