@@ -640,7 +640,7 @@ def _after_bracket_action(state: dict[str, Any], row: Mapping[str, Any]) -> None
     state["queue"] = [(np.asarray(item["genome"], dtype=float), FIDELITIES[rung + 1]) for item in promoted]
 
 
-def _start_asha(state: dict[str, Any], records: Sequence[Mapping[str, Any]) -> None:
+def _start_asha(state: dict[str, Any], records: Sequence[Mapping[str, Any]]) -> None:
     state["asha_rungs"] = [[], [], []]
     state["asha_promoted"] = [set(), set(), set()]
     state["queue"] = [(_multi_config("M10_ASHA", state, records), FIDELITIES[0]) for _ in range(12)]
