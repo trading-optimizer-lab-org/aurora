@@ -15,6 +15,7 @@ env:
   LANG: C.UTF-8
   DATA_ARTIFACT: sp500-search-method-expanded-prepared-${{ github.run_id }}
   UNIT_ARTIFACT_PREFIX: sp500-search-method-expanded-unit-${{ github.run_id }}
+  BENCHMARK_SEEDS: "104729 209759 314159 419431 524287 630529 735731 840731 945959 1050977 1155871 1260829 1366063 1471109 1576271 1681301 1786367 1891429 1996499 2101549 2206637"
 
 jobs:
   framework_contract:
@@ -152,11 +153,12 @@ jobs:
     needs: smoke
     runs-on: ubuntu-24.04
     outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+      matrix_batch_1: ${{ steps.matrix.outputs.matrix_batch_1 }}
+      matrix_batch_2: ${{ steps.matrix.outputs.matrix_batch_2 }}
     steps:
       - id: matrix
         env:
-          SEEDS: "104729 209759 314159 419431 524287 630529 735731"
+          SEEDS: ${{ env.BENCHMARK_SEEDS }}
           METHODS: "M00_RANDOM M01_SCRAMBLED_SOBOL M02_TPE M03_SMAC_RF_SMBO M04_DIFFERENTIAL_EVOLUTION M05_GENETIC_PROGRAMMING M06_GP_TPE_HYBRID M07_DEHB_REAL M08_BOHB M09_HYPERBAND M10_ASHA M11_CMA_ES M12_PSO M13_GP_BAYESIAN_OPTIMIZATION M14_TURBO M15_OPTUNA M16_NEVERGRAD M17_NSGA_II M18_LATIN_HYPERCUBE M19_HALTON M20_SUCCESSIVE_HALVING M21_POPULATION_BASED_TRAINING M22_ADVANCED_SURROGATE_ASSISTED"
         run: |
           set -euo pipefail
@@ -164,18 +166,66 @@ jobs:
           import json, os
           seeds = [int(value) for value in os.environ["SEEDS"].split()]
           methods = os.environ["METHODS"].split()
-          items = [{"method": method, "seed": seed, "unit": f"{method}-{seed}"} for method in methods for seed in seeds]
-          assert len(items) == 161
+          assert len(seeds) == 21 and len(set(seeds)) == 21
+          assert len(methods) == 23 and len(set(methods)) == 23
+          batch_1 = [{"method": method, "seed": seed, "unit": f"{method}-{seed}"} for method in methods for seed in seeds[:11]]
+          batch_2 = [{"method": method, "seed": seed, "unit": f"{method}-{seed}"} for method in methods for seed in seeds[11:]]
+          assert len(batch_1) == 253
+          assert len(batch_2) == 230
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
-              handle.write("matrix=" + json.dumps({"include": items}, separators=(",", ":")) + "\n")
+              handle.write("matrix_batch_1=" + json.dumps({"include": batch_1}, separators=(",", ":")) + "\n")
+              handle.write("matrix_batch_2=" + json.dumps({"include": batch_2}, separators=(",", ":")) + "\n")
           PY
 
-  benchmark:
+  benchmark_batch_1:
     needs: [plan, preflight]
     strategy:
       fail-fast: false
-      max-parallel: 64
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_batch_1) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/github-performance.lock
+      - name: Install locked Aurora runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.DATA_ARTIFACT }}
+          path: ${{ runner.temp }}/prepared
+      - name: Run one expanded method and seed
+        run: |
+          set -euo pipefail
+          python -m aurora.infra.sp500_search_method_benchmark.expanded unit \
+            --method "${{ matrix.method }}" \
+            --seed "${{ matrix.seed }}" \
+            --data-root "$RUNNER_TEMP/prepared" \
+            --output-dir "$RUNNER_TEMP/unit"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.UNIT_ARTIFACT_PREFIX }}-${{ matrix.method }}-${{ matrix.seed }}
+          path: ${{ runner.temp }}/unit
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 30
+
+  benchmark_batch_2:
+    needs: [benchmark_batch_1, plan, preflight]
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_batch_2) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -214,7 +264,7 @@ jobs:
           retention-days: 30
 
   freeze_check:
-    needs: benchmark
+    needs: [benchmark_batch_1, benchmark_batch_2]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -222,11 +272,11 @@ jobs:
         with:
           pattern: ${{ env.UNIT_ARTIFACT_PREFIX }}-*
           path: ${{ runner.temp }}/units
-      - name: Verify 161 freezes before audit
+      - name: Verify 483 freezes before audit
         run: |
           set -euo pipefail
           count=$(find "$RUNNER_TEMP/units" -name unit_result.json | wc -l)
-          test "$count" -eq 161
+          test "$count" -eq 483
           python - <<'PY'
           import json, os
           from pathlib import Path
@@ -289,7 +339,7 @@ jobs:
           retention-days: 30
 
   aggregate:
-    needs: [benchmark, audit]
+    needs: [benchmark_batch_2, audit]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

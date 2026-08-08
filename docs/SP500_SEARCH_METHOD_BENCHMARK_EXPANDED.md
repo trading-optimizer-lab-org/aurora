@@ -8,7 +8,8 @@ es una afirmación de que un método sea universalmente mejor.
 
 ## Contrato congelado
 
-- 23 métodos, exactamente las mismas siete semillas del benchmark anterior.
+- 23 métodos y 21 semillas deterministas. Las siete semillas anteriores se
+  conservan y se añaden catorce réplicas nuevas.
 - Un snapshot SPY inmutable, cargado solo hasta `2010-12-31`.
 - Búsqueda: `1998-01-01..2005-12-31`.
 - Auditoría congelada: `2006-01-01..2010-12-31`.
@@ -61,6 +62,14 @@ se mide aparte como el área bajo la mejor CAGR de búsqueda a fidelidad complet
 frente al coste consumido. Un intervalo bootstrap pareado del 95 % compara el
 primero y el segundo; si incluye cero, el estado es `NO_CLEAR_WINNER`.
 
+El perfil nocturno conserva 256 unidades de coste por método/semilla y ejecuta
+483 unidades en dos matrices secuenciales (`253 + 230`), ambas con
+`max-parallel: 1`. La estimación previa al lanzamiento usa los 54,1 segundos
+medios por job medidos en el run corto válido: unas 7 h 15 min de matrices, más
+preparación, colas, auditoría y cierre; objetivo aproximado, 8 horas. El tiempo
+es una estimación operativa, no una condición científica ni una espera
+artificial.
+
 El pipeline previsto es:
 
-`prepare -> preflight -> smoke -> 161 method/seed units -> freeze_check -> audit -> aggregate -> independent_verify -> conclude`
+`prepare -> preflight -> smoke -> 253 units -> 230 units -> freeze_check -> audit -> aggregate -> independent_verify -> conclude`

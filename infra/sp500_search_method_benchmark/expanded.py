@@ -8,8 +8,10 @@ the algorithm implemented here, not to a package silently falling back to
 random search.
 
 All methods share one 15-dimensional grammar, one immutable SPY snapshot, the
-same seven seeds, the same 32 full-fidelity warm-start candidates, a budget of
-256 full-fidelity-equivalent cost units, and the same 15-minute wall limit.
+same 21 deterministic seeds, the same 32 full-fidelity warm-start candidates,
+a budget of 256 full-fidelity-equivalent cost units, and the same 15-minute
+wall limit.  The first seven seeds are retained from the shorter benchmark so
+the overnight campaign adds replication instead of replacing earlier evidence.
 Multi-fidelity methods may spend 0.25 or 0.50 cost units on early rungs, but
 only 1.00-fidelity candidates can enter the frozen top-five set.  The official
 validation and locked periods are never loaded.
@@ -39,7 +41,6 @@ from aurora.infra.sp500_search_method_benchmark.benchmark import (
     LOCKED_START,
     SEARCH_END,
     SEARCH_START,
-    SEEDS,
     TOP_K,
     TRAIN_END,
     VALIDATION_START,
@@ -64,6 +65,30 @@ SEARCH_WALL_SECONDS = 15 * 60
 FIDELITIES = (0.25, 0.50, 1.00)
 EVALUATION_WORKERS = 2
 ETA = 3
+
+SEEDS = (
+    104729,
+    209759,
+    314159,
+    419431,
+    524287,
+    630529,
+    735731,
+    840731,
+    945959,
+    1050977,
+    1155871,
+    1260829,
+    1366063,
+    1471109,
+    1576271,
+    1681301,
+    1786367,
+    1891429,
+    1996499,
+    2101549,
+    2206637,
+)
 
 METHODS = (
     "M00_RANDOM",
