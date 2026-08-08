@@ -2,12 +2,6 @@ name: SP500 Search Method Benchmark Short
 
 on:
   workflow_dispatch:
-    inputs:
-      framework_contract:
-        description: Run the optional Aurora framework contract gate
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -24,7 +18,6 @@ jobs:
   framework_contract:
     # Declare the common Aurora contract for policy and reusable-workflow
     # compatibility; the manual scientific benchmark keeps its own stages.
-    if: inputs.framework_contract
     uses: ./.github/workflows/_aurora-future-run-v3.yml
     with:
       spec_path: config/github_performance_reference.yaml
