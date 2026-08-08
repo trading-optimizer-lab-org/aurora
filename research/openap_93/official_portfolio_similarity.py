@@ -12,7 +12,7 @@ import re
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -25,6 +25,13 @@ from aurora.research.openap_93.historical_proxy_validation import FIVE_PROXY_SIG
 # reference file, so it is a useful fallback when Google's large decile ZIP
 # requires an interactive confirmation page in a GitHub runner.
 OFFICIAL_LS_FILE_ID = "10sOryk_ddjkXagaajTKUk1nwJs2ZLRiI"
+
+
+def _requested_signals(signal_names: Sequence[str] | None) -> tuple[str, ...]:
+    requested = tuple(signal_names or FIVE_PROXY_SIGNALS)
+    if not requested or len(requested) != len(set(requested)):
+        raise ValueError("signal_names must contain unique signal names")
+    return requested
 
 
 def _column(frame: pd.DataFrame, names: Iterable[str]) -> str | None:
@@ -99,7 +106,11 @@ def _download_public_drive_file(file_id: str, destination: str | Path) -> Path:
     raise RuntimeError(f"Unable to download public Google Drive file {file_id}: {last_error}")
 
 
-def normalise_official_deciles(frame: pd.DataFrame) -> pd.DataFrame:
+def normalise_official_deciles(
+    frame: pd.DataFrame,
+    *,
+    signal_names: Sequence[str] | None = None,
+) -> pd.DataFrame:
     """Normalise an OpenAP decile download to signal/month/decile/return."""
 
     signal_col = _column(frame, ("signalname", "signal", "predictor", "acronym"))
@@ -134,12 +145,16 @@ def normalise_official_deciles(frame: pd.DataFrame) -> pd.DataFrame:
         "decile": decile,
         "official_return": returns,
     })
-    result = result.loc[result["signal"].isin(FIVE_PROXY_SIGNALS)]
+    result = result.loc[result["signal"].isin(_requested_signals(signal_names))]
     result = result.dropna(subset=["signal", "formation_month", "decile", "official_return"])
     return result.drop_duplicates(["signal", "formation_month", "decile"])
 
 
-def normalise_official_long_short(frame: pd.DataFrame) -> pd.DataFrame:
+def normalise_official_long_short(
+    frame: pd.DataFrame,
+    *,
+    signal_names: Sequence[str] | None = None,
+) -> pd.DataFrame:
     """Normalise the official OpenAP monthly long-short wide CSV."""
 
     date_col = _column(frame, ("date", "yyyymm", "month", "formation_month"))
@@ -151,16 +166,17 @@ def normalise_official_long_short(frame: pd.DataFrame) -> pd.DataFrame:
         frame,
         ("ret", "return", "portfolio_return", "exret", "lsret", "official_return"),
     )
+    requested = _requested_signals(signal_names)
     if signal_col and return_col:
         long_short = frame[[signal_col, date_col, return_col]].copy()
         long_short.columns = ["signal", "formation_month", "official_return"]
     else:
-        available = [signal for signal in FIVE_PROXY_SIGNALS if signal in frame.columns]
+        available = [signal for signal in requested if signal in frame.columns]
         if not available:
             lowered = {str(column).lower(): column for column in frame.columns}
-            available = [lowered[signal.lower()] for signal in FIVE_PROXY_SIGNALS if signal.lower() in lowered]
+            available = [lowered[signal.lower()] for signal in requested if signal.lower() in lowered]
         if not available:
-            raise ValueError("Official long-short file has none of the five requested signals")
+            raise ValueError("Official long-short file has none of the requested signals")
         long_short = frame[[date_col, *available]].melt(
             id_vars=[date_col], var_name="signal", value_name="official_return"
         )
@@ -171,7 +187,7 @@ def normalise_official_long_short(frame: pd.DataFrame) -> pd.DataFrame:
     finite = long_short["official_return"].dropna().abs()
     if not finite.empty and finite.quantile(0.95) > 2.0:
         long_short["official_return"] = long_short["official_return"] / 100.0
-    long_short = long_short.loc[long_short["signal"].isin(FIVE_PROXY_SIGNALS)]
+    long_short = long_short.loc[long_short["signal"].isin(requested)]
     long_short = long_short.dropna(subset=["signal", "formation_month", "official_return"])
     return long_short.drop_duplicates(["signal", "formation_month"])
 
@@ -180,11 +196,14 @@ def download_official_deciles(
     *,
     release: str = "202510",
     archive_path: str | Path | None = None,
+    signal_names: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Download the public official OpenAP equal-weighted decile file."""
 
     if archive_path:
-        result = normalise_official_deciles(_read_official_archive(archive_path))
+        result = normalise_official_deciles(
+            _read_official_archive(archive_path), signal_names=signal_names
+        )
         if result.empty:
             raise ValueError(f"Official archive contains no requested signals: {archive_path}")
         return result
@@ -201,7 +220,7 @@ def download_official_deciles(
             client = oap.OpenAP(int(candidate))
             # Download the complete archive and filter after normalisation.
             raw = client.dl_port("deciles_ew", "pandas")
-            result = normalise_official_deciles(raw)
+            result = normalise_official_deciles(raw, signal_names=signal_names)
             if result.empty:
                 raise ValueError("no requested signals found in decile archive")
             return result
@@ -214,6 +233,7 @@ def download_official_long_short(
     *,
     output_dir: str | Path,
     archive_path: str | Path | None = None,
+    signal_names: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Load the official compact monthly OpenAP long-short reference.
 
@@ -232,7 +252,7 @@ def download_official_long_short(
                 Path(temp_dir) / "PredictorLSretWide.csv",
             )
             raw = _read_official_archive(source)
-    result = normalise_official_long_short(raw)
+    result = normalise_official_long_short(raw, signal_names=signal_names)
     if result.empty:
         raise ValueError("Official long-short file contains no requested signals")
     return result
@@ -282,7 +302,12 @@ def build_official_long_short_spreads(official: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def build_proxy_spreads(proxy_panel: pd.DataFrame, monthly: pd.DataFrame) -> pd.DataFrame:
+def build_proxy_spreads(
+    proxy_panel: pd.DataFrame,
+    monthly: pd.DataFrame,
+    *,
+    signal_names: Sequence[str] | None = None,
+) -> pd.DataFrame:
     panel = proxy_panel.copy()
     panel["formation_month"] = pd.to_datetime(panel["formation_month"], errors="coerce").dt.to_period("M").dt.to_timestamp()
     panel["proxy_value"] = pd.to_numeric(panel["proxy_value"], errors="coerce")
@@ -311,7 +336,7 @@ def build_proxy_spreads(proxy_panel: pd.DataFrame, monthly: pd.DataFrame) -> pd.
             ]
         )
     panel = panel.dropna(subset=["signal", "formation_month", "proxy_value", "month_return"])
-    panel = panel.loc[panel["signal"].isin(FIVE_PROXY_SIGNALS)]
+    panel = panel.loc[panel["signal"].isin(_requested_signals(signal_names))]
     rows: list[dict[str, object]] = []
     for (signal, month), group in panel.groupby(["signal", "formation_month"], sort=True):
         group = group.sort_values("proxy_value", kind="mergesort")
@@ -371,11 +396,16 @@ def _similarity_row(signal: str, merged: pd.DataFrame, period: str = "all") -> d
     }
 
 
-def compare_official_and_proxy(official_spreads: pd.DataFrame, proxy_spreads: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def compare_official_and_proxy(
+    official_spreads: pd.DataFrame,
+    proxy_spreads: pd.DataFrame,
+    *,
+    signal_names: Sequence[str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     merged = official_spreads.merge(proxy_spreads, on=["signal", "formation_month"], how="inner")
     rows: list[dict[str, object]] = []
     periods = ("all", "1962-01-01:1999-12-31", "2000-01-01:2009-12-31", "2010-01-01:2019-12-31", "2020-01-01:2026-12-31")
-    for signal in FIVE_PROXY_SIGNALS:
+    for signal in _requested_signals(signal_names):
         for period in periods:
             rows.append(_similarity_row(signal, merged, period))
     return merged, pd.DataFrame(rows)

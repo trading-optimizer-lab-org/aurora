@@ -47,7 +47,7 @@ jobs:
       - name: Compile and test auditor
         run: |
           python -m py_compile research/openap_proxy_real_correlation.py scripts/run_openap_proxy_real_correlation.py
-          python -m pytest tests/test_openap_proxy_real_correlation.py -q
+          python -m pytest tests/test_openap_proxy_real_correlation.py tests/test_openap_93_official_portfolio_similarity.py -q
       - name: Enforce GitHub-only contract
         run: |
           grep -q "require_github_actions_or_explicit_local_permission" scripts/run_openap_proxy_real_correlation.py
@@ -73,11 +73,13 @@ jobs:
           mkdir -p inputs/aurora_snapshot
           gh run download "${{ inputs.source_run_id }}" --repo "${{ github.repository }}" \
             --name "openap-feature-snapshot-8866666560" --dir inputs/aurora_snapshot
-      - name: Build the observed proxy inventory
+      - name: Freeze canonical proxy inventory and audit snapshot drift
         run: |
           python - <<'PY'
           from pathlib import Path
+          import json
           import pandas as pd
+          from aurora.research.openap_proxy_real_correlation import load_canonical_proxy_names
 
           candidates = list(Path("inputs/aurora_snapshot").rglob("*.parquet"))
           if not candidates:
@@ -88,18 +90,26 @@ jobs:
               target.write_bytes(snapshot.read_bytes())
               snapshot = target
           frame = pd.read_parquet(snapshot, columns=["signalname", "status"])
-          names = sorted(
+          observed = sorted(
               frame.loc[frame["status"].astype(str).str.lower().eq("proxy"), "signalname"]
               .dropna()
               .astype(str)
               .unique()
               .tolist()
           )
+          names = load_canonical_proxy_names()
           Path("inputs/proxy_signal_list.txt").write_text("\n".join(names) + "\n", encoding="utf-8")
-          print(f"Observed proxy signals: {len(names)}")
-          print(f"Expected proxy signals: 44")
-          if len(names) != 44:
-              print("WARNING: observed proxy count differs from configured 44")
+          drift = {
+              "canonical_count": len(names),
+              "snapshot_proxy_count": len(observed),
+              "snapshot_only": sorted(set(observed) - set(names)),
+              "canonical_missing_from_snapshot_proxy_status": sorted(set(names) - set(observed)),
+          }
+          Path("inputs/proxy_inventory_drift.json").write_text(
+              json.dumps(drift, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          print(f"Canonical proxy signals: {len(names)}")
+          print(f"Snapshot rows labelled proxy: {len(observed)}")
           PY
       - name: Download official OpenAP stock-level panel
         if: ${{ inputs.official_stock_panel_url != '' && inputs.proxy_panel_url != '' && inputs.identity_bridge_url != '' }}

@@ -20,6 +20,17 @@ import pandas as pd
 
 EXPECTED_OPENAP_SIGNALS = 212
 DEFAULT_PROXY_COUNT_EXPECTED = 44
+CANONICAL_PROXY_SIGNALS = (
+    "AOP", "AgeIPO", "AnalystRevision", "CPVolSpread", "ChForecastAccrual",
+    "ChangeInRecommendation", "CredRatDG", "DelBreadth", "DivInit", "DivOmit",
+    "DivSeason", "DownRecomm", "EarningsForecastDisparity", "ExclExp", "FEPS",
+    "ForecastDispersion", "IO_ShortInterest", "IndIPO", "NOA", "OptionVolume1",
+    "OptionVolume2", "RDIPO", "RDcap", "REV6", "RIO_Disp", "RIO_MB",
+    "RIO_Turnover", "RIO_Volatility", "RIVolSpread", "Recomm_ShortInterest",
+    "ShareVol", "SmileSlope", "Spinoff", "TrendFactor", "UpRecomm", "VolSD",
+    "VolumeTrend", "dCPVolSpread", "dNoa", "dVolCall", "fgr5yrLag", "sfe",
+    "skew1", "std_turn",
+)
 
 
 class ProxyCorrelationError(RuntimeError):
@@ -215,6 +226,23 @@ def load_proxy_names(
             .tolist()
         )
     return sorted(proxy_panel["signalname"].dropna().astype(str).unique().tolist())
+
+
+def load_canonical_proxy_names(
+    path: str | Path = "config/openap_proxy_44_signals.txt",
+) -> list[str]:
+    """Load and validate the frozen 44-proxy inventory from the 212 catalogue."""
+
+    names = load_proxy_names(path)
+    if tuple(names) != CANONICAL_PROXY_SIGNALS:
+        raise ProxyCorrelationError(
+            "El registro canónico de proxies no coincide exactamente con las 44 señales congeladas"
+        )
+    if len(names) != DEFAULT_PROXY_COUNT_EXPECTED:
+        raise ProxyCorrelationError(
+            f"El registro canónico debe contener {DEFAULT_PROXY_COUNT_EXPECTED} señales; contiene {len(names)}"
+        )
+    return names
 
 
 def validate_identity_bridge(path: str | Path) -> dict[str, object]:
