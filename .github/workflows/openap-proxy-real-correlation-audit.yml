@@ -7,6 +7,14 @@ on:
         description: Existing OpenAP current-score run containing the Aurora feature snapshot
         required: true
         default: "31185612446"
+      base_run_id:
+        description: Run containing the audited YFinance and SEC DuckDB
+        required: true
+        default: "30837929185"
+      official_reference_run_id:
+        description: Run containing the staged official OpenAP long-short returns
+        required: true
+        default: "31076097192"
       official_stock_panel_url:
         description: Optional official OpenAP firm-level panel or zip URL
         required: false
@@ -158,10 +166,68 @@ jobs:
           assert summary["locked_opened"] is False
           assert summary["validation_used_for_selection"] is False
           PY
+      - name: Download audited base database
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-yfinance-sec-current-score-results
+          path: inputs/base
+          run-id: ${{ inputs.base_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download staged official OpenAP reference
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-five-proxy-historical-validation-results
+          path: inputs/official
+          run-id: ${{ inputs.official_reference_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Locate historical audit inputs
+        id: historical_inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          db=$(find inputs/base -type f -name '*.duckdb' -print -quit)
+          official=$(find inputs/official -type f \( -name 'official_long_short.csv' -o -name 'PredictorLSretWide.csv' \) -print -quit)
+          test -n "$db"
+          test -n "$official"
+          echo "db=$db" >> "$GITHUB_OUTPUT"
+          echo "official=$official" >> "$GITHUB_OUTPUT"
+      - name: Run canonical 44 historical behavior audit
+        run: |
+          python scripts/run_openap_proxy44_historical.py \
+            --base-db "${{ steps.historical_inputs.outputs.db }}" \
+            --official-long-short "${{ steps.historical_inputs.outputs.official }}" \
+            --output-dir outputs/openap_proxy44_historical
+      - name: Validate canonical 44 historical report
+        run: |
+          test -s outputs/openap_proxy44_historical/openap_proxy44_correlation.csv
+          python - <<'PY'
+          import json
+          import pandas as pd
+          from pathlib import Path
+
+          root = Path("outputs/openap_proxy44_historical")
+          summary = json.loads((root / "openap_proxy44_summary.json").read_text())
+          result = pd.read_csv(root / "openap_proxy44_correlation.csv")
+          assert summary['canonical_proxy_count'] == 44
+          assert summary["locked_opened"] is False
+          assert summary["validation_used_for_selection"] is False
+          assert len(result) == 44
+          assert result["signal"].is_unique
+          assert summary["measured_count"] > 0
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: openap-proxy-real-correlation-results
           path: outputs/proxy_real_audit/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: openap-proxy44-historical-correlation-results
+          path: outputs/openap_proxy44_historical/
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
