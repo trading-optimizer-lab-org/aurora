@@ -186,9 +186,16 @@ jobs:
           curl --fail --location --retry 4 --retry-all-errors \
             https://raw.githubusercontent.com/OpenSourceAP/CrossSection/8db892442c2c3a3779b0f1eac4370d3655be15a1/SignalDoc.csv \
             --output inputs/openap_official/SignalDoc.csv
+          reproduction_summary="$(find inputs/openap_base -type f \( -iname 'PredictorSummary.xlsx' -o -iname 'predictor_summary.xlsx' \) -print -quit)"
+          current_features="$(find inputs/openap_base -type f -iname 'openap_features_current.parquet' -print -quit)"
+          test -n "$reproduction_summary" && test -s "$reproduction_summary"
+          test -n "$current_features" && test -s "$current_features"
           python scripts/run_openap_181_completion.py \
             --signal-doc inputs/openap_official/SignalDoc.csv \
             --signals-93 config/openap_93/signals_93.yaml \
+            --reproduction-summary "$reproduction_summary" \
+            --current-features "$current_features" \
+            --coverage-93 outputs/openap_93_current/coverage_93.csv \
             --output-dir outputs/openap_93_current/openap_181_completion
           test -s outputs/openap_93_current/openap_181_completion/openap_181_completion_manifest.csv
           test -s outputs/openap_93_current/openap_181_completion/openap_181_source_catalog.csv

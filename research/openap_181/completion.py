@@ -349,6 +349,80 @@ def build_completion_manifest(
     return manifest
 
 
+def attach_runtime_evidence(
+    manifest: pd.DataFrame,
+    *,
+    reproduction_summary: pd.DataFrame | None = None,
+    current_features: pd.DataFrame | None = None,
+    coverage_93: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Attach measured current coverage without changing readiness.
+
+    Raw availability and readiness are intentionally different columns.  This
+    prevents a wide panel with non-null proxies from bypassing fidelity gates.
+    """
+
+    result = manifest.copy()
+    result["raw_current_value_available"] = False
+    result["raw_current_non_null_count"] = 0
+    result["raw_current_coverage_pct"] = 0.0
+    result["raw_fidelity"] = ""
+    result["raw_status"] = ""
+    result["validation_paired_observations"] = 0
+    result["validation_spearman"] = pd.NA
+    result["validation_extreme_decile_agreement"] = pd.NA
+
+    if reproduction_summary is not None and not reproduction_summary.empty:
+        name_column = _column(reproduction_summary, "signalname", "Acronym", "signal")
+        tstat_column = _column(reproduction_summary, "tstat")
+        stats = (
+            reproduction_summary[[name_column, tstat_column]]
+            .drop_duplicates(name_column)
+            .set_index(name_column)[tstat_column]
+        )
+        result["reproduction_tstat"] = result["signal"].map(stats)
+
+    if current_features is not None and not current_features.empty:
+        denominator = len(current_features)
+        for signal in set(result["signal"]).intersection(current_features.columns):
+            count = int(pd.to_numeric(current_features[signal], errors="coerce").notna().sum())
+            mask = result["signal"].eq(signal)
+            result.loc[mask, "raw_current_value_available"] = count > 0
+            result.loc[mask, "raw_current_non_null_count"] = count
+            result.loc[mask, "raw_current_coverage_pct"] = (
+                100.0 * count / denominator if denominator else 0.0
+            )
+            result.loc[mask, "raw_fidelity"] = "unvalidated_proxy"
+            result.loc[mask, "raw_status"] = "current_value_requires_validation"
+
+    if coverage_93 is not None and not coverage_93.empty:
+        name_column = _column(coverage_93, "signal")
+        indexed = coverage_93.drop_duplicates(name_column).set_index(name_column)
+        field_map = {
+            "non_null_count": "raw_current_non_null_count",
+            "coverage_pct": "raw_current_coverage_pct",
+            "fidelity_class": "raw_fidelity",
+            "status": "raw_status",
+            "paired_observations": "validation_paired_observations",
+            "spearman": "validation_spearman",
+            "extreme_decile_agreement": "validation_extreme_decile_agreement",
+        }
+        for source_field, target_field in field_map.items():
+            if source_field not in indexed.columns:
+                continue
+            mapped = result["signal"].map(indexed[source_field])
+            result.loc[mapped.notna(), target_field] = mapped.loc[mapped.notna()]
+        if "non_null_count" in indexed.columns:
+            counts = pd.to_numeric(result["raw_current_non_null_count"], errors="coerce").fillna(0)
+            result["raw_current_value_available"] = counts.gt(0)
+
+    # Evidence attachment must never silently promote a baseline signal.
+    result["current_usable"] = False
+    result["evidence_complete"] = False
+    result["readiness"] = "not_ready"
+    return result
+
+
 def write_completion_outputs(
     manifest: pd.DataFrame,
     output_dir: str | Path,

@@ -7,6 +7,7 @@ from aurora.research.openap_181.completion import (
     CURRENT_EXCLUDED_27,
     CURRENT_PROXY_61,
     CompletionError,
+    attach_runtime_evidence,
     build_completion_manifest,
     build_source_catalog,
     source_can_satisfy,
@@ -88,3 +89,32 @@ def test_outputs_never_claim_completion_for_unvalidated_baseline(tmp_path):
     assert summary["fail_closed"] is True
     assert summary["locked_opened"] is False
     assert (tmp_path / "openap_181_completion_manifest.csv").is_file()
+
+
+def test_runtime_coverage_and_tstats_do_not_bypass_validation():
+    manifest = build_completion_manifest(_signal_doc())
+    runtime = attach_runtime_evidence(
+        manifest,
+        reproduction_summary=pd.DataFrame(
+            {"signalname": ["BM", "ShortInterest"], "tstat": [4.2, 3.1]}
+        ),
+        current_features=pd.DataFrame({"BM": [1.0, None, 3.0]}),
+        coverage_93=pd.DataFrame(
+            {
+                "signal": ["ShortInterest"],
+                "status": ["research_only"],
+                "fidelity_class": ["unvalidated_proxy"],
+                "non_null_count": [2],
+                "coverage_pct": [66.67],
+                "paired_observations": [0],
+                "spearman": [None],
+                "extreme_decile_agreement": [None],
+            }
+        ),
+    ).set_index("signal")
+    assert runtime.loc["BM", "raw_current_non_null_count"] == 2
+    assert runtime.loc["BM", "reproduction_tstat"] == 4.2
+    assert runtime.loc["ShortInterest", "raw_current_non_null_count"] == 2
+    assert runtime.loc["ShortInterest", "raw_status"] == "research_only"
+    assert not runtime["current_usable"].any()
+    assert not runtime["evidence_complete"].any()
