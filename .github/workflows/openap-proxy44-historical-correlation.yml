@@ -1,0 +1,117 @@
+name: OpenAP Proxy44 Historical Correlation
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_run_id:
+        description: Run containing the audited YFinance and SEC DuckDB
+        required: true
+        default: "30837929185"
+        type: string
+      official_reference_run_id:
+        description: Run containing the staged official OpenAP long-short returns
+        required: true
+        default: "31076097192"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-proxy44-historical-correlation
+  cancel-in-progress: false
+
+env:
+  GITHUB_ACTIONS: "true"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install focused dependencies
+        run: python -m pip install --disable-pip-version-check -e . pytest pandas numpy pyarrow duckdb
+      - name: Compile and test
+        run: |
+          python -m py_compile research/openap_proxy44_historical.py scripts/run_openap_proxy44_historical.py
+          python -m pytest tests/test_openap_proxy44_historical.py tests/test_openap_93_official_portfolio_similarity.py -q
+
+  historical_audit:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check -e . pandas numpy pyarrow duckdb scipy
+      - name: Download audited base database
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-yfinance-sec-current-score-results
+          path: inputs/base
+          run-id: ${{ inputs.base_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download official OpenAP reference
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-five-proxy-historical-validation-results
+          path: inputs/official
+          run-id: ${{ inputs.official_reference_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Locate inputs
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          db=$(find inputs/base -type f -name '*.duckdb' -print -quit)
+          official=$(find inputs/official -type f \( -name 'official_long_short.csv' -o -name 'PredictorLSretWide.csv' \) -print -quit)
+          test -n "$db"
+          test -n "$official"
+          echo "db=$db" >> "$GITHUB_OUTPUT"
+          echo "official=$official" >> "$GITHUB_OUTPUT"
+      - name: Reconstruct and compare the canonical 44
+        run: |
+          python scripts/run_openap_proxy44_historical.py \
+            --base-db "${{ steps.locate.outputs.db }}" \
+            --official-long-short "${{ steps.locate.outputs.official }}" \
+            --output-dir outputs/openap_proxy44_historical
+      - name: Verify complete fail-closed report
+        run: |
+          test -s outputs/openap_proxy44_historical/openap_proxy44_correlation.csv
+          test -s outputs/openap_proxy44_historical/openap_proxy44_reconstruction_coverage.csv
+          python - <<'PY'
+          import json
+          import pandas as pd
+          from pathlib import Path
+
+          root = Path("outputs/openap_proxy44_historical")
+          summary = json.loads((root / "openap_proxy44_summary.json").read_text())
+          result = pd.read_csv(root / "openap_proxy44_correlation.csv")
+          assert summary['canonical_proxy_count'] == 44
+          assert summary["locked_opened"] is False
+          assert summary["validation_used_for_selection"] is False
+          assert summary["backtest_enabled"] is False
+          assert len(result) == 44
+          assert result["signal"].is_unique
+          assert summary["measured_count"] > 0
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: openap-proxy44-historical-correlation-results
+          path: outputs/openap_proxy44_historical/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
