@@ -14,6 +14,11 @@ from aurora.research.openap_181.completion import (
     write_completion_outputs,
 )
 from aurora.research.openap_93.registry import REQUIRED_93
+from aurora.research.openap_181.official_formulas import (
+    OPENAP_FORMULA_COMMIT,
+    build_formula_inventory,
+    write_formula_bundle,
+)
 
 
 def _signal_doc() -> pd.DataFrame:
@@ -111,10 +116,43 @@ def test_runtime_coverage_and_tstats_do_not_bypass_validation():
                 "extreme_decile_agreement": [None],
             }
         ),
+        formula_inventory=pd.DataFrame(
+            {
+                "signal": ["BM"],
+                "status": ["resolved"],
+                "path": ["Signals/pyCode/Predictors/BM.py"],
+                "commit": [OPENAP_FORMULA_COMMIT],
+                "source_url": ["https://example.test/BM.py"],
+                "sha256": ["a" * 64],
+            }
+        ),
     ).set_index("signal")
     assert runtime.loc["BM", "raw_current_non_null_count"] == 2
     assert runtime.loc["BM", "reproduction_tstat"] == 4.2
     assert runtime.loc["ShortInterest", "raw_current_non_null_count"] == 2
     assert runtime.loc["ShortInterest", "raw_status"] == "research_only"
+    assert runtime.loc["BM", "formula_status"] == "resolved"
+    assert runtime.loc["BM", "formula_sha256"] == "a" * 64
     assert not runtime["current_usable"].any()
     assert not runtime["evidence_complete"].any()
+
+
+def test_formula_inventory_prefers_exact_and_explicit_official_outputs(tmp_path):
+    sources = {
+        "Signals/pyCode/Predictors/BM.py": b'save_predictor(df, "BM")\n',
+        "Signals/pyCode/Predictors/ZZ1_Size_AM.py": (
+            b'save_predictor(df, "Size")\nsave_predictor(df, "AM")\n'
+        ),
+        "Signals/pyCode/Predictors/Reference.py": b'# BM is discussed only\n',
+    }
+    inventory = build_formula_inventory(["BM", "AM", "Missing"], sources)
+    indexed = inventory.set_index("signal")
+    assert indexed.loc["BM", "status"] == "resolved"
+    assert indexed.loc["BM", "match_method"] == "exact_filename"
+    assert indexed.loc["AM", "status"] == "resolved"
+    assert indexed.loc["AM", "match_method"] == "explicit_output"
+    assert indexed.loc["Missing", "status"] == "unresolved"
+    summary = write_formula_bundle(inventory, sources, tmp_path)
+    assert summary["signals"] == 3
+    assert summary["resolved"] == 2
+    assert (tmp_path / "openap_181_formula_inventory.csv").is_file()

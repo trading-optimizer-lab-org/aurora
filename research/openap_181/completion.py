@@ -355,6 +355,7 @@ def attach_runtime_evidence(
     reproduction_summary: pd.DataFrame | None = None,
     current_features: pd.DataFrame | None = None,
     coverage_93: pd.DataFrame | None = None,
+    formula_inventory: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Attach measured current coverage without changing readiness.
 
@@ -371,6 +372,10 @@ def attach_runtime_evidence(
     result["validation_paired_observations"] = 0
     result["validation_spearman"] = pd.NA
     result["validation_extreme_decile_agreement"] = pd.NA
+    result["formula_status"] = ""
+    result["formula_commit"] = ""
+    result["formula_source_url"] = ""
+    result["formula_sha256"] = ""
 
     if reproduction_summary is not None and not reproduction_summary.empty:
         name_column = _column(reproduction_summary, "signalname", "Acronym", "signal")
@@ -415,6 +420,22 @@ def attach_runtime_evidence(
         if "non_null_count" in indexed.columns:
             counts = pd.to_numeric(result["raw_current_non_null_count"], errors="coerce").fillna(0)
             result["raw_current_value_available"] = counts.gt(0)
+
+    if formula_inventory is not None and not formula_inventory.empty:
+        name_column = _column(formula_inventory, "signal")
+        indexed = formula_inventory.drop_duplicates(name_column).set_index(name_column)
+        field_map = {
+            "status": "formula_status",
+            "commit": "formula_commit",
+            "source_url": "formula_source_url",
+            "sha256": "formula_sha256",
+            "path": "official_formula_path",
+        }
+        for source_field, target_field in field_map.items():
+            if source_field not in indexed.columns:
+                continue
+            mapped = result["signal"].map(indexed[source_field])
+            result.loc[mapped.notna(), target_field] = mapped.loc[mapped.notna()]
 
     # Evidence attachment must never silently promote a baseline signal.
     result["current_usable"] = False

@@ -77,8 +77,10 @@ jobs:
           python -m py_compile research/openap_93/quarterly_pipeline.py
           python -m py_compile research/openap_93/current_pipeline.py
           python -m py_compile research/openap_181/completion.py
+          python -m py_compile research/openap_181/official_formulas.py
           python -m py_compile scripts/run_openap_93_max_free.py
           python -m py_compile scripts/run_openap_181_completion.py
+          python -m py_compile scripts/fetch_openap_181_official_formulas.py
           python -m py_compile scripts/verify_openap_93_outputs.py
       - name: Run focused tests
         run: python -m pytest tests/test_openap_93_max_free.py tests/test_openap_181_completion.py -q --tb=short
@@ -190,16 +192,21 @@ jobs:
           current_features="$(find inputs/openap_base -type f -iname 'openap_features_current.parquet' -print -quit)"
           test -n "$reproduction_summary" && test -s "$reproduction_summary"
           test -n "$current_features" && test -s "$current_features"
+          python scripts/fetch_openap_181_official_formulas.py \
+            --signal-doc inputs/openap_official/SignalDoc.csv \
+            --output-dir outputs/openap_93_current/openap_181_completion
           python scripts/run_openap_181_completion.py \
             --signal-doc inputs/openap_official/SignalDoc.csv \
             --signals-93 config/openap_93/signals_93.yaml \
             --reproduction-summary "$reproduction_summary" \
             --current-features "$current_features" \
             --coverage-93 outputs/openap_93_current/coverage_93.csv \
+            --formula-inventory outputs/openap_93_current/openap_181_completion/openap_181_formula_inventory.csv \
             --output-dir outputs/openap_93_current/openap_181_completion
           test -s outputs/openap_93_current/openap_181_completion/openap_181_completion_manifest.csv
           test -s outputs/openap_93_current/openap_181_completion/openap_181_source_catalog.csv
           test -s outputs/openap_93_current/openap_181_completion/openap_181_summary.json
+          test -s outputs/openap_93_current/openap_181_completion/openap_181_formula_summary.json
       - name: Preserve failed output for diagnosis
         if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

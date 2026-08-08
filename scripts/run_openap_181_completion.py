@@ -34,6 +34,7 @@ def main() -> int:
     parser.add_argument("--reproduction-summary", type=Path)
     parser.add_argument("--current-features", type=Path)
     parser.add_argument("--coverage-93", type=Path)
+    parser.add_argument("--formula-inventory", type=Path)
     args = parser.parse_args()
     require_github_actions_or_explicit_local_permission("OpenAP 181 completion audit")
     signal_doc = pd.read_csv(args.signal_doc)
@@ -44,6 +45,7 @@ def main() -> int:
         reproduction_summary=_read_frame(args.reproduction_summary),
         current_features=_read_frame(args.current_features),
         coverage_93=_read_frame(args.coverage_93),
+        formula_inventory=_read_frame(args.formula_inventory),
     )
     write_completion_outputs(manifest, args.output_dir)
     return 0
