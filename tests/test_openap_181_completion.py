@@ -78,10 +78,28 @@ def test_source_semantics_prevent_false_substitutions():
     assert source_can_satisfy("PatentsRD", "uspto_patentsview_bulk")
 
 
+def test_manifest_uses_concrete_family_blockers():
+    manifest = build_completion_manifest(_signal_doc()).set_index("signal")
+    assert (
+        manifest.loc["SmileSlope", "blocker_code"]
+        == "authorized_current_option_surface_missing"
+    )
+    assert (
+        manifest.loc["ShortInterest", "blocker_code"]
+        == "free_listed_short_interest_source_missing"
+    )
+    assert (
+        manifest.loc["PatentsRD", "blocker_code"]
+        == "patent_assignee_to_public_issuer_crosswalk_missing"
+    )
+
+
 def test_source_catalog_documents_rights_and_scope():
     catalog = build_source_catalog().set_index("source_id")
     assert bool(catalog.loc["uspto_patentsview_bulk", "free"])
     assert bool(catalog.loc["uspto_patentsview_bulk", "authorized_automation"])
+    assert not bool(catalog.loc["uspto_odp_patentsview", "authorized_automation"])
+    assert not bool(catalog.loc["cboe_delayed_options", "authorized_automation"])
     assert not bool(catalog.loc["exchange_short_interest", "free"])
     assert "short_interest" in catalog.loc["finra_short_sale_volume", "cannot_satisfy"]
 

@@ -132,7 +132,8 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         True, False, "Current delayed listed-option chains where available",
         ("current_option_chain_candidate",),
         ("historical_option_surface", "prior_month_iv_without_archived_snapshot"),
-        "Can support a current reconstruction only after field and terms validation.",
+        "Cboe explicitly prohibits automated extraction of the delayed quote table; "
+        "it cannot be used by the autonomous pipeline.",
     ),
     SourceEvidence(
         "cboe_public_aggregate", "Cboe public option volume and index histories",
@@ -166,11 +167,21 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
     ),
     SourceEvidence(
         "uspto_patentsview_bulk", "USPTO PatentsView bulk datasets",
-        "https://data.uspto.gov/bulkdata/datasets/pvannual", "official_bulk_download",
-        True, True, "Disambiguated patent, assignee and citation data through 2025",
+        "https://zenodo.org/records/15058362", "official_static_archive",
+        True, True, "Final official PatentsView metadata release through 2024",
         ("patent_counts", "patent_citations", "assignee_identity"),
         ("assignee_to_public_issuer_crosswalk",),
-        "Public bulk source; issuer linkage still needs a separately validated bridge.",
+        "USPTO-authored CC BY 4.0 archive; issuer linkage still needs a separately "
+        "validated bridge.",
+    ),
+    SourceEvidence(
+        "uspto_odp_patentsview", "USPTO Open Data Portal PatentsView datasets",
+        "https://data.uspto.gov/bulkdata/datasets/pvannual", "account_and_api_key",
+        True, False, "Current official PatentsView releases",
+        ("patent_counts", "patent_citations", "assignee_identity"),
+        ("autonomous_access_without_user_credentials", "assignee_to_public_issuer_crosswalk"),
+        "Since 18 June 2026 ODP requires a USPTO.gov account and API key; Aurora "
+        "cannot create user credentials autonomously.",
     ),
     SourceEvidence(
         "sec_13f", "SEC Form 13F structured datasets",
@@ -214,7 +225,7 @@ def _source_candidates(signal: str, category: str) -> tuple[str, ...]:
     if signal in SHORT_INTEREST_SIGNALS:
         return ("exchange_short_interest", "finra_otc_short_interest")
     if signal in PATENT_SIGNALS:
-        return ("uspto_patentsview_bulk", "sec_edgar")
+        return ("uspto_patentsview_bulk", "uspto_odp_patentsview", "sec_edgar")
     if signal in ANALYST_SIGNALS:
         return ("openap_official", "yahoo_public")
     if signal in INSTITUTIONAL_SIGNALS:
@@ -234,9 +245,48 @@ def source_can_satisfy(signal: str, source_id: str) -> bool:
         return False
     if signal in OPTION_IV_SIGNALS and source_id == "cboe_public_aggregate":
         return False
-    if signal in PATENT_SIGNALS and source_id == "uspto_patentsview_bulk":
+    if signal in PATENT_SIGNALS and source_id in {
+        "uspto_patentsview_bulk", "uspto_odp_patentsview"
+    }:
         return True
     return source_id in _source_candidates(signal, "")
+
+
+def _specific_blocker(
+    signal: str,
+    *,
+    baseline_group: str,
+    category: str,
+    spec: SignalSpec | None,
+) -> str:
+    """Return the most concrete known blocker instead of a generic label."""
+
+    if baseline_group == "statistically_excluded_or_not_selected":
+        return "statistical_or_definition_review_required"
+    if signal in OPTION_IV_SIGNALS:
+        return "authorized_current_option_surface_missing"
+    if signal in OPTION_VOLUME_SIGNALS:
+        return "issuer_option_volume_definition_and_validation_missing"
+    if signal in SHORT_INTEREST_SIGNALS:
+        return "free_listed_short_interest_source_missing"
+    if signal in PATENT_SIGNALS:
+        return "patent_assignee_to_public_issuer_crosswalk_missing"
+    if signal in ANALYST_SIGNALS:
+        return "point_in_time_analyst_history_missing_or_unvalidated"
+    if signal in INSTITUTIONAL_SIGNALS:
+        return "institutional_mapping_and_stock_level_validation_required"
+    family = (spec.data_family if spec is not None else category).lower()
+    if family in {"microstructure", "intraday"}:
+        return "classified_intraday_trade_data_missing"
+    if family in {"supply_chain", "customer", "industry_network"}:
+        return "firm_relationship_panel_missing_or_unvalidated"
+    if family in {"accounting", "fundamental", "investment", "credit"}:
+        return "sec_xbrl_formula_mapping_and_stock_validation_required"
+    if family in {"market", "price", "momentum", "trading", "liquidity"}:
+        return "market_formula_and_stock_level_validation_required"
+    if family in {"event", "governance"}:
+        return "causal_event_taxonomy_and_stock_validation_required"
+    return "required_inputs_or_stock_level_validation_missing"
 
 
 def build_source_catalog() -> pd.DataFrame:
@@ -291,16 +341,19 @@ def build_completion_manifest(
         spec = registry_93.get(signal)
         if signal in CURRENT_PROXY_61:
             baseline_group = "current_proxy_unvalidated"
-            blocker = "independent_stock_level_validation_required"
             readiness = "not_ready"
         elif signal in required_93:
             baseline_group = "strict_93_unfinished"
-            blocker = "required_inputs_or_validation_missing"
             readiness = "not_ready"
         else:
             baseline_group = "statistically_excluded_or_not_selected"
-            blocker = "statistical_or_definition_review_required"
             readiness = "not_ready"
+        blocker = _specific_blocker(
+            signal,
+            baseline_group=baseline_group,
+            category=category,
+            spec=spec,
+        )
         candidates = (
             tuple(spec.candidate_sources)
             if spec is not None
