@@ -188,6 +188,7 @@ def test_current_185_coverage_is_attached_without_promotion():
     assert runtime.loc["SmileSlope", "raw_fidelity"] == (
         "mixed_exact_proxy_unvalidated"
     )
+    assert runtime.loc["AOP", "raw_status"] == "excluded_from_current_score_universe"
     assert not runtime["current_usable"].any()
     assert not runtime["evidence_complete"].any()
 

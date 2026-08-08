@@ -499,6 +499,11 @@ def attach_runtime_evidence(
             result.loc[mask, "raw_fidelity"] = "unvalidated_proxy"
             result.loc[mask, "raw_status"] = "current_value_requires_validation"
 
+    is_current_coverage = (
+        current_coverage is not None
+        and not current_coverage.empty
+        and "signalname" in current_coverage.columns
+    )
     runtime_coverage = current_coverage if current_coverage is not None else coverage_93
     runtime_coverage = (
         _normalise_current_coverage(runtime_coverage)
@@ -533,6 +538,14 @@ def attach_runtime_evidence(
         if "non_null_count" in indexed.columns:
             counts = pd.to_numeric(result["raw_current_non_null_count"], errors="coerce").fillna(0)
             result["raw_current_value_available"] = counts.gt(0)
+        if is_current_coverage:
+            missing = ~result["signal"].isin(indexed.index)
+            result.loc[missing, "raw_fidelity"] = "not_applicable_current_score"
+            result.loc[missing, "raw_status"] = "excluded_from_current_score_universe"
+            result.loc[missing, "raw_unavailable_reasons"] = (
+                "excluded_from_current_score_universe"
+            )
+            result.loc[missing, "raw_value_sources"] = "coverage_185_absent"
 
     if formula_inventory is not None and not formula_inventory.empty:
         name_column = _column(formula_inventory, "signal")
