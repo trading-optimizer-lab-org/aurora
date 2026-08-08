@@ -76,10 +76,12 @@ jobs:
           python -m py_compile research/openap_93/institutional_pipeline.py
           python -m py_compile research/openap_93/quarterly_pipeline.py
           python -m py_compile research/openap_93/current_pipeline.py
+          python -m py_compile research/openap_181/completion.py
           python -m py_compile scripts/run_openap_93_max_free.py
+          python -m py_compile scripts/run_openap_181_completion.py
           python -m py_compile scripts/verify_openap_93_outputs.py
       - name: Run focused tests
-        run: python -m pytest tests/test_openap_93_max_free.py -q --tb=short
+        run: python -m pytest tests/test_openap_93_max_free.py tests/test_openap_181_completion.py -q --tb=short
       - name: Download audited 185-signal base database
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -178,6 +180,19 @@ jobs:
         run: |
           python scripts/verify_openap_93_outputs.py \
             --output-dir outputs/openap_93_current
+      - name: Build the canonical fail-closed 181-signal completion audit
+        run: |
+          mkdir -p inputs/openap_official
+          curl --fail --location --retry 4 --retry-all-errors \
+            https://raw.githubusercontent.com/OpenSourceAP/CrossSection/8db892442c2c3a3779b0f1eac4370d3655be15a1/SignalDoc.csv \
+            --output inputs/openap_official/SignalDoc.csv
+          python scripts/run_openap_181_completion.py \
+            --signal-doc inputs/openap_official/SignalDoc.csv \
+            --signals-93 config/openap_93/signals_93.yaml \
+            --output-dir outputs/openap_93_current/openap_181_completion
+          test -s outputs/openap_93_current/openap_181_completion/openap_181_completion_manifest.csv
+          test -s outputs/openap_93_current/openap_181_completion/openap_181_source_catalog.csv
+          test -s outputs/openap_93_current/openap_181_completion/openap_181_summary.json
       - name: Preserve failed output for diagnosis
         if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
