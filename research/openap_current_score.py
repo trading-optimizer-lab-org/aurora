@@ -716,10 +716,11 @@ def calculate_price_features(
 
         volume_window_60m = monthly_volume.tail(60)
         if len(volume_window_60m) >= 30:
-            month_number = (
+            month_number = np.asarray(
                 volume_window_60m.index.year.astype(float) * 12.0
                 + volume_window_60m.index.month.astype(float)
-                - 1.0
+                - 1.0,
+                dtype=float,
             )
             y = volume_window_60m.to_numpy(dtype=float)
             valid = np.isfinite(month_number) & np.isfinite(y)
