@@ -175,6 +175,16 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "validated bridge.",
     ),
     SourceEvidence(
+        "google_patents_bigquery", "Google Patents Public Datasets",
+        "https://cloud.google.com/blog/topics/public-datasets/google-patents-public-datasets-connecting-public-paid-and-private-patent-data",
+        "public_bigquery_free_tier", True, True,
+        "Worldwide patent publications, citations and assignee names maintained in BigQuery",
+        ("patent_counts", "patent_citations", "assignee_identity"),
+        ("assignee_to_public_issuer_crosswalk", "anonymous_access_without_google_project"),
+        "Google hosts the public data and the first 1 TB of queries per month is free, "
+        "but a Google Cloud project and credentials are still required for autonomous GitHub use.",
+    ),
+    SourceEvidence(
         "uspto_odp_patentsview", "USPTO Open Data Portal PatentsView datasets",
         "https://data.uspto.gov/bulkdata/datasets/pvannual", "account_and_api_key",
         True, False, "Current official PatentsView releases",
@@ -225,7 +235,10 @@ def _source_candidates(signal: str, category: str) -> tuple[str, ...]:
     if signal in SHORT_INTEREST_SIGNALS:
         return ("exchange_short_interest", "finra_otc_short_interest")
     if signal in PATENT_SIGNALS:
-        return ("uspto_patentsview_bulk", "uspto_odp_patentsview", "sec_edgar")
+        return (
+            "google_patents_bigquery", "uspto_patentsview_bulk",
+            "uspto_odp_patentsview", "sec_edgar",
+        )
     if signal in ANALYST_SIGNALS:
         return ("openap_official", "yahoo_public")
     if signal in INSTITUTIONAL_SIGNALS:

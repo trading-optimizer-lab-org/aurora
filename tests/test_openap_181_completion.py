@@ -98,6 +98,11 @@ def test_source_catalog_documents_rights_and_scope():
     catalog = build_source_catalog().set_index("source_id")
     assert bool(catalog.loc["uspto_patentsview_bulk", "free"])
     assert bool(catalog.loc["uspto_patentsview_bulk", "authorized_automation"])
+    assert bool(catalog.loc["google_patents_bigquery", "free"])
+    assert bool(catalog.loc["google_patents_bigquery", "authorized_automation"])
+    assert "assignee_to_public_issuer_crosswalk" in catalog.loc[
+        "google_patents_bigquery", "cannot_satisfy"
+    ]
     assert not bool(catalog.loc["uspto_odp_patentsview", "authorized_automation"])
     assert not bool(catalog.loc["cboe_delayed_options", "authorized_automation"])
     assert not bool(catalog.loc["exchange_short_interest", "free"])

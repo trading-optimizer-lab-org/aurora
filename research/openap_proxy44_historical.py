@@ -31,6 +31,8 @@ HISTORICALLY_RECONSTRUCTED_PROXY_SIGNALS = (
     "VolumeTrend",
 )
 
+TREND_WINDOWS = (3, 5, 10, 20, 50, 100, 200, 400, 600, 800, 1000)
+
 NOT_RECONSTRUCTIBLE_REASONS = {
     "AOP": "historical point-in-time analyst forecasts and long-term growth are unavailable",
     "AnalystRevision": "historical point-in-time analyst revision panel is unavailable",
@@ -71,31 +73,122 @@ NOT_RECONSTRUCTIBLE_REASONS = {
 }
 
 
-def _rolling_volume_slope(volume: pd.Series, window: int = 252) -> pd.Series:
-    y = np.log1p(pd.to_numeric(volume, errors="coerce"))
-    index = pd.Series(np.arange(len(y), dtype=float), index=y.index)
-    sum_y = y.rolling(window, min_periods=window).sum()
-    sum_xy = (y * index).rolling(window, min_periods=window).sum()
-    end = index
-    start = index - window + 1.0
-    mean_x = (start + end) / 2.0
-    denominator = window * (window**2 - 1.0) / 12.0
-    return (sum_xy - mean_x * sum_y) / denominator
+def _rolling_ols_slope(values: pd.Series, months: pd.Series) -> float:
+    y = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float)
+    x = pd.to_numeric(months, errors="coerce").to_numpy(dtype=float)
+    valid = np.isfinite(x) & np.isfinite(y)
+    if valid.sum() < 30:
+        return np.nan
+    x = x[valid]
+    y = y[valid]
+    centered = x - x.mean()
+    denominator = float(np.dot(centered, centered))
+    if denominator <= 0:
+        return np.nan
+    return float(np.dot(centered, y - y.mean()) / denominator)
 
 
 def _price_signal_monthly(group: pd.DataFrame) -> pd.DataFrame:
+    """Build the official monthly inputs, not the final cross-sectional signal."""
+
     daily = group.sort_values("date").copy()
     close = pd.to_numeric(daily["adj_close"], errors="coerce")
     volume = pd.to_numeric(daily["volume"], errors="coerce")
-    lengths = (3, 5, 10, 20, 50, 100, 200, 400, 600, 800, 1000)
-    moving = [close.rolling(length, min_periods=length).mean() / close for length in lengths]
-    daily["TrendFactor"] = -pd.concat(moving, axis=1).mean(axis=1, skipna=False)
-    daily["VolSD"] = volume.rolling(252, min_periods=252).std(ddof=1)
-    daily["VolumeTrend"] = _rolling_volume_slope(volume)
+    for length in TREND_WINDOWS:
+        # OpenAP uses partial moving-average windows and requires all 11 ratios
+        # only when producing the final TrendFactor value.
+        daily[f"A_{length}"] = close.rolling(length, min_periods=1).mean() / close
     daily["completed_month"] = daily["date"].dt.to_period("M").dt.to_timestamp()
-    return daily.groupby("completed_month", as_index=False).tail(1)[
-        ["completed_month", "TrendFactor", "VolSD", "VolumeTrend"]
+    month_end = daily.groupby("completed_month", as_index=False).tail(1)[
+        ["completed_month", *[f"A_{length}" for length in TREND_WINDOWS]]
+    ].copy()
+    monthly_volume = (
+        pd.DataFrame({"completed_month": daily["completed_month"], "volume": volume})
+        .groupby("completed_month", as_index=False)["volume"]
+        .sum(min_count=1)
+    )
+    result = month_end.merge(monthly_volume, on="completed_month", how="left")
+    result["VolSD"] = result["volume"].rolling(36, min_periods=24).std(ddof=1)
+    month_number = result["completed_month"].dt.year * 12 + result["completed_month"].dt.month - 1
+    result["VolumeTrend"] = [
+        (
+            _rolling_ols_slope(
+                result["volume"].iloc[max(0, index - 59): index + 1],
+                month_number.iloc[max(0, index - 59): index + 1],
+            )
+            / result["volume"].iloc[max(0, index - 59): index + 1].mean()
+        )
+        if result["volume"].iloc[max(0, index - 59): index + 1].notna().sum() >= 30
+        and result["volume"].iloc[max(0, index - 59): index + 1].mean() != 0
+        else np.nan
+        for index in range(len(result))
     ]
+    return result
+
+
+def _apply_volume_trend_trim(monthly: pd.DataFrame) -> pd.DataFrame:
+    """Apply OpenAP's cross-sectional 1/99 trim month by month."""
+
+    result = monthly.copy()
+    for _, index in result.groupby("completed_month").groups.items():
+        values = pd.to_numeric(result.loc[index, "VolumeTrend"], errors="coerce")
+        finite = values.dropna()
+        if len(finite) < 2:
+            continue
+        low = finite.quantile(0.01, interpolation="nearest")
+        high = finite.quantile(0.99, interpolation="nearest")
+        outside = values.lt(low) | values.gt(high)
+        result.loc[values.index[outside], "VolumeTrend"] = np.nan
+    return result
+
+
+def _build_trend_factor(monthly: pd.DataFrame) -> pd.Series:
+    """Reproduce OpenAP's lagged cross-sectional moving-average model."""
+
+    feature_columns = [f"A_{length}" for length in TREND_WINDOWS]
+    frame = monthly.sort_values(["completed_month", "symbol"]).copy()
+    next_return = frame[["symbol", "completed_month", "month_return"]].copy()
+    next_return["completed_month"] = next_return["completed_month"] - pd.offsets.MonthBegin(1)
+    next_return = next_return.rename(columns={"month_return": "future_return"})
+    frame = frame.merge(next_return, on=["symbol", "completed_month"], how="left")
+    beta_rows: list[dict[str, object]] = []
+    for month, group in frame.groupby("completed_month", sort=True):
+        sample = group.dropna(subset=["future_return", *feature_columns])
+        if len(sample) <= len(feature_columns) + 1:
+            continue
+        x = sample[feature_columns].to_numpy(dtype=float)
+        x = np.column_stack([x, np.ones(len(x), dtype=float)])
+        y = sample["future_return"].to_numpy(dtype=float)
+        beta, _, rank, _ = np.linalg.lstsq(x, y, rcond=None)
+        if rank < x.shape[1]:
+            continue
+        row: dict[str, object] = {"completed_month": month}
+        row.update({column: float(beta[i]) for i, column in enumerate(feature_columns)})
+        beta_rows.append(row)
+    if not beta_rows:
+        return pd.Series(np.nan, index=monthly.index, dtype=float)
+    betas = pd.DataFrame(beta_rows).sort_values("completed_month").set_index("completed_month")
+    expected = betas[feature_columns].shift(1).rolling(12, min_periods=1).mean()
+    expected = expected.add_prefix("beta_").reset_index()
+    scored = frame.merge(expected, on="completed_month", how="left", sort=False)
+    products = [
+        pd.to_numeric(scored[column], errors="coerce")
+        * pd.to_numeric(scored[f"beta_{column}"], errors="coerce")
+        for column in feature_columns
+    ]
+    product_frame = pd.concat(products, axis=1)
+    value = product_frame.sum(axis=1, min_count=len(feature_columns))
+    keyed = pd.DataFrame(
+        {
+            "symbol": scored["symbol"],
+            "completed_month": scored["completed_month"],
+            "TrendFactor": value,
+        }
+    )
+    original = monthly[["symbol", "completed_month"]].reset_index().merge(
+        keyed, on=["symbol", "completed_month"], how="left"
+    )
+    return original.set_index("index")["TrendFactor"].reindex(monthly.index)
 
 
 def _omission(paid: pd.Series, completed: pd.Period, window: int, payer_window: int) -> bool:
@@ -166,7 +259,7 @@ def build_price_event_proxy_panel(prices_daily: pd.DataFrame) -> pd.DataFrame:
     prices["volume"] = pd.to_numeric(prices["volume"], errors="coerce")
     prices["dividends"] = pd.to_numeric(prices["dividends"], errors="coerce").fillna(0.0)
     prices = prices.dropna(subset=["symbol", "date", "adj_close", "volume"])
-    parts: list[pd.DataFrame] = []
+    monthly_parts: list[pd.DataFrame] = []
     for symbol, group in prices.groupby("symbol", sort=False):
         price_monthly = _price_signal_monthly(group)
         event_monthly = _event_signal_monthly(group)
@@ -177,10 +270,26 @@ def build_price_event_proxy_panel(prices_daily: pd.DataFrame) -> pd.DataFrame:
         realized.index = realized.index.to_period("M").to_timestamp()
         wide = price_monthly.merge(event_monthly, on="completed_month", how="outer")
         wide["symbol"] = symbol
+        wide["month_return"] = wide["completed_month"].map(realized)
+        monthly_parts.append(wide)
+    if not monthly_parts:
+        return pd.DataFrame(
+            columns=[
+                "symbol", "completed_month", "signal_cutoff", "available_at",
+                "formation_month", "realized_month_return", "signal", "proxy_value",
+            ]
+        )
+    monthly = pd.concat(monthly_parts, ignore_index=True)
+    monthly = _apply_volume_trend_trim(monthly)
+    monthly["TrendFactor"] = _build_trend_factor(monthly)
+    parts: list[pd.DataFrame] = []
+    for symbol, wide in monthly.groupby("symbol", sort=False):
+        wide = wide.copy()
         wide["signal_cutoff"] = wide["completed_month"] + pd.offsets.MonthEnd(0)
         wide["available_at"] = wide["signal_cutoff"]
         wide["formation_month"] = wide["completed_month"] + pd.offsets.MonthBegin(1)
-        wide["realized_month_return"] = wide["formation_month"].map(realized)
+        next_return = monthly.loc[monthly["symbol"].eq(symbol)].set_index("completed_month")["month_return"]
+        wide["realized_month_return"] = wide["formation_month"].map(next_return)
         long = wide.melt(
             id_vars=[
                 "symbol", "completed_month", "signal_cutoff", "available_at",
@@ -191,13 +300,6 @@ def build_price_event_proxy_panel(prices_daily: pd.DataFrame) -> pd.DataFrame:
             value_name="proxy_value",
         )
         parts.append(long)
-    if not parts:
-        return pd.DataFrame(
-            columns=[
-                "symbol", "completed_month", "signal_cutoff", "available_at",
-                "formation_month", "realized_month_return", "signal", "proxy_value",
-            ]
-        )
     result = pd.concat(parts, ignore_index=True)
     result["proxy_value"] = pd.to_numeric(result["proxy_value"], errors="coerce")
     return result.sort_values(["signal", "formation_month", "symbol"]).reset_index(drop=True)

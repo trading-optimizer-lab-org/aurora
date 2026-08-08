@@ -7,7 +7,7 @@ openap:
   reproduction_tstat_minimum: 1.96
   original_tstat_minimum: 1.96
   expected_predictors: 185
-  correlation_threshold: 0.80
+  correlation_threshold: 0.95
   minimum_overlap_months: 60
   current_redundancy_threshold: 0.995
   current_redundancy_minimum_overlap: 100
