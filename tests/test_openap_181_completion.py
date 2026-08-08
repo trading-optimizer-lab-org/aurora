@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import gzip
+
 import pandas as pd
+import pytest
 
 from aurora.research.openap_181.completion import (
     CURRENT_EXACT_31,
@@ -16,6 +19,7 @@ from aurora.research.openap_181.completion import (
 from aurora.research.openap_93.registry import REQUIRED_93
 from aurora.research.openap_181.official_formulas import (
     OPENAP_FORMULA_COMMIT,
+    _fetch_bytes,
     build_formula_inventory,
     write_formula_bundle,
 )
@@ -186,6 +190,28 @@ def test_current_185_coverage_is_attached_without_promotion():
     )
     assert not runtime["current_usable"].any()
     assert not runtime["evidence_complete"].any()
+
+
+def test_official_formula_fetch_decodes_gzip_responses(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class FakeResponse:
+        headers = {"Content-Encoding": "gzip"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return gzip.compress(b'{"tree": []}')
+
+    monkeypatch.setattr(
+        "aurora.research.openap_181.official_formulas.urllib.request.urlopen",
+        lambda request, timeout: FakeResponse(),
+    )
+    assert _fetch_bytes("https://example.test/tree", attempts=1) == b'{"tree": []}'
 
 
 def test_formula_inventory_prefers_exact_and_explicit_official_outputs(tmp_path):

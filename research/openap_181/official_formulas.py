@@ -11,10 +11,12 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
+import gzip
 import json
 import re
 import time
 import urllib.request
+import zlib
 
 import pandas as pd
 
@@ -67,7 +69,13 @@ def _fetch_bytes(url: str, *, attempts: int = 4, timeout: int = 60) -> bytes:
         try:
             request = urllib.request.Request(url, headers=public_headers())
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                return response.read()
+                body = response.read()
+                encoding = str(response.headers.get("Content-Encoding", "")).lower()
+                if "gzip" in encoding or body[:2] == b"\x1f\x8b":
+                    return gzip.decompress(body)
+                if "deflate" in encoding:
+                    return zlib.decompress(body)
+                return body
         except Exception as exc:  # pragma: no cover - exercised in GitHub
             last_error = exc
             if attempt + 1 < attempts:
