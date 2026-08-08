@@ -15,6 +15,19 @@ env:
   UNIT_ARTIFACT_PREFIX: sp500-search-method-unit-${{ github.run_id }}
 
 jobs:
+  framework_contract:
+    # Declare the common Aurora contract for policy and reusable-workflow
+    # compatibility; the manual scientific benchmark keeps its own stages.
+    if: ${{ false }}
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: sp500-search-method-benchmark-framework-contract
+      retention_days: 1
+      execution_mode: optimized
+      forced_job_count: 1
+
   prepare:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -52,7 +65,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30af803
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -108,7 +121,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30af803
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -171,7 +184,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30af803
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -243,7 +256,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30af803
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
