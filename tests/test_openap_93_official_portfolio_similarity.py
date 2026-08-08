@@ -56,6 +56,23 @@ def test_official_long_short_wide_normalises_requested_signals() -> None:
     assert spreads["official_spread_return"].tolist() == pytest.approx([0.10, -0.02, 0.04, 0.03])
 
 
+def test_official_long_short_accepts_arbitrary_requested_signals() -> None:
+    raw = pd.DataFrame(
+        {
+            "yyyymm": [202001, 202002],
+            "TrendFactor": [0.01, 0.02],
+            "NOA": [-0.01, 0.03],
+            "DivSeason": [99.0, 99.0],
+        }
+    )
+    official = normalise_official_long_short(
+        raw,
+        signal_names=["TrendFactor", "NOA"],
+    )
+    assert set(official["signal"]) == {"TrendFactor", "NOA"}
+    assert len(official) == 4
+
+
 def test_official_long_short_can_load_staged_csv(tmp_path: Path) -> None:
     source = tmp_path / "PredictorLSretWide.csv"
     pd.DataFrame(
@@ -86,6 +103,27 @@ def test_proxy_deciles_use_next_formation_month_return() -> None:
     })
     spreads = build_proxy_spreads(proxy, monthly)
     assert len(spreads) == 1
+    assert spreads.iloc[0]["proxy_spread_return"] == pytest.approx(0.09)
+
+
+def test_proxy_deciles_accept_arbitrary_requested_signals() -> None:
+    proxy = pd.DataFrame(
+        {
+            "symbol": [f"S{i}" for i in range(10)],
+            "formation_month": pd.to_datetime(["2020-02-01"] * 10),
+            "signal": ["TrendFactor"] * 10,
+            "proxy_value": list(range(10)),
+        }
+    )
+    monthly = pd.DataFrame(
+        {
+            "symbol": [f"S{i}" for i in range(10)],
+            "completed_month": pd.to_datetime(["2020-02-01"] * 10),
+            "month_return": [i / 100 for i in range(10)],
+        }
+    )
+    spreads = build_proxy_spreads(proxy, monthly, signal_names=["TrendFactor"])
+    assert set(spreads["signal"]) == {"TrendFactor"}
     assert spreads.iloc[0]["proxy_spread_return"] == pytest.approx(0.09)
 
 

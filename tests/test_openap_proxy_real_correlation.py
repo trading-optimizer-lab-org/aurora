@@ -5,13 +5,28 @@ import pandas as pd
 import pytest
 
 from aurora.research.openap_proxy_real_correlation import (
+    CANONICAL_PROXY_SIGNALS,
     ProxyCorrelationError,
     audit_proxy_real,
     detect_panel_schema,
+    load_canonical_proxy_names,
     load_proxy_names,
     read_panel_from_frame,
     validate_identity_bridge,
 )
+
+
+EXPECTED_PROXY_44 = {
+    "AOP", "AgeIPO", "AnalystRevision", "CPVolSpread", "ChForecastAccrual",
+    "ChangeInRecommendation", "CredRatDG", "DelBreadth", "DivInit", "DivOmit",
+    "DivSeason", "DownRecomm", "EarningsForecastDisparity", "ExclExp", "FEPS",
+    "ForecastDispersion", "IO_ShortInterest", "IndIPO", "NOA", "OptionVolume1",
+    "OptionVolume2", "RDIPO", "RDcap", "REV6", "RIO_Disp", "RIO_MB",
+    "RIO_Turnover", "RIO_Volatility", "RIVolSpread", "Recomm_ShortInterest",
+    "ShareVol", "SmileSlope", "Spinoff", "TrendFactor", "UpRecomm", "VolSD",
+    "VolumeTrend", "dCPVolSpread", "dNoa", "dVolCall", "fgr5yrLag", "sfe",
+    "skew1", "std_turn",
+}
 
 
 def _panel(multiplier: float = 1.0) -> pd.DataFrame:
@@ -96,6 +111,27 @@ def test_proxy_names_can_be_recovered_from_current_snapshot(tmp_path: Path) -> N
         }
     ).to_parquet(snapshot)
     assert load_proxy_names(None, snapshot=snapshot) == ["ProxyA", "ProxyB"]
+
+
+def test_canonical_proxy_inventory_contains_exactly_the_44_from_the_212_catalogue() -> None:
+    names = load_canonical_proxy_names()
+    assert tuple(names) == CANONICAL_PROXY_SIGNALS
+    assert len(names) == 44
+    assert len(set(names)) == 44
+    assert set(names) == EXPECTED_PROXY_44
+
+
+def test_explicit_canonical_registry_wins_over_snapshot_status_drift(tmp_path: Path) -> None:
+    snapshot = tmp_path / "snapshot.parquet"
+    pd.DataFrame(
+        {
+            "signalname": ["UnexpectedA", "UnexpectedB"],
+            "status": ["proxy", "proxy"],
+        }
+    ).to_parquet(snapshot)
+    assert load_proxy_names(Path("config/openap_proxy_44_signals.txt"), snapshot=snapshot) == list(
+        CANONICAL_PROXY_SIGNALS
+    )
 
 
 def test_identity_bridge_requires_ticker_and_permno(tmp_path: Path) -> None:
