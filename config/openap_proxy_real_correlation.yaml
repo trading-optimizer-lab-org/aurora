@@ -1,0 +1,25 @@
+dataset_id: openap_proxy_real_correlation_v1
+official_openap:
+  release: "2025-10"
+  stock_level_url: "https://drive.google.com/uc?id=1avFIMjz_7LoF3p3nO26eqLW5KdRTOdhW&export=download"
+  expected_signals: 212
+  identifier: permno
+proxy_audit:
+  expected_proxy_count: 44
+  observed_proxy_count_source: current_feature_snapshot_status_proxy
+  observed_proxy_count_must_be_reported: true
+  proxy_count_mismatch_requires_reconciliation: true
+  correlation_threshold: 0.95
+  primary_metric: spearman_pooled
+  minimum_overlap_rows: 60
+  minimum_overlap_months: 12
+  require_historical_panel: true
+  require_identifier_bridge: true
+  no_positional_join: true
+  require_permno_panels: true
+execution:
+  execution_location: github_actions
+  local_runs_allowed: false
+  requires_explicit_user_local_permission: true
+  locked_opened: false
+  validation_used_for_selection: false
