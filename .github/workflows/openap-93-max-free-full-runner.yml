@@ -100,7 +100,7 @@ jobs:
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
       - name: Reuse audited source-probe evidence
-        if: ${{ inputs.public_inputs_run_id != '' }}
+        if: ${{ inputs.public_inputs_run_id != '' && inputs.public_inputs_run_id != 'completion_only' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-93-max-free-source-probe
@@ -109,7 +109,7 @@ jobs:
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
       - name: Reuse audited normalized public inputs
-        if: ${{ inputs.public_inputs_run_id != '' }}
+        if: ${{ inputs.public_inputs_run_id != '' && inputs.public_inputs_run_id != 'completion_only' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-93-public-inputs
@@ -118,7 +118,7 @@ jobs:
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
       - name: Run complete pipeline from audited cached inputs
-        if: ${{ inputs.public_inputs_run_id != '' }}
+        if: ${{ inputs.public_inputs_run_id != '' && inputs.public_inputs_run_id != 'completion_only' }}
         run: |
           python scripts/run_openap_93_max_free.py \
             --signals-config config/openap_93/signals_93.yaml \
@@ -137,7 +137,11 @@ jobs:
             --output-dir outputs/openap_93_current \
             --formation-date "${{ inputs.formation_date }}" \
             --refresh
+      - name: Prepare completion-only output directory
+        if: ${{ inputs.public_inputs_run_id == 'completion_only' }}
+        run: mkdir -p outputs/openap_93_current/openap_181_completion
       - name: Verify mandatory deliverables and contracts
+        if: ${{ inputs.public_inputs_run_id != 'completion_only' }}
         run: |
           for file in \
             signals_93_current.parquet signals_93_current.csv \
@@ -186,6 +190,7 @@ jobs:
           assert reference["identifier_columns"] == ["permno", "yyyymm"]
           PY
       - name: Independently reopen and verify the complete artifact
+        if: ${{ inputs.public_inputs_run_id != 'completion_only' }}
         run: |
           python scripts/verify_openap_93_outputs.py \
             --output-dir outputs/openap_93_current
@@ -195,25 +200,56 @@ jobs:
           curl --fail --location --retry 4 --retry-all-errors \
             https://raw.githubusercontent.com/OpenSourceAP/CrossSection/8db892442c2c3a3779b0f1eac4370d3655be15a1/SignalDoc.csv \
             --output inputs/openap_official/SignalDoc.csv
-          reproduction_summary="$(find inputs/openap_base -type f \( -iname 'PredictorSummary.xlsx' -o -iname 'predictor_summary.xlsx' \) -print -quit)"
-          current_features="$(find inputs/openap_base -type f -iname 'openap_features_current.parquet' -print -quit)"
-          test -n "$reproduction_summary" && test -s "$reproduction_summary"
-          test -n "$current_features" && test -s "$current_features"
           python scripts/fetch_openap_181_official_formulas.py \
             --signal-doc inputs/openap_official/SignalDoc.csv \
             --output-dir outputs/openap_93_current/openap_181_completion
-          python scripts/run_openap_181_completion.py \
-            --signal-doc inputs/openap_official/SignalDoc.csv \
-            --signals-93 config/openap_93/signals_93.yaml \
-            --reproduction-summary "$reproduction_summary" \
-            --current-features "$current_features" \
-            --coverage-93 outputs/openap_93_current/coverage_93.csv \
-            --formula-inventory outputs/openap_93_current/openap_181_completion/openap_181_formula_inventory.csv \
-            --output-dir outputs/openap_93_current/openap_181_completion
+          if [ "${{ inputs.public_inputs_run_id }}" = "completion_only" ]; then
+            current_coverage="$(find inputs/openap_base -type f -iname 'coverage_185.csv' -print -quit)"
+            test -n "$current_coverage" && test -s "$current_coverage"
+            python scripts/run_openap_181_completion.py \
+              --signal-doc inputs/openap_official/SignalDoc.csv \
+              --signals-93 config/openap_93/signals_93.yaml \
+              --current-coverage "$current_coverage" \
+              --formula-inventory outputs/openap_93_current/openap_181_completion/openap_181_formula_inventory.csv \
+              --output-dir outputs/openap_93_current/openap_181_completion
+          else
+            reproduction_summary="$(find inputs/openap_base -type f \( -iname 'PredictorSummary.xlsx' -o -iname 'predictor_summary.xlsx' \) -print -quit)"
+            current_features="$(find inputs/openap_base -type f -iname 'openap_features_current.parquet' -print -quit)"
+            test -n "$reproduction_summary" && test -s "$reproduction_summary"
+            test -n "$current_features" && test -s "$current_features"
+            python scripts/run_openap_181_completion.py \
+              --signal-doc inputs/openap_official/SignalDoc.csv \
+              --signals-93 config/openap_93/signals_93.yaml \
+              --reproduction-summary "$reproduction_summary" \
+              --current-features "$current_features" \
+              --coverage-93 outputs/openap_93_current/coverage_93.csv \
+              --formula-inventory outputs/openap_93_current/openap_181_completion/openap_181_formula_inventory.csv \
+              --output-dir outputs/openap_93_current/openap_181_completion
+          fi
           test -s outputs/openap_93_current/openap_181_completion/openap_181_completion_manifest.csv
           test -s outputs/openap_93_current/openap_181_completion/openap_181_source_catalog.csv
           test -s outputs/openap_93_current/openap_181_completion/openap_181_summary.json
           test -s outputs/openap_93_current/openap_181_completion/openap_181_formula_summary.json
+      - name: Verify completion-only runtime evidence
+        if: ${{ inputs.public_inputs_run_id == 'completion_only' }}
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          root = "outputs/openap_93_current/openap_181_completion"
+          manifest = pd.read_csv(f"{root}/openap_181_completion_manifest.csv")
+          summary = json.load(open(f"{root}/openap_181_summary.json", encoding="utf-8"))
+          assert len(manifest) == manifest["signal"].nunique() == 181
+          assert manifest["raw_status"].ne("").all()
+          assert manifest["raw_current_non_null_count"].ge(0).all()
+          assert manifest["current_usable"].astype(str).str.lower().eq("false").all()
+          assert manifest["evidence_complete"].astype(str).str.lower().eq("false").all()
+          assert summary["unfinished_signals"] == 181
+          assert summary["completion_claimed"] is False
+          assert summary["fail_closed"] is True
+          assert summary["locked_opened"] is False
+          assert summary["validation_used_for_selection"] is False
+          PY
       - name: Preserve failed output for diagnosis
         if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
