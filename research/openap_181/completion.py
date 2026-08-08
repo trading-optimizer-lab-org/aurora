@@ -312,6 +312,36 @@ def build_source_catalog() -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("source_id").reset_index(drop=True)
 
 
+def _normalise_current_coverage(coverage: pd.DataFrame) -> pd.DataFrame:
+    """Translate the current-score coverage contract to the audit contract.
+
+    The current-score pipeline deliberately reports 185 candidate predictors,
+    while this audit owns the canonical unfinished 181.  Keep the two
+    inventories separate and translate only the shared evidence columns.
+    """
+
+    if coverage.empty or "signalname" not in coverage.columns:
+        return coverage
+    result = coverage.copy()
+    result["signal"] = result["signalname"].astype(str).str.strip()
+    if "symbols_with_value" in result.columns and "non_null_count" not in result:
+        result["non_null_count"] = result["symbols_with_value"]
+    if "coverage_status" in result.columns:
+        fidelity_map = {
+            "exact": "exact_unvalidated",
+            "proxy": "unvalidated_proxy",
+            "mixed": "mixed_exact_proxy_unvalidated",
+            "unavailable": "unavailable",
+        }
+        result["fidelity_class"] = result["coverage_status"].map(fidelity_map).fillna(
+            "unclassified"
+        )
+        result["status"] = (
+            "current_" + result["coverage_status"].astype(str) + "_unvalidated"
+        )
+    return result
+
+
 def build_completion_manifest(
     signal_doc: pd.DataFrame,
     *,
@@ -421,6 +451,7 @@ def attach_runtime_evidence(
     reproduction_summary: pd.DataFrame | None = None,
     current_features: pd.DataFrame | None = None,
     coverage_93: pd.DataFrame | None = None,
+    current_coverage: pd.DataFrame | None = None,
     formula_inventory: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Attach measured current coverage without changing readiness.
@@ -442,6 +473,8 @@ def attach_runtime_evidence(
     result["formula_commit"] = ""
     result["formula_source_url"] = ""
     result["formula_sha256"] = ""
+    result["raw_unavailable_reasons"] = ""
+    result["raw_value_sources"] = ""
 
     if reproduction_summary is not None and not reproduction_summary.empty:
         name_column = _column(reproduction_summary, "signalname", "Acronym", "signal")
@@ -466,9 +499,15 @@ def attach_runtime_evidence(
             result.loc[mask, "raw_fidelity"] = "unvalidated_proxy"
             result.loc[mask, "raw_status"] = "current_value_requires_validation"
 
-    if coverage_93 is not None and not coverage_93.empty:
-        name_column = _column(coverage_93, "signal")
-        indexed = coverage_93.drop_duplicates(name_column).set_index(name_column)
+    runtime_coverage = current_coverage if current_coverage is not None else coverage_93
+    runtime_coverage = (
+        _normalise_current_coverage(runtime_coverage)
+        if runtime_coverage is not None
+        else None
+    )
+    if runtime_coverage is not None and not runtime_coverage.empty:
+        name_column = _column(runtime_coverage, "signal")
+        indexed = runtime_coverage.drop_duplicates(name_column).set_index(name_column)
         field_map = {
             "non_null_count": "raw_current_non_null_count",
             "coverage_pct": "raw_current_coverage_pct",
@@ -479,6 +518,14 @@ def attach_runtime_evidence(
             "extreme_decile_agreement": "validation_extreme_decile_agreement",
         }
         for source_field, target_field in field_map.items():
+            if source_field not in indexed.columns:
+                continue
+            mapped = result["signal"].map(indexed[source_field])
+            result.loc[mapped.notna(), target_field] = mapped.loc[mapped.notna()]
+        for source_field, target_field in {
+            "unavailable_reasons": "raw_unavailable_reasons",
+            "value_sources": "raw_value_sources",
+        }.items():
             if source_field not in indexed.columns:
                 continue
             mapped = result["signal"].map(indexed[source_field])

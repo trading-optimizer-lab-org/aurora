@@ -7,6 +7,11 @@ on:
         description: Exact Aurora revision to audit
         required: true
         type: string
+      current_score_run_id:
+        description: Optional successful current-score run providing coverage_185 evidence
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -45,15 +50,38 @@ jobs:
             https://raw.githubusercontent.com/OpenSourceAP/CrossSection/8db892442c2c3a3779b0f1eac4370d3655be15a1/SignalDoc.csv \
             --output inputs/SignalDoc.csv
           test -s inputs/SignalDoc.csv
+      - name: Download current-score evidence
+        if: ${{ inputs.current_score_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-yfinance-sec-current-score-results
+          path: inputs/current_score
+          run-id: ${{ inputs.current_score_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Locate current-score coverage evidence
+        if: ${{ inputs.current_score_run_id != '' }}
+        run: |
+          current_coverage="$(find inputs/current_score -name coverage_185.csv -type f -print -quit)"
+          current_summary="$(find inputs/current_score -name execution_summary.json -type f -print -quit)"
+          test -s "$current_coverage"
+          test -s "$current_summary"
+          echo "CURRENT_SCORE_RUN_ID=${{ inputs.current_score_run_id }}" >> "$GITHUB_ENV"
+          echo "CURRENT_COVERAGE=$current_coverage" >> "$GITHUB_ENV"
+          echo "CURRENT_SUMMARY=$current_summary" >> "$GITHUB_ENV"
       - name: Build fail-closed 181 manifest
         run: |
           python scripts/fetch_openap_181_official_formulas.py \
             --signal-doc inputs/SignalDoc.csv \
             --output-dir outputs/openap_181_completion
+          current_coverage_args=()
+          if [ -n "${CURRENT_COVERAGE:-}" ]; then
+            current_coverage_args+=(--current-coverage "$CURRENT_COVERAGE")
+          fi
           python scripts/run_openap_181_completion.py \
             --signal-doc inputs/SignalDoc.csv \
             --signals-93 config/openap_93/signals_93.yaml \
             --formula-inventory outputs/openap_181_completion/openap_181_formula_inventory.csv \
+            "${current_coverage_args[@]}" \
             --output-dir outputs/openap_181_completion
       - name: Verify mandatory counts and safety flags
         run: |
@@ -75,6 +103,9 @@ jobs:
           assert summary["validation_used_for_selection"] is False
           assert formulas["signals"] == 181
           assert formulas["resolved"] + formulas["ambiguous"] + formulas["unresolved"] == 181
+          if __import__("os").environ.get("CURRENT_SCORE_RUN_ID", ""):
+              assert manifest["raw_status"].ne("").all()
+              assert manifest["raw_current_non_null_count"].ge(0).all()
           PY
       - name: Upload completion evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

@@ -160,6 +160,34 @@ def test_runtime_coverage_and_tstats_do_not_bypass_validation():
     assert not runtime["evidence_complete"].any()
 
 
+def test_current_185_coverage_is_attached_without_promotion():
+    manifest = build_completion_manifest(_signal_doc())
+    runtime = attach_runtime_evidence(
+        manifest,
+        current_coverage=pd.DataFrame(
+            {
+                "signalname": ["BM", "ShortInterest", "SmileSlope"],
+                "coverage_status": ["proxy", "unavailable", "mixed"],
+                "symbols_with_value": [12, 0, 4],
+                "coverage_pct": [40.0, 0.0, 13.33],
+                "unavailable_reasons": ["", "listed_short_interest_missing", ""],
+                "value_sources": ["sec", "", "sec|yahoo"],
+            }
+        ),
+    ).set_index("signal")
+    assert runtime.loc["BM", "raw_current_non_null_count"] == 12
+    assert runtime.loc["BM", "raw_fidelity"] == "unvalidated_proxy"
+    assert runtime.loc["ShortInterest", "raw_status"] == "current_unavailable_unvalidated"
+    assert runtime.loc["ShortInterest", "raw_unavailable_reasons"] == (
+        "listed_short_interest_missing"
+    )
+    assert runtime.loc["SmileSlope", "raw_fidelity"] == (
+        "mixed_exact_proxy_unvalidated"
+    )
+    assert not runtime["current_usable"].any()
+    assert not runtime["evidence_complete"].any()
+
+
 def test_formula_inventory_prefers_exact_and_explicit_official_outputs(tmp_path):
     sources = {
         "Signals/pyCode/Predictors/BM.py": b'save_predictor(df, "BM")\n',
