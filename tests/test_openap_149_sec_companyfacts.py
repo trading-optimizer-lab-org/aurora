@@ -629,6 +629,44 @@ def test_companyfacts_realestate_rejects_evidence_not_yet_retrieved() -> None:
     assert values.empty
 
 
+def test_companyfacts_realestate_diagnostics_trace_every_filter() -> None:
+    facts, submissions, status = _realestate_frames()
+
+    diagnostics = _module().diagnose_companyfacts_realestate_coverage(
+        facts,
+        submissions,
+        status,
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    assert diagnostics["stage_counts"] == {
+        "input_companyfacts_rows": 20,
+        "causal_alias_rows": 20,
+        "causal_alias_ciks": 5,
+        "ratio_candidate_ciks": 5,
+        "candidate_ciks_with_sic": 5,
+        "candidate_ciks_with_identity": 5,
+        "candidate_ciks_with_sic_and_identity": 5,
+        "candidate_ciks_in_five_firm_sic2": 5,
+        "current_value_rows": 5,
+    }
+    assert diagnostics["concept_cik_counts"] == {
+        "assets": 5,
+        "buildings_gross": 5,
+        "buildings_net": 0,
+        "land": 5,
+        "ppe_gross": 5,
+        "ppe_net": 0,
+    }
+    assert diagnostics["candidate_variant_counts"] == {"gross": 5, "net": 0}
+    assert diagnostics["related_source_tags"] == {
+        "BuildingsAndImprovementsGross": {"rows": 5, "ciks": 5},
+        "LandAndLandImprovements": {"rows": 5, "ciks": 5},
+        "PropertyPlantAndEquipmentGross": {"rows": 5, "ciks": 5},
+    }
+
+
 def test_companyfacts_tax_uses_current_federal_and_foreign_expense() -> None:
     facts = _facts()
     template = facts.loc[
