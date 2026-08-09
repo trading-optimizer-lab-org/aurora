@@ -60,7 +60,8 @@ def test_companyfacts_probe_workflow_is_bounded_pinned_and_evidence_only():
     )
     text = workflow.read_text(encoding="utf-8")
 
-    assert "codex/openap-proxy44-validation" in text
+    assert "workflow_dispatch:" in text
+    assert "  push:" not in text
     assert "source_sha:" in text
     assert "sec_user_agent:" in text
     assert "320193,789019,21344" in text

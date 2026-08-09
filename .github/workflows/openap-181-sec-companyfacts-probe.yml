@@ -1,9 +1,6 @@
 name: OpenAP 181 SEC CompanyFacts Probe
 
 on:
-  push:
-    branches:
-      - codex/openap-proxy44-validation
   workflow_dispatch:
     inputs:
       source_sha:
