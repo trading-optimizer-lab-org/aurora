@@ -52,10 +52,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 39)]
+    ] == [f"F{index:03d}" for index in range(1, 41)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[38:]
+        for lane in feature_contract.lanes[40:]
     )
 
 

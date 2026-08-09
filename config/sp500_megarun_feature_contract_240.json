@@ -8,7 +8,7 @@
   },
   "available_at_mode": "max_input_available_at",
   "position_values": [-1, 1],
-  "implemented_lanes": ["F001-F038"],
+  "implemented_lanes": ["F001-F040"],
   "operator_spaces": {
     "*": {
       "window": [5, 10, 20, 40, 63, 126, 252, 504],
