@@ -1141,6 +1141,52 @@ def calculate_companyfacts_herf_current(
     return result
 
 
+def calculate_companyfacts_herfbe_current(
+    companyfacts: pd.DataFrame,
+    submissions: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+) -> pd.DataFrame:
+    """Build a causal SEC book-equity concentration proxy for OpenAP HerfBE."""
+
+    _require_columns(
+        companyfacts,
+        _FACT_COLUMNS | {"taxonomy", "fy", "fp"},
+        "SEC CompanyFacts",
+    )
+    aliases = SEC_CONCEPT_ALIASES["equity"]
+    facts = companyfacts.loc[companyfacts["tag"].isin(aliases)].copy()
+    if facts.empty:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+    alias_rank = {alias: rank for rank, alias in enumerate(aliases)}
+    facts["_alias_rank"] = facts["tag"].map(alias_rank)
+    best_alias = facts.groupby(["cik", "period_end"])["_alias_rank"].transform(
+        "min"
+    )
+    facts = facts.loc[facts["_alias_rank"].eq(best_alias)].copy()
+    facts["tag"] = "Assets"
+
+    result = calculate_companyfacts_herfasset_current(
+        facts,
+        submissions,
+        status,
+        formation_at=formation_at,
+        retrieved_at=retrieved_at,
+    )
+    if result.empty:
+        return result
+    result["signal"] = "HerfBE"
+    result["formula_id"] = "openap_herfbe_sec_companyfacts_current_proxy"
+    result["caveat"] = (
+        "SEC StockholdersEquity three-annual-period SIC4 approximation to "
+        "OpenAP's 36-month adjusted book-equity HHI; current SEC SIC, no "
+        "Compustat book-equity adjustments and no CRSP share-code filter"
+    )
+    return result
+
+
 def _tax_annual_facts(
     companyfacts: pd.DataFrame,
     formation: pd.Timestamp,
@@ -1687,6 +1733,7 @@ __all__ = [
     "build_companyfacts_identity",
     "calculate_companyfacts_accounting_current",
     "calculate_companyfacts_149_current",
+    "calculate_companyfacts_herfbe_current",
     "calculate_companyfacts_herf_current",
     "calculate_companyfacts_herfasset_current",
     "calculate_companyfacts_order_backlog_current",
