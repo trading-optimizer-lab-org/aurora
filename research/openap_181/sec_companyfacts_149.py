@@ -15,6 +15,7 @@ import pandas as pd
 
 from ..openap_current_score import (
     ACCOUNTING_FEATURE_DEPENDENCIES,
+    SEC_CONCEPT_ALIASES,
     apply_accounting_input_freshness,
     calculate_accounting_features,
     latest_sec_concept_inputs,
@@ -46,6 +47,11 @@ _ALIAS_LOOKUP = {
     alias: (concept, priority)
     for concept, spec in CONCEPT_SPECS.items()
     for priority, alias in enumerate(spec.aliases)
+}
+_RDABILITY_ALIAS_LOOKUP = {
+    alias: (concept, priority)
+    for concept in ("revenue", "rd")
+    for priority, alias in enumerate(SEC_CONCEPT_ALIASES[concept])
 }
 _OUTPUT_COLUMNS = (
     "security_id",
@@ -499,10 +505,199 @@ def calculate_companyfacts_accounting_current(
     ).reset_index(drop=True)
 
 
+def _rdability_annual_facts(
+    companyfacts: pd.DataFrame,
+    formation: pd.Timestamp,
+) -> pd.DataFrame:
+    required = _FACT_COLUMNS | {"taxonomy", "fy", "fp"}
+    _require_columns(companyfacts, required, "SEC CompanyFacts")
+    frame = companyfacts.copy()
+    frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce")
+    frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+    frame["fiscal_year"] = pd.to_numeric(frame["fy"], errors="coerce")
+    frame["period_start"] = _utc(frame["period_start"])
+    frame["period_end"] = _utc(frame["period_end"])
+    frame["filed_at"] = _utc(frame["filed"])
+    frame["available_at"] = _utc(frame["available_at"])
+    duration = (frame["period_end"] - frame["period_start"]).dt.days
+    frame = frame.loc[
+        frame["cik"].notna()
+        & frame["value"].notna()
+        & np.isfinite(frame["value"])
+        & frame["fiscal_year"].notna()
+        & frame["taxonomy"].fillna("").astype(str).str.lower().eq("us-gaap")
+        & frame["tag"].isin(_RDABILITY_ALIAS_LOOKUP)
+        & frame["unit"].eq("USD")
+        & frame["form"].isin({"10-K", "10-K/A"})
+        & frame["fp"].fillna("").astype(str).eq("FY")
+        & duration.between(250, 450)
+        & frame["period_end"].notna()
+        & frame["available_at"].notna()
+        & frame["available_at"].le(formation)
+    ].copy()
+    if frame.empty:
+        return frame
+    frame["concept"] = frame["tag"].map(
+        lambda tag: _RDABILITY_ALIAS_LOOKUP[str(tag)][0]
+    )
+    frame["alias_priority"] = frame["tag"].map(
+        lambda tag: _RDABILITY_ALIAS_LOOKUP[str(tag)][1]
+    )
+    group = ["cik", "fiscal_year", "concept"]
+    best_priority = frame.groupby(group)["alias_priority"].transform("min")
+    frame = frame.loc[frame["alias_priority"].eq(best_priority)].copy()
+    latest_available = frame.groupby(group)["available_at"].transform("max")
+    frame = frame.loc[frame["available_at"].eq(latest_available)].copy()
+    conflicts = frame.groupby(group)["value"].transform("nunique").gt(1)
+    frame = frame.loc[~conflicts].copy()
+    return frame.sort_values(group + ["filed_at", "accession_number"]).drop_duplicates(
+        group, keep="last"
+    )
+
+
+def _rdability_candidate(issuer_facts: pd.DataFrame) -> dict[str, Any] | None:
+    values = issuer_facts.pivot(
+        index="fiscal_year", columns="concept", values="value"
+    ).sort_index()
+    if not {"revenue", "rd"}.issubset(values.columns):
+        return None
+    years = values.index.to_series().astype(int)
+    breaks = years.diff().fillna(1).ne(1)
+    if breaks.any():
+        values = values.loc[years.index[breaks].max() :]
+    if len(values) < 13:
+        return None
+    sales = pd.to_numeric(values["revenue"], errors="coerce")
+    rd = pd.to_numeric(values["rd"], errors="coerce")
+    sales = sales.where(sales.gt(0))
+    rd = rd.where(rd.ge(0))
+    sales_growth = np.log(sales / sales.shift(1))
+    rd_intensity_log = np.log1p(rd / sales)
+    slopes: list[float] = []
+    for lag in range(1, 6):
+        window = pd.DataFrame(
+            {
+                "y": sales_growth,
+                "x": rd_intensity_log.shift(lag),
+            }
+        ).tail(8)
+        valid = window.dropna()
+        positive_frequency = float(window["x"].gt(0).mean())
+        if len(valid) < 6 or positive_frequency < 0.5:
+            continue
+        x = valid["x"].to_numpy(dtype=float)
+        y = valid["y"].to_numpy(dtype=float)
+        if not np.isfinite(x).all() or not np.isfinite(y).all():
+            continue
+        if float(np.ptp(x)) <= 1e-12:
+            continue
+        design = np.column_stack([np.ones(len(x), dtype=float), x])
+        coefficient = np.linalg.lstsq(design, y, rcond=None)[0][1]
+        if np.isfinite(coefficient):
+            slopes.append(float(coefficient))
+    latest_rd = rd.iloc[-1]
+    latest_sales = sales.iloc[-1]
+    current_intensity = (
+        float(latest_rd / latest_sales)
+        if pd.notna(latest_rd)
+        and pd.notna(latest_sales)
+        and float(latest_sales) != 0.0
+        else None
+    )
+    if not slopes or current_intensity is None or current_intensity <= 0:
+        return None
+    used_years = set(values.index.astype(float))
+    used = issuer_facts.loc[issuer_facts["fiscal_year"].isin(used_years)]
+    return {
+        "cik": int(issuer_facts["cik"].iloc[0]),
+        "value": float(np.mean(slopes)),
+        "rd_intensity": float(current_intensity),
+        "period_end": used["period_end"].max(),
+        "filed_at": used["filed_at"].max(),
+        "available_at": used["available_at"].max(),
+        "observation_count": int(len(values)),
+    }
+
+
+def calculate_companyfacts_rdability_current(
+    companyfacts: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+) -> pd.DataFrame:
+    """Reconstruct current OpenAP RDAbility from causal annual SEC facts."""
+
+    formation = pd.Timestamp(formation_at)
+    if formation.tzinfo is None:
+        formation = formation.tz_localize("UTC")
+    else:
+        formation = formation.tz_convert("UTC")
+    retrieved = pd.Timestamp(retrieved_at)
+    if retrieved.tzinfo is None:
+        retrieved = retrieved.tz_localize("UTC")
+    else:
+        retrieved = retrieved.tz_convert("UTC")
+    identity = build_companyfacts_identity(status)
+    facts = _rdability_annual_facts(companyfacts, formation)
+    candidates = [
+        candidate
+        for _, issuer_facts in facts.groupby("cik", sort=False)
+        if (candidate := _rdability_candidate(issuer_facts)) is not None
+    ]
+    candidate_frame = pd.DataFrame(candidates)
+    if len(candidate_frame) < 3 or candidate_frame["rd_intensity"].nunique() < 3:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+    candidate_frame["rd_tercile"] = pd.qcut(
+        candidate_frame["rd_intensity"], q=3, labels=False, duplicates="drop"
+    )
+    observed_terciles = set(candidate_frame["rd_tercile"].dropna().astype(int))
+    if observed_terciles != {0, 1, 2}:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+    selected = candidate_frame.loc[candidate_frame["rd_tercile"].eq(2)].merge(
+        identity, on="cik", how="inner", validate="one_to_one"
+    )
+    rows = []
+    for row in selected.itertuples(index=False):
+        rows.append(
+            {
+                "security_id": str(row.security_id),
+                "ticker": str(row.symbol),
+                "cik": f"{int(row.cik):010d}",
+                "signal": "RDAbility",
+                "formation_at": formation.isoformat(),
+                "period_end": pd.Timestamp(row.period_end).isoformat(),
+                "filed_at": pd.Timestamp(row.filed_at).isoformat(),
+                "available_at": pd.Timestamp(row.available_at).isoformat(),
+                "retrieved_at": retrieved.isoformat(),
+                "value": float(row.value),
+                "fidelity_class": "unvalidated_proxy",
+                "current_usable": True,
+                "source_id": "sec_edgar",
+                "source_url": (
+                    "https://data.sec.gov/api/xbrl/companyfacts/"
+                    f"CIK{int(row.cik):010d}.json"
+                ),
+                "formula_id": "openap_rdability_sec_companyfacts_current_proxy",
+                "formula_sha256": "",
+                "observation_count": int(row.observation_count),
+                "reason_if_missing": "",
+                "caveat": (
+                    "SEC CompanyFacts and current CIK-universe reconstruction; "
+                    "not validated as Compustat/GVKEY/PERMNO-equivalent"
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
+        "security_id"
+    ).reset_index(drop=True)
+
+
 __all__ = [
     "build_companyfacts_identity",
     "calculate_companyfacts_accounting_current",
     "calculate_companyfacts_149_current",
+    "calculate_companyfacts_rdability_current",
     "calculate_sec_submission_current",
     "normalize_companyfacts_for_accounting",
 ]

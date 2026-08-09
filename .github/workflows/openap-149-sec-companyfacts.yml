@@ -114,7 +114,7 @@ jobs:
           import pandas as pd
           path = "outputs/openap_149_sec_companyfacts/openap_149_sec_companyfacts_current.csv"
           values = pd.read_csv(path)
-          assert {"Cash", "FirmAge", "GP", "Investment"}.issubset(
+          assert {"Cash", "FirmAge", "GP", "Investment", "RDAbility"}.issubset(
               set(values["signal"])
           )
           assert values["signal"].nunique() > 3
