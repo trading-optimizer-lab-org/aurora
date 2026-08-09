@@ -419,6 +419,47 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "Aurora without written permission.",
     ),
     SourceEvidence(
+        "nasdaq_zacks_premium", "Nasdaq Data Link Zacks analyst products",
+        "https://docs.data.nasdaq.com/docs/data-organization", "premium_subscription",
+        False, False, "Zacks earnings estimates and analyst ratings products",
+        ("aggregate_earnings_estimates", "analyst_ratings"),
+        ("zero_cost_access", "ibes_definition_equivalence", "permanent_free_access"),
+        "Nasdaq Data Link classifies Zacks Earnings Estimates and Zacks Analyst Ratings "
+        "as premium products, so they are references only for the zero-cost objective.",
+    ),
+    SourceEvidence(
+        "zacks_data_commercial", "Zacks Investment Research Data",
+        "https://zacksdata.com/consensus/faq/", "direct_or_wrds_vendor_license",
+        False, False, "Point-in-time estimate, surprise and recommendation histories",
+        ("estimate_vintages", "recommendations", "individual_contributors"),
+        ("zero_cost_access", "ibes_definition_equivalence"),
+        "Zacks documents long point-in-time history, but access requires a direct research "
+        "system license or WRDS subscription.",
+    ),
+    SourceEvidence(
+        "intrinio_zacks_enterprise", "Intrinio Zacks analyst products",
+        "https://account.intrinio.com/pricing", "enterprise_or_temporary_trial",
+        False, False, "Zacks EPS, growth, surprise and analyst-rating products",
+        ("eps_estimates", "long_term_growth", "surprises", "analyst_ratings"),
+        ("permanent_free_access", "ibes_definition_equivalence"),
+        "The analyst products are enterprise datasets. A temporary trial is not a "
+        "permanent free source for the Aurora pipeline.",
+    ),
+    SourceEvidence(
+        "simfin_free", "SimFin free fundamentals",
+        "https://www.simfin.com/en/prices/", "free_account_api",
+        True, True, "Five recent years of standardized and as-reported fundamentals",
+        ("recent_financial_statements", "as_reported_fundamentals"),
+        (
+            "history_before_five_years", "analyst_estimate_vintages",
+            "analyst_recommendations", "compustat_definition_equivalence",
+            "aurora_project_use_without_written_permission",
+        ),
+        "The free tier is automatable for recent fundamentals but lacks the historical "
+        "depth and analyst records required by the OpenAP analyst families. Project signal "
+        "derivation rights remain unverified, so this route is fail-closed.",
+    ),
+    SourceEvidence(
         "field_ritter_ipo", "Field-Ritter IPO founding dates",
         "https://site.warrington.ufl.edu/ritter/files/IPO-age.xlsx",
         "official_static_excel", True, False,
@@ -576,7 +617,13 @@ def _source_candidates(signal: str, category: str) -> tuple[str, ...]:
             "uspto_odp_patentsview", "sec_edgar",
         )
     if signal in ANALYST_SIGNALS:
-        return ("openap_official", "alpha_vantage_free", "yahoo_public")
+        return (
+            "openap_official", "alpha_vantage_free", "fmp_basic", "twelve_data_basic",
+            "nasdaq_zacks_premium", "zacks_data_commercial",
+            "intrinio_zacks_enterprise", "simfin_free", "sec_edgar",
+            "sec_financial_statement_datasets", "openfigi", "lseg_ibes_commercial",
+            "compustat_commercial", "crsp_stock_commercial", "wrds_linking_suite",
+        )
     if signal in INSTITUTIONAL_SIGNALS:
         return ("sec_13f", "openap_official")
     text = category.lower()

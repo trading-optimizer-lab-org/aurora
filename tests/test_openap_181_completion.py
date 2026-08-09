@@ -503,7 +503,7 @@ def test_analyst_source_matrix_uses_family_specific_sources_and_blockers():
     assert not bool(
         inventory.loc["intrinio_zacks_enterprise", "aurora_project_use_authorized"]
     )
-    assert bool(inventory.loc["simfin_free", "aurora_project_use_authorized"])
+    assert not bool(inventory.loc["simfin_free", "aurora_project_use_authorized"])
 
     for signal in ANALYST_SIGNALS:
         row = resolution.loc[signal]

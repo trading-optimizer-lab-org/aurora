@@ -14,6 +14,11 @@ import json
 
 import pandas as pd
 
+from aurora.research.openap_181.analyst_batch import (
+    ANALYST_BLOCKERS,
+    ANALYST_SIGNAL_FAMILIES,
+    ANALYST_SIGNALS,
+)
 from aurora.research.openap_181.completion import SOURCE_CATALOG
 
 
@@ -508,6 +513,69 @@ SOURCE_METADATA = {
             redistribution="personal non-commercial license; broader research requires permission",
         ),
         _meta(
+            "nasdaq_zacks_premium",
+            "Nasdaq Data Link / Zacks",
+            "https://docs.data.nasdaq.com/docs/data-organization",
+            "https://data.nasdaq.com/terms",
+            account=True,
+            card=True,
+            auth="premium Nasdaq Data Link subscription",
+            rate="subscription dependent",
+            start="product dependent",
+            frequency="vendor updates",
+            identifiers="ticker and Zacks product identifiers",
+            available_at="premium product vintage fields",
+            pit="Zacks premium point-in-time product; not a free route",
+            redistribution="premium product license required",
+        ),
+        _meta(
+            "zacks_data_commercial",
+            "Zacks Investment Research",
+            "https://zacksdata.com/consensus/faq/",
+            "https://zacksdata.com/",
+            account=True,
+            card=True,
+            auth="direct research-system or WRDS vendor license",
+            rate="contract dependent",
+            start="annual EPS 1979; quarterly EPS 1982; ratings 1985",
+            frequency="vendor updates",
+            identifiers="ticker,contributor and provider identifiers",
+            available_at="point-in-time consensus and contributor histories",
+            pit="commercial point-in-time estimate and recommendation history",
+            redistribution="direct Zacks or WRDS vendor license required",
+        ),
+        _meta(
+            "intrinio_zacks_enterprise",
+            "Intrinio / Zacks",
+            "https://account.intrinio.com/pricing",
+            "https://intrinio.com/terms-of-service",
+            account=True,
+            card=True,
+            auth="enterprise subscription or temporary trial",
+            rate="contract dependent",
+            start="selected products advertise 20+ years",
+            frequency="vendor updates",
+            identifiers="ticker and provider identifiers",
+            available_at="product dependent",
+            pit="commercial Zacks-derived product; trial is not permanent access",
+            redistribution="enterprise product license required",
+        ),
+        _meta(
+            "simfin_free",
+            "SimFin",
+            "https://www.simfin.com/en/prices/",
+            "https://www.simfin.com/en/prices/",
+            account=True,
+            auth="free API key",
+            rate="free-tier API limits",
+            start="five rolling years on free tier",
+            frequency="filing driven with free-tier delay",
+            identifiers="SimFin ID,ticker,CIK where available",
+            available_at="filing and provider update metadata; audit still required",
+            pit="recent fundamentals only; no analyst recommendation vintages",
+            redistribution="project signal-derivation permission not verified",
+        ),
+        _meta(
             "field_ritter_ipo",
             "Jay R. Ritter / University of Florida",
             "https://site.warrington.ufl.edu/ritter/files/founding-dates.pdf",
@@ -810,6 +878,25 @@ def _route_source_ids(signal: str, row: Mapping[str, Any]) -> tuple[str, ...]:
             "tiingo_starter", "twelve_data_basic", "sec_edgar", "openfigi",
             "crsp_stock_commercial",
         ]
+    elif signal in ANALYST_SIGNALS:
+        sources += [
+            "lseg_ibes_commercial", "alpha_vantage_free", "fmp_basic",
+            "twelve_data_basic", "nasdaq_zacks_premium", "zacks_data_commercial",
+            "intrinio_zacks_enterprise",
+        ]
+        family = ANALYST_SIGNAL_FAMILIES[signal]
+        if family in {
+            "accounting_compustat",
+            "ibes_mixed",
+            "ibes_compustat_crsp_cross_section",
+        }:
+            sources += [
+                "sec_edgar", "sec_financial_statement_datasets", "simfin_free",
+                "openfigi", "compustat_commercial", "crsp_stock_commercial",
+                "wrds_linking_suite",
+            ]
+        else:
+            sources += ["crsp_stock_commercial", "wrds_linking_suite"]
     elif blocker == "point_in_time_analyst_history_missing_or_unvalidated" or category == "Analyst":
         sources += [
             "alpha_vantage_free", "fmp_basic", "sec_edgar", "tiingo_starter",
@@ -906,6 +993,11 @@ def build_source_inventory() -> pd.DataFrame:
         if metadata is None:
             raise ValueError(f"Missing research metadata for source {source.source_id}")
         meta = asdict(metadata)
+        remaining_blocker = (
+            ANALYST_BLOCKERS[signal]
+            if signal in ANALYST_SIGNALS
+            else blocker_code + ": " + _classification_detail(classification)
+        )
         rows.append(
             {
                 "source_id": source.source_id,
@@ -1001,9 +1093,7 @@ def build_signal_resolution(
                     else "candidate_sources_authorized"
                 ),
                 "final_research_classification": classification,
-                "remaining_blocker": blocker_code
-                + ": "
-                + _classification_detail(classification),
+                "remaining_blocker": remaining_blocker,
                 "next_exact_action": _next_action(signal, classification),
                 "access_checked_at": RESEARCH_CHECKED_DATE,
             }

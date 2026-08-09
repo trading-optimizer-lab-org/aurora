@@ -1,0 +1,88 @@
+name: OpenAP 181 Analyst Source Probe
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision to probe
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openap-181-analyst-source-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GITHUB_ACTIONS: "true"
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      OPENAP_COMMIT: 8db892442c2c3a3779b0f1eac4370d3655be15a1
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and focused tests
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Verify analyst source contracts
+        run: |
+          python -m py_compile research/openap_181/analyst_batch.py scripts/run_openap_181_analyst_source_probe.py
+          python -m pytest tests/test_openap_181_analyst_batch.py -q --tb=short
+      - name: Probe pinned formulas and official source documents
+        run: |
+          python scripts/run_openap_181_analyst_source_probe.py \
+            --output-dir outputs/openap_181_analyst \
+            --evidence-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --evidence-artifact openap-181-analyst-source-probe-results \
+            --implementation-commit "$SOURCE_SHA"
+      - name: Verify fail-closed documentary decision
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import pandas as pd
+          root = pathlib.Path("outputs/openap_181_analyst")
+          summary = json.load(open(root / "analyst_source_probe.json", encoding="utf-8"))
+          evidence = pd.read_csv(root / "analyst_batch_evidence.csv")
+          formulas = pd.read_csv(root / "analyst_formula_requirements.csv")
+          sources = pd.read_csv(root / "analyst_source_assessment.csv")
+          assert summary["formula_sources_verified"] is True
+          assert summary["formula_signals"] == 18
+          assert summary["source_access_decision_complete"] is True
+          assert summary["unresolved_documents"] == []
+          assert summary["exact_free_authorized_source_found"] is False
+          assert summary["raw_source_data_downloaded"] is False
+          assert summary["raw_files_in_artifact"] is False
+          assert summary["strict_approved"] == 0
+          assert summary["locked_opened"] is False
+          assert summary["validation_used_for_selection"] is False
+          assert len(evidence) == evidence["signal"].nunique() == 18
+          assert len(formulas) == formulas["signal"].nunique() == 18
+          assert sources["source_id"].nunique() == len(sources)
+          assert evidence["formula_implemented"].eq(True).all()
+          assert evidence["strict_gate_result"].eq("blocked").all()
+          assert evidence["blocking_reason"].str.startswith("analyst_source_blocked:").all()
+          PY
+      - name: Upload analyst source evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-181-analyst-source-probe-results
+          path: outputs/openap_181_analyst/
+          if-no-files-found: error
+          retention-days: 90

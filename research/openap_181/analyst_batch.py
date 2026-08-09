@@ -2,16 +2,64 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Mapping
 import json
 import re
+import time
+import urllib.request
 
 import pandas as pd
 
 
 OPENAP_COMMIT = "8db892442c2c3a3779b0f1eac4370d3655be15a1"
+
+DOCUMENT_URLS = {
+    "ibes": (
+        "https://wrds-www.wharton.upenn.edu/pages/about/data-vendors/"
+        "vendor-partner-ibes/"
+    ),
+    "alpha_vantage_docs": "https://www.alphavantage.co/documentation/",
+    "alpha_vantage_terms": "https://www.alphavantage.co/terms_of_service/",
+    "fmp_docs": "https://site.financialmodelingprep.com/developer/docs/stable",
+    "fmp_pricing": "https://site.financialmodelingprep.com/developer/docs/pricing",
+    "fmp_terms": "https://site.financialmodelingprep.com/terms-of-service",
+    "twelve_data_pricing": "https://twelvedata.com/pricing",
+    "twelve_data_analysis": (
+        "https://twelvedata.com/blog/"
+        "twelve-data-unveils-analysis-data-with-estimations-and-recommendations"
+    ),
+    "nasdaq_data_link": "https://docs.data.nasdaq.com/docs/data-organization",
+    "zacks": "https://zacksdata.com/consensus/faq/",
+    "intrinio": "https://account.intrinio.com/pricing",
+    "sec_api": (
+        "https://www.sec.gov/search-filings/"
+        "edgar-application-programming-interfaces"
+    ),
+    "sec_fsd": "https://www.sec.gov/files/fsds.pdf",
+    "sec_reuse": "https://www.sec.gov/about/webmaster-frequently-asked-questions",
+}
+DOCUMENT_GROUPS = {
+    name: (name,)
+    for name in (
+        "ibes",
+        "alpha_vantage_docs",
+        "alpha_vantage_terms",
+        "fmp_docs",
+        "fmp_pricing",
+        "fmp_terms",
+        "twelve_data_pricing",
+        "twelve_data_analysis",
+        "nasdaq_data_link",
+        "zacks",
+        "intrinio",
+        "sec_api",
+        "sec_fsd",
+        "sec_reuse",
+    )
+}
 
 _AOP_PATH = (
     "Signals/pyCode/Predictors/"
@@ -361,9 +409,9 @@ SOURCE_ASSESSMENTS = (
         "access": "free_account",
         "history": "five years delayed fundamentals on free tier",
         "fields": "standardized and as-reported fundamentals; no analyst vintages",
-        "project_use_authorized": True,
+        "project_use_authorized": False,
         "exact_for_openap": False,
-        "blocker": "history_too_short_and_no_ibes_estimate_or_recommendation_detail",
+        "blocker": "history_too_short_no_ibes_detail_and_project_derivation_terms_unverified",
     },
     {
         "source_id": "compustat_commercial",
@@ -627,14 +675,110 @@ def write_analyst_source_probe_outputs(
     )
 
 
+def _headers() -> dict[str, str]:
+    return {
+        "User-Agent": (
+            "Aurora-OpenAP-181-analyst-source-probe/1.0 "
+            "contact https://github.com/trading-optimizer-lab-org/aurora"
+        ),
+        "Accept": "text/html,text/plain,application/json,application/pdf",
+    }
+
+
+def _fetch(url: str, *, attempts: int = 3) -> bytes:
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            request = urllib.request.Request(url, headers=_headers())
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return response.read()
+        except Exception as exc:  # pragma: no cover - exercised in GitHub Actions
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(2**attempt)
+    raise RuntimeError(f"Unable to fetch {url}: {last_error}")
+
+
+def run_analyst_source_probe(
+    *,
+    output_dir: Path,
+    evidence_run_url: str,
+    evidence_artifact: str,
+    implementation_commit: str,
+) -> dict[str, Any]:
+    """Verify pinned formulas and live official documentation without source data."""
+
+    payload_cache: dict[str, bytes] = {}
+    formula_verified = True
+    for source in OPENAP_FORMULA_SOURCES.values():
+        path = source["path"]
+        if path not in payload_cache:
+            payload_cache[path] = _fetch(
+                "https://raw.githubusercontent.com/OpenSourceAP/CrossSection/"
+                f"{OPENAP_COMMIT}/{path}"
+            )
+        formula_verified &= sha256(payload_cache[path]).hexdigest() == source["sha256"]
+    if not formula_verified:
+        raise ValueError("Pinned OpenAP analyst formula source hash mismatch")
+
+    documents: dict[str, str] = {}
+    access_errors: dict[str, str] = {}
+    for document_name, source_names in DOCUMENT_GROUPS.items():
+        payloads: list[str] = []
+        errors: list[str] = []
+        for source_name in source_names:
+            try:
+                payloads.append(
+                    _fetch(DOCUMENT_URLS[source_name]).decode(
+                        "utf-8", errors="replace"
+                    )
+                )
+            except RuntimeError as exc:
+                errors.append(f"{source_name}:{exc}")
+        documents[document_name] = " ".join(payloads)
+        if errors:
+            access_errors[document_name] = ";".join(errors)
+    summary = evaluate_analyst_source_documents(
+        documents,
+        access_errors=access_errors,
+    )
+    if not summary["source_access_decision_complete"]:
+        raise ValueError(
+            "Official analyst documentation contract unresolved: "
+            + ",".join(summary["unresolved_documents"])
+        )
+    summary.update(
+        {
+            "formula_sources_verified": True,
+            "formula_commit": OPENAP_COMMIT,
+            "formula_signals": len(ANALYST_SIGNALS),
+            "raw_source_data_downloaded": False,
+            "raw_files_in_artifact": False,
+            "locked_opened": False,
+            "validation_used_for_selection": False,
+        }
+    )
+    write_analyst_source_probe_outputs(
+        summary,
+        output_dir=output_dir,
+        evidence_run_url=evidence_run_url,
+        evidence_artifact=evidence_artifact,
+        implementation_commit=implementation_commit,
+    )
+    return summary
+
+
 __all__ = [
     "ANALYST_FORMULA_REQUIREMENTS",
     "ANALYST_SIGNAL_FAMILIES",
     "ANALYST_SIGNALS",
+    "DOCUMENT_GROUPS",
+    "DOCUMENT_URLS",
     "OPENAP_COMMIT",
     "OPENAP_FORMULA_SOURCES",
     "SOURCE_ASSESSMENTS",
     "build_analyst_batch_evidence",
     "evaluate_analyst_source_documents",
+    "run_analyst_source_probe",
     "write_analyst_source_probe_outputs",
 ]
