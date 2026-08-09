@@ -1096,6 +1096,51 @@ def calculate_companyfacts_herfasset_current(
     ).reset_index(drop=True)
 
 
+def calculate_companyfacts_herf_current(
+    companyfacts: pd.DataFrame,
+    submissions: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+) -> pd.DataFrame:
+    """Build a causal SEC sales-concentration proxy for OpenAP Herf."""
+
+    _require_columns(
+        companyfacts,
+        _FACT_COLUMNS | {"taxonomy", "fy", "fp"},
+        "SEC CompanyFacts",
+    )
+    aliases = SEC_CONCEPT_ALIASES["revenue"]
+    facts = companyfacts.loc[companyfacts["tag"].isin(aliases)].copy()
+    if facts.empty:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+    alias_rank = {alias: rank for rank, alias in enumerate(aliases)}
+    facts["_alias_rank"] = facts["tag"].map(alias_rank)
+    best_alias = facts.groupby(["cik", "period_end"])["_alias_rank"].transform(
+        "min"
+    )
+    facts = facts.loc[facts["_alias_rank"].eq(best_alias)].copy()
+    facts["tag"] = "Assets"
+
+    result = calculate_companyfacts_herfasset_current(
+        facts,
+        submissions,
+        status,
+        formation_at=formation_at,
+        retrieved_at=retrieved_at,
+    )
+    if result.empty:
+        return result
+    result["signal"] = "Herf"
+    result["formula_id"] = "openap_herf_sec_companyfacts_current_proxy"
+    result["caveat"] = (
+        "SEC CompanyFacts three-annual-period SIC4 approximation to OpenAP's "
+        "36-month sales HHI; current SEC SIC and no CRSP share-code filter"
+    )
+    return result
+
+
 def _tax_annual_facts(
     companyfacts: pd.DataFrame,
     formation: pd.Timestamp,
@@ -1642,6 +1687,7 @@ __all__ = [
     "build_companyfacts_identity",
     "calculate_companyfacts_accounting_current",
     "calculate_companyfacts_149_current",
+    "calculate_companyfacts_herf_current",
     "calculate_companyfacts_herfasset_current",
     "calculate_companyfacts_order_backlog_current",
     "calculate_companyfacts_rdability_current",

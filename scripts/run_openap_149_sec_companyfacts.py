@@ -14,6 +14,7 @@ from aurora.research.openap_181.acquisition_149 import load_target_routes
 from aurora.research.openap_181.sec_companyfacts_149 import (
     calculate_companyfacts_accounting_current,
     calculate_companyfacts_149_current,
+    calculate_companyfacts_herf_current,
     calculate_companyfacts_herfasset_current,
     calculate_companyfacts_order_backlog_current,
     calculate_companyfacts_rdability_current,
@@ -128,6 +129,13 @@ def main() -> int:
         formation_at=args.formation_at,
         retrieved_at=retrieved_at,
     )
+    herf_values = calculate_companyfacts_herf_current(
+        companyfacts,
+        submissions,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
     tax_values = calculate_companyfacts_tax_current(
         companyfacts,
         status,
@@ -153,6 +161,7 @@ def main() -> int:
             submission_values,
             rdability_values,
             realestate_values,
+            herf_values,
             herfasset_values,
             tax_values,
             roaq_values,
