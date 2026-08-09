@@ -49,3 +49,23 @@ def test_sec_accounting_workflow_is_manual_bounded_pinned_and_fail_closed():
     assert "len(strict_inventory) == 31" in text
     assert "openap-181-sec-accounting-validation" in text
     assert "retention-days: 90" in text
+
+
+def test_companyfacts_probe_workflow_is_bounded_pinned_and_evidence_only():
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "openap-181-sec-companyfacts-probe.yml"
+    )
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "codex/openap-proxy44-validation" in text
+    assert "source_sha:" in text
+    assert "sec_user_agent:" in text
+    assert "320193,789019,21344" in text
+    assert "scripts/run_openap_181_sec_companyfacts_access.py" in text
+    assert "all_downloaded" in text
+    assert "score_eligible" not in text
+    assert "openap-181-sec-companyfacts-probe" in text
+    assert "retention-days: 90" in text
