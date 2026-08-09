@@ -27,6 +27,11 @@ from aurora.research.openap_181.complex_accounting_batch import (
     COMPLEX_ACCOUNTING_BLOCKERS,
     COMPLEX_ACCOUNTING_SIGNALS,
 )
+from aurora.research.openap_181.financing_issuance_batch import (
+    FINANCING_ISSUANCE_BLOCKERS,
+    FINANCING_ISSUANCE_CRSP_ONLY_SIGNALS,
+    FINANCING_ISSUANCE_SIGNALS,
+)
 from aurora.research.openap_181.completion import SOURCE_CATALOG
 from aurora.research.openap_181.microstructure_batch import (
     MICROSTRUCTURE_BLOCKERS,
@@ -985,6 +990,13 @@ def _route_source_ids(signal: str, row: Mapping[str, Any]) -> tuple[str, ...]:
             ]
         else:
             sources += ["crsp_stock_commercial", "wrds_linking_suite"]
+    elif signal in FINANCING_ISSUANCE_SIGNALS:
+        sources += ["openfigi", "crsp_stock_commercial", "wrds_linking_suite"]
+        if signal not in FINANCING_ISSUANCE_CRSP_ONLY_SIGNALS:
+            sources += [
+                "sec_edgar", "sec_financial_statement_datasets",
+                "compustat_commercial",
+            ]
     elif signal in VALUATION_ACCOUNTING_SIGNALS:
         sources += [
             "sec_edgar", "sec_financial_statement_datasets", "openfigi",
@@ -1165,6 +1177,8 @@ def build_signal_resolution(
         ]
         if signal in ANALYST_SIGNALS:
             remaining_blocker = ANALYST_BLOCKERS[signal]
+        elif signal in FINANCING_ISSUANCE_SIGNALS:
+            remaining_blocker = FINANCING_ISSUANCE_BLOCKERS[signal]
         elif signal in VALUATION_ACCOUNTING_SIGNALS:
             remaining_blocker = VALUATION_ACCOUNTING_BLOCKERS[signal]
         elif signal in ACCRUALS_NOA_SIGNALS:
