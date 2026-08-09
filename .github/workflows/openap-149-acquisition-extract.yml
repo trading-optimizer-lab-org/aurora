@@ -67,6 +67,7 @@ jobs:
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
       OUTPUT_ARTIFACT: openap-149-acquisition-extract-results
+      AU_DATA_DIR: ${{ github.workspace }}/outputs
     steps:
       - name: Checkout exact implementation revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -102,8 +103,9 @@ jobs:
             --route-matrix docs/OPENAP_181_CURRENT_FREE_SOURCE_REAUDIT_2026-08-09.csv \
             --current-values-root inputs/current_values \
             --formula-evidence-root inputs/formulas \
-            --output-dir outputs/openap_149_acquisition \
+            --output-dir openap_149_acquisition \
             --evidence-run-url "$run_url" \
+            --source-evidence-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.current_values_run_id }}" \
             --evidence-artifact "$OUTPUT_ARTIFACT"
       - name: Verify 149-row fail-closed result
         run: |

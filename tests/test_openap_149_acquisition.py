@@ -198,4 +198,3 @@ def test_acquisition_matrix_rejects_lookahead_and_conflicting_duplicates() -> No
     duplicate.iloc[1, duplicate.columns.get_loc("value")] = 0.75
     with pytest.raises(module.AcquisitionContractError, match="duplicate"):
         module.build_acquisition_matrix(_routes().iloc[[0]], duplicate)
-
