@@ -86,6 +86,27 @@ class _FinraLinkParser(HTMLParser):
             self.hrefs.append(href.strip())
 
 
+class _VisibleTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        if data.strip():
+            self.parts.append(data)
+
+
+def extract_visible_text(html: str) -> str:
+    """Convert official HTML to normalized visible text for semantic checks."""
+
+    parser = _VisibleTextParser()
+    parser.feed(str(html))
+    text = " ".join(parser.parts).lower()
+    for dash in ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2212"):
+        text = text.replace(dash, "-")
+    return " ".join(text.replace("\xa0", " ").split())
+
+
 def extract_finra_file_links(html: str) -> tuple[str, ...]:
     """Extract unique HTTPS links hosted by FINRA's public download CDN."""
 
@@ -349,14 +370,18 @@ def run_short_interest_source_probe(
     glossary_payload, _ = _fetch(FINRA_GLOSSARY_URL)
     schedule_payload, _ = _fetch(FINRA_SCHEDULE_URL)
     files_text = files_payload.decode("utf-8", errors="replace")
-    about = about_payload.decode("utf-8", errors="replace").lower()
-    glossary = glossary_payload.decode("utf-8", errors="replace").lower()
-    schedule = schedule_payload.decode("utf-8", errors="replace").lower()
-    files_lower = files_text.lower()
+    files_visible = extract_visible_text(files_text)
+    about = extract_visible_text(about_payload.decode("utf-8", errors="replace"))
+    glossary = extract_visible_text(
+        glossary_payload.decode("utf-8", errors="replace")
+    )
+    schedule = extract_visible_text(
+        schedule_payload.decode("utf-8", errors="replace")
+    )
     files_verified = (
-        "june 2021" in files_lower
-        and "otc" in files_lower
-        and ("exchange-listed" in files_lower or "exchange listed" in files_lower)
+        "june 2021" in files_visible
+        and "otc" in files_visible
+        and ("exchange-listed" in files_visible or "exchange listed" in files_visible)
     )
     about_verified = (
         "five years" in about
@@ -370,8 +395,18 @@ def run_short_interest_source_probe(
     schedule_verified = all(
         field in schedule for field in ("settlement date", "due date", "publication date")
     )
-    if not all((files_verified, about_verified, glossary_verified, schedule_verified)):
-        raise ValueError("Official FINRA short-interest documentation contract drifted")
+    documentation_checks = {
+        "files": files_verified,
+        "about": about_verified,
+        "glossary": glossary_verified,
+        "schedule": schedule_verified,
+    }
+    failed_checks = [name for name, passed in documentation_checks.items() if not passed]
+    if failed_checks:
+        raise ValueError(
+            "Official FINRA short-interest documentation contract drifted: "
+            + ",".join(failed_checks)
+        )
 
     formula_verified = True
     for source in OPENAP_FORMULA_SOURCES.values():
@@ -468,6 +503,7 @@ __all__ = [
     "OPENAP_FORMULA_SOURCES",
     "build_short_interest_batch_evidence",
     "extract_finra_file_links",
+    "extract_visible_text",
     "parse_finra_short_interest_text",
     "run_short_interest_source_probe",
     "summarize_finra_short_interest_rows",

@@ -61,6 +61,20 @@ def test_finra_file_link_extractor_accepts_only_https_finra_cdn_links():
         module.extract_finra_file_links("<html>no files</html>")
 
 
+def test_finra_document_contract_uses_visible_text_across_markup_and_entities():
+    module = _module()
+    html = (
+        "<p>Prior to June <strong>2021</strong>, positions were OTC only and did "
+        "not reflect <span>exchange&#x2D;listed</span> securities.</p>"
+    )
+
+    visible = module.extract_visible_text(html)
+
+    assert "june 2021" in visible
+    assert "otc" in visible
+    assert "exchange-listed" in visible
+
+
 def test_finra_pipe_file_parser_and_source_summary_are_fail_closed():
     module = _module()
     text = "\n".join(
