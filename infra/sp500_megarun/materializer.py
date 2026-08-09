@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import date, timedelta
 import hashlib
 from html.parser import HTMLParser
 import json
@@ -157,6 +158,23 @@ def parquet_safe_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return safe
 
 
+def coverage_spans_research_window(
+    *,
+    minimum_date: str | date,
+    maximum_date: str | date,
+    search_start: str | date,
+    evaluation_end: str | date,
+) -> bool:
+    """Accept the first/last scheduled observation near calendar boundaries."""
+
+    def parsed(value: str | date) -> date:
+        return value if isinstance(value, date) else date.fromisoformat(value)
+
+    return parsed(minimum_date) <= parsed(search_start) + timedelta(days=31) and parsed(
+        maximum_date
+    ) >= parsed(evaluation_end) - timedelta(days=31)
+
+
 def _write_report(report: Mapping[str, Any], output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "primary_materialization_report.json").write_text(
@@ -294,7 +312,12 @@ def materialize_primary_sources(
         combined = combined.loc[combined["date"].notna()].sort_values("date", kind="mergesort")
         minimum = combined["date"].min().date()
         maximum = combined["date"].max().date()
-        coverage_valid = minimum <= contract.boundaries.search_start and maximum.year >= 2010
+        coverage_valid = coverage_spans_research_window(
+            minimum_date=minimum,
+            maximum_date=maximum,
+            search_start=contract.boundaries.search_start,
+            evaluation_end=contract.boundaries.evaluation_end,
+        )
         target = normalized_dir / f"{dataset_id}.parquet"
         combined = parquet_safe_frame(combined)
         combined.to_parquet(target, index=False)

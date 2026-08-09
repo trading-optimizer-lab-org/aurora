@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from aurora.infra.sp500_megarun.materializer import (
+    coverage_spans_research_window,
     discover_official_data_links,
     parquet_safe_frame,
 )
@@ -54,3 +55,12 @@ def test_parquet_safe_frame_stabilizes_mixed_object_columns() -> None:
 
     assert str(safe["mixed"].dtype) == "string"
     assert str(safe["number"].dtype) == "float64"
+
+
+def test_weekly_or_monthly_sources_may_start_after_calendar_boundary() -> None:
+    assert coverage_spans_research_window(
+        minimum_date="1998-01-06",
+        maximum_date="2010-12-28",
+        search_start="1998-01-01",
+        evaluation_end="2010-12-31",
+    )
