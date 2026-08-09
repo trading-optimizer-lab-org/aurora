@@ -159,6 +159,23 @@ def test_prepare_fsd_batch_reduces_zip_and_builds_cik_cohort(tmp_path):
     assert expected["security_id"].eq("CIK-0000000001").all()
     assert expected["exchange"].eq("unknown_not_available_in_sec_fsd").all()
     assert expected["security_type"].eq("unknown_not_available_in_sec_fsd").all()
+    batch = import_module("aurora.research.openap_181.sec_accounting_batch")
+    normalized = batch.normalize_sec_fsd_tables(
+        pd.read_csv(output / "sub.csv"),
+        pd.read_csv(output / "tag.csv"),
+        pd.read_csv(output / "num.csv"),
+        pd.read_csv(output / "pre.csv"),
+    )
+    observations = batch.calculate_sec_accounting_batch(
+        normalized,
+        identity,
+        pd.read_csv(output / "formation_months.csv")["formation_at"],
+    )
+    assert len(observations) == 6
+    assert observations["security_id"].eq("CIK-0000000001").all()
+    assert observations["identity_source"].eq(
+        "sec_cik_internal_not_openap_identity_bridge"
+    ).all()
 
 
 def test_quarter_range_rejects_reversed_or_unbounded_requests():
