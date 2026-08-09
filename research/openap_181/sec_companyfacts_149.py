@@ -565,8 +565,6 @@ def _rdability_candidate(issuer_facts: pd.DataFrame) -> dict[str, Any] | None:
     breaks = years.diff().fillna(1).ne(1)
     if breaks.any():
         values = values.loc[years.index[breaks].max() :]
-    if len(values) < 13:
-        return None
     sales = pd.to_numeric(values["revenue"], errors="coerce")
     rd = pd.to_numeric(values["rd"], errors="coerce")
     sales = sales.where(sales.gt(0))
