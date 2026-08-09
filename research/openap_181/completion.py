@@ -84,6 +84,7 @@ ANALYST_SIGNALS = frozenset(
 INSTITUTIONAL_SIGNALS = frozenset(
     {"IO_ShortInterest", "RIO_Disp", "RIO_MB", "RIO_Turnover", "RIO_Volatility"}
 )
+ZERO_TRADE_SIGNALS = frozenset({"zerotrade1M", "zerotrade6M", "zerotrade12M"})
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,22 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "Requires a declared User-Agent and at most 10 requests per second.",
     ),
     SourceEvidence(
+        "sec_financial_statement_datasets", "SEC Financial Statement Data Sets",
+        "https://www.sec.gov/data-research/sec-markets-data/financial-statement-data-sets",
+        "official_quarterly_bulk_zip", True, True,
+        "As-filed XBRL face-financial numeric data from April 2009, flattened by quarter",
+        (
+            "as_filed_primary_financial_statement_facts", "filing_accession",
+            "filing_acceptance_time", "sic", "xbrl_tags",
+        ),
+        (
+            "pre_2009_history", "all_footnote_disclosures", "compustat_item_equivalence",
+            "security_returns", "shares_outstanding_between_filings",
+        ),
+        "Official quarterly ZIPs preserve accession-level as-filed values and amendments. "
+        "They do not contain every disclosure or establish a one-to-one Compustat mapping.",
+    ),
+    SourceEvidence(
         "yahoo_public", "Yahoo Finance public endpoints",
         "https://query1.finance.yahoo.com/", "public_endpoint_terms_review", True, False,
         "Current and historical prices plus selected snapshots",
@@ -145,6 +162,20 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "Aggregate volume is not an option chain or volatility surface.",
     ),
     SourceEvidence(
+        "occ_option_volume", "OCC public option volume reports",
+        "https://www.theocc.com/market-data/market-data-reports/volume-and-open-interest/volume-query",
+        "public_web_and_documented_batch_urls", True, False,
+        "Issuer-level calls and puts in daily, weekly and monthly public volume queries",
+        ("recent_issuer_option_volume", "call_put_volume", "account_type_volume"),
+        (
+            "authorized_automation", "historical_option_surface", "implied_volatility",
+            "greeks", "permanent_security_identity", "full_openap_sample_history",
+        ),
+        "OCC documents batch URL parameters, but its website terms updated 5 February 2025 "
+        "expressly prohibit automated systems. It is reference evidence only unless OCC grants "
+        "written permission.",
+    ),
+    SourceEvidence(
         "marketdata_options_free", "Market Data Free Forever options API",
         "https://www.marketdata.app/pricing/", "account_bearer_token_api",
         True, False, "US-listed option chains, delayed 24 hours, one year of history",
@@ -159,6 +190,35 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "The API is technically automatable at 100 daily credits, but the self-service "
         "license is personal/non-professional and defines broader research or testing as "
         "professional use. Treat Aurora use as unauthorized until written permission exists.",
+    ),
+    SourceEvidence(
+        "tradier_personal_api", "Tradier personal brokerage API",
+        "https://docs.tradier.com/docs/market-data", "free_brokerage_account_api",
+        True, True, "US equities and options; delayed sandbox and real-time brokerage data",
+        (
+            "current_option_chains", "unexpired_option_daily_prices", "daily_equity_ohlcv",
+            "market_calendar", "occ_option_symbol",
+        ),
+        (
+            "expired_option_history", "historical_option_surface", "sandbox_greeks",
+            "permanent_security_identity", "non_personal_or_distributed_application",
+        ),
+        "Tradier permits automated personal API use through a brokerage account, but historical "
+        "options are unavailable after expiry and sandbox Greeks are unavailable. It cannot "
+        "reconstruct the OpenAP OptionMetrics panel.",
+    ),
+    SourceEvidence(
+        "optionmetrics_ivydb_us", "OptionMetrics IvyDB US",
+        "https://optionmetrics.com/data-products/", "commercial_subscription", False, False,
+        "Complete US exchange-listed equity and index option history from January 1996",
+        (
+            "option_bid_ask", "option_volume", "option_open_interest", "implied_volatility",
+            "greeks", "constant_maturity_volatility_surface", "permanent_option_identity",
+            "corporate_actions",
+        ),
+        (),
+        "Exact commercial benchmark for the OpenAP option families; contact-sales access is "
+        "not a zero-cost source.",
     ),
     SourceEvidence(
         "finra_short_sale_volume", "FINRA daily short-sale volume",
@@ -358,6 +418,70 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "The concordance is frequently many-to-many; it cannot by itself assign an exact NAICS "
         "code to a firm-year.",
     ),
+    SourceEvidence(
+        "crsp_stock_commercial", "CRSP US Stock Databases",
+        "https://wrds-www.wharton.upenn.edu/pages/about/data-vendors/center-for-research-in-security-prices-crsp/",
+        "wrds_subscription_and_vendor_license", False, False,
+        "NYSE, AMEX and Nasdaq security prices, returns and volume with permanent identifiers",
+        (
+            "permno", "permco", "security_returns", "delisting_returns", "shares_outstanding",
+            "volume", "corporate_actions", "historical_security_identity",
+        ),
+        (),
+        "Commercial reference for stock-level OpenAP inputs and rank validation. WRDS states "
+        "that CRSP requires a separate vendor license in addition to WRDS access.",
+    ),
+    SourceEvidence(
+        "compustat_commercial", "S&P Compustat North America and historical segments",
+        "https://wrds-www.wharton.upenn.edu/pages/about/data-vendors/sp-global-market-intelligence/",
+        "wrds_subscription_and_vendor_license", False, False,
+        "North American fundamentals, point-in-time variants and historical segment data",
+        (
+            "compustat_fundamentals", "point_in_time_fundamentals", "unrestated_fundamentals",
+            "historical_segments", "customer_segments", "gvkey", "cusip",
+        ),
+        (),
+        "Exact commercial reference for Compustat-defined accounting and segment signals; "
+        "the WRDS subscription does not include the required S&P license.",
+    ),
+    SourceEvidence(
+        "lseg_ibes_commercial", "LSEG I/B/E/S",
+        "https://wrds-www.wharton.upenn.edu/pages/about/data-vendors/vendor-partner-ibes/",
+        "wrds_subscription_and_vendor_license", False, False,
+        "Detailed and summary analyst estimate, recommendation and actuals histories",
+        (
+            "analyst_estimate_vintages", "analyst_recommendations", "forecast_dispersion",
+            "forecast_revisions", "ibes_ticker", "analyst_and_broker_identifiers",
+        ),
+        (),
+        "Exact commercial benchmark for analyst signals. WRDS warns that analyst and broker "
+        "identifiers can be reassigned, so each data vintage must be treated separately.",
+    ),
+    SourceEvidence(
+        "nyse_taq_commercial", "NYSE TAQ",
+        "https://www.nyse.com/market-data/historical/daily-taq", "commercial_subscription",
+        False, False, "US consolidated intraday trades and quotes",
+        (
+            "intraday_trades", "intraday_quotes", "bid_ask", "trade_conditions",
+            "exchange_timestamps",
+        ),
+        (),
+        "Commercial benchmark for true intraday and microstructure signals; WRDS lists NYSE "
+        "TAQ among datasets requiring a separate institutional license.",
+    ),
+    SourceEvidence(
+        "wrds_linking_suite", "WRDS Linking Suite",
+        "https://wrds-www.wharton.upenn.edu/pages/grid-items/linking-suite-wrds/",
+        "wrds_and_vendor_subscriptions", False, False,
+        "Historical links among CRSP, Compustat, I/B/E/S, OptionMetrics and TAQ",
+        (
+            "ibes_crsp_link", "optionmetrics_crsp_link", "taq_crsp_link",
+            "crsp_compustat_link", "supply_chain_identifiers",
+        ),
+        (),
+        "Commercial identity benchmark. Each linked vendor dataset needs its own license, so "
+        "the links cannot solve the zero-cost objective.",
+    ),
 )
 
 
@@ -448,6 +572,8 @@ def _specific_blocker(
         return "point_in_time_analyst_history_missing_or_unvalidated"
     if signal in INSTITUTIONAL_SIGNALS:
         return "institutional_mapping_and_stock_level_validation_required"
+    if signal in ZERO_TRADE_SIGNALS:
+        return "daily_zero_trade_days_shares_and_calendar_validation_required"
     family = (spec.data_family if spec is not None else category).lower()
     if family in {"microstructure", "intraday"}:
         return "classified_intraday_trade_data_missing"

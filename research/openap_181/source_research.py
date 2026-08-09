@@ -126,6 +126,20 @@ SOURCE_METADATA = {
             redistribution="public filing content free to access and reuse",
         ),
         _meta(
+            "sec_financial_statement_datasets",
+            "US Securities and Exchange Commission",
+            "https://www.sec.gov/files/fsds.pdf",
+            "https://www.sec.gov/about/webmaster-frequently-asked-questions",
+            rate="bulk quarterly ZIP downloads under SEC fair-access policy",
+            start="April 2009; 2009 Q1 is headers only",
+            frequency="quarterly",
+            lag="submissions after quarter cutoff appear in the next quarterly file",
+            identifiers="CIK,accession number,SIC,XBRL tag,taxonomy version",
+            available_at="acceptance datetime in SUB plus accession-level amendment history",
+            pit="as-filed numeric face statements; retain original and amended submissions",
+            redistribution="public filing content free to access and reuse",
+        ),
+        _meta(
             "yahoo_public",
             "Yahoo",
             "https://query1.finance.yahoo.com/",
@@ -163,6 +177,19 @@ SOURCE_METADATA = {
             redistribution="subject to Cboe terms",
         ),
         _meta(
+            "occ_option_volume",
+            "The Options Clearing Corporation",
+            "https://www.theocc.com/market-data/market-data-reports/other-market-data-info/batch-processing/volume-query-batch-processing",
+            "https://www.theocc.com/specialpages/legal/terms-and-conditions",
+            start="past 24 months on the interactive query; older batch availability not verified",
+            frequency="daily,weekly,monthly",
+            lag="report publication date",
+            identifiers="underlying symbol,OCC option product type,call/put,account type",
+            available_at="report date",
+            pit="recent volume reports only; no IV surface or permanent identity",
+            redistribution="website data may not be copied or commercially exploited; automation prohibited",
+        ),
+        _meta(
             "marketdata_options_free",
             "Market Data",
             "https://www.marketdata.app/docs/api/options/chain/",
@@ -177,6 +204,39 @@ SOURCE_METADATA = {
             available_at="updated timestamp",
             pit="one year of end-of-day option chains",
             redistribution="no raw redistribution; personal/non-professional license",
+        ),
+        _meta(
+            "tradier_personal_api",
+            "Tradier Brokerage",
+            "https://docs.tradier.com/docs/historical-data",
+            "https://docs.tradier.com/docs/faq",
+            account=True,
+            auth="personal brokerage bearer token",
+            rate="120 requests/minute production; 60 requests/minute sandbox",
+            start="equities usually company lifetime; options only while contract remains unexpired",
+            frequency="daily historical plus live or 15-minute-delayed current data",
+            lag="sandbox market data delayed 15 minutes",
+            identifiers="ticker,OCC option symbol",
+            available_at="quote or candle timestamp; revision vintage not exposed",
+            pit="no expired-option history; no sandbox Greeks; personal-use entitlement only",
+            redistribution="personal use only unless approved as a Tradier Partner",
+        ),
+        _meta(
+            "optionmetrics_ivydb_us",
+            "OptionMetrics LLC",
+            "https://optionmetrics.com/data-products/",
+            "https://optionmetrics.com/contact-us/",
+            account=True,
+            card=True,
+            auth="commercial customer delivery",
+            rate="contract dependent",
+            start="January 1996",
+            frequency="daily end-of-day with correction patches",
+            lag="daily vendor delivery",
+            identifiers="permanent security ID,ticker,option contract,underlying security",
+            available_at="daily observation and vendor correction files",
+            pit="complete commercial EOD option panel with corporate-action continuity",
+            redistribution="commercial license required",
         ),
         _meta(
             "finra_short_sale_volume",
@@ -463,6 +523,91 @@ SOURCE_METADATA = {
             pit="vintage-specific but often many-to-many",
             redistribution="US government public information",
         ),
+        _meta(
+            "crsp_stock_commercial",
+            "Center for Research in Security Prices / Morningstar",
+            "https://wrds-www.wharton.upenn.edu/pages/grid-items/crsp-basics/",
+            "https://wrds-www.wharton.upenn.edu/pages/about/what-wrds/",
+            account=True,
+            card=True,
+            auth="institutional WRDS subscription plus CRSP vendor license",
+            rate="contract dependent",
+            start="exchange and product dependent; long US history",
+            frequency="daily and monthly products",
+            lag="vendor release schedule",
+            identifiers="PERMNO,PERMCO,CUSIP,ticker,exchange code",
+            available_at="vendor dates and event records",
+            pit="commercial security master with delistings and corporate actions",
+            redistribution="separate CRSP license required",
+        ),
+        _meta(
+            "compustat_commercial",
+            "S&P Global Market Intelligence",
+            "https://wrds-www.wharton.upenn.edu/pages/about/data-vendors/sp-global-market-intelligence/",
+            "https://wrds-www.wharton.upenn.edu/pages/about/what-wrds/",
+            account=True,
+            card=True,
+            auth="institutional WRDS subscription plus S&P vendor license",
+            rate="contract dependent",
+            start="product dependent; North America and PIT products include long histories",
+            frequency="daily,monthly or quarterly by product",
+            lag="vendor release schedule",
+            identifiers="GVKEY,CIK,CUSIP,ticker,SIC",
+            available_at="PIT,preliminary and unrestated products are separately licensed",
+            pit="commercial current, historical, PIT and segment products",
+            redistribution="separate S&P Global license required",
+        ),
+        _meta(
+            "lseg_ibes_commercial",
+            "LSEG",
+            "https://wrds-www.wharton.upenn.edu/pages/about/data-vendors/vendor-partner-ibes/",
+            "https://wrds-www.wharton.upenn.edu/pages/about/what-wrds/",
+            account=True,
+            card=True,
+            auth="institutional WRDS subscription plus LSEG vendor license",
+            rate="contract dependent",
+            start="product and region dependent",
+            frequency="vendor updates",
+            lag="estimate and recommendation announcement timestamps",
+            identifiers="IBES ticker,CUSIP,analyst ID,broker ID",
+            available_at="detail-history announcement and activation dates",
+            pit="vintages required because broker and analyst IDs can be reassigned",
+            redistribution="separate LSEG license required",
+        ),
+        _meta(
+            "nyse_taq_commercial",
+            "NYSE",
+            "https://www.nyse.com/market-data/historical/daily-taq",
+            "https://wrds-www.wharton.upenn.edu/pages/about/what-wrds/",
+            account=True,
+            card=True,
+            auth="commercial NYSE or institutional WRDS license",
+            rate="contract and delivery dependent",
+            start="product vintage dependent",
+            frequency="daily files",
+            lag="vendor publication schedule",
+            identifiers="symbol root,suffix,exchange,trade and quote timestamps",
+            available_at="event timestamps and file publication date",
+            pit="commercial consolidated intraday trades and quotes",
+            redistribution="separate NYSE TAQ license required",
+        ),
+        _meta(
+            "wrds_linking_suite",
+            "Wharton Research Data Services",
+            "https://wrds-www.wharton.upenn.edu/pages/grid-items/linking-suite-wrds/",
+            "https://wrds-www.wharton.upenn.edu/pages/about/what-wrds/",
+            account=True,
+            card=True,
+            auth="institutional WRDS plus every linked vendor license",
+            rate="contract dependent",
+            start="link and source-product dependent",
+            frequency="WRDS updates",
+            lag="source-product dependent",
+            identifiers="PERMNO,GVKEY,IBES ticker,OptionMetrics SECID,TAQ symbol",
+            available_at="link validity fields depend on each product",
+            pit="historical commercial cross-database identity links",
+            redistribution="WRDS and all linked vendor licenses required",
+        ),
     )
 }
 
@@ -561,41 +706,75 @@ def _route_source_ids(signal: str, row: Mapping[str, Any]) -> tuple[str, ...]:
     blocker = _clean_text(row.get("blocker_code"), "not_documented")
     sources: list[str] = ["openap_official"]
     if signal in OPTION_SIGNALS:
-        sources += ["marketdata_options_free", "cboe_delayed_options", "cboe_public_aggregate"]
+        sources += [
+            "marketdata_options_free", "tradier_personal_api", "occ_option_volume",
+            "cboe_delayed_options", "cboe_public_aggregate", "optionmetrics_ivydb_us",
+            "wrds_linking_suite",
+        ]
     elif signal in SHORT_INTEREST_SIGNALS:
-        sources += ["finra_equity_short_interest", "sec_13f", "openfigi", "tiingo_starter"]
+        sources += [
+            "finra_equity_short_interest", "exchange_short_interest", "sec_13f",
+            "openfigi", "tiingo_starter", "crsp_stock_commercial",
+        ]
         if signal == "Recomm_ShortInterest":
-            sources += ["alpha_vantage_free", "fmp_basic"]
+            sources += ["alpha_vantage_free", "fmp_basic", "lseg_ibes_commercial"]
     elif signal in PATENT_SIGNALS:
         sources += ["uspto_patentsview_bulk", "uspto_odp_patentsview", "google_patents_bigquery", "sec_edgar", "openfigi"]
     elif signal in RIO_SIGNALS or signal == "DelBreadth":
-        sources += ["sec_13f", "openfigi", "tiingo_starter"]
+        sources += [
+            "sec_13f", "openfigi", "tiingo_starter", "crsp_stock_commercial",
+            "compustat_commercial", "wrds_linking_suite",
+        ]
         if signal == "RIO_Disp":
-            sources += ["alpha_vantage_free", "fmp_basic"]
+            sources += ["alpha_vantage_free", "fmp_basic", "lseg_ibes_commercial"]
     elif signal in IPO_SIGNALS:
-        sources += ["field_ritter_ipo", "sec_edgar", "tiingo_starter"]
+        sources += [
+            "field_ritter_ipo", "sec_edgar", "tiingo_starter",
+            "crsp_stock_commercial", "wrds_linking_suite",
+        ]
     elif signal == "Governance":
         sources += ["yale_governance"]
     elif signal == "ProbInformedTrading":
-        sources += ["edwin_hu_pin", "openfigi"]
+        sources += [
+            "edwin_hu_pin", "openfigi", "nyse_taq_commercial",
+            "crsp_stock_commercial", "wrds_linking_suite",
+        ]
     elif signal in BEA_NETWORK_SIGNALS:
-        sources += ["bea_input_output", "census_naics_concordance", "sec_edgar", "tiingo_starter"]
+        sources += [
+            "bea_input_output", "census_naics_concordance", "sec_edgar",
+            "tiingo_starter", "compustat_commercial", "wrds_linking_suite",
+        ]
     elif signal == "CustomerMomentum" or signal == "sinAlgo":
-        sources += ["sec_edgar", "openfigi"]
+        sources += ["sec_edgar", "openfigi", "compustat_commercial", "wrds_linking_suite"]
     elif signal == "betaVIX":
         sources += ["fred_vxo_vix", "tiingo_starter"]
     elif signal in ZERO_TRADE_SIGNALS:
-        sources += ["tiingo_starter", "twelve_data_basic", "sec_edgar", "openfigi"]
+        sources += [
+            "tiingo_starter", "twelve_data_basic", "sec_edgar", "openfigi",
+            "crsp_stock_commercial",
+        ]
     elif blocker == "point_in_time_analyst_history_missing_or_unvalidated" or category == "Analyst":
-        sources += ["alpha_vantage_free", "fmp_basic", "sec_edgar", "tiingo_starter"]
+        sources += [
+            "alpha_vantage_free", "fmp_basic", "sec_edgar", "tiingo_starter",
+            "lseg_ibes_commercial", "wrds_linking_suite",
+        ]
     elif category == "Event":
-        sources += ["sec_edgar", "tiingo_starter", "twelve_data_basic"]
+        sources += [
+            "sec_edgar", "tiingo_starter", "twelve_data_basic",
+            "crsp_stock_commercial",
+        ]
     elif category == "Accounting" or blocker == "sec_xbrl_formula_mapping_and_stock_validation_required":
-        sources += ["sec_edgar", "tiingo_starter", "twelve_data_basic", "openfigi"]
+        sources += [
+            "sec_edgar", "sec_financial_statement_datasets", "tiingo_starter",
+            "twelve_data_basic", "openfigi", "compustat_commercial",
+            "crsp_stock_commercial", "wrds_linking_suite",
+        ]
     else:
         sources += ["tiingo_starter", "twelve_data_basic", "fmp_basic", "sec_edgar", "openfigi"]
         if category in {"Price", "Trading"}:
-            sources += ["kenneth_french_factors"]
+            sources += ["kenneth_french_factors", "crsp_stock_commercial"]
+        if blocker == "classified_intraday_trade_data_missing":
+            sources += ["nyse_taq_commercial", "wrds_linking_suite"]
     return tuple(dict.fromkeys(sources))
 
 
@@ -603,7 +782,7 @@ def _next_action(signal: str, classification: str) -> str:
     if signal in RIO_SIGNALS:
         return "Reconcile SignalDoc typos with Nagel 2005 Table 2 and freeze an exact executable formula."
     if signal in OPTION_SIGNALS:
-        return "Run a GitHub entitlement and one-year option-chain coverage test, then compare monthly ranks with OpenAP."
+        return "Prove an authorized source preserves expired contracts and required IV fields, then compare its history with the OptionMetrics benchmark."
     if signal in SHORT_INTEREST_SIGNALS:
         return "Measure FINRA listed coverage from June 2021 and validate causal publication dates, shares and identifiers."
     if signal in PATENT_SIGNALS:
@@ -911,8 +1090,13 @@ def render_research_report(
         "## Hallazgos determinantes",
         "",
         "- [OpenSourceAP](https://github.com/OpenSourceAP/CrossSection) identifica `Signals/pyCode/Predictors/` como la construcción actual; el Stata duplicado es legado.",
+        "- Los [SEC Financial Statement Data Sets](https://www.sec.gov/data-research/sec-markets-data/financial-statement-data-sets) aportan estados primarios XBRL `as filed` desde abril de 2009, con accession y fecha de aceptación. No incluyen todas las notas ni demuestran equivalencia uno-a-uno con partidas Compustat.",
         "- [FINRA Equity Short Interest](https://www.finra.org/finra-data/browse-catalog/equity-short-interest) publica acciones cotizadas desde junio de 2021; el archivo anterior es OTC y no resuelve la historia listada.",
         "- La [tabla retrasada de Cboe](https://www.cboe.com/delayed_quotes/API/quote_table/) prohíbe extracción automática. [Market Data](https://www.marketdata.app/docs/api/options/chain/) ofrece una API de opciones de un año, pero sus [términos](https://www.marketdata.app/terms/) no autorizan todavía el uso de Aurora.",
+        "- [OCC](https://www.theocc.com/market-data/market-data-reports/other-market-data-info/batch-processing/volume-query-batch-processing) documenta parámetros batch para volumen por emisor, pero sus [términos del sitio](https://www.theocc.com/specialpages/legal/terms-and-conditions) prohíben sistemas automatizados. No es una fuente programable autorizada.",
+        "- [Tradier](https://docs.tradier.com/docs/historical-data) permite automatización personal y cadenas actuales, pero no conserva precios históricos de opciones expiradas y no ofrece Greeks en sandbox; no reproduce el panel histórico requerido.",
+        "- [OptionMetrics IvyDB US](https://optionmetrics.com/data-products/) es la referencia comercial desde 1996 para bid/ask, volumen, open interest, IV, Greeks, superficies y continuidad de identidad. No es una solución de coste cero.",
+        "- [WRDS](https://wrds-www.wharton.upenn.edu/pages/about/what-wrds/) confirma que CRSP, S&P/Compustat, LSEG I/B/E/S, NYSE TAQ y OptionMetrics requieren licencias separadas. Se conservan únicamente como benchmarks comerciales.",
         "- [Field-Ritter](https://site.warrington.ufl.edu/ritter/files/IPO-age.xlsx) cubre IPO y años de fundación de 1975-2025; la autorización de descarga programada no es explícita.",
         "- [Yale](https://faculty.som.yale.edu/andrewmetrick/data/) mantiene el índice Governance original solo para 1990-2006.",
         "- Los [autores de PIN](https://edwinhu.github.io/pin/) publican parámetros exactos hasta 2012; la extensión 2003-2024 contiene GPIN/OWR, que no son sustitutos exactos.",
@@ -955,7 +1139,7 @@ def render_research_report(
         "1. SEC EDGAR y 13F: congelar conceptos, aceptación, enmiendas e identidad y validar primero la cobertura por señal.",
         "2. FINRA short interest: medir el periodo cotizado desde junio de 2021 sin extenderlo retrospectivamente.",
         "3. USPTO y BEA: construir y auditar puentes históricos antes de calcular cualquier señal.",
-        "4. Opciones y analistas: mantener bloqueados hasta disponer de historia exacta y licencia compatible.",
+        "4. Opciones y analistas: mantener bloqueados hasta disponer de historia exacta y licencia compatible; Tradier y OCC no cubren esas brechas.",
         "",
     ]
     return "\n".join(lines)

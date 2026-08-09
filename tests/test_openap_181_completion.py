@@ -88,6 +88,8 @@ def test_source_semantics_prevent_false_substitutions():
     assert source_can_satisfy("ShortInterest", "finra_equity_short_interest")
     assert not source_can_satisfy("SmileSlope", "cboe_public_aggregate")
     assert not source_can_satisfy("SmileSlope", "marketdata_options_free")
+    assert not source_can_satisfy("SmileSlope", "tradier_personal_api")
+    assert not source_can_satisfy("SmileSlope", "occ_option_volume")
     assert source_can_satisfy("PatentsRD", "uspto_patentsview_bulk")
 
 
@@ -104,6 +106,10 @@ def test_manifest_uses_concrete_family_blockers():
     assert (
         manifest.loc["PatentsRD", "blocker_code"]
         == "patent_assignee_to_public_issuer_crosswalk_missing"
+    )
+    assert (
+        manifest.loc["zerotrade1M", "blocker_code"]
+        == "daily_zero_trade_days_shares_and_calendar_validation_required"
     )
 
 
@@ -122,6 +128,17 @@ def test_source_catalog_documents_rights_and_scope():
     assert not bool(catalog.loc["exchange_short_interest", "free"])
     assert bool(catalog.loc["finra_equity_short_interest", "free"])
     assert bool(catalog.loc["finra_equity_short_interest", "authorized_automation"])
+    assert bool(catalog.loc["sec_financial_statement_datasets", "free"])
+    assert bool(catalog.loc["sec_financial_statement_datasets", "authorized_automation"])
+    assert bool(catalog.loc["occ_option_volume", "free"])
+    assert not bool(catalog.loc["occ_option_volume", "authorized_automation"])
+    assert bool(catalog.loc["tradier_personal_api", "free"])
+    assert bool(catalog.loc["tradier_personal_api", "authorized_automation"])
+    assert not bool(catalog.loc["optionmetrics_ivydb_us", "free"])
+    assert not bool(catalog.loc["crsp_stock_commercial", "free"])
+    assert not bool(catalog.loc["compustat_commercial", "free"])
+    assert not bool(catalog.loc["lseg_ibes_commercial", "free"])
+    assert not bool(catalog.loc["nyse_taq_commercial", "free"])
     assert bool(catalog.loc["edwin_hu_pin", "authorized_automation"])
     assert bool(catalog.loc["twelve_data_basic", "authorized_automation"])
     assert bool(catalog.loc["tiingo_starter", "authorized_automation"])
@@ -354,7 +371,19 @@ def test_source_research_inventory_and_matrix_cover_manifest():
     assert not bool(inventory.loc["tiingo_starter", "aurora_project_use_authorized"])
     assert not bool(inventory.loc["fmp_basic", "aurora_project_use_authorized"])
     assert bool(inventory.loc["twelve_data_basic", "aurora_project_use_authorized"])
+    assert bool(inventory.loc[
+        "sec_financial_statement_datasets", "aurora_project_use_authorized"
+    ])
+    assert not bool(inventory.loc["occ_option_volume", "aurora_project_use_authorized"])
+    assert bool(inventory.loc["tradier_personal_api", "aurora_project_use_authorized"])
+    assert inventory.loc["optionmetrics_ivydb_us", "free_access_class"] == "commercial"
     assert matrix["coverage_verified"].eq(False).all()
+    matrix_sources = matrix.groupby("signal")["source_name"].agg(set)
+    assert "SEC Financial Statement Data Sets" in matrix_sources["AM"]
+    assert "S&P Compustat North America and historical segments" in matrix_sources["AM"]
+    assert "Tradier personal brokerage API" in matrix_sources["SmileSlope"]
+    assert "OptionMetrics IvyDB US" in matrix_sources["SmileSlope"]
+    assert "LSEG I/B/E/S" in matrix_sources["AnalystRevision"]
 
 
 def test_source_research_writer_creates_five_mandatory_files(tmp_path):
