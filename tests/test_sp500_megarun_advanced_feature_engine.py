@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -260,6 +261,32 @@ def test_f068_supports_ar_and_conditional_arma_forecasts(q: int) -> None:
     )
 
     assert result["value"].notna().any()
+
+
+def test_f068_remains_finite_after_a_large_known_return_shock() -> None:
+    api = _engine_api()
+    spy = _spy_inputs(620)
+    returns = 0.0003 + 0.002 * np.sin(np.arange(len(spy), dtype=float) / 13.0)
+    returns[200] = -0.5
+    returns[400] = 0.25
+    close = 100.0 * np.exp(np.cumsum(returns))
+    open_ = np.r_[close[0], close[:-1]]
+    spy.loc[:, "open"] = open_
+    spy.loc[:, "high"] = np.maximum(open_, close) * 1.001
+    spy.loc[:, "low"] = np.minimum(open_, close) * 0.999
+    spy.loc[:, "close"] = close
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        result = api.evaluate_advanced_lane(
+            "F068",
+            spy,
+            {"p": 2, "q": 1, "window": 504, "refit": "monthly"},
+        )
+
+    finite = result["value"].dropna()
+    assert not finite.empty
+    assert np.isfinite(finite).all()
 
 
 @pytest.mark.parametrize("kind", ["garch", "gjr", "egarch"])

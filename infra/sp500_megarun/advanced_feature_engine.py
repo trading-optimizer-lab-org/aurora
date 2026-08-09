@@ -534,6 +534,25 @@ def _arma_residuals(values: np.ndarray, coefficients: np.ndarray, p: int, q: int
     return residuals
 
 
+def _project_arma_coefficients(
+    coefficients: np.ndarray,
+    values: np.ndarray,
+    p: int,
+    q: int,
+) -> np.ndarray:
+    projected = np.asarray(coefficients, dtype=float).copy()
+    scale = max(float(np.std(values, ddof=0)), _EPSILON)
+    projected[0] = float(np.clip(projected[0], -5.0 * scale, 5.0 * scale))
+    for start, count in ((1, p), (1 + p, q)):
+        if count == 0:
+            continue
+        block = projected[start : start + count]
+        absolute_sum = float(np.abs(block).sum())
+        if absolute_sum > 0.98:
+            projected[start : start + count] = block * (0.98 / absolute_sum)
+    return projected
+
+
 def _fit_arma(values: np.ndarray, p: int, q: int) -> np.ndarray:
     residuals = np.zeros(len(values), dtype=float)
     coefficients = np.zeros(1 + p + q, dtype=float)
@@ -560,6 +579,7 @@ def _fit_arma(values: np.ndarray, p: int, q: int) -> np.ndarray:
             augmented_target,
             rcond=None,
         )[0]
+        coefficients = _project_arma_coefficients(coefficients, values, p, q)
         residuals = _arma_residuals(values, coefficients, p, q)
     return coefficients
 
