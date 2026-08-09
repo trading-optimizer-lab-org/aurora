@@ -9,9 +9,11 @@ on:
       - research/openap_current_score.py
       - research/openap_181/acquisition_149.py
       - research/openap_181/sec_companyfacts_149.py
+      - research/openap_181/short_interest_batch.py
       - scripts/run_openap_149_consolidate.py
       - tests/test_openap_149_acquisition.py
       - tests/test_openap_149_sec_companyfacts.py
+      - tests/test_openap_181_short_interest_batch.py
   workflow_dispatch:
     inputs:
       source_sha:
@@ -24,6 +26,10 @@ on:
         type: string
       sec_current_run_id:
         description: Successful OpenAP 149 SEC CompanyFacts run
+        required: true
+        type: string
+      finra_current_run_id:
+        description: Successful OpenAP 149 FINRA ShortInterest run
         required: true
         type: string
       formula_evidence_run_id:
@@ -65,6 +71,7 @@ jobs:
           python -m pytest \
             tests/test_openap_149_acquisition.py \
             tests/test_openap_149_sec_companyfacts.py \
+            tests/test_openap_181_short_interest_batch.py \
             -q --tb=short
 
   consolidate:
@@ -104,6 +111,14 @@ jobs:
           run-id: ${{ inputs.sec_current_run_id }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
+      - name: Download official FINRA ShortInterest values
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-149-finra-short-interest-current
+          path: inputs/finra_current
+          run-id: ${{ inputs.finra_current_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
       - name: Download pinned official formula evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -119,9 +134,11 @@ jobs:
             --route-matrix docs/OPENAP_181_CURRENT_FREE_SOURCE_REAUDIT_2026-08-09.csv \
             --current-93-root inputs/current_93 \
             --sec-current-root inputs/sec_current \
+            --finra-current-root inputs/finra_current \
             --formula-root inputs/formulas \
             --current-93-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.current_93_run_id }}" \
             --sec-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.sec_current_run_id }}" \
+            --finra-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.finra_current_run_id }}" \
             --evidence-run-url "$run_url" \
             --evidence-artifact "$OUTPUT_ARTIFACT" \
             --output-dir openap_149_current_consolidated
@@ -134,7 +151,7 @@ jobs:
           matrix = pd.read_csv(f"{root}/OPENAP_149_ACQUISITION_MATRIX.csv")
           summary = json.load(open(f"{root}/openap_149_acquisition_summary.json"))
           assert len(matrix) == matrix["signal"].nunique() == 149
-          assert summary["latest_formation_at"] == "2026-08-09T00:00:00+00:00"
+          assert summary["latest_formation_at"] == "2026-08-09T23:59:59+00:00"
           assert summary["current_values_calculated"] > 16
           assert summary["strict_score_eligible"] == 0
           assert not matrix["strict_score_eligible"].astype(str).str.lower().eq("true").any()
