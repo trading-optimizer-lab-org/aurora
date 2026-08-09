@@ -8,6 +8,7 @@ on:
       - .github/workflows/openap-149-consolidate.yml
       - research/openap_current_score.py
       - research/openap_181/acquisition_149.py
+      - research/openap_181/sec_companyfacts_149.py
       - scripts/run_openap_149_consolidate.py
       - tests/test_openap_149_acquisition.py
       - tests/test_openap_149_sec_companyfacts.py
