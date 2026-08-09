@@ -1218,3 +1218,41 @@ def test_accruals_noa_source_matrix_uses_exact_routes_and_blockers():
         "accruals_noa_source_blocked:"
     ).all()
     assert attempted.groupby("signal")["blocking_reason"].nunique().eq(1).all()
+
+
+def test_valuation_accounting_source_matrix_uses_exact_routes_and_blockers():
+    from aurora.research.openap_181.valuation_accounting_batch import (
+        VALUATION_ACCOUNTING_BLOCKERS,
+        VALUATION_ACCOUNTING_SIGNALS,
+    )
+
+    manifest = build_completion_manifest(_signal_doc())
+    formulas = _formula_inventory_for_source_research(manifest)
+    formulas.loc[
+        formulas["signal"].isin(VALUATION_ACCOUNTING_SIGNALS), "status"
+    ] = "resolved"
+    resolution = build_signal_resolution(manifest, formulas).set_index("signal")
+    matrix = build_signal_source_matrix(
+        manifest, formulas, resolution.reset_index()
+    )
+
+    assert resolution.loc[
+        list(VALUATION_ACCOUNTING_SIGNALS), "remaining_blocker"
+    ].to_dict() == VALUATION_ACCOUNTING_BLOCKERS
+    routes = {
+        signal: set(matrix.loc[matrix["signal"].eq(signal), "source_name"])
+        for signal in VALUATION_ACCOUNTING_SIGNALS
+    }
+    for signal in VALUATION_ACCOUNTING_SIGNALS:
+        assert any("SEC" in source for source in routes[signal])
+        assert any("OpenFIGI" in source for source in routes[signal])
+        assert any("Compustat" in source for source in routes[signal])
+        assert any("CRSP" in source for source in routes[signal])
+
+    attempted = matrix.loc[
+        matrix["signal"].isin(VALUATION_ACCOUNTING_SIGNALS)
+    ]
+    assert attempted["blocking_reason"].str.startswith(
+        "valuation_accounting_source_blocked:"
+    ).all()
+    assert attempted.groupby("signal")["blocking_reason"].nunique().eq(1).all()
