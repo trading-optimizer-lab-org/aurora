@@ -293,3 +293,26 @@ def test_current_evidence_merge_rejects_conflicts_at_same_formation() -> None:
 
     with pytest.raises(_module().AcquisitionContractError, match="conflicting evidence"):
         _module().merge_current_evidence([left, right])
+
+
+def test_current_evidence_overlay_prefers_93_and_fills_only_its_gaps() -> None:
+    primary = _current_rows().iloc[[0, 1]].copy()
+    primary.loc[:, "source_id"] = "primary_93"
+    primary.loc[primary["security_id"].eq("cik:2"), "value"] = None
+    primary.loc[primary["security_id"].eq("cik:2"), "current_usable"] = False
+    primary.loc[primary["security_id"].eq("cik:2"), "fidelity_class"] = (
+        "unavailable"
+    )
+
+    fallback = _current_rows().iloc[[0, 1]].copy()
+    fallback.loc[:, "source_id"] = "sec_fallback"
+    fallback.loc[:, "value"] = [0.75, 0.60]
+
+    overlaid = _module().overlay_preferred_current_evidence(primary, fallback)
+    indexed = overlaid.set_index("security_id")
+
+    assert len(overlaid) == 2
+    assert indexed.loc["cik:1", "value"] == pytest.approx(0.25)
+    assert indexed.loc["cik:1", "source_id"] == "primary_93"
+    assert indexed.loc["cik:2", "value"] == pytest.approx(0.60)
+    assert indexed.loc["cik:2", "source_id"] == "sec_fallback"
