@@ -95,6 +95,8 @@ def test_official_sec_transport_probe_covers_hosted_runner_families_without_prox
     assert "sec_official_companyfacts_fair_access" in text
     assert "sec_official_direct_fair_access" in text
     assert "openap-181-sec-official-transport-probe-" in text
+    assert "build_sec_transport_matrix_blocker_evidence" in text
+    assert "sec_accounting_batch_evidence.csv" in text
     assert "retention-days: 90" in text
     assert "r.jina.ai" not in text
     assert "score_eligible" not in text

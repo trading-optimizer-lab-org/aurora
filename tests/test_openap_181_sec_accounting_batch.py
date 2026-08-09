@@ -662,6 +662,65 @@ def test_access_blocker_evidence_keeps_all_sec_signals_out_of_strict_score():
     ).all()
 
 
+def test_transport_matrix_blocker_requires_all_hosted_runner_families_to_fail():
+    module = _module()
+    rows = []
+    for runner in ("ubuntu-24.04", "windows-2025", "macos-15"):
+        rows.append(
+            {
+                "runner": runner,
+                "source_sha": "2" * 40,
+                "companyfacts_downloaded": False,
+                "companyfacts_http_status": 403,
+                "companyfacts_failure_reason": "http_403_after_4_attempts",
+                "fsd_downloaded": False,
+                "fsd_http_status": 403,
+                "fsd_failure_reason": "http_403_after_5_attempts",
+                "proxy_used": False,
+                "locked_opened": False,
+                "validation_used_for_selection": False,
+            }
+        )
+    matrix = pd.DataFrame(rows)
+
+    evidence = module.build_sec_transport_matrix_blocker_evidence(
+        matrix,
+        evidence_run_url="https://github.com/example/aurora/actions/runs/8",
+        evidence_artifact="openap-181-sec-official-transport-probe-summary",
+        implementation_commit="2" * 40,
+    )
+
+    assert evidence["signal"].tolist() == ["Cash", "GP", "Investment"]
+    assert evidence["formula_implemented"].all()
+    assert evidence["data_pipeline_implemented"].all()
+    assert not evidence[
+        [
+            "point_in_time_verified",
+            "identity_verified",
+            "coverage_measured",
+            "fidelity_measured",
+        ]
+    ].any().any()
+    assert evidence["strict_gate_result"].eq("blocked").all()
+    assert evidence["blocking_reason"].eq(
+        "official_sec_access_blocked_all_github_hosted_runner_families_http_403"
+    ).all()
+
+    available = matrix.copy()
+    available.loc[available["runner"].eq("macos-15"), "fsd_downloaded"] = True
+    available.loc[available["runner"].eq("macos-15"), "fsd_http_status"] = 200
+    available.loc[
+        available["runner"].eq("macos-15"), "fsd_failure_reason"
+    ] = ""
+    with pytest.raises(ValueError, match="requires every official transport"):
+        module.build_sec_transport_matrix_blocker_evidence(
+            available,
+            evidence_run_url="https://github.com/example/aurora/actions/runs/8",
+            evidence_artifact="openap-181-sec-official-transport-probe-summary",
+            implementation_commit="2" * 40,
+        )
+
+
 def test_sec_validation_cli_fails_closed_outside_github(tmp_path, monkeypatch):
     script = (
         Path(__file__).parents[1]
