@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import runpy
+import sys
 from importlib import import_module
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from aurora.core.execution_policy import LocalRunBlocked
 
 def _module():
     return import_module("aurora.research.openap_181.sec_accounting_batch")
@@ -319,3 +323,80 @@ def test_sec_batch_evidence_marks_formula_and_pipeline_only_but_stays_blocked():
     assert evidence["blocking_reason"].eq(
         "point_in_time_identity_coverage_fidelity_not_measured"
     ).all()
+
+
+def test_sec_batch_writer_persists_observations_evidence_and_summary(tmp_path):
+    module = _module()
+    submissions = [
+        _submission(
+            "cash",
+            1,
+            form="10-Q",
+            period=20240331,
+            filed=20240501,
+            accepted=20240501120000,
+            sic=3571,
+        )
+    ]
+    facts = [
+        _fact("cash", "Assets", 200.0, ddate=20240331, qtrs=0, stmt="BS"),
+        _fact(
+            "cash",
+            "CashAndCashEquivalentsAtCarryingValue",
+            40.0,
+            ddate=20240331,
+            qtrs=0,
+            stmt="BS",
+        ),
+        _fact(
+            "cash",
+            "ShortTermInvestments",
+            10.0,
+            ddate=20240331,
+            qtrs=0,
+            stmt="BS",
+        ),
+    ]
+    sub, tag, num, pre = _fsd_tables(submissions, facts)
+
+    summary = module.write_sec_accounting_batch_outputs(
+        sub,
+        tag,
+        num,
+        pre,
+        _identity(1),
+        [pd.Timestamp("2024-05-31")],
+        tmp_path,
+        evidence_run_url="https://github.com/example/aurora/actions/runs/1",
+        evidence_artifact="openap-181-sec-accounting-batch",
+        implementation_commit="a" * 40,
+    )
+
+    observations = pd.read_csv(tmp_path / "sec_accounting_batch_observations.csv")
+    evidence = pd.read_csv(tmp_path / "sec_accounting_batch_evidence.csv")
+    assert summary == {
+        "normalized_facts": 3,
+        "observations": 3,
+        "finite_values": 1,
+        "signals": 3,
+        "strict_approved": 0,
+    }
+    assert set(observations["signal"]) == {"Cash", "GP", "Investment"}
+    assert evidence["strict_gate_result"].eq("blocked").all()
+    for name in {
+        "sec_accounting_batch_normalized_facts.csv",
+        "sec_accounting_batch_observations.csv",
+        "sec_accounting_batch_evidence.csv",
+        "sec_accounting_batch_summary.json",
+    }:
+        assert (tmp_path / name).stat().st_size > 0
+
+
+def test_sec_batch_cli_fails_closed_outside_github(tmp_path, monkeypatch):
+    script = Path(__file__).parents[1] / "scripts" / "run_openap_181_sec_accounting_batch.py"
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT", raising=False)
+    monkeypatch.setattr(sys, "argv", [str(script), "--output-dir", str(tmp_path)])
+
+    with pytest.raises(LocalRunBlocked, match="OpenAP 181 SEC accounting batch"):
+        runpy.run_path(str(script), run_name="__main__")
