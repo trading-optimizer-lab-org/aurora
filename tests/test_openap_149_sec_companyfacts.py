@@ -328,3 +328,37 @@ def test_companyfacts_calculates_additional_non_93_sec_accounting_signals() -> N
     assert indexed.loc["ShareRepurchase", "value"] == 1.0
     assert indexed.loc["OperProfRD", "fidelity_class"] == "unvalidated_proxy"
     assert indexed.loc["ShareRepurchase", "fidelity_class"] == "reconstructed"
+
+
+def test_companyfacts_calculates_deferred_revenue_change_as_explicit_proxy() -> None:
+    facts = _facts()
+    extra: list[dict[str, object]] = []
+    for year, deferred_revenue in ((2024, 20.0), (2025, 30.0)):
+        template = facts.loc[
+            facts["accession_number"].eq(f"fy{year}")
+            & facts["tag"].eq("Assets")
+        ].iloc[0]
+        for tag, amount in (
+            ("ContractWithCustomerLiabilityCurrent", deferred_revenue),
+            ("StockholdersEquity", 60.0),
+        ):
+            row = template.copy()
+            row["tag"] = tag
+            row["value"] = amount * 1_000_000.0
+            extra.append(row.to_dict())
+
+    values = _module().calculate_companyfacts_accounting_current(
+        pd.concat([facts, pd.DataFrame(extra)], ignore_index=True),
+        _status(),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+        target_signals={"DelDRC"},
+    )
+
+    assert values["signal"].tolist() == ["DelDRC"]
+    assert values.iloc[0]["value"] == pytest.approx(0.1)
+    assert values.iloc[0]["fidelity_class"] == "unvalidated_proxy"
+    assert values.iloc[0]["source_id"] == "sec_edgar"
+    assert pd.Timestamp(values.iloc[0]["available_at"]) <= pd.Timestamp(
+        values.iloc[0]["formation_at"]
+    )
