@@ -561,10 +561,9 @@ def _rdability_candidate(issuer_facts: pd.DataFrame) -> dict[str, Any] | None:
     ).sort_index()
     if not {"revenue", "rd"}.issubset(values.columns):
         return None
-    years = values.index.to_series().astype(int)
-    breaks = years.diff().fillna(1).ne(1)
-    if breaks.any():
-        values = values.loc[years.index[breaks].max() :]
+    years = values.index.to_numpy(dtype=int)
+    gap_positions = np.flatnonzero(np.diff(years) > 1) + 1
+    current_segment_start = int(gap_positions[-1]) if len(gap_positions) else 0
     sales = pd.to_numeric(values["revenue"], errors="coerce")
     rd = pd.to_numeric(values["rd"], errors="coerce")
     sales = sales.where(sales.gt(0))
@@ -580,9 +579,15 @@ def _rdability_candidate(issuer_facts: pd.DataFrame) -> dict[str, Any] | None:
             }
         ).tail(8)
         valid = window.dropna()
-        positive_frequency = float(window["x"].gt(0).mean())
-        if len(valid) < 6 or positive_frequency < 0.5:
+        if len(valid) < 6:
             continue
+        frequency_window = rd_intensity_log.shift(lag).iloc[
+            current_segment_start:
+        ].tail(8)
+        if len(frequency_window) >= 6:
+            positive_frequency = float(frequency_window.gt(0).mean())
+            if positive_frequency < 0.5:
+                continue
         x = valid["x"].to_numpy(dtype=float)
         y = valid["y"].to_numpy(dtype=float)
         if not np.isfinite(x).all() or not np.isfinite(y).all():
