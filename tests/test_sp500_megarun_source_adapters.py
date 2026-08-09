@@ -250,3 +250,91 @@ def test_world_bank_all_commodities_keeps_every_series() -> None:
 
     assert {"Crude oil, WTI", "Gold"} <= set(frame.columns)
     assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-01", "2020-12-01"]
+
+
+def test_world_bank_all_commodities_finds_date_after_leading_blank_columns() -> None:
+    workbook = BytesIO()
+    with pd.ExcelWriter(workbook, engine="openpyxl") as writer:
+        pd.DataFrame(
+            [
+                [None, "World Bank commodity prices", None, None],
+                [None, "Date", "Crude oil, WTI", "Gold"],
+                [None, "1998M01", 17.0, 290.0],
+                [None, "2020M12", 47.0, 1887.0],
+            ]
+        ).to_excel(writer, sheet_name="Monthly Prices", header=False, index=False)
+
+    frame = normalize_resource_payload(
+        "world_bank_all_commodities",
+        workbook.getvalue(),
+        format_name="xlsx",
+        resource_id="pink_all_offset",
+        maximum_observation_date="2020-12-31",
+    )
+
+    assert {"Crude oil, WTI", "Gold"} <= set(frame.columns)
+    assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-01", "2020-12-01"]
+
+
+def test_fomc_archive_keeps_meetings_statements_and_minutes_release_dates() -> None:
+    payload = b"""
+    <h5>February 3-4 Meeting - 1998</h5>
+    <a href="/boarddocs/press/general/1998/19980929/">Statement</a>
+    <a href="/fomc/minutes/19980929.htm">Minutes</a> (Released November 19, 1998)
+    """
+
+    frame = normalize_resource_payload(
+        "fomc_public_archive",
+        payload,
+        format_name="html",
+        resource_id="fomc_1998",
+        maximum_observation_date="2020-12-31",
+    )
+
+    assert {"meeting", "statement", "minutes_release"} <= set(frame["document_kind"])
+    assert {"1998-02-03", "1998-09-29", "1998-11-19"} <= set(
+        frame["date"].dt.strftime("%Y-%m-%d")
+    )
+
+
+def test_treasury_tic_fixed_width_history_parses_signed_comma_values() -> None:
+    payload = b"""NET PURCHASES OF U.S. TREASURY BONDS & NOTES\n\n
+      MONTH        PURCHASES     INSTITUTIONS   FOREIGNERS    ORGANIZATIONS\n
+      -------   ---------------  ------------  ------------  ---------------\n
+      2020-12           -20,696        -2,280       -18,509               93\n
+      1998-01             7,126        -1,093         8,271              -52\n
+    """
+
+    frame = normalize_resource_payload(
+        "treasury_tic_bundle",
+        payload,
+        format_name="txt",
+        resource_id="tressect",
+        maximum_observation_date="2020-12-31",
+    )
+
+    assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-01", "2020-12-01"]
+    assert frame["total_net_purchases"].tolist() == [7126, -20696]
+
+
+def test_spf_multisheet_workbook_is_read_without_assuming_one_header_row() -> None:
+    workbook = BytesIO()
+    with pd.ExcelWriter(workbook, engine="openpyxl") as writer:
+        pd.DataFrame(
+            [["YEAR", "QUARTER", "RGDP1"], [1998, 1, 1.2], [2020, 4, 2.3]]
+        ).to_excel(writer, sheet_name="RGDP", header=False, index=False)
+        pd.DataFrame(
+            [["YEAR", "QUARTER", "UNEMP1"], [1998, 1, 4.7], [2020, 4, 6.7]]
+        ).to_excel(writer, sheet_name="UNEMP", header=False, index=False)
+
+    frame = normalize_resource_payload(
+        "philadelphia_spf_bundle",
+        workbook.getvalue(),
+        format_name="xlsx",
+        resource_id="spf_mean",
+        maximum_observation_date="2020-12-31",
+    )
+
+    assert set(frame["source_sheet"]) == {"RGDP", "UNEMP"}
+    assert frame["date"].min().date().isoformat() == "1998-01-01"
+    assert frame["date"].max().date().isoformat() == "2020-01-01"

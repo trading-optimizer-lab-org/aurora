@@ -3,11 +3,22 @@ from __future__ import annotations
 import pandas as pd
 
 from aurora.infra.sp500_megarun.materializer import (
+    _request_headers,
     _expand_resource,
     coverage_spans_research_window,
     discover_official_data_links,
     parquet_safe_frame,
 )
+
+
+def test_sec_download_headers_identify_the_research_client() -> None:
+    headers = _request_headers("https://www.sec.gov/Archives/edgar/full-index/2020/QTR4/master.idx")
+
+    assert "@" in headers["User-Agent"]
+    assert headers["Accept-Encoding"] == "gzip, deflate"
+    assert _request_headers("https://example.test/data.csv")["User-Agent"].startswith(
+        "Aurora-SP500"
+    )
 
 
 def test_official_data_link_discovery_resolves_relative_links_and_deduplicates() -> None:

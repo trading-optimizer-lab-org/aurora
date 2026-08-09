@@ -42,7 +42,7 @@ jobs:
           ):
               cursor = start
               while cursor <= end:
-                  bounded_end = min(cursor + dt.timedelta(days=89), end)
+                  bounded_end = min(cursor + dt.timedelta(days=364), end)
                   windows.append(
                       {
                           "window_id": f"{len(windows):03d}",
@@ -155,7 +155,7 @@ jobs:
             --work-dir "$RUNNER_TEMP/preflight-240" \
             --output-dir outputs/sp500_megarun_preflight_240
       - name: Upload first-cycle train snapshot
-        if: always()
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: sp500-megarun-train-1993-2010-F001-F240-${{ github.run_id }}
@@ -164,7 +164,7 @@ jobs:
           compression-level: 0
           retention-days: 90
       - name: Upload closed validation snapshot separately
-        if: always()
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: sp500-megarun-VALIDATION-CLOSED-2011-2020-F001-F240-${{ github.run_id }}
@@ -184,5 +184,5 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Fail closed unless GitHub proves 240 of 240 ready
-        if: steps.build.outcome != 'success'
+        if: always() && steps.build.outcome != 'success'
         run: exit 1

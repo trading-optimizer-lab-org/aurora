@@ -33,12 +33,12 @@
     "D_FED_H15_H10": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_fed_h15_h10","maximum_observation_date":"2020-12-31","resources":[]},
     "D_FED_H3_H6_H8_G19_CP": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_fed_macro_bundle","maximum_observation_date":"2020-12-31","resources":[]},
     "D_SPF": {"execution":"github_actions_only","acquisition_kind":"direct","adapter":"philadelphia_spf_bundle","maximum_observation_date":"2020-12-31","resources":[
-      {"id":"spf_mean_level","url":"https://www.philadelphiafed.org/-/media/frbp/assets/surveys-and-data/survey-of-professional-forecasters/data-files/files/mean_level.xlsx","format":"xlsx"},
-      {"id":"spf_median_level","url":"https://www.philadelphiafed.org/-/media/frbp/assets/surveys-and-data/survey-of-professional-forecasters/data-files/files/median_level.xlsx","format":"xlsx"},
-      {"id":"spf_dispersion","url":"https://www.philadelphiafed.org/-/media/frbp/assets/surveys-and-data/survey-of-professional-forecasters/data-files/files/dispersion.xlsx","format":"xlsx"}
+      {"id":"spf_mean_level","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/survey-of-professional-forecasters/historical-data/meanLevel.xlsx","format":"xlsx"},
+      {"id":"spf_median_level","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/survey-of-professional-forecasters/historical-data/medianLevel.xlsx","format":"xlsx"},
+      {"id":"spf_dispersion","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/survey-of-professional-forecasters/historical-data/Dispersion_1.xlsx","format":"xlsx"}
     ]},
     "D_SLOOS": {"execution":"github_actions_only","acquisition_kind":"direct","adapter":"federal_reserve_sloos_bundle","maximum_observation_date":"2020-12-31","resources":[
-      {"id":"sloos_public_downloads","url":"https://www.federalreserve.gov/data/sloos/sloos.htm","format":"html_with_official_xlsx_link"}
+      {"id":"sloos_public_downloads","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=SLOOS","format":"zip_xml"}
     ]},
     "D_Z1": {"execution":"github_actions_only","acquisition_kind":"direct","adapter":"federal_reserve_z1_bundle","maximum_observation_date":"2020-12-31","resources":[
       {"id":"federal_reserve_z1_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=Z1","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2020-12-31"}
@@ -63,10 +63,11 @@
       {"id":"debt_to_penny_1993_2020","url":"https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/debt_to_penny?filter=record_date:gte:1993-01-01,record_date:lte:2020-12-31&page[size]=10000","format":"json"}
     ]},
     "D_TIC": {"execution":"github_actions_only","acquisition_kind":"direct","adapter":"treasury_tic_bundle","maximum_observation_date":"2020-12-31","resources":[
-      {"id":"tic_historical_tables","url":"https://home.treasury.gov/data/treasury-international-capital-tic-system-home-page/tic-forms-instructions-and-other-documents","format":"html_with_official_xlsx_link"}
+      {"id":"tic_treasury_sector","url":"https://ticdata.treasury.gov/resource-center/data-chart-center/tic/Documents/tressect.txt","format":"txt"},
+      {"id":"tic_equity_sector","url":"https://ticdata.treasury.gov/resource-center/data-chart-center/tic/Documents/stksect.txt","format":"txt"}
     ]},
     "D_FOMC_PUBLIC": {"execution":"github_actions_only","acquisition_kind":"bundle","adapter":"fomc_public_archive","maximum_observation_date":"2020-12-31","resources":[
-      {"id":"fomc_historical_year","url_template":"https://www.federalreserve.gov/monetarypolicy/fomchistorical{year}.htm","years":[1993,1994,1995,1996,1997,1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020],"format":"html"}
+      {"id":"fomc_historical_year","url_template":"https://www.federalreserve.gov/monetarypolicy/fomchistorical{year}.htm","years":[1993,1994,1995,1996,1997,1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020],"format":"html","discover_tabular_links":false}
     ]},
     "D_SEC_INDEX": {"execution":"github_actions_only","acquisition_kind":"bundle","adapter":"sec_edgar_index_bundle","maximum_observation_date":"2020-12-31","resources":[
       {"id":"sec_quarterly_master_index","url_template":"https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/master.idx","years":[1994,1995,1996,1997,1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020],"quarters":[1,2,3,4],"format":"idx"}

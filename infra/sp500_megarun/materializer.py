@@ -77,6 +77,19 @@ def _cache_path(cache_dir: Path, url: str) -> Path:
     return cache_dir / f"{digest}{suffix}"
 
 
+def _request_headers(url: str) -> dict[str, str]:
+    host = urlparse(url).netloc.casefold()
+    if host == "sec.gov" or host.endswith(".sec.gov"):
+        return {
+            "User-Agent": (
+                "trading-optimizer-lab-org Aurora research "
+                "aurora-research@users.noreply.github.com"
+            ),
+            "Accept-Encoding": "gzip, deflate",
+        }
+    return {"User-Agent": "Aurora-SP500-Free-Data-Materializer/1.0"}
+
+
 def _download(url: str, *, cache_dir: Path) -> tuple[bytes, str]:
     cache_dir.mkdir(parents=True, exist_ok=True)
     target = _cache_path(cache_dir, url)
@@ -86,9 +99,11 @@ def _download(url: str, *, cache_dir: Path) -> tuple[bytes, str]:
     last_error: Exception | None = None
     for attempt in range(1, 4):
         try:
+            if urlparse(url).netloc.casefold().endswith("sec.gov"):
+                time.sleep(0.12)
             with requests.get(
                 url,
-                headers={"User-Agent": "Aurora-SP500-Free-Data-Materializer/1.0"},
+                headers=_request_headers(url),
                 timeout=(20, 180),
                 stream=True,
             ) as response:
@@ -209,7 +224,9 @@ def _normalize_download(
 ) -> tuple[pd.DataFrame, MaterializedResource]:
     payload, raw_sha256 = _download(url, cache_dir=cache_dir)
     targets = ((resource_id, url, format_name, payload, raw_sha256),)
-    if format_name.startswith("html"):
+    if format_name.startswith("html") and bool(
+        resource_metadata.get("discover_tabular_links", True)
+    ):
         host = urlparse(url).netloc.lower()
         links = discover_official_data_links(payload, base_url=url, allowed_hosts={host})
         if links:
@@ -288,11 +305,13 @@ def materialize_primary_sources(
     _write_report(report, output_dir)
     for dataset_id in sorted(source_plan):
         item = source_plan[dataset_id]
+        print(f"MATERIALIZE_DATASET_START:{dataset_id}", flush=True)
         if item.acquisition_kind in {"existing", "derived"}:
             report["datasets"][dataset_id] = {
                 "status": f"awaiting_{item.acquisition_kind}_materialization"
             }
             _write_report(report, output_dir)
+            print(f"MATERIALIZE_DATASET_AWAITING:{dataset_id}", flush=True)
             continue
         frames: list[pd.DataFrame] = []
         receipts: list[MaterializedResource] = []
@@ -321,6 +340,10 @@ def materialize_primary_sources(
                 "resources": [asdict(row) for row in receipts],
             }
             _write_report(report, output_dir)
+            print(
+                f"MATERIALIZE_DATASET_FAILED:{dataset_id}:{'|'.join(failures)[:500]}",
+                flush=True,
+            )
             continue
         combined = pd.concat(frames, ignore_index=True, sort=False)
         combined = combined.loc[combined["date"].notna()].sort_values("date", kind="mergesort")
@@ -346,6 +369,10 @@ def materialize_primary_sources(
             "failures": [] if coverage_valid else ["SEARCH_OR_EVALUATION_COVERAGE_GAP"],
         }
         _write_report(report, output_dir)
+        print(
+            f"MATERIALIZE_DATASET_DONE:{dataset_id}:{report['datasets'][dataset_id]['status']}",
+            flush=True,
+        )
     ready = all(
         row.get("status") in {"ready", "awaiting_existing_materialization", "awaiting_derived_materialization"}
         for row in report["datasets"].values()

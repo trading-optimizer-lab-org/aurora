@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
+from html import unescape
+from html.parser import HTMLParser
 from io import BytesIO, StringIO
 import json
 import re
@@ -342,14 +344,139 @@ def _world_bank_all(payload: bytes, *, adapter: str, **_: object) -> pd.DataFram
     for sheet_name, raw in sheets.items():
         for row_index in range(min(30, len(raw))):
             labels = [str(value).strip() if pd.notna(value) else "" for value in raw.iloc[row_index]]
-            if not labels or labels[0].casefold() != "date":
+            date_indexes = [
+                index for index, value in enumerate(labels) if value.casefold() == "date"
+            ]
+            if not date_indexes:
                 continue
-            frame = raw.iloc[row_index + 1 :].copy()
-            frame.columns = [label or f"column_{index}" for index, label in enumerate(labels)]
-            frame = frame.rename(columns={frame.columns[0]: "date"})
+            date_index = date_indexes[0]
+            kept_indexes = [
+                index
+                for index in range(date_index, len(labels))
+                if labels[index] or raw.iloc[row_index + 1 :, index].notna().any()
+            ]
+            frame = raw.iloc[row_index + 1 :, kept_indexes].copy()
+            frame.columns = [
+                labels[index] or f"column_{index}" for index in kept_indexes
+            ]
+            frame = frame.rename(columns={labels[date_index]: "date"})
             frame["source_sheet"] = str(sheet_name)
             return _nonempty(frame, adapter=adapter)
     raise SourceAdapterError(f"WORLD_BANK_MONTHLY_TABLE_NOT_FOUND:{adapter}")
+
+
+class _FomcAnchorCollector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.current_href = ""
+        self.current_text: list[str] = []
+        self.anchors: list[tuple[str, str]] = []
+        self.text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.casefold() != "a":
+            return
+        self.current_href = next(
+            (value for key, value in attrs if key.casefold() == "href" and value), ""
+        )
+        self.current_text = []
+
+    def handle_data(self, data: str) -> None:
+        self.text.append(data)
+        if self.current_href:
+            self.current_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.casefold() == "a" and self.current_href:
+            self.anchors.append(
+                (self.current_href, " ".join(self.current_text).strip())
+            )
+            self.current_href = ""
+            self.current_text = []
+
+
+def _fomc_public_archive(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
+    parser = _FomcAnchorCollector()
+    parser.feed(payload.decode("utf-8", errors="replace"))
+    page_text = " ".join(unescape(part) for part in parser.text)
+    page_text = re.sub(r"\s+", " ", page_text)
+    rows: list[dict[str, object]] = []
+    month_pattern = (
+        r"January|February|March|April|May|June|July|August|"
+        r"September|October|November|December"
+    )
+    for match in re.finditer(
+        rf"({month_pattern})\s+(\d{{1,2}})(?:\s*[-\u2013]\s*\d{{1,2}})?\s+"
+        rf"(Meeting|Conference Call)\s*[-\u2013]\s*((?:19|20)\d{{2}})",
+        page_text,
+        flags=re.IGNORECASE,
+    ):
+        rows.append(
+            {
+                "date": pd.Timestamp(
+                    f"{match.group(1)} {match.group(2)}, {match.group(4)}"
+                ).date().isoformat(),
+                "document_kind": "meeting",
+                "document_reference": match.group(0),
+            }
+        )
+    for href, label in parser.anchors:
+        kind = label.strip().casefold()
+        if kind not in {"statement", "minutes"}:
+            continue
+        date_match = re.search(r"((?:19|20)\d{6})", href)
+        if not date_match:
+            continue
+        rows.append(
+            {
+                "date": date_match.group(1),
+                "document_kind": kind,
+                "document_reference": href,
+            }
+        )
+    for match in re.finditer(
+        rf"Released\s+({month_pattern})\s+(\d{{1,2}}),\s*((?:19|20)\d{{2}})",
+        page_text,
+        flags=re.IGNORECASE,
+    ):
+        rows.append(
+            {
+                "date": pd.Timestamp(
+                    f"{match.group(1)} {match.group(2)}, {match.group(3)}"
+                ).date().isoformat(),
+                "document_kind": "minutes_release",
+                "document_reference": match.group(0),
+            }
+        )
+    if not rows:
+        raise SourceAdapterError(f"FOMC_PUBLIC_DATES_MISSING:{adapter}")
+    return _nonempty(pd.DataFrame(rows).drop_duplicates(), adapter=adapter)
+
+
+def _treasury_tic_text(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
+    text = payload.decode("utf-8-sig", errors="replace")
+    rows: list[dict[str, object]] = []
+    pattern = re.compile(
+        r"^\s*((?:19|20)\d{2}-\d{2})\s+"
+        r"([+-]?[\d,]+)\s+([+-]?[\d,]+)\s+([+-]?[\d,]+)\s+([+-]?[\d,]+)\s*$"
+    )
+    for line in text.splitlines():
+        match = pattern.match(line)
+        if not match:
+            continue
+        values = [int(value.replace(",", "")) for value in match.groups()[1:]]
+        rows.append(
+            {
+                "date": match.group(1),
+                "total_net_purchases": values[0],
+                "foreign_official": values[1],
+                "other_foreigners": values[2],
+                "international_regional": values[3],
+            }
+        )
+    if not rows:
+        raise SourceAdapterError(f"TIC_HISTORY_ROWS_MISSING:{adapter}")
+    return _nonempty(pd.DataFrame(rows), adapter=adapter)
 
 
 def _json_rows(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
@@ -400,6 +527,10 @@ def _read_resource_format(
         )
     if adapter == "world_bank_all_commodities":
         return _world_bank_all(payload, adapter=adapter)
+    if adapter == "fomc_public_archive":
+        return _fomc_public_archive(payload, adapter=adapter)
+    if adapter == "treasury_tic_bundle" and format_name in {"txt", "text"}:
+        return _treasury_tic_text(payload, adapter=adapter)
     if adapter == "treasury_fiscal_json" or format_name == "json":
         return _json_rows(payload, adapter=adapter)
     if adapter == "sec_edgar_index_bundle" or format_name == "idx":
@@ -415,6 +546,7 @@ def _read_resource_format(
             "shiller_monthly_excel",
             "cboe_history_csv",
             "cboe_causal_vol30_bridge",
+            "philadelphia_spf_bundle",
         }:
             return _excel_without_header(payload, adapter=adapter)
         return _excel(payload, adapter=adapter)
