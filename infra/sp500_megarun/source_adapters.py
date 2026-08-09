@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO, StringIO
 import re
+from typing import Mapping
 import zipfile
 from xml.etree import ElementTree
 
@@ -70,6 +71,25 @@ def _excel(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
     except Exception as exc:
         raise SourceAdapterError(f"EXCEL_PARSE_FAILED:{adapter}") from exc
     return _nonempty(frame, adapter=adapter)
+
+
+def _excel_without_header(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
+    try:
+        sheets = pd.read_excel(BytesIO(payload), sheet_name=None, header=None)
+    except Exception as exc:
+        raise SourceAdapterError(
+            f"EXCEL_PARSE_FAILED:{adapter}:{type(exc).__name__}:{str(exc)[:200]}"
+        ) from exc
+    frames: list[pd.DataFrame] = []
+    for sheet_name, frame in sheets.items():
+        if frame.dropna(how="all").empty:
+            continue
+        copy = frame.copy()
+        copy["source_sheet"] = str(sheet_name)
+        frames.append(copy)
+    if not frames:
+        raise SourceAdapterError(f"EXCEL_HAS_NO_TABLE:{adapter}")
+    return _nonempty(pd.concat(frames, ignore_index=True, sort=False), adapter=adapter)
 
 
 def _html(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
@@ -194,16 +214,90 @@ def _french_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
     return _nonempty(pd.concat(frames, ignore_index=True, sort=False), adapter=adapter)
 
 
+def _cftc_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    try:
+        with zipfile.ZipFile(BytesIO(payload)) as archive:
+            members = sorted(
+                name
+                for name in archive.namelist()
+                if not name.endswith("/") and name.lower().endswith((".csv", ".txt"))
+            )
+            for member in members:
+                raw = archive.read(member)
+                frame = pd.read_csv(
+                    BytesIO(raw),
+                    sep=",",
+                    encoding="cp1252",
+                    engine="python",
+                    on_bad_lines="skip",
+                )
+                if not frame.dropna(how="all").empty:
+                    frame["source_file"] = member
+                    frames.append(frame)
+    except Exception as exc:
+        raise SourceAdapterError(
+            f"CFTC_ZIP_PARSE_FAILED:{adapter}:{type(exc).__name__}:{str(exc)[:200]}"
+        ) from exc
+    if not frames:
+        raise SourceAdapterError(f"CFTC_ZIP_HAS_NO_ROWS:{adapter}")
+    return _nonempty(pd.concat(frames, ignore_index=True, sort=False), adapter=adapter)
+
+
+def _world_bank_monthly(
+    payload: bytes, *, adapter: str, resource_metadata: Mapping[str, object]
+) -> pd.DataFrame:
+    requested = str(resource_metadata.get("series", "")).strip().casefold()
+    if not requested:
+        raise SourceAdapterError(f"WORLD_BANK_SERIES_MISSING:{adapter}")
+    try:
+        sheets = pd.read_excel(BytesIO(payload), sheet_name=None, header=None)
+    except Exception as exc:
+        raise SourceAdapterError(
+            f"WORLD_BANK_EXCEL_PARSE_FAILED:{type(exc).__name__}:{str(exc)[:200]}"
+        ) from exc
+    for sheet_name, raw in sheets.items():
+        for row_index in range(min(30, len(raw))):
+            labels = [str(value).strip() if pd.notna(value) else "" for value in raw.iloc[row_index]]
+            lowered = [value.casefold() for value in labels]
+            date_indexes = [index for index, value in enumerate(lowered) if value == "date"]
+            series_indexes = [index for index, value in enumerate(lowered) if value == requested]
+            if not date_indexes or not series_indexes:
+                continue
+            date_index = date_indexes[0]
+            series_index = series_indexes[0]
+            frame = raw.iloc[row_index + 1 :, [date_index, series_index]].copy()
+            frame.columns = ["date", "value"]
+            frame["series_name"] = labels[series_index]
+            frame["source_sheet"] = str(sheet_name)
+            return _nonempty(frame, adapter=adapter)
+    raise SourceAdapterError(f"WORLD_BANK_SERIES_NOT_FOUND:{adapter}:{requested}")
+
+
 def _read_resource_format(
-    payload: bytes, *, adapter: str, format_name: str
+    payload: bytes,
+    *,
+    adapter: str,
+    format_name: str,
+    resource_metadata: Mapping[str, object],
 ) -> pd.DataFrame:
     if adapter == "federal_reserve_ddp_zip_xml" or format_name == "zip_xml":
         return _federal_reserve_zip_xml(payload, adapter=adapter)
     if adapter == "french_zip_csv":
         return _french_zip(payload, adapter=adapter)
+    if adapter == "cftc_legacy_zip":
+        return _cftc_zip(payload, adapter=adapter)
+    if adapter == "world_bank_pink_sheet":
+        return _world_bank_monthly(
+            payload,
+            adapter=adapter,
+            resource_metadata=resource_metadata,
+        )
     if format_name in {"zip_csv", "zip_txt"}:
         return _zip_table(payload, adapter=adapter)
     if format_name in {"xls", "xlsx"}:
+        if adapter in {"alfred_philly_pit_bundle", "philadelphia_realtime_bundle"}:
+            return _excel_without_header(payload, adapter=adapter)
         return _excel(payload, adapter=adapter)
     if format_name == "csv":
         return _csv(payload, adapter=adapter)
@@ -212,18 +306,53 @@ def _read_resource_format(
     return _auto_table(payload, adapter=adapter)
 
 
-def _candidate_dates(values: pd.Series) -> pd.Series:
+def _candidate_dates(values: pd.Series, *, column_name: str = "") -> pd.Series:
     cleaned = values.astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     result = pd.Series(pd.NaT, index=values.index, dtype="datetime64[ns]")
     eight = cleaned.str.fullmatch(r"\d{8}")
-    six = cleaned.str.fullmatch(r"\d{6}")
-    four = cleaned.str.fullmatch(r"\d{4}")
+    six_raw = cleaned.str.fullmatch(r"\d{6}")
+    four_raw = cleaned.str.fullmatch(r"\d{4}")
+    four_years = pd.to_numeric(cleaned.where(four_raw), errors="coerce")
+    four = four_raw & four_years.between(1800, 2100)
     result.loc[eight] = pd.to_datetime(cleaned.loc[eight], format="%Y%m%d", errors="coerce")
-    result.loc[six] = pd.to_datetime(cleaned.loc[six], format="%Y%m", errors="coerce")
+    if "yymmdd" in column_name.casefold():
+        result.loc[six_raw] = pd.to_datetime(
+            cleaned.loc[six_raw], format="%y%m%d", errors="coerce"
+        )
+        six = six_raw
+    else:
+        years = pd.to_numeric(cleaned.str[:4], errors="coerce")
+        months = pd.to_numeric(cleaned.str[4:], errors="coerce")
+        valid_six = six_raw & years.between(1800, 2100) & months.between(1, 12)
+        result.loc[valid_six] = pd.to_datetime(
+            cleaned.loc[valid_six], format="%Y%m", errors="coerce"
+        )
+        six = valid_six
     result.loc[four] = pd.to_datetime(cleaned.loc[four], format="%Y", errors="coerce")
-    remaining = result.isna() & ~(eight | six | four)
+    world_bank_month = cleaned.str.fullmatch(r"\d{4}M\d{2}", case=False)
+    result.loc[world_bank_month] = pd.to_datetime(
+        cleaned.loc[world_bank_month].str.replace("M", "", case=False),
+        format="%Y%m",
+        errors="coerce",
+    )
+    quarter = cleaned.str.fullmatch(r"\d{4}Q[1-4]", case=False)
+    if quarter.any():
+        quarter_values = cleaned.loc[quarter].str.upper()
+        result.loc[quarter] = pd.PeriodIndex(quarter_values, freq="Q").to_timestamp()
+    decimal_month = cleaned.str.fullmatch(r"\d{4}\.\d{1,2}")
+    if decimal_month.any():
+        pieces = cleaned.loc[decimal_month].str.split(".", expand=True)
+        normalized = pieces[0] + pieces[1].str.zfill(2)
+        result.loc[decimal_month] = pd.to_datetime(normalized, format="%Y%m", errors="coerce")
+    remaining = result.isna() & ~(eight | six | six_raw | four | world_bank_month | quarter | decimal_month)
     if remaining.any():
-        result.loc[remaining] = pd.to_datetime(cleaned.loc[remaining], errors="coerce")
+        plausible = cleaned.loc[remaining].str.match(
+            r"^(?:[A-Za-z]{3,9}[- /]\d{2,4}|\d{4}[- /]\d{1,2}(?:[- /]\d{1,2})?)$"
+        )
+        indexes = plausible.index[plausible]
+        result.loc[indexes] = pd.to_datetime(cleaned.loc[indexes], errors="coerce")
+    plausible_year = result.dt.year.between(1800, 2100)
+    result.loc[~plausible_year.fillna(False)] = pd.NaT
     return result
 
 
@@ -242,11 +371,13 @@ def _normalize_and_bound_dates(
     candidates = [column for column in frame.columns if str(column).strip().lower() in preferred]
     candidates.extend(column for column in frame.columns[:2] if column not in candidates)
     selected: pd.Series | None = None
+    selected_score = 0
     for column in candidates:
-        parsed = _candidate_dates(frame[column])
-        if int(parsed.notna().sum()) >= max(1, min(3, len(frame))):
+        parsed = _candidate_dates(frame[column], column_name=str(column))
+        score = int(parsed.notna().sum())
+        if score >= max(1, min(3, len(frame))) and score > selected_score:
             selected = parsed
-            break
+            selected_score = score
     if selected is None:
         raise SourceAdapterError(f"DATE_COLUMN_MISSING:{adapter}")
     bounded = frame.copy()
@@ -317,12 +448,18 @@ def normalize_resource_payload(
     format_name: str,
     resource_id: str,
     maximum_observation_date: str,
+    resource_metadata: Mapping[str, object] | None = None,
 ) -> pd.DataFrame:
     """Normalize one declared resource and reject rows beyond evaluation."""
 
     if adapter not in _ADAPTERS:
         raise SourceAdapterError(f"UNKNOWN_ADAPTER:{adapter}")
-    frame = _read_resource_format(payload, adapter=adapter, format_name=format_name)
+    frame = _read_resource_format(
+        payload,
+        adapter=adapter,
+        format_name=format_name,
+        resource_metadata=resource_metadata or {},
+    )
     frame = _normalize_and_bound_dates(
         frame,
         adapter=adapter,

@@ -108,12 +108,14 @@ def _download(url: str, *, cache_dir: Path) -> tuple[bytes, str]:
     raise MaterializationError(f"DOWNLOAD_FAILED:{url}:{type(last_error).__name__}") from last_error
 
 
-def _expand_resource(resource: Mapping[str, Any]) -> tuple[tuple[str, str, str], ...]:
+def _expand_resource(
+    resource: Mapping[str, Any],
+) -> tuple[tuple[str, str, str, Mapping[str, Any]], ...]:
     resource_id = str(resource.get("id", "resource"))
     format_name = str(resource.get("format", ""))
     if resource.get("url"):
-        return ((resource_id, str(resource["url"]), format_name),)
-    expanded: list[tuple[str, str, str]] = []
+        return ((resource_id, str(resource["url"]), format_name, resource),)
+    expanded: list[tuple[str, str, str, Mapping[str, Any]]] = []
     template = str(resource.get("url_template", ""))
     for series_id in resource.get("series_ids", []):
         expanded.append(
@@ -121,6 +123,7 @@ def _expand_resource(resource: Mapping[str, Any]) -> tuple[tuple[str, str, str],
                 f"{resource_id}:{series_id}",
                 template.replace("{series_id}", str(series_id)),
                 format_name,
+                resource,
             )
         )
     year_template = str(resource.get("year_url_template", template))
@@ -130,6 +133,7 @@ def _expand_resource(resource: Mapping[str, Any]) -> tuple[tuple[str, str, str],
                 f"{resource_id}:{year}",
                 year_template.replace("{year}", str(year)),
                 format_name,
+                resource,
             )
         )
     return tuple(expanded)
@@ -167,6 +171,7 @@ def _normalize_download(
     resource_id: str,
     url: str,
     format_name: str,
+    resource_metadata: Mapping[str, Any],
     maximum_observation_date: str,
     cache_dir: Path,
 ) -> tuple[pd.DataFrame, MaterializedResource]:
@@ -195,6 +200,7 @@ def _normalize_download(
             format_name=target_format,
             resource_id=target_id,
             maximum_observation_date=maximum_observation_date,
+            resource_metadata=resource_metadata,
         )
         frames.append(frame)
         receipts.append(
@@ -260,7 +266,7 @@ def materialize_primary_sources(
         receipts: list[MaterializedResource] = []
         failures: list[str] = []
         for resource in item.resources:
-            for resource_id, url, format_name in _expand_resource(resource):
+            for resource_id, url, format_name, resource_metadata in _expand_resource(resource):
                 try:
                     frame, receipt = _normalize_download(
                         dataset_id=dataset_id,
@@ -268,6 +274,7 @@ def materialize_primary_sources(
                         resource_id=resource_id,
                         url=url,
                         format_name=format_name,
+                        resource_metadata=resource_metadata,
                         maximum_observation_date=item.maximum_observation_date.isoformat(),
                         cache_dir=cache_dir,
                     )

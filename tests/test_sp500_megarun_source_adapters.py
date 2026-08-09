@@ -82,6 +82,69 @@ def test_numeric_yyyymm_dates_are_normalized_without_future_leakage() -> None:
     assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-01", "2010-12-01"]
 
 
+def test_quarter_and_decimal_month_dates_are_normalized() -> None:
+    quarterly = normalize_resource_payload(
+        "academic_table",
+        b"period,value\n1998Q1,1\n2010Q4,2\n2011Q1,3\n",
+        format_name="csv",
+        resource_id="quarterly",
+        maximum_observation_date="2010-12-31",
+    )
+    decimal_month = normalize_resource_payload(
+        "academic_table",
+        b"period,value\n1998.01,1\n2010.12,2\n2011.01,3\n",
+        format_name="csv",
+        resource_id="monthly",
+        maximum_observation_date="2010-12-31",
+    )
+
+    assert quarterly["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-01", "2010-10-01"]
+    assert decimal_month["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "1998-01-01",
+        "2010-12-01",
+    ]
+
+
+def test_world_bank_monthly_workbook_selects_declared_series() -> None:
+    workbook = BytesIO()
+    with pd.ExcelWriter(workbook, engine="openpyxl") as writer:
+        pd.DataFrame(
+            [
+                ["World Bank commodity prices", None, None],
+                ["Date", "Crude oil, WTI", "Gold"],
+                ["1998M01", 17.0, 290.0],
+                ["2010M12", 89.0, 1390.0],
+                ["2011M01", 90.0, 1400.0],
+            ]
+        ).to_excel(writer, sheet_name="Monthly Prices", header=False, index=False)
+
+    frame = normalize_resource_payload(
+        "world_bank_pink_sheet",
+        workbook.getvalue(),
+        format_name="xlsx",
+        resource_id="pink",
+        maximum_observation_date="2010-12-31",
+        resource_metadata={"series": "Gold"},
+    )
+
+    assert frame["value"].tolist() == [290.0, 1390.0]
+    assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-01", "2010-12-01"]
+
+
+def test_cftc_comma_zip_parses_legacy_rows() -> None:
+    raw = b"Market_and_Exchange_Names,As_of_Date_In_Form_YYMMDD,Open_Interest_All\nS&P 500,980106,100\nS&P 500,101228,200\n"
+
+    frame = normalize_resource_payload(
+        "cftc_legacy_zip",
+        _zip_bytes("annual.txt", raw),
+        format_name="zip_csv",
+        resource_id="cftc",
+        maximum_observation_date="2010-12-31",
+    )
+
+    assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-06", "2010-12-28"]
+
+
 def test_normalized_resource_has_a_stable_content_hash_input() -> None:
     payload = b"date,value\n1998-01-02,1.5\n"
 
