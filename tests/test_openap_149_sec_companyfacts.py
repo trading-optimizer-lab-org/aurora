@@ -664,3 +664,76 @@ def test_companyfacts_tax_uses_current_federal_and_foreign_expense() -> None:
     assert pd.Timestamp(values.iloc[0]["available_at"]) <= pd.Timestamp(
         values.iloc[0]["retrieved_at"]
     )
+
+
+def test_companyfacts_roaq_uses_quarterly_income_over_lagged_assets() -> None:
+    fact_rows: list[dict[str, object]] = []
+    for tag, value, period_start, period_end, fp, accepted in (
+        (
+            "Assets",
+            100_000_000.0,
+            "",
+            "2026-03-31",
+            "Q1",
+            "2026-05-01T15:00:00Z",
+        ),
+        (
+            "Assets",
+            120_000_000.0,
+            "",
+            "2026-06-30",
+            "Q2",
+            "2026-07-20T15:00:00Z",
+        ),
+        (
+            "IncomeLossFromContinuingOperations",
+            12_000_000.0,
+            "2026-04-01",
+            "2026-06-30",
+            "Q2",
+            "2026-07-20T15:00:00Z",
+        ),
+    ):
+        fact_rows.append(
+            {
+                "cik": 1,
+                "entity_name": "Example Corp",
+                "taxonomy": "us-gaap",
+                "tag": tag,
+                "unit": "USD",
+                "value": value,
+                "period_start": period_start,
+                "period_end": period_end,
+                "fy": 2026,
+                "fp": fp,
+                "form": "10-Q",
+                "filed": accepted[:10],
+                "accession_number": f"2026-{fp}",
+                "frame": "",
+                "available_at": accepted,
+                "available_at_quality": "sec_acceptance_timestamp",
+                "source": (
+                    "https://data.sec.gov/api/xbrl/companyfacts/"
+                    "CIK0000000001.json"
+                ),
+                "source_mode": "sec_official_api",
+            }
+        )
+
+    values = _module().calculate_companyfacts_roaq_current(
+        pd.DataFrame(fact_rows),
+        _status(),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    assert values["signal"].tolist() == ["roaq"]
+    assert values.iloc[0]["value"] == pytest.approx(0.12)
+    assert values.iloc[0]["period_end"] == "2026-06-30T00:00:00+00:00"
+    assert values.iloc[0]["fidelity_class"] == "unvalidated_proxy"
+    assert values.iloc[0]["formula_id"] == (
+        "openap_roaq_sec_companyfacts_current_proxy"
+    )
+    assert pd.Timestamp(values.iloc[0]["available_at"]) <= pd.Timestamp(
+        values.iloc[0]["retrieved_at"]
+    )
