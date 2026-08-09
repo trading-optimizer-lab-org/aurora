@@ -20,6 +20,10 @@ from aurora.research.openap_181.analyst_batch import (
     ANALYST_SIGNALS,
 )
 from aurora.research.openap_181.completion import SOURCE_CATALOG
+from aurora.research.openap_181.microstructure_batch import (
+    MICROSTRUCTURE_BLOCKERS,
+    MICROSTRUCTURE_SIGNALS,
+)
 from aurora.research.openap_181.relationship_batch import (
     RELATIONSHIP_BLOCKERS,
     RELATIONSHIP_SIGNALS,
@@ -621,6 +625,28 @@ SOURCE_METADATA = {
             redistribution="MIT repository terms",
         ),
         _meta(
+            "hvidkjaer_pin_archive",
+            "Soeren Hvidkjaer via Internet Archive",
+            (
+                "https://web.archive.org/web/20110219024112/"
+                "http://sites.google.com/site/hvidkjaer/data/data-files/"
+                "pin1983-2001.zip?attredirects=0"
+            ),
+            "https://web.archive.org/about/terms.php",
+            account=False,
+            card=False,
+            auth="none for archive access; original-data reuse rights unverified",
+            rate="Internet Archive fair-use limits",
+            start="1983",
+            end="2001",
+            frequency="archived static file",
+            lag="year t parameters used for year t+1",
+            identifiers="historical security key documented by author file",
+            available_at="archived publication; original yearly release dates not recovered",
+            pit="historical author estimates only",
+            redistribution="original author-data permission not explicit",
+        ),
+        _meta(
             "bea_input_output",
             "US Bureau of Economic Analysis",
             "https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf",
@@ -880,9 +906,15 @@ def _route_source_ids(signal: str, row: Mapping[str, Any]) -> tuple[str, ...]:
         ]
     elif signal == "Governance":
         sources += ["yale_governance"]
+    elif signal == "BidAskSpread":
+        sources += [
+            "twelve_data_basic", "openfigi", "crsp_stock_commercial",
+            "nyse_taq_commercial", "wrds_linking_suite",
+        ]
     elif signal == "ProbInformedTrading":
         sources += [
-            "edwin_hu_pin", "openfigi", "nyse_taq_commercial",
+            "hvidkjaer_pin_archive", "edwin_hu_pin", "openfigi",
+            "nyse_taq_commercial",
             "crsp_stock_commercial", "wrds_linking_suite",
         ]
     elif signal in BEA_NETWORK_SIGNALS:
@@ -1093,6 +1125,8 @@ def build_signal_resolution(
         ]
         if signal in ANALYST_SIGNALS:
             remaining_blocker = ANALYST_BLOCKERS[signal]
+        elif signal in MICROSTRUCTURE_SIGNALS:
+            remaining_blocker = MICROSTRUCTURE_BLOCKERS[signal]
         elif signal in RELATIONSHIP_SIGNALS:
             remaining_blocker = RELATIONSHIP_BLOCKERS[signal]
         else:

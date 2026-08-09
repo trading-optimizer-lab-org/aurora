@@ -491,6 +491,23 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "contains GPIN and OWR, not the exact PIN model required by ProbInformedTrading.",
     ),
     SourceEvidence(
+        "hvidkjaer_pin_archive", "Hvidkjaer archived PIN estimates",
+        (
+            "https://web.archive.org/web/20110219024112/"
+            "http://sites.google.com/site/hvidkjaer/data/data-files/"
+            "pin1983-2001.zip?attredirects=0"
+        ),
+        "public_web_archive_download", True, False,
+        "Author PIN parameter estimates for 1983 through 2001 referenced by OpenAP",
+        ("exact_pin_parameters_1983_2001", "historical_security_keys"),
+        (
+            "exact_pin_after_2001", "current_security_identity",
+            "explicit_automation_and_reuse_permission",
+        ),
+        "The archived author file is an exact historical component, but it ends in 2001 "
+        "and no explicit scheduled-automation or reuse permission was verified.",
+    ),
+    SourceEvidence(
         "bea_input_output", "BEA input-output accounts",
         "https://www.bea.gov/data/industries/input-output-accounts-data",
         "official_bulk_download", True, True, "US industry supplier-use relationships",

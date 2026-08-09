@@ -50,6 +50,11 @@ on:
         required: false
         default: ""
         type: string
+      microstructure_evidence_run_id:
+        description: Optional pinned microstructure source probe providing per-signal blocker evidence
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: read
@@ -60,6 +65,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  microstructure_probe:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.microstructure_evidence_run_id == '' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/openap-181-microstructure-source-probe.yml
+    with:
+      source_sha: ${{ inputs.source_sha || github.sha }}
+    secrets: inherit
+
   relationship_probe:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.relationship_evidence_run_id == '' }}
     permissions:
@@ -106,8 +120,8 @@ jobs:
     secrets: inherit
 
   audit:
-    needs: [relationship_probe, analyst_probe, patent_probe, short_interest_probe, options_probe]
-    if: ${{ always() && (needs.relationship_probe.result == 'success' || needs.relationship_probe.result == 'skipped') && (needs.analyst_probe.result == 'success' || needs.analyst_probe.result == 'skipped') && (needs.patent_probe.result == 'success' || needs.patent_probe.result == 'skipped') && (needs.short_interest_probe.result == 'success' || needs.short_interest_probe.result == 'skipped') && (needs.options_probe.result == 'success' || needs.options_probe.result == 'skipped') }}
+    needs: [microstructure_probe, relationship_probe, analyst_probe, patent_probe, short_interest_probe, options_probe]
+    if: ${{ always() && (needs.microstructure_probe.result == 'success' || needs.microstructure_probe.result == 'skipped') && (needs.relationship_probe.result == 'success' || needs.relationship_probe.result == 'skipped') && (needs.analyst_probe.result == 'success' || needs.analyst_probe.result == 'skipped') && (needs.patent_probe.result == 'success' || needs.patent_probe.result == 'skipped') && (needs.short_interest_probe.result == 'success' || needs.short_interest_probe.result == 'skipped') && (needs.options_probe.result == 'success' || needs.options_probe.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -121,6 +135,7 @@ jobs:
       OPTIONS_EVIDENCE_RUN_ID: ${{ inputs.options_evidence_run_id || '' }}
       ANALYST_EVIDENCE_RUN_ID: ${{ inputs.analyst_evidence_run_id || '' }}
       RELATIONSHIP_EVIDENCE_RUN_ID: ${{ inputs.relationship_evidence_run_id || '' }}
+      MICROSTRUCTURE_EVIDENCE_RUN_ID: ${{ inputs.microstructure_evidence_run_id || '' }}
       TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
     steps:
       - name: Checkout exact implementation revision
@@ -136,8 +151,8 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e . pytest
       - name: Compile and test completion contract
         run: |
-          python -m py_compile research/openap_181/completion.py research/openap_181/official_formulas.py research/openap_181/source_research.py research/openap_181/implementation_status.py research/openap_181/relationship_batch.py research/openap_181/analyst_batch.py research/openap_181/options_batch.py research/openap_181/patent_batch.py research/openap_181/short_interest_batch.py research/openap_181/sec_accounting_batch.py research/openap_181/sec_companyfacts_access.py research/openap_181/sec_fsd_access.py research/openap_181/sec_fsd_inputs.py
-          python -m py_compile scripts/run_openap_181_completion.py scripts/fetch_openap_181_official_formulas.py scripts/run_openap_181_source_research.py scripts/run_openap_181_implementation_status.py scripts/run_openap_181_relationship_source_probe.py scripts/run_openap_181_analyst_source_probe.py scripts/run_openap_181_options_source_probe.py scripts/run_openap_181_patent_source_probe.py scripts/run_openap_181_short_interest_source_probe.py scripts/run_openap_181_sec_accounting_batch.py scripts/run_openap_181_sec_accounting_validation.py scripts/run_openap_181_sec_companyfacts_access.py scripts/run_openap_181_sec_fsd_access.py scripts/run_openap_181_sec_fsd_inputs.py
+          python -m py_compile research/openap_181/completion.py research/openap_181/official_formulas.py research/openap_181/source_research.py research/openap_181/implementation_status.py research/openap_181/microstructure_batch.py research/openap_181/relationship_batch.py research/openap_181/analyst_batch.py research/openap_181/options_batch.py research/openap_181/patent_batch.py research/openap_181/short_interest_batch.py research/openap_181/sec_accounting_batch.py research/openap_181/sec_companyfacts_access.py research/openap_181/sec_fsd_access.py research/openap_181/sec_fsd_inputs.py
+          python -m py_compile scripts/run_openap_181_completion.py scripts/fetch_openap_181_official_formulas.py scripts/run_openap_181_source_research.py scripts/run_openap_181_implementation_status.py scripts/run_openap_181_microstructure_source_probe.py scripts/run_openap_181_relationship_source_probe.py scripts/run_openap_181_analyst_source_probe.py scripts/run_openap_181_options_source_probe.py scripts/run_openap_181_patent_source_probe.py scripts/run_openap_181_short_interest_source_probe.py scripts/run_openap_181_sec_accounting_batch.py scripts/run_openap_181_sec_accounting_validation.py scripts/run_openap_181_sec_companyfacts_access.py scripts/run_openap_181_sec_fsd_access.py scripts/run_openap_181_sec_fsd_inputs.py
           python -m pytest tests/test_openap_181_completion.py tests/test_openap_181_microstructure_batch.py tests/test_openap_181_relationship_batch.py tests/test_openap_181_analyst_batch.py tests/test_openap_181_options_batch.py tests/test_openap_181_patent_batch.py tests/test_openap_181_short_interest_batch.py tests/test_openap_181_sec_accounting_batch.py tests/test_openap_181_sec_companyfacts_access.py tests/test_openap_181_sec_fsd_access.py tests/test_openap_181_sec_fsd_inputs.py tests/test_openap_181_sec_workflow.py tests/test_openap_93_max_free.py -q --tb=short
       - name: Download pinned official SignalDoc
         run: |
@@ -271,6 +286,47 @@ jobs:
           echo "SHORT_INTEREST_EVIDENCE_COMMIT=$short_interest_commit" >> "$GITHUB_ENV"
           if [[ -z "${SHORT_INTEREST_EVIDENCE_RUN_ID:-}" ]]; then
             echo "SHORT_INTEREST_EVIDENCE_RUN_ID=$GITHUB_RUN_ID" >> "$GITHUB_ENV"
+          fi
+      - name: Download pinned microstructure source evidence
+        if: ${{ env.MICROSTRUCTURE_EVIDENCE_RUN_ID != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-microstructure-source-probe-results
+          path: inputs/microstructure
+          run-id: ${{ env.MICROSTRUCTURE_EVIDENCE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download in-run pinned microstructure source evidence
+        if: ${{ github.event_name == 'workflow_dispatch' && env.MICROSTRUCTURE_EVIDENCE_RUN_ID == '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-microstructure-source-probe-results
+          path: inputs/microstructure
+      - name: Locate pinned microstructure source evidence
+        if: ${{ env.MICROSTRUCTURE_EVIDENCE_RUN_ID != '' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          microstructure_evidence="$(find inputs/microstructure -name microstructure_batch_evidence.csv -type f -print -quit)"
+          microstructure_summary="$(find inputs/microstructure -name microstructure_source_probe.json -type f -print -quit)"
+          test -s "$microstructure_evidence"
+          test -s "$microstructure_summary"
+          grep -q '"exact_free_authorized_source_found": false' "$microstructure_summary"
+          grep -q 'microstructure_source_blocked:' "$microstructure_evidence"
+          microstructure_commit="$(python - "$microstructure_evidence" <<'PY'
+          import re
+          import sys
+          import pandas as pd
+          evidence = pd.read_csv(sys.argv[1])
+          assert len(evidence) == evidence["signal"].nunique() == 5
+          assert evidence["formula_implemented"].eq(True).all()
+          assert evidence["strict_gate_result"].eq("blocked").all()
+          commits = evidence["implementation_commit"].astype(str).unique()
+          assert len(commits) == 1 and re.fullmatch(r"[0-9a-f]{40}", commits[0])
+          print(commits[0])
+          PY
+          )"
+          echo "MICROSTRUCTURE_EVIDENCE=$microstructure_evidence" >> "$GITHUB_ENV"
+          echo "MICROSTRUCTURE_EVIDENCE_COMMIT=$microstructure_commit" >> "$GITHUB_ENV"
+          if [[ -z "${MICROSTRUCTURE_EVIDENCE_RUN_ID:-}" ]]; then
+            echo "MICROSTRUCTURE_EVIDENCE_RUN_ID=$GITHUB_RUN_ID" >> "$GITHUB_ENV"
           fi
       - name: Download pinned relationship source evidence
         if: ${{ env.RELATIONSHIP_EVIDENCE_RUN_ID != '' }}
@@ -432,6 +488,9 @@ jobs:
           if [[ -n "${OPTIONS_EVIDENCE:-}" ]]; then
             evidence_args+=(--evidence "$OPTIONS_EVIDENCE")
           fi
+          if [[ -n "${MICROSTRUCTURE_EVIDENCE:-}" ]]; then
+            evidence_args+=(--evidence "$MICROSTRUCTURE_EVIDENCE")
+          fi
           if [[ -n "${RELATIONSHIP_EVIDENCE:-}" ]]; then
             evidence_args+=(--evidence "$RELATIONSHIP_EVIDENCE")
           fi
@@ -457,6 +516,10 @@ jobs:
           from aurora.research.openap_181.analyst_batch import (
               ANALYST_BLOCKERS,
               ANALYST_SIGNALS,
+          )
+          from aurora.research.openap_181.microstructure_batch import (
+              MICROSTRUCTURE_BLOCKERS,
+              MICROSTRUCTURE_SIGNALS,
           )
           from aurora.research.openap_181.relationship_batch import (
               RELATIONSHIP_BLOCKERS,
@@ -521,6 +584,9 @@ jobs:
           short_interest_evidence_present = bool(os.environ.get("SHORT_INTEREST_EVIDENCE", ""))
           options_evidence_present = bool(os.environ.get("OPTIONS_EVIDENCE", ""))
           analyst_evidence_present = bool(os.environ.get("ANALYST_EVIDENCE", ""))
+          microstructure_evidence_present = bool(
+              os.environ.get("MICROSTRUCTURE_EVIDENCE", "")
+          )
           relationship_evidence_present = bool(
               os.environ.get("RELATIONSHIP_EVIDENCE", "")
           )
@@ -535,6 +601,7 @@ jobs:
               "dVolCall", "dVolPut", "OptionVolume1", "OptionVolume2",
           }
           analyst_signals = set(ANALYST_SIGNALS)
+          microstructure_signals = set(MICROSTRUCTURE_SIGNALS)
           relationship_signals = set(RELATIONSHIP_SIGNALS)
           expected_blocked_signals = set(
               resolution.loc[documentary, "signal"].astype(str)
@@ -551,6 +618,8 @@ jobs:
               expected_blocked_signals.update(option_signals)
           if analyst_evidence_present:
               expected_blocked_signals.update(analyst_signals)
+          if microstructure_evidence_present:
+              expected_blocked_signals.update(microstructure_signals)
           if relationship_evidence_present:
               expected_blocked_signals.update(relationship_signals)
           blocked = implementation.loc[implementation["strict_gate_result"].eq("blocked")]
@@ -570,6 +639,8 @@ jobs:
               externally_evidenced.update(option_signals)
           if analyst_evidence_present:
               externally_evidenced.update(analyst_signals)
+          if microstructure_evidence_present:
+              externally_evidenced.update(microstructure_signals)
           if relationship_evidence_present:
               externally_evidenced.update(relationship_signals)
           generated = blocked.loc[~blocked["signal"].isin(externally_evidenced)]
@@ -672,6 +743,27 @@ jobs:
               assert analyst_status["implementation_commit"].eq(
                   os.environ["ANALYST_EVIDENCE_COMMIT"]
               ).all()
+          microstructure_status = implementation.loc[
+              implementation["signal"].isin(microstructure_signals)
+          ]
+          if microstructure_evidence_present:
+              assert len(microstructure_status) == microstructure_status["signal"].nunique() == 5
+              assert microstructure_status["formula_implemented"].astype(str).str.lower().eq("true").all()
+              assert microstructure_status["strict_gate_result"].eq("blocked").all()
+              assert microstructure_status["blocking_reason"].str.startswith(
+                  "microstructure_source_blocked:"
+              ).all()
+              assert microstructure_status["blocking_reason"].nunique() == 5
+              assert microstructure_status.set_index("signal")["blocking_reason"].to_dict() == MICROSTRUCTURE_BLOCKERS
+              assert microstructure_status["evidence_run_url"].eq(
+                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['MICROSTRUCTURE_EVIDENCE_RUN_ID']}"
+              ).all()
+              assert microstructure_status["evidence_artifact"].eq(
+                  "openap-181-microstructure-source-probe-results"
+              ).all()
+              assert microstructure_status["implementation_commit"].eq(
+                  os.environ["MICROSTRUCTURE_EVIDENCE_COMMIT"]
+              ).all()
           relationship_status = implementation.loc[
               implementation["signal"].isin(relationship_signals)
           ]
@@ -696,13 +788,18 @@ jobs:
           market_status = implementation.loc[
               implementation["signal"].isin(TWELVE_DATA_MARKET_SIGNALS)
           ]
+          generic_market_status = market_status.loc[
+              ~market_status["signal"].isin(
+                  microstructure_signals if microstructure_evidence_present else set()
+              )
+          ]
           if credential_missing:
-              assert market_status["blocking_reason"].eq(
+              assert generic_market_status["blocking_reason"].eq(
                   "credential_missing:twelve_data_basic_api_key_not_configured"
               ).all()
-              assert market_status["strict_gate_result"].eq("blocked").all()
+              assert generic_market_status["strict_gate_result"].eq("blocked").all()
           else:
-              assert market_status["strict_gate_result"].eq("not_attempted").all()
+              assert generic_market_status["strict_gate_result"].eq("not_attempted").all()
           assert len(strict_inventory) == strict_inventory["signal"].nunique() == 31
           assert strict_inventory["eligibility_basis"].eq("preexisting_exact_31").all()
           for name in {
