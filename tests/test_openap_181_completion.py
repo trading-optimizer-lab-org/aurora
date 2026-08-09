@@ -1339,3 +1339,41 @@ def test_operating_accounting_source_matrix_uses_exact_routes_and_blockers():
         "operating_accounting_source_blocked:"
     ).all()
     assert attempted.groupby("signal")["blocking_reason"].nunique().eq(1).all()
+
+
+def test_accounting_change_source_matrix_uses_exact_routes_and_blockers():
+    from aurora.research.openap_181.accounting_change_batch import (
+        ACCOUNTING_CHANGE_BLOCKERS,
+        ACCOUNTING_CHANGE_SIGNALS,
+    )
+
+    manifest = build_completion_manifest(_signal_doc())
+    formulas = _formula_inventory_for_source_research(manifest)
+    formulas.loc[
+        formulas["signal"].isin(ACCOUNTING_CHANGE_SIGNALS), "status"
+    ] = "resolved"
+    resolution = build_signal_resolution(manifest, formulas).set_index("signal")
+    matrix = build_signal_source_matrix(
+        manifest, formulas, resolution.reset_index()
+    )
+
+    assert resolution.loc[
+        list(ACCOUNTING_CHANGE_SIGNALS), "remaining_blocker"
+    ].to_dict() == ACCOUNTING_CHANGE_BLOCKERS
+    routes = {
+        signal: set(matrix.loc[matrix["signal"].eq(signal), "source_name"])
+        for signal in ACCOUNTING_CHANGE_SIGNALS
+    }
+    for signal in ACCOUNTING_CHANGE_SIGNALS:
+        assert any("OpenFIGI" in source for source in routes[signal])
+        assert any("SEC" in source for source in routes[signal])
+        assert any("Compustat" in source for source in routes[signal])
+        assert any("CRSP" in source for source in routes[signal])
+        assert not any("Tiingo" in source for source in routes[signal])
+        assert not any("Twelve Data" in source for source in routes[signal])
+
+    attempted = matrix.loc[matrix["signal"].isin(ACCOUNTING_CHANGE_SIGNALS)]
+    assert attempted["blocking_reason"].str.startswith(
+        "accounting_change_source_blocked:"
+    ).all()
+    assert attempted.groupby("signal")["blocking_reason"].nunique().eq(1).all()
