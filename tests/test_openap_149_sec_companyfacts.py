@@ -737,3 +737,58 @@ def test_companyfacts_roaq_uses_quarterly_income_over_lagged_assets() -> None:
     assert pd.Timestamp(values.iloc[0]["available_at"]) <= pd.Timestamp(
         values.iloc[0]["retrieved_at"]
     )
+
+
+def test_companyfacts_order_backlog_uses_average_assets_and_ratio_change() -> None:
+    fact_rows: list[dict[str, object]] = []
+    for year, assets, backlog in (
+        (2023, 80_000_000.0, 18_000_000.0),
+        (2024, 100_000_000.0, 18_000_000.0),
+        (2025, 200_000_000.0, 30_000_000.0),
+    ):
+        accepted = f"{year + 1}-02-15T15:00:00Z"
+        for tag, value in (("Assets", assets), ("OrderBacklog", backlog)):
+            fact_rows.append(
+                {
+                    "cik": 1,
+                    "entity_name": "Example Corp",
+                    "taxonomy": "us-gaap",
+                    "tag": tag,
+                    "unit": "USD",
+                    "value": value,
+                    "period_start": "",
+                    "period_end": f"{year}-12-31",
+                    "fy": year,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": accepted[:10],
+                    "accession_number": f"fy{year}",
+                    "frame": "",
+                    "available_at": accepted,
+                    "available_at_quality": "sec_acceptance_timestamp",
+                    "source": (
+                        "https://data.sec.gov/api/xbrl/companyfacts/"
+                        "CIK0000000001.json"
+                    ),
+                    "source_mode": "sec_official_api",
+                }
+            )
+
+    values = _module().calculate_companyfacts_order_backlog_current(
+        pd.DataFrame(fact_rows),
+        _status(),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    indexed = values.set_index("signal")
+    assert set(indexed.index) == {"OrderBacklog", "OrderBacklogChg"}
+    assert indexed.loc["OrderBacklog", "value"] == pytest.approx(0.2)
+    assert indexed.loc["OrderBacklogChg", "value"] == pytest.approx(0.0)
+    assert indexed.loc["OrderBacklog", "formula_id"] == (
+        "openap_orderbacklog_sec_companyfacts_current_proxy"
+    )
+    assert indexed.loc["OrderBacklogChg", "formula_id"] == (
+        "openap_orderbacklogchg_sec_companyfacts_current_proxy"
+    )
+    assert values["fidelity_class"].eq("unvalidated_proxy").all()
