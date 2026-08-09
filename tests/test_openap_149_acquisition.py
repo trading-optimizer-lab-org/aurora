@@ -1,0 +1,201 @@
+from __future__ import annotations
+
+from importlib import import_module
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+ROUTE_MATRIX = ROOT / "docs" / "OPENAP_181_CURRENT_FREE_SOURCE_REAUDIT_2026-08-09.csv"
+
+
+def _module():
+    return import_module("aurora.research.openap_181.acquisition_149")
+
+
+def _routes() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "signal": "Cash",
+                "category": "Accounting",
+                "current_free_data_feasibility": "free_route_documented",
+                "current_route_quality": "reconstructed_current_not_compustat_exact",
+                "primary_free_sources": "sec_edgar|sec_financial_statement_datasets",
+                "current_remaining_blocker": "implementation_pending",
+                "strict_score_eligible": False,
+                "official_formula_url": "https://example.test/Cash.py",
+                "source_checked_at": "2026-08-09",
+            },
+            {
+                "signal": "Mom6m",
+                "category": "Price",
+                "current_free_data_feasibility": "free_route_documented",
+                "current_route_quality": "market_data_equivalent_or_proxy",
+                "primary_free_sources": "twelve_data_basic|kenneth_french_factors",
+                "current_remaining_blocker": "implementation_pending",
+                "strict_score_eligible": False,
+                "official_formula_url": "https://example.test/Mom6m.py",
+                "source_checked_at": "2026-08-09",
+            },
+            {
+                "signal": "AgeIPO",
+                "category": "Event",
+                "current_free_data_feasibility": "free_route_documented",
+                "current_route_quality": "filing_event_reconstruction",
+                "primary_free_sources": "sec_edgar|field_ritter_ipo",
+                "current_remaining_blocker": "implementation_pending",
+                "strict_score_eligible": False,
+                "official_formula_url": "https://example.test/AgeIPO.py",
+                "source_checked_at": "2026-08-09",
+            },
+        ]
+    )
+
+
+def _current_rows() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "security_id": "cik:1",
+                "ticker": "AAA",
+                "cik": "0000000001",
+                "signal": "Cash",
+                "formation_at": "2026-08-09",
+                "period_end": "2025-12-31",
+                "filed_at": "2026-02-01",
+                "available_at": "2026-02-01",
+                "retrieved_at": "2026-08-09T10:00:00Z",
+                "value": 0.25,
+                "fidelity_class": "reconstructed",
+                "current_usable": True,
+                "source_id": "sec_edgar",
+                "source_url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000000001.json",
+                "coverage_flag": "covered",
+                "formula_id": "cash_over_assets",
+                "openap_script": "Signals/pyCode/Predictors/Cash.py",
+                "natural_frequency": "annual",
+                "staleness_days": 189,
+                "is_current_for_natural_frequency": True,
+                "observation_count": 2,
+                "reason_if_missing": "",
+                "caveat": "SEC reconstruction",
+            },
+            {
+                "security_id": "cik:2",
+                "ticker": "BBB",
+                "cik": "0000000002",
+                "signal": "Cash",
+                "formation_at": "2026-08-09",
+                "period_end": "2025-12-31",
+                "filed_at": "2026-02-03",
+                "available_at": "2026-02-03",
+                "retrieved_at": "2026-08-09T10:00:00Z",
+                "value": 0.5,
+                "fidelity_class": "reconstructed",
+                "current_usable": True,
+                "source_id": "sec_edgar",
+                "source_url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000000002.json",
+                "coverage_flag": "covered",
+                "formula_id": "cash_over_assets",
+                "openap_script": "Signals/pyCode/Predictors/Cash.py",
+                "natural_frequency": "annual",
+                "staleness_days": 187,
+                "is_current_for_natural_frequency": True,
+                "observation_count": 2,
+                "reason_if_missing": "",
+                "caveat": "SEC reconstruction",
+            },
+            {
+                "security_id": "cik:1",
+                "ticker": "AAA",
+                "cik": "0000000001",
+                "signal": "Mom6m",
+                "formation_at": "2026-08-09",
+                "period_end": "2026-07-31",
+                "filed_at": "",
+                "available_at": "2026-08-01",
+                "retrieved_at": "2026-08-09T10:00:00Z",
+                "value": 0.1,
+                "fidelity_class": "reconstructed",
+                "current_usable": True,
+                "source_id": "yahoo_public",
+                "source_url": "https://query1.finance.yahoo.com",
+                "coverage_flag": "covered",
+                "formula_id": "return_months_7_to_1",
+                "openap_script": "Signals/pyCode/Predictors/Mom6m.py",
+                "natural_frequency": "monthly",
+                "staleness_days": 8,
+                "is_current_for_natural_frequency": True,
+                "observation_count": 7,
+                "reason_if_missing": "",
+                "caveat": "",
+            },
+        ]
+    )
+
+
+def test_authoritative_route_matrix_contains_exactly_149_unique_free_routes() -> None:
+    routes = _module().load_target_routes(ROUTE_MATRIX)
+
+    assert len(routes) == routes["signal"].nunique() == 149
+    assert routes["current_free_data_feasibility"].eq("free_route_documented").all()
+
+
+def test_acquisition_matrix_counts_only_approved_causal_current_values() -> None:
+    module = _module()
+    formula_inventory = pd.DataFrame(
+        [
+            {"signal": "Cash", "formula_sha256": "a" * 64},
+            {"signal": "Mom6m", "formula_sha256": "b" * 64},
+            {"signal": "AgeIPO", "formula_sha256": "c" * 64},
+        ]
+    )
+
+    matrix, values = module.build_acquisition_matrix(
+        _routes(),
+        _current_rows(),
+        formula_inventory=formula_inventory,
+        evidence_run_url="https://github.com/org/repo/actions/runs/123",
+        evidence_artifact="openap-93-max-free-full-results",
+    )
+
+    assert matrix["signal"].tolist() == ["AgeIPO", "Cash", "Mom6m"]
+    cash = matrix.set_index("signal").loc["Cash"]
+    assert bool(cash["data_acquired"])
+    assert bool(cash["current_value_calculated"])
+    assert cash["current_value_count"] == 2
+    assert cash["coverage"] == pytest.approx(1.0)
+    assert cash["fidelity"] == "reconstructed"
+    assert cash["status"] == "current_signal_computed"
+    assert not bool(cash["strict_score_eligible"])
+    assert cash["official_formula_sha256"] == "a" * 64
+
+    mom = matrix.set_index("signal").loc["Mom6m"]
+    assert not bool(mom["data_acquired"])
+    assert not bool(mom["current_value_calculated"])
+    assert mom["status"] == "blocked_fidelity"
+    assert "yahoo_public" in mom["remaining_blocker"]
+
+    age = matrix.set_index("signal").loc["AgeIPO"]
+    assert age["status"] == "blocked_source_failure"
+    assert not bool(age["current_value_calculated"])
+
+    assert set(values["signal"]) == {"Cash"}
+    assert values["value"].tolist() == [0.25, 0.5]
+
+
+def test_acquisition_matrix_rejects_lookahead_and_conflicting_duplicates() -> None:
+    module = _module()
+    future = _current_rows().iloc[[0]].copy()
+    future.loc[:, "available_at"] = "2026-08-10"
+    with pytest.raises(module.AcquisitionContractError, match="lookahead"):
+        module.build_acquisition_matrix(_routes().iloc[[0]], future)
+
+    duplicate = pd.concat([_current_rows().iloc[[0]], _current_rows().iloc[[0]]])
+    duplicate.iloc[1, duplicate.columns.get_loc("value")] = 0.75
+    with pytest.raises(module.AcquisitionContractError, match="duplicate"):
+        module.build_acquisition_matrix(_routes().iloc[[0]], duplicate)
+

@@ -1,0 +1,133 @@
+name: OpenAP 149 Acquisition Extract
+
+on:
+  push:
+    branches:
+      - codex/openap-proxy44-validation
+    paths:
+      - .github/workflows/openap-149-acquisition-extract.yml
+      - docs/OPENAP_181_CURRENT_FREE_SOURCE_REAUDIT_2026-08-09.csv
+      - research/openap_181/acquisition_149.py
+      - scripts/run_openap_149_acquisition_extract.py
+      - tests/test_openap_149_acquisition.py
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision to execute
+        required: true
+        type: string
+      current_values_run_id:
+        description: Successful run containing openap-93-max-free-full-results
+        required: true
+        default: "30995267332"
+        type: string
+      formula_evidence_run_id:
+        description: Successful OpenAP 181 completion-audit run
+        required: true
+        default: "31331835149"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-149-acquisition-extract
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and focused tests
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Verify acquisition contract
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
+          python -m pytest tests/test_openap_149_acquisition.py -q --tb=short
+
+  extract:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      OUTPUT_ARTIFACT: openap-149-acquisition-extract-results
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Download verified current-value evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-93-max-free-full-results
+          path: inputs/current_values
+          run-id: ${{ inputs.current_values_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download pinned official formula evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-completion-audit-results
+          path: inputs/formulas
+          run-id: ${{ inputs.formula_evidence_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Extract approved current values for the 149 routes
+        run: |
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          python scripts/run_openap_149_acquisition_extract.py \
+            --route-matrix docs/OPENAP_181_CURRENT_FREE_SOURCE_REAUDIT_2026-08-09.csv \
+            --current-values-root inputs/current_values \
+            --formula-evidence-root inputs/formulas \
+            --output-dir outputs/openap_149_acquisition \
+            --evidence-run-url "$run_url" \
+            --evidence-artifact "$OUTPUT_ARTIFACT"
+      - name: Verify 149-row fail-closed result
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          root = "outputs/openap_149_acquisition"
+          matrix = pd.read_csv(f"{root}/OPENAP_149_ACQUISITION_MATRIX.csv")
+          values = pd.read_csv(f"{root}/openap_149_current_values.csv")
+          summary = json.load(open(f"{root}/openap_149_acquisition_summary.json", encoding="utf-8"))
+          assert len(matrix) == matrix["signal"].nunique() == 149
+          assert summary["target_signals"] == 149
+          assert summary["data_acquired"] == int(matrix["data_acquired"].sum())
+          assert summary["current_values_calculated"] == int(matrix["current_value_calculated"].sum())
+          assert summary["strict_score_eligible"] == int(matrix["strict_score_eligible"].sum())
+          assert not matrix["strict_score_eligible"].astype(str).str.lower().eq("true").any()
+          if not values.empty:
+              assert values["signal"].isin(matrix.loc[matrix["current_value_calculated"], "signal"]).all()
+              assert pd.to_datetime(values["available_at"]).le(pd.to_datetime(values["formation_at"])).all()
+          PY
+      - name: Upload acquisition evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-149-acquisition-extract-results
+          path: outputs/openap_149_acquisition/
+          if-no-files-found: error
+          retention-days: 90
