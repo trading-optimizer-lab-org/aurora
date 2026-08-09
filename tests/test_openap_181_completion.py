@@ -60,6 +60,16 @@ def _signal_doc() -> pd.DataFrame:
     )
 
 
+def test_completion_reader_rejects_empty_path_resolved_as_directory(
+    tmp_path: Path,
+) -> None:
+    script = Path(__file__).parents[1] / "scripts" / "run_openap_181_completion.py"
+    namespace = runpy.run_path(str(script))
+
+    with pytest.raises(ValueError, match="input must be a regular file"):
+        namespace["_read_frame"](tmp_path)
+
+
 def test_canonical_partition_is_31_plus_181_equals_212():
     manifest = build_completion_manifest(_signal_doc())
     assert len(CURRENT_EXACT_31) == 31
