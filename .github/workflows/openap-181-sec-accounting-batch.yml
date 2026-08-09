@@ -21,6 +21,9 @@ on:
       formation_end:
         required: true
         type: string
+    secrets:
+      TWELVE_DATA_API_KEY:
+        required: false
   workflow_dispatch:
     inputs:
       source_sha:
@@ -73,6 +76,7 @@ jobs:
       FORMATION_START: ${{ inputs.formation_start }}
       FORMATION_END: ${{ inputs.formation_end }}
       EVIDENCE_ARTIFACT: openap-181-sec-accounting-validation
+      TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
     steps:
       - name: Checkout exact implementation revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -300,11 +304,16 @@ jobs:
             --manifest outputs/final/openap_181_completion_manifest.csv \
             --formula-inventory outputs/final/openap_181_formula_inventory.csv \
             --output-dir outputs/final
+          twelve_data_args=(--twelve-data-credential-check)
+          if [[ -n "${TWELVE_DATA_API_KEY:-}" ]]; then
+            twelve_data_args+=(--twelve-data-credential-available)
+          fi
           python scripts/run_openap_181_implementation_status.py \
             --manifest outputs/final/openap_181_completion_manifest.csv \
             --resolution outputs/final/signal_resolution_181.csv \
             --evidence outputs/sec_batch/sec_accounting_batch_evidence.csv \
             --documentary-blockers \
+            "${twelve_data_args[@]}" \
             --evidence-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --evidence-artifact "$EVIDENCE_ARTIFACT" \
             --implementation-commit "$SOURCE_SHA" \
@@ -340,8 +349,10 @@ jobs:
               ).all()
           assert attempted["strict_gate_result"].eq("blocked").all()
           assert not attempted["score_eligible"].astype(str).str.lower().eq("true").any()
-          assert status["strict_gate_result"].eq("blocked").sum() == 59
-          assert status["strict_gate_result"].eq("not_attempted").sum() == 122
+          credential_missing = not bool(os.environ.get("TWELVE_DATA_API_KEY", ""))
+          expected_market_blockers = 36 if credential_missing else 0
+          assert status["strict_gate_result"].eq("blocked").sum() == 59 + expected_market_blockers
+          assert status["strict_gate_result"].eq("not_attempted").sum() == 122 - expected_market_blockers
           assert len(strict_inventory) == 31
           assert strict_inventory["signal"].nunique() == 31
           required = {

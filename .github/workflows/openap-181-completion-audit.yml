@@ -32,6 +32,7 @@ jobs:
       GITHUB_ACTIONS: "true"
       SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
       CURRENT_SCORE_EVIDENCE_RUN_ID: ${{ inputs.current_score_run_id || (github.event_name == 'push' && '31270341796') || '' }}
+      TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
     steps:
       - name: Checkout exact implementation revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -93,10 +94,15 @@ jobs:
             --manifest outputs/openap_181_completion/openap_181_completion_manifest.csv \
             --formula-inventory outputs/openap_181_completion/openap_181_formula_inventory.csv \
             --output-dir outputs/openap_181_completion
+          twelve_data_args=(--twelve-data-credential-check)
+          if [[ -n "${TWELVE_DATA_API_KEY:-}" ]]; then
+            twelve_data_args+=(--twelve-data-credential-available)
+          fi
           python scripts/run_openap_181_implementation_status.py \
             --manifest outputs/openap_181_completion/openap_181_completion_manifest.csv \
             --resolution outputs/openap_181_completion/signal_resolution_181.csv \
             --documentary-blockers \
+            "${twelve_data_args[@]}" \
             --evidence-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --evidence-artifact openap-181-completion-audit-results \
             --implementation-commit "$SOURCE_SHA" \
@@ -105,6 +111,7 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
           import pandas as pd
           root = "outputs/openap_181_completion"
           manifest = pd.read_csv(f"{root}/openap_181_completion_manifest.csv")
@@ -155,21 +162,43 @@ jobs:
           documentary = resolution["final_research_classification"].isin(
               documentary_classes
           )
+          market = (
+              resolution["final_research_classification"].eq("multiple_sources_required")
+              & resolution["best_free_source_option"].str.contains(
+                  "twelve_data_basic", regex=False
+              )
+              & ~resolution["best_free_source_option"].str.contains(
+                  "sec_financial_statement_datasets", regex=False
+              )
+          )
+          credential_missing = not bool(os.environ.get("TWELVE_DATA_API_KEY", ""))
+          expected_market_blockers = 36 if credential_missing else 0
           assert documentary.sum() == 56
-          assert implementation["strict_gate_result"].eq("blocked").sum() == 56
-          assert implementation["strict_gate_result"].eq("not_attempted").sum() == 125
+          assert market.sum() == 36
+          assert implementation["strict_gate_result"].eq("blocked").sum() == 56 + expected_market_blockers
+          assert implementation["strict_gate_result"].eq("not_attempted").sum() == 125 - expected_market_blockers
           assert not implementation["score_eligible"].astype(str).str.lower().eq("true").any()
           assert implementation["blocking_reason"].fillna("").astype(str).str.strip().ne("").all()
           blocked = implementation.loc[implementation["strict_gate_result"].eq("blocked")]
           assert blocked["evidence_run_url"].eq(
-              f"https://github.com/{__import__('os').environ['GITHUB_REPOSITORY']}/actions/runs/{__import__('os').environ['GITHUB_RUN_ID']}"
+              f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
           ).all()
           assert blocked["evidence_artifact"].eq(
               "openap-181-completion-audit-results"
           ).all()
           assert blocked["implementation_commit"].eq(
-              __import__("os").environ["SOURCE_SHA"]
+              os.environ["SOURCE_SHA"]
           ).all()
+          market_status = implementation.loc[
+              implementation["signal"].isin(resolution.loc[market, "signal"])
+          ]
+          if credential_missing:
+              assert market_status["blocking_reason"].eq(
+                  "credential_missing:twelve_data_basic_api_key_not_configured"
+              ).all()
+              assert market_status["strict_gate_result"].eq("blocked").all()
+          else:
+              assert market_status["strict_gate_result"].eq("not_attempted").all()
           assert len(strict_inventory) == strict_inventory["signal"].nunique() == 31
           assert strict_inventory["eligibility_basis"].eq("preexisting_exact_31").all()
           for name in {

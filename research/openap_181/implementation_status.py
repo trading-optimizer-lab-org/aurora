@@ -209,6 +209,75 @@ def build_documentary_blocker_evidence(
     return pd.DataFrame(rows, columns=_EVIDENCE_COLUMNS)
 
 
+def build_twelve_data_credential_blocker_evidence(
+    resolution: pd.DataFrame,
+    *,
+    credential_available: bool,
+    evidence_run_url: str,
+    evidence_artifact: str,
+    implementation_commit: str,
+) -> pd.DataFrame:
+    """Block Twelve Data-dependent market routes when no API key is configured."""
+
+    if not isinstance(credential_available, bool):
+        raise ValueError("Twelve Data credential availability must be boolean")
+    clean = _clean_signal_column(resolution, label="resolution")
+    required = {
+        "best_free_source_option",
+        "final_research_classification",
+    }
+    missing = sorted(required - set(clean.columns))
+    if missing:
+        raise ValueError(f"Resolution is missing market route fields: {missing}")
+    if not str(evidence_run_url).startswith("https://"):
+        raise ValueError("Credential evidence requires an HTTPS run URL")
+    if not str(evidence_artifact).strip():
+        raise ValueError("Credential evidence requires a non-empty artifact")
+    if not _COMMIT_RE.fullmatch(str(implementation_commit)):
+        raise ValueError("Credential evidence requires a 40-character commit SHA")
+    if credential_available:
+        return pd.DataFrame(columns=_EVIDENCE_COLUMNS)
+
+    for column in (
+        "best_free_source_option",
+        "final_research_classification",
+    ):
+        clean[column] = clean[column].fillna("").astype(str).str.strip()
+    selected = clean.loc[
+        clean["final_research_classification"].eq("multiple_sources_required")
+        & clean["best_free_source_option"].str.contains(
+            "twelve_data_basic",
+            regex=False,
+        )
+        & ~clean["best_free_source_option"].str.contains(
+            "sec_financial_statement_datasets",
+            regex=False,
+        )
+    ].copy()
+    rows = [
+        {
+            "signal": signal,
+            "formula_implemented": False,
+            "data_pipeline_implemented": False,
+            "point_in_time_verified": False,
+            "identity_verified": False,
+            "coverage_measured": False,
+            "fidelity_measured": False,
+            "coverage_result": "not_measured",
+            "fidelity_result": "not_measured",
+            "strict_gate_result": "blocked",
+            "blocking_reason": (
+                "credential_missing:twelve_data_basic_api_key_not_configured"
+            ),
+            "evidence_run_url": str(evidence_run_url),
+            "evidence_artifact": str(evidence_artifact).strip(),
+            "implementation_commit": str(implementation_commit),
+        }
+        for signal in sorted(selected["signal"])
+    ]
+    return pd.DataFrame(rows, columns=_EVIDENCE_COLUMNS)
+
+
 def build_signal_implementation_status(
     manifest: pd.DataFrame,
     resolution: pd.DataFrame,
@@ -490,6 +559,7 @@ __all__ = [
     "build_documentary_blocker_evidence",
     "build_signal_implementation_status",
     "build_strict_score_inventory",
+    "build_twelve_data_credential_blocker_evidence",
     "render_implementation_validation_report",
     "write_implementation_outputs",
 ]
