@@ -74,6 +74,12 @@ _TAX_ALIAS_LOOKUP = {
     "IncomeTaxExpenseBenefit": ("total_tax", 0),
     "DeferredIncomeTaxExpenseBenefit": ("deferred_tax", 0),
 }
+_ROAQ_ALIAS_LOOKUP = {
+    "Assets": ("assets", 0),
+    "IncomeLossFromContinuingOperations": ("income", 0),
+    "NetIncomeLoss": ("income", 1),
+    "ProfitLoss": ("income", 2),
+}
 _OUTPUT_COLUMNS = (
     "security_id",
     "ticker",
@@ -1127,12 +1133,177 @@ def calculate_companyfacts_tax_current(
     ).reset_index(drop=True)
 
 
+def _roaq_quarterly_facts(
+    companyfacts: pd.DataFrame,
+    formation: pd.Timestamp,
+) -> pd.DataFrame:
+    required = _FACT_COLUMNS | {"taxonomy", "fy", "fp"}
+    _require_columns(companyfacts, required, "SEC CompanyFacts")
+    frame = companyfacts.copy()
+    frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce")
+    frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+    frame["period_start"] = _utc(frame["period_start"])
+    frame["period_end"] = _utc(frame["period_end"])
+    frame["filed_at"] = _utc(frame["filed"])
+    frame["available_at"] = _utc(frame["available_at"])
+    frame["concept"] = frame["tag"].map(
+        lambda tag: _ROAQ_ALIAS_LOOKUP.get(str(tag), (None, None))[0]
+    )
+    frame["alias_priority"] = frame["tag"].map(
+        lambda tag: _ROAQ_ALIAS_LOOKUP.get(str(tag), (None, None))[1]
+    )
+    duration = (frame["period_end"] - frame["period_start"]).dt.days
+    valid_assets = frame["concept"].eq("assets") & frame["form"].isin(
+        {"10-K", "10-K/A", "10-Q", "10-Q/A"}
+    )
+    valid_income = (
+        frame["concept"].eq("income")
+        & frame["form"].isin({"10-Q", "10-Q/A"})
+        & duration.between(70, 110)
+    )
+    frame = frame.loc[
+        frame["cik"].notna()
+        & frame["value"].notna()
+        & np.isfinite(frame["value"])
+        & frame["taxonomy"].fillna("").astype(str).str.lower().eq("us-gaap")
+        & frame["tag"].isin(_ROAQ_ALIAS_LOOKUP)
+        & frame["unit"].eq("USD")
+        & (valid_assets | valid_income)
+        & frame["period_end"].notna()
+        & frame["filed_at"].notna()
+        & frame["available_at"].notna()
+        & frame["available_at"].le(formation)
+    ].copy()
+    if frame.empty:
+        return frame
+    group = ["cik", "period_end", "concept"]
+    best_priority = frame.groupby(group)["alias_priority"].transform("min")
+    frame = frame.loc[frame["alias_priority"].eq(best_priority)].copy()
+    latest_available = frame.groupby(group)["available_at"].transform("max")
+    frame = frame.loc[frame["available_at"].eq(latest_available)].copy()
+    conflicts = frame.groupby(group)["value"].transform("nunique").gt(1)
+    frame = frame.loc[~conflicts].copy()
+    return frame.sort_values(group + ["filed_at", "accession_number"]).drop_duplicates(
+        group, keep="last"
+    )
+
+
+def _roaq_candidate(issuer_facts: pd.DataFrame) -> dict[str, Any] | None:
+    income_facts = issuer_facts.loc[issuer_facts["concept"].eq("income")].sort_values(
+        "period_end", ascending=False
+    )
+    assets = issuer_facts.loc[issuer_facts["concept"].eq("assets")].sort_values(
+        "period_end"
+    )
+    for income_row in income_facts.itertuples(index=False):
+        prior_assets = assets.loc[assets["period_end"].lt(income_row.period_end)].copy()
+        if prior_assets.empty:
+            continue
+        prior = prior_assets.iloc[-1]
+        gap_days = (pd.Timestamp(income_row.period_end) - prior["period_end"]).days
+        if not 60 <= gap_days <= 125:
+            continue
+        denominator = float(prior["value"])
+        income = float(income_row.value)
+        if denominator <= 0 or not np.isfinite(denominator) or not np.isfinite(income):
+            continue
+        value = income / denominator
+        if not np.isfinite(value):
+            continue
+        return {
+            "cik": int(issuer_facts["cik"].iloc[0]),
+            "value": float(value),
+            "period_end": income_row.period_end,
+            "filed_at": max(
+                pd.Timestamp(income_row.filed_at), pd.Timestamp(prior["filed_at"])
+            ),
+            "available_at": max(
+                pd.Timestamp(income_row.available_at),
+                pd.Timestamp(prior["available_at"]),
+            ),
+            "observation_count": 2,
+        }
+    return None
+
+
+def calculate_companyfacts_roaq_current(
+    companyfacts: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+) -> pd.DataFrame:
+    """Build a causal quarterly SEC proxy for OpenAP roaq."""
+
+    formation = pd.Timestamp(formation_at)
+    if formation.tzinfo is None:
+        formation = formation.tz_localize("UTC")
+    else:
+        formation = formation.tz_convert("UTC")
+    retrieved = pd.Timestamp(retrieved_at)
+    if retrieved.tzinfo is None:
+        retrieved = retrieved.tz_localize("UTC")
+    else:
+        retrieved = retrieved.tz_convert("UTC")
+    identity = build_companyfacts_identity(status)
+    facts = _roaq_quarterly_facts(companyfacts, formation)
+    candidates = [
+        candidate
+        for _, issuer_facts in facts.groupby("cik", sort=False)
+        if (candidate := _roaq_candidate(issuer_facts)) is not None
+    ]
+    candidate_frame = pd.DataFrame(candidates)
+    if candidate_frame.empty or identity.empty:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+    selected = candidate_frame.merge(
+        identity, on="cik", how="inner", validate="one_to_one"
+    )
+    rows: list[dict[str, Any]] = []
+    for row in selected.itertuples(index=False):
+        available_at = pd.Timestamp(row.available_at)
+        if available_at > formation or available_at > retrieved:
+            continue
+        rows.append(
+            {
+                "security_id": str(row.security_id),
+                "ticker": str(row.symbol),
+                "cik": f"{int(row.cik):010d}",
+                "signal": "roaq",
+                "formation_at": formation.isoformat(),
+                "period_end": pd.Timestamp(row.period_end).isoformat(),
+                "filed_at": pd.Timestamp(row.filed_at).isoformat(),
+                "available_at": available_at.isoformat(),
+                "retrieved_at": retrieved.isoformat(),
+                "value": float(row.value),
+                "fidelity_class": "unvalidated_proxy",
+                "current_usable": True,
+                "source_id": "sec_edgar",
+                "source_url": (
+                    "https://data.sec.gov/api/xbrl/companyfacts/"
+                    f"CIK{int(row.cik):010d}.json"
+                ),
+                "formula_id": "openap_roaq_sec_companyfacts_current_proxy",
+                "formula_sha256": "",
+                "observation_count": int(row.observation_count),
+                "reason_if_missing": "",
+                "caveat": (
+                    "SEC CompanyFacts discrete-quarter income over prior fiscal-"
+                    "quarter assets; not validated as Compustat/GVKEY-equivalent"
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
+        "security_id"
+    ).reset_index(drop=True)
+
+
 __all__ = [
     "build_companyfacts_identity",
     "calculate_companyfacts_accounting_current",
     "calculate_companyfacts_149_current",
     "calculate_companyfacts_rdability_current",
     "calculate_companyfacts_realestate_current",
+    "calculate_companyfacts_roaq_current",
     "calculate_companyfacts_tax_current",
     "calculate_sec_submission_current",
     "normalize_companyfacts_for_accounting",

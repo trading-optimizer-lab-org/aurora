@@ -16,6 +16,7 @@ from aurora.research.openap_181.sec_companyfacts_149 import (
     calculate_companyfacts_149_current,
     calculate_companyfacts_rdability_current,
     calculate_companyfacts_realestate_current,
+    calculate_companyfacts_roaq_current,
     calculate_companyfacts_tax_current,
     calculate_sec_submission_current,
 )
@@ -123,6 +124,12 @@ def main() -> int:
         formation_at=args.formation_at,
         retrieved_at=retrieved_at,
     )
+    roaq_values = calculate_companyfacts_roaq_current(
+        companyfacts,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
     values = pd.concat(
         [
             core_values,
@@ -131,6 +138,7 @@ def main() -> int:
             rdability_values,
             realestate_values,
             tax_values,
+            roaq_values,
         ],
         ignore_index=True,
     )
