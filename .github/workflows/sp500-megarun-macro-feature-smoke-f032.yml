@@ -1,6 +1,18 @@
 name: SP500 Megarun Macro Feature Smoke F032
 
 on:
+  push:
+    branches:
+      - codex/sp500-search-method-benchmark-short
+    paths:
+      - .github/workflows/sp500-megarun-macro-feature-smoke-f032.yml
+      - infra/sp500_megarun/feature_input_normalizers.py
+      - infra/sp500_megarun/macro_feature_engine.py
+      - infra/sp500_megarun/macro_feature_smoke.py
+      - scripts/run_sp500_megarun_macro_feature_smoke_f032.py
+      - tests/test_sp500_megarun_feature_input_normalizers.py
+      - tests/test_sp500_megarun_macro_feature_engine.py
+      - tests/test_sp500_megarun_macro_feature_smoke.py
   workflow_dispatch:
     inputs:
       source_run_id:
@@ -19,7 +31,7 @@ jobs:
     env:
       GITHUB_ACTIONS: "true"
       PYTHONUTF8: "1"
-      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id || '31326209627' }}
     steps:
       - name: Check out the exact smoke revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
