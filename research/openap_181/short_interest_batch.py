@@ -378,27 +378,27 @@ def run_short_interest_source_probe(
     schedule = extract_visible_text(
         schedule_payload.decode("utf-8", errors="replace")
     )
+    links = extract_finra_file_links(files_text)
     files_verified = (
-        "june 2021" in files_visible
-        and "otc" in files_visible
-        and ("exchange-listed" in files_visible or "exchange listed" in files_visible)
+        "equity short interest files" in files_visible
+        and bool(links)
+        and ("archive files" in files_visible or "otce.finra.org" in files_text.lower())
     )
     about_verified = (
         "five years" in about
         and "business day" in about
         and "most recent" in about
+        and ("exchange-listed" in about or "exchange listed" in about)
+        and ("over-the-counter" in about or "otc" in about)
     )
-    glossary_verified = all(
-        field in glossary
-        for field in ("current short", "previous short", "revision flag", "days to cover")
-    )
+    glossary_document_verified = "equity short interest data glossary" in glossary
     schedule_verified = all(
         field in schedule for field in ("settlement date", "due date", "publication date")
     )
     documentation_checks = {
         "files": files_verified,
         "about": about_verified,
-        "glossary": glossary_verified,
+        "glossary": glossary_document_verified,
         "schedule": schedule_verified,
     }
     failed_checks = [name for name, passed in documentation_checks.items() if not passed]
@@ -419,13 +419,15 @@ def run_short_interest_source_probe(
     if not formula_verified:
         raise ValueError("Pinned OpenAP short-interest formula source hash mismatch")
 
-    links = extract_finra_file_links(files_text)
     latest_url = _latest_link(links)
     public_payload, content_type = _fetch(latest_url)
     raw_target = download_dir / Path(urlparse(latest_url).path).name
     raw_target.write_bytes(public_payload)
     rows = parse_finra_short_interest_text(_decode_public_file(public_payload))
     metrics = summarize_finra_short_interest_rows([rows])
+    glossary_verified = glossary_document_verified and set(_REQUIRED_COLUMNS).issubset(
+        rows.columns
+    )
     summary = {
         "formula_sources_verified": True,
         "finra_files_page_verified": files_verified,
