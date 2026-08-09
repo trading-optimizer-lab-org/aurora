@@ -497,6 +497,85 @@ def test_implementation_status_requires_every_gate_and_complete_evidence():
     assert approved.loc["Cash", "blocking_reason"] == "none"
 
 
+def test_documentary_blockers_create_evidence_without_promoting_plausible_routes():
+    module = _implementation_status_module()
+    manifest, resolution = _implementation_inputs()
+
+    evidence = module.build_documentary_blocker_evidence(
+        resolution,
+        evidence_run_url="https://github.com/example/aurora/actions/runs/8",
+        evidence_artifact="openap-181-completion-audit-results",
+        implementation_commit="2" * 40,
+    )
+    status = module.build_signal_implementation_status(
+        manifest,
+        resolution,
+        evidence,
+    )
+
+    assert len(evidence) == evidence["signal"].nunique() == 56
+    assert set(
+        evidence["blocking_reason"].str.split(":", n=1).str[0]
+    ) == {
+        "formula_ambiguous",
+        "historical_point_in_time_missing",
+        "identifier_bridge_missing",
+        "no_free_authorized_source",
+        "proxy_only",
+        "source_access_unverified",
+    }
+    assert evidence["strict_gate_result"].eq("blocked").all()
+    assert not evidence["data_pipeline_implemented"].any()
+    assert status["strict_gate_result"].eq("blocked").sum() == 56
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 125
+    assert not status["score_eligible"].any()
+    plausible = status.loc[status["signal"].eq("Cash")].iloc[0]
+    assert plausible["strict_gate_result"] == "not_attempted"
+
+
+def test_implementation_cli_attaches_documentary_blocker_evidence(
+    tmp_path,
+    monkeypatch,
+):
+    manifest, resolution = _implementation_inputs()
+    manifest_path = tmp_path / "manifest.csv"
+    resolution_path = tmp_path / "resolution.csv"
+    output = tmp_path / "outputs"
+    manifest.to_csv(manifest_path, index=False)
+    resolution.to_csv(resolution_path, index=False)
+    script = Path(__file__).parents[1] / "scripts" / "run_openap_181_implementation_status.py"
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--manifest",
+            str(manifest_path),
+            "--resolution",
+            str(resolution_path),
+            "--output-dir",
+            str(output),
+            "--documentary-blockers",
+            "--evidence-run-url",
+            "https://github.com/example/aurora/actions/runs/8",
+            "--evidence-artifact",
+            "openap-181-completion-audit-results",
+            "--implementation-commit",
+            "2" * 40,
+        ],
+    )
+
+    with pytest.raises(SystemExit) as result:
+        runpy.run_path(str(script), run_name="__main__")
+
+    assert result.value.code == 0
+    status = pd.read_csv(output / "signal_implementation_status_181.csv")
+    assert status["strict_gate_result"].eq("blocked").sum() == 56
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 125
+    assert not status["score_eligible"].any()
+
+
 def test_strict_inventory_starts_at_31_and_only_accepts_fully_gated_signals():
     module = _implementation_status_module()
     manifest, resolution = _implementation_inputs()
