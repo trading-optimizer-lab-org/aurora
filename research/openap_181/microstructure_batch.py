@@ -49,7 +49,7 @@ OPENAP_FORMULA_FILES: dict[str, dict[str, str]] = {
     "BidAskSpread_prep": {
         "path": "Signals/pyCode/PrepScripts/corwin_schultz_edit.sas",
         # The live GitHub probe reports the actual digest if this pin ever drifts.
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "sha256": "551fdc4e58104e0a2180032d7b534e979951474f2f4259b1e897f6dd3d5847f0",
     },
     "ProbInformedTrading": {
         "path": "Signals/pyCode/Predictors/ProbInformedTrading.py",

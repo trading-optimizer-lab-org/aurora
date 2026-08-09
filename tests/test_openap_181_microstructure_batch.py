@@ -97,6 +97,9 @@ def test_microstructure_universe_formulas_and_requirements_are_frozen() -> None:
     assert module.OPENAP_FORMULA_FILES["BidAskSpread_prep"]["path"].endswith(
         "PrepScripts/corwin_schultz_edit.sas"
     )
+    assert module.OPENAP_FORMULA_FILES["BidAskSpread_prep"]["sha256"] == (
+        "551fdc4e58104e0a2180032d7b534e979951474f2f4259b1e897f6dd3d5847f0"
+    )
     assert "minimum 12 daily observations" in (
         module.MICROSTRUCTURE_FORMULA_REQUIREMENTS["BidAskSpread"]["formula"]
     )
