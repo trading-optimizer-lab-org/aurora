@@ -14,6 +14,7 @@ def test_sec_accounting_workflow_is_manual_bounded_pinned_and_fail_closed():
 
     assert "workflow_dispatch:" in text
     assert "workflow_call:" in text
+    assert "workflow_call:" in text
     assert "  push:" not in text
     assert "  pull_request:" not in text
     for required_input in {
@@ -154,6 +155,9 @@ def test_completion_audit_can_consume_patent_source_evidence():
     text = workflow.read_text(encoding="utf-8")
 
     assert "patent_evidence_run_id:" in text
+    assert "patent_probe:" in text
+    assert "uses: ./.github/workflows/openap-181-patent-source-probe.yml" in text
+    assert "needs: patent_probe" in text
     assert "PATENT_EVIDENCE_RUN_ID" in text
     assert "openap-181-patent-source-probe-results" in text
     assert "patent_batch_evidence.csv" in text
