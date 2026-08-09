@@ -233,6 +233,7 @@ def _validate_current_rows(frame: pd.DataFrame) -> pd.DataFrame:
             rows[column] = pd.NaT
         rows[column] = pd.to_datetime(rows[column], errors="coerce", utc=True)
     rows["value"] = pd.to_numeric(rows["value"], errors="coerce")
+    rows["_contract_invalid_reason"] = ""
     finite = rows["value"].notna() & np.isfinite(rows["value"])
     lookahead = (
         finite
@@ -243,22 +244,27 @@ def _validate_current_rows(frame: pd.DataFrame) -> pd.DataFrame:
     if lookahead.any():
         offenders = sorted(rows.loc[lookahead, "signal"].astype(str).unique())
         raise AcquisitionContractError(f"lookahead detected for signals: {offenders}")
-    pre_period = (
-        finite
-        & rows["available_at"].notna()
-        & rows["period_end"].notna()
-        & rows["available_at"].lt(rows["period_end"])
+    invalid_checks = (
+        (
+            finite
+            & rows["available_at"].notna()
+            & rows["period_end"].notna()
+            & rows["available_at"].lt(rows["period_end"]),
+            "available_at_precedes_effective_period",
+        ),
+        (
+            finite
+            & rows["available_at"].notna()
+            & rows["filed_at"].notna()
+            & rows["available_at"].lt(rows["filed_at"]),
+            "available_at_precedes_filing_date",
+        ),
     )
-    if pre_period.any():
-        raise AcquisitionContractError("available_at precedes the effective period")
-    pre_filing = (
-        finite
-        & rows["available_at"].notna()
-        & rows["filed_at"].notna()
-        & rows["available_at"].lt(rows["filed_at"])
-    )
-    if pre_filing.any():
-        raise AcquisitionContractError("available_at precedes filing date")
+    for mask, reason in invalid_checks:
+        existing = rows.loc[mask, "_contract_invalid_reason"]
+        rows.loc[mask, "_contract_invalid_reason"] = np.where(
+            existing.eq(""), reason, existing + "|" + reason
+        )
     key = ["security_id", "signal", "formation_at"]
     duplicate = rows.duplicated(key, keep=False)
     if duplicate.any():
@@ -334,8 +340,12 @@ def build_acquisition_matrix(
             index=part.index,
             dtype=bool,
         )
-        approved = part.loc[source_match].copy()
-        unapproved = part.loc[~source_match & part["value"].notna()].copy()
+        contract_valid = part["_contract_invalid_reason"].eq("")
+        approved = part.loc[source_match & contract_valid].copy()
+        invalid = part.loc[~contract_valid & part["value"].notna()].copy()
+        unapproved = part.loc[
+            ~source_match & contract_valid & part["value"].notna()
+        ].copy()
         observation_count = pd.to_numeric(
             approved.get("observation_count", pd.Series(index=approved.index, dtype=float)),
             errors="coerce",
@@ -351,7 +361,18 @@ def build_acquisition_matrix(
         if current_value_calculated:
             status = "current_signal_computed"
             blocker = "strict_validation_and_fidelity_gates_pending"
+            if not invalid.empty:
+                blocker += (
+                    f";quarantined_contract_rows={len(invalid)}:"
+                    + "|".join(
+                        sorted(set(invalid["_contract_invalid_reason"].astype(str)))
+                    )
+                )
             approved_parts.append(calculated)
+        elif not invalid.empty:
+            reasons = sorted(set(invalid["_contract_invalid_reason"].astype(str)))
+            status = "blocked_fidelity"
+            blocker = "evidence_contract_violation:" + "|".join(reasons)
         elif not unapproved.empty:
             bad_sources = sorted(
                 {
