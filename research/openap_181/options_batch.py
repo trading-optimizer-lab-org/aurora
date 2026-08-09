@@ -129,6 +129,20 @@ DOCUMENT_URLS = {
     "wrds": "https://wrds-www.wharton.upenn.edu/pages/grid-items/option-suite-wrds/",
 }
 
+DOCUMENT_GROUPS = {
+    "marketdata": ("marketdata_pricing", "marketdata_terms"),
+    "massive": ("massive_pricing", "massive_terms"),
+    "tradier_history": ("tradier_history",),
+    "tradier_rights": ("tradier_rights",),
+    "occ_data": ("occ_data",),
+    "occ_terms": ("occ_terms",),
+    "cboe_delayed": ("cboe_delayed",),
+    "cboe_volume": ("cboe_volume",),
+    "alpha_vantage": ("alpha_vantage",),
+    "optionmetrics": ("optionmetrics",),
+    "wrds": ("wrds",),
+}
+
 SOURCE_ASSESSMENTS = (
     {
         "source_id": "marketdata_options_free",
@@ -232,6 +246,8 @@ def _has_all(text: str, *tokens: str) -> bool:
 
 def evaluate_options_source_documents(
     documents: Mapping[str, str],
+    *,
+    access_errors: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Evaluate primary-source documentation without treating it as data coverage."""
 
@@ -251,6 +267,16 @@ def evaluate_options_source_documents(
     missing = required - set(documents)
     if missing:
         raise ValueError(f"Missing options source documents: {sorted(missing)}")
+    normalized_errors = {
+        str(name): str(error)
+        for name, error in (access_errors or {}).items()
+        if str(error).strip()
+    }
+    unknown_errors = set(normalized_errors) - required
+    if unknown_errors:
+        raise ValueError(
+            f"Unknown options source document access errors: {sorted(unknown_errors)}"
+        )
     text = {key: _visible_text(documents[key]) for key in required}
     checks = {
         "marketdata": (
@@ -306,9 +332,19 @@ def evaluate_options_source_documents(
             and "optionmetrics" in text["wrds"]
         ),
     }
+    access_blocked = sorted(
+        name for name, passed in checks.items() if not passed and name in normalized_errors
+    )
+    unresolved = sorted(
+        name for name, passed in checks.items() if not passed and name not in normalized_errors
+    )
     return {
         "document_checks": checks,
         "official_documents_verified": all(checks.values()),
+        "document_access_errors": normalized_errors,
+        "access_blocked_documents": access_blocked,
+        "unresolved_documents": unresolved,
+        "source_access_decision_complete": not unresolved,
         "marketdata_free_history_years": 1,
         "massive_free_history_years": 2,
         "occ_history_months": 24,
@@ -373,7 +409,7 @@ def build_options_batch_evidence(
 
     valid = (
         probe.get("formula_sources_verified") is True
-        and probe.get("official_documents_verified") is True
+        and probe.get("source_access_decision_complete") is True
         and probe.get("optionmetrics_commercial_benchmark_verified") is True
         and probe.get("exact_free_authorized_source_found") is False
         and probe.get("raw_market_data_downloaded") is False
@@ -448,11 +484,20 @@ def write_options_source_probe_outputs(
         ]
     ).to_csv(output_dir / "options_formula_requirements.csv", index=False)
     evidence.to_csv(output_dir / "options_batch_evidence.csv", index=False)
+    if probe.get("official_documents_verified") is True:
+        source_decision = "- All official source document checks passed."
+    else:
+        blocked = ", ".join(probe.get("access_blocked_documents", []))
+        source_decision = (
+            "- Official source access failures were recorded fail-closed: "
+            f"{blocked or 'none'}."
+        )
     report = "\n".join(
         (
             "# OpenAP options source probe",
             "",
             "- Nine pinned option formulas were verified by source hash.",
+            source_decision,
             "- No raw option market data were downloaded or retained.",
             "- Free routes are too short, omit exact IV/open-interest/surface fields, or are not authorized for this project.",
             "- OptionMetrics IvyDB US is the exact historical benchmark but requires a commercial subscription.",
@@ -508,30 +553,31 @@ def run_options_source_probe(
     if not formula_verified:
         raise ValueError("Pinned OpenAP options formula source hash mismatch")
 
-    fetched = {
-        name: _fetch(url).decode("utf-8", errors="replace")
-        for name, url in DOCUMENT_URLS.items()
-    }
-    documents = {
-        "marketdata": fetched["marketdata_pricing"] + " " + fetched["marketdata_terms"],
-        "massive": fetched["massive_pricing"] + " " + fetched["massive_terms"],
-        "tradier_history": fetched["tradier_history"],
-        "tradier_rights": fetched["tradier_rights"],
-        "occ_data": fetched["occ_data"],
-        "occ_terms": fetched["occ_terms"],
-        "cboe_delayed": fetched["cboe_delayed"],
-        "cboe_volume": fetched["cboe_volume"],
-        "alpha_vantage": fetched["alpha_vantage"],
-        "optionmetrics": fetched["optionmetrics"],
-        "wrds": fetched["wrds"],
-    }
-    summary = evaluate_options_source_documents(documents)
-    if not summary["official_documents_verified"]:
-        failed = [
-            name for name, passed in summary["document_checks"].items() if not passed
-        ]
+    documents: dict[str, str] = {}
+    access_errors: dict[str, str] = {}
+    for document_name, source_names in DOCUMENT_GROUPS.items():
+        payloads: list[str] = []
+        errors: list[str] = []
+        for source_name in source_names:
+            try:
+                payloads.append(
+                    _fetch(DOCUMENT_URLS[source_name]).decode(
+                        "utf-8", errors="replace"
+                    )
+                )
+            except RuntimeError as exc:
+                errors.append(f"{source_name}:{exc}")
+        documents[document_name] = " ".join(payloads)
+        if errors:
+            access_errors[document_name] = ";".join(errors)
+    summary = evaluate_options_source_documents(
+        documents,
+        access_errors=access_errors,
+    )
+    if not summary["source_access_decision_complete"]:
         raise ValueError(
-            "Official options documentation contract drifted: " + ",".join(failed)
+            "Official options documentation contract unresolved: "
+            + ",".join(summary["unresolved_documents"])
         )
     summary.update(
         {

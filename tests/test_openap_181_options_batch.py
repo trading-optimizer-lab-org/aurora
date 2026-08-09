@@ -159,6 +159,8 @@ def test_options_evidence_covers_all_nine_signals_without_promotion() -> None:
 def test_options_evidence_rejects_incomplete_or_promotable_probe() -> None:
     incomplete = _valid_probe()
     incomplete["official_documents_verified"] = False
+    incomplete["source_access_decision_complete"] = False
+    incomplete["unresolved_documents"] = ["occ_data"]
     with pytest.raises(ValueError, match="Invalid or incomplete options probe evidence"):
         build_options_batch_evidence(
             incomplete,

@@ -65,7 +65,8 @@ jobs:
           formulas = pd.read_csv(root / "options_formula_requirements.csv")
           sources = pd.read_csv(root / "options_source_assessment.csv")
           assert summary["formula_sources_verified"] is True
-          assert summary["official_documents_verified"] is True
+          assert summary["source_access_decision_complete"] is True
+          assert summary["unresolved_documents"] == []
           assert summary["optionmetrics_commercial_benchmark_verified"] is True
           assert summary["exact_free_authorized_source_found"] is False
           assert summary["raw_market_data_downloaded"] is False
