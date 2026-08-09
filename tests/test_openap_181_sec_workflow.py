@@ -70,3 +70,31 @@ def test_companyfacts_probe_workflow_is_bounded_pinned_and_evidence_only():
     assert "score_eligible" not in text
     assert "openap-181-sec-companyfacts-probe" in text
     assert "retention-days: 90" in text
+
+
+def test_official_sec_transport_probe_covers_hosted_runner_families_without_proxy():
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "openap-181-sec-official-transport-probe.yml"
+    )
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in text
+    assert "push:" in text
+    assert "codex/openap-proxy44-validation" in text
+    for runner in {"ubuntu-24.04", "windows-2025", "macos-15"}:
+        assert runner in text
+    assert "source_sha:" in text
+    assert "scripts/run_openap_181_sec_companyfacts_access.py" in text
+    assert "scripts/run_openap_181_sec_fsd_access.py" in text
+    assert 'CIKS: "320193"' in text
+    assert 'START_QUARTER: "2024q4"' in text
+    assert 'END_QUARTER: "2024q4"' in text
+    assert "sec_official_companyfacts_fair_access" in text
+    assert "sec_official_direct_fair_access" in text
+    assert "openap-181-sec-official-transport-probe-" in text
+    assert "retention-days: 90" in text
+    assert "r.jina.ai" not in text
+    assert "score_eligible" not in text
