@@ -30,6 +30,11 @@ on:
         required: false
         default: ""
         type: string
+      short_interest_evidence_run_id:
+        description: Optional official FINRA source probe providing per-signal blocker evidence
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: read
@@ -49,9 +54,18 @@ jobs:
       source_sha: ${{ inputs.source_sha || github.sha }}
     secrets: inherit
 
+  short_interest_probe:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.short_interest_evidence_run_id == '' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/openap-181-short-interest-source-probe.yml
+    with:
+      source_sha: ${{ inputs.source_sha || github.sha }}
+    secrets: inherit
+
   audit:
-    needs: patent_probe
-    if: ${{ always() && (needs.patent_probe.result == 'success' || needs.patent_probe.result == 'skipped') }}
+    needs: [patent_probe, short_interest_probe]
+    if: ${{ always() && (needs.patent_probe.result == 'success' || needs.patent_probe.result == 'skipped') && (needs.short_interest_probe.result == 'success' || needs.short_interest_probe.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -61,6 +75,7 @@ jobs:
       SEC_ACCOUNTING_EVIDENCE_RUN_ID: ${{ inputs.sec_accounting_evidence_run_id || (github.event_name == 'push' && '31307096969') || '' }}
       SEC_TRANSPORT_EVIDENCE_RUN_ID: ${{ inputs.sec_transport_evidence_run_id || '' }}
       PATENT_EVIDENCE_RUN_ID: ${{ inputs.patent_evidence_run_id || '' }}
+      SHORT_INTEREST_EVIDENCE_RUN_ID: ${{ inputs.short_interest_evidence_run_id || '' }}
       TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
     steps:
       - name: Checkout exact implementation revision
@@ -76,9 +91,9 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e . pytest
       - name: Compile and test completion contract
         run: |
-          python -m py_compile research/openap_181/completion.py research/openap_181/official_formulas.py research/openap_181/source_research.py research/openap_181/implementation_status.py research/openap_181/patent_batch.py research/openap_181/sec_accounting_batch.py research/openap_181/sec_companyfacts_access.py research/openap_181/sec_fsd_access.py research/openap_181/sec_fsd_inputs.py
-          python -m py_compile scripts/run_openap_181_completion.py scripts/fetch_openap_181_official_formulas.py scripts/run_openap_181_source_research.py scripts/run_openap_181_implementation_status.py scripts/run_openap_181_patent_source_probe.py scripts/run_openap_181_sec_accounting_batch.py scripts/run_openap_181_sec_accounting_validation.py scripts/run_openap_181_sec_companyfacts_access.py scripts/run_openap_181_sec_fsd_access.py scripts/run_openap_181_sec_fsd_inputs.py
-          python -m pytest tests/test_openap_181_completion.py tests/test_openap_181_patent_batch.py tests/test_openap_181_sec_accounting_batch.py tests/test_openap_181_sec_companyfacts_access.py tests/test_openap_181_sec_fsd_access.py tests/test_openap_181_sec_fsd_inputs.py tests/test_openap_181_sec_workflow.py tests/test_openap_93_max_free.py -q --tb=short
+          python -m py_compile research/openap_181/completion.py research/openap_181/official_formulas.py research/openap_181/source_research.py research/openap_181/implementation_status.py research/openap_181/patent_batch.py research/openap_181/short_interest_batch.py research/openap_181/sec_accounting_batch.py research/openap_181/sec_companyfacts_access.py research/openap_181/sec_fsd_access.py research/openap_181/sec_fsd_inputs.py
+          python -m py_compile scripts/run_openap_181_completion.py scripts/fetch_openap_181_official_formulas.py scripts/run_openap_181_source_research.py scripts/run_openap_181_implementation_status.py scripts/run_openap_181_patent_source_probe.py scripts/run_openap_181_short_interest_source_probe.py scripts/run_openap_181_sec_accounting_batch.py scripts/run_openap_181_sec_accounting_validation.py scripts/run_openap_181_sec_companyfacts_access.py scripts/run_openap_181_sec_fsd_access.py scripts/run_openap_181_sec_fsd_inputs.py
+          python -m pytest tests/test_openap_181_completion.py tests/test_openap_181_patent_batch.py tests/test_openap_181_short_interest_batch.py tests/test_openap_181_sec_accounting_batch.py tests/test_openap_181_sec_companyfacts_access.py tests/test_openap_181_sec_fsd_access.py tests/test_openap_181_sec_fsd_inputs.py tests/test_openap_181_sec_workflow.py tests/test_openap_93_max_free.py -q --tb=short
       - name: Download pinned official SignalDoc
         run: |
           mkdir -p inputs
@@ -165,6 +180,33 @@ jobs:
           if [[ -z "${PATENT_EVIDENCE_RUN_ID:-}" ]]; then
             echo "PATENT_EVIDENCE_RUN_ID=$GITHUB_RUN_ID" >> "$GITHUB_ENV"
           fi
+      - name: Download official short-interest source evidence
+        if: ${{ env.SHORT_INTEREST_EVIDENCE_RUN_ID != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-short-interest-source-probe-results
+          path: inputs/short_interest
+          run-id: ${{ env.SHORT_INTEREST_EVIDENCE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download in-run official short-interest source evidence
+        if: ${{ github.event_name == 'workflow_dispatch' && env.SHORT_INTEREST_EVIDENCE_RUN_ID == '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-short-interest-source-probe-results
+          path: inputs/short_interest
+      - name: Locate official short-interest source evidence
+        if: ${{ env.SHORT_INTEREST_EVIDENCE_RUN_ID != '' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          short_interest_evidence="$(find inputs/short_interest -name short_interest_batch_evidence.csv -type f -print -quit)"
+          short_interest_summary="$(find inputs/short_interest -name short_interest_source_probe.json -type f -print -quit)"
+          test -s "$short_interest_evidence"
+          test -s "$short_interest_summary"
+          grep -q '"listed_history_start": "2021-06-01"' "$short_interest_summary"
+          grep -q 'short_interest_source_partial:' "$short_interest_evidence"
+          echo "SHORT_INTEREST_EVIDENCE=$short_interest_evidence" >> "$GITHUB_ENV"
+          if [[ -z "${SHORT_INTEREST_EVIDENCE_RUN_ID:-}" ]]; then
+            echo "SHORT_INTEREST_EVIDENCE_RUN_ID=$GITHUB_RUN_ID" >> "$GITHUB_ENV"
+          fi
       - name: Build fail-closed 181 manifest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -196,6 +238,9 @@ jobs:
           fi
           if [[ -n "${PATENT_EVIDENCE:-}" ]]; then
             evidence_args+=(--evidence "$PATENT_EVIDENCE")
+          fi
+          if [[ -n "${SHORT_INTEREST_EVIDENCE:-}" ]]; then
+            evidence_args+=(--evidence "$SHORT_INTEREST_EVIDENCE")
           fi
           python scripts/run_openap_181_implementation_status.py \
             --manifest outputs/openap_181_completion/openap_181_completion_manifest.csv \
@@ -269,12 +314,14 @@ jobs:
           expected_market_blockers = 36 if credential_missing else 0
           sec_evidence_present = bool(os.environ.get("SEC_ACCOUNTING_EVIDENCE", ""))
           patent_evidence_present = bool(os.environ.get("PATENT_EVIDENCE", ""))
+          short_interest_evidence_present = bool(os.environ.get("SHORT_INTEREST_EVIDENCE", ""))
           expected_sec_blockers = 3 if sec_evidence_present else 0
           expected_patent_blockers = 2 if patent_evidence_present else 0
+          expected_short_interest_blockers = 3 if short_interest_evidence_present else 0
           assert documentary.sum() == 58
           assert len(TWELVE_DATA_MARKET_SIGNALS) == 36
           assert set(TWELVE_DATA_MARKET_SIGNALS).issubset(set(resolution["signal"]))
-          expected_blocked = 58 + expected_market_blockers + expected_sec_blockers + expected_patent_blockers
+          expected_blocked = 58 + expected_market_blockers + expected_sec_blockers + expected_patent_blockers + expected_short_interest_blockers
           assert implementation["strict_gate_result"].eq("blocked").sum() == expected_blocked
           assert implementation["strict_gate_result"].eq("not_attempted").sum() == 181 - expected_blocked
           assert not implementation["score_eligible"].astype(str).str.lower().eq("true").any()
@@ -282,9 +329,12 @@ jobs:
           blocked = implementation.loc[implementation["strict_gate_result"].eq("blocked")]
           sec_signals = {"Cash", "GP", "Investment"}
           patent_signals = {"CitationsRD", "PatentsRD"}
+          short_interest_signals = {"ShortInterest", "IO_ShortInterest", "Recomm_ShortInterest"}
           externally_evidenced = set(sec_signals)
           if patent_evidence_present:
               externally_evidenced.update(patent_signals)
+          if short_interest_evidence_present:
+              externally_evidenced.update(short_interest_signals)
           generated = blocked.loc[~blocked["signal"].isin(externally_evidenced)]
           assert generated["evidence_run_url"].eq(
               f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
@@ -325,6 +375,24 @@ jobs:
                   "openap-181-patent-source-probe-results"
               ).all()
               assert patent_status["implementation_commit"].eq(
+                  os.environ["SOURCE_SHA"]
+              ).all()
+          short_interest_status = implementation.loc[
+              implementation["signal"].isin(short_interest_signals)
+          ]
+          if short_interest_evidence_present:
+              assert short_interest_status["formula_implemented"].astype(str).str.lower().eq("true").all()
+              assert short_interest_status["strict_gate_result"].eq("blocked").all()
+              assert short_interest_status["blocking_reason"].str.startswith(
+                  "short_interest_source_partial:"
+              ).all()
+              assert short_interest_status["evidence_run_url"].eq(
+                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['SHORT_INTEREST_EVIDENCE_RUN_ID']}"
+              ).all()
+              assert short_interest_status["evidence_artifact"].eq(
+                  "openap-181-short-interest-source-probe-results"
+              ).all()
+              assert short_interest_status["implementation_commit"].eq(
                   os.environ["SOURCE_SHA"]
               ).all()
           market_status = implementation.loc[
