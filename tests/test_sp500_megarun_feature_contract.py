@@ -52,10 +52,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 101)]
+    ] == [f"F{index:03d}" for index in range(1, 111)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[100:]
+        for lane in feature_contract.lanes[110:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -182,6 +182,34 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "event_interaction",
     )
     assert all(lane.minimum_history >= 13 for lane in tail_macro_lanes)
+    fundamental_lanes = feature_contract.lanes[100:110]
+    assert fundamental_lanes[0].parameter_space["statistic"] == (
+        "news_seasonality",
+        "earnings_news",
+        "dividend_news",
+        "quarterly_cycle",
+    )
+    assert fundamental_lanes[2].parameter_space["statistic"] == (
+        "earnings_growth",
+        "dividend_growth",
+        "payout_change",
+        "decomposition",
+    )
+    assert "no margin claim" in fundamental_lanes[2].formula.casefold()
+    assert fundamental_lanes[3].required_datasets == ("D_GOYAL", "D_Z1")
+    assert fundamental_lanes[6].parameter_space["statistic"] == (
+        "recession_pressure",
+        "growth_state",
+        "labor_state",
+        "curve_state",
+    )
+    assert fundamental_lanes[9].parameter_space["statistic"] == (
+        "oil_gold_ratio",
+        "relative_momentum",
+        "inflation_impulse",
+        "shock_divergence",
+    )
+    assert all(lane.minimum_history >= 20 for lane in fundamental_lanes)
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:

@@ -62,6 +62,7 @@
     "F049": {"required_datasets":["D_Z1","D_FINRA_MARGIN","D_CFTC_LEGACY"],"fidelity":"proxy","replacement_note":"Public revised balance-sheet history delayed 13 months, margin and positioning form an aggregate-flow proxy; do not label it ETF flows or consolidated short interest."},
     "F081": {"required_datasets":["D_SPY","D_Z1","D_FINRA_MARGIN"],"fidelity":"proxy","replacement_note":"Use signed SPY dollar-volume pressure plus public aggregate fund and margin balances; neither true turnover nor sponsor share-count history is claimed."},
     "F084": {"required_datasets":["D_Z1","D_FINRA_MARGIN","D_CFTC_LEGACY"],"fidelity":"proxy","replacement_note":"Use public aggregate financing, fund balances and futures positioning with their historical release lags."},
+    "F103": {"required_datasets":["D_GOYAL","D_SHILLER"],"fidelity":"proxy","replacement_note":"Use conservatively lagged aggregate earnings, dividends and payout only; no aggregate margin or historical-vintage claim is made."},
     "F104": {"required_datasets":["D_GOYAL","D_Z1"],"fidelity":"proxy","replacement_note":"Use aggregate net equity issuance and public Z.1 transactions; buyback and insider components are omitted."},
     "F109": {"required_datasets":["D_Z1","D_EPU","D_CFTC_LEGACY","D_CBOE_VOL"],"fidelity":"proxy","replacement_note":"Compose public balance-sheet, uncertainty, positioning and volatility inputs; no analyst or retail survey is claimed."}
   },

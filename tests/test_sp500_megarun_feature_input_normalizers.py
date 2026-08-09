@@ -208,6 +208,27 @@ def test_cboe_panel_does_not_carry_a_close_beyond_five_source_rows() -> None:
     assert pd.isna(sixth_gap["vix_close"])
 
 
+def test_cboe_bundle_panel_splits_only_its_declared_native_sources() -> None:
+    api = _normalizer_api()
+    bundle = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2003-09-22", "2003-09-22"]),
+            "CLOSE": [21.0, np.nan],
+            "4": [np.nan, 20.0],
+            "Unnamed: 4": [np.nan, np.nan],
+            "resource_id": ["vix_from_2003", "vxo_1986_2003"],
+            "source_dataset": ["D_VIX", "D_VXO"],
+        }
+    )
+    sessions = pd.bdate_range("2003-09-22", "2003-09-24")
+
+    result = api.normalize_cboe_vol_bundle_panel(bundle, sessions=sessions)
+
+    assert result.loc[0, "date"] == pd.Timestamp("2003-09-23")
+    assert result.loc[0, "vix_close"] == pytest.approx(21.0)
+    assert result.loc[0, "vxo_close"] == pytest.approx(20.0)
+
+
 def test_policy_rate_panel_uses_only_the_official_effective_funds_series() -> None:
     api = _normalizer_api()
     frame = pd.DataFrame(
@@ -522,6 +543,67 @@ def test_philadelphia_realtime_growth_uses_only_values_in_each_vintage() -> None
     )
 
 
+def test_philadelphia_cycle_panel_combines_output_and_unemployment_vintages() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                [
+                    "2009-02-15",
+                    "2009-02-15",
+                    "2009-02-15",
+                    "2009-02-15",
+                    "2009-05-15",
+                    "2009-05-15",
+                    "2009-05-15",
+                    "2009-05-15",
+                ]
+            ),
+            "observation_date": pd.to_datetime(
+                [
+                    "2008-07-01",
+                    "2008-10-01",
+                    "2008-10-01",
+                    "2009-01-01",
+                    "2008-10-01",
+                    "2009-01-01",
+                    "2009-01-01",
+                    "2009-04-01",
+                ]
+            ),
+            "value": [100.0, 101.0, 5.0, 5.5, 102.0, 104.0, 5.6, 6.0],
+            "resource_id": [
+                "real_output_monthly_vintages",
+                "real_output_monthly_vintages",
+                "unemployment_quarterly_vintages",
+                "unemployment_quarterly_vintages",
+                "real_output_monthly_vintages",
+                "real_output_monthly_vintages",
+                "unemployment_quarterly_vintages",
+                "unemployment_quarterly_vintages",
+            ],
+        }
+    )
+    sessions = pd.bdate_range("2009-02-13", "2009-05-20")
+
+    result = api.normalize_philadelphia_realtime_cycle_panel(
+        frame, sessions=sessions
+    )
+
+    assert result["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2009-02-16",
+        "2009-05-18",
+    ]
+    assert result.loc[0, "realtime_output_growth"] == pytest.approx(
+        ((101.0 / 100.0) ** 4 - 1.0) * 100.0
+    )
+    assert result.loc[0, "realtime_unemployment"] == pytest.approx(5.5)
+    assert result.loc[0, "unemployment_change"] == pytest.approx(0.5)
+    assert result.loc[1, "realtime_unemployment"] == pytest.approx(6.0)
+    assert result.loc[1, "unemployment_change"] == pytest.approx(0.4)
+    assert result.loc[1, "observed_at"] == pd.Timestamp("2009-04-01")
+
+
 def test_macro_release_panel_assigns_first_and_second_release_dates() -> None:
     api = _normalizer_api()
     frame = pd.DataFrame(
@@ -611,6 +693,29 @@ def test_revised_valuation_inputs_wait_a_full_year_before_use() -> None:
     assert result.loc[0, "inverse_cape"] == pytest.approx(0.05)
     assert result.loc[0, "net_equity_issuance"] == pytest.approx(0.02)
     assert result.loc[0, "payout_ratio"] == pytest.approx(0.5)
+    assert result.loc[0, "aggregate_earnings"] == pytest.approx(10.0)
+    assert result.loc[0, "aggregate_dividends"] == pytest.approx(5.0)
+    assert result.loc[0, "market_index"] == pytest.approx(100.0)
+
+
+def test_goyal_issuance_panel_does_not_depend_on_shiller_rows() -> None:
+    api = _normalizer_api()
+    goyal = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2008-01-01", "2008-01-01"]),
+            "resource_id": ["predictor_data_original_2005", "predictor_data_updated"],
+            "ntis": [0.5, 0.02],
+        }
+    )
+    sessions = pd.bdate_range("2008-01-02", "2009-03-31")
+
+    result = api.normalize_lagged_goyal_issuance_panel(
+        goyal, sessions=sessions
+    )
+
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2008-01-01")
+    assert result.loc[0, "date"] == pd.Timestamp("2009-02-16")
+    assert result.loc[0, "net_equity_issuance"] == pytest.approx(0.02)
 
 
 def test_fx_panel_uses_frozen_daily_series_only_after_next_session() -> None:
@@ -758,6 +863,50 @@ def test_revised_z1_proxy_waits_full_year_and_margin_waits_two_months() -> None:
     assert z1.loc[0, "mutual_fund_equity_share"] == pytest.approx(0.5)
     assert margin.loc[0, "date"] == pd.Timestamp("2009-03-13")
     assert margin.loc[0, "margin_debit_to_credit"] == pytest.approx(200.0 / 150.0)
+
+
+def test_z1_corporate_issuance_waits_full_year_before_use() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2008-03-31", "2009-06-30")
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2008-03-31", "2008-03-31"]),
+            "series_id": ["FA103164105.Q", "UNRELATED.Q"],
+            "value": [125.0, 999.0],
+        }
+    )
+
+    result = api.normalize_z1_corporate_issuance_panel(
+        frame, sessions=sessions
+    )
+
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2008-03-31")
+    assert result.loc[0, "date"] == pd.Timestamp("2009-04-15")
+    assert result.loc[0, "corporate_equity_net_issuance"] == pytest.approx(125.0)
+
+
+def test_uncertainty_panel_waits_until_next_session() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-01-04", "2010-01-05"]),
+            "uncertainty_score": [0.2, 0.4],
+            "volatility_level": [20.0, 21.0],
+            "absolute_rate_change": [0.05, 0.08],
+        }
+    )
+
+    result = api.normalize_uncertainty_panel(frame, sessions=_sessions())
+
+    assert result["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2010-01-05",
+        "2010-01-06",
+    ]
+    assert result["uncertainty_score"].tolist() == [0.2, 0.4]
+    assert result["observed_at"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2010-01-04",
+        "2010-01-05",
+    ]
 
 
 def test_calendar_panel_is_known_on_each_session() -> None:

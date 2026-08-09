@@ -440,6 +440,36 @@ def normalize_financial_conditions_panel(
     )
 
 
+def normalize_uncertainty_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Expose the causal uncertainty composite only on the next session."""
+
+    uncertainty = _validated_dates(frame, dataset_id="D_EPU")
+    required = {
+        "uncertainty_score",
+        "volatility_level",
+        "absolute_rate_change",
+    }
+    missing = sorted(required - set(uncertainty.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"UNCERTAINTY_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    for column in required:
+        uncertainty[column] = pd.to_numeric(uncertainty[column], errors="coerce")
+    uncertainty = uncertainty.dropna(subset=list(required))
+    if uncertainty.empty:
+        raise FeatureInputNormalizerError("EMPTY_UNCERTAINTY_PANEL")
+    return _project_to_decision_session(
+        uncertainty,
+        policy="next_session",
+        sessions=sessions,
+    )
+
+
 def normalize_philadelphia_realtime_growth_panel(
     frame: pd.DataFrame,
     *,
@@ -497,6 +527,125 @@ def normalize_philadelphia_realtime_growth_panel(
         projected.pop("period_observed_at"), errors="raise"
     ).dt.normalize()
     return projected
+
+
+def _normalize_realtime_vintage_state(
+    frame: pd.DataFrame,
+    *,
+    resource_id: str,
+    value_names: tuple[str, ...],
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    selected = frame.loc[frame["resource_id"].astype(str).eq(resource_id)].copy()
+    rows: list[dict[str, object]] = []
+    for vintage_at, vintage in selected.groupby("date", sort=True):
+        history = (
+            vintage.loc[vintage["observation_date"].le(vintage_at)]
+            .sort_values("observation_date", kind="mergesort")
+            .drop_duplicates("observation_date", keep="last")
+        )
+        if len(history) < 2:
+            continue
+        previous, latest = history.iloc[-2], history.iloc[-1]
+        previous_value = float(previous["value"])
+        latest_value = float(latest["value"])
+        row: dict[str, object] = {
+            "date": vintage_at,
+            "period_observed_at": latest["observation_date"],
+        }
+        if "realtime_output_growth" in value_names:
+            if previous_value <= 0.0:
+                continue
+            row["realtime_output_growth"] = (
+                (latest_value / previous_value) ** 4 - 1.0
+            ) * 100.0
+        if "realtime_unemployment" in value_names:
+            row["realtime_unemployment"] = latest_value
+        if "unemployment_change" in value_names:
+            row["unemployment_change"] = latest_value - previous_value
+        rows.append(row)
+    if not rows:
+        raise FeatureInputNormalizerError(
+            f"EMPTY_PHILADELPHIA_REALTIME_STATE:{resource_id}"
+        )
+    projected = _project_to_decision_session(
+        pd.DataFrame(rows),
+        policy="next_session",
+        sessions=sessions,
+    )
+    projected["observed_at"] = pd.to_datetime(
+        projected.pop("period_observed_at"), errors="raise"
+    ).dt.normalize()
+    return projected
+
+
+def normalize_philadelphia_realtime_cycle_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Combine vintage-known output growth and unemployment state."""
+
+    realtime = _validated_dates(frame, dataset_id="D_PHILLY_RT")
+    required = {"observation_date", "value", "resource_id"}
+    missing = sorted(required - set(realtime.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"PHILADELPHIA_REALTIME_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    realtime["observation_date"] = pd.to_datetime(
+        realtime["observation_date"], errors="coerce"
+    ).dt.normalize()
+    realtime["value"] = pd.to_numeric(realtime["value"], errors="coerce")
+    realtime = realtime.dropna(subset=["observation_date", "value"])
+
+    output = _normalize_realtime_vintage_state(
+        realtime,
+        resource_id="real_output_monthly_vintages",
+        value_names=("realtime_output_growth",),
+        sessions=sessions,
+    ).rename(columns={"observed_at": "output_observed_at"})
+    unemployment = _normalize_realtime_vintage_state(
+        realtime,
+        resource_id="unemployment_quarterly_vintages",
+        value_names=("realtime_unemployment", "unemployment_change"),
+        sessions=sessions,
+    ).rename(columns={"observed_at": "unemployment_observed_at"})
+
+    dates = pd.DataFrame(
+        {
+            "date": pd.DatetimeIndex(
+                output["date"].tolist() + unemployment["date"].tolist()
+            ).unique().sort_values()
+        }
+    )
+    result = pd.merge_asof(
+        dates,
+        output.drop(columns="available_at").sort_values("date"),
+        on="date",
+        direction="backward",
+    )
+    result = pd.merge_asof(
+        result.sort_values("date"),
+        unemployment.drop(columns="available_at").sort_values("date"),
+        on="date",
+        direction="backward",
+    )
+    required_values = {
+        "realtime_output_growth",
+        "realtime_unemployment",
+        "unemployment_change",
+    }
+    result = result.dropna(subset=sorted(required_values))
+    if result.empty:
+        raise FeatureInputNormalizerError("EMPTY_PHILADELPHIA_REALTIME_CYCLE")
+    result["observed_at"] = result[
+        ["output_observed_at", "unemployment_observed_at"]
+    ].max(axis=1)
+    result["available_at"] = result["date"]
+    return result.drop(
+        columns=["output_observed_at", "unemployment_observed_at"]
+    ).reset_index(drop=True)
 
 
 def _release_target(period: pd.Series, *, frequency: str, release_number: int) -> pd.Series:
@@ -888,6 +1037,8 @@ def normalize_lagged_valuation_panel(
             "net_equity_issuance": selected["ntis"],
             "payout_ratio": selected["D12"] / earnings,
             "aggregate_earnings": selected["E12"],
+            "aggregate_dividends": selected["D12"],
+            "market_index": selected["Index"],
         }
     ).dropna()
     targets = panel["observed_at"] + pd.offsets.MonthBegin(13) + pd.Timedelta(days=14)
@@ -897,6 +1048,44 @@ def normalize_lagged_valuation_panel(
         raise FeatureInputNormalizerError("EMPTY_LAGGED_VALUATION_PANEL")
     panel["available_at"] = panel["date"]
     return panel.reset_index(drop=True)
+
+
+def normalize_lagged_goyal_issuance_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Expose Goyal aggregate net issuance after the full revision guard."""
+
+    goyal = _validated_dates(frame, dataset_id="D_GOYAL")
+    if "ntis" not in goyal:
+        raise FeatureInputNormalizerError("GOYAL_NTIS_COLUMN_MISSING")
+    if "resource_id" in goyal:
+        updated = goyal.loc[
+            goyal["resource_id"].astype(str).eq("predictor_data_updated")
+        ].copy()
+        if not updated.empty:
+            goyal = updated
+    result = pd.DataFrame(
+        {
+            "observed_at": goyal["date"],
+            "net_equity_issuance": pd.to_numeric(
+                goyal["ntis"], errors="coerce"
+            ),
+        }
+    ).dropna(subset=["net_equity_issuance"])
+    result = result.sort_values("observed_at", kind="mergesort").drop_duplicates(
+        "observed_at", keep="last"
+    )
+    targets = result["observed_at"] + pd.offsets.MonthBegin(13) + pd.Timedelta(
+        days=14
+    )
+    result["date"] = _release_session(targets, sessions=sessions)
+    result = result.dropna(subset=["date"]).sort_values("date", kind="mergesort")
+    if result.empty:
+        raise FeatureInputNormalizerError("EMPTY_LAGGED_GOYAL_ISSUANCE_PANEL")
+    result["available_at"] = result["date"]
+    return result.reset_index(drop=True)
 
 
 def normalize_fx_cross_asset_panel(
@@ -931,6 +1120,24 @@ def normalize_fx_cross_asset_panel(
     return _project_to_decision_session(
         panel, policy="next_session", sessions=sessions
     )
+
+
+def normalize_cboe_vol_bundle_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Split the frozen Cboe bundle before applying the causal VIX bridge."""
+
+    bundle = _validated_dates(frame, dataset_id="D_CBOE_VOL")
+    if "source_dataset" not in bundle:
+        raise FeatureInputNormalizerError("CBOE_VOL_SOURCE_DATASET_MISSING")
+    source = bundle["source_dataset"].astype(str)
+    vix = bundle.loc[source.eq("D_VIX")].copy()
+    vxo = bundle.loc[source.eq("D_VXO")].copy()
+    if vix.empty or vxo.empty:
+        raise FeatureInputNormalizerError("CBOE_VOL_NATIVE_SOURCE_MISSING")
+    return normalize_cboe_vol_panel(vix, vxo, sessions=sessions)
 
 
 def normalize_world_bank_cross_asset_panel(
@@ -1067,6 +1274,42 @@ def normalize_revised_z1_equity_panel(
     return result.reset_index(drop=True)
 
 
+def normalize_z1_corporate_issuance_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Expose official corporate-equity net issuance after a revision guard."""
+
+    z1 = _validated_dates(frame, dataset_id="D_Z1")
+    required = {"series_id", "value"}
+    missing = sorted(required - set(z1.columns))
+    if missing:
+        raise FeatureInputNormalizerError(f"Z1_COLUMNS_MISSING:{','.join(missing)}")
+    selected = z1.loc[z1["series_id"].astype(str).eq("FA103164105.Q")].copy()
+    selected["corporate_equity_net_issuance"] = pd.to_numeric(
+        selected["value"], errors="coerce"
+    )
+    result = selected.loc[
+        :, ["date", "corporate_equity_net_issuance"]
+    ].dropna(subset=["corporate_equity_net_issuance"])
+    if result.empty:
+        raise FeatureInputNormalizerError("Z1_CORPORATE_ISSUANCE_SERIES_MISSING")
+    result = result.sort_values("date", kind="mergesort").drop_duplicates(
+        "date", keep="last"
+    )
+    result = result.rename(columns={"date": "observed_at"})
+    targets = result["observed_at"] + pd.offsets.MonthBegin(13) + pd.Timedelta(
+        days=14
+    )
+    result["date"] = _release_session(targets, sessions=sessions)
+    result = result.dropna(subset=["date"]).sort_values("date", kind="mergesort")
+    if result.empty:
+        raise FeatureInputNormalizerError("EMPTY_Z1_CORPORATE_ISSUANCE_PANEL")
+    result["available_at"] = result["date"]
+    return result.reset_index(drop=True)
+
+
 def normalize_finra_margin_panel(
     frame: pd.DataFrame,
     *,
@@ -1160,10 +1403,12 @@ def normalize_calendar_state_panel(
 __all__ = [
     "FeatureInputNormalizerError",
     "normalize_cboe_vol_panel",
+    "normalize_cboe_vol_bundle_panel",
     "normalize_credit_spread_panel",
     "normalize_credit_money_panel",
     "normalize_cftc_sp500_panel",
     "normalize_financial_conditions_panel",
+    "normalize_uncertainty_panel",
     "normalize_finra_margin_panel",
     "normalize_fomc_decision_panel",
     "normalize_fomc_event_panel",
@@ -1171,11 +1416,14 @@ __all__ = [
     "normalize_french_us_panels",
     "normalize_fx_cross_asset_panel",
     "normalize_lagged_valuation_panel",
+    "normalize_lagged_goyal_issuance_panel",
     "normalize_macro_release_panel",
     "normalize_monetary_liquidity_panel",
     "normalize_philadelphia_realtime_growth_panel",
+    "normalize_philadelphia_realtime_cycle_panel",
     "normalize_policy_rate_panel",
     "normalize_revised_z1_equity_panel",
+    "normalize_z1_corporate_issuance_panel",
     "normalize_spy_decision_panel",
     "normalize_treasury_curve_panel",
     "normalize_world_bank_cross_asset_panel",
