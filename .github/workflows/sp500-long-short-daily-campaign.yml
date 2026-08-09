@@ -167,7 +167,7 @@ jobs:
         run: |
           set -euo pipefail
           source_mode="stooq-with-fallback"
-          if [[ "$PHASE" == "validation_diagnostic" ]]; then
+          if [[ "$PHASE" == "validation_diagnostic" || "$PHASE" == "megarun_data_snapshot" ]]; then
             source_mode="yahoo-fallback"
           fi
           python scripts/download_sp500_stooq_window.py \
