@@ -65,9 +65,13 @@ CURRENT_EXCLUDED_27 = frozenset(
 
 
 OPTION_IV_SIGNALS = frozenset(
-    {"CPVolSpread", "RIVolSpread", "SmileSlope", "skew1", "dCPVolSpread", "dVolCall"}
+    {
+        "CPVolSpread", "RIVolSpread", "SmileSlope", "skew1", "dCPVolSpread",
+        "dVolCall", "dVolPut",
+    }
 )
 OPTION_VOLUME_SIGNALS = frozenset({"OptionVolume1", "OptionVolume2"})
+OPTION_SIGNALS = OPTION_IV_SIGNALS | OPTION_VOLUME_SIGNALS
 SHORT_INTEREST_SIGNALS = frozenset(
     {"ShortInterest", "IO_ShortInterest", "Recomm_ShortInterest"}
 )
@@ -192,20 +196,35 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "professional use. Treat Aurora use as unauthorized until written permission exists.",
     ),
     SourceEvidence(
+        "massive_options_basic", "Massive Options Basic",
+        "https://massive.com/options", "free_individual_api", True, False,
+        "All US option tickers with two years of end-of-day OHLCV aggregates",
+        ("option_contract_reference", "option_ohlcv", "option_volume"),
+        (
+            "historical_option_iv", "historical_option_open_interest",
+            "historical_option_surface", "history_before_two_years",
+            "permanent_security_identity", "aurora_project_use_without_written_permission",
+        ),
+        "The free individual plan omits the historical IV, open interest and long history "
+        "required by OpenAP and is not licensed for project use.",
+    ),
+    SourceEvidence(
         "tradier_personal_api", "Tradier personal brokerage API",
         "https://docs.tradier.com/docs/market-data", "free_brokerage_account_api",
         True, True, "US equities and options; delayed sandbox and real-time brokerage data",
         (
-            "current_option_chains", "unexpired_option_daily_prices", "daily_equity_ohlcv",
+            "current_option_chains", "option_contract_daily_ohlcv", "daily_equity_ohlcv",
             "market_calendar", "occ_option_symbol",
         ),
         (
-            "expired_option_history", "historical_option_surface", "sandbox_greeks",
-            "permanent_security_identity", "non_personal_or_distributed_application",
+            "historical_chain_enumeration", "historical_option_iv",
+            "historical_option_open_interest", "historical_option_surface",
+            "sandbox_greeks", "permanent_security_identity",
+            "aurora_project_use_without_written_permission",
         ),
-        "Tradier permits automated personal API use through a brokerage account, but historical "
-        "options are unavailable after expiry and sandbox Greeks are unavailable. It cannot "
-        "reconstruct the OpenAP OptionMetrics panel.",
+        "Tradier now documents OHLCV history for a known OCC option symbol, but does not "
+        "provide the historical chain, IV, open interest, surface and identity panel required "
+        "by OpenAP. Its self-service API entitlement is personal unless Partner approval exists.",
     ),
     SourceEvidence(
         "optionmetrics_ivydb_us", "OptionMetrics IvyDB US",
@@ -219,6 +238,18 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         (),
         "Exact commercial benchmark for the OpenAP option families; contact-sales access is "
         "not a zero-cost source.",
+    ),
+    SourceEvidence(
+        "alpha_vantage_options_premium", "Alpha Vantage Historical Options",
+        "https://www.alphavantage.co/documentation/", "premium_api", False, False,
+        "Full historical option chains with IV and Greeks for dates after 2008-01-01",
+        ("historical_option_chain", "implied_volatility", "greeks"),
+        (
+            "zero_cost_access", "history_1996_to_2007", "optionmetrics_surface_equivalence",
+            "permanent_security_identity",
+        ),
+        "Historical Options is explicitly premium and starts after the beginning of every "
+        "OpenAP option study sample.",
     ),
     SourceEvidence(
         "finra_short_sale_volume", "FINRA daily short-sale volume",
@@ -522,10 +553,16 @@ def _optional_value(row: Mapping[str, Any], *keys: str) -> Any:
 
 def _source_candidates(signal: str, category: str) -> tuple[str, ...]:
     if signal in OPTION_IV_SIGNALS:
-        return ("marketdata_options_free", "cboe_delayed_options", "openap_official")
+        return (
+            "marketdata_options_free", "massive_options_basic", "tradier_personal_api",
+            "cboe_delayed_options", "alpha_vantage_options_premium",
+            "optionmetrics_ivydb_us", "openap_official",
+        )
     if signal in OPTION_VOLUME_SIGNALS:
         return (
-            "marketdata_options_free", "cboe_delayed_options", "cboe_public_aggregate"
+            "marketdata_options_free", "massive_options_basic", "tradier_personal_api",
+            "occ_option_volume", "cboe_delayed_options", "cboe_public_aggregate",
+            "alpha_vantage_options_premium", "optionmetrics_ivydb_us", "openap_official",
         )
     if signal == "ShortInterest":
         return ("finra_equity_short_interest", "alpha_vantage_free")
@@ -555,6 +592,8 @@ def source_can_satisfy(signal: str, source_id: str) -> bool:
 
     source = next((item for item in SOURCE_CATALOG if item.source_id == source_id), None)
     if source is None or not source.free or not source.authorized_automation:
+        return False
+    if signal in OPTION_SIGNALS:
         return False
     if signal in SHORT_INTEREST_SIGNALS and source_id == "finra_short_sale_volume":
         return False
