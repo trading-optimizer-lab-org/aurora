@@ -12,6 +12,7 @@ on:
           - preflight
           - megarun_data_audit
           - megarun_data_materialize
+          - megarun_data_snapshot
           - smoke
           - pilot
           - train
@@ -187,7 +188,7 @@ jobs:
 
   prepare_campaign_data:
     needs: [resolve_data_windows, stooq_windows]
-    if: inputs.phase != 'preflight' && inputs.phase != 'megarun_data_audit' && inputs.phase != 'megarun_data_materialize' && inputs.phase != 'validation_once' && inputs.phase != 'validation_diagnostic'
+    if: inputs.phase != 'preflight' && inputs.phase != 'megarun_data_audit' && inputs.phase != 'megarun_data_materialize' && inputs.phase != 'megarun_data_snapshot' && inputs.phase != 'validation_once' && inputs.phase != 'validation_diagnostic'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -382,6 +383,78 @@ jobs:
           retention-days: 30
       - name: Fail closed when any primary source cannot be normalized
         if: steps.materialize.outcome != 'success'
+        run: exit 1
+
+  megarun_data_snapshot:
+    needs: [resolve_data_windows, stooq_windows]
+    if: inputs.phase == 'megarun_data_snapshot'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Restore bounded data runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install "pytest==9.0.3" "openpyxl==3.1.5" "xlrd==2.0.2" "python-calamine==0.6.1"
+          python -m pip install --no-deps -e .
+      - name: Verify complete-snapshot and temporal guards
+        run: |
+          set -euo pipefail
+          python -m pytest \
+            tests/test_sp500_megarun_data_contract.py \
+            tests/test_sp500_megarun_source_adapters.py \
+            tests/test_sp500_megarun_materializer.py \
+            tests/test_sp500_megarun_complete_snapshot.py \
+            -q
+      - name: Download every bounded SPY window
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-ls-stooq-window-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/stooq-windows
+      - name: Merge and verify bounded SPY history
+        run: |
+          set -euo pipefail
+          python scripts/merge_sp500_stooq_windows.py \
+            --input-root "$RUNNER_TEMP/stooq-windows" \
+            --output-dir "$RUNNER_TEMP/stooq-merged" \
+            --expected-windows "${{ needs.resolve_data_windows.outputs.window_count }}" \
+            --requested-start "${{ needs.resolve_data_windows.outputs.requested_start }}" \
+            --requested-end "${{ needs.resolve_data_windows.outputs.requested_end }}"
+      - name: Build all 19 datasets and prove F001-F120 ready
+        id: snapshot
+        continue-on-error: true
+        env:
+          GITHUB_ACTIONS: "true"
+        run: |
+          python scripts/build_sp500_megarun_complete_snapshot.py \
+            --contract config/sp500_megarun_free_data_120.json \
+            --sources config/sp500_megarun_free_sources.json \
+            --spy-csv "$RUNNER_TEMP/stooq-merged/stooq_spy_us_history.csv" \
+            --output-dir outputs/sp500_megarun_free_data/complete_snapshot \
+            --cache-dir "$RUNNER_TEMP/sp500-megarun-raw"
+      - name: Upload complete F001-F120 data snapshot
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-complete-data-F001-F120-${{ github.run_id }}
+          path: outputs/sp500_megarun_free_data/complete_snapshot
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+      - name: Fail closed unless all 120 lanes are ready
+        if: steps.snapshot.outcome != 'success'
         run: exit 1
 
   smoke:
