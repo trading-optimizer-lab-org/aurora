@@ -396,6 +396,26 @@ SOURCE_METADATA = {
             redistribution="CC BY 4.0 on official Zenodo release",
         ),
         _meta(
+            "kpss_patent_crsp_extended",
+            "Kogan, Papanikolaou, Seru and Stoffman",
+            "https://github.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data",
+            "https://github.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data/blob/2ee29097f7ca05fc0e56905e82474ad426c387b9/README.md",
+            start="1926",
+            end="2024",
+            frequency="annual research update",
+            lag="latest release 7 December 2025 for data through 2024",
+            identifiers="patent number,CRSP PERMCO,CRSP PERMNO,CPC",
+            available_at="filing and issue dates; crosswalk revision vintage is not preserved",
+            pit=(
+                "issue date supports patent-count timing; forward cites are updated through "
+                "2024 and are not a historical five-year citation vintage"
+            ),
+            redistribution=(
+                "README invites use with citation but no formal license is present; do not "
+                "redistribute raw archives"
+            ),
+        ),
+        _meta(
             "google_patents_bigquery",
             "Google Cloud Public Datasets",
             "https://console.cloud.google.com/marketplace/product/google_patents_public_datasets/google-patents-public-data",
@@ -637,7 +657,7 @@ NO_FREE_AUTHORIZED_SIGNALS = frozenset(
     {"CredRatDG", "CustomerMomentum", "retConglomerate", "sinAlgo"}
 )
 IDENTIFIER_BLOCKED_SIGNALS = frozenset(
-    {"FirmAge", "CitationsRD", "PatentsRD", "iomom_cust", "iomom_supp"}
+    {"FirmAge", "iomom_cust", "iomom_supp"}
 )
 HISTORICAL_BLOCKED_SIGNALS = frozenset(
     {
@@ -697,8 +717,6 @@ def classify_signal(
         "listed_short_interest_history_and_stock_validation_required",
     }:
         return "historical_point_in_time_missing"
-    if blocker_code == "patent_assignee_to_public_issuer_crosswalk_missing":
-        return "identifier_bridge_missing"
     if blocker_code == "firm_relationship_panel_missing_or_unvalidated":
         return "no_free_authorized_source"
     return "multiple_sources_required"
@@ -722,7 +740,10 @@ def _route_source_ids(signal: str, row: Mapping[str, Any]) -> tuple[str, ...]:
         if signal == "Recomm_ShortInterest":
             sources += ["alpha_vantage_free", "fmp_basic", "lseg_ibes_commercial"]
     elif signal in PATENT_SIGNALS:
-        sources += ["uspto_patentsview_bulk", "uspto_odp_patentsview", "google_patents_bigquery", "sec_edgar", "openfigi"]
+        sources += [
+            "kpss_patent_crsp_extended", "uspto_patentsview_bulk",
+            "uspto_odp_patentsview", "google_patents_bigquery", "sec_edgar", "openfigi",
+        ]
     elif signal in RIO_SIGNALS or signal == "DelBreadth":
         sources += [
             "sec_13f", "openfigi", "tiingo_starter", "crsp_stock_commercial",
@@ -789,7 +810,15 @@ def _next_action(signal: str, classification: str) -> str:
     if signal in SHORT_INTEREST_SIGNALS:
         return "Measure FINRA listed coverage from June 2021 and validate causal publication dates, shares and identifiers."
     if signal in PATENT_SIGNALS:
-        return "Build and manually audit a historical assignee-to-CIK/FIGI bridge before computing the signal."
+        if signal == "CitationsRD":
+            return (
+                "Obtain individual citation links needed for the five-year subcategory-scaled "
+                "ncitscale input, then recover exact xrd and audit the GVKEY/PERMNO spine."
+            )
+        return (
+            "Use the pinned KPSS count/PERMNO component only after recovering exact xrd and "
+            "measuring NBER-GVKEY identity, stock coverage and OpenAP fidelity."
+        )
     if signal in IPO_SIGNALS:
         return "Obtain explicit scheduled-download permission and audit Field-Ritter PERMNO/CUSIP coverage against the 181-stock identity spine."
     if signal == "ProbInformedTrading":
@@ -1096,6 +1125,7 @@ def render_research_report(
         "- [OpenSourceAP](https://github.com/OpenSourceAP/CrossSection) identifica `Signals/pyCode/Predictors/` como la construcción actual; el Stata duplicado es legado.",
         "- Los [SEC Financial Statement Data Sets](https://www.sec.gov/data-research/sec-markets-data/financial-statement-data-sets) aportan estados primarios XBRL `as filed` desde abril de 2009, con accession y fecha de aceptación. No incluyen todas las notas ni demuestran equivalencia uno-a-uno con partidas Compustat.",
         "- [FINRA Equity Short Interest](https://www.finra.org/finra-data/browse-catalog/equity-short-interest) publica acciones cotizadas desde junio de 2021; el archivo anterior es OTC y no resuelve la historia listada.",
+        "- [KPSS](https://github.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data) publica patentes y enlaces PERMNO/PERMCO de 1926-2024 e invita a usar los datos con cita. No incluye licencia formal para redistribuir el bruto. Sus citas futuras totales no reproducen `ncitscale`, que OpenAP calcula con enlaces individuales a cinco años y escalado por subcategoría; ambas señales siguen necesitando `xrd` exacto y validación bursátil.",
         "- La [tabla retrasada de Cboe](https://www.cboe.com/delayed_quotes/API/quote_table/) prohíbe extracción automática. [Market Data](https://www.marketdata.app/docs/api/options/chain/) ofrece una API de opciones de un año, pero sus [términos](https://www.marketdata.app/terms/) no autorizan todavía el uso de Aurora.",
         "- [OCC](https://www.theocc.com/market-data/market-data-reports/other-market-data-info/batch-processing/volume-query-batch-processing) documenta parámetros batch para volumen por emisor, pero sus [términos del sitio](https://www.theocc.com/specialpages/legal/terms-and-conditions) prohíben sistemas automatizados. No es una fuente programable autorizada.",
         "- [Tradier](https://docs.tradier.com/docs/historical-data) permite automatización personal y cadenas actuales, pero no conserva precios históricos de opciones expiradas y no ofrece Greeks en sandbox; no reproduce el panel histórico requerido.",

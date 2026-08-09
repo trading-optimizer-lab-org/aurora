@@ -18,7 +18,7 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--resolution", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--evidence", type=Path)
+    parser.add_argument("--evidence", type=Path, action="append", default=[])
     parser.add_argument("--documentary-blockers", action="store_true")
     parser.add_argument("--twelve-data-credential-check", action="store_true")
     parser.add_argument("--twelve-data-credential-available", action="store_true")
@@ -68,8 +68,8 @@ def main() -> int:
                 implementation_commit=args.implementation_commit,
             )
         )
-    if args.evidence is not None:
-        evidence_frames.append(pd.read_csv(args.evidence))
+    for evidence_path in args.evidence:
+        evidence_frames.append(pd.read_csv(evidence_path))
     evidence = (
         pd.concat(evidence_frames, ignore_index=True)
         if evidence_frames

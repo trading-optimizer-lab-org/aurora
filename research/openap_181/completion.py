@@ -328,6 +328,24 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "validated bridge.",
     ),
     SourceEvidence(
+        "kpss_patent_crsp_extended", "KPSS patent-CRSP extended data",
+        "https://github.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data",
+        "pinned_github_lfs_download_with_citation", True, True,
+        "Patent-level panel and patent-to-PERMCO/PERMNO matches from 1926 through 2024",
+        (
+            "patent_counts_candidate", "total_forward_citations",
+            "patent_permno_permco_bridge", "issue_date", "filing_date",
+        ),
+        (
+            "openap_five_year_subcategory_scaled_ncitscale", "exact_xrd",
+            "gvkey", "historical_crosswalk_vintages",
+            "raw_redistribution_without_explicit_license",
+        ),
+        "The authors explicitly invite use with citation and document Git cloning. The "
+        "repository has no formal license, so raw redistribution is not authorized. Its "
+        "updated forward-citation total is not OpenAP's five-year subcategory-scaled input.",
+    ),
+    SourceEvidence(
         "google_patents_bigquery", "Google Patents Public Datasets",
         "https://cloud.google.com/blog/topics/public-datasets/google-patents-public-datasets-connecting-public-paid-and-private-patent-data",
         "public_bigquery_free_tier", True, True,
@@ -517,7 +535,7 @@ def _source_candidates(signal: str, category: str) -> tuple[str, ...]:
         return ("finra_equity_short_interest", "alpha_vantage_free")
     if signal in PATENT_SIGNALS:
         return (
-            "google_patents_bigquery", "uspto_patentsview_bulk",
+            "kpss_patent_crsp_extended", "google_patents_bigquery", "uspto_patentsview_bulk",
             "uspto_odp_patentsview", "sec_edgar",
         )
     if signal in ANALYST_SIGNALS:
@@ -542,10 +560,8 @@ def source_can_satisfy(signal: str, source_id: str) -> bool:
         return False
     if signal in OPTION_IV_SIGNALS and source_id == "cboe_public_aggregate":
         return False
-    if signal in PATENT_SIGNALS and source_id in {
-        "uspto_patentsview_bulk", "uspto_odp_patentsview"
-    }:
-        return True
+    if signal in PATENT_SIGNALS:
+        return False
     return source_id in _source_candidates(signal, "")
 
 
@@ -566,8 +582,10 @@ def _specific_blocker(
         return "issuer_option_volume_definition_and_validation_missing"
     if signal in SHORT_INTEREST_SIGNALS:
         return "listed_short_interest_history_and_stock_validation_required"
-    if signal in PATENT_SIGNALS:
-        return "patent_assignee_to_public_issuer_crosswalk_missing"
+    if signal == "CitationsRD":
+        return "patent_five_year_scaled_citations_and_exact_xrd_stock_validation_required"
+    if signal == "PatentsRD":
+        return "patent_counts_exact_xrd_and_stock_validation_required"
     if signal in ANALYST_SIGNALS:
         return "point_in_time_analyst_history_missing_or_unvalidated"
     if signal in INSTITUTIONAL_SIGNALS:

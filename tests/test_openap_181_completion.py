@@ -580,7 +580,7 @@ def test_documentary_blockers_create_evidence_without_promoting_plausible_routes
         evidence,
     )
 
-    assert len(evidence) == evidence["signal"].nunique() == 60
+    assert len(evidence) == evidence["signal"].nunique() == 58
     assert set(
         evidence["blocking_reason"].str.split(":", n=1).str[0]
     ) == {
@@ -594,8 +594,8 @@ def test_documentary_blockers_create_evidence_without_promoting_plausible_routes
     assert evidence["strict_gate_result"].eq("blocked").all()
     assert not evidence["formula_implemented"].any()
     assert not evidence["data_pipeline_implemented"].any()
-    assert status["strict_gate_result"].eq("blocked").sum() == 60
-    assert status["strict_gate_result"].eq("not_attempted").sum() == 121
+    assert status["strict_gate_result"].eq("blocked").sum() == 58
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 123
     assert not status["score_eligible"].any()
     plausible = status.loc[status["signal"].eq("Cash")].iloc[0]
     assert plausible["strict_gate_result"] == "not_attempted"
@@ -642,11 +642,11 @@ def test_implementation_cli_attaches_documentary_blocker_evidence(
     report = (output / "IMPLEMENTATION_VALIDATION_REPORT.md").read_text(
         encoding="utf-8"
     )
-    assert status["strict_gate_result"].eq("blocked").sum() == 60
-    assert status["strict_gate_result"].eq("not_attempted").sum() == 121
+    assert status["strict_gate_result"].eq("blocked").sum() == 58
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 123
     assert not status["score_eligible"].any()
-    assert "- Signals blocked with evidence: 60" in report
-    assert "- Signals not attempted: 121" in report
+    assert "- Signals blocked with evidence: 58" in report
+    assert "- Signals not attempted: 123" in report
 
 
 def test_missing_twelve_data_credential_blocks_only_dependent_market_routes():
@@ -721,8 +721,8 @@ def test_missing_twelve_data_credential_blocks_only_dependent_market_routes():
     assert not missing["formula_implemented"].any()
     assert not missing["data_pipeline_implemented"].any()
     assert available.empty
-    assert status["strict_gate_result"].eq("blocked").sum() == 96
-    assert status["strict_gate_result"].eq("not_attempted").sum() == 85
+    assert status["strict_gate_result"].eq("blocked").sum() == 94
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 87
     assert not status["score_eligible"].any()
 
 
@@ -765,8 +765,8 @@ def test_implementation_cli_attaches_missing_twelve_data_credential_blockers(
 
     assert result.value.code == 0
     status = pd.read_csv(output / "signal_implementation_status_181.csv")
-    assert status["strict_gate_result"].eq("blocked").sum() == 96
-    assert status["strict_gate_result"].eq("not_attempted").sum() == 85
+    assert status["strict_gate_result"].eq("blocked").sum() == 94
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 87
     assert not status["score_eligible"].any()
 
 

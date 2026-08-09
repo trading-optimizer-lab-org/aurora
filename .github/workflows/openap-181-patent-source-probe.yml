@@ -1,0 +1,88 @@
+name: OpenAP 181 Patent Source Probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision to probe
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openap-181-patent-source-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GITHUB_ACTIONS: "true"
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      KPSS_COMMIT: 2ee29097f7ca05fc0e56905e82474ad426c387b9
+      KPSS_PATENT_SHA256: 60215d8db687b0c40060de1649cf0f14364cbac2cbdd16b5cb3dee2dcdb85f27
+      KPSS_MATCH_SHA256: 4686ee4383bfc8bf43b7721766f28e04e331ea02bbffe4dd1358d5c02b5e675a
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+          lfs: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and focused tests
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Verify patent source contracts
+        run: |
+          python -m py_compile research/openap_181/patent_batch.py scripts/run_openap_181_patent_source_probe.py
+          python -m pytest tests/test_openap_181_patent_batch.py -q --tb=short
+      - name: Probe pinned patent archives and formula requirements
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/run_openap_181_patent_source_probe.py \
+            --output-dir outputs/openap_181_patent \
+            --download-dir "$RUNNER_TEMP/openap_181_patent_raw" \
+            --evidence-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --evidence-artifact openap-181-patent-source-probe-results \
+            --implementation-commit "$SOURCE_SHA"
+      - name: Verify fail-closed decision
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          root = "outputs/openap_181_patent"
+          summary = json.load(open(f"{root}/patent_source_probe.json", encoding="utf-8"))
+          evidence = pd.read_csv(f"{root}/patent_batch_evidence.csv")
+          integrity = pd.read_csv(f"{root}/kpss_archive_integrity.csv")
+          assert summary["source_commit"] == "2ee29097f7ca05fc0e56905e82474ad426c387b9"
+          assert summary["archives_verified"] is True
+          assert summary["schema_verified"] is True
+          assert summary["formula_sources_verified"] is True
+          assert summary["readme_use_with_citation"] is True
+          assert summary["formal_license_detected"] is False
+          assert summary["raw_redistribution_authorized"] is False
+          assert summary["raw_archives_in_artifact"] is False
+          assert summary["strict_approved"] == 0
+          assert summary["locked_opened"] is False
+          assert summary["validation_used_for_selection"] is False
+          assert len(integrity) == 3
+          assert integrity["download_verified"].astype(str).str.lower().eq("true").all()
+          assert set(evidence["signal"]) == {"CitationsRD", "PatentsRD"}
+          assert evidence["strict_gate_result"].eq("blocked").all()
+          assert not evidence["data_pipeline_implemented"].astype(str).str.lower().eq("true").any()
+          assert evidence["blocking_reason"].str.startswith("patent_source_partial:").all()
+          PY
+      - name: Upload patent source evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-181-patent-source-probe-results
+          path: outputs/openap_181_patent/
+          if-no-files-found: error
+          retention-days: 90
