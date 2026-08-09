@@ -903,7 +903,11 @@ def calculate_companyfacts_realestate_current(
         available_at = max(
             pd.Timestamp(row.available_at), pd.Timestamp(row.sic_available_at)
         )
-        if available_at > formation or not np.isfinite(row.value):
+        if (
+            available_at > formation
+            or available_at > retrieved
+            or not np.isfinite(row.value)
+        ):
             continue
         rows.append(
             {
