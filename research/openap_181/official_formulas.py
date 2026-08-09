@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
+import ast
 import gzip
 import json
 import os
@@ -132,6 +133,62 @@ def _explicit_outputs(text: str) -> set[str]:
     outputs: set[str] = set()
     for pattern in patterns:
         outputs.update(re.findall(pattern, text, flags=re.IGNORECASE))
+    outputs.update(_literal_loop_outputs(text))
+    return outputs
+
+
+def _literal_loop_outputs(text: str) -> set[str]:
+    """Recover literal output collections consumed by save_predictor loops."""
+
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return set()
+    literal_lists: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        target = node.targets[0] if isinstance(node, ast.Assign) else node.target
+        value = node.value
+        if not isinstance(target, ast.Name) or not isinstance(
+            value, (ast.List, ast.Tuple, ast.Set)
+        ):
+            continue
+        values = {
+            item.value
+            for item in value.elts
+            if isinstance(item, ast.Constant) and isinstance(item.value, str)
+        }
+        if values and len(values) == len(value.elts):
+            literal_lists[target.id] = values
+
+    outputs: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.For):
+            continue
+        if not isinstance(node.target, ast.Name) or not isinstance(node.iter, ast.Name):
+            continue
+        candidates = literal_lists.get(node.iter.id)
+        if not candidates:
+            continue
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            function_name = (
+                child.func.id
+                if isinstance(child.func, ast.Name)
+                else child.func.attr
+                if isinstance(child.func, ast.Attribute)
+                else ""
+            )
+            if function_name != "save_predictor":
+                continue
+            if any(
+                isinstance(argument, ast.Name) and argument.id == node.target.id
+                for argument in child.args
+            ):
+                outputs.update(candidates)
+                break
     return outputs
 
 

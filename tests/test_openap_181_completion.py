@@ -1133,6 +1133,7 @@ def test_rio_source_matrix_uses_exact_family_routes_and_blockers():
         for signal in RIO_SIGNALS
     }
     for signal in RIO_SIGNALS:
+        assert any("Nagel" in source for source in routes[signal])
         assert any("SEC Form 13F" in source for source in routes[signal])
         assert any("OpenFIGI" in source for source in routes[signal])
         assert any("CRSP" in source for source in routes[signal])

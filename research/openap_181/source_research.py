@@ -28,6 +28,7 @@ from aurora.research.openap_181.relationship_batch import (
     RELATIONSHIP_BLOCKERS,
     RELATIONSHIP_SIGNALS,
 )
+from aurora.research.openap_181.rio_batch import RIO_BLOCKERS, RIO_SIGNALS
 
 
 RESEARCH_CHECKED_DATE = "2026-08-09"
@@ -123,6 +124,19 @@ SOURCE_METADATA = {
             available_at="formula documents lags; values require separate audit",
             pit="historical_reference_not_current_feed",
             redistribution="GPL-2.0 code; data terms require source-page review",
+        ),
+        _meta(
+            "nagel_2005",
+            "Stefan Nagel / Journal of Financial Economics",
+            "https://bpb-us-w2.wpmucdn.com/voices.uchicago.edu/dist/f/575/files/2020/07/shortbtm.pdf",
+            "https://bpb-us-w2.wpmucdn.com/voices.uchicago.edu/dist/f/575/files/2020/07/shortbtm.pdf",
+            start="1980 research sample",
+            end="2003 research sample",
+            frequency="static_primary_paper",
+            identifiers="none; methodology document",
+            available_at="publication date",
+            pit="formula and research-design evidence only",
+            redistribution="citation and metadata only; article copyright retained",
         ),
         _meta(
             "sec_edgar",
@@ -780,7 +794,6 @@ SOURCE_METADATA = {
 }
 
 
-RIO_SIGNALS = frozenset({"RIO_Disp", "RIO_MB", "RIO_Turnover", "RIO_Volatility"})
 PATENT_SIGNALS = frozenset({"CitationsRD", "PatentsRD"})
 OPTION_SIGNALS = frozenset(
     {
@@ -894,7 +907,7 @@ def _route_source_ids(signal: str, row: Mapping[str, Any]) -> tuple[str, ...]:
         ]
     elif signal in RIO_SIGNALS or signal == "DelBreadth":
         sources += [
-            "sec_13f", "openfigi", "tiingo_starter", "crsp_stock_commercial",
+            "nagel_2005", "sec_13f", "openfigi", "tiingo_starter", "crsp_stock_commercial",
             "compustat_commercial", "wrds_linking_suite",
         ]
         if signal == "RIO_Disp":
@@ -1129,6 +1142,8 @@ def build_signal_resolution(
             remaining_blocker = MICROSTRUCTURE_BLOCKERS[signal]
         elif signal in RELATIONSHIP_SIGNALS:
             remaining_blocker = RELATIONSHIP_BLOCKERS[signal]
+        elif signal in RIO_SIGNALS:
+            remaining_blocker = RIO_BLOCKERS[signal]
         else:
             remaining_blocker = blocker_code + ": " + _classification_detail(
                 classification

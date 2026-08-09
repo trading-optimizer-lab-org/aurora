@@ -115,6 +115,15 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "Reference truth, not a current live feed.",
     ),
     SourceEvidence(
+        "nagel_2005", "Nagel (2005) RIO primary paper",
+        "https://bpb-us-w2.wpmucdn.com/voices.uchicago.edu/dist/f/575/files/2020/07/shortbtm.pdf",
+        "public_author_paper", True, True,
+        "Published RIO equation, sample rules, lags and independent sorts",
+        ("formula_reference", "rio_research_design"),
+        ("current_values", "security_identity", "source_data"),
+        "Primary paper reports a 0.09 squared-size coefficient while pinned OpenAP code uses 0.08.",
+    ),
+    SourceEvidence(
         "sec_edgar", "SEC EDGAR APIs and bulk files",
         "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
         "official_api_and_bulk", True, True,
