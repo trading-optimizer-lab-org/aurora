@@ -1,0 +1,100 @@
+name: OpenAP 181 Accounting Change Source Probe
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision to execute
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openap-181-accounting-change-source-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GITHUB_ACTIONS: "true"
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      EVIDENCE_ARTIFACT: openap-181-accounting-change-source-probe-results
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and focused tests
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Verify accounting change source contracts
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
+          python -m py_compile \
+            research/openap_181/accounting_change_batch.py \
+            scripts/run_openap_181_accounting_change_source_probe.py
+          python -m pytest \
+            tests/test_openap_181_accounting_change_batch.py \
+            -q --tb=short
+      - name: Probe pinned formulas and official source documents
+        run: |
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          python scripts/run_openap_181_accounting_change_source_probe.py \
+            --output-dir outputs/accounting_change \
+            --evidence-run-url "$run_url" \
+            --evidence-artifact "$EVIDENCE_ARTIFACT" \
+            --implementation-commit "$SOURCE_SHA"
+      - name: Verify fail-closed documentary decision
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          root = Path("outputs/accounting_change")
+          summary = json.loads(
+              (root / "accounting_change_source_probe.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          evidence = pd.read_csv(root / "accounting_change_batch_evidence.csv")
+          assert summary["source_access_decision_complete"] is True
+          assert summary["unresolved_documents"] == []
+          assert summary["formula_sources_verified"] is True
+          assert summary["formula_files"] == 10
+          assert summary["formula_signals"] == 10
+          assert summary["exact_free_authorized_source_found"] is False
+          assert summary["strict_approved"] == 0
+          assert summary["raw_source_data_downloaded"] is False
+          assert summary["locked_opened"] is False
+          assert summary["validation_used_for_selection"] is False
+          assert len(evidence) == evidence["signal"].nunique() == 10
+          assert evidence["strict_gate_result"].eq("blocked").all()
+          assert evidence["blocking_reason"].str.startswith(
+              "accounting_change_source_blocked:"
+          ).all()
+          assert evidence["blocking_reason"].nunique() == 10
+          assert not evidence["score_eligible"].astype(str).str.lower().eq(
+              "true"
+          ).any()
+          PY
+      - name: Upload accounting change source evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-181-accounting-change-source-probe-results
+          path: outputs/accounting_change/
+          if-no-files-found: error
+          retention-days: 90

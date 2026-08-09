@@ -70,6 +70,11 @@ on:
         required: false
         default: ""
         type: string
+      accounting_change_evidence_run_id:
+        description: Optional accounting change source probe providing per-signal blocker evidence
+        required: false
+        default: ""
+        type: string
       operating_accounting_evidence_run_id:
         description: Optional operating accounting source probe providing per-signal blocker evidence
         required: false
@@ -95,6 +100,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  accounting_change_probe:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.accounting_change_evidence_run_id == '' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/openap-181-accounting-change-source-probe.yml
+    with:
+      source_sha: ${{ inputs.source_sha || github.sha }}
+    secrets: inherit
+
   operating_accounting_probe:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.operating_accounting_evidence_run_id == '' }}
     permissions:
@@ -204,8 +218,8 @@ jobs:
     secrets: inherit
 
   audit:
-    needs: [operating_accounting_probe, financing_issuance_probe, valuation_accounting_probe, accruals_noa_probe, complex_accounting_probe, rio_probe, microstructure_probe, relationship_probe, analyst_probe, patent_probe, short_interest_probe, options_probe]
-    if: ${{ always() && (needs.operating_accounting_probe.result == 'success' || needs.operating_accounting_probe.result == 'skipped') && (needs.financing_issuance_probe.result == 'success' || needs.financing_issuance_probe.result == 'skipped') && (needs.valuation_accounting_probe.result == 'success' || needs.valuation_accounting_probe.result == 'skipped') && (needs.accruals_noa_probe.result == 'success' || needs.accruals_noa_probe.result == 'skipped') && (needs.complex_accounting_probe.result == 'success' || needs.complex_accounting_probe.result == 'skipped') && (needs.rio_probe.result == 'success' || needs.rio_probe.result == 'skipped') && (needs.microstructure_probe.result == 'success' || needs.microstructure_probe.result == 'skipped') && (needs.relationship_probe.result == 'success' || needs.relationship_probe.result == 'skipped') && (needs.analyst_probe.result == 'success' || needs.analyst_probe.result == 'skipped') && (needs.patent_probe.result == 'success' || needs.patent_probe.result == 'skipped') && (needs.short_interest_probe.result == 'success' || needs.short_interest_probe.result == 'skipped') && (needs.options_probe.result == 'success' || needs.options_probe.result == 'skipped') }}
+    needs: [accounting_change_probe, operating_accounting_probe, financing_issuance_probe, valuation_accounting_probe, accruals_noa_probe, complex_accounting_probe, rio_probe, microstructure_probe, relationship_probe, analyst_probe, patent_probe, short_interest_probe, options_probe]
+    if: ${{ always() && (needs.accounting_change_probe.result == 'success' || needs.accounting_change_probe.result == 'skipped') && (needs.operating_accounting_probe.result == 'success' || needs.operating_accounting_probe.result == 'skipped') && (needs.financing_issuance_probe.result == 'success' || needs.financing_issuance_probe.result == 'skipped') && (needs.valuation_accounting_probe.result == 'success' || needs.valuation_accounting_probe.result == 'skipped') && (needs.accruals_noa_probe.result == 'success' || needs.accruals_noa_probe.result == 'skipped') && (needs.complex_accounting_probe.result == 'success' || needs.complex_accounting_probe.result == 'skipped') && (needs.rio_probe.result == 'success' || needs.rio_probe.result == 'skipped') && (needs.microstructure_probe.result == 'success' || needs.microstructure_probe.result == 'skipped') && (needs.relationship_probe.result == 'success' || needs.relationship_probe.result == 'skipped') && (needs.analyst_probe.result == 'success' || needs.analyst_probe.result == 'skipped') && (needs.patent_probe.result == 'success' || needs.patent_probe.result == 'skipped') && (needs.short_interest_probe.result == 'success' || needs.short_interest_probe.result == 'skipped') && (needs.options_probe.result == 'success' || needs.options_probe.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -223,6 +237,7 @@ jobs:
       RIO_EVIDENCE_RUN_ID: ${{ inputs.rio_evidence_run_id || '' }}
       COMPLEX_ACCOUNTING_EVIDENCE_RUN_ID: ${{ inputs.complex_accounting_evidence_run_id || '' }}
       ACCRUALS_NOA_EVIDENCE_RUN_ID: ${{ inputs.accruals_noa_evidence_run_id || '' }}
+      ACCOUNTING_CHANGE_EVIDENCE_RUN_ID: ${{ inputs.accounting_change_evidence_run_id || '' }}
       OPERATING_ACCOUNTING_EVIDENCE_RUN_ID: ${{ inputs.operating_accounting_evidence_run_id || '' }}
       FINANCING_ISSUANCE_EVIDENCE_RUN_ID: ${{ inputs.financing_issuance_evidence_run_id || '' }}
       VALUATION_ACCOUNTING_EVIDENCE_RUN_ID: ${{ inputs.valuation_accounting_evidence_run_id || '' }}
@@ -241,8 +256,8 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e . pytest
       - name: Compile and test completion contract
         run: |
-          python -m py_compile research/openap_181/completion.py research/openap_181/official_formulas.py research/openap_181/source_research.py research/openap_181/implementation_status.py research/openap_181/operating_accounting_batch.py research/openap_181/financing_issuance_batch.py research/openap_181/valuation_accounting_batch.py research/openap_181/accruals_noa_batch.py research/openap_181/complex_accounting_batch.py research/openap_181/rio_batch.py research/openap_181/microstructure_batch.py research/openap_181/relationship_batch.py research/openap_181/analyst_batch.py research/openap_181/options_batch.py research/openap_181/patent_batch.py research/openap_181/short_interest_batch.py research/openap_181/sec_accounting_batch.py research/openap_181/sec_companyfacts_access.py research/openap_181/sec_fsd_access.py research/openap_181/sec_fsd_inputs.py
-          python -m py_compile scripts/run_openap_181_completion.py scripts/fetch_openap_181_official_formulas.py scripts/run_openap_181_source_research.py scripts/run_openap_181_implementation_status.py scripts/run_openap_181_operating_accounting_source_probe.py scripts/run_openap_181_financing_issuance_source_probe.py scripts/run_openap_181_valuation_accounting_source_probe.py scripts/run_openap_181_accruals_noa_source_probe.py scripts/run_openap_181_complex_accounting_source_probe.py scripts/run_openap_181_rio_source_probe.py scripts/run_openap_181_microstructure_source_probe.py scripts/run_openap_181_relationship_source_probe.py scripts/run_openap_181_analyst_source_probe.py scripts/run_openap_181_options_source_probe.py scripts/run_openap_181_patent_source_probe.py scripts/run_openap_181_short_interest_source_probe.py scripts/run_openap_181_sec_accounting_batch.py scripts/run_openap_181_sec_accounting_validation.py scripts/run_openap_181_sec_companyfacts_access.py scripts/run_openap_181_sec_fsd_access.py scripts/run_openap_181_sec_fsd_inputs.py
+          python -m py_compile research/openap_181/completion.py research/openap_181/official_formulas.py research/openap_181/source_research.py research/openap_181/implementation_status.py research/openap_181/accounting_change_batch.py research/openap_181/operating_accounting_batch.py research/openap_181/financing_issuance_batch.py research/openap_181/valuation_accounting_batch.py research/openap_181/accruals_noa_batch.py research/openap_181/complex_accounting_batch.py research/openap_181/rio_batch.py research/openap_181/microstructure_batch.py research/openap_181/relationship_batch.py research/openap_181/analyst_batch.py research/openap_181/options_batch.py research/openap_181/patent_batch.py research/openap_181/short_interest_batch.py research/openap_181/sec_accounting_batch.py research/openap_181/sec_companyfacts_access.py research/openap_181/sec_fsd_access.py research/openap_181/sec_fsd_inputs.py
+          python -m py_compile scripts/run_openap_181_completion.py scripts/fetch_openap_181_official_formulas.py scripts/run_openap_181_source_research.py scripts/run_openap_181_implementation_status.py scripts/run_openap_181_accounting_change_source_probe.py scripts/run_openap_181_operating_accounting_source_probe.py scripts/run_openap_181_financing_issuance_source_probe.py scripts/run_openap_181_valuation_accounting_source_probe.py scripts/run_openap_181_accruals_noa_source_probe.py scripts/run_openap_181_complex_accounting_source_probe.py scripts/run_openap_181_rio_source_probe.py scripts/run_openap_181_microstructure_source_probe.py scripts/run_openap_181_relationship_source_probe.py scripts/run_openap_181_analyst_source_probe.py scripts/run_openap_181_options_source_probe.py scripts/run_openap_181_patent_source_probe.py scripts/run_openap_181_short_interest_source_probe.py scripts/run_openap_181_sec_accounting_batch.py scripts/run_openap_181_sec_accounting_validation.py scripts/run_openap_181_sec_companyfacts_access.py scripts/run_openap_181_sec_fsd_access.py scripts/run_openap_181_sec_fsd_inputs.py
           python -m pytest tests/test_openap_181_completion.py tests/test_openap_181_accounting_change_batch.py tests/test_openap_181_operating_accounting_batch.py tests/test_openap_181_financing_issuance_batch.py tests/test_openap_181_valuation_accounting_batch.py tests/test_openap_181_accruals_noa_batch.py tests/test_openap_181_complex_accounting_batch.py tests/test_openap_181_rio_batch.py tests/test_openap_181_microstructure_batch.py tests/test_openap_181_relationship_batch.py tests/test_openap_181_analyst_batch.py tests/test_openap_181_options_batch.py tests/test_openap_181_patent_batch.py tests/test_openap_181_short_interest_batch.py tests/test_openap_181_sec_accounting_batch.py tests/test_openap_181_sec_companyfacts_access.py tests/test_openap_181_sec_fsd_access.py tests/test_openap_181_sec_fsd_inputs.py tests/test_openap_181_sec_workflow.py tests/test_openap_93_max_free.py -q --tb=short
       - name: Download pinned official SignalDoc
         run: |
@@ -417,6 +432,52 @@ jobs:
           echo "RIO_EVIDENCE_COMMIT=$rio_commit" >> "$GITHUB_ENV"
           if [[ -z "${RIO_EVIDENCE_RUN_ID:-}" ]]; then
             echo "RIO_EVIDENCE_RUN_ID=$GITHUB_RUN_ID" >> "$GITHUB_ENV"
+          fi
+      - name: Download pinned accounting change source evidence
+        if: ${{ env.ACCOUNTING_CHANGE_EVIDENCE_RUN_ID != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-accounting-change-source-probe-results
+          path: inputs/accounting_change
+          run-id: ${{ env.ACCOUNTING_CHANGE_EVIDENCE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download in-run accounting change source evidence
+        if: ${{ github.event_name == 'workflow_dispatch' && env.ACCOUNTING_CHANGE_EVIDENCE_RUN_ID == '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-accounting-change-source-probe-results
+          path: inputs/accounting_change
+      - name: Locate accounting change source evidence
+        if: ${{ env.ACCOUNTING_CHANGE_EVIDENCE_RUN_ID != '' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          accounting_change_evidence="$(find inputs/accounting_change -name accounting_change_batch_evidence.csv -type f -print -quit)"
+          accounting_change_summary="$(find inputs/accounting_change -name accounting_change_source_probe.json -type f -print -quit)"
+          test -s "$accounting_change_evidence"
+          test -s "$accounting_change_summary"
+          grep -q '"exact_free_authorized_source_found": false' "$accounting_change_summary"
+          grep -q 'accounting_change_source_blocked:' "$accounting_change_evidence"
+          accounting_change_commit="$(python - "$accounting_change_evidence" <<'PY'
+          import re
+          import sys
+          import pandas as pd
+          evidence = pd.read_csv(sys.argv[1])
+          assert len(evidence) == evidence["signal"].nunique() == 10
+          assert evidence["formula_implemented"].eq(True).all()
+          assert evidence["data_pipeline_implemented"].eq(False).all()
+          assert evidence["strict_gate_result"].eq("blocked").all()
+          assert evidence["blocking_reason"].nunique() == 10
+          assert not evidence["score_eligible"].astype(str).str.lower().eq(
+              "true"
+          ).any()
+          commits = evidence["implementation_commit"].astype(str).unique()
+          assert len(commits) == 1 and re.fullmatch(r"[0-9a-f]{40}", commits[0])
+          print(commits[0])
+          PY
+          )"
+          echo "ACCOUNTING_CHANGE_EVIDENCE=$accounting_change_evidence" >> "$GITHUB_ENV"
+          echo "ACCOUNTING_CHANGE_EVIDENCE_COMMIT=$accounting_change_commit" >> "$GITHUB_ENV"
+          if [[ -z "${ACCOUNTING_CHANGE_EVIDENCE_RUN_ID:-}" ]]; then
+            echo "ACCOUNTING_CHANGE_EVIDENCE_RUN_ID=$GITHUB_RUN_ID" >> "$GITHUB_ENV"
           fi
       - name: Download pinned operating accounting source evidence
         if: ${{ env.OPERATING_ACCOUNTING_EVIDENCE_RUN_ID != '' }}
@@ -825,6 +886,9 @@ jobs:
           if [[ -n "${SEC_ACCOUNTING_EVIDENCE:-}" ]]; then
             evidence_args+=(--evidence "$SEC_ACCOUNTING_EVIDENCE")
           fi
+          if [[ -n "${ACCOUNTING_CHANGE_EVIDENCE:-}" ]]; then
+            evidence_args+=(--evidence "$ACCOUNTING_CHANGE_EVIDENCE")
+          fi
           if [[ -n "${OPERATING_ACCOUNTING_EVIDENCE:-}" ]]; then
             evidence_args+=(--evidence "$OPERATING_ACCOUNTING_EVIDENCE")
           fi
@@ -884,6 +948,10 @@ jobs:
           from aurora.research.openap_181.accruals_noa_batch import (
               ACCRUALS_NOA_BLOCKERS,
               ACCRUALS_NOA_SIGNALS,
+          )
+          from aurora.research.openap_181.accounting_change_batch import (
+              ACCOUNTING_CHANGE_BLOCKERS,
+              ACCOUNTING_CHANGE_SIGNALS,
           )
           from aurora.research.openap_181.complex_accounting_batch import (
               COMPLEX_ACCOUNTING_BLOCKERS,
@@ -965,6 +1033,9 @@ jobs:
           credential_missing = not bool(os.environ.get("TWELVE_DATA_API_KEY", ""))
           expected_market_blockers = 36 if credential_missing else 0
           sec_evidence_present = bool(os.environ.get("SEC_ACCOUNTING_EVIDENCE", ""))
+          accounting_change_evidence_present = bool(
+              os.environ.get("ACCOUNTING_CHANGE_EVIDENCE", "")
+          )
           operating_accounting_evidence_present = bool(
               os.environ.get("OPERATING_ACCOUNTING_EVIDENCE", "")
           )
@@ -995,6 +1066,7 @@ jobs:
           assert len(TWELVE_DATA_MARKET_SIGNALS) == 36
           assert set(TWELVE_DATA_MARKET_SIGNALS).issubset(set(resolution["signal"]))
           sec_signals = {"Cash", "GP", "Investment"}
+          accounting_change_signals = set(ACCOUNTING_CHANGE_SIGNALS)
           operating_accounting_signals = set(OPERATING_ACCOUNTING_SIGNALS)
           financing_issuance_signals = set(FINANCING_ISSUANCE_SIGNALS)
           valuation_accounting_signals = set(VALUATION_ACCOUNTING_SIGNALS)
@@ -1017,6 +1089,8 @@ jobs:
               expected_blocked_signals.update(TWELVE_DATA_MARKET_SIGNALS)
           if sec_evidence_present:
               expected_blocked_signals.update(sec_signals)
+          if accounting_change_evidence_present:
+              expected_blocked_signals.update(accounting_change_signals)
           if operating_accounting_evidence_present:
               expected_blocked_signals.update(operating_accounting_signals)
           if financing_issuance_evidence_present:
@@ -1050,6 +1124,8 @@ jobs:
           externally_evidenced = set()
           if sec_evidence_present:
               externally_evidenced.update(sec_signals)
+          if accounting_change_evidence_present:
+              externally_evidenced.update(accounting_change_signals)
           if operating_accounting_evidence_present:
               externally_evidenced.update(operating_accounting_signals)
           if financing_issuance_evidence_present:
@@ -1105,6 +1181,41 @@ jobs:
               ).all()
           else:
               assert sec_uncovered_status["strict_gate_result"].eq(
+                  "not_attempted"
+              ).all()
+          accounting_change_status = implementation.loc[
+              implementation["signal"].isin(accounting_change_signals)
+          ]
+          if accounting_change_evidence_present:
+              assert len(accounting_change_status) == 10
+              assert accounting_change_status["signal"].nunique() == 10
+              assert accounting_change_status["formula_implemented"].astype(
+                  str
+              ).str.lower().eq("true").all()
+              assert accounting_change_status[
+                  "data_pipeline_implemented"
+              ].astype(str).str.lower().eq("false").all()
+              assert accounting_change_status["strict_gate_result"].eq(
+                  "blocked"
+              ).all()
+              assert accounting_change_status["blocking_reason"].str.startswith(
+                  "accounting_change_source_blocked:"
+              ).all()
+              assert accounting_change_status["blocking_reason"].nunique() == 10
+              assert accounting_change_status.set_index("signal")[
+                  "blocking_reason"
+              ].to_dict() == ACCOUNTING_CHANGE_BLOCKERS
+              assert accounting_change_status["evidence_run_url"].eq(
+                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['ACCOUNTING_CHANGE_EVIDENCE_RUN_ID']}"
+              ).all()
+              assert accounting_change_status["evidence_artifact"].eq(
+                  "openap-181-accounting-change-source-probe-results"
+              ).all()
+              assert accounting_change_status["implementation_commit"].eq(
+                  os.environ["ACCOUNTING_CHANGE_EVIDENCE_COMMIT"]
+              ).all()
+          else:
+              assert accounting_change_status["strict_gate_result"].eq(
                   "not_attempted"
               ).all()
           operating_accounting_status = implementation.loc[
