@@ -1,0 +1,290 @@
+name: OpenAP 181 SEC Accounting Batch
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision to execute
+        required: true
+        type: string
+      sec_user_agent:
+        description: SEC-compliant User-Agent with monitored contact email
+        required: true
+        type: string
+      start_quarter:
+        description: First official SEC FSD quarter
+        required: true
+        default: "2021q1"
+        type: string
+      end_quarter:
+        description: Last official SEC FSD quarter, maximum 16 inclusive
+        required: true
+        default: "2024q4"
+        type: string
+      formation_start:
+        description: First monthly formation date
+        required: true
+        default: "2021-01-31"
+        type: string
+      formation_end:
+        description: Last monthly formation date
+        required: true
+        default: "2024-12-31"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-181-sec-accounting-batch
+  cancel-in-progress: false
+
+jobs:
+  sec-accounting-validation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      GITHUB_ACTIONS: "true"
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      SEC_USER_AGENT: ${{ inputs.sec_user_agent }}
+      START_QUARTER: ${{ inputs.start_quarter }}
+      END_QUARTER: ${{ inputs.end_quarter }}
+      FORMATION_START: ${{ inputs.formation_start }}
+      FORMATION_END: ${{ inputs.formation_end }}
+      EVIDENCE_ARTIFACT: openap-181-sec-accounting-validation
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install focused runtime
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Validate dispatch boundary
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
+          [[ "$SEC_USER_AGENT" =~ ^[^[:space:]@]+.*@[^[:space:]@]+\.[^[:space:]@]+$ ]]
+          python - <<'PY'
+          import os
+          from aurora.research.openap_181.sec_fsd_inputs import bounded_quarters
+          quarters = bounded_quarters(os.environ["START_QUARTER"], os.environ["END_QUARTER"])
+          assert 1 <= len(quarters) <= 16
+          print({"quarter_count": len(quarters), "quarters": quarters})
+          PY
+      - name: Print frozen validation thresholds
+        run: |
+          python - <<'PY'
+          import json
+          from dataclasses import asdict
+          from aurora.research.openap_181.sec_accounting_batch import (
+              FROZEN_VALIDATION_THRESHOLDS,
+              OPENAP_FORMULA_COMMIT,
+          )
+          thresholds = asdict(FROZEN_VALIDATION_THRESHOLDS)
+          assert thresholds["minimum_cross_sectional_coverage"] == 0.80
+          assert thresholds["minimum_extreme_decile_agreement"] == 0.80
+          print(json.dumps({"formula_commit": OPENAP_FORMULA_COMMIT, **thresholds}, sort_keys=True))
+          PY
+      - name: Run focused contracts before data access
+        run: |
+          python -m pytest \
+            tests/test_openap_181_sec_accounting_batch.py \
+            tests/test_openap_181_sec_fsd_inputs.py \
+            tests/test_openap_181_sec_workflow.py \
+            -q --tb=short
+      - name: Download bounded official SEC FSD
+        run: |
+          mkdir -p inputs/sec_fsd_zips inputs
+          printf '%s\n' 'source_id,source_url,period,sha256,size_bytes,retrieved_at,status,failure_reason' > inputs/sec_fsd_source_manifest.csv
+          mapfile -t quarters < <(python - <<'PY'
+          import os
+          from aurora.research.openap_181.sec_fsd_inputs import bounded_quarters
+          print(*bounded_quarters(os.environ["START_QUARTER"], os.environ["END_QUARTER"]), sep="\n")
+          PY
+          )
+          for quarter in "${quarters[@]}"; do
+            url="https://www.sec.gov/files/dera/data/financial-statement-data-sets/${quarter}.zip"
+            destination="inputs/sec_fsd_zips/${quarter}.zip"
+            temporary="${destination}.part"
+            retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            if curl --fail --location --retry 4 --retry-all-errors \
+              --connect-timeout 30 --max-time 900 \
+              --header "User-Agent: ${SEC_USER_AGENT}" \
+              --output "$temporary" "$url"; then
+              mv "$temporary" "$destination"
+              digest="$(sha256sum "$destination" | cut -d' ' -f1)"
+              size="$(stat -c '%s' "$destination")"
+              printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
+                "sec_fsd_${quarter}" "$url" "$quarter" "$digest" "$size" \
+                "$retrieved_at" "downloaded" "" >> inputs/sec_fsd_source_manifest.csv
+            else
+              rm -f "$temporary"
+              printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
+                "sec_fsd_${quarter}" "$url" "$quarter" "" "" \
+                "$retrieved_at" "failed" "curl_failed_after_retries" >> inputs/sec_fsd_source_manifest.csv
+              exit 1
+            fi
+          done
+      - name: Reduce and verify official FSD inputs
+        run: |
+          python scripts/run_openap_181_sec_fsd_inputs.py \
+            --zip-dir inputs/sec_fsd_zips \
+            --source-manifest inputs/sec_fsd_source_manifest.csv \
+            --output-dir outputs/prepared \
+            --start-quarter "$START_QUARTER" \
+            --end-quarter "$END_QUARTER" \
+            --formation-start "$FORMATION_START" \
+            --formation-end "$FORMATION_END"
+      - name: Calculate frozen Cash GP Investment batch
+        run: |
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          python scripts/run_openap_181_sec_accounting_batch.py \
+            --sub outputs/prepared/sub.csv \
+            --tag outputs/prepared/tag.csv \
+            --num outputs/prepared/num.csv \
+            --pre outputs/prepared/pre.csv \
+            --identity outputs/prepared/identity.csv \
+            --formation-months outputs/prepared/formation_months.csv \
+            --output-dir outputs/sec_batch \
+            --evidence-run-url "$run_url" \
+            --evidence-artifact "$EVIDENCE_ARTIFACT" \
+            --implementation-commit "$SOURCE_SHA"
+      - name: Verify causal dates and freeze gate evidence
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import pandas as pd
+          root = Path("outputs/sec_batch")
+          observations = pd.read_csv(root / "sec_accounting_batch_observations.csv")
+          assert len(observations) > 0
+          assert set(observations["signal"]) == {"Cash", "GP", "Investment"}
+          used = observations.dropna(subset=["value", "available_at", "formation_at"]).copy()
+          if not used.empty:
+              available = pd.to_datetime(used["available_at"], utc=True)
+              formation = pd.to_datetime(used["formation_at"], utc=True)
+              assert available.le(formation).all()
+          run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          common = {
+              "evidence_run_url": run_url,
+              "evidence_artifact": os.environ["EVIDENCE_ARTIFACT"],
+              "verification_commit": os.environ["SOURCE_SHA"],
+          }
+          point_in_time = {
+              "gate": "point_in_time",
+              "verified": True,
+              "blocking_reason": "none",
+              "verification_method": "sec_accepted_timestamp_and_actual_output_causality_check",
+              **common,
+          }
+          identity = {
+              "gate": "identity",
+              "verified": False,
+              "blocking_reason": "historical_cik_permno_bridge_unavailable",
+              "verification_method": "sec_cik_internal_cohort_only_no_authorized_historical_bridge",
+              **common,
+          }
+          (root / "point_in_time_evidence.json").write_text(
+              json.dumps(point_in_time, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          (root / "identity_evidence.json").write_text(
+              json.dumps(identity, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          pd.DataFrame(
+              columns=["security_id", "formation_at", "signal", "reference_value"]
+          ).to_csv(root / "openap_reference.csv", index=False)
+          PY
+      - name: Measure coverage and block fidelity without historical identity
+        run: |
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          python scripts/run_openap_181_sec_accounting_validation.py \
+            --observations outputs/sec_batch/sec_accounting_batch_observations.csv \
+            --reference outputs/sec_batch/openap_reference.csv \
+            --expected-universe outputs/prepared/expected_universe.csv \
+            --source-manifest outputs/prepared/source_manifest.csv \
+            --point-in-time-evidence outputs/sec_batch/point_in_time_evidence.json \
+            --identity-evidence outputs/sec_batch/identity_evidence.json \
+            --output-dir outputs/sec_batch \
+            --evidence-run-url "$run_url" \
+            --evidence-artifact "$EVIDENCE_ARTIFACT" \
+            --implementation-commit "$SOURCE_SHA"
+      - name: Build mandatory 181 implementation outputs
+        run: |
+          mkdir -p inputs/openap outputs/final
+          curl --fail --location --retry 4 --retry-all-errors \
+            https://raw.githubusercontent.com/OpenSourceAP/CrossSection/8db892442c2c3a3779b0f1eac4370d3655be15a1/SignalDoc.csv \
+            --output inputs/openap/SignalDoc.csv
+          python scripts/fetch_openap_181_official_formulas.py \
+            --signal-doc inputs/openap/SignalDoc.csv \
+            --output-dir outputs/final
+          python scripts/run_openap_181_completion.py \
+            --signal-doc inputs/openap/SignalDoc.csv \
+            --signals-93 config/openap_93/signals_93.yaml \
+            --formula-inventory outputs/final/openap_181_formula_inventory.csv \
+            --output-dir outputs/final
+          python scripts/run_openap_181_source_research.py \
+            --manifest outputs/final/openap_181_completion_manifest.csv \
+            --formula-inventory outputs/final/openap_181_formula_inventory.csv \
+            --output-dir outputs/final
+          python scripts/run_openap_181_implementation_status.py \
+            --manifest outputs/final/openap_181_completion_manifest.csv \
+            --resolution outputs/final/signal_resolution_181.csv \
+            --evidence outputs/sec_batch/sec_accounting_batch_evidence.csv \
+            --output-dir outputs/final
+      - name: Verify fail-closed score integration
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+          final = Path("outputs/final")
+          status = pd.read_csv(final / "signal_implementation_status_181.csv")
+          strict_inventory = pd.read_csv(final / "strict_score_signal_inventory.csv")
+          assert len(status) == status["signal"].nunique() == 181
+          attempted = status.loc[status["signal"].isin({"Cash", "GP", "Investment"})]
+          assert len(attempted) == 3
+          assert attempted["point_in_time_verified"].astype(str).str.lower().eq("true").all()
+          assert attempted["identity_verified"].astype(str).str.lower().eq("false").all()
+          assert attempted["blocking_reason"].eq("identity_not_verified").all()
+          assert attempted["strict_gate_result"].eq("blocked").all()
+          assert not attempted["score_eligible"].astype(str).str.lower().eq("true").any()
+          assert len(strict_inventory) == 31
+          assert strict_inventory["signal"].nunique() == 31
+          required = {
+              "openap_181_completion_manifest.csv",
+              "signal_source_matrix_181.csv",
+              "signal_resolution_181.csv",
+              "source_inventory_free.csv",
+              "unresolved_signals.csv",
+              "RESEARCH_REPORT.md",
+              "signal_implementation_status_181.csv",
+              "strict_score_signal_inventory.csv",
+              "IMPLEMENTATION_VALIDATION_REPORT.md",
+          }
+          assert all((final / name).stat().st_size > 0 for name in required)
+          PY
+      - name: Upload SEC attempt manifest
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-181-sec-accounting-download-attempt-${{ github.run_id }}
+          path: inputs/sec_fsd_source_manifest.csv
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Upload validated SEC accounting evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-181-sec-accounting-validation
+          path: |
+            outputs/prepared/preparation_summary.json
+            outputs/prepared/source_manifest.csv
+            outputs/sec_batch/
+            outputs/final/
+          if-no-files-found: error
+          retention-days: 90
