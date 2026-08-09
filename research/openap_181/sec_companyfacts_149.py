@@ -1094,6 +1094,65 @@ def diagnose_companyfacts_realestate_coverage(
     }
 
 
+def diagnose_companyfacts_convdebt_coverage(
+    companyfacts: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+) -> dict[str, Any]:
+    """Profile causal SEC tags that may map to OpenAP's dc or cshrc inputs."""
+
+    formation = pd.Timestamp(formation_at)
+    if formation.tzinfo is None:
+        formation = formation.tz_localize("UTC")
+    else:
+        formation = formation.tz_convert("UTC")
+
+    required = _FACT_COLUMNS | {"taxonomy", "fy", "fp"}
+    _require_columns(companyfacts, required, "SEC CompanyFacts")
+    related = companyfacts.copy()
+    related["cik"] = pd.to_numeric(related["cik"], errors="coerce")
+    related["value"] = pd.to_numeric(related["value"], errors="coerce")
+    related["period_end"] = _utc(related["period_end"])
+    related["filed_at"] = _utc(related["filed"])
+    related["available_at"] = _utc(related["available_at"])
+    related = related.loc[
+        related["cik"].notna()
+        & related["value"].notna()
+        & np.isfinite(related["value"])
+        & related["taxonomy"].fillna("").astype(str).str.lower().eq("us-gaap")
+        & related["form"].isin({"10-K", "10-K/A"})
+        & related["fp"].fillna("").astype(str).eq("FY")
+        & related["period_end"].notna()
+        & related["filed_at"].notna()
+        & related["available_at"].notna()
+        & related["available_at"].le(formation)
+        & related["tag"].fillna("").astype(str).str.contains(
+            "convertible|conversion|reserved|deferredcharges?",
+            case=False,
+            regex=True,
+        )
+    ].copy()
+    related["is_nonzero"] = related["value"].ne(0)
+    related_source_tags = {
+        str(tag): {
+            "rows": int(len(group)),
+            "ciks": int(group["cik"].nunique()),
+            "positive_rows": int(group["is_nonzero"].sum()),
+            "units": sorted(group["unit"].dropna().astype(str).unique().tolist()),
+        }
+        for tag, group in related.groupby("tag", sort=True)
+    }
+    positive = related.loc[related["is_nonzero"]]
+    return {
+        "stage_counts": {
+            "causal_related_rows": int(len(related)),
+            "positive_related_rows": int(len(positive)),
+            "positive_related_ciks": int(positive["cik"].nunique()),
+        },
+        "related_source_tags": related_source_tags,
+    }
+
+
 def calculate_companyfacts_herfasset_current(
     companyfacts: pd.DataFrame,
     submissions: pd.DataFrame,
@@ -1870,6 +1929,7 @@ __all__ = [
     "calculate_companyfacts_order_backlog_current",
     "calculate_companyfacts_rdability_current",
     "calculate_companyfacts_realestate_current",
+    "diagnose_companyfacts_convdebt_coverage",
     "diagnose_companyfacts_realestate_coverage",
     "calculate_companyfacts_roaq_current",
     "calculate_companyfacts_tax_current",
