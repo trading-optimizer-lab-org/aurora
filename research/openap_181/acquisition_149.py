@@ -363,6 +363,59 @@ def merge_current_evidence(frames: list[pd.DataFrame]) -> pd.DataFrame:
     return combined.sort_values(["signal", "security_id"]).reset_index(drop=True)
 
 
+def overlay_preferred_current_evidence(
+    primary: pd.DataFrame,
+    fallback: pd.DataFrame,
+) -> pd.DataFrame:
+    """Prefer usable primary rows and fill only their exact-key gaps."""
+
+    primary_rows = _validate_current_rows(primary)
+    fallback_rows = _validate_current_rows(fallback)
+    key_columns = ["security_id", "signal", "formation_at"]
+
+    def row_keys(rows: pd.DataFrame) -> list[tuple[Any, ...]]:
+        return list(
+            rows[key_columns].itertuples(index=False, name=None)
+        )
+
+    def usable_mask(rows: pd.DataFrame) -> pd.Series:
+        if "current_usable" not in rows:
+            declared_usable = pd.Series(False, index=rows.index, dtype=bool)
+        else:
+            declared_usable = rows["current_usable"].map(_as_bool)
+        finite = rows["value"].notna() & np.isfinite(rows["value"])
+        contract_valid = rows["_contract_invalid_reason"].eq("")
+        return declared_usable & finite & contract_valid
+
+    primary_keys = row_keys(primary_rows)
+    fallback_keys = row_keys(fallback_rows)
+    primary_key_set = set(primary_keys)
+    usable_primary_keys = {
+        key
+        for key, usable in zip(primary_keys, usable_mask(primary_rows), strict=True)
+        if usable
+    }
+    replacement_keys = {
+        key
+        for key, usable in zip(fallback_keys, usable_mask(fallback_rows), strict=True)
+        if usable and key in primary_key_set and key not in usable_primary_keys
+    }
+
+    primary_keep = [key not in replacement_keys for key in primary_keys]
+    fallback_usable = usable_mask(fallback_rows)
+    fallback_keep = [
+        key not in usable_primary_keys
+        and (usable or key not in primary_key_set)
+        for key, usable in zip(fallback_keys, fallback_usable, strict=True)
+    ]
+    return merge_current_evidence(
+        [
+            primary_rows.loc[primary_keep].copy(),
+            fallback_rows.loc[fallback_keep].copy(),
+        ]
+    )
+
+
 def build_acquisition_matrix(
     routes: pd.DataFrame,
     current_rows: pd.DataFrame,
@@ -642,5 +695,6 @@ __all__ = [
     "build_acquisition_matrix",
     "load_target_routes",
     "merge_current_evidence",
+    "overlay_preferred_current_evidence",
     "write_acquisition_outputs",
 ]

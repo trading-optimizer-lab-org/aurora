@@ -12,10 +12,10 @@ from aurora.core.runtime_paths import base_data_dir
 from aurora.research.openap_181.acquisition_149 import (
     build_acquisition_matrix,
     load_target_routes,
-    merge_current_evidence,
+    overlay_preferred_current_evidence,
     write_acquisition_outputs,
 )
-from aurora.research.openap_93.registry import REQUIRED_93, load_signal_registry
+from aurora.research.openap_93.registry import load_signal_registry
 
 
 def _find_one(root: Path, filename: str) -> Path:
@@ -75,9 +75,8 @@ def main() -> int:
     current_93 = pd.read_csv(current_93_path, low_memory=False)
     current_93["evidence_run"] = args.current_93_run_url
     sec_current = pd.read_csv(sec_path, low_memory=False)
-    sec_current = sec_current.loc[~sec_current["signal"].isin(REQUIRED_93)].copy()
     sec_current["evidence_run"] = args.sec_current_run_url
-    current = merge_current_evidence([current_93, sec_current])
+    current = overlay_preferred_current_evidence(current_93, sec_current)
 
     routes = load_target_routes(args.route_matrix)
     formulas = pd.read_csv(formula_path, keep_default_na=False)
