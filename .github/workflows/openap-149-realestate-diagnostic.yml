@@ -56,7 +56,7 @@ jobs:
         with:
           pattern: openap-sec-repair-lake-*
           path: inputs/sec
-          run-id: ${{ inputs.sec_artifact_run_id }}
+          run-id: ${{ env.SEC_ARTIFACT_RUN_ID }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
       - name: Trace every realestate coverage gate
