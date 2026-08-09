@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -9,7 +10,12 @@ from aurora.infra.sp500_megarun.data_contract import (
     load_and_validate_contract,
     load_and_validate_source_plan,
 )
-from aurora.infra.sp500_megarun.source_probe import expand_source_urls, probe_sources
+from aurora.infra.sp500_megarun.source_probe import (
+    ExpandedSource,
+    expand_source_urls,
+    probe_expanded_sources,
+    probe_sources,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +37,17 @@ def test_expand_source_urls_expands_series_and_year_templates_without_post_2010_
             "years": [2009, 2010],
             "format": "zip_csv",
         },
+        {
+            "id": "vintages",
+            "url_template": "https://example.test/{series_id}?vintage_date={vintage_dates}",
+            "series_ids": ["PIT"],
+            "vintage_schedule": {
+                "start": "1998-01-31",
+                "end": "1998-03-31",
+                "frequency": "month_end",
+            },
+            "format": "csv",
+        },
     )
 
     expanded = expand_source_urls(resources, secrets={})
@@ -40,6 +57,7 @@ def test_expand_source_urls_expands_series_and_year_templates_without_post_2010_
         "https://example.test/TWO",
         "https://example.test/2009.zip",
         "https://example.test/2010.zip",
+        "https://example.test/PIT?vintage_date=1998-01-31%2C1998-02-28%2C1998-03-31",
     ]
     assert all("2011" not in item.url for item in expanded)
 
@@ -50,3 +68,28 @@ def test_source_probe_is_blocked_locally_even_with_valid_contract(tmp_path: Path
 
     with pytest.raises(LocalRunBlocked):
         probe_sources(source_plan, output_path=tmp_path / "report.json", environ={})
+
+
+def test_probe_expanded_sources_uses_bounded_parallel_fetches(monkeypatch: pytest.MonkeyPatch) -> None:
+    rendezvous = Barrier(2, timeout=2)
+
+    class FakeResponse:
+        ok = True
+        status_code = 200
+        content = b"date,value\n2000-01-01,1\n"
+
+    def fake_get(url: str, **kwargs: object) -> FakeResponse:
+        assert kwargs["timeout"] == (15, 45)
+        rendezvous.wait()
+        return FakeResponse()
+
+    monkeypatch.setattr("aurora.infra.sp500_megarun.source_probe.requests.get", fake_get)
+    sources = (
+        ExpandedSource("one", "https://example.test/one.csv", "csv"),
+        ExpandedSource("two", "https://example.test/two.csv", "csv"),
+    )
+
+    rows = probe_expanded_sources(sources, max_workers=2)
+
+    assert [row["resource_id"] for row in rows] == ["one", "two"]
+    assert all(row["shape_valid"] is True for row in rows)

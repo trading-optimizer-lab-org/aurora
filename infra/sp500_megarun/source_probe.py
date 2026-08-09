@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import calendar
+import datetime as dt
 import hashlib
 import json
 import os
@@ -29,6 +32,28 @@ def _replace_secrets(template: str, secrets: Mapping[str, str]) -> str:
     return result
 
 
+def _expand_vintage_schedule(resource: Mapping[str, object], template: str) -> str:
+    raw_schedule = resource.get("vintage_schedule")
+    if not isinstance(raw_schedule, Mapping):
+        return template
+    if raw_schedule.get("frequency") != "month_end":
+        raise ValueError("UNSUPPORTED_VINTAGE_FREQUENCY")
+    start = dt.date.fromisoformat(str(raw_schedule["start"]))
+    end = dt.date.fromisoformat(str(raw_schedule["end"]))
+    if end > dt.date(2010, 12, 31):
+        raise ValueError(f"POST_EVALUATION_VINTAGE_DATE:{end.isoformat()}")
+    cursor = dt.date(start.year, start.month, 1)
+    vintages: list[str] = []
+    while cursor <= end:
+        month_end = dt.date(cursor.year, cursor.month, calendar.monthrange(cursor.year, cursor.month)[1])
+        if start <= month_end <= end:
+            vintages.append(month_end.isoformat())
+        cursor = dt.date(cursor.year + (cursor.month == 12), (cursor.month % 12) + 1, 1)
+    if not vintages:
+        raise ValueError("EMPTY_VINTAGE_SCHEDULE")
+    return template.replace("{vintage_dates}", "%2C".join(vintages))
+
+
 def expand_source_urls(
     resources: Sequence[Mapping[str, object]], *, secrets: Mapping[str, str]
 ) -> tuple[ExpandedSource, ...]:
@@ -47,7 +72,7 @@ def expand_source_urls(
                 )
             )
             continue
-        template = str(resource.get("url_template", ""))
+        template = _expand_vintage_schedule(resource, str(resource.get("url_template", "")))
         for series_id in resource.get("series_ids", []):
             url = template.replace("{series_id}", str(series_id))
             expanded.append(
@@ -93,6 +118,54 @@ def _payload_shape_valid(payload: bytes, format_name: str) -> bool:
     return True
 
 
+def _probe_one_source(source: ExpandedSource, *, fred_api_key: str) -> dict[str, object]:
+    safe_url = source.url.replace(fred_api_key, "***") if fred_api_key else source.url
+    try:
+        response = requests.get(
+            source.url,
+            headers={"User-Agent": "Aurora-SP500-Free-Data-Audit/1.0"},
+            timeout=(15, 45),
+        )
+        payload = response.content
+        shape_valid = response.ok and _payload_shape_valid(payload, source.format)
+        return {
+            "resource_id": source.resource_id,
+            "url": safe_url,
+            "http_status": response.status_code,
+            "byte_count": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "format": source.format,
+            "shape_valid": shape_valid,
+        }
+    except requests.RequestException as exc:
+        return {
+            "resource_id": source.resource_id,
+            "url": safe_url,
+            "format": source.format,
+            "shape_valid": False,
+            "error": type(exc).__name__,
+        }
+
+
+def probe_expanded_sources(
+    sources: Sequence[ExpandedSource],
+    *,
+    fred_api_key: str = "",
+    max_workers: int = 16,
+) -> tuple[dict[str, object], ...]:
+    """Probe one source bundle concurrently while preserving declared order."""
+
+    if not sources:
+        return ()
+    worker_count = max(1, min(max_workers, len(sources)))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        rows = executor.map(
+            lambda source: _probe_one_source(source, fred_api_key=fred_api_key),
+            sources,
+        )
+        return tuple(rows)
+
+
 def probe_sources(
     source_plan: Mapping[str, SourcePlanItem],
     *,
@@ -104,8 +177,6 @@ def probe_sources(
     env = os.environ if environ is None else environ
     require_github_only_execution("SP500_MEGARUN_FREE_DATA_SOURCE_PROBE", env)
     secrets = {"FRED_API_KEY": env.get("FRED_API_KEY", "")}
-    session = requests.Session()
-    session.headers.update({"User-Agent": "Aurora-SP500-Free-Data-Audit/1.0"})
     datasets: dict[str, object] = {}
     overall_ready = True
     for dataset_id, item in sorted(source_plan.items()):
@@ -117,37 +188,10 @@ def probe_sources(
             }
             continue
         expanded = expand_source_urls(item.resources, secrets=secrets)
-        resource_rows: list[dict[str, object]] = []
-        for source in expanded:
-            safe_url = source.url.replace(secrets["FRED_API_KEY"], "***") if secrets["FRED_API_KEY"] else source.url
-            try:
-                response = session.get(source.url, timeout=(15, 90))
-                payload = response.content
-                shape_valid = response.ok and _payload_shape_valid(payload, source.format)
-                resource_rows.append(
-                    {
-                        "resource_id": source.resource_id,
-                        "url": safe_url,
-                        "http_status": response.status_code,
-                        "byte_count": len(payload),
-                        "sha256": hashlib.sha256(payload).hexdigest(),
-                        "format": source.format,
-                        "shape_valid": shape_valid,
-                    }
-                )
-                if not shape_valid:
-                    overall_ready = False
-            except requests.RequestException as exc:
-                overall_ready = False
-                resource_rows.append(
-                    {
-                        "resource_id": source.resource_id,
-                        "url": safe_url,
-                        "format": source.format,
-                        "shape_valid": False,
-                        "error": type(exc).__name__,
-                    }
-                )
+        resource_rows = probe_expanded_sources(
+            expanded,
+            fred_api_key=secrets["FRED_API_KEY"],
+        )
         dataset_ready = bool(resource_rows) and all(row["shape_valid"] for row in resource_rows)
         datasets[dataset_id] = {
             "status": "source_reachable" if dataset_ready else "source_failed",
@@ -167,4 +211,3 @@ def probe_sources(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
     return report
-

@@ -67,10 +67,16 @@
     "D_MACRO_PIT": {
       "execution": "github_actions_only",
       "acquisition_kind": "bundle",
-      "adapter": "alfred_initial_bundle",
+      "adapter": "alfred_philly_pit_bundle",
       "maximum_observation_date": "2010-12-31",
       "resources": [
-        {"id":"alfred_initial_releases","url_template":"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={FRED_API_KEY}&file_type=json&realtime_start=1947-01-01&realtime_end=2010-12-31","series_ids":["CPIAUCSL","CPILFESL","PCEPI","PCEPILFE","UNRATE","PAYEMS","ICSA","INDPRO","RSAFS","HOUST","PERMIT","M2SL","BUSLOANS","TOTALSL","DPCREDIT","CP"],"format":"json","secret":"FRED_API_KEY_FREE"}
+        {"id":"alfred_month_end_vintages","url_template":"https://alfred.stlouisfed.org/graph/alfredgraph.csv?id={series_id}&cosd=1947-01-01&coed=2010-12-31&vintage_date={vintage_dates}","series_ids":["CPIAUCSL","CPILFESL","PCEPI","PCEPILFE","UNRATE","PAYEMS","ICSA","INDPRO","RSAFS","HOUST","PERMIT","M2SL","BUSLOANS","TOTALSL","DPCREDIT","CP"],"vintage_schedule":{"start":"1997-12-31","end":"2010-12-31","frequency":"month_end"},"format":"csv","decision_lag":"use_previous_completed_month_end_only"},
+        {"id":"philly_cpi_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/pcpi_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_core_cpi_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/pcpix_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_core_pce_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/pconx_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_payroll_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/employ_level_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_industrial_production_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/ipt_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_housing_starts_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/hstarts_first_second_third.xlsx","format":"xlsx"}
       ]
     },
     "D_PHILLY_RT": {
