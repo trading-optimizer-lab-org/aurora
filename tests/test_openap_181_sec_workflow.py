@@ -120,3 +120,42 @@ def test_completion_audit_can_prefer_all_runner_sec_transport_evidence():
         "official_sec_access_blocked_all_github_hosted_runner_families_http_403"
         in text
     )
+
+
+def test_patent_source_probe_is_manual_pinned_and_fail_closed():
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "openap-181-patent-source-probe.yml"
+    )
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in text
+    assert "push:" not in text
+    assert "2ee29097f7ca05fc0e56905e82474ad426c387b9" in text
+    assert "60215d8db687b0c40060de1649cf0f14364cbac2cbdd16b5cb3dee2dcdb85f27" in text
+    assert "4686ee4383bfc8bf43b7721766f28e04e331ea02bbffe4dd1358d5c02b5e675a" in text
+    assert "openap-181-patent-source-probe-results" in text
+    assert "patent_batch_evidence.csv" in text
+    assert "retention-days: 90" in text
+    assert "OOS_LOCKED" not in text
+    assert "FORWARD" not in text
+    assert "score_eligible" not in text
+
+
+def test_completion_audit_can_consume_patent_source_evidence():
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "openap-181-completion-audit.yml"
+    )
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "patent_evidence_run_id:" in text
+    assert "PATENT_EVIDENCE_RUN_ID" in text
+    assert "openap-181-patent-source-probe-results" in text
+    assert "patent_batch_evidence.csv" in text
+    assert "PATENT_EVIDENCE" in text
+    assert "patent_source_partial:" in text

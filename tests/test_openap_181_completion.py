@@ -94,7 +94,9 @@ def test_source_semantics_prevent_false_substitutions():
     assert not source_can_satisfy("SmileSlope", "marketdata_options_free")
     assert not source_can_satisfy("SmileSlope", "tradier_personal_api")
     assert not source_can_satisfy("SmileSlope", "occ_option_volume")
-    assert source_can_satisfy("PatentsRD", "uspto_patentsview_bulk")
+    assert not source_can_satisfy("PatentsRD", "uspto_patentsview_bulk")
+    assert not source_can_satisfy("CitationsRD", "kpss_patent_crsp_extended")
+    assert not source_can_satisfy("PatentsRD", "kpss_patent_crsp_extended")
 
 
 def test_manifest_uses_concrete_family_blockers():
@@ -107,9 +109,11 @@ def test_manifest_uses_concrete_family_blockers():
         manifest.loc["ShortInterest", "blocker_code"]
         == "listed_short_interest_history_and_stock_validation_required"
     )
-    assert (
-        manifest.loc["PatentsRD", "blocker_code"]
-        == "patent_assignee_to_public_issuer_crosswalk_missing"
+    assert manifest.loc["CitationsRD", "blocker_code"] == (
+        "patent_five_year_scaled_citations_and_exact_xrd_stock_validation_required"
+    )
+    assert manifest.loc["PatentsRD", "blocker_code"] == (
+        "patent_counts_exact_xrd_and_stock_validation_required"
     )
     assert (
         manifest.loc["zerotrade1M", "blocker_code"]
@@ -127,6 +131,20 @@ def test_source_catalog_documents_rights_and_scope():
         "google_patents_bigquery", "cannot_satisfy"
     ]
     assert bool(catalog.loc["uspto_odp_patentsview", "authorized_automation"])
+    assert bool(catalog.loc["kpss_patent_crsp_extended", "free"])
+    assert bool(catalog.loc["kpss_patent_crsp_extended", "authorized_automation"])
+    assert "patent_permno_permco_bridge" in catalog.loc[
+        "kpss_patent_crsp_extended", "satisfies"
+    ]
+    assert "openap_five_year_subcategory_scaled_ncitscale" in catalog.loc[
+        "kpss_patent_crsp_extended", "cannot_satisfy"
+    ]
+    assert "exact_xrd" in catalog.loc[
+        "kpss_patent_crsp_extended", "cannot_satisfy"
+    ]
+    assert "raw_redistribution_without_explicit_license" in catalog.loc[
+        "kpss_patent_crsp_extended", "cannot_satisfy"
+    ]
     assert not bool(catalog.loc["cboe_delayed_options", "authorized_automation"])
     assert not bool(catalog.loc["marketdata_options_free", "authorized_automation"])
     assert not bool(catalog.loc["exchange_short_interest", "free"])
@@ -376,8 +394,14 @@ def test_source_research_classifies_all_181_fail_closed():
         "SmileSlope", "final_research_classification"
     ] == "historical_point_in_time_missing"
     assert resolution.loc[
+        "CitationsRD", "final_research_classification"
+    ] == "multiple_sources_required"
+    assert resolution.loc[
         "PatentsRD", "final_research_classification"
-    ] == "identifier_bridge_missing"
+    ] == "multiple_sources_required"
+    assert "kpss_patent_crsp_extended" in resolution.loc[
+        "PatentsRD", "best_free_source_option"
+    ]
     assert resolution.loc[
         "AgeIPO", "final_research_classification"
     ] == "source_access_unverified"
