@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+from math import exp
 
 import pandas as pd
 import pytest
@@ -359,6 +360,79 @@ def test_companyfacts_calculates_deferred_revenue_change_as_explicit_proxy() -> 
     assert values.iloc[0]["value"] == pytest.approx(0.1)
     assert values.iloc[0]["fidelity_class"] == "unvalidated_proxy"
     assert values.iloc[0]["source_id"] == "sec_edgar"
+    assert pd.Timestamp(values.iloc[0]["available_at"]) <= pd.Timestamp(
+        values.iloc[0]["formation_at"]
+    )
+
+
+def test_companyfacts_rdability_uses_causal_rolling_regressions_and_top_tercile() -> None:
+    fact_rows: list[dict[str, object]] = []
+    status_rows: list[dict[str, object]] = []
+    for cik, symbol, intensity_scale in (
+        (1, "AAA", 1.0),
+        (2, "BBB", 2.0),
+        (3, "CCC", 3.0),
+    ):
+        status_rows.extend(
+            {
+                "cik": cik,
+                "symbol": symbol,
+                "surface": surface,
+                "status": "ok",
+            }
+            for surface in ("companyfacts", "submissions")
+        )
+        sales = 100_000_000.0
+        for sequence, year in enumerate(range(2010, 2026), start=1):
+            rd_intensity_log = intensity_scale * sequence / 100.0
+            if year > 2010:
+                sales *= exp(2.0 * rd_intensity_log)
+            rd = sales * (exp(rd_intensity_log) - 1.0)
+            accepted = f"{year + 1}-02-15T15:00:00Z"
+            for tag, value in (
+                ("Revenues", sales),
+                ("ResearchAndDevelopmentExpense", rd),
+            ):
+                fact_rows.append(
+                    {
+                        "cik": cik,
+                        "entity_name": f"{symbol} Corp",
+                        "taxonomy": "us-gaap",
+                        "tag": tag,
+                        "unit": "USD",
+                        "value": value,
+                        "period_start": f"{year}-01-01",
+                        "period_end": f"{year}-12-31",
+                        "fy": year,
+                        "fp": "FY",
+                        "form": "10-K",
+                        "filed": accepted[:10],
+                        "accession_number": f"{cik}-{year}",
+                        "frame": "",
+                        "available_at": accepted,
+                        "available_at_quality": "sec_acceptance_timestamp",
+                        "source": (
+                            "https://data.sec.gov/api/xbrl/companyfacts/"
+                            f"CIK{cik:010d}.json"
+                        ),
+                        "source_mode": "sec_official_api",
+                    }
+                )
+
+    values = _module().calculate_companyfacts_rdability_current(
+        pd.DataFrame(fact_rows),
+        pd.DataFrame(status_rows),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    assert values["signal"].tolist() == ["RDAbility"]
+    assert values.iloc[0]["security_id"] == "US-SEC-0000000003-CCC"
+    assert values.iloc[0]["value"] == pytest.approx(2.0)
+    assert values.iloc[0]["fidelity_class"] == "unvalidated_proxy"
+    assert values.iloc[0]["formula_id"] == (
+        "openap_rdability_sec_companyfacts_current_proxy"
+    )
     assert pd.Timestamp(values.iloc[0]["available_at"]) <= pd.Timestamp(
         values.iloc[0]["formation_at"]
     )
