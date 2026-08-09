@@ -110,7 +110,7 @@ _DATASET_AVAILABLE_AT_POLICIES: Mapping[str, str] = {
     "D_VXO": "next_session",
     "D_CFTC": "friday_after_tuesday",
     "D_RATES": "next_session",
-    "D_FIN_COND": "max_input_available_at",
+    "D_FIN_COND": "next_session",
     "D_MACRO_PIT": "frequency_aware",
     "D_PHILLY_RT": "next_session",
     "D_MARGIN": "second_month_tenth_session",

@@ -78,3 +78,112 @@ def test_macro_engine_rejects_validation_rows() -> None:
 
     with pytest.raises(api.MacroFeatureEngineError, match="NON_TRAIN_PANEL_ROW:credit"):
         api.evaluate_macro_lane("F032", {"credit": panel}, {"window": 20})
+
+
+def _decision_panel(dates: pd.DatetimeIndex, **columns: object) -> pd.DataFrame:
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "observed_at": dates - pd.offsets.BDay(1),
+            "available_at": dates,
+        }
+    )
+    for name, values in columns.items():
+        frame[name] = values
+    return frame
+
+
+def _macro_panels(periods: int = 120) -> dict[str, pd.DataFrame]:
+    dates = pd.bdate_range("2010-01-04", periods=periods)
+    phase = np.arange(periods, dtype=float)
+    financial = _decision_panel(
+        dates,
+        financial_conditions_score=np.sin(phase / 9.0),
+        rate_level=2.0 + phase / 1000.0,
+        volatility_level=20.0 + np.cos(phase / 7.0),
+    )
+    rates = _decision_panel(
+        dates,
+        yield_10y=3.0 + 0.2 * np.sin(phase / 13.0),
+    )
+    event_dates = dates[::5]
+    event_phase = np.arange(len(event_dates), dtype=float)
+    macro = _decision_panel(
+        event_dates,
+        cpi_first=2.0 + 0.1 * np.sin(event_phase / 3.0),
+        output_first=2.0 + np.sin(event_phase / 4.0),
+        consumption_first=2.5 + np.cos(event_phase / 5.0),
+        payroll_first=100.0 + 5.0 * event_phase,
+        payroll_revision=-10.0 + event_phase,
+        industrial_production_first=1.0 + np.sin(event_phase / 2.0),
+        housing_starts_first=800.0 + 10.0 * event_phase,
+    )
+    realtime_dates = dates[::10]
+    realtime_phase = np.arange(len(realtime_dates), dtype=float)
+    realtime = _decision_panel(
+        realtime_dates,
+        realtime_output_growth=2.0 + np.sin(realtime_phase / 2.0),
+    )
+    fomc_dates = dates[::20]
+    fomc = _decision_panel(
+        fomc_dates,
+        fomc_event_count=np.ones(len(fomc_dates)),
+    )
+    calendar = _decision_panel(dates)
+    return {
+        "financial": financial,
+        "rates": rates,
+        "macro": macro,
+        "realtime": realtime,
+        "fomc": fomc,
+        "calendar": calendar,
+    }
+
+
+@pytest.mark.parametrize("lane_id", ["F033", "F034", "F035", "F036", "F037", "F038"])
+def test_f033_f038_produce_finite_causal_states(lane_id: str) -> None:
+    api = _engine_api()
+    result = api.evaluate_macro_lane(
+        lane_id,
+        _macro_panels(),
+        {"window": 5, "change_lag": 2, "event_window": 5, "normalization_window": 10},
+    )
+
+    finite = result["value"].replace([np.inf, -np.inf], np.nan).dropna()
+    assert not finite.empty
+    assert result["date"].max() <= pd.Timestamp("2010-12-31")
+    assert result.loc[finite.index, "observed_at"].le(
+        result.loc[finite.index, "available_at"]
+    ).all()
+
+
+def test_f036_combines_payroll_level_and_known_revision() -> None:
+    api = _engine_api()
+    panels = _macro_panels()
+    result = api.evaluate_macro_lane("F036", panels, {"window": 5})
+    payroll = panels["macro"]["payroll_first"]
+    revision = panels["macro"]["payroll_revision"]
+
+    def rolling_z(values: pd.Series) -> pd.Series:
+        return (values - values.rolling(5).mean()) / values.rolling(5).std(ddof=0)
+
+    expected = rolling_z(payroll) + 0.5 * rolling_z(revision)
+    assert result.iloc[-1]["value"] == pytest.approx(expected.iloc[-1])
+
+
+def test_f033_is_stable_when_future_rows_are_appended() -> None:
+    api = _engine_api()
+    panels = _macro_panels()
+    before_panels = {
+        name: panel.loc[panel["date"].le(pd.Timestamp("2010-04-30"))].copy()
+        for name, panel in panels.items()
+    }
+    before = api.evaluate_macro_lane(
+        "F033", before_panels, {"window": 10, "change_lag": 2}
+    )
+    after = api.evaluate_macro_lane(
+        "F033", panels, {"window": 10, "change_lag": 2}
+    )
+    after = after.loc[after["date"].le(pd.Timestamp("2010-04-30"))]
+
+    pd.testing.assert_frame_equal(before.reset_index(drop=True), after.reset_index(drop=True))

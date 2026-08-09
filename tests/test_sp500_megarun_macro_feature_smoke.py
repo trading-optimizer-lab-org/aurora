@@ -34,24 +34,101 @@ def _write_train_snapshot(root: Path) -> Path:
                     "series_id": "RIMLPBAAR_N.B",
                     "value": aaa + spread,
                 },
+                {
+                    "date": date,
+                    "series_id": "RIFLGFCY10_N.B",
+                    "value": 3.0 + 0.1 * np.sin(phase / 30.0),
+                },
             ]
         )
     pd.DataFrame(rows).to_parquet(snapshot / "D_RATES.parquet", index=False)
+    pd.DataFrame({"date": dates}).to_parquet(
+        snapshot / "D_CALENDAR.parquet", index=False
+    )
+    pd.DataFrame(
+        {
+            "date": dates,
+            "financial_conditions_score": np.sin(np.arange(len(dates)) / 20.0),
+            "rate_level": 2.0 + np.arange(len(dates)) / 10000.0,
+            "volatility_level": 20.0 + np.cos(np.arange(len(dates)) / 15.0),
+        }
+    ).to_parquet(snapshot / "D_FIN_COND.parquet", index=False)
+    vintage_rows: list[dict[str, object]] = []
+    for vintage in pd.date_range("2007-02-15", "2010-11-15", freq="3MS"):
+        quarter = vintage.to_period("Q").start_time - pd.offsets.QuarterBegin(startingMonth=1)
+        vintage_rows.extend(
+            [
+                {
+                    "date": vintage,
+                    "observation_date": quarter - pd.offsets.QuarterBegin(startingMonth=1),
+                    "value": 100.0 + len(vintage_rows),
+                    "resource_id": "real_output_monthly_vintages",
+                },
+                {
+                    "date": vintage,
+                    "observation_date": quarter,
+                    "value": 101.0 + len(vintage_rows),
+                    "resource_id": "real_output_monthly_vintages",
+                },
+            ]
+        )
+    pd.DataFrame(vintage_rows).to_parquet(
+        snapshot / "D_PHILLY_RT.parquet", index=False
+    )
+    macro_rows: list[dict[str, object]] = []
+    resources = {
+        "philly_payroll_first_releases": "monthly",
+        "philly_industrial_production_first_releases": "monthly",
+        "philly_housing_starts_first_releases": "monthly",
+        "philly_cpi_first_releases": "monthly",
+        "philly_real_output_first_releases": "quarterly",
+        "philly_real_consumption_first_releases": "quarterly",
+    }
+    for resource_id, frequency in resources.items():
+        periods = (
+            pd.date_range("2007-01-01", "2010-10-01", freq="QS")
+            if frequency == "quarterly"
+            else pd.date_range("2007-01-01", "2010-11-01", freq="MS")
+        )
+        for position, period in enumerate(periods):
+            base = 2.0 + 0.1 * position
+            if "payroll" in resource_id:
+                base = 100.0 + position
+            elif "housing" in resource_id:
+                base = 800.0 + 2.0 * position
+            macro_rows.append(
+                {
+                    "date": period,
+                    "resource_id": resource_id,
+                    "1": base,
+                    "2": base + 0.1 * np.sin(float(position) / 3.0),
+                }
+            )
+    pd.DataFrame(macro_rows).to_parquet(
+        snapshot / "D_MACRO_PIT.parquet", index=False
+    )
+    pd.DataFrame(
+        {
+            "date": pd.date_range("2007-01-30", "2010-12-01", freq="60D"),
+            "document_kind": "meeting",
+        }
+    ).to_parquet(snapshot / "D_FOMC_PUBLIC.parquet", index=False)
     return snapshot
 
 
-def test_macro_smoke_builds_f032_train_only_artifact(tmp_path: Path) -> None:
+def test_macro_smoke_builds_f032_f038_train_only_artifacts(tmp_path: Path) -> None:
     api = _smoke_api()
     snapshot = _write_train_snapshot(tmp_path)
 
     report = api.build_macro_feature_smoke(snapshot, output_dir=tmp_path / "out")
 
     assert report["ready"] is True
-    assert report["executable_lanes"] == ["F032"]
+    assert report["executable_lanes"] == [f"F{index:03d}" for index in range(32, 39)]
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
     assert (tmp_path / "out" / "features" / "F032.parquet").is_file()
+    assert (tmp_path / "out" / "features" / "F038.parquet").is_file()
 
 
 def test_macro_smoke_requires_the_physical_train_partition(tmp_path: Path) -> None:

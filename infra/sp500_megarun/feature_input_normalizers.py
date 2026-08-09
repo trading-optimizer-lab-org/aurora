@@ -38,6 +38,19 @@ _CREDIT_SERIES: Mapping[str, str] = {
     "RIMLPAAAR_N.B": "aaa_yield",
     "RIMLPBAAR_N.B": "baa_yield",
 }
+_MACRO_RELEASE_SERIES: Mapping[str, tuple[str, str]] = {
+    "philly_cpi_first_releases": ("cpi", "monthly"),
+    "philly_core_cpi_first_releases": ("core_cpi", "monthly"),
+    "philly_core_pce_first_releases": ("core_pce", "quarterly"),
+    "philly_payroll_first_releases": ("payroll", "monthly"),
+    "philly_industrial_production_first_releases": (
+        "industrial_production",
+        "monthly",
+    ),
+    "philly_housing_starts_first_releases": ("housing_starts", "monthly"),
+    "philly_real_output_first_releases": ("output", "quarterly"),
+    "philly_real_consumption_first_releases": ("consumption", "quarterly"),
+}
 
 
 def _validated_dates(frame: pd.DataFrame, *, dataset_id: str) -> pd.DataFrame:
@@ -306,11 +319,208 @@ def normalize_credit_spread_panel(
     return _project_to_decision_session(panel, policy="next_session", sessions=sessions)
 
 
+def normalize_financial_conditions_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Make the derived daily conditions composite usable only next session."""
+
+    conditions = _validated_dates(frame, dataset_id="D_FIN_COND")
+    required = {
+        "financial_conditions_score",
+        "rate_level",
+        "volatility_level",
+    }
+    missing = sorted(required - set(conditions.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"FINANCIAL_CONDITION_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    for column in required:
+        conditions[column] = pd.to_numeric(conditions[column], errors="coerce")
+    conditions = conditions.dropna(subset=list(required))
+    if conditions.empty:
+        raise FeatureInputNormalizerError("EMPTY_FINANCIAL_CONDITIONS_PANEL")
+    return _project_to_decision_session(
+        conditions,
+        policy="next_session",
+        sessions=sessions,
+    )
+
+
+def normalize_philadelphia_realtime_growth_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Calculate the latest real-output growth known at each official vintage."""
+
+    realtime = _validated_dates(frame, dataset_id="D_PHILLY_RT")
+    required = {"observation_date", "value", "resource_id"}
+    missing = sorted(required - set(realtime.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"PHILADELPHIA_REALTIME_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    realtime = realtime.loc[
+        realtime["resource_id"].astype(str).eq("real_output_monthly_vintages")
+    ].copy()
+    realtime["observation_date"] = pd.to_datetime(
+        realtime["observation_date"], errors="coerce"
+    ).dt.normalize()
+    realtime["value"] = pd.to_numeric(realtime["value"], errors="coerce")
+    realtime = realtime.dropna(subset=["observation_date", "value"])
+    rows: list[dict[str, object]] = []
+    for vintage_at, vintage in realtime.groupby("date", sort=True):
+        history = (
+            vintage.loc[vintage["observation_date"].le(vintage_at)]
+            .sort_values("observation_date", kind="mergesort")
+            .drop_duplicates("observation_date", keep="last")
+        )
+        if len(history) < 2:
+            continue
+        previous, latest = history.iloc[-2], history.iloc[-1]
+        previous_value = float(previous["value"])
+        latest_value = float(latest["value"])
+        if previous_value <= 0.0:
+            continue
+        rows.append(
+            {
+                "date": vintage_at,
+                "period_observed_at": latest["observation_date"],
+                "realtime_output_growth": (
+                    (latest_value / previous_value) ** 4 - 1.0
+                )
+                * 100.0,
+            }
+        )
+    if not rows:
+        raise FeatureInputNormalizerError("EMPTY_PHILADELPHIA_REALTIME_GROWTH")
+    projected = _project_to_decision_session(
+        pd.DataFrame(rows),
+        policy="next_session",
+        sessions=sessions,
+    )
+    projected["observed_at"] = pd.to_datetime(
+        projected.pop("period_observed_at"), errors="raise"
+    ).dt.normalize()
+    return projected
+
+
+def _release_target(period: pd.Series, *, frequency: str, release_number: int) -> pd.Series:
+    if frequency == "monthly":
+        month_offset = release_number
+    elif frequency == "quarterly":
+        month_offset = release_number + 3
+    else:  # pragma: no cover - closed mapping above
+        raise FeatureInputNormalizerError(f"UNKNOWN_MACRO_FREQUENCY:{frequency}")
+    return period + pd.offsets.MonthBegin(month_offset) + pd.Timedelta(days=14)
+
+
+def _release_session(
+    targets: pd.Series,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.Series:
+    normalized_sessions = (
+        pd.DatetimeIndex(pd.to_datetime(sessions)).normalize().unique().sort_values()
+    )
+    positions = normalized_sessions.searchsorted(
+        pd.to_datetime(targets).to_numpy(), side="left"
+    )
+    result = pd.Series(pd.NaT, index=targets.index, dtype="datetime64[ns]")
+    valid = positions < len(normalized_sessions)
+    if valid.any():
+        result.loc[valid] = normalized_sessions.take(positions[valid]).to_numpy()
+    return result
+
+
+def normalize_macro_release_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Place each first and second release on its conservative official vintage date."""
+
+    macro = _validated_dates(frame, dataset_id="D_MACRO_PIT")
+    if "resource_id" not in macro or "1" not in macro:
+        raise FeatureInputNormalizerError("MACRO_RELEASE_COLUMNS_MISSING")
+    events: list[dict[str, object]] = []
+    for resource_id, (name, frequency) in _MACRO_RELEASE_SERIES.items():
+        selected = macro.loc[macro["resource_id"].astype(str).eq(resource_id)].copy()
+        if selected.empty:
+            continue
+        for release_number, value_column in ((1, "1"), (2, "2")):
+            if value_column not in selected:
+                continue
+            values = pd.to_numeric(selected[value_column], errors="coerce")
+            first_values = pd.to_numeric(selected["1"], errors="coerce")
+            targets = _release_target(
+                selected["date"],
+                frequency=frequency,
+                release_number=release_number,
+            )
+            release_sessions = _release_session(targets, sessions=sessions)
+            for index in selected.index[values.notna() & release_sessions.notna()]:
+                event: dict[str, object] = {
+                    "date": release_sessions.loc[index],
+                    "observed_at": selected.loc[index, "date"],
+                }
+                if release_number == 1:
+                    event[f"{name}_first"] = float(values.loc[index])
+                elif first_values.notna().loc[index]:
+                    event[f"{name}_revision"] = float(
+                        values.loc[index] - first_values.loc[index]
+                    )
+                events.append(event)
+    if not events:
+        raise FeatureInputNormalizerError("EMPTY_MACRO_RELEASE_PANEL")
+    event_frame = pd.DataFrame(events).sort_values("date", kind="mergesort")
+    value_columns = [
+        column for column in event_frame.columns if column not in {"date", "observed_at"}
+    ]
+    grouped = event_frame.groupby("date", as_index=False, sort=True).agg(
+        {
+            "observed_at": "max",
+            **{column: "last" for column in value_columns},
+        }
+    )
+    grouped["available_at"] = grouped["date"]
+    return grouped
+
+
+def normalize_fomc_event_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Count public FOMC documents and make each event usable next session."""
+
+    fomc = _validated_dates(frame, dataset_id="D_FOMC_PUBLIC")
+    if "document_kind" not in fomc:
+        raise FeatureInputNormalizerError("FOMC_DOCUMENT_KIND_MISSING")
+    events = (
+        fomc.groupby("date", as_index=False, sort=True)
+        .size()
+        .rename(columns={"size": "fomc_event_count"})
+    )
+    return _project_to_decision_session(
+        events,
+        policy="next_session",
+        sessions=sessions,
+    )
+
+
 __all__ = [
     "FeatureInputNormalizerError",
     "normalize_cboe_vol_panel",
     "normalize_credit_spread_panel",
     "normalize_cftc_sp500_panel",
+    "normalize_financial_conditions_panel",
+    "normalize_fomc_event_panel",
+    "normalize_macro_release_panel",
+    "normalize_philadelphia_realtime_growth_panel",
     "normalize_spy_decision_panel",
     "normalize_treasury_curve_panel",
 ]

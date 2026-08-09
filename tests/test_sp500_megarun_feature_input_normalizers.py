@@ -213,3 +213,105 @@ def test_normalizers_reject_2011_rows() -> None:
 
     with pytest.raises(api.FeatureInputNormalizerError, match="NON_TRAIN_ROW:D_RATES"):
         api.normalize_treasury_curve_panel(frame, sessions=_sessions())
+
+
+def test_financial_conditions_wait_until_next_session() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-01-04", "2010-01-05"]),
+            "financial_conditions_score": [0.2, 0.4],
+            "rate_level": [2.0, 2.1],
+            "volatility_level": [20.0, 21.0],
+        }
+    )
+
+    result = api.normalize_financial_conditions_panel(frame, sessions=_sessions())
+
+    assert result["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2010-01-05",
+        "2010-01-06",
+    ]
+    assert result["observed_at"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2010-01-04",
+        "2010-01-05",
+    ]
+
+
+def test_philadelphia_realtime_growth_uses_only_values_in_each_vintage() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["2009-02-15", "2009-02-15", "2009-05-15", "2009-05-15"]
+            ),
+            "observation_date": pd.to_datetime(
+                ["2008-07-01", "2008-10-01", "2008-10-01", "2009-01-01"]
+            ),
+            "value": [100.0, 101.0, 102.0, 104.0],
+            "resource_id": ["real_output_monthly_vintages"] * 4,
+        }
+    )
+    sessions = pd.bdate_range("2009-02-13", "2009-05-20")
+
+    result = api.normalize_philadelphia_realtime_growth_panel(
+        frame, sessions=sessions
+    )
+
+    assert result["observed_at"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2008-10-01",
+        "2009-01-01",
+    ]
+    assert result["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2009-02-16",
+        "2009-05-18",
+    ]
+    assert result.loc[0, "realtime_output_growth"] == pytest.approx(
+        ((101.0 / 100.0) ** 4 - 1.0) * 100.0
+    )
+    assert result.loc[1, "realtime_output_growth"] == pytest.approx(
+        ((104.0 / 102.0) ** 4 - 1.0) * 100.0
+    )
+
+
+def test_macro_release_panel_assigns_first_and_second_release_dates() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2009-01-01", "2009-01-01"]),
+            "resource_id": [
+                "philly_payroll_first_releases",
+                "philly_real_output_first_releases",
+            ],
+            "1": [100.0, 2.0],
+            "2": [120.0, 2.5],
+        }
+    )
+    sessions = pd.bdate_range("2009-01-02", "2009-07-31")
+
+    result = api.normalize_macro_release_panel(frame, sessions=sessions)
+
+    march_release = result.loc[result["date"].eq(pd.Timestamp("2009-02-16"))]
+    assert march_release.iloc[0]["payroll_first"] == pytest.approx(100.0)
+    april_revision = result.loc[result["date"].eq(pd.Timestamp("2009-03-16"))]
+    assert april_revision.iloc[0]["payroll_revision"] == pytest.approx(20.0)
+    may_output = result.loc[result["date"].eq(pd.Timestamp("2009-05-15"))]
+    assert may_output.iloc[0]["output_first"] == pytest.approx(2.0)
+
+
+def test_fomc_events_are_only_usable_next_session() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-01-04", "2010-01-04", "2010-01-05"]),
+            "document_kind": ["meeting", "statement", "minutes_release"],
+        }
+    )
+
+    result = api.normalize_fomc_event_panel(frame, sessions=_sessions())
+
+    assert result["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2010-01-05",
+        "2010-01-06",
+    ]
+    assert result["fomc_event_count"].tolist() == [2, 1]

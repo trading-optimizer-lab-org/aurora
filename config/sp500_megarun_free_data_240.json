@@ -20,7 +20,7 @@
     "D_VXO": {"coverage_end":"2020-12-31","available_at_rule":"published index value available for the next session"},
     "D_CFTC": {"coverage_end":"2020-12-31","available_at_rule":"Tuesday observation available only after Friday release"},
     "D_RATES": {"coverage_end":"2020-12-31","available_at_rule":"official release timestamp plus one session"},
-    "D_FIN_COND": {"coverage_end":"2020-12-31","available_at_rule":"maximum available-at timestamp of all inputs"},
+    "D_FIN_COND": {"coverage_end":"2020-12-31","available_at_rule":"maximum input timestamp plus one full SPY session; never backfilled"},
     "D_MACRO_PIT": {"coverage_end":"2020-12-31","available_at_rule":"first release or one full publication period lag"},
     "D_PHILLY_RT": {"coverage_end":"2020-12-31","available_at_rule":"vintage publication date"},
     "D_MARGIN": {"coverage_end":"2020-12-31","available_at_rule":"documented monthly publication plus one session"},
@@ -55,6 +55,7 @@
     "D_DERIVED_CAUSAL": {"provider":"Aurora causal feature ledger built from contracted free inputs","url":"https://github.com/trading-optimizer-lab-org/aurora","cost":"free","license_status":"derived_from_free_contemporaneous_inputs","coverage_start":"1986-01-02","coverage_end":"2020-12-31","causal_lag":"maximum_input_release_lag","available_at_rule":"maximum available-at timestamp of all inputs","adapter":"derived_causal_ledger","readiness":"source_and_adapter_ready"}
   },
   "lane_overrides": {
+    "F038": {"required_datasets":["D_MACRO_PIT","D_CALENDAR","D_FOMC_PUBLIC"],"fidelity":"exact","replacement_note":"Only already-published macro releases and public FOMC documents are counted; future scheduled events are excluded."},
     "F041": {"required_datasets":["D_Z1","D_CFTC_LEGACY","D_FINRA_MARGIN"],"fidelity":"proxy","replacement_note":"Post-2010 sentiment is represented by public balance-sheet, positioning and margin data; no retail survey is claimed."},
     "F049": {"required_datasets":["D_Z1","D_FINRA_MARGIN","D_CFTC_LEGACY"],"fidelity":"proxy","replacement_note":"Use public aggregate balance sheets, margin and positioning; do not label these consolidated ETF flows or short interest."},
     "F081": {"required_datasets":["D_SPY","D_Z1","D_FINRA_MARGIN"],"fidelity":"proxy","replacement_note":"Use price-volume turnover plus public aggregate fund and margin balances; no sponsor share-count history is claimed."},
