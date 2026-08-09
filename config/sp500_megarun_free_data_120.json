@@ -101,7 +101,7 @@
     {"lane_id":"F068","required_datasets":["D_SPY"],"fidelity":"exact","original_dependency":"SPY returns","replacement_note":""},
     {"lane_id":"F069","required_datasets":["D_SPY"],"fidelity":"exact","original_dependency":"SPY returns","replacement_note":""},
     {"lane_id":"F070","required_datasets":["D_SPY"],"fidelity":"redesigned","original_dependency":"approved realized variance including intraday options","replacement_note":"Use daily close and OHLC realized-volatility cascades; no intraday estimator is claimed."},
-    {"lane_id":"F071","required_datasets":["D_SPY"],"fidelity":"redesigned","original_dependency":"intraday realized semivariance bipower variation and jumps","replacement_note":"Use daily OHLC range, signed semivariance and robust jump proxies; omit intraday BPV terminology."},
+    {"lane_id":"F071","required_datasets":["D_SPY"],"fidelity":"redesigned","original_dependency":"intraday realized semivariance bipower variation and jumps","replacement_note":"Use daily-sampling signed semivariance, adjacent daily absolute-return product and OHLC range jump proxies; never present them as intraday realised BPV."},
     {"lane_id":"F072","required_datasets":["D_SPY"],"fidelity":"exact","original_dependency":"SPY OHLC","replacement_note":""},
     {"lane_id":"F073","required_datasets":["D_SPY"],"fidelity":"exact","original_dependency":"SPY OHLCV","replacement_note":""},
     {"lane_id":"F074","required_datasets":["D_SPY"],"fidelity":"exact","original_dependency":"SPY OHLCV","replacement_note":""},

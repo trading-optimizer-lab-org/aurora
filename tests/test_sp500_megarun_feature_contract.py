@@ -52,10 +52,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 71)]
+    ] == [f"F{index:03d}" for index in range(1, 81)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[70:]
+        for lane in feature_contract.lanes[80:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -90,6 +90,29 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "rogers_satchell",
     )
     assert all(lane.minimum_history >= 252 for lane in advanced_lanes)
+    microstructure_lanes = feature_contract.lanes[70:80]
+    assert all(lane.required_datasets == ("D_SPY",) for lane in microstructure_lanes)
+    assert microstructure_lanes[0].parameter_space["statistic"] == (
+        "semivariance_imbalance",
+        "bipower_share",
+        "jump_proxy",
+    )
+    assert microstructure_lanes[2].parameter_space["length"] == (2, 3, 4, 5)
+    assert microstructure_lanes[6].parameter_space["statistic"] == (
+        "imbalance",
+        "obv_slope",
+        "pressure",
+    )
+    assert microstructure_lanes[7].parameter_space["estimator"] == (
+        "roll",
+        "corwin_schultz",
+        "amihud",
+    )
+    assert microstructure_lanes[9].parameter_space["logic"] == (
+        "gate",
+        "attenuate",
+    )
+    assert all(lane.minimum_history >= 5 for lane in microstructure_lanes)
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:
