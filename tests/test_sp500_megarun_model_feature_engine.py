@@ -275,3 +275,13 @@ def test_model_engine_rejects_validation_rows() -> None:
     with pytest.raises(api.ModelFeatureEngineError, match="NON_TRAIN_MARKET_ROW"):
         api.evaluate_model_lane("F060", market, panels, _parameters("F060"))
 
+
+def test_supervised_model_waits_for_a_complete_valid_window() -> None:
+    api = _engine_api()
+    market, panels = _model_inputs(220)
+    panels["F032"].loc[:19, "value"] = np.nan
+
+    result = api.evaluate_model_lane("F056", market, panels, _parameters("F056"))
+
+    assert result.loc[:99, "value"].isna().all()
+    assert result.loc[100:, "value"].notna().any()

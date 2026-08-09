@@ -232,7 +232,6 @@ def _rolling_supervised(
     forward_return = market["close"].pct_change(fill_method=None).shift(-1).to_numpy()
     result = np.full(len(market), np.nan, dtype=float)
     model: Any = None
-    minimum_rows = max(30, 8 * x.shape[1])
     for index in range(len(market)):
         if index < window:
             continue
@@ -241,7 +240,7 @@ def _rolling_supervised(
             train_x = x[start:index]
             train_y = forward_return[start:index]
             valid = np.isfinite(train_y) & np.isfinite(train_x).all(axis=1)
-            if int(valid.sum()) >= minimum_rows and np.unique(train_y[valid] > 0.0).size > 1:
+            if int(valid.sum()) == window and np.unique(train_y[valid] > 0.0).size > 1:
                 model = fit(train_x[valid], train_y[valid])
         if model is not None and np.isfinite(x[index]).all():
             result[index] = predict(model, x[index])
@@ -480,7 +479,7 @@ def _f054(
             train_x = x[start:index]
             train_y = forward_return[start:index]
             valid = np.isfinite(train_y) & np.isfinite(train_x).all(axis=1)
-            if int(valid.sum()) >= max(40, states * 15):
+            if int(valid.sum()) == window:
                 model = _fit_markov(train_x[valid], train_y[valid], states)
                 posterior = model["prior"].copy()
         if model is None or posterior is None or not np.isfinite(x[index]).all():

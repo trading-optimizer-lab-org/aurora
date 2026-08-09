@@ -152,7 +152,7 @@ def build_model_feature_smoke(
             "learning_rate": 0.5,
         },
         "F059": {
-            "feature_set": "macro_5",
+            "feature_set": "diversified_5",
             "window": 252,
             "refit": "quarterly",
             "depth": 3,
