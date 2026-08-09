@@ -326,8 +326,13 @@ def build_acquisition_matrix(
         signal = str(route["signal"])
         part = rows.loc[rows["signal"].astype(str).eq(signal)].copy()
         allowed_sources = route["primary_free_sources"]
-        source_match = part["source_id"].map(
-            lambda value, allowed=allowed_sources: _source_allowed(value, allowed)
+        source_match = pd.Series(
+            [
+                _source_allowed(value, allowed_sources)
+                for value in part["source_id"]
+            ],
+            index=part.index,
+            dtype=bool,
         )
         approved = part.loc[source_match].copy()
         unapproved = part.loc[~source_match & part["value"].notna()].copy()
