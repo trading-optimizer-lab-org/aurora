@@ -299,6 +299,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install "pytest==9.0.3"
           python -m pip install --no-deps -e .
       - name: Verify the 120-lane contract and guards
         run: |
