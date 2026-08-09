@@ -316,3 +316,32 @@ def test_current_evidence_overlay_prefers_93_and_fills_only_its_gaps() -> None:
     assert indexed.loc["cik:1", "source_id"] == "primary_93"
     assert indexed.loc["cik:2", "value"] == pytest.approx(0.60)
     assert indexed.loc["cik:2", "source_id"] == "sec_fallback"
+
+
+def test_current_evidence_replacement_swaps_complete_signal_batches() -> None:
+    primary = _current_rows().iloc[[0, 2]].copy()
+    primary.loc[primary["signal"].eq("Mom6m"), "signal"] = "ShortInterest"
+    primary.loc[primary["signal"].eq("ShortInterest"), "formula_id"] = (
+        "legacy_short_interest_proxy"
+    )
+
+    replacement = primary.loc[primary["signal"].eq("ShortInterest")].copy()
+    replacement.loc[:, "source_id"] = "finra_equity_short_interest|sec_edgar"
+    replacement.loc[:, "source_url"] = "https://cdn.finra.org/equity/example.csv"
+    replacement.loc[:, "formula_id"] = "openap_shortinterest_finra_sec_current_proxy"
+    replacement.loc[:, "value"] = 0.12
+
+    replaced = _module().replace_current_signal_batches(primary, replacement)
+
+    assert set(replaced["signal"]) == {"Cash", "ShortInterest"}
+    short_interest = replaced.loc[replaced["signal"].eq("ShortInterest")]
+    assert len(short_interest) == 1
+    assert short_interest.iloc[0]["source_id"] == (
+        "finra_equity_short_interest|sec_edgar"
+    )
+    assert short_interest.iloc[0]["value"] == pytest.approx(0.12)
+
+    unchanged = _module().replace_current_signal_batches(
+        primary, replacement.iloc[0:0]
+    )
+    assert unchanged.reset_index(drop=True).equals(primary.reset_index(drop=True))
