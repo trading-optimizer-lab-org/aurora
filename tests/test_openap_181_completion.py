@@ -986,7 +986,7 @@ def test_relationship_source_matrix_uses_exact_family_routes_and_blockers():
         RELATIONSHIP_SIGNALS,
     )
 
-    manifest = build_manifest(_signal_doc())
+    manifest = build_completion_manifest(_signal_doc())
     formulas = _formula_inventory_for_source_research(manifest)
     resolution = build_signal_resolution(manifest, formulas).set_index("signal")
     inventory = build_source_inventory().set_index("source_id")
