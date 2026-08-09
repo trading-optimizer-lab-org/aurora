@@ -199,6 +199,150 @@ def test_finra_current_csv_api_headers_map_to_canonical_source_schema():
     assert summary["otc_rows"] == 1
 
 
+def test_finra_short_interest_current_is_causal_and_fails_closed_on_identity():
+    module = _module()
+    finra = pd.DataFrame(
+        [
+            {
+                "settlement_date": "2026-07-15",
+                "issue_name": "Issuer A",
+                "symbol": "AAA",
+                "market": "N",
+                "current_short": "100",
+                "previous_short": "90",
+                "revision_flag": "",
+            },
+            {
+                "settlement_date": "2026-07-15",
+                "issue_name": "Issuer B",
+                "symbol": "BBB",
+                "market": "R",
+                "current_short": "200",
+                "previous_short": "180",
+                "revision_flag": "",
+            },
+            {
+                "settlement_date": "2026-07-15",
+                "issue_name": "Ambiguous issuer",
+                "symbol": "DUP",
+                "market": "N",
+                "current_short": "300",
+                "previous_short": "250",
+                "revision_flag": "",
+            },
+            {
+                "settlement_date": "2026-07-31",
+                "issue_name": "Future publication",
+                "symbol": "FUT",
+                "market": "N",
+                "current_short": "400",
+                "previous_short": "350",
+                "revision_flag": "",
+            },
+            {
+                "settlement_date": "2026-07-15",
+                "issue_name": "OTC issuer",
+                "symbol": "OTC",
+                "market": "S",
+                "current_short": "500",
+                "previous_short": "450",
+                "revision_flag": "",
+            },
+        ]
+    )
+    schedule = pd.DataFrame(
+        {
+            "settlement_date": pd.to_datetime(
+                ["2026-07-15", "2026-07-31"], utc=True
+            ),
+            "publication_date": pd.to_datetime(
+                ["2026-07-24", "2026-08-11"], utc=True
+            ),
+        }
+    )
+    facts: list[dict[str, object]] = []
+    statuses: list[dict[str, object]] = []
+    identities = ((1, "AAA", 1000.0), (2, "BBB", 4000.0), (3, "DUP", 1000.0))
+    for cik, symbol, shares in identities:
+        for surface in ("companyfacts", "submissions"):
+            statuses.append(
+                {"cik": cik, "symbol": symbol, "surface": surface, "status": "ok"}
+            )
+        facts.append(
+            {
+                "cik": cik,
+                "taxonomy": "dei",
+                "tag": "EntityCommonStockSharesOutstanding",
+                "unit": "shares",
+                "value": shares,
+                "period_start": "",
+                "period_end": "2026-06-30",
+                "form": "10-Q",
+                "filed": "2026-07-01",
+                "accession_number": f"{cik}-current",
+                "available_at": "2026-07-01T12:00:00Z",
+            }
+        )
+    for cik in (4,):
+        for surface in ("companyfacts", "submissions"):
+            statuses.append(
+                {"cik": cik, "symbol": "DUP", "surface": surface, "status": "ok"}
+            )
+        facts.append(
+            {
+                "cik": cik,
+                "taxonomy": "dei",
+                "tag": "EntityCommonStockSharesOutstanding",
+                "unit": "shares",
+                "value": 2000.0,
+                "period_start": "",
+                "period_end": "2026-06-30",
+                "form": "10-Q",
+                "filed": "2026-07-01",
+                "accession_number": f"{cik}-current",
+                "available_at": "2026-07-01T12:00:00Z",
+            }
+        )
+    facts.append(
+        {
+            **facts[0],
+            "value": 2000.0,
+            "period_end": "2026-07-31",
+            "filed": "2026-08-10",
+            "accession_number": "1-future",
+            "available_at": "2026-08-10T12:00:00Z",
+        }
+    )
+
+    values = module.calculate_finra_short_interest_current(
+        finra,
+        pd.DataFrame(facts),
+        pd.DataFrame(statuses),
+        schedule,
+        formation_at="2026-08-09T23:59:59Z",
+        retrieved_at="2026-08-10T09:00:00Z",
+        finra_source_url=(
+            "https://cdn.finra.org/equity/otcmarket/biweekly/shrt20260715.csv"
+        ),
+    )
+
+    assert values["ticker"].tolist() == ["AAA", "BBB"]
+    assert values["value"].tolist() == pytest.approx([0.1, 0.05])
+    assert values["signal"].eq("ShortInterest").all()
+    assert pd.to_datetime(values["period_end"]).dt.strftime("%Y-%m-%d").eq(
+        "2026-07-15"
+    ).all()
+    assert pd.to_datetime(values["available_at"]).dt.strftime("%Y-%m-%d").eq(
+        "2026-07-24"
+    ).all()
+    assert values["fidelity_class"].eq("unvalidated_proxy").all()
+    assert values["current_usable"].all()
+    assert values["source_id"].eq("finra_equity_short_interest|sec_edgar").all()
+    assert values["formula_id"].eq(
+        "openap_shortinterest_finra_sec_current_proxy"
+    ).all()
+
+
 def test_short_interest_evidence_records_three_concrete_blockers_without_promotion():
     module = _module()
     probe = {
