@@ -426,10 +426,15 @@ def _investment_value(
 ) -> dict[str, Any]:
     last_month = formation_at + pd.offsets.MonthEnd(0)
     month_ends = [last_month - pd.offsets.MonthEnd(offset) for offset in range(35, -1, -1)]
+    annual = _annual_investment_ratios(facts, cik, formation_at)
+    if annual.empty:
+        return _missing_result("missing_complete_annual_filing")
     ratios = []
     current = pd.DataFrame()
     for month_end in month_ends:
-        as_of = _annual_investment_ratios(facts, cik, month_end)
+        as_of = annual.loc[
+            pd.to_datetime(annual["accepted_at"], errors="coerce").le(month_end)
+        ]
         if as_of.empty:
             continue
         current = as_of.sort_values(["accepted_at", "period_end"]).tail(1)
