@@ -30,6 +30,13 @@ PREDICTOR_PREFIXES = (
     "Signals/Code/Predictors/",
     "Signals/LegacyStataCode/Predictors/",
 )
+PREDICTOR_PREFIX_PRIORITY = {
+    # OpenSourceAP documents pyCode as the current stock-level construction
+    # pipeline.  The Stata tree is retained for legacy replication only.
+    "Signals/pyCode/Predictors/": 3,
+    "Signals/Code/Predictors/": 2,
+    "Signals/LegacyStataCode/Predictors/": 1,
+}
 SOURCE_SUFFIXES = (".py", ".do", ".r", ".R")
 
 
@@ -123,6 +130,13 @@ def _filename_tokens(path: str) -> set[str]:
     return {token for token in re.split(r"[^A-Za-z0-9]+", stem) if token}
 
 
+def _source_priority(path: str) -> int:
+    for prefix, priority in PREDICTOR_PREFIX_PRIORITY.items():
+        if path.startswith(prefix):
+            return priority
+    return 0
+
+
 def build_formula_inventory(
     signals: Iterable[str], sources: Mapping[str, bytes]
 ) -> pd.DataFrame:
@@ -152,7 +166,13 @@ def build_formula_inventory(
             )
         else:
             best_score = max(item[0] for item in eligible)
-            best = sorted(item for item in eligible if item[0] == best_score)
+            best_score_matches = [item for item in eligible if item[0] == best_score]
+            best_priority = max(_source_priority(item[1]) for item in best_score_matches)
+            best = sorted(
+                item
+                for item in best_score_matches
+                if _source_priority(item[1]) == best_priority
+            )
             if len(best) != 1:
                 match = FormulaMatch(
                     signal,

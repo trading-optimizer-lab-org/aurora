@@ -23,6 +23,13 @@ from aurora.research.openap_181.official_formulas import (
     build_formula_inventory,
     write_formula_bundle,
 )
+from aurora.research.openap_181.source_research import (
+    ALLOWED_CLASSIFICATIONS,
+    build_signal_resolution,
+    build_signal_source_matrix,
+    build_source_inventory,
+    write_source_research_outputs,
+)
 
 
 def _signal_doc() -> pd.DataFrame:
@@ -78,7 +85,9 @@ def test_manifest_ignores_official_rows_outside_the_strict_212():
 
 def test_source_semantics_prevent_false_substitutions():
     assert not source_can_satisfy("ShortInterest", "finra_short_sale_volume")
+    assert source_can_satisfy("ShortInterest", "finra_equity_short_interest")
     assert not source_can_satisfy("SmileSlope", "cboe_public_aggregate")
+    assert not source_can_satisfy("SmileSlope", "marketdata_options_free")
     assert source_can_satisfy("PatentsRD", "uspto_patentsview_bulk")
 
 
@@ -90,7 +99,7 @@ def test_manifest_uses_concrete_family_blockers():
     )
     assert (
         manifest.loc["ShortInterest", "blocker_code"]
-        == "free_listed_short_interest_source_missing"
+        == "listed_short_interest_history_and_stock_validation_required"
     )
     assert (
         manifest.loc["PatentsRD", "blocker_code"]
@@ -107,9 +116,19 @@ def test_source_catalog_documents_rights_and_scope():
     assert "assignee_to_public_issuer_crosswalk" in catalog.loc[
         "google_patents_bigquery", "cannot_satisfy"
     ]
-    assert not bool(catalog.loc["uspto_odp_patentsview", "authorized_automation"])
+    assert bool(catalog.loc["uspto_odp_patentsview", "authorized_automation"])
     assert not bool(catalog.loc["cboe_delayed_options", "authorized_automation"])
+    assert not bool(catalog.loc["marketdata_options_free", "authorized_automation"])
     assert not bool(catalog.loc["exchange_short_interest", "free"])
+    assert bool(catalog.loc["finra_equity_short_interest", "free"])
+    assert bool(catalog.loc["finra_equity_short_interest", "authorized_automation"])
+    assert bool(catalog.loc["edwin_hu_pin", "authorized_automation"])
+    assert bool(catalog.loc["twelve_data_basic", "authorized_automation"])
+    assert bool(catalog.loc["tiingo_starter", "authorized_automation"])
+    assert not bool(catalog.loc["kenneth_french_factors", "authorized_automation"])
+    assert "historical_point_in_time_identity_guarantee" in catalog.loc[
+        "openfigi", "cannot_satisfy"
+    ]
     assert "short_interest" in catalog.loc["finra_short_sale_volume", "cannot_satisfy"]
 
 
@@ -234,3 +253,123 @@ def test_formula_inventory_prefers_exact_and_explicit_official_outputs(tmp_path)
     assert summary["signals"] == 3
     assert summary["resolved"] == 2
     assert (tmp_path / "openap_181_formula_inventory.csv").is_file()
+
+
+def test_formula_inventory_prefers_current_python_over_legacy_stata():
+    sources = {
+        "Signals/pyCode/Predictors/BM.py": b'save_predictor(df, "BM")\n',
+        "Signals/LegacyStataCode/Predictors/BM.do": b"save BM.csv\n",
+    }
+
+    match = build_formula_inventory(["BM"], sources).iloc[0]
+
+    assert match["status"] == "resolved"
+    assert match["path"] == "Signals/pyCode/Predictors/BM.py"
+    assert match["candidate_count"] == 2
+
+
+def test_formula_inventory_remains_ambiguous_with_two_current_python_matches():
+    sources = {
+        "Signals/pyCode/Predictors/ZZ1_BM.py": b'save_predictor(df, "BM")\n',
+        "Signals/pyCode/Predictors/ZZ2_BM.py": b'save_predictor(df, "BM")\n',
+        "Signals/LegacyStataCode/Predictors/BM.do": b"save BM.csv\n",
+    }
+
+    match = build_formula_inventory(["BM"], sources).iloc[0]
+
+    assert match["status"] == "ambiguous"
+    assert match["candidate_count"] == 2
+    assert "Signals/LegacyStataCode" not in match["path"]
+
+
+def _formula_inventory_for_source_research(manifest: pd.DataFrame) -> pd.DataFrame:
+    rio = {"RIO_Disp", "RIO_MB", "RIO_Turnover", "RIO_Volatility"}
+    return pd.DataFrame(
+        {
+            "signal": manifest["signal"],
+            "status": [
+                "unresolved" if signal in rio else "resolved"
+                for signal in manifest["signal"]
+            ],
+            "source_url": [
+                "https://example.test/formula/" + signal
+                for signal in manifest["signal"]
+            ],
+        }
+    )
+
+
+def test_source_research_classifies_all_181_fail_closed():
+    manifest = build_completion_manifest(_signal_doc())
+    formulas = _formula_inventory_for_source_research(manifest)
+    resolution = build_signal_resolution(manifest, formulas).set_index("signal")
+
+    assert len(resolution) == 181
+    assert resolution.index.nunique() == 181
+    assert set(resolution["final_research_classification"]).issubset(
+        ALLOWED_CLASSIFICATIONS
+    )
+    assert resolution.loc[
+        "RIO_MB", "final_research_classification"
+    ] == "formula_ambiguous"
+    assert resolution.loc[
+        "ShortInterest", "final_research_classification"
+    ] == "historical_point_in_time_missing"
+    assert resolution.loc[
+        "SmileSlope", "final_research_classification"
+    ] == "historical_point_in_time_missing"
+    assert resolution.loc[
+        "PatentsRD", "final_research_classification"
+    ] == "identifier_bridge_missing"
+    assert resolution.loc[
+        "AgeIPO", "final_research_classification"
+    ] == "source_access_unverified"
+    assert resolution.loc[
+        "ProbInformedTrading", "final_research_classification"
+    ] == "historical_point_in_time_missing"
+    assert resolution.loc[
+        "zerotrade1M", "final_research_classification"
+    ] == "multiple_sources_required"
+    assert resolution.loc[
+        "CustomerMomentum", "final_research_classification"
+    ] == "no_free_authorized_source"
+    assert resolution.loc[
+        "iomom_supp", "final_research_classification"
+    ] == "identifier_bridge_missing"
+    assert resolution.loc["DivInit", "final_research_classification"] == "proxy_only"
+    assert not resolution.astype(str).apply(
+        lambda column: column.str.lower().eq("nan").any()
+    ).any()
+
+
+def test_source_research_inventory_and_matrix_cover_manifest():
+    manifest = build_completion_manifest(_signal_doc())
+    formulas = _formula_inventory_for_source_research(manifest)
+    resolution = build_signal_resolution(manifest, formulas)
+    inventory = build_source_inventory().set_index("source_id")
+    matrix = build_signal_source_matrix(manifest, formulas, resolution)
+
+    assert inventory.index.is_unique
+    assert set(matrix["signal"]) == set(manifest["signal"])
+    assert not bool(inventory.loc["tiingo_starter", "aurora_project_use_authorized"])
+    assert not bool(inventory.loc["fmp_basic", "aurora_project_use_authorized"])
+    assert bool(inventory.loc["twelve_data_basic", "aurora_project_use_authorized"])
+    assert matrix["coverage_verified"].eq(False).all()
+
+
+def test_source_research_writer_creates_five_mandatory_files(tmp_path):
+    manifest = build_completion_manifest(_signal_doc())
+    formulas = _formula_inventory_for_source_research(manifest)
+    summary = write_source_research_outputs(manifest, formulas, tmp_path)
+
+    assert summary["signals"] == summary["unique_signals"] == 181
+    assert summary["completion_claimed"] is False
+    assert summary["coverage_claimed"] is False
+    for name in {
+        "signal_source_matrix_181.csv",
+        "signal_resolution_181.csv",
+        "source_inventory_free.csv",
+        "unresolved_signals.csv",
+        "RESEARCH_REPORT.md",
+    }:
+        assert (tmp_path / name).is_file()

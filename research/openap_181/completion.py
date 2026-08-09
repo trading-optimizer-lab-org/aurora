@@ -145,6 +145,22 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "Aggregate volume is not an option chain or volatility surface.",
     ),
     SourceEvidence(
+        "marketdata_options_free", "Market Data Free Forever options API",
+        "https://www.marketdata.app/pricing/", "account_bearer_token_api",
+        True, False, "US-listed option chains, delayed 24 hours, one year of history",
+        (
+            "recent_option_chain", "option_iv", "option_delta", "option_volume",
+            "option_open_interest",
+        ),
+        (
+            "option_history_before_one_year", "aurora_project_use_without_written_permission",
+            "raw_data_redistribution",
+        ),
+        "The API is technically automatable at 100 daily credits, but the self-service "
+        "license is personal/non-professional and defines broader research or testing as "
+        "professional use. Treat Aurora use as unauthorized until written permission exists.",
+    ),
+    SourceEvidence(
         "finra_short_sale_volume", "FINRA daily short-sale volume",
         "https://www.finra.org/finra-data/browse-catalog/short-sale-volume",
         "official_api", True, True, "FINRA-reported short-sale transaction volume",
@@ -152,11 +168,18 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "FINRA explicitly states that short-sale volume is not short interest.",
     ),
     SourceEvidence(
-        "finra_otc_short_interest", "FINRA OTC equity short interest",
-        "https://www.finra.org/finra-data/browse-catalog/equity-short-interest/data",
-        "official_api", True, True, "OTC securities only",
-        ("otc_short_interest",), ("listed_equity_short_interest",),
-        "Does not cover the full NYSE/Nasdaq listed-stock universe.",
+        "finra_equity_short_interest", "FINRA Equity Short Interest",
+        "https://www.finra.org/finra-data/browse-catalog/equity-short-interest",
+        "official_grid_files_and_authenticated_api", True, True,
+        "All exchange-listed and OTC equities from June 2021; archive files reach 2014, "
+        "but files before June 2021 are OTC-only",
+        ("listed_equity_short_interest_since_2021_06", "otc_short_interest"),
+        (
+            "listed_equity_short_interest_before_2021_06", "historical_revisions",
+            "shares_outstanding",
+        ),
+        "Published twice monthly on the seventh business day after settlement. The public "
+        "grid/files are free; Query API automation uses free FINRA credentials.",
     ),
     SourceEvidence(
         "exchange_short_interest", "NYSE and Nasdaq listed short interest products",
@@ -164,6 +187,76 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "commercial_feed", False, False, "Listed exchange short interest",
         ("listed_equity_short_interest",), (),
         "The complete listed feed is commercial, so it cannot satisfy the free-only goal.",
+    ),
+    SourceEvidence(
+        "twelve_data_basic", "Twelve Data Basic API",
+        "https://twelvedata.com/pricing", "free_account_api_key",
+        True, True, "US-listed equities; end-of-day history for most symbols from first trade",
+        ("daily_ohlcv", "split_adjusted_prices", "exchange_and_mic_metadata"),
+        (
+            "otc_equities", "survivorship_free_permanent_identity",
+            "free_dividend_adjustment_verified", "raw_data_redistribution",
+        ),
+        "Basic provides 8 credits per minute and 800 per day for internal non-display use. "
+        "Daily data are split-adjusted; dividend-adjusted access on Basic needs an empirical gate.",
+    ),
+    SourceEvidence(
+        "tiingo_starter", "Tiingo Starter API",
+        "https://www.tiingo.com/about/pricing", "free_account_api_token",
+        True, True, "US-focused end-of-day equities with 30+ years advertised depth",
+        ("raw_ohlcv", "adjusted_ohlcv", "dividend", "split_factor", "exchange"),
+        (
+            "full_us_historical_universe_verified", "permanent_security_identity",
+            "more_than_500_unique_symbols_per_month", "raw_data_redistribution",
+            "signal_derivation_without_written_permission",
+        ),
+        "Free internal-use plan: 500 unique symbols per month, 50 requests per hour, "
+        "1,000 requests per day and 1 GB per month. The terms updated 18 July 2026 "
+        "require written approval to create or retain derived data, so Tiingo cannot "
+        "currently supply Aurora signals even though its API itself is automatable.",
+    ),
+    SourceEvidence(
+        "fmp_basic", "Financial Modeling Prep Basic API",
+        "https://site.financialmodelingprep.com/developer/docs/pricing",
+        "free_account_api_key", True, True,
+        "US end-of-day and reference endpoints with a five-year free historical window",
+        ("recent_eod_prices", "company_profile", "selected_reference_endpoints"),
+        (
+            "history_before_five_years", "full_analyst_endpoint_entitlement_verified",
+            "ibes_definition_equivalence", "commercial_or_redistribution_use",
+            "signal_derivation_without_written_permission",
+        ),
+        "Basic is free for individual use at 250 calls per day and 500 MB per trailing 30 "
+        "days. Its terms prohibit derivative works without written approval; each analyst "
+        "endpoint also needs an entitlement test before use.",
+    ),
+    SourceEvidence(
+        "openfigi", "OpenFIGI mapping API",
+        "https://www.openfigi.com/api/documentation", "public_api_optional_free_key",
+        True, True, "Global instrument mappings for CUSIP, ISIN, ticker and other identifiers",
+        ("cusip_figi_mapping", "isin_figi_mapping", "ticker_exchange_metadata"),
+        ("cik_mapping", "historical_point_in_time_identity_guarantee"),
+        "No key allows 25 requests per minute and 10 jobs per request; a free key allows "
+        "25 requests per six seconds and 100 jobs. FIGI identifiers are public-domain.",
+    ),
+    SourceEvidence(
+        "kenneth_french_factors", "Kenneth French Data Library",
+        "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html",
+        "public_static_download", True, False,
+        "Daily and monthly US Fama-French factors from July 1926 with release archives",
+        ("market_excess_return", "smb", "hml", "factor_validation"),
+        ("stock_level_returns", "explicit_automation_permission"),
+        "Direct files and dated archives are public, but explicit automated-download terms "
+        "were not found. Treat scheduled collection as unverified until permission is established.",
+    ),
+    SourceEvidence(
+        "fred_vxo_vix", "FRED VXO and VIX series",
+        "https://fred.stlouisfed.org/series/VXOCLS", "free_api_key",
+        True, True, "Daily VXO from 1986 through September 2021 and daily VIX from 1990",
+        ("vxo_history", "vix_history"),
+        ("exact_vxo_after_2021_09", "vix_as_exact_vxo_substitute"),
+        "FRED permits automated API use with attribution and source-specific rights. VXO is "
+        "the OpenAP betaVIX input; substituting VIX after VXO ended would be a proxy.",
     ),
     SourceEvidence(
         "uspto_patentsview_bulk", "USPTO PatentsView bulk datasets",
@@ -187,11 +280,11 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
     SourceEvidence(
         "uspto_odp_patentsview", "USPTO Open Data Portal PatentsView datasets",
         "https://data.uspto.gov/bulkdata/datasets/pvannual", "account_and_api_key",
-        True, False, "Current official PatentsView releases",
+        True, True, "Current official PatentsView releases",
         ("patent_counts", "patent_citations", "assignee_identity"),
-        ("autonomous_access_without_user_credentials", "assignee_to_public_issuer_crosswalk"),
-        "Since 18 June 2026 ODP requires a USPTO.gov account and API key; Aurora "
-        "cannot create user credentials autonomously.",
+        ("assignee_to_public_issuer_crosswalk",),
+        "Since 18 June 2026 ODP requires a free USPTO.gov account and API key. The "
+        "official API authorizes automation, but credentials must be supplied by the user.",
     ),
     SourceEvidence(
         "sec_13f", "SEC Form 13F structured datasets",
@@ -201,11 +294,69 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "CUSIP mapping and quarter availability must be handled causally.",
     ),
     SourceEvidence(
+        "alpha_vantage_free", "Alpha Vantage free API",
+        "https://www.alphavantage.co/documentation/", "free_api_key",
+        True, False, "Ticker-level market, listing, shares and aggregate estimate endpoints",
+        (
+            "daily_ohlcv", "listing_status", "quarterly_shares_outstanding",
+            "aggregate_earnings_estimates", "analyst_count_and_revision_snapshot",
+        ),
+        (
+            "individual_analyst_recommendation_history", "ibes_definition_equivalence",
+            "permanent_security_identity", "aurora_project_use_without_written_permission",
+        ),
+        "Most endpoints are free at 25 calls per day, but the free terms are personal and "
+        "non-commercial and classify broader research/testing as commercial. Do not use in "
+        "Aurora without written permission.",
+    ),
+    SourceEvidence(
+        "field_ritter_ipo", "Field-Ritter IPO founding dates",
+        "https://site.warrington.ufl.edu/ritter/files/IPO-age.xlsx",
+        "official_static_excel", True, False,
+        "US IPOs and direct listings from 1975 through 2025",
+        ("ipo_offer_date", "founding_year", "permno", "cusip", "ticker"),
+        (
+            "spac_merger_new_lists", "all_new_listings", "post_2025_updates",
+            "explicit_automation_permission",
+        ),
+        "The author links the workbook for research and documents its construction, but no "
+        "explicit automated-download terms were found. Validate permission before scheduled use.",
+    ),
+    SourceEvidence(
+        "yale_governance", "Gompers-Ishii-Metrick Governance Index",
+        "https://faculty.som.yale.edu/andrewmetrick/data/", "official_static_excel",
+        True, False, "Firm-level Governance Index observations from 1990 through 2006",
+        ("governance_index_1990_2006",),
+        ("governance_index_after_2006", "explicit_automation_permission"),
+        "Yale provides the original workbook directly. The page states the years and source "
+        "paper but does not state a reusable license or automated-download permission.",
+    ),
+    SourceEvidence(
+        "edwin_hu_pin", "Duarte-Hu-Young PIN model data",
+        "https://edwinhu.github.io/pin/", "github_and_zenodo_public_download",
+        True, True, "PIN-family stock-year estimates keyed by PERMNO",
+        ("pin_parameters_1993_2012", "gpin_owr_parameters_2003_2024"),
+        ("exact_pin_parameters_after_2012", "ticker_permno_crosswalk"),
+        "The authors publish code and data under MIT terms. Their recent 2003-2024 release "
+        "contains GPIN and OWR, not the exact PIN model required by ProbInformedTrading.",
+    ),
+    SourceEvidence(
         "bea_input_output", "BEA input-output accounts",
         "https://www.bea.gov/data/industries/input-output-accounts-data",
         "official_bulk_download", True, True, "US industry supplier-use relationships",
         ("industry_supplier_links",), ("firm_customer_links",),
-        "Needs an audited SIC/NAICS-to-BEA bridge for firm-level use.",
+        "Public-domain data are downloadable and available through a free API key. Needs an "
+        "audited SIC/NAICS-to-BEA bridge for firm-level use and vintage-aware handling.",
+    ),
+    SourceEvidence(
+        "census_naics_concordance", "US Census SIC-NAICS concordances",
+        "https://www.census.gov/naics/concordances/concordances.html",
+        "official_static_download", True, True,
+        "Official classification-system concordances for published SIC and NAICS vintages",
+        ("sic_naics_concordance",),
+        ("unique_firm_naics", "point_in_time_company_classification"),
+        "The concordance is frequently many-to-many; it cannot by itself assign an exact NAICS "
+        "code to a firm-year.",
     ),
 )
 
@@ -229,18 +380,24 @@ def _optional_value(row: Mapping[str, Any], *keys: str) -> Any:
 
 def _source_candidates(signal: str, category: str) -> tuple[str, ...]:
     if signal in OPTION_IV_SIGNALS:
-        return ("cboe_delayed_options", "openap_official")
+        return ("marketdata_options_free", "cboe_delayed_options", "openap_official")
     if signal in OPTION_VOLUME_SIGNALS:
-        return ("cboe_delayed_options", "cboe_public_aggregate")
-    if signal in SHORT_INTEREST_SIGNALS:
-        return ("exchange_short_interest", "finra_otc_short_interest")
+        return (
+            "marketdata_options_free", "cboe_delayed_options", "cboe_public_aggregate"
+        )
+    if signal == "ShortInterest":
+        return ("finra_equity_short_interest", "alpha_vantage_free")
+    if signal == "IO_ShortInterest":
+        return ("finra_equity_short_interest", "sec_13f", "alpha_vantage_free")
+    if signal == "Recomm_ShortInterest":
+        return ("finra_equity_short_interest", "alpha_vantage_free")
     if signal in PATENT_SIGNALS:
         return (
             "google_patents_bigquery", "uspto_patentsview_bulk",
             "uspto_odp_patentsview", "sec_edgar",
         )
     if signal in ANALYST_SIGNALS:
-        return ("openap_official", "yahoo_public")
+        return ("openap_official", "alpha_vantage_free", "yahoo_public")
     if signal in INSTITUTIONAL_SIGNALS:
         return ("sec_13f", "openap_official")
     text = category.lower()
@@ -254,6 +411,9 @@ def _source_candidates(signal: str, category: str) -> tuple[str, ...]:
 def source_can_satisfy(signal: str, source_id: str) -> bool:
     """Hard semantic gates for commonly confused public datasets."""
 
+    source = next((item for item in SOURCE_CATALOG if item.source_id == source_id), None)
+    if source is None or not source.free or not source.authorized_automation:
+        return False
     if signal in SHORT_INTEREST_SIGNALS and source_id == "finra_short_sale_volume":
         return False
     if signal in OPTION_IV_SIGNALS and source_id == "cboe_public_aggregate":
@@ -281,7 +441,7 @@ def _specific_blocker(
     if signal in OPTION_VOLUME_SIGNALS:
         return "issuer_option_volume_definition_and_validation_missing"
     if signal in SHORT_INTEREST_SIGNALS:
-        return "free_listed_short_interest_source_missing"
+        return "listed_short_interest_history_and_stock_validation_required"
     if signal in PATENT_SIGNALS:
         return "patent_assignee_to_public_issuer_crosswalk_missing"
     if signal in ANALYST_SIGNALS:
