@@ -62,7 +62,7 @@
     {"lane_id":"F029","required_datasets":["D_CFTC"],"fidelity":"exact","original_dependency":"legacy S&P futures COT","replacement_note":""},
     {"lane_id":"F030","required_datasets":["D_RATES"],"fidelity":"exact","original_dependency":"nominal rates","replacement_note":""},
     {"lane_id":"F031","required_datasets":["D_RATES"],"fidelity":"exact","original_dependency":"yield curve","replacement_note":""},
-    {"lane_id":"F032","required_datasets":["D_RATES","D_MACRO_PIT"],"fidelity":"exact","original_dependency":"credit spreads with causal releases","replacement_note":"H15 includes contemporaneous Moody's corporate yields and Treasury benchmarks."},
+    {"lane_id":"F032","required_datasets":["D_RATES"],"fidelity":"exact","original_dependency":"credit spreads with causal releases","replacement_note":"H15 includes contemporaneous daily Moody's Aaa and Baa corporate yields; F032 uses their Baa-minus-Aaa spread at the next SPY session."},
     {"lane_id":"F033","required_datasets":["D_FIN_COND","D_PHILLY_RT"],"fidelity":"exact","original_dependency":"financial conditions indexes","replacement_note":""},
     {"lane_id":"F034","required_datasets":["D_RATES","D_MACRO_PIT"],"fidelity":"exact","original_dependency":"inflation and real rates","replacement_note":""},
     {"lane_id":"F035","required_datasets":["D_MACRO_PIT","D_PHILLY_RT"],"fidelity":"exact","original_dependency":"aggregate growth vintages","replacement_note":""},

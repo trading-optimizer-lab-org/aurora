@@ -89,6 +89,34 @@ def test_cboe_panel_combines_vix_and_vxo_at_next_session() -> None:
     assert result["date"].equals(result["available_at"])
 
 
+def test_cboe_panel_keeps_latest_observation_when_dates_share_next_session() -> None:
+    api = _normalizer_api()
+    observations = pd.to_datetime(["2010-01-08", "2010-01-09"])
+    vix = pd.DataFrame(
+        {
+            "date": observations,
+            "CLOSE": [20.0, 21.0],
+            "resource_id": "vix_from_2003",
+        }
+    )
+    vxo = pd.DataFrame(
+        {
+            "date": observations,
+            "4": [19.0, 20.0],
+            "Unnamed: 4": None,
+            "resource_id": "vxo_1986_2003",
+        }
+    )
+
+    result = api.normalize_cboe_vol_panel(vix, vxo, sessions=_sessions())
+
+    assert len(result) == 1
+    assert result.loc[0, "date"] == pd.Timestamp("2010-01-11")
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2010-01-09")
+    assert result.loc[0, "vix_close"] == pytest.approx(21.0)
+    assert result.loc[0, "vxo_close"] == pytest.approx(20.0)
+
+
 def test_cftc_panel_filters_sp500_and_waits_until_friday() -> None:
     api = _normalizer_api()
     base = {

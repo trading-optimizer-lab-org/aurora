@@ -77,6 +77,14 @@ def _project_to_decision_session(
         policy=policy,
         sessions=normalized_sessions,
     )
+    projected = (
+        projected.sort_values(
+            ["available_at", "observed_at"],
+            kind="mergesort",
+        )
+        .drop_duplicates("available_at", keep="last")
+        .reset_index(drop=True)
+    )
     projected["date"] = projected["available_at"]
     return projected.sort_values("date", kind="mergesort").reset_index(drop=True)
 

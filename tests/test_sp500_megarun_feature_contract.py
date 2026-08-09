@@ -48,6 +48,8 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.validation_opened is False
     assert feature_contract.locked_opened is False
     assert feature_contract.search_end.isoformat() == "2010-12-31"
+    assert feature_contract.lanes[31].lane_id == "F032"
+    assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
     ] == [f"F{index:03d}" for index in range(1, 21)]
