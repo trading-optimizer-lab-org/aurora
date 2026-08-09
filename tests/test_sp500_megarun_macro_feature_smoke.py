@@ -201,7 +201,7 @@ def _write_train_snapshot(root: Path) -> Path:
     z1_rows: list[dict[str, object]] = []
     z1_dates = pd.date_range("2003-03-31", "2009-09-30", freq="QE")
     for position, date in enumerate(z1_dates):
-        values = {
+        z1_values = {
             "FL153064105.Q": 400.0 + position * 8.0,
             "FL154090005.Q": 1000.0 + position * 10.0,
             "FL653064100.Q": 300.0 + position * 5.0,
@@ -209,7 +209,7 @@ def _write_train_snapshot(root: Path) -> Path:
         }
         z1_rows.extend(
             {"date": date, "series_id": series_id, "value": value}
-            for series_id, value in values.items()
+            for series_id, value in z1_values.items()
         )
     pd.DataFrame(z1_rows).to_parquet(snapshot / "D_Z1.parquet", index=False)
 
