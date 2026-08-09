@@ -157,7 +157,11 @@ def parse_finra_short_interest_text(text: str) -> pd.DataFrame:
     rows = rows.rename(columns=rename)
     missing = set(_REQUIRED_COLUMNS) - set(rows.columns)
     if missing:
-        raise ValueError(f"FINRA short-interest file is missing columns: {sorted(missing)}")
+        observed = sorted(_normalise_header(column) for column in rows.columns)
+        raise ValueError(
+            f"FINRA short-interest file is missing columns: {sorted(missing)}; "
+            f"observed normalized headers: {observed}"
+        )
     rows = rows.loc[:, list(_REQUIRED_COLUMNS)].copy()
     for column in _REQUIRED_COLUMNS:
         rows[column] = rows[column].astype("string").str.strip()
