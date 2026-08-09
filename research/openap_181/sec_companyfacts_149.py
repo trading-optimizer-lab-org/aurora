@@ -65,6 +65,15 @@ _REALESTATE_ALIAS_LOOKUP = {
         "AccumulatedDepreciationAndAmortization"
     ): ("ppe_net", 1),
 }
+_TAX_ALIAS_LOOKUP = {
+    "IncomeLossFromContinuingOperations": ("income", 0),
+    "NetIncomeLoss": ("income", 1),
+    "ProfitLoss": ("income", 2),
+    "CurrentFederalTaxExpenseBenefit": ("federal_tax", 0),
+    "CurrentForeignTaxExpenseBenefit": ("foreign_tax", 0),
+    "IncomeTaxExpenseBenefit": ("total_tax", 0),
+    "DeferredIncomeTaxExpenseBenefit": ("deferred_tax", 0),
+}
 _OUTPUT_COLUMNS = (
     "security_id",
     "ticker",
@@ -943,12 +952,188 @@ def calculate_companyfacts_realestate_current(
     ).reset_index(drop=True)
 
 
+def _tax_annual_facts(
+    companyfacts: pd.DataFrame,
+    formation: pd.Timestamp,
+) -> pd.DataFrame:
+    required = _FACT_COLUMNS | {"taxonomy", "fy", "fp"}
+    _require_columns(companyfacts, required, "SEC CompanyFacts")
+    frame = companyfacts.copy()
+    frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce")
+    frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+    frame["fiscal_year"] = pd.to_numeric(frame["fy"], errors="coerce")
+    frame["period_start"] = _utc(frame["period_start"])
+    frame["period_end"] = _utc(frame["period_end"])
+    frame["filed_at"] = _utc(frame["filed"])
+    frame["available_at"] = _utc(frame["available_at"])
+    duration = (frame["period_end"] - frame["period_start"]).dt.days
+    frame = frame.loc[
+        frame["cik"].notna()
+        & frame["value"].notna()
+        & np.isfinite(frame["value"])
+        & frame["fiscal_year"].notna()
+        & frame["taxonomy"].fillna("").astype(str).str.lower().eq("us-gaap")
+        & frame["tag"].isin(_TAX_ALIAS_LOOKUP)
+        & frame["unit"].eq("USD")
+        & frame["form"].isin({"10-K", "10-K/A"})
+        & frame["fp"].fillna("").astype(str).eq("FY")
+        & duration.between(250, 450)
+        & frame["period_end"].notna()
+        & frame["filed_at"].notna()
+        & frame["available_at"].notna()
+        & frame["available_at"].le(formation)
+    ].copy()
+    if frame.empty:
+        return frame
+    frame["concept"] = frame["tag"].map(
+        lambda tag: _TAX_ALIAS_LOOKUP[str(tag)][0]
+    )
+    frame["alias_priority"] = frame["tag"].map(
+        lambda tag: _TAX_ALIAS_LOOKUP[str(tag)][1]
+    )
+    group = ["cik", "period_end", "concept"]
+    best_priority = frame.groupby(group)["alias_priority"].transform("min")
+    frame = frame.loc[frame["alias_priority"].eq(best_priority)].copy()
+    latest_available = frame.groupby(group)["available_at"].transform("max")
+    frame = frame.loc[frame["available_at"].eq(latest_available)].copy()
+    conflicts = frame.groupby(group)["value"].transform("nunique").gt(1)
+    frame = frame.loc[~conflicts].copy()
+    return frame.sort_values(group + ["filed_at", "accession_number"]).drop_duplicates(
+        group, keep="last"
+    )
+
+
+def _tax_candidate(issuer_facts: pd.DataFrame) -> dict[str, Any] | None:
+    for period_end in sorted(issuer_facts["period_end"].unique(), reverse=True):
+        period = issuer_facts.loc[issuer_facts["period_end"].eq(period_end)].copy()
+        lookup = period.set_index("concept")
+        if "income" not in lookup.index:
+            continue
+        income = float(lookup.loc["income", "value"])
+        if not np.isfinite(income):
+            continue
+
+        direct = {"federal_tax", "foreign_tax"}
+        alternative = {"total_tax", "deferred_tax"}
+        if direct.issubset(lookup.index):
+            numerator = float(lookup.loc["federal_tax", "value"]) + float(
+                lookup.loc["foreign_tax", "value"]
+            )
+            used_concepts = ("income", "federal_tax", "foreign_tax")
+            variant = "current_federal_plus_foreign"
+        elif alternative.issubset(lookup.index):
+            numerator = float(lookup.loc["total_tax", "value"]) - float(
+                lookup.loc["deferred_tax", "value"]
+            )
+            used_concepts = ("income", "total_tax", "deferred_tax")
+            variant = "total_less_deferred"
+        else:
+            continue
+        if not np.isfinite(numerator):
+            continue
+        if income <= 0 and numerator > 0:
+            value = 1.0
+        elif income == 0:
+            continue
+        else:
+            value = (numerator / 0.35) / income
+        if not np.isfinite(value):
+            continue
+        used = period.loc[period["concept"].isin(used_concepts)]
+        return {
+            "cik": int(issuer_facts["cik"].iloc[0]),
+            "value": float(value),
+            "variant": variant,
+            "period_end": used["period_end"].max(),
+            "filed_at": used["filed_at"].max(),
+            "available_at": used["available_at"].max(),
+            "observation_count": int(len(used)),
+        }
+    return None
+
+
+def calculate_companyfacts_tax_current(
+    companyfacts: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+) -> pd.DataFrame:
+    """Build a causal SEC proxy for OpenAP taxable-income-to-income."""
+
+    formation = pd.Timestamp(formation_at)
+    if formation.tzinfo is None:
+        formation = formation.tz_localize("UTC")
+    else:
+        formation = formation.tz_convert("UTC")
+    retrieved = pd.Timestamp(retrieved_at)
+    if retrieved.tzinfo is None:
+        retrieved = retrieved.tz_localize("UTC")
+    else:
+        retrieved = retrieved.tz_convert("UTC")
+    identity = build_companyfacts_identity(status)
+    facts = _tax_annual_facts(companyfacts, formation)
+    candidates = [
+        candidate
+        for _, issuer_facts in facts.groupby("cik", sort=False)
+        if (candidate := _tax_candidate(issuer_facts)) is not None
+    ]
+    candidate_frame = pd.DataFrame(candidates)
+    if candidate_frame.empty or identity.empty:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+    selected = candidate_frame.merge(
+        identity, on="cik", how="inner", validate="one_to_one"
+    )
+    rows: list[dict[str, Any]] = []
+    for row in selected.itertuples(index=False):
+        available_at = pd.Timestamp(row.available_at)
+        if (
+            available_at > formation
+            or available_at > retrieved
+            or not np.isfinite(row.value)
+        ):
+            continue
+        rows.append(
+            {
+                "security_id": str(row.security_id),
+                "ticker": str(row.symbol),
+                "cik": f"{int(row.cik):010d}",
+                "signal": "Tax",
+                "formation_at": formation.isoformat(),
+                "period_end": pd.Timestamp(row.period_end).isoformat(),
+                "filed_at": pd.Timestamp(row.filed_at).isoformat(),
+                "available_at": available_at.isoformat(),
+                "retrieved_at": retrieved.isoformat(),
+                "value": float(row.value),
+                "fidelity_class": "unvalidated_proxy",
+                "current_usable": True,
+                "source_id": "sec_edgar",
+                "source_url": (
+                    "https://data.sec.gov/api/xbrl/companyfacts/"
+                    f"CIK{int(row.cik):010d}.json"
+                ),
+                "formula_id": "openap_tax_sec_companyfacts_current_proxy",
+                "formula_sha256": "",
+                "observation_count": int(row.observation_count),
+                "reason_if_missing": "",
+                "caveat": (
+                    f"SEC CompanyFacts {row.variant} tax proxy; OpenAP uses "
+                    "Compustat tax and income semantics"
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
+        "security_id"
+    ).reset_index(drop=True)
+
+
 __all__ = [
     "build_companyfacts_identity",
     "calculate_companyfacts_accounting_current",
     "calculate_companyfacts_149_current",
     "calculate_companyfacts_rdability_current",
     "calculate_companyfacts_realestate_current",
+    "calculate_companyfacts_tax_current",
     "calculate_sec_submission_current",
     "normalize_companyfacts_for_accounting",
 ]
