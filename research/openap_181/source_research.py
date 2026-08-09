@@ -37,6 +37,10 @@ from aurora.research.openap_181.relationship_batch import (
     RELATIONSHIP_SIGNALS,
 )
 from aurora.research.openap_181.rio_batch import RIO_BLOCKERS, RIO_SIGNALS
+from aurora.research.openap_181.valuation_accounting_batch import (
+    VALUATION_ACCOUNTING_BLOCKERS,
+    VALUATION_ACCOUNTING_SIGNALS,
+)
 
 
 RESEARCH_CHECKED_DATE = "2026-08-09"
@@ -981,6 +985,11 @@ def _route_source_ids(signal: str, row: Mapping[str, Any]) -> tuple[str, ...]:
             ]
         else:
             sources += ["crsp_stock_commercial", "wrds_linking_suite"]
+    elif signal in VALUATION_ACCOUNTING_SIGNALS:
+        sources += [
+            "sec_edgar", "sec_financial_statement_datasets", "openfigi",
+            "compustat_commercial", "crsp_stock_commercial", "wrds_linking_suite",
+        ]
     elif signal in ACCRUALS_NOA_SIGNALS:
         sources += [
             "sec_edgar", "sec_financial_statement_datasets", "openfigi",
@@ -1156,6 +1165,8 @@ def build_signal_resolution(
         ]
         if signal in ANALYST_SIGNALS:
             remaining_blocker = ANALYST_BLOCKERS[signal]
+        elif signal in VALUATION_ACCOUNTING_SIGNALS:
+            remaining_blocker = VALUATION_ACCOUNTING_BLOCKERS[signal]
         elif signal in ACCRUALS_NOA_SIGNALS:
             remaining_blocker = ACCRUALS_NOA_BLOCKERS[signal]
         elif signal in COMPLEX_ACCOUNTING_SIGNALS:

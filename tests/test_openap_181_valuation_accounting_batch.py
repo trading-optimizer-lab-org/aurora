@@ -234,4 +234,3 @@ def test_workflows_are_github_only_sha_pinned_and_integrated() -> None:
     assert "valuation_accounting_evidence_run_id" in completion_text
     assert "valuation_accounting_probe:" in completion_text
     assert "valuation_accounting_batch_evidence.csv" in completion_text
-
