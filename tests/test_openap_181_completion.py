@@ -978,3 +978,47 @@ def test_implementation_cli_fails_closed_outside_github(tmp_path, monkeypatch):
 
     with pytest.raises(LocalRunBlocked, match="OpenAP 181 implementation status"):
         runpy.run_path(str(script), run_name="__main__")
+
+
+def test_relationship_source_matrix_uses_exact_family_routes_and_blockers():
+    from aurora.research.openap_181.relationship_batch import (
+        RELATIONSHIP_BLOCKERS,
+        RELATIONSHIP_SIGNALS,
+    )
+
+    manifest = build_manifest(_signal_doc())
+    formulas = _formula_inventory_for_source_research(manifest)
+    resolution = build_signal_resolution(manifest, formulas).set_index("signal")
+    inventory = build_source_inventory().set_index("source_id")
+    matrix = build_signal_source_matrix(
+        manifest, formulas, resolution.reset_index()
+    )
+
+    assert "factset_supply_chain_commercial" in inventory.index
+    assert bool(
+        inventory.loc[
+            "factset_supply_chain_commercial", "aurora_project_use_authorized"
+        ]
+    ) is False
+    assert set(RELATIONSHIP_SIGNALS) == {
+        "CustomerMomentum", "iomom_cust", "iomom_supp", "retConglomerate", "sinAlgo"
+    }
+    assert resolution.loc[
+        list(RELATIONSHIP_SIGNALS), "remaining_blocker"
+    ].to_dict() == RELATIONSHIP_BLOCKERS
+
+    routes = {
+        signal: set(matrix.loc[matrix["signal"].eq(signal), "source_name"])
+        for signal in RELATIONSHIP_SIGNALS
+    }
+    assert any("BEA" in source for source in routes["iomom_cust"])
+    assert any("Census" in source for source in routes["iomom_supp"])
+    assert any("FactSet" in source for source in routes["CustomerMomentum"])
+    assert any("Compustat" in source for source in routes["retConglomerate"])
+    assert any("Compustat" in source for source in routes["sinAlgo"])
+
+    relationship = matrix.loc[matrix["signal"].isin(RELATIONSHIP_SIGNALS)]
+    assert relationship["blocking_reason"].str.startswith(
+        "relationship_source_blocked:"
+    ).all()
+    assert relationship["blocking_reason"].nunique() == 5
