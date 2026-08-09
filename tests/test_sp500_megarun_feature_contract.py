@@ -52,10 +52,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 121)]
+    ] == [f"F{index:03d}" for index in range(1, 131)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[120:]
+        for lane in feature_contract.lanes[130:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -219,6 +219,37 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "mean_forecast", "median_forecast", "consensus", "disagreement"
     )
     assert cross_section_lanes[9].parameter_space["features"] == (3, 5, 7)
+    technical_lanes = feature_contract.lanes[120:130]
+    assert all(lane.required_datasets == ("D_SPY",) for lane in technical_lanes)
+    assert technical_lanes[0].parameter_space["statistic"] == (
+        "high_distance",
+        "low_distance",
+        "range_position",
+        "confirmed_breakout",
+    )
+    assert "shift(1)" in technical_lanes[0].formula
+    assert technical_lanes[3].parameter_space["statistic"] == (
+        "conversion_base_spread",
+        "cloud_position",
+        "cloud_width",
+        "cloud_breakout",
+    )
+    assert "never forward-shift" in technical_lanes[3].formula
+    assert technical_lanes[6].parameter_space["statistic"] == (
+        "heikin_ashi",
+        "renko",
+        "point_figure",
+        "consensus",
+    )
+    assert technical_lanes[9].parameter_space["statistic"] == (
+        "chaikin_money_flow",
+        "money_flow_index",
+        "force_index",
+        "ease_of_movement",
+        "klinger_oscillator",
+        "consensus",
+    )
+    assert all(lane.minimum_history >= 20 for lane in technical_lanes)
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:
