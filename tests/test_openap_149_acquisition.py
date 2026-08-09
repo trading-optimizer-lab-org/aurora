@@ -198,3 +198,24 @@ def test_acquisition_matrix_rejects_lookahead_and_conflicting_duplicates() -> No
     duplicate.iloc[1, duplicate.columns.get_loc("value")] = 0.75
     with pytest.raises(module.AcquisitionContractError, match="duplicate"):
         module.build_acquisition_matrix(_routes().iloc[[0]], duplicate)
+
+
+def test_acquisition_matrix_quarantines_pre_period_availability() -> None:
+    module = _module()
+    invalid = _current_rows().iloc[[0]].copy()
+    invalid.loc[:, "period_end"] = "2026-03-31"
+    invalid.loc[:, "available_at"] = "2026-03-30"
+    formulas = pd.DataFrame([{"signal": "Cash", "formula_sha256": "a" * 64}])
+
+    matrix, values = module.build_acquisition_matrix(
+        _routes().iloc[[0]],
+        invalid,
+        formula_inventory=formulas,
+    )
+
+    row = matrix.iloc[0]
+    assert row["status"] == "blocked_fidelity"
+    assert "available_at_precedes_effective_period" in row["remaining_blocker"]
+    assert not bool(row["data_acquired"])
+    assert not bool(row["current_value_calculated"])
+    assert values.empty
