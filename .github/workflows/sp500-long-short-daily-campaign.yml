@@ -11,6 +11,7 @@ on:
         options:
           - preflight
           - megarun_data_audit
+          - megarun_data_materialize
           - smoke
           - pilot
           - train
@@ -67,7 +68,7 @@ permissions:
 
 jobs:
   resolve_data_windows:
-    if: inputs.phase != 'preflight' && inputs.phase != 'megarun_data_audit'
+    if: inputs.phase != 'preflight' && inputs.phase != 'megarun_data_audit' && inputs.phase != 'megarun_data_materialize'
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -136,7 +137,7 @@ jobs:
 
   stooq_windows:
     needs: resolve_data_windows
-    if: inputs.phase != 'preflight' && inputs.phase != 'megarun_data_audit'
+    if: inputs.phase != 'preflight' && inputs.phase != 'megarun_data_audit' && inputs.phase != 'megarun_data_materialize'
     strategy:
       fail-fast: false
       max-parallel: 180
@@ -186,7 +187,7 @@ jobs:
 
   prepare_campaign_data:
     needs: [resolve_data_windows, stooq_windows]
-    if: inputs.phase != 'preflight' && inputs.phase != 'megarun_data_audit' && inputs.phase != 'validation_once' && inputs.phase != 'validation_diagnostic'
+    if: inputs.phase != 'preflight' && inputs.phase != 'megarun_data_audit' && inputs.phase != 'megarun_data_materialize' && inputs.phase != 'validation_once' && inputs.phase != 'validation_diagnostic'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -326,6 +327,61 @@ jobs:
           retention-days: 30
       - name: Fail closed when any source is unavailable
         if: steps.probe.outcome != 'success'
+        run: exit 1
+
+  megarun_data_materialize:
+    if: inputs.phase == 'megarun_data_materialize'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Restore bounded data runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install "pytest==9.0.3" "openpyxl==3.1.5" "xlrd==2.0.2"
+          python -m pip install --no-deps -e .
+      - name: Verify materializer and temporal guards
+        run: |
+          set -euo pipefail
+          python -m pytest \
+            tests/test_sp500_megarun_data_contract.py \
+            tests/test_sp500_megarun_source_adapters.py \
+            tests/test_sp500_megarun_materializer.py \
+            -q
+      - name: Materialize every primary free source through 2010
+        id: materialize
+        continue-on-error: true
+        env:
+          GITHUB_ACTIONS: "true"
+        run: |
+          python scripts/materialize_sp500_megarun_free_sources.py \
+            --contract config/sp500_megarun_free_data_120.json \
+            --sources config/sp500_megarun_free_sources.json \
+            --output-dir outputs/sp500_megarun_free_data/materialized \
+            --cache-dir "$RUNNER_TEMP/sp500-megarun-raw"
+      - name: Upload complete normalized-source evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-free-data-materialized-${{ github.run_id }}
+          path: outputs/sp500_megarun_free_data/materialized
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Fail closed when any primary source cannot be normalized
+        if: steps.materialize.outcome != 'success'
         run: exit 1
 
   smoke:

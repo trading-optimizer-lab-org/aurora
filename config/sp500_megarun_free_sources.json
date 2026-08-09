@@ -83,9 +83,9 @@
       "adapter": "philadelphia_realtime_bundle",
       "maximum_observation_date": "2010-12-31",
       "resources": [
-        {"id":"rtdsm_index","url":"https://www.philadelphiafed.org/surveys-and-data/real-time-data-research/real-time-data-set-for-macroeconomists","format":"html_link_index"},
-        {"id":"rtdsm_real_output","url":"https://www.philadelphiafed.org/surveys-and-data/real-time-data-research/routput","format":"html_link_index"},
-        {"id":"rtdsm_unemployment","url":"https://www.philadelphiafed.org/surveys-and-data/real-time-data-research/ruc","format":"html_link_index"}
+        {"id":"real_output_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/ROUTPUTQvQd.xlsx","format":"xlsx","vintage_axis":"quarterly"},
+        {"id":"real_output_monthly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/routputMvQd.xlsx","format":"xlsx","vintage_axis":"monthly"},
+        {"id":"unemployment_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/rucQvMd.xlsx","format":"xlsx","vintage_axis":"quarterly"}
       ]
     },
     "D_MARGIN": {
