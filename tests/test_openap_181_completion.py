@@ -601,6 +601,43 @@ def test_documentary_blockers_create_evidence_without_promoting_plausible_routes
     assert plausible["strict_gate_result"] == "not_attempted"
 
 
+def test_explicit_evidence_replaces_only_matching_generic_documentary_blocker():
+    module = _implementation_status_module()
+    _, resolution = _implementation_inputs()
+    documentary = module.build_documentary_blocker_evidence(
+        resolution,
+        evidence_run_url="https://github.com/example/aurora/actions/runs/8",
+        evidence_artifact="openap-181-completion-audit-results",
+        implementation_commit="2" * 40,
+    )
+    explicit = documentary.loc[documentary["signal"].eq("ShortInterest")].copy()
+    explicit["formula_implemented"] = True
+    explicit["blocking_reason"] = (
+        "short_interest_source_partial:exact_monthly_crsp_shrout_unavailable"
+    )
+    explicit["evidence_run_url"] = (
+        "https://github.com/example/aurora/actions/runs/9"
+    )
+    explicit["evidence_artifact"] = "openap-181-short-interest-source-probe-results"
+
+    merged = module.merge_generated_and_explicit_evidence(
+        [documentary],
+        [explicit],
+    ).set_index("signal")
+
+    assert len(merged) == 58
+    assert bool(merged.loc["ShortInterest", "formula_implemented"])
+    assert merged.loc["ShortInterest", "blocking_reason"].startswith(
+        "short_interest_source_partial:"
+    )
+    assert merged.loc["ShortInterest", "evidence_run_url"].endswith("/9")
+    with pytest.raises(ValueError, match="duplicate signals"):
+        module.merge_generated_and_explicit_evidence(
+            [documentary],
+            [explicit, explicit],
+        )
+
+
 def test_implementation_cli_attaches_documentary_blocker_evidence(
     tmp_path,
     monkeypatch,

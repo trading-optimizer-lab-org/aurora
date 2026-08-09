@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 
@@ -176,6 +176,33 @@ def _require_evidence_schema(evidence: pd.DataFrame) -> pd.DataFrame:
     ).all():
         raise ValueError("Every evidence row requires a 40-character commit SHA")
     return clean[_EVIDENCE_COLUMNS]
+
+
+def merge_generated_and_explicit_evidence(
+    generated_frames: Iterable[pd.DataFrame],
+    explicit_frames: Iterable[pd.DataFrame],
+) -> pd.DataFrame:
+    """Let validated explicit evidence replace only generic generated blockers."""
+
+    generated_parts = [frame for frame in generated_frames if not frame.empty]
+    explicit_parts = [frame for frame in explicit_frames if not frame.empty]
+    generated = (
+        _require_evidence_schema(pd.concat(generated_parts, ignore_index=True))
+        if generated_parts
+        else pd.DataFrame(columns=_EVIDENCE_COLUMNS)
+    )
+    explicit = (
+        _require_evidence_schema(pd.concat(explicit_parts, ignore_index=True))
+        if explicit_parts
+        else pd.DataFrame(columns=_EVIDENCE_COLUMNS)
+    )
+    if explicit.empty:
+        return generated
+    retained_generated = generated.loc[
+        ~generated["signal"].isin(set(explicit["signal"]))
+    ]
+    merged = pd.concat([retained_generated, explicit], ignore_index=True)
+    return _require_evidence_schema(merged)
 
 
 def _row_is_eligible(row: pd.Series | dict[str, Any]) -> bool:
@@ -602,6 +629,7 @@ __all__ = [
     "STRICT_INVENTORY_COLUMNS",
     "TWELVE_DATA_MARKET_SIGNALS",
     "build_documentary_blocker_evidence",
+    "merge_generated_and_explicit_evidence",
     "build_signal_implementation_status",
     "build_strict_score_inventory",
     "build_twelve_data_credential_blocker_evidence",

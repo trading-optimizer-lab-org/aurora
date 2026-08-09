@@ -317,11 +317,10 @@ jobs:
           short_interest_evidence_present = bool(os.environ.get("SHORT_INTEREST_EVIDENCE", ""))
           expected_sec_blockers = 3 if sec_evidence_present else 0
           expected_patent_blockers = 2 if patent_evidence_present else 0
-          expected_short_interest_blockers = 3 if short_interest_evidence_present else 0
           assert documentary.sum() == 58
           assert len(TWELVE_DATA_MARKET_SIGNALS) == 36
           assert set(TWELVE_DATA_MARKET_SIGNALS).issubset(set(resolution["signal"]))
-          expected_blocked = 58 + expected_market_blockers + expected_sec_blockers + expected_patent_blockers + expected_short_interest_blockers
+          expected_blocked = 58 + expected_market_blockers + expected_sec_blockers + expected_patent_blockers
           assert implementation["strict_gate_result"].eq("blocked").sum() == expected_blocked
           assert implementation["strict_gate_result"].eq("not_attempted").sum() == 181 - expected_blocked
           assert not implementation["score_eligible"].astype(str).str.lower().eq("true").any()

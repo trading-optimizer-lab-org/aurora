@@ -9,6 +9,7 @@ from aurora.core.execution_policy import require_github_actions_or_explicit_loca
 from aurora.research.openap_181.implementation_status import (
     build_documentary_blocker_evidence,
     build_twelve_data_credential_blocker_evidence,
+    merge_generated_and_explicit_evidence,
     write_implementation_outputs,
 )
 
@@ -30,7 +31,8 @@ def main() -> int:
         "OpenAP 181 implementation status"
     )
     resolution = pd.read_csv(args.resolution)
-    evidence_frames = []
+    generated_evidence_frames = []
+    explicit_evidence_frames = []
     evidence_requested = (
         args.documentary_blockers or args.twelve_data_credential_check
     )
@@ -50,7 +52,7 @@ def main() -> int:
                 "Generated blockers require run URL, artifact and commit evidence"
             )
     if args.documentary_blockers:
-        evidence_frames.append(
+        generated_evidence_frames.append(
             build_documentary_blocker_evidence(
                 resolution,
                 evidence_run_url=args.evidence_run_url,
@@ -59,7 +61,7 @@ def main() -> int:
             )
         )
     if args.twelve_data_credential_check:
-        evidence_frames.append(
+        generated_evidence_frames.append(
             build_twelve_data_credential_blocker_evidence(
                 resolution,
                 credential_available=args.twelve_data_credential_available,
@@ -69,11 +71,10 @@ def main() -> int:
             )
         )
     for evidence_path in args.evidence:
-        evidence_frames.append(pd.read_csv(evidence_path))
-    evidence = (
-        pd.concat(evidence_frames, ignore_index=True)
-        if evidence_frames
-        else None
+        explicit_evidence_frames.append(pd.read_csv(evidence_path))
+    evidence = merge_generated_and_explicit_evidence(
+        generated_evidence_frames,
+        explicit_evidence_frames,
     )
     write_implementation_outputs(
         pd.read_csv(args.manifest),
