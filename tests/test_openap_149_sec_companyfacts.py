@@ -3,6 +3,7 @@ from __future__ import annotations
 from importlib import import_module
 
 import pandas as pd
+import pytest
 
 
 def _module():
@@ -173,3 +174,78 @@ def test_companyfacts_batch_ignores_facts_not_available_at_formation() -> None:
     )
 
     assert values.set_index("signal").loc["Cash", "value"] == 0.25
+
+
+def test_companyfacts_expanded_accounting_calculates_pure_sec_formulas() -> None:
+    facts = _facts()
+    extra: list[dict[str, object]] = []
+    values_by_year = {
+        2024: {
+            "Liabilities": 40.0,
+            "StockholdersEquity": 60.0,
+            "CashAndCashEquivalentsAtCarryingValue": 10.0,
+            "InventoryNet": 10.0,
+            "AccountsReceivableNetCurrent": 20.0,
+            "PropertyPlantAndEquipmentNet": 40.0,
+            "SellingGeneralAndAdministrativeExpense": 10.0,
+            "InterestExpenseNonOperating": 5.0,
+        },
+        2025: {
+            "Liabilities": 40.0,
+            "StockholdersEquity": 60.0,
+            "CashAndCashEquivalentsAtCarryingValue": 10.0,
+            "InventoryNet": 20.0,
+            "AccountsReceivableNetCurrent": 20.0,
+            "PropertyPlantAndEquipmentNet": 40.0,
+            "SellingGeneralAndAdministrativeExpense": 10.0,
+            "InterestExpenseNonOperating": 5.0,
+        },
+    }
+    for year, concepts in values_by_year.items():
+        template = facts.loc[
+            facts["accession_number"].eq(f"fy{year}")
+            & facts["tag"].eq("Assets")
+        ].iloc[0]
+        for tag, value in concepts.items():
+            row = template.copy()
+            row["tag"] = tag
+            row["value"] = value * 1_000_000.0
+            if tag in {
+                "SellingGeneralAndAdministrativeExpense",
+                "InterestExpenseNonOperating",
+            }:
+                row["period_start"] = f"{year}-01-01"
+            extra.append(row.to_dict())
+
+    targets = {
+        "BookLeverage",
+        "ChAssetTurnover",
+        "InvGrowth",
+        "OPLeverage",
+        "OperProf",
+        "tang",
+    }
+    values = _module().calculate_companyfacts_accounting_current(
+        pd.concat([facts, pd.DataFrame(extra)], ignore_index=True),
+        _status(),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+        target_signals=targets,
+    )
+
+    assert set(values["signal"]) == targets
+    indexed = values.set_index("signal")
+    assert indexed.loc["BookLeverage", "value"] == 0.4
+    assert indexed.loc["ChAssetTurnover", "value"] == pytest.approx(0.8)
+    assert indexed.loc["InvGrowth", "value"] == pytest.approx(1.0)
+    assert indexed.loc["OPLeverage", "value"] == pytest.approx(1.3)
+    assert indexed.loc["OperProf", "value"] == pytest.approx(65.0 / 60.0)
+    assert indexed.loc["tang", "value"] == pytest.approx(0.5664)
+    assert values["source_id"].eq("sec_edgar").all()
+    assert values["fidelity_class"].eq("unvalidated_proxy").all()
+    assert pd.to_datetime(values["period_end"]).le(
+        pd.to_datetime(values["available_at"])
+    ).all()
+    assert pd.to_datetime(values["available_at"]).le(
+        pd.to_datetime(values["formation_at"])
+    ).all()
