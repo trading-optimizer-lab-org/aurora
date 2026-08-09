@@ -17,6 +17,8 @@ from aurora.research.openap_93.registry import load_signal_registry
 def _read_frame(path: Path | None) -> pd.DataFrame | None:
     if path is None:
         return None
+    if not path.is_file():
+        raise ValueError(f"completion input must be a regular file: {path}")
     if path.suffix.lower() == ".parquet":
         return pd.read_parquet(path)
     if path.suffix.lower() in {".xlsx", ".xls"}:

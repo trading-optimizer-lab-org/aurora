@@ -205,7 +205,8 @@ jobs:
             --output-dir outputs/openap_93_current/openap_181_completion
           if [ "${{ inputs.public_inputs_run_id }}" = "completion_only" ]; then
             current_coverage="$(find inputs/openap_base -type f -iname 'coverage_185.csv' -print -quit)"
-            test -n "$current_coverage" && test -s "$current_coverage"
+            test -n "$current_coverage"
+            test -s "$current_coverage"
             python scripts/run_openap_181_completion.py \
               --signal-doc inputs/openap_official/SignalDoc.csv \
               --signals-93 config/openap_93/signals_93.yaml \
@@ -213,15 +214,9 @@ jobs:
               --formula-inventory outputs/openap_93_current/openap_181_completion/openap_181_formula_inventory.csv \
               --output-dir outputs/openap_93_current/openap_181_completion
           else
-            reproduction_summary="$(find inputs/openap_base -type f \( -iname 'PredictorSummary.xlsx' -o -iname 'predictor_summary.xlsx' \) -print -quit)"
-            current_features="$(find inputs/openap_base -type f -iname 'openap_features_current.parquet' -print -quit)"
-            test -n "$reproduction_summary" && test -s "$reproduction_summary"
-            test -n "$current_features" && test -s "$current_features"
             python scripts/run_openap_181_completion.py \
               --signal-doc inputs/openap_official/SignalDoc.csv \
               --signals-93 config/openap_93/signals_93.yaml \
-              --reproduction-summary "$reproduction_summary" \
-              --current-features "$current_features" \
               --coverage-93 outputs/openap_93_current/coverage_93.csv \
               --formula-inventory outputs/openap_93_current/openap_181_completion/openap_181_formula_inventory.csv \
               --output-dir outputs/openap_93_current/openap_181_completion
