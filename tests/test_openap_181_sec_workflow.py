@@ -13,6 +13,7 @@ def test_sec_accounting_workflow_is_manual_bounded_pinned_and_fail_closed():
     text = workflow.read_text(encoding="utf-8")
 
     assert "workflow_dispatch:" in text
+    assert "workflow_call:" in text
     assert "  push:" not in text
     assert "  pull_request:" not in text
     for required_input in {
