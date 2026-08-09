@@ -582,6 +582,101 @@ def test_implementation_cli_attaches_documentary_blocker_evidence(
     assert "- Signals not attempted: 125" in report
 
 
+def test_missing_twelve_data_credential_blocks_only_dependent_market_routes():
+    module = _implementation_status_module()
+    manifest, resolution = _implementation_inputs()
+    common = {
+        "evidence_run_url": "https://github.com/example/aurora/actions/runs/9",
+        "evidence_artifact": "openap-181-completion-audit-results",
+        "implementation_commit": "3" * 40,
+    }
+
+    missing = module.build_twelve_data_credential_blocker_evidence(
+        resolution,
+        credential_available=False,
+        **common,
+    )
+    available = module.build_twelve_data_credential_blocker_evidence(
+        resolution,
+        credential_available=True,
+        **common,
+    )
+    documentary = module.build_documentary_blocker_evidence(resolution, **common)
+    status = module.build_signal_implementation_status(
+        manifest,
+        resolution,
+        pd.concat([documentary, missing], ignore_index=True),
+    )
+    expected = resolution.loc[
+        resolution["final_research_classification"].eq("multiple_sources_required")
+        & resolution["best_free_source_option"].str.contains(
+            "twelve_data_basic",
+            regex=False,
+        )
+        & ~resolution["best_free_source_option"].str.contains(
+            "sec_financial_statement_datasets",
+            regex=False,
+        ),
+        "signal",
+    ]
+
+    assert len(missing) == missing["signal"].nunique() == 36
+    assert set(missing["signal"]) == set(expected)
+    assert missing["blocking_reason"].eq(
+        "credential_missing:twelve_data_basic_api_key_not_configured"
+    ).all()
+    assert not missing["formula_implemented"].any()
+    assert not missing["data_pipeline_implemented"].any()
+    assert available.empty
+    assert status["strict_gate_result"].eq("blocked").sum() == 92
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 89
+    assert not status["score_eligible"].any()
+
+
+def test_implementation_cli_attaches_missing_twelve_data_credential_blockers(
+    tmp_path,
+    monkeypatch,
+):
+    manifest, resolution = _implementation_inputs()
+    manifest_path = tmp_path / "manifest.csv"
+    resolution_path = tmp_path / "resolution.csv"
+    output = tmp_path / "outputs"
+    manifest.to_csv(manifest_path, index=False)
+    resolution.to_csv(resolution_path, index=False)
+    script = Path(__file__).parents[1] / "scripts" / "run_openap_181_implementation_status.py"
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--manifest",
+            str(manifest_path),
+            "--resolution",
+            str(resolution_path),
+            "--output-dir",
+            str(output),
+            "--documentary-blockers",
+            "--twelve-data-credential-check",
+            "--evidence-run-url",
+            "https://github.com/example/aurora/actions/runs/9",
+            "--evidence-artifact",
+            "openap-181-completion-audit-results",
+            "--implementation-commit",
+            "3" * 40,
+        ],
+    )
+
+    with pytest.raises(SystemExit) as result:
+        runpy.run_path(str(script), run_name="__main__")
+
+    assert result.value.code == 0
+    status = pd.read_csv(output / "signal_implementation_status_181.csv")
+    assert status["strict_gate_result"].eq("blocked").sum() == 92
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 89
+    assert not status["score_eligible"].any()
+
+
 def test_strict_inventory_starts_at_31_and_only_accepts_fully_gated_signals():
     module = _implementation_status_module()
     manifest, resolution = _implementation_inputs()
