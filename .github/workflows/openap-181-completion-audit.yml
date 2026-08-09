@@ -113,6 +113,9 @@ jobs:
           import json
           import os
           import pandas as pd
+          from aurora.research.openap_181.implementation_status import (
+              TWELVE_DATA_MARKET_SIGNALS,
+          )
           root = "outputs/openap_181_completion"
           manifest = pd.read_csv(f"{root}/openap_181_completion_manifest.csv")
           summary = json.load(open(f"{root}/openap_181_summary.json", encoding="utf-8"))
@@ -162,19 +165,11 @@ jobs:
           documentary = resolution["final_research_classification"].isin(
               documentary_classes
           )
-          market = (
-              resolution["final_research_classification"].eq("multiple_sources_required")
-              & resolution["best_free_source_option"].str.contains(
-                  "twelve_data_basic", regex=False
-              )
-              & ~resolution["best_free_source_option"].str.contains(
-                  "sec_financial_statement_datasets", regex=False
-              )
-          )
           credential_missing = not bool(os.environ.get("TWELVE_DATA_API_KEY", ""))
           expected_market_blockers = 36 if credential_missing else 0
           assert documentary.sum() == 56
-          assert market.sum() == 36
+          assert len(TWELVE_DATA_MARKET_SIGNALS) == 36
+          assert set(TWELVE_DATA_MARKET_SIGNALS).issubset(set(resolution["signal"]))
           assert implementation["strict_gate_result"].eq("blocked").sum() == 56 + expected_market_blockers
           assert implementation["strict_gate_result"].eq("not_attempted").sum() == 125 - expected_market_blockers
           assert not implementation["score_eligible"].astype(str).str.lower().eq("true").any()
@@ -190,7 +185,7 @@ jobs:
               os.environ["SOURCE_SHA"]
           ).all()
           market_status = implementation.loc[
-              implementation["signal"].isin(resolution.loc[market, "signal"])
+              implementation["signal"].isin(TWELVE_DATA_MARKET_SIGNALS)
           ]
           if credential_missing:
               assert market_status["blocking_reason"].eq(

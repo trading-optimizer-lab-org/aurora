@@ -69,6 +69,46 @@ DOCUMENTARY_BLOCKING_CLASSIFICATIONS = frozenset(
         "source_access_unverified",
     }
 )
+TWELVE_DATA_MARKET_SIGNALS = frozenset(
+    {
+        "Activism1",
+        "Activism2",
+        "Beta",
+        "BetaFP",
+        "BetaLiquidityPS",
+        "BetaTailRisk",
+        "BidAskSpread",
+        "CoskewACX",
+        "Coskewness",
+        "FirmAgeMom",
+        "Herf",
+        "HerfAsset",
+        "HerfBE",
+        "High52",
+        "IdioVol3F",
+        "IdioVolAHT",
+        "IndMom",
+        "IndRetBig",
+        "MomOffSeason11YrPlus",
+        "MomRev",
+        "MomVol",
+        "PriceDelayRsq",
+        "PriceDelaySlope",
+        "PriceDelayTstat",
+        "RealizedVol",
+        "ResidualMomentum",
+        "ReturnSkew3F",
+        "Size",
+        "TrendFactor",
+        "VolMkt",
+        "VolSD",
+        "VolumeTrend",
+        "std_turn",
+        "zerotrade12M",
+        "zerotrade1M",
+        "zerotrade6M",
+    }
+)
 
 
 def _clean_signal_column(frame: pd.DataFrame, *, label: str) -> pd.DataFrame:
@@ -243,17 +283,21 @@ def build_twelve_data_credential_blocker_evidence(
         "final_research_classification",
     ):
         clean[column] = clean[column].fillna("").astype(str).str.strip()
-    selected = clean.loc[
-        clean["final_research_classification"].eq("multiple_sources_required")
-        & clean["best_free_source_option"].str.contains(
-            "twelve_data_basic",
-            regex=False,
+    missing_signals = TWELVE_DATA_MARKET_SIGNALS - set(clean["signal"])
+    if missing_signals:
+        raise ValueError(
+            f"Resolution is missing frozen Twelve Data signals: {sorted(missing_signals)}"
         )
-        & ~clean["best_free_source_option"].str.contains(
-            "sec_financial_statement_datasets",
-            regex=False,
-        )
-    ].copy()
+    selected = clean.loc[clean["signal"].isin(TWELVE_DATA_MARKET_SIGNALS)].copy()
+    if not selected["final_research_classification"].eq(
+        "multiple_sources_required"
+    ).all():
+        raise ValueError("A frozen Twelve Data signal is no longer a plausible route")
+    if not selected["best_free_source_option"].str.contains(
+        "twelve_data_basic",
+        regex=False,
+    ).all():
+        raise ValueError("A frozen market route no longer requires Twelve Data")
     rows = [
         {
             "signal": signal,
@@ -556,6 +600,7 @@ __all__ = [
     "DOCUMENTARY_BLOCKING_CLASSIFICATIONS",
     "IMPLEMENTATION_STATUS_COLUMNS",
     "STRICT_INVENTORY_COLUMNS",
+    "TWELVE_DATA_MARKET_SIGNALS",
     "build_documentary_blocker_evidence",
     "build_signal_implementation_status",
     "build_strict_score_inventory",
