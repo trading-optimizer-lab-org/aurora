@@ -61,8 +61,10 @@ _HEADER_ALIASES = {
     "issuename": "issue_name",
     "symbol": "symbol",
     "issuesymbolidentifier": "symbol",
+    "symbolcode": "symbol",
     "market": "market",
     "marketcategorycode": "market",
+    "issuerservicesgroupexchangecode": "market",
     "currentshort": "current_short",
     "currentshortposition": "current_short",
     "currentshortpositionquantity": "current_short",
@@ -208,7 +210,7 @@ def summarize_finra_short_interest_rows(
     if current.notna().sum() == 0 or previous.notna().sum() == 0:
         raise ValueError("FINRA short-interest rows contain no numeric positions")
     market = rows["market"].fillna("").astype(str).str.strip().str.upper()
-    otc = market.str.contains("OTC", regex=False)
+    otc = market.eq("S") | market.str.contains("OTC", regex=False)
     revision = rows["revision_flag"].fillna("").astype(str).str.strip().str.upper()
     revision_flagged = ~revision.isin({"", "N", "NO", "FALSE", "0"})
     symbols = rows["symbol"].fillna("").astype(str).str.strip()

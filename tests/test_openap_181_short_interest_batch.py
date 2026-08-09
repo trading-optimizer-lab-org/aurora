@@ -146,6 +146,22 @@ def test_finra_current_csv_api_headers_map_to_canonical_source_schema():
     assert rows.loc[0, "symbol"] == "AAA"
     assert rows.loc[0, "market"] == "N"
 
+    current_file = "\n".join(
+        (
+            "settlementDate,issueName,symbolCode,marketClassCode,"
+            "issuerServicesGroupExchangeCode,currentShort,previousShort,revisionFlag",
+            "2026-07-15,Issuer B,BBB,Listed,R,200,180,",
+            "2026-07-15,Issuer C,CCC,OTC,S,300,250,",
+        )
+    )
+    current_rows = module.parse_finra_short_interest_text(current_file)
+    summary = module.summarize_finra_short_interest_rows([current_rows])
+
+    assert current_rows["symbol"].tolist() == ["BBB", "CCC"]
+    assert current_rows["market"].tolist() == ["R", "S"]
+    assert summary["listed_rows"] == 1
+    assert summary["otc_rows"] == 1
+
 
 def test_short_interest_evidence_records_three_concrete_blockers_without_promotion():
     module = _module()
