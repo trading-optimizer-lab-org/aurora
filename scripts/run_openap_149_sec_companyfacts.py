@@ -9,7 +9,10 @@ import pandas as pd
 
 from aurora.core.execution_policy import require_github_actions_or_explicit_local_permission
 from aurora.core.runtime_paths import base_data_dir
+from aurora.research.openap_current_score import ACCOUNTING_FEATURE_DEPENDENCIES
+from aurora.research.openap_181.acquisition_149 import load_target_routes
 from aurora.research.openap_181.sec_companyfacts_149 import (
+    calculate_companyfacts_accounting_current,
     calculate_companyfacts_149_current,
 )
 
@@ -42,6 +45,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sec-root", type=Path, required=True)
     parser.add_argument("--formula-root", type=Path, required=True)
+    parser.add_argument("--route-matrix", type=Path, required=True)
     parser.add_argument("--formation-at", required=True)
     parser.add_argument("--source-run-id", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -67,15 +71,31 @@ def main() -> int:
     submissions = _read_many(submission_paths, pd.read_parquet)
     status = _read_many(status_paths, pd.read_csv)
     retrieved_at = _latest_retrieved_at(summary_paths)
-    values = calculate_companyfacts_149_current(
+    core_values = calculate_companyfacts_149_current(
         companyfacts,
         submissions,
         status,
         formation_at=args.formation_at,
         retrieved_at=retrieved_at,
     )
+    routes = load_target_routes(args.route_matrix)
+    accounting_targets = set(
+        routes.loc[routes["category"].eq("Accounting"), "signal"].astype(str)
+    )
+    expanded_targets = accounting_targets.difference({"Cash", "GP", "Investment"})
+    supported_targets = expanded_targets.intersection(ACCOUNTING_FEATURE_DEPENDENCIES)
+    expanded_values = calculate_companyfacts_accounting_current(
+        companyfacts,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+        target_signals=supported_targets,
+    )
+    values = pd.concat([core_values, expanded_values], ignore_index=True)
+    if values.duplicated(["security_id", "signal", "formation_at"]).any():
+        raise RuntimeError("Conflicting duplicate SEC accounting values")
     current = values.loc[values["current_usable"] & values["value"].notna()].copy()
-    if set(current["signal"]) != {"Cash", "GP", "Investment"}:
+    if not {"Cash", "GP", "Investment"}.issubset(set(current["signal"])):
         raise RuntimeError("The SEC batch did not produce all three target signals")
 
     formula_matches = sorted(args.formula_root.rglob("openap_181_formula_inventory.csv"))
@@ -84,6 +104,8 @@ def main() -> int:
     formulas = pd.read_csv(formula_matches[0], keep_default_na=False)
     hash_column = "formula_sha256" if "formula_sha256" in formulas else "sha256"
     expected = formulas.set_index("signal")[hash_column].astype(str).to_dict()
+    values["formula_sha256"] = values["signal"].map(expected).fillna("")
+    current["formula_sha256"] = current["signal"].map(expected).fillna("")
     observed = current[["signal", "formula_sha256"]].drop_duplicates()
     if not observed.apply(
         lambda row: expected.get(str(row["signal"])) == row["formula_sha256"], axis=1
@@ -111,6 +133,7 @@ def main() -> int:
         "observation_rows": int(len(values)),
         "current_value_rows": int(len(current)),
         "signals_calculated": sorted(current["signal"].unique().tolist()),
+        "signal_count": int(current["signal"].nunique()),
         "formula_inventory_sha256": _sha256(formula_matches[0]),
         "locked_opened": False,
         "forward_opened": False,

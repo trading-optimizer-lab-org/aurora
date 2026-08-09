@@ -9,6 +9,7 @@ on:
       - research/openap_181/sec_companyfacts_149.py
       - scripts/run_openap_149_sec_companyfacts.py
       - tests/test_openap_149_sec_companyfacts.py
+      - docs/OPENAP_181_CURRENT_FREE_SOURCE_REAUDIT_2026-08-09.csv
   workflow_dispatch:
     inputs:
       source_sha:
@@ -99,6 +100,7 @@ jobs:
           python scripts/run_openap_149_sec_companyfacts.py \
             --sec-root inputs/sec \
             --formula-root inputs/formulas \
+            --route-matrix docs/OPENAP_181_CURRENT_FREE_SOURCE_REAUDIT_2026-08-09.csv \
             --formation-at 2026-08-09 \
             --source-run-id "${{ inputs.sec_artifact_run_id }}" \
             --output-dir openap_149_sec_companyfacts
@@ -108,7 +110,8 @@ jobs:
           import pandas as pd
           path = "outputs/openap_149_sec_companyfacts/openap_149_sec_companyfacts_current.csv"
           values = pd.read_csv(path)
-          assert set(values["signal"]) == {"Cash", "GP", "Investment"}
+          assert {"Cash", "GP", "Investment"}.issubset(set(values["signal"]))
+          assert values["signal"].nunique() > 3
           assert values["value"].notna().all()
           assert values["source_id"].eq("sec_edgar").all()
           assert pd.to_datetime(values["available_at"]).le(

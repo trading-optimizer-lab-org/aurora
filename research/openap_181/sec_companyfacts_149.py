@@ -13,6 +13,13 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
+from ..openap_current_score import (
+    ACCOUNTING_FEATURE_DEPENDENCIES,
+    apply_accounting_input_freshness,
+    calculate_accounting_features,
+    latest_sec_concept_inputs,
+    sec_concepts_from_inputs,
+)
 from .sec_accounting_batch import (
     CONCEPT_SPECS,
     FORMULA_METADATA,
@@ -212,7 +219,28 @@ def calculate_companyfacts_149_current(
     normalized["accepted_at"] = normalized["accepted_at"].dt.tz_localize(None)
     normalized["filed_at"] = normalized["filed_at"].dt.tz_localize(None)
     identity = build_companyfacts_identity(status)
-    observations = calculate_sec_accounting_batch(normalized, identity, [formation])
+    observation_parts = []
+    facts_by_cik = {
+        int(cik): part for cik, part in normalized.groupby("cik", sort=False)
+    }
+    for identity_row in identity.itertuples(index=False):
+        cik = int(identity_row.cik)
+        issuer_facts = facts_by_cik.get(cik)
+        if issuer_facts is None:
+            continue
+        issuer_identity = identity.loc[identity["cik"].eq(cik)].copy()
+        observation_parts.append(
+            calculate_sec_accounting_batch(
+                issuer_facts,
+                issuer_identity,
+                [formation],
+            )
+        )
+    observations = (
+        pd.concat(observation_parts, ignore_index=True)
+        if observation_parts
+        else pd.DataFrame()
+    )
     tickers = identity.set_index("security_id")["symbol"].to_dict()
     rows: list[dict[str, Any]] = []
     for row in observations.itertuples(index=False):
@@ -265,8 +293,131 @@ def calculate_companyfacts_149_current(
     return result
 
 
+def _dependency_dates(
+    inputs: pd.DataFrame,
+    signal: str,
+) -> tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp] | None:
+    dependencies = ACCOUNTING_FEATURE_DEPENDENCIES.get(signal)
+    if not dependencies:
+        return None
+    lookup = {
+        (str(row.concept), int(row.concept_lag)): row
+        for row in inputs.dropna(subset=["concept", "concept_lag"]).itertuples()
+    }
+    rows = [lookup.get(dependency) for dependency in dependencies]
+    if any(row is None for row in rows):
+        return None
+    period_ends = pd.to_datetime(
+        pd.Series([row.period_end for row in rows]), errors="coerce", utc=True
+    ).dropna()
+    available = pd.to_datetime(
+        pd.Series([row.available_at for row in rows]), errors="coerce", utc=True
+    ).dropna()
+    filed = pd.to_datetime(
+        pd.Series([row.filed for row in rows]), errors="coerce", utc=True
+    ).dropna()
+    if period_ends.empty or available.empty:
+        return None
+    available_at = available.max()
+    filed_at = filed.max() if not filed.empty else available_at
+    if filed_at > available_at:
+        return None
+    return period_ends.max(), filed_at, available_at
+
+
+def calculate_companyfacts_accounting_current(
+    companyfacts: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+    target_signals: Iterable[str],
+    maximum_input_age_days: int = 550,
+) -> pd.DataFrame:
+    """Calculate every finite pure-SEC accounting formula already implemented."""
+
+    _require_columns(companyfacts, _FACT_COLUMNS, "SEC CompanyFacts")
+    targets = {str(signal) for signal in target_signals}
+    unsupported = targets.difference(ACCOUNTING_FEATURE_DEPENDENCIES)
+    if unsupported:
+        raise ValueError(f"Unsupported SEC accounting targets: {sorted(unsupported)}")
+    formation = pd.Timestamp(formation_at)
+    if formation.tzinfo is not None:
+        formation = formation.tz_localize(None)
+    identity = build_companyfacts_identity(status)
+    facts = companyfacts.copy()
+    facts["cik"] = pd.to_numeric(facts["cik"], errors="coerce")
+    facts_by_cik = {
+        int(cik): part.copy() for cik, part in facts.groupby("cik", sort=False)
+    }
+    rows: list[dict[str, Any]] = []
+    for identity_row in identity.itertuples(index=False):
+        cik = int(identity_row.cik)
+        issuer_facts = facts_by_cik.get(cik)
+        if issuer_facts is None:
+            continue
+        issuer_facts["symbol"] = str(identity_row.symbol)
+        inputs = latest_sec_concept_inputs(issuer_facts, formation)
+        concepts = sec_concepts_from_inputs(inputs)
+        calculated = calculate_accounting_features(concepts, market_cap=None)
+        calculated = apply_accounting_input_freshness(
+            calculated,
+            inputs,
+            as_of=formation,
+            maximum_age_days=maximum_input_age_days,
+        )
+        for signal in sorted(targets):
+            value = calculated.get(signal)
+            if value is None or value.raw_value is None:
+                continue
+            number = pd.to_numeric(pd.Series([value.raw_value]), errors="coerce").iloc[0]
+            if pd.isna(number) or not np.isfinite(number):
+                continue
+            dates = _dependency_dates(inputs, signal)
+            if dates is None:
+                continue
+            period_end, filed_at, available_at = dates
+            if available_at.tz_localize(None) > formation:
+                continue
+            fidelity = (
+                "reconstructed" if value.status == "exact" else "unvalidated_proxy"
+            )
+            rows.append(
+                {
+                    "security_id": str(identity_row.security_id),
+                    "ticker": str(identity_row.symbol),
+                    "cik": f"{cik:010d}",
+                    "signal": signal,
+                    "formation_at": pd.Timestamp(formation, tz="UTC").isoformat(),
+                    "period_end": period_end.isoformat(),
+                    "filed_at": filed_at.isoformat(),
+                    "available_at": available_at.isoformat(),
+                    "retrieved_at": pd.Timestamp(retrieved_at).isoformat(),
+                    "value": float(number),
+                    "fidelity_class": fidelity,
+                    "current_usable": True,
+                    "source_id": "sec_edgar",
+                    "source_url": (
+                        "https://data.sec.gov/api/xbrl/companyfacts/"
+                        f"CIK{cik:010d}.json"
+                    ),
+                    "formula_id": str(value.formula_id),
+                    "formula_sha256": "",
+                    "observation_count": len(
+                        ACCOUNTING_FEATURE_DEPENDENCIES[signal]
+                    ),
+                    "reason_if_missing": "",
+                    "caveat": str(value.note),
+                }
+            )
+    return pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
+        ["security_id", "signal"]
+    ).reset_index(drop=True)
+
+
 __all__ = [
     "build_companyfacts_identity",
+    "calculate_companyfacts_accounting_current",
     "calculate_companyfacts_149_current",
     "normalize_companyfacts_for_accounting",
 ]
