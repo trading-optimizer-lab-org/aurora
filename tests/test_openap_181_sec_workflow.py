@@ -82,8 +82,7 @@ def test_official_sec_transport_probe_covers_hosted_runner_families_without_prox
     text = workflow.read_text(encoding="utf-8")
 
     assert "workflow_dispatch:" in text
-    assert "push:" in text
-    assert "codex/openap-proxy44-validation" in text
+    assert "  push:" not in text
     for runner in {"ubuntu-24.04", "windows-2025", "macos-15"}:
         assert runner in text
     assert "source_sha:" in text
@@ -100,3 +99,24 @@ def test_official_sec_transport_probe_covers_hosted_runner_families_without_prox
     assert "retention-days: 90" in text
     assert "r.jina.ai" not in text
     assert "score_eligible" not in text
+
+
+def test_completion_audit_can_prefer_all_runner_sec_transport_evidence():
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "openap-181-completion-audit.yml"
+    )
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "sec_transport_evidence_run_id:" in text
+    assert "SEC_TRANSPORT_EVIDENCE_RUN_ID" in text
+    assert "openap-181-sec-official-transport-probe-summary" in text
+    assert "sec_accounting_batch_evidence.csv" in text
+    assert "SEC_ACCOUNTING_EVIDENCE_EFFECTIVE_RUN_ID" in text
+    assert "SEC_ACCOUNTING_EVIDENCE_ARTIFACT" in text
+    assert (
+        "official_sec_access_blocked_all_github_hosted_runner_families_http_403"
+        in text
+    )
