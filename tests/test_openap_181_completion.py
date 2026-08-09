@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import gzip
+import runpy
+import sys
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from aurora.core.execution_policy import LocalRunBlocked
 from aurora.research.openap_181.completion import (
     CURRENT_EXACT_31,
     CURRENT_EXCLUDED_27,
@@ -520,3 +524,63 @@ def test_strict_inventory_starts_at_31_and_only_accepts_fully_gated_signals():
     promoted = approved_inventory.set_index("signal").loc["Cash"]
     assert promoted["eligibility_basis"] == "openap_181_complete_strict_gates"
     assert promoted["evidence_artifact"] == "openap-cash-validation"
+
+
+def test_implementation_writer_creates_three_auditable_baseline_artifacts(tmp_path):
+    module = _implementation_status_module()
+    manifest, resolution = _implementation_inputs()
+
+    summary = module.write_implementation_outputs(manifest, resolution, tmp_path)
+
+    status_path = tmp_path / "signal_implementation_status_181.csv"
+    inventory_path = tmp_path / "strict_score_signal_inventory.csv"
+    report_path = tmp_path / "IMPLEMENTATION_VALIDATION_REPORT.md"
+    status = pd.read_csv(status_path)
+    inventory = pd.read_csv(inventory_path)
+    report = report_path.read_text(encoding="utf-8")
+    assert summary == {
+        "signals": 181,
+        "unique_signals": 181,
+        "attempted": 0,
+        "approved": 0,
+        "blocked": 181,
+        "strict_inventory_signals": 31,
+    }
+    assert len(status) == status["signal"].nunique() == 181
+    assert not status["score_eligible"].any()
+    assert set(inventory["signal"]) == set(CURRENT_EXACT_31)
+    assert len(inventory) == 31
+    assert "# OpenAP 181 Implementation Validation Report" in report
+    assert "Signals approved: 0" in report
+    assert "Strict score signals: 31" in report
+    assert all(f"`{signal}`" in report for signal in CURRENT_EXACT_31)
+    assert status_path.stat().st_size > 0
+    assert inventory_path.stat().st_size > 0
+    assert report_path.stat().st_size > 0
+
+
+def test_implementation_cli_fails_closed_outside_github(tmp_path, monkeypatch):
+    manifest, resolution = _implementation_inputs()
+    manifest_path = tmp_path / "manifest.csv"
+    resolution_path = tmp_path / "resolution.csv"
+    manifest.to_csv(manifest_path, index=False)
+    resolution.to_csv(resolution_path, index=False)
+    script = Path(__file__).parents[1] / "scripts" / "run_openap_181_implementation_status.py"
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--manifest",
+            str(manifest_path),
+            "--resolution",
+            str(resolution_path),
+            "--output-dir",
+            str(tmp_path / "outputs"),
+        ],
+    )
+
+    with pytest.raises(LocalRunBlocked, match="OpenAP 181 implementation status"):
+        runpy.run_path(str(script), run_name="__main__")
