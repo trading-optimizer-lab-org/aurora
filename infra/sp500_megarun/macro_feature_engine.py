@@ -248,6 +248,61 @@ def evaluate_macro_lane(
         fomc_state = _align_state(calendar, fomc)
         return _output(calendar, value, observed_panels=(calendar, macro_state, fomc_state))
 
+    if lane_id == "F039":
+        rates = _required_panel(input_panels, "rates")
+        valuation = _align_state(
+            rates,
+            _required_panel(input_panels, "valuation"),
+        )
+        cheapness = pd.concat(
+            [
+                _rolling_z(
+                    _numeric(valuation, "dividend_yield", panel_name="valuation"),
+                    window,
+                ),
+                _rolling_z(
+                    _numeric(valuation, "earnings_yield", panel_name="valuation"),
+                    window,
+                ),
+                _rolling_z(
+                    _numeric(valuation, "book_to_market", panel_name="valuation"),
+                    window,
+                ),
+                _rolling_z(
+                    _numeric(valuation, "inverse_cape", panel_name="valuation"),
+                    window,
+                ),
+            ],
+            axis=1,
+        ).mean(axis=1, skipna=False)
+        nominal_yield = _numeric(rates, "yield_10y", panel_name="rates")
+        value = cheapness - 0.5 * _rolling_z(nominal_yield, window)
+        return _output(rates, value, observed_panels=(rates, valuation))
+
+    if lane_id == "F040":
+        valuation = _required_panel(input_panels, "valuation")
+        earnings_lag = int(parameters.get("earnings_lag", 12))
+        issuance = -_numeric(
+            valuation,
+            "net_equity_issuance",
+            panel_name="valuation",
+        )
+        payout = _numeric(valuation, "payout_ratio", panel_name="valuation")
+        earnings_growth = _numeric(
+            valuation,
+            "aggregate_earnings",
+            panel_name="valuation",
+        ).pct_change(earnings_lag, fill_method=None)
+        value = pd.concat(
+            [
+                _rolling_z(issuance, window),
+                _rolling_z(payout, window),
+                _rolling_z(earnings_growth, window),
+            ],
+            axis=1,
+        ).mean(axis=1, skipna=False)
+        return _output(valuation, value, observed_panels=(valuation,))
+
     raise MacroFeatureEngineError(f"MACRO_LANE_NOT_IMPLEMENTED:{lane_id}")
 
 

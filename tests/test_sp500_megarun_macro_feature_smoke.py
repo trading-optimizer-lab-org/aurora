@@ -20,7 +20,7 @@ def _smoke_api():
 def _write_train_snapshot(root: Path) -> Path:
     snapshot = root / "train_snapshot_1993_2010"
     snapshot.mkdir()
-    dates = pd.bdate_range("2007-01-02", "2010-12-31")
+    dates = pd.bdate_range("2005-01-03", "2010-12-31")
     rows: list[dict[str, object]] = []
     for position, date in enumerate(dates):
         phase = float(position)
@@ -113,22 +113,42 @@ def _write_train_snapshot(root: Path) -> Path:
             "document_kind": "meeting",
         }
     ).to_parquet(snapshot / "D_FOMC_PUBLIC.parquet", index=False)
+    valuation_dates = pd.date_range("2004-01-01", "2010-11-01", freq="MS")
+    valuation_phase = np.arange(len(valuation_dates), dtype=float)
+    pd.DataFrame(
+        {
+            "date": valuation_dates,
+            "resource_id": "predictor_data_updated",
+            "Index": 100.0 + valuation_phase,
+            "D12": 4.0 + valuation_phase / 20.0,
+            "E12": 8.0 + valuation_phase / 10.0 + np.sin(valuation_phase / 4.0),
+            "b/m": 0.4 + valuation_phase / 1000.0,
+            "ntis": 0.03 - valuation_phase / 10000.0,
+        }
+    ).to_parquet(snapshot / "D_GOYAL.parquet", index=False)
+    pd.DataFrame(
+        {
+            "date": valuation_dates,
+            "12": 20.0 + np.sin(valuation_phase / 5.0),
+            "resource_id": "shiller_ie_data",
+        }
+    ).to_parquet(snapshot / "D_SHILLER.parquet", index=False)
     return snapshot
 
 
-def test_macro_smoke_builds_f032_f038_train_only_artifacts(tmp_path: Path) -> None:
+def test_macro_smoke_builds_f032_f040_train_only_artifacts(tmp_path: Path) -> None:
     api = _smoke_api()
     snapshot = _write_train_snapshot(tmp_path)
 
     report = api.build_macro_feature_smoke(snapshot, output_dir=tmp_path / "out")
 
     assert report["ready"] is True
-    assert report["executable_lanes"] == [f"F{index:03d}" for index in range(32, 39)]
+    assert report["executable_lanes"] == [f"F{index:03d}" for index in range(32, 41)]
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
     assert (tmp_path / "out" / "features" / "F032.parquet").is_file()
-    assert (tmp_path / "out" / "features" / "F038.parquet").is_file()
+    assert (tmp_path / "out" / "features" / "F040.parquet").is_file()
 
 
 def test_macro_smoke_requires_the_physical_train_partition(tmp_path: Path) -> None:

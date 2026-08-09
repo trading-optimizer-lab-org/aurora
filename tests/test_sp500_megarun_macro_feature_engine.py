@@ -129,6 +129,18 @@ def _macro_panels(periods: int = 120) -> dict[str, pd.DataFrame]:
         fomc_dates,
         fomc_event_count=np.ones(len(fomc_dates)),
     )
+    valuation_dates = dates[::5]
+    valuation_phase = np.arange(len(valuation_dates), dtype=float)
+    valuation = _decision_panel(
+        valuation_dates,
+        dividend_yield=0.02 + valuation_phase / 10000.0,
+        earnings_yield=0.04 + valuation_phase / 5000.0,
+        book_to_market=0.4 + valuation_phase / 100.0,
+        inverse_cape=0.05 + np.sin(valuation_phase / 4.0) / 100.0,
+        net_equity_issuance=0.03 - valuation_phase / 1000.0,
+        payout_ratio=0.4 + np.cos(valuation_phase / 5.0) / 20.0,
+        aggregate_earnings=50.0 + valuation_phase**1.2,
+    )
     calendar = _decision_panel(dates)
     return {
         "financial": financial,
@@ -137,11 +149,14 @@ def _macro_panels(periods: int = 120) -> dict[str, pd.DataFrame]:
         "realtime": realtime,
         "fomc": fomc,
         "calendar": calendar,
+        "valuation": valuation,
     }
 
 
-@pytest.mark.parametrize("lane_id", ["F033", "F034", "F035", "F036", "F037", "F038"])
-def test_f033_f038_produce_finite_causal_states(lane_id: str) -> None:
+@pytest.mark.parametrize(
+    "lane_id", ["F033", "F034", "F035", "F036", "F037", "F038", "F039", "F040"]
+)
+def test_f033_f040_produce_finite_causal_states(lane_id: str) -> None:
     api = _engine_api()
     result = api.evaluate_macro_lane(
         lane_id,

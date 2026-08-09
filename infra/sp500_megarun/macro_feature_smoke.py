@@ -1,4 +1,4 @@
-"""Train-only GitHub smoke for executable SP500 macro lanes F032-F038."""
+"""Train-only GitHub smoke for executable SP500 macro lanes F032-F040."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_credit_spread_panel,
     normalize_financial_conditions_panel,
     normalize_fomc_event_panel,
+    normalize_lagged_valuation_panel,
     normalize_macro_release_panel,
     normalize_philadelphia_realtime_growth_panel,
     normalize_treasury_curve_panel,
@@ -30,7 +31,7 @@ class MacroFeatureSmokeError(ValueError):
 _TRAIN_PARTITION = "train_snapshot_1993_2010"
 _SEARCH_START = pd.Timestamp("1998-01-01")
 _TRAIN_END = pd.Timestamp("2010-12-31")
-_EXECUTABLE_LANES = tuple(f"F{index:03d}" for index in range(32, 39))
+_EXECUTABLE_LANES = tuple(f"F{index:03d}" for index in range(32, 41))
 
 
 def _sha256(path: Path) -> str:
@@ -46,7 +47,7 @@ def build_macro_feature_smoke(
     *,
     output_dir: str | Path,
 ) -> dict[str, Any]:
-    """Normalize, execute and audit F032-F038 without mounting validation."""
+    """Normalize, execute and audit F032-F040 without mounting validation."""
 
     snapshot = Path(train_snapshot)
     if snapshot.name != _TRAIN_PARTITION:
@@ -58,6 +59,8 @@ def build_macro_feature_smoke(
         "D_MACRO_PIT",
         "D_FOMC_PUBLIC",
         "D_CALENDAR",
+        "D_GOYAL",
+        "D_SHILLER",
     )
     datasets: dict[str, pd.DataFrame] = {}
     for dataset_id in required_datasets:
@@ -82,6 +85,11 @@ def build_macro_feature_smoke(
         datasets["D_MACRO_PIT"], sessions=sessions
     )
     fomc = normalize_fomc_event_panel(datasets["D_FOMC_PUBLIC"], sessions=sessions)
+    valuation = normalize_lagged_valuation_panel(
+        datasets["D_GOYAL"],
+        datasets["D_SHILLER"],
+        sessions=sessions,
+    )
     calendar = pd.DataFrame(
         {
             "date": sessions,
@@ -97,6 +105,7 @@ def build_macro_feature_smoke(
         "macro": macro,
         "fomc": fomc,
         "calendar": calendar,
+        "valuation": valuation,
     }
     parameters: dict[str, dict[str, int]] = {
         "F032": {"window": 252, "change_lag": 5},
@@ -106,6 +115,8 @@ def build_macro_feature_smoke(
         "F036": {"window": 12},
         "F037": {"window": 12},
         "F038": {"event_window": 20, "normalization_window": 252},
+        "F039": {"window": 252},
+        "F040": {"window": 24, "earnings_lag": 12},
     }
     outputs = {
         lane_id: evaluate_macro_lane(lane_id, panels, parameters[lane_id])

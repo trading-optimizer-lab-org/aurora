@@ -1,4 +1,4 @@
-name: SP500 Megarun Train Feature Smoke F021-F038
+name: SP500 Megarun Train Feature Smoke F021-F040
 
 on:
   push:
@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 jobs:
-  smoke_f021_f038:
+  smoke_f021_f040:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -54,7 +54,7 @@ jobs:
           python -m pip install --require-hashes -r requirements/github-performance.lock
           python -m pip install "pytest==9.0.3"
           python -m pip install --no-deps -e .
-      - name: Verify F021-F038 fail-closed implementations
+      - name: Verify F021-F040 fail-closed implementations
         run: |
           python -m pytest \
             tests/test_sp500_megarun_feature_input_normalizers.py \
@@ -76,7 +76,7 @@ jobs:
           python scripts/run_sp500_megarun_market_feature_smoke_f021_f031.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_market_feature_smoke_f021_f031
-      - name: Execute and audit F032-F038 on train only
+      - name: Execute and audit F032-F040 on train only
         run: |
           python scripts/run_sp500_megarun_macro_feature_smoke_f032.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
@@ -88,10 +88,10 @@ jobs:
           path: outputs/sp500_megarun_market_feature_smoke_f021_f031
           if-no-files-found: error
           retention-days: 90
-      - name: Upload F032-F038 train-only evidence
+      - name: Upload F032-F040 train-only evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: sp500-megarun-macro-feature-smoke-F032-F038-${{ github.run_id }}
+          name: sp500-megarun-macro-feature-smoke-F032-F040-${{ github.run_id }}
           path: outputs/sp500_megarun_macro_feature_smoke_f032
           if-no-files-found: error
           retention-days: 90

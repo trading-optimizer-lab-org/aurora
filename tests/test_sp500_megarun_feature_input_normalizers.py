@@ -315,3 +315,51 @@ def test_fomc_events_are_only_usable_next_session() -> None:
         "2010-01-06",
     ]
     assert result["fomc_event_count"].tolist() == [2, 1]
+
+
+def test_revised_valuation_inputs_wait_a_full_year_before_use() -> None:
+    api = _normalizer_api()
+    goyal = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2008-01-01", "2008-01-01", "2008-02-01"]),
+            "resource_id": [
+                "predictor_data_original_2005",
+                "predictor_data_updated",
+                "predictor_data_updated",
+            ],
+            "Index": [100.0, 100.0, 110.0],
+            "D12": [4.0, 5.0, 5.5],
+            "E12": [8.0, 10.0, 11.0],
+            "b/m": [0.4, 0.5, 0.6],
+            "ntis": [0.03, 0.02, 0.01],
+        }
+    )
+    shiller = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2008-01-01", "2008-02-01"]),
+            "12": [20.0, 22.0],
+            "resource_id": "shiller_ie_data",
+        }
+    )
+    sessions = pd.bdate_range("2008-01-02", "2009-04-30")
+
+    result = api.normalize_lagged_valuation_panel(
+        goyal,
+        shiller,
+        sessions=sessions,
+    )
+
+    assert result["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2009-02-16",
+        "2009-03-16",
+    ]
+    assert result["observed_at"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2008-01-01",
+        "2008-02-01",
+    ]
+    assert result.loc[0, "dividend_yield"] == pytest.approx(0.05)
+    assert result.loc[0, "earnings_yield"] == pytest.approx(0.10)
+    assert result.loc[0, "book_to_market"] == pytest.approx(0.5)
+    assert result.loc[0, "inverse_cape"] == pytest.approx(0.05)
+    assert result.loc[0, "net_equity_issuance"] == pytest.approx(0.02)
+    assert result.loc[0, "payout_ratio"] == pytest.approx(0.5)

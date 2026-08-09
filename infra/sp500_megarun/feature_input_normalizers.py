@@ -512,6 +512,69 @@ def normalize_fomc_event_panel(
     )
 
 
+def normalize_lagged_valuation_panel(
+    goyal_frame: pd.DataFrame,
+    shiller_frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Build a labelled proxy only after a full-year revision safety lag."""
+
+    goyal = _validated_dates(goyal_frame, dataset_id="D_GOYAL")
+    shiller = _validated_dates(shiller_frame, dataset_id="D_SHILLER")
+    goyal_required = {"Index", "D12", "E12", "b/m", "ntis"}
+    missing_goyal = sorted(goyal_required - set(goyal.columns))
+    if missing_goyal:
+        raise FeatureInputNormalizerError(
+            f"GOYAL_COLUMNS_MISSING:{','.join(missing_goyal)}"
+        )
+    if "12" not in shiller:
+        raise FeatureInputNormalizerError("SHILLER_CAPE_COLUMN_MISSING")
+    if "resource_id" in goyal:
+        updated = goyal.loc[
+            goyal["resource_id"].astype(str).eq("predictor_data_updated")
+        ].copy()
+        if not updated.empty:
+            goyal = updated
+    goyal = goyal.sort_values("date", kind="mergesort").drop_duplicates(
+        "date", keep="last"
+    )
+    shiller = shiller.sort_values("date", kind="mergesort").drop_duplicates(
+        "date", keep="last"
+    )
+    selected = goyal.loc[:, ["date", *sorted(goyal_required)]].merge(
+        shiller.loc[:, ["date", "12"]],
+        on="date",
+        how="inner",
+        validate="one_to_one",
+    )
+    for column in (*goyal_required, "12"):
+        selected[column] = pd.to_numeric(selected[column], errors="coerce")
+    selected = selected.dropna(subset=[*goyal_required, "12"])
+    index_level = selected["Index"].replace(0.0, np.nan)
+    earnings = selected["E12"].replace(0.0, np.nan)
+    cape = selected["12"].replace(0.0, np.nan)
+    panel = pd.DataFrame(
+        {
+            "observed_at": selected["date"],
+            "dividend_yield": selected["D12"] / index_level,
+            "earnings_yield": selected["E12"] / index_level,
+            "book_to_market": selected["b/m"],
+            "inverse_cape": 1.0 / cape,
+            "net_equity_issuance": selected["ntis"],
+            "payout_ratio": selected["D12"] / earnings,
+            "aggregate_earnings": selected["E12"],
+        }
+    ).dropna()
+    targets = panel["observed_at"] + pd.offsets.MonthBegin(13) + pd.Timedelta(days=14)
+    panel["date"] = _release_session(targets, sessions=sessions)
+    panel = panel.dropna(subset=["date"]).sort_values("date", kind="mergesort")
+    if panel.empty:
+        raise FeatureInputNormalizerError("EMPTY_LAGGED_VALUATION_PANEL")
+    panel["available_at"] = panel["date"]
+    return panel.reset_index(drop=True)
+
+
 __all__ = [
     "FeatureInputNormalizerError",
     "normalize_cboe_vol_panel",
@@ -519,6 +582,7 @@ __all__ = [
     "normalize_cftc_sp500_panel",
     "normalize_financial_conditions_panel",
     "normalize_fomc_event_panel",
+    "normalize_lagged_valuation_panel",
     "normalize_macro_release_panel",
     "normalize_philadelphia_realtime_growth_panel",
     "normalize_spy_decision_panel",
