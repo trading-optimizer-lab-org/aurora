@@ -88,7 +88,11 @@ def test_companyfacts_probe_records_official_origin_headers_hash_and_concepts(tm
         "ciks_requested": 1,
     }
     assert (tmp_path / "raw" / "CIK0000320193.json").read_bytes() == expected_bytes
-    manifest = pd.read_csv(tmp_path / "manifest.csv", keep_default_na=False)
+    manifest = pd.read_csv(
+        tmp_path / "manifest.csv",
+        keep_default_na=False,
+        dtype={"cik": str},
+    )
     assert manifest.to_dict(orient="records") == [
         {
             "source_id": "sec_companyfacts_CIK0000320193",

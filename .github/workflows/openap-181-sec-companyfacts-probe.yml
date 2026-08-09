@@ -1,0 +1,95 @@
+name: OpenAP 181 SEC CompanyFacts Probe
+
+on:
+  push:
+    branches:
+      - codex/openap-proxy44-validation
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision to probe
+        required: false
+        default: ""
+        type: string
+      sec_user_agent:
+        description: Declared research identity and contact email or HTTPS URL
+        required: false
+        default: "Aurora Research https://github.com/trading-optimizer-lab-org/aurora"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openap-181-sec-companyfacts-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GITHUB_ACTIONS: "true"
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+      SEC_USER_AGENT: ${{ inputs.sec_user_agent || 'Aurora Research https://github.com/trading-optimizer-lab-org/aurora' }}
+      PROBE_CIKS: "320193,789019,21344"
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Verify declared SEC identity
+        run: |
+          test ${#SEC_USER_AGENT} -ge 20
+          [[ "$SEC_USER_AGENT" == *"@"* || "$SEC_USER_AGENT" == *"https://"* ]]
+      - name: Probe bounded official CompanyFacts access
+        run: |
+          python scripts/run_openap_181_sec_companyfacts_access.py \
+            --output-dir outputs/sec_companyfacts_probe \
+            --ciks "$PROBE_CIKS" \
+            --user-agent "$SEC_USER_AGENT"
+      - name: Verify evidence-only result
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+
+          root = "outputs/sec_companyfacts_probe"
+          summary = json.load(open(
+              f"{root}/sec_companyfacts_access_summary.json", encoding="utf-8"
+          ))
+          manifest = pd.read_csv(
+              f"{root}/sec_companyfacts_source_manifest.csv",
+              keep_default_na=False,
+              dtype={"cik": str},
+          )
+          assert summary["ciks_requested"] == 3
+          assert summary["downloaded"] + summary["failed"] == len(manifest)
+          assert 1 <= len(manifest) <= 3
+          assert set(manifest["status"]).issubset({"downloaded", "failed"})
+          if summary["all_downloaded"]:
+              assert len(manifest) == 3
+              assert manifest["status"].eq("downloaded").all()
+              assert manifest["http_status"].eq(200).all()
+              assert manifest["sha256"].str.fullmatch(r"[0-9a-f]{64}").all()
+              assert manifest["size_bytes"].gt(0).all()
+          else:
+              failed = manifest.loc[manifest["status"].eq("failed")]
+              assert len(failed) == 1
+              assert failed["failure_reason"].str.strip().ne("").all()
+          PY
+      - name: Upload probe evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-181-sec-companyfacts-probe
+          path: outputs/sec_companyfacts_probe
+          if-no-files-found: error
+          retention-days: 90
