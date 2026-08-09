@@ -600,6 +600,58 @@ def test_validation_writer_persists_frozen_metrics_sources_and_summary(tmp_path)
     assert persisted_sources.loc[0, "status"] == "downloaded"
 
 
+def test_access_blocker_evidence_keeps_all_sec_signals_out_of_strict_score():
+    module = _module()
+    sources = pd.DataFrame(
+        [
+            {
+                "source_id": "sec_fsd_2021q1",
+                "source_url": (
+                    "https://www.sec.gov/files/dera/data/"
+                    "financial-statement-data-sets/2021q1.zip"
+                ),
+                "access_url": (
+                    "https://www.sec.gov/files/dera/data/"
+                    "financial-statement-data-sets/2021q1.zip"
+                ),
+                "access_method": "sec_official_direct_fair_access",
+                "period": "2021q1",
+                "sha256": "",
+                "size_bytes": 0,
+                "retrieved_at": "2026-08-09T09:17:27Z",
+                "status": "failed",
+                "http_status": 403,
+                "failure_reason": "http_403_after_5_attempts",
+            }
+        ]
+    )
+
+    evidence = module.build_sec_accounting_access_blocker_evidence(
+        sources,
+        evidence_run_url="https://github.com/example/aurora/actions/runs/7",
+        evidence_artifact="openap-181-sec-accounting-validation",
+        implementation_commit="1" * 40,
+    )
+
+    assert evidence["signal"].tolist() == ["Cash", "GP", "Investment"]
+    assert evidence["formula_implemented"].all()
+    assert evidence["data_pipeline_implemented"].all()
+    assert not evidence[
+        [
+            "point_in_time_verified",
+            "identity_verified",
+            "coverage_measured",
+            "fidelity_measured",
+        ]
+    ].any().any()
+    assert evidence["coverage_result"].eq("not_measured").all()
+    assert evidence["fidelity_result"].eq("not_measured").all()
+    assert evidence["strict_gate_result"].eq("blocked").all()
+    assert evidence["blocking_reason"].eq(
+        "official_sec_fsd_access_blocked_http_403"
+    ).all()
+
+
 def test_sec_validation_cli_fails_closed_outside_github(tmp_path, monkeypatch):
     script = (
         Path(__file__).parents[1]
