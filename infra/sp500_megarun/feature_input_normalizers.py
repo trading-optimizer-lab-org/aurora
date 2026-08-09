@@ -621,13 +621,16 @@ def normalize_fx_cross_asset_panel(
     selected = selected.dropna(subset=["asset", "value"])
     panel = selected.pivot_table(
         index="date", columns="asset", values="value", aggfunc="last"
-    ).reset_index()
+    ).sort_index().reset_index()
     panel.columns.name = None
     missing_assets = sorted(set(_FX_SERIES.values()) - set(panel.columns))
     if missing_assets:
         raise FeatureInputNormalizerError(
             f"FX_FROZEN_SERIES_MISSING:{','.join(missing_assets)}"
         )
+    asset_columns = list(_FX_SERIES.values())
+    panel[asset_columns] = panel[asset_columns].ffill()
+    panel = panel.dropna(subset=asset_columns)
     return _project_to_decision_session(
         panel, policy="next_session", sessions=sessions
     )

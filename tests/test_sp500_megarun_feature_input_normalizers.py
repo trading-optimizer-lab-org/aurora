@@ -394,6 +394,29 @@ def test_fx_panel_uses_frozen_daily_series_only_after_next_session() -> None:
     assert {"fx_cad", "fx_jpy", "fx_chf", "fx_gbp"} <= set(result.columns)
 
 
+def test_fx_panel_causally_carries_prior_local_holiday_quotes() -> None:
+    api = _normalizer_api()
+    observed = pd.to_datetime(["2010-01-04", "2010-01-05"])
+    rows: list[dict[str, object]] = []
+    for series_id in [
+        "V0.JRXWTFB_N.B",
+        "RXI_N.B.CA",
+        "RXI_N.B.JA",
+        "RXI_N.B.SZ",
+        "RXI$US_N.B.UK",
+    ]:
+        rows.append({"date": observed[0], "series_id": series_id, "value": 100.0})
+        if series_id != "RXI_N.B.JA":
+            rows.append({"date": observed[1], "series_id": series_id, "value": 101.0})
+
+    result = api.normalize_fx_cross_asset_panel(
+        pd.DataFrame(rows), sessions=_sessions()
+    )
+
+    assert result.loc[1, "fx_jpy"] == pytest.approx(100.0)
+    assert result.loc[1, "observed_at"] == pd.Timestamp("2010-01-05")
+
+
 def test_world_bank_assets_wait_until_third_session_of_next_month() -> None:
     api = _normalizer_api()
     gold = pd.DataFrame({"date": pd.to_datetime(["2009-12-01"]), "value": [1100.0]})
