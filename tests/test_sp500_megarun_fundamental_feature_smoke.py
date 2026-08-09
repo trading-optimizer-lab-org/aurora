@@ -320,6 +320,10 @@ def test_fundamental_smoke_builds_f101_f110_train_only_artifacts(
     assert report["empty_lanes"] == []
     assert report["exact_duplicate_groups"] == []
     assert report["near_duplicate_pairs"] == []
+    assert all(
+        item["yearly_non_null_fraction"][1998] == pytest.approx(1.0)
+        for item in report["coverage"]
+    )
     assert (tmp_path / "out" / "features" / "F101.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F110.parquet").is_file()
 

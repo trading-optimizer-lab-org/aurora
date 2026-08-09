@@ -624,7 +624,7 @@ _FUNDAMENTAL_BATCH_PARAMETERS: Mapping[str, Mapping[str, Any]] = {
     },
     "F107": {"statistic": "recession_pressure", "window": 12},
     "F108": {"statistic": "disagreement", "window": 12, "trend_window": 6},
-    "F109": {"statistic": "sentiment_composite", "window": 26},
+    "F109": {"statistic": "sentiment_composite", "window": 12},
     "F110": {"statistic": "relative_momentum", "window": 24, "momentum_lag": 6},
 }
 
