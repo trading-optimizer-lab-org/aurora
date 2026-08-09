@@ -274,3 +274,57 @@ def test_sec_submissions_calculate_firm_age_as_explicit_current_proxy() -> None:
     assert pd.Timestamp(values.iloc[0]["available_at"]) == pd.Timestamp(
         "2024-02-15T15:00:00Z"
     )
+
+
+def test_companyfacts_calculates_additional_non_93_sec_accounting_signals() -> None:
+    facts = _facts()
+    extra: list[dict[str, object]] = []
+    for year, sga in ((2023, 5.0), (2024, 8.0), (2025, 10.0)):
+        template = facts.loc[
+            facts["accession_number"].eq(f"fy{year}")
+            & facts["tag"].eq("Assets")
+        ].iloc[0]
+        sga_row = template.copy()
+        sga_row["tag"] = "SellingGeneralAndAdministrativeExpense"
+        sga_row["value"] = sga * 1_000_000.0
+        sga_row["period_start"] = f"{year}-01-01"
+        extra.append(sga_row.to_dict())
+
+    latest = facts.loc[
+        facts["accession_number"].eq("fy2025") & facts["tag"].eq("Assets")
+    ].iloc[0]
+    for tag, amount in (
+        ("ResearchAndDevelopmentExpense", 5.0),
+        ("PaymentsForRepurchaseOfCommonStock", 2.0),
+    ):
+        row = latest.copy()
+        row["tag"] = tag
+        row["value"] = amount * 1_000_000.0
+        row["period_start"] = "2025-01-01"
+        extra.append(row.to_dict())
+
+    values = _module().calculate_companyfacts_accounting_current(
+        pd.concat([facts, pd.DataFrame(extra)], ignore_index=True),
+        _status(),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+        target_signals={
+            "GrSaleToGrOverhead",
+            "OperProfRD",
+            "ShareRepurchase",
+        },
+    )
+
+    indexed = values.set_index("signal")
+    assert set(indexed.index) == {
+        "GrSaleToGrOverhead",
+        "OperProfRD",
+        "ShareRepurchase",
+    }
+    assert indexed.loc["GrSaleToGrOverhead", "value"] == pytest.approx(
+        0.2797202797202797
+    )
+    assert indexed.loc["OperProfRD", "value"] == pytest.approx(0.75)
+    assert indexed.loc["ShareRepurchase", "value"] == 1.0
+    assert indexed.loc["OperProfRD", "fidelity_class"] == "unvalidated_proxy"
+    assert indexed.loc["ShareRepurchase", "fidelity_class"] == "reconstructed"
