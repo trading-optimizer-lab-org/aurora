@@ -14,7 +14,10 @@ import time
 import urllib.request
 import zipfile
 
+import numpy as np
 import pandas as pd
+
+from .sec_companyfacts_149 import build_companyfacts_identity
 
 
 FINRA_FILES_URL = (
@@ -54,6 +57,27 @@ _REQUIRED_COLUMNS = (
     "current_short",
     "previous_short",
     "revision_flag",
+)
+_CURRENT_OUTPUT_COLUMNS = (
+    "security_id",
+    "ticker",
+    "cik",
+    "signal",
+    "formation_at",
+    "period_end",
+    "filed_at",
+    "available_at",
+    "retrieved_at",
+    "value",
+    "fidelity_class",
+    "current_usable",
+    "source_id",
+    "source_url",
+    "formula_id",
+    "formula_sha256",
+    "observation_count",
+    "reason_if_missing",
+    "caveat",
 )
 _HEADER_ALIASES = {
     "date": "settlement_date",
@@ -342,6 +366,218 @@ def summarize_finra_short_interest_rows(
         "markets": sorted(set(market.loc[market.ne("")])),
         "signal_coverage_measured": False,
     }
+
+
+def _utc_timestamp(value: str | pd.Timestamp) -> pd.Timestamp:
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is None:
+        return timestamp.tz_localize("UTC")
+    return timestamp.tz_convert("UTC")
+
+
+def calculate_finra_short_interest_current(
+    finra_rows: pd.DataFrame,
+    companyfacts: pd.DataFrame,
+    status: pd.DataFrame,
+    publication_schedule: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+    finra_source_url: str,
+) -> pd.DataFrame:
+    """Calculate a causal current ShortInterest proxy from FINRA and SEC shares."""
+
+    required_facts = {
+        "cik",
+        "taxonomy",
+        "tag",
+        "unit",
+        "value",
+        "period_end",
+        "form",
+        "filed",
+        "accession_number",
+        "available_at",
+    }
+    missing_finra = set(_REQUIRED_COLUMNS).difference(finra_rows.columns)
+    missing_facts = required_facts.difference(companyfacts.columns)
+    missing_schedule = {"settlement_date", "publication_date"}.difference(
+        publication_schedule.columns
+    )
+    if missing_finra:
+        raise ValueError(f"FINRA short-interest rows are missing columns: {sorted(missing_finra)}")
+    if missing_facts:
+        raise ValueError(f"SEC CompanyFacts is missing columns: {sorted(missing_facts)}")
+    if missing_schedule:
+        raise ValueError(
+            f"FINRA publication schedule is missing columns: {sorted(missing_schedule)}"
+        )
+    if urlparse(str(finra_source_url)).hostname != "cdn.finra.org":
+        raise ValueError("FINRA source URL must use the official download CDN")
+
+    formation = _utc_timestamp(formation_at)
+    retrieved = _utc_timestamp(retrieved_at)
+    cutoff = min(formation, retrieved)
+
+    schedule = publication_schedule.copy()
+    schedule["settlement_date"] = pd.to_datetime(
+        schedule["settlement_date"], errors="coerce", utc=True
+    ).dt.normalize()
+    schedule["publication_date"] = pd.to_datetime(
+        schedule["publication_date"], errors="coerce", utc=True
+    ).dt.normalize()
+    schedule = schedule.loc[
+        schedule["settlement_date"].notna()
+        & schedule["publication_date"].notna()
+        & schedule["publication_date"].ge(schedule["settlement_date"])
+    ].copy()
+    schedule_conflicts = schedule.groupby("settlement_date")[
+        "publication_date"
+    ].nunique()
+    if schedule_conflicts.gt(1).any():
+        raise ValueError("FINRA publication schedule contains conflicts")
+    schedule = schedule.drop_duplicates("settlement_date", keep="last")
+
+    finra = finra_rows.copy()
+    finra["symbol"] = finra["symbol"].fillna("").astype(str).str.strip().str.upper()
+    finra["settlement_date"] = pd.to_datetime(
+        finra["settlement_date"], errors="coerce", utc=True
+    ).dt.normalize()
+    finra["current_short"] = pd.to_numeric(finra["current_short"], errors="coerce")
+    finra["market"] = finra["market"].fillna("").astype(str).str.strip().str.upper()
+    otc = finra["market"].eq("S") | finra["market"].str.contains(
+        "OTC", regex=False
+    )
+    finra = finra.loc[
+        finra["symbol"].ne("")
+        & finra["settlement_date"].notna()
+        & finra["current_short"].notna()
+        & np.isfinite(finra["current_short"])
+        & finra["current_short"].ge(0)
+        & ~otc
+    ].copy()
+    finra = finra.merge(
+        schedule,
+        on="settlement_date",
+        how="inner",
+        validate="many_to_one",
+    )
+    finra = finra.loc[
+        finra["settlement_date"].le(formation)
+        & finra["publication_date"].le(cutoff)
+    ].copy()
+    if finra.empty:
+        return pd.DataFrame(columns=_CURRENT_OUTPUT_COLUMNS)
+    latest_settlement = finra.groupby("symbol")["settlement_date"].transform("max")
+    finra = finra.loc[finra["settlement_date"].eq(latest_settlement)].copy()
+    conflict_key = ["symbol", "settlement_date"]
+    conflicting = finra.groupby(conflict_key).agg(
+        short_values=("current_short", "nunique"),
+        market_values=("market", "nunique"),
+    )
+    bad_keys = set(
+        conflicting.loc[
+            conflicting["short_values"].gt(1) | conflicting["market_values"].gt(1)
+        ].index
+    )
+    if bad_keys:
+        keys = list(finra[conflict_key].itertuples(index=False, name=None))
+        finra = finra.loc[[key not in bad_keys for key in keys]].copy()
+    finra = finra.drop_duplicates(conflict_key, keep="last")
+
+    identity = build_companyfacts_identity(status)
+    identity = identity.loc[~identity["symbol"].duplicated(keep=False)].copy()
+    finra = finra.merge(identity, on="symbol", how="inner", validate="many_to_one")
+    if finra.empty:
+        return pd.DataFrame(columns=_CURRENT_OUTPUT_COLUMNS)
+
+    facts = companyfacts.copy()
+    facts["cik"] = pd.to_numeric(facts["cik"], errors="coerce")
+    facts["shares_outstanding"] = pd.to_numeric(facts["value"], errors="coerce")
+    facts["period_end"] = pd.to_datetime(
+        facts["period_end"], errors="coerce", utc=True
+    ).dt.normalize()
+    facts["filed_at"] = pd.to_datetime(facts["filed"], errors="coerce", utc=True)
+    facts["shares_available_at"] = pd.to_datetime(
+        facts["available_at"], errors="coerce", utc=True
+    )
+    facts = facts.loc[
+        facts["cik"].notna()
+        & facts["taxonomy"].fillna("").astype(str).str.lower().isin({"dei", "us-gaap"})
+        & facts["tag"].isin(
+            {"EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"}
+        )
+        & facts["unit"].fillna("").astype(str).str.lower().eq("shares")
+        & facts["form"].isin({"10-K", "10-K/A", "10-Q", "10-Q/A"})
+        & facts["shares_outstanding"].notna()
+        & np.isfinite(facts["shares_outstanding"])
+        & facts["shares_outstanding"].gt(0)
+        & facts["period_end"].notna()
+        & facts["filed_at"].notna()
+        & facts["shares_available_at"].notna()
+        & facts["shares_available_at"].le(cutoff)
+    ].copy()
+    facts["tag_priority"] = facts["tag"].eq(
+        "EntityCommonStockSharesOutstanding"
+    ).astype(int)
+    joined = finra.merge(facts, on="cik", how="inner", validate="one_to_many")
+    joined = joined.loc[joined["period_end"].le(joined["settlement_date"])].copy()
+    if joined.empty:
+        return pd.DataFrame(columns=_CURRENT_OUTPUT_COLUMNS)
+    joined = joined.sort_values(
+        [
+            "security_id",
+            "period_end",
+            "shares_available_at",
+            "tag_priority",
+            "accession_number",
+        ]
+    ).drop_duplicates("security_id", keep="last")
+    joined["signal_value"] = joined["current_short"] / joined["shares_outstanding"]
+    joined["signal_available_at"] = joined[
+        ["publication_date", "shares_available_at"]
+    ].max(axis=1)
+    joined = joined.loc[
+        joined["signal_available_at"].le(formation)
+        & joined["signal_value"].notna()
+        & np.isfinite(joined["signal_value"])
+    ].copy()
+
+    rows: list[dict[str, Any]] = []
+    for row in joined.itertuples(index=False):
+        rows.append(
+            {
+                "security_id": str(row.security_id),
+                "ticker": str(row.symbol),
+                "cik": f"{int(row.cik):010d}",
+                "signal": "ShortInterest",
+                "formation_at": formation.isoformat(),
+                "period_end": pd.Timestamp(row.settlement_date).isoformat(),
+                "filed_at": pd.Timestamp(row.filed_at).isoformat(),
+                "available_at": pd.Timestamp(row.signal_available_at).isoformat(),
+                "retrieved_at": retrieved.isoformat(),
+                "value": float(row.signal_value),
+                "fidelity_class": "unvalidated_proxy",
+                "current_usable": True,
+                "source_id": "finra_equity_short_interest|sec_edgar",
+                "source_url": (
+                    f"{finra_source_url}|https://data.sec.gov/api/xbrl/"
+                    f"companyfacts/CIK{int(row.cik):010d}.json"
+                ),
+                "formula_id": "openap_shortinterest_finra_sec_current_proxy",
+                "formula_sha256": "",
+                "observation_count": 2,
+                "reason_if_missing": "",
+                "caveat": (
+                    "Official FINRA listed short interest divided by current SEC "
+                    "shares; current ticker-CIK identity replaces historical "
+                    "GVKEY-PERMNO and CRSP monthly shares"
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=_CURRENT_OUTPUT_COLUMNS).sort_values(
+        "security_id"
+    ).reset_index(drop=True)
 
 
 def _headers() -> dict[str, str]:
@@ -636,6 +872,7 @@ __all__ = [
     "OPENAP_COMMIT",
     "OPENAP_FORMULA_SOURCES",
     "build_short_interest_batch_evidence",
+    "calculate_finra_short_interest_current",
     "extract_finra_file_links",
     "extract_visible_text",
     "parse_finra_short_interest_text",
