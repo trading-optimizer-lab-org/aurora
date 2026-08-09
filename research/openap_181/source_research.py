@@ -19,6 +19,10 @@ from aurora.research.openap_181.analyst_batch import (
     ANALYST_SIGNAL_FAMILIES,
     ANALYST_SIGNALS,
 )
+from aurora.research.openap_181.complex_accounting_batch import (
+    COMPLEX_ACCOUNTING_BLOCKERS,
+    COMPLEX_ACCOUNTING_SIGNALS,
+)
 from aurora.research.openap_181.completion import SOURCE_CATALOG
 from aurora.research.openap_181.microstructure_batch import (
     MICROSTRUCTURE_BLOCKERS,
@@ -973,6 +977,11 @@ def _route_source_ids(signal: str, row: Mapping[str, Any]) -> tuple[str, ...]:
             ]
         else:
             sources += ["crsp_stock_commercial", "wrds_linking_suite"]
+    elif signal in COMPLEX_ACCOUNTING_SIGNALS:
+        sources += [
+            "sec_edgar", "sec_financial_statement_datasets", "openfigi",
+            "compustat_commercial", "crsp_stock_commercial", "wrds_linking_suite",
+        ]
     elif blocker == "point_in_time_analyst_history_missing_or_unvalidated" or category == "Analyst":
         sources += [
             "alpha_vantage_free", "fmp_basic", "sec_edgar", "tiingo_starter",
@@ -1138,6 +1147,8 @@ def build_signal_resolution(
         ]
         if signal in ANALYST_SIGNALS:
             remaining_blocker = ANALYST_BLOCKERS[signal]
+        elif signal in COMPLEX_ACCOUNTING_SIGNALS:
+            remaining_blocker = COMPLEX_ACCOUNTING_BLOCKERS[signal]
         elif signal in MICROSTRUCTURE_SIGNALS:
             remaining_blocker = MICROSTRUCTURE_BLOCKERS[signal]
         elif signal in RELATIONSHIP_SIGNALS:
