@@ -859,8 +859,9 @@ def _latest_submission_sic(
     latest["sic"] = latest["sic"].astype(int)
     latest = latest.loc[latest["sic"].between(1, 9999)].copy()
     latest["sic2"] = latest["sic"].map(lambda sic: f"{sic:04d}"[:2])
+    latest["sic4"] = latest["sic"].map(lambda sic: f"{sic:04d}")
     return latest.rename(columns={"accepted_at": "sic_available_at"})[
-        ["cik", "sic", "sic2", "sic_available_at"]
+        ["cik", "sic", "sic2", "sic4", "sic_available_at"]
     ]
 
 
@@ -954,6 +955,139 @@ def calculate_companyfacts_realestate_current(
                 "caveat": (
                     f"SEC CompanyFacts {row.variant} PP&E and current SEC SIC2 "
                     "proxy; not validated as Compustat/CRSP-equivalent"
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
+        "security_id"
+    ).reset_index(drop=True)
+
+
+def calculate_companyfacts_herfasset_current(
+    companyfacts: pd.DataFrame,
+    submissions: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+) -> pd.DataFrame:
+    """Build a causal SEC proxy for OpenAP's asset concentration signal."""
+
+    formation = pd.Timestamp(formation_at)
+    if formation.tzinfo is None:
+        formation = formation.tz_localize("UTC")
+    else:
+        formation = formation.tz_convert("UTC")
+    retrieved = pd.Timestamp(retrieved_at)
+    if retrieved.tzinfo is None:
+        retrieved = retrieved.tz_localize("UTC")
+    else:
+        retrieved = retrieved.tz_convert("UTC")
+
+    identity = build_companyfacts_identity(status)
+    annual = _realestate_annual_facts(companyfacts, formation)
+    annual = annual.loc[
+        annual.get("concept", pd.Series(index=annual.index, dtype="string")).eq(
+            "assets"
+        )
+        & annual["value"].gt(0)
+    ].copy()
+    sic = _latest_submission_sic(submissions, formation)
+    if annual.empty or identity.empty or sic.empty:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+
+    annual = annual.merge(
+        sic[["cik", "sic4", "sic_available_at"]],
+        on="cik",
+        how="inner",
+        validate="many_to_one",
+    )
+    annual = annual.loc[~annual["sic4"].str.startswith("49")].copy()
+    if annual.empty:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+    latest_period = annual.groupby(["cik", "fiscal_year"])[
+        "period_end"
+    ].transform("max")
+    annual = annual.loc[annual["period_end"].eq(latest_period)].copy()
+    annual = annual.sort_values(
+        ["cik", "fiscal_year", "available_at", "accession_number"]
+    ).drop_duplicates(["cik", "fiscal_year"], keep="last")
+
+    industry_key = ["fiscal_year", "sic4"]
+    annual["industry_assets"] = annual.groupby(industry_key)["value"].transform(
+        "sum"
+    )
+    annual = annual.loc[annual["industry_assets"].gt(0)].copy()
+    annual["squared_asset_share"] = (
+        annual["value"] / annual["industry_assets"]
+    ) ** 2
+    annual["industry_hhi"] = annual.groupby(industry_key)[
+        "squared_asset_share"
+    ].transform("sum")
+    industry = (
+        annual.groupby(industry_key, as_index=False)
+        .agg(
+            industry_hhi=("industry_hhi", "first"),
+            period_end=("period_end", "max"),
+            filed_at=("filed_at", "max"),
+            available_at=("available_at", "max"),
+            observation_count=("cik", "size"),
+        )
+        .sort_values(industry_key)
+    )
+    current = (
+        annual.sort_values(["cik", "fiscal_year", "period_end"])
+        .drop_duplicates("cik", keep="last")
+        .merge(identity, on="cik", how="inner", validate="one_to_one")
+    )
+
+    rows: list[dict[str, Any]] = []
+    for issuer in current.itertuples(index=False):
+        history = industry.loc[
+            industry["sic4"].eq(str(issuer.sic4))
+            & industry["fiscal_year"].le(issuer.fiscal_year)
+        ].tail(3)
+        if history.empty:
+            continue
+        value = float(history["industry_hhi"].mean())
+        available_at = max(
+            history["available_at"].max(), pd.Timestamp(issuer.sic_available_at)
+        )
+        if (
+            available_at > formation
+            or available_at > retrieved
+            or not np.isfinite(value)
+        ):
+            continue
+        rows.append(
+            {
+                "security_id": str(issuer.security_id),
+                "ticker": str(issuer.symbol),
+                "cik": f"{int(issuer.cik):010d}",
+                "signal": "HerfAsset",
+                "formation_at": formation.isoformat(),
+                "period_end": pd.Timestamp(history["period_end"].max()).isoformat(),
+                "filed_at": pd.Timestamp(history["filed_at"].max()).isoformat(),
+                "available_at": available_at.isoformat(),
+                "retrieved_at": retrieved.isoformat(),
+                "value": value,
+                "fidelity_class": "unvalidated_proxy",
+                "current_usable": True,
+                "source_id": "sec_edgar",
+                "source_url": (
+                    "https://data.sec.gov/api/xbrl/companyfacts/"
+                    f"CIK{int(issuer.cik):010d}.json"
+                ),
+                "formula_id": (
+                    "openap_herfasset_sec_companyfacts_current_proxy"
+                ),
+                "formula_sha256": "",
+                "observation_count": int(history["observation_count"].sum()),
+                "reason_if_missing": "",
+                "caveat": (
+                    "SEC CompanyFacts three-annual-period SIC4 approximation "
+                    "to OpenAP's 36-month asset HHI; current SEC SIC and no "
+                    "CRSP share-code filter"
                 ),
             }
         )
@@ -1508,6 +1642,7 @@ __all__ = [
     "build_companyfacts_identity",
     "calculate_companyfacts_accounting_current",
     "calculate_companyfacts_149_current",
+    "calculate_companyfacts_herfasset_current",
     "calculate_companyfacts_order_backlog_current",
     "calculate_companyfacts_rdability_current",
     "calculate_companyfacts_realestate_current",
