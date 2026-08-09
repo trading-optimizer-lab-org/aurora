@@ -95,6 +95,15 @@ def _excel_without_header(payload: bytes, *, adapter: str, **_: object) -> pd.Da
         frames.append(copy)
     if not frames:
         raise SourceAdapterError(f"EXCEL_HAS_NO_TABLE:{adapter}")
+    data_frames = [
+        frame
+        for frame in frames
+        if not str(frame["source_sheet"].iloc[0]).strip().casefold().startswith(
+            ("note", "doc", "readme")
+        )
+    ]
+    if data_frames:
+        frames = data_frames
     return _nonempty(pd.concat(frames, ignore_index=True, sort=False), adapter=adapter)
 
 
@@ -218,16 +227,30 @@ def _french_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
 
 def _cftc_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
+    inspected: list[str] = []
     try:
         with zipfile.ZipFile(BytesIO(payload)) as archive:
-            members = sorted(
-                name
-                for name in archive.namelist()
-                if not name.endswith("/") and name.lower().endswith((".csv", ".txt"))
-            )
+            members = sorted(name for name in archive.namelist() if not name.endswith("/"))
             for member in members:
                 raw = archive.read(member)
+                inspected.append(f"{member}:{len(raw)}")
                 if not raw.strip():
+                    continue
+                if raw.startswith(b"PK\x03\x04"):
+                    try:
+                        nested = _cftc_zip(raw, adapter=adapter)
+                    except SourceAdapterError:
+                        continue
+                    nested["source_file"] = f"{member}!" + nested["source_file"].astype(str)
+                    frames.append(nested)
+                    continue
+                if raw.startswith(b"\xd0\xcf\x11\xe0"):
+                    try:
+                        frame = pd.read_excel(BytesIO(raw), header=None)
+                    except Exception:
+                        continue
+                    frame["source_file"] = member
+                    frames.append(frame)
                     continue
                 try:
                     frame = pd.read_csv(
@@ -238,7 +261,12 @@ def _cftc_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
                         on_bad_lines="skip",
                     )
                 except pd.errors.EmptyDataError:
-                    continue
+                    frame = pd.DataFrame()
+                if frame.dropna(how="all").empty:
+                    try:
+                        frame = pd.read_fwf(StringIO(raw.decode("cp1252", errors="replace")))
+                    except Exception:
+                        frame = pd.DataFrame()
                 if not frame.dropna(how="all").empty:
                     frame["source_file"] = member
                     frames.append(frame)
@@ -247,7 +275,9 @@ def _cftc_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
             f"CFTC_ZIP_PARSE_FAILED:{adapter}:{type(exc).__name__}:{str(exc)[:200]}"
         ) from exc
     if not frames:
-        raise SourceAdapterError(f"CFTC_ZIP_HAS_NO_ROWS:{adapter}")
+        raise SourceAdapterError(
+            f"CFTC_ZIP_HAS_NO_ROWS:{adapter}:MEMBERS:{'|'.join(inspected)[:500]}"
+        )
     return _nonempty(pd.concat(frames, ignore_index=True, sort=False), adapter=adapter)
 
 
@@ -271,11 +301,11 @@ def _world_bank_monthly(
             series_indexes = [
                 index
                 for index, value in enumerate(lowered)
-                if requested in value or value in requested
+                if value and (requested in value or value in requested)
             ]
-            if not date_indexes or not series_indexes:
+            if not series_indexes:
                 continue
-            date_index = date_indexes[0]
+            date_index = date_indexes[0] if date_indexes else 0
             series_index = series_indexes[0]
             frame = raw.iloc[row_index + 1 :, [date_index, series_index]].copy()
             frame.columns = ["date", "value"]
@@ -311,6 +341,8 @@ def _read_resource_format(
             "alfred_philly_pit_bundle",
             "philadelphia_realtime_bundle",
             "shiller_monthly_excel",
+            "cboe_history_csv",
+            "cboe_causal_vol30_bridge",
         }:
             return _excel_without_header(payload, adapter=adapter)
         return _excel(payload, adapter=adapter)
@@ -376,12 +408,28 @@ def _candidate_dates(values: pd.Series, *, column_name: str = "") -> pd.Series:
         pieces = cleaned.loc[decimal_month].str.split(".", expand=True)
         normalized = pieces[0] + pieces[1].str.zfill(2)
         result.loc[decimal_month] = pd.to_datetime(normalized, format="%Y%m", errors="coerce")
+    colon_month_raw = cleaned.str.fullmatch(r"\d{4}:\d{2}")
+    colon_years = pd.to_numeric(cleaned.str[:4].where(colon_month_raw), errors="coerce")
+    colon_month = colon_month_raw & colon_years.between(1800, 2100)
+    if colon_month.any():
+        result.loc[colon_month] = pd.to_datetime(
+            cleaned.loc[colon_month].str.replace(":", ""),
+            format="%Y%m",
+            errors="coerce",
+        )
     remaining = result.isna() & ~(
-        eight_raw | six | six_raw | four_raw | world_bank_raw | quarter_raw | decimal_raw
+        eight_raw
+        | six
+        | six_raw
+        | four_raw
+        | world_bank_raw
+        | quarter_raw
+        | decimal_raw
+        | colon_month_raw
     )
     if remaining.any():
         plausible = cleaned.loc[remaining].str.match(
-            r"^(?:[A-Za-z]{3,9}[- /]\d{2,4}|\d{1,2}/\d{1,2}/\d{2,4}|\d{4}[- /]\d{1,2}(?:[- /]\d{1,2})?)$"
+            r"^(?:[A-Za-z]{3,9}[- /]\d{2,4}|\d{1,2}/\d{1,2}/\d{2,4}|\d{4}[- /]\d{1,2}(?:[- /]\d{1,2})?(?:\s+\d{2}:\d{2}:\d{2})?)$"
         )
         indexes = plausible.index[plausible]
         result.loc[indexes] = pd.to_datetime(cleaned.loc[indexes], errors="coerce")

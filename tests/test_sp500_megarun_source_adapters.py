@@ -97,9 +97,20 @@ def test_quarter_and_decimal_month_dates_are_normalized() -> None:
         resource_id="monthly",
         maximum_observation_date="2010-12-31",
     )
+    colon_month = normalize_resource_payload(
+        "academic_table",
+        b"period,value\n1998:01,1\n2010:12,2\n2011:01,3\n",
+        format_name="csv",
+        resource_id="colon_monthly",
+        maximum_observation_date="2010-12-31",
+    )
 
     assert quarterly["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-01", "2010-10-01"]
     assert decimal_month["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "1998-01-01",
+        "2010-12-01",
+    ]
+    assert colon_month["date"].dt.strftime("%Y-%m-%d").tolist() == [
         "1998-01-01",
         "2010-12-01",
     ]
