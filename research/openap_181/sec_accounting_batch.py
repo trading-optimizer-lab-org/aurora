@@ -960,11 +960,14 @@ def evaluate_sec_accounting_validation(
 _SOURCE_MANIFEST_COLUMNS = [
     "source_id",
     "source_url",
+    "access_url",
+    "access_method",
     "period",
     "sha256",
     "size_bytes",
     "retrieved_at",
     "status",
+    "http_status",
     "failure_reason",
 ]
 
@@ -979,6 +982,8 @@ def _validate_sec_source_manifest(source_manifest: pd.DataFrame) -> pd.DataFrame
     for column in (
         "source_id",
         "source_url",
+        "access_url",
+        "access_method",
         "period",
         "sha256",
         "retrieved_at",
@@ -992,21 +997,76 @@ def _validate_sec_source_manifest(source_manifest: pd.DataFrame) -> pd.DataFrame
         raise ValueError("SEC source manifest requires unique non-empty source IDs")
     if not clean["source_url"].str.startswith("https://").all():
         raise ValueError("SEC source manifest requires HTTPS source URLs")
+    if not clean["access_url"].str.startswith("https://").all():
+        raise ValueError("SEC source manifest requires HTTPS access URLs")
+    if clean["access_method"].eq("").any():
+        raise ValueError("SEC source manifest requires explicit access methods")
     if clean["period"].eq("").any() or clean["retrieved_at"].eq("").any():
         raise ValueError("SEC source manifest requires periods and retrieval timestamps")
     if not set(clean["status"]).issubset({"downloaded", "failed"}):
         raise ValueError("SEC source manifest has an unsupported status")
     clean["size_bytes"] = pd.to_numeric(clean["size_bytes"], errors="coerce")
+    clean["http_status"] = pd.to_numeric(clean["http_status"], errors="coerce")
     downloaded = clean["status"].eq("downloaded")
     valid_hashes = clean["sha256"].str.fullmatch(r"[0-9a-fA-F]{64}")
     valid_sizes = clean["size_bytes"].notna() & clean["size_bytes"].gt(0)
     if not (valid_hashes.loc[downloaded] & valid_sizes.loc[downloaded]).all():
         raise ValueError("Downloaded SEC sources require SHA-256 and positive size")
+    if not clean.loc[downloaded, "http_status"].eq(200).all():
+        raise ValueError("Downloaded SEC sources require HTTP 200 evidence")
+    valid_failed_status = clean.loc[~downloaded, "http_status"].fillna(0).map(
+        lambda value: value == 0 or 100 <= value <= 599
+    )
+    if not valid_failed_status.all():
+        raise ValueError("Failed SEC sources require a valid HTTP status or zero")
     if clean.loc[~downloaded, "failure_reason"].eq("").any():
         raise ValueError("Failed SEC sources require a concrete failure reason")
     clean["size_bytes"] = clean["size_bytes"].fillna(0).astype("int64")
+    clean["http_status"] = clean["http_status"].fillna(0).astype("int64")
     return clean.sort_values(["period", "source_id"], kind="stable").reset_index(
         drop=True
+    )
+
+
+def build_sec_accounting_access_blocker_evidence(
+    source_manifest: pd.DataFrame,
+    *,
+    evidence_run_url: str,
+    evidence_artifact: str,
+    implementation_commit: str,
+) -> pd.DataFrame:
+    """Convert a measured official-source access failure into fail-closed evidence."""
+
+    clean = _validate_sec_source_manifest(source_manifest)
+    failed = clean.loc[clean["status"].eq("failed")]
+    if failed.empty:
+        raise ValueError("SEC access blocker evidence requires a failed source row")
+    status_codes = set(failed["http_status"].astype(int))
+    blocker = (
+        "official_sec_fsd_access_blocked_http_403"
+        if status_codes == {403}
+        else "official_sec_fsd_access_unavailable"
+    )
+    return pd.DataFrame(
+        [
+            {
+                "signal": signal,
+                "formula_implemented": True,
+                "data_pipeline_implemented": True,
+                "point_in_time_verified": False,
+                "identity_verified": False,
+                "coverage_measured": False,
+                "fidelity_measured": False,
+                "coverage_result": "not_measured",
+                "fidelity_result": "not_measured",
+                "strict_gate_result": "blocked",
+                "blocking_reason": blocker,
+                "evidence_run_url": evidence_run_url,
+                "evidence_artifact": evidence_artifact,
+                "implementation_commit": implementation_commit,
+            }
+            for signal in SEC_ACCOUNTING_BATCH
+        ]
     )
 
 
@@ -1074,6 +1134,7 @@ __all__ = [
     "FROZEN_VALIDATION_THRESHOLDS",
     "OPENAP_FORMULA_COMMIT",
     "SEC_ACCOUNTING_BATCH",
+    "build_sec_accounting_access_blocker_evidence",
     "build_sec_accounting_batch_evidence",
     "calculate_sec_accounting_batch",
     "evaluate_sec_accounting_validation",

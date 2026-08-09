@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-from importlib import import_module
-from pathlib import Path
 import runpy
 import sys
+from importlib import import_module
+from pathlib import Path
 
 import pandas as pd
 import pytest

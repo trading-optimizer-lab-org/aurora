@@ -23,11 +23,14 @@ _PRE_COLUMNS = ["adsh", "line", "stmt", "tag", "version"]
 _MANIFEST_COLUMNS = [
     "source_id",
     "source_url",
+    "access_url",
+    "access_method",
     "period",
     "sha256",
     "size_bytes",
     "retrieved_at",
     "status",
+    "http_status",
     "failure_reason",
 ]
 _RELEVANT_TAGS = frozenset(
@@ -133,6 +136,16 @@ def _validated_manifest(
     clean["status"] = clean["status"].astype(str).str.strip()
     if not clean["status"].eq("downloaded").all():
         raise ValueError("Every SEC FSD quarter must be downloaded before preparation")
+    if not clean["source_url"].astype(str).str.startswith("https://").all():
+        raise ValueError("SEC FSD source URLs must use HTTPS")
+    if not clean["access_url"].astype(str).str.startswith("https://").all():
+        raise ValueError("SEC FSD access URLs must use HTTPS")
+    if clean["access_method"].fillna("").astype(str).str.strip().eq("").any():
+        raise ValueError("SEC FSD access methods must be explicit")
+    clean["http_status"] = pd.to_numeric(clean["http_status"], errors="coerce")
+    if not clean["http_status"].eq(200).all():
+        raise ValueError("Downloaded SEC FSD archives require HTTP 200 evidence")
+    clean["http_status"] = clean["http_status"].astype("int64")
     for row in clean.itertuples(index=False):
         archive = zip_dir / f"{row.period}.zip"
         if not archive.is_file():

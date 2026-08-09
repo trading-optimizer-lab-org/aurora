@@ -116,43 +116,38 @@ jobs:
         run: |
           python -m pytest \
             tests/test_openap_181_sec_accounting_batch.py \
+            tests/test_openap_181_sec_fsd_access.py \
             tests/test_openap_181_sec_fsd_inputs.py \
             tests/test_openap_181_sec_workflow.py \
             -q --tb=short
       - name: Download bounded official SEC FSD
         run: |
-          mkdir -p inputs/sec_fsd_zips inputs
-          printf '%s\n' 'source_id,source_url,period,sha256,size_bytes,retrieved_at,status,failure_reason' > inputs/sec_fsd_source_manifest.csv
-          mapfile -t quarters < <(python - <<'PY'
+          python scripts/run_openap_181_sec_fsd_access.py \
+            --zip-dir inputs/sec_fsd_zips \
+            --source-manifest inputs/sec_fsd_source_manifest.csv \
+            --start-quarter "$START_QUARTER" \
+            --end-quarter "$END_QUARTER" \
+            --user-agent "$SEC_USER_AGENT"
+      - name: Record official SEC FSD access outcome
+        run: |
+          python - <<'PY'
           import os
+          from pathlib import Path
+          import pandas as pd
           from aurora.research.openap_181.sec_fsd_inputs import bounded_quarters
-          print(*bounded_quarters(os.environ["START_QUARTER"], os.environ["END_QUARTER"]), sep="\n")
-          PY
+          expected = bounded_quarters(os.environ["START_QUARTER"], os.environ["END_QUARTER"])
+          manifest = pd.read_csv("inputs/sec_fsd_source_manifest.csv")
+          all_downloaded = bool(
+              len(manifest) == len(expected)
+              and set(manifest["period"]) == set(expected)
+              and manifest["status"].eq("downloaded").all()
           )
-          for quarter in "${quarters[@]}"; do
-            url="https://www.sec.gov/files/dera/data/financial-statement-data-sets/${quarter}.zip"
-            destination="inputs/sec_fsd_zips/${quarter}.zip"
-            temporary="${destination}.part"
-            retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            if curl --fail --location --retry 4 --retry-all-errors \
-              --connect-timeout 30 --max-time 900 \
-              --header "User-Agent: ${SEC_USER_AGENT}" \
-              --output "$temporary" "$url"; then
-              mv "$temporary" "$destination"
-              digest="$(sha256sum "$destination" | cut -d' ' -f1)"
-              size="$(stat -c '%s' "$destination")"
-              printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
-                "sec_fsd_${quarter}" "$url" "$quarter" "$digest" "$size" \
-                "$retrieved_at" "downloaded" "" >> inputs/sec_fsd_source_manifest.csv
-            else
-              rm -f "$temporary"
-              printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
-                "sec_fsd_${quarter}" "$url" "$quarter" "" "" \
-                "$retrieved_at" "failed" "curl_failed_after_retries" >> inputs/sec_fsd_source_manifest.csv
-              exit 1
-            fi
-          done
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"FSD_AVAILABLE={str(all_downloaded).lower()}\n")
+          print({"FSD_AVAILABLE": all_downloaded, "manifest_rows": len(manifest)})
+          PY
       - name: Reduce and verify official FSD inputs
+        if: ${{ env.FSD_AVAILABLE == 'true' }}
         run: |
           python scripts/run_openap_181_sec_fsd_inputs.py \
             --zip-dir inputs/sec_fsd_zips \
@@ -163,6 +158,7 @@ jobs:
             --formation-start "$FORMATION_START" \
             --formation-end "$FORMATION_END"
       - name: Calculate frozen Cash GP Investment batch
+        if: ${{ env.FSD_AVAILABLE == 'true' }}
         run: |
           run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           python scripts/run_openap_181_sec_accounting_batch.py \
@@ -177,6 +173,7 @@ jobs:
             --evidence-artifact "$EVIDENCE_ARTIFACT" \
             --implementation-commit "$SOURCE_SHA"
       - name: Verify causal dates and freeze gate evidence
+        if: ${{ env.FSD_AVAILABLE == 'true' }}
         run: |
           python - <<'PY'
           import json
@@ -223,6 +220,7 @@ jobs:
           ).to_csv(root / "openap_reference.csv", index=False)
           PY
       - name: Measure coverage and block fidelity without historical identity
+        if: ${{ env.FSD_AVAILABLE == 'true' }}
         run: |
           run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           python scripts/run_openap_181_sec_accounting_validation.py \
@@ -236,6 +234,54 @@ jobs:
             --evidence-run-url "$run_url" \
             --evidence-artifact "$EVIDENCE_ARTIFACT" \
             --implementation-commit "$SOURCE_SHA"
+      - name: Record official SEC FSD access blocker
+        if: ${{ env.FSD_AVAILABLE != 'true' }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from dataclasses import asdict
+          from pathlib import Path
+          import pandas as pd
+          from aurora.research.openap_181.sec_accounting_batch import (
+              FROZEN_VALIDATION_THRESHOLDS,
+              OPENAP_FORMULA_COMMIT,
+              build_sec_accounting_access_blocker_evidence,
+          )
+          source_manifest = pd.read_csv("inputs/sec_fsd_source_manifest.csv")
+          run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          evidence = build_sec_accounting_access_blocker_evidence(
+              source_manifest,
+              evidence_run_url=run_url,
+              evidence_artifact=os.environ["EVIDENCE_ARTIFACT"],
+              implementation_commit=os.environ["SOURCE_SHA"],
+          )
+          output = Path("outputs/sec_batch")
+          output.mkdir(parents=True, exist_ok=True)
+          evidence.to_csv(output / "sec_accounting_batch_evidence.csv", index=False)
+          source_manifest.to_csv(
+              output / "sec_accounting_batch_source_manifest.csv", index=False
+          )
+          thresholds = {
+              "formula_commit": OPENAP_FORMULA_COMMIT,
+              **asdict(FROZEN_VALIDATION_THRESHOLDS),
+          }
+          (output / "sec_accounting_batch_thresholds.json").write_text(
+              json.dumps(thresholds, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          blocker = {
+              "access_blocked": True,
+              "coverage_measured": False,
+              "fidelity_measured": False,
+              "signals": 3,
+              "strict_approved": 0,
+          }
+          (output / "sec_accounting_batch_access_blocker.json").write_text(
+              json.dumps(blocker, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
       - name: Build mandatory 181 implementation outputs
         run: |
           mkdir -p inputs/openap outputs/final
@@ -262,6 +308,7 @@ jobs:
       - name: Verify fail-closed score integration
         run: |
           python - <<'PY'
+          import os
           from pathlib import Path
           import pandas as pd
           final = Path("outputs/final")
@@ -270,9 +317,23 @@ jobs:
           assert len(status) == status["signal"].nunique() == 181
           attempted = status.loc[status["signal"].isin({"Cash", "GP", "Investment"})]
           assert len(attempted) == 3
-          assert attempted["point_in_time_verified"].astype(str).str.lower().eq("true").all()
-          assert attempted["identity_verified"].astype(str).str.lower().eq("false").all()
-          assert attempted["blocking_reason"].eq("identity_not_verified").all()
+          if os.environ["FSD_AVAILABLE"] == "true":
+              assert attempted["point_in_time_verified"].astype(str).str.lower().eq("true").all()
+              assert attempted["identity_verified"].astype(str).str.lower().eq("false").all()
+              assert attempted["blocking_reason"].eq("identity_not_verified").all()
+          else:
+              assert attempted["formula_implemented"].astype(str).str.lower().eq("true").all()
+              assert attempted["data_pipeline_implemented"].astype(str).str.lower().eq("true").all()
+              for column in {
+                  "point_in_time_verified", "identity_verified",
+                  "coverage_measured", "fidelity_measured",
+              }:
+                  assert attempted[column].astype(str).str.lower().eq("false").all()
+              assert attempted["coverage_result"].eq("not_measured").all()
+              assert attempted["fidelity_result"].eq("not_measured").all()
+              assert attempted["blocking_reason"].eq(
+                  "official_sec_fsd_access_blocked_http_403"
+              ).all()
           assert attempted["strict_gate_result"].eq("blocked").all()
           assert not attempted["score_eligible"].astype(str).str.lower().eq("true").any()
           assert len(strict_inventory) == 31
