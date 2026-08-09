@@ -672,7 +672,11 @@ def _coverage_metrics(
             delisted_found = int(
                 expected.loc[
                     expected.apply(
-                        lambda row: (row["security_id"], row["formation_at"]) in matched,
+                        lambda row, matched_keys=matched: (
+                            row["security_id"],
+                            row["formation_at"],
+                        )
+                        in matched_keys,
                         axis=1,
                     ),
                     "delisted",
