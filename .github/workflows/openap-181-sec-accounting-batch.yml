@@ -304,6 +304,10 @@ jobs:
             --manifest outputs/final/openap_181_completion_manifest.csv \
             --resolution outputs/final/signal_resolution_181.csv \
             --evidence outputs/sec_batch/sec_accounting_batch_evidence.csv \
+            --documentary-blockers \
+            --evidence-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --evidence-artifact "$EVIDENCE_ARTIFACT" \
+            --implementation-commit "$SOURCE_SHA" \
             --output-dir outputs/final
       - name: Verify fail-closed score integration
         run: |
@@ -336,6 +340,8 @@ jobs:
               ).all()
           assert attempted["strict_gate_result"].eq("blocked").all()
           assert not attempted["score_eligible"].astype(str).str.lower().eq("true").any()
+          assert status["strict_gate_result"].eq("blocked").sum() == 59
+          assert status["strict_gate_result"].eq("not_attempted").sum() == 122
           assert len(strict_inventory) == 31
           assert strict_inventory["signal"].nunique() == 31
           required = {

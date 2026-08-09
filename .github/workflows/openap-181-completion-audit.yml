@@ -96,6 +96,10 @@ jobs:
           python scripts/run_openap_181_implementation_status.py \
             --manifest outputs/openap_181_completion/openap_181_completion_manifest.csv \
             --resolution outputs/openap_181_completion/signal_resolution_181.csv \
+            --documentary-blockers \
+            --evidence-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --evidence-artifact openap-181-completion-audit-results \
+            --implementation-commit "$SOURCE_SHA" \
             --output-dir outputs/openap_181_completion
       - name: Verify mandatory counts and safety flags
         run: |
@@ -143,9 +147,29 @@ jobs:
           assert source_summary["coverage_claimed"] is False
           assert len(implementation) == implementation["signal"].nunique() == 181
           assert set(implementation["signal"]) == set(manifest["signal"])
-          assert implementation["strict_gate_result"].eq("not_attempted").all()
+          documentary_classes = {
+              "formula_ambiguous", "historical_point_in_time_missing",
+              "identifier_bridge_missing", "no_free_authorized_source",
+              "proxy_only", "source_access_unverified",
+          }
+          documentary = resolution["final_research_classification"].isin(
+              documentary_classes
+          )
+          assert documentary.sum() == 56
+          assert implementation["strict_gate_result"].eq("blocked").sum() == 56
+          assert implementation["strict_gate_result"].eq("not_attempted").sum() == 125
           assert not implementation["score_eligible"].astype(str).str.lower().eq("true").any()
           assert implementation["blocking_reason"].fillna("").astype(str).str.strip().ne("").all()
+          blocked = implementation.loc[implementation["strict_gate_result"].eq("blocked")]
+          assert blocked["evidence_run_url"].eq(
+              f"https://github.com/{__import__('os').environ['GITHUB_REPOSITORY']}/actions/runs/{__import__('os').environ['GITHUB_RUN_ID']}"
+          ).all()
+          assert blocked["evidence_artifact"].eq(
+              "openap-181-completion-audit-results"
+          ).all()
+          assert blocked["implementation_commit"].eq(
+              __import__("os").environ["SOURCE_SHA"]
+          ).all()
           assert len(strict_inventory) == strict_inventory["signal"].nunique() == 31
           assert strict_inventory["eligibility_basis"].eq("preexisting_exact_31").all()
           for name in {

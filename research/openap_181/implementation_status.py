@@ -59,6 +59,16 @@ _EVIDENCE_COLUMNS = [
 _ALLOWED_MEASUREMENT_RESULTS = frozenset({"pass", "fail", "not_measured"})
 _ALLOWED_STRICT_RESULTS = frozenset({"approved", "blocked", "not_attempted"})
 _COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+DOCUMENTARY_BLOCKING_CLASSIFICATIONS = frozenset(
+    {
+        "formula_ambiguous",
+        "historical_point_in_time_missing",
+        "identifier_bridge_missing",
+        "no_free_authorized_source",
+        "proxy_only",
+        "source_access_unverified",
+    }
+)
 
 
 def _clean_signal_column(frame: pd.DataFrame, *, label: str) -> pd.DataFrame:
@@ -138,6 +148,65 @@ def _row_is_eligible(row: pd.Series | dict[str, Any]) -> bool:
         and bool(str(row["evidence_artifact"]).strip())
         and bool(_COMMIT_RE.fullmatch(str(row["implementation_commit"])))
     )
+
+
+def build_documentary_blocker_evidence(
+    resolution: pd.DataFrame,
+    *,
+    evidence_run_url: str,
+    evidence_artifact: str,
+    implementation_commit: str,
+) -> pd.DataFrame:
+    """Attach auditable fail-closed evidence only to closed research classes."""
+
+    clean = _clean_signal_column(resolution, label="resolution")
+    required = {
+        "final_research_classification",
+        "remaining_blocker",
+    }
+    missing = sorted(required - set(clean.columns))
+    if missing:
+        raise ValueError(f"Resolution is missing documentary fields: {missing}")
+    if not str(evidence_run_url).startswith("https://"):
+        raise ValueError("Documentary evidence requires an HTTPS run URL")
+    if not str(evidence_artifact).strip():
+        raise ValueError("Documentary evidence requires a non-empty artifact")
+    if not _COMMIT_RE.fullmatch(str(implementation_commit)):
+        raise ValueError("Documentary evidence requires a 40-character commit SHA")
+    for column in (
+        "final_research_classification",
+        "remaining_blocker",
+    ):
+        clean[column] = clean[column].fillna("").astype(str).str.strip()
+    selected = clean.loc[
+        clean["final_research_classification"].isin(
+            DOCUMENTARY_BLOCKING_CLASSIFICATIONS
+        )
+    ].copy()
+    if selected["remaining_blocker"].eq("").any():
+        raise ValueError("Documentary blocker evidence requires concrete blockers")
+    rows = []
+    for row in selected.sort_values("signal").itertuples(index=False):
+        classification = row.final_research_classification
+        rows.append(
+            {
+                "signal": row.signal,
+                "formula_implemented": False,
+                "data_pipeline_implemented": False,
+                "point_in_time_verified": False,
+                "identity_verified": False,
+                "coverage_measured": False,
+                "fidelity_measured": False,
+                "coverage_result": "not_measured",
+                "fidelity_result": "not_measured",
+                "strict_gate_result": "blocked",
+                "blocking_reason": f"{classification}:{row.remaining_blocker}",
+                "evidence_run_url": str(evidence_run_url),
+                "evidence_artifact": str(evidence_artifact).strip(),
+                "implementation_commit": str(implementation_commit),
+            }
+        )
+    return pd.DataFrame(rows, columns=_EVIDENCE_COLUMNS)
 
 
 def build_signal_implementation_status(
@@ -298,8 +367,8 @@ def render_implementation_validation_report(
         f"- Signals in implementation registry: {len(clean_status)}",
         f"- Signals attempted: {len(attempted)}",
         f"- Signals approved: {len(approved)}",
-        f"- Signals rejected after an attempt: {len(rejected)}",
-        f"- Signals blocked or pending: {len(clean_status) - len(approved)}",
+        f"- Signals blocked with evidence: {len(rejected)}",
+        f"- Signals not attempted: {len(clean_status) - len(attempted)}",
         f"- Strict score signals: {len(clean_inventory)}",
         "",
         "No signal is promoted merely because it produces a value. Promotion requires "
@@ -401,19 +470,24 @@ def write_implementation_outputs(
     )
     attempted = int(status["strict_gate_result"].ne("not_attempted").sum())
     approved = int(status["score_eligible"].sum())
+    blocked = int(status["strict_gate_result"].eq("blocked").sum())
+    not_attempted = int(status["strict_gate_result"].eq("not_attempted").sum())
     return {
         "signals": int(len(status)),
         "unique_signals": int(status["signal"].nunique()),
         "attempted": attempted,
         "approved": approved,
-        "blocked": int(len(status) - approved),
+        "blocked": blocked,
+        "not_attempted": not_attempted,
         "strict_inventory_signals": int(len(inventory)),
     }
 
 
 __all__ = [
+    "DOCUMENTARY_BLOCKING_CLASSIFICATIONS",
     "IMPLEMENTATION_STATUS_COLUMNS",
     "STRICT_INVENTORY_COLUMNS",
+    "build_documentary_blocker_evidence",
     "build_signal_implementation_status",
     "build_strict_score_inventory",
     "render_implementation_validation_report",
