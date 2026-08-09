@@ -176,7 +176,17 @@ jobs:
           test -s "$patent_summary"
           grep -q '"source_commit": "2ee29097f7ca05fc0e56905e82474ad426c387b9"' "$patent_summary"
           grep -q 'patent_source_partial:' "$patent_evidence"
+          patent_commit="$(python - "$patent_evidence" <<'PY'
+          import re
+          import sys
+          import pandas as pd
+          commits = pd.read_csv(sys.argv[1])["implementation_commit"].astype(str).unique()
+          assert len(commits) == 1 and re.fullmatch(r"[0-9a-f]{40}", commits[0])
+          print(commits[0])
+          PY
+          )"
           echo "PATENT_EVIDENCE=$patent_evidence" >> "$GITHUB_ENV"
+          echo "PATENT_EVIDENCE_COMMIT=$patent_commit" >> "$GITHUB_ENV"
           if [[ -z "${PATENT_EVIDENCE_RUN_ID:-}" ]]; then
             echo "PATENT_EVIDENCE_RUN_ID=$GITHUB_RUN_ID" >> "$GITHUB_ENV"
           fi
@@ -203,7 +213,17 @@ jobs:
           test -s "$short_interest_summary"
           grep -q '"listed_history_start": "2021-06-01"' "$short_interest_summary"
           grep -q 'short_interest_source_partial:' "$short_interest_evidence"
+          short_interest_commit="$(python - "$short_interest_evidence" <<'PY'
+          import re
+          import sys
+          import pandas as pd
+          commits = pd.read_csv(sys.argv[1])["implementation_commit"].astype(str).unique()
+          assert len(commits) == 1 and re.fullmatch(r"[0-9a-f]{40}", commits[0])
+          print(commits[0])
+          PY
+          )"
           echo "SHORT_INTEREST_EVIDENCE=$short_interest_evidence" >> "$GITHUB_ENV"
+          echo "SHORT_INTEREST_EVIDENCE_COMMIT=$short_interest_commit" >> "$GITHUB_ENV"
           if [[ -z "${SHORT_INTEREST_EVIDENCE_RUN_ID:-}" ]]; then
             echo "SHORT_INTEREST_EVIDENCE_RUN_ID=$GITHUB_RUN_ID" >> "$GITHUB_ENV"
           fi
@@ -374,7 +394,7 @@ jobs:
                   "openap-181-patent-source-probe-results"
               ).all()
               assert patent_status["implementation_commit"].eq(
-                  os.environ["SOURCE_SHA"]
+                  os.environ["PATENT_EVIDENCE_COMMIT"]
               ).all()
           short_interest_status = implementation.loc[
               implementation["signal"].isin(short_interest_signals)
@@ -392,7 +412,7 @@ jobs:
                   "openap-181-short-interest-source-probe-results"
               ).all()
               assert short_interest_status["implementation_commit"].eq(
-                  os.environ["SOURCE_SHA"]
+                  os.environ["SHORT_INTEREST_EVIDENCE_COMMIT"]
               ).all()
           market_status = implementation.loc[
               implementation["signal"].isin(TWELVE_DATA_MARKET_SIGNALS)

@@ -159,6 +159,7 @@ def test_completion_audit_can_consume_patent_source_evidence():
     assert "uses: ./.github/workflows/openap-181-patent-source-probe.yml" in text
     assert "needs: [patent_probe, short_interest_probe]" in text
     assert "PATENT_EVIDENCE_RUN_ID" in text
+    assert "PATENT_EVIDENCE_COMMIT" in text
     assert "openap-181-patent-source-probe-results" in text
     assert "patent_batch_evidence.csv" in text
     assert "PATENT_EVIDENCE" in text
@@ -205,6 +206,7 @@ def test_completion_audit_can_consume_short_interest_source_evidence():
     )
     assert "needs: [patent_probe, short_interest_probe]" in text
     assert "SHORT_INTEREST_EVIDENCE_RUN_ID" in text
+    assert "SHORT_INTEREST_EVIDENCE_COMMIT" in text
     assert "openap-181-short-interest-source-probe-results" in text
     assert "short_interest_batch_evidence.csv" in text
     assert "SHORT_INTEREST_EVIDENCE" in text
