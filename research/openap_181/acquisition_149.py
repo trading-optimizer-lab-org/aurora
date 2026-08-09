@@ -517,6 +517,14 @@ def write_acquisition_outputs(
         ).sum()
     )
     blocked_count = int((~matrix["current_value_calculated"].map(_as_bool)).sum())
+    formation_times = pd.to_datetime(
+        values.get("formation_at", pd.Series(index=values.index, dtype="string")),
+        errors="coerce",
+        utc=True,
+    ).dropna()
+    latest_formation_at = (
+        formation_times.max().isoformat() if not formation_times.empty else ""
+    )
     summary = {
         "target_signals": int(len(matrix)),
         "data_acquired": data_count,
@@ -526,6 +534,7 @@ def write_acquisition_outputs(
         "blocked": blocked_count,
         "pending": blocked_count,
         "value_rows": int(len(values)),
+        "latest_formation_at": latest_formation_at,
         "source_values_sha256": source_values_sha256,
         "formula_inventory_sha256": formula_inventory_sha256,
         "locked_opened": False,
@@ -538,25 +547,31 @@ def write_acquisition_outputs(
     )
     status_counts = matrix["status"].value_counts().sort_index()
     lines = [
-        "# OpenAP 149 Acquisition Status",
+        "# Estado de adquisicion de las 149 senales OpenAP",
         "",
-        "This is a fail-closed extraction of already verified current artifacts. ",
-        "It does not promote any signal into the strict score.",
+        "Extraccion fail-closed de artefactos ya verificados.",
+        "No incorpora ninguna senal al score estricto.",
         "",
-        f"- Target signals: {len(matrix)}",
-        f"- Approved free-route data acquired: {data_count}",
-        f"- Current signals calculated: {calculated_count}",
-        f"- Strict-score eligible: {strict_count}",
-        f"- Reconstructed but not strict: {reconstructed_count}",
-        f"- Blocked or pending: {blocked_count}",
-        f"- Company-signal value rows preserved: {len(values)}",
+        f"- Senales objetivo: {len(matrix)}",
+        f"- Senales con datos adquiridos por ruta gratuita aprobada: {data_count}",
+        f"- Senales con valor calculado: {calculated_count}",
+        f"- Senales aptas para el score estricto: {strict_count}",
+        f"- Reconstruidas pero no estrictas: {reconstructed_count}",
+        f"- Bloqueadas o pendientes: {blocked_count}",
+        f"- Filas empresa-senal conservadas: {len(values)}",
+        f"- Fecha maxima de formacion: `{latest_formation_at or 'sin_valores'}`",
         "",
-        "## Status counts",
+        "Los valores conservados solo quedan demostrados hasta esa fecha de formacion.",
+        "",
+        "## Recuento por estado",
         "",
         *[f"- `{name}`: {int(count)}" for name, count in status_counts.items()],
         "",
-        "The matrix records source allow-list checks, official formula hashes, ",
-        "point-in-time dates, coverage and the remaining blocker per signal.",
+        f"- SHA-256 de valores fuente: `{source_values_sha256}`",
+        f"- SHA-256 del inventario de formulas: `{formula_inventory_sha256}`",
+        "",
+        "La matriz registra fuentes permitidas, hashes de formulas oficiales,",
+        "fechas point-in-time, cobertura y bloqueo pendiente por senal.",
     ]
     (output / "OPENAP_149_ACQUISITION_STATUS.md").write_text(
         "\n".join(lines), encoding="utf-8"
