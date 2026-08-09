@@ -607,21 +607,47 @@ def test_missing_twelve_data_credential_blocks_only_dependent_market_routes():
         resolution,
         pd.concat([documentary, missing], ignore_index=True),
     )
-    expected = resolution.loc[
-        resolution["final_research_classification"].eq("multiple_sources_required")
-        & resolution["best_free_source_option"].str.contains(
-            "twelve_data_basic",
-            regex=False,
-        )
-        & ~resolution["best_free_source_option"].str.contains(
-            "sec_financial_statement_datasets",
-            regex=False,
-        ),
-        "signal",
-    ]
+    expected = {
+        "Activism1",
+        "Activism2",
+        "Beta",
+        "BetaFP",
+        "BetaLiquidityPS",
+        "BetaTailRisk",
+        "BidAskSpread",
+        "CoskewACX",
+        "Coskewness",
+        "FirmAgeMom",
+        "Herf",
+        "HerfAsset",
+        "HerfBE",
+        "High52",
+        "IdioVol3F",
+        "IdioVolAHT",
+        "IndMom",
+        "IndRetBig",
+        "MomOffSeason11YrPlus",
+        "MomRev",
+        "MomVol",
+        "PriceDelayRsq",
+        "PriceDelaySlope",
+        "PriceDelayTstat",
+        "RealizedVol",
+        "ResidualMomentum",
+        "ReturnSkew3F",
+        "Size",
+        "TrendFactor",
+        "VolMkt",
+        "VolSD",
+        "VolumeTrend",
+        "std_turn",
+        "zerotrade12M",
+        "zerotrade1M",
+        "zerotrade6M",
+    }
 
     assert len(missing) == missing["signal"].nunique() == 36
-    assert set(missing["signal"]) == set(expected)
+    assert set(missing["signal"]) == expected
     assert missing["blocking_reason"].eq(
         "credential_missing:twelve_data_basic_api_key_not_configured"
     ).all()
