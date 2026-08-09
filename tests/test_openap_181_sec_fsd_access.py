@@ -132,6 +132,50 @@ def test_official_fsd_http_403_is_bounded_and_persisted_as_a_blocker(tmp_path):
     assert manifest.loc[0, "failure_reason"] == "http_403_after_2_attempts"
 
 
+def test_official_notes_download_records_origin_hash_and_size(tmp_path):
+    module = _module()
+    payload = b"PK\x03\x04fixture-sec-notes"
+    session = _Session([_Response(200, payload)])
+
+    summary = module.download_official_sec_notes_archives(
+        ("2026_07",),
+        tmp_path / "zips",
+        tmp_path / "manifest.csv",
+        user_agent="Aurora Research https://github.com/example/aurora",
+        session=session,
+        retry_delays=(),
+    )
+
+    expected_url = (
+        "https://www.sec.gov/files/dera/data/"
+        "financial-statement-notes-data-sets/2026_07_notes.zip"
+    )
+    assert summary == {
+        "all_downloaded": True,
+        "downloaded": 1,
+        "failed": 0,
+        "periods_requested": 1,
+    }
+    assert (tmp_path / "zips" / "2026_07_notes.zip").read_bytes() == payload
+    manifest = pd.read_csv(tmp_path / "manifest.csv", keep_default_na=False)
+    assert manifest.to_dict(orient="records") == [
+        {
+            "source_id": "sec_notes_2026_07",
+            "source_url": expected_url,
+            "access_url": expected_url,
+            "access_method": "sec_official_notes_direct_fair_access",
+            "period": "2026_07",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size_bytes": len(payload),
+            "retrieved_at": manifest.loc[0, "retrieved_at"],
+            "status": "downloaded",
+            "http_status": 200,
+            "failure_reason": "",
+        }
+    ]
+    assert session.calls[0]["url"] == expected_url
+
+
 def test_sec_fsd_access_cli_fails_closed_outside_github(tmp_path, monkeypatch):
     script = (
         Path(__file__).parents[1]
