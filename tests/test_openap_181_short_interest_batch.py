@@ -68,6 +68,32 @@ def test_finra_file_link_extractor_accepts_only_https_finra_cdn_links():
     )
 
 
+def test_finra_link_selection_excludes_not_yet_published_settlements():
+    module = _module()
+    links = (
+        "https://cdn.finra.org/equity/otcmarket/biweekly/shrt20260715.csv",
+        "https://cdn.finra.org/equity/otcmarket/biweekly/shrt20260731.csv",
+    )
+    schedule = pd.DataFrame(
+        {
+            "settlement_date": pd.to_datetime(
+                ["2026-07-15", "2026-07-31"], utc=True
+            ),
+            "publication_date": pd.to_datetime(
+                ["2026-07-24", "2026-08-11"], utc=True
+            ),
+        }
+    )
+
+    selected = module.select_latest_causal_finra_link(
+        links,
+        schedule,
+        formation_at="2026-08-09T23:59:59Z",
+    )
+
+    assert selected == links[0]
+
+
 def test_finra_document_contract_uses_visible_text_across_markup_and_entities():
     module = _module()
     html = (
