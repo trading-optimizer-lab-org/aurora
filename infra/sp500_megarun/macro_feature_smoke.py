@@ -1,4 +1,4 @@
-"""Train-only GitHub smoke for executable SP500 macro lanes F032-F040."""
+"""Train-only GitHub smoke for executable SP500 macro lanes F032-F050."""
 
 from __future__ import annotations
 
@@ -12,13 +12,21 @@ import pandas as pd
 
 from aurora.infra.sp500_megarun.feature_audit import audit_feature_outputs
 from aurora.infra.sp500_megarun.feature_input_normalizers import (
+    normalize_calendar_state_panel,
     normalize_credit_spread_panel,
+    normalize_cftc_sp500_panel,
     normalize_financial_conditions_panel,
+    normalize_finra_margin_panel,
     normalize_fomc_event_panel,
+    normalize_french_us_panels,
+    normalize_fx_cross_asset_panel,
     normalize_lagged_valuation_panel,
     normalize_macro_release_panel,
     normalize_philadelphia_realtime_growth_panel,
+    normalize_revised_z1_equity_panel,
+    normalize_spy_decision_panel,
     normalize_treasury_curve_panel,
+    normalize_world_bank_cross_asset_panel,
 )
 from aurora.infra.sp500_megarun.macro_feature_engine import evaluate_macro_lane
 from aurora.infra.sp500_megarun.materializer import parquet_safe_frame
@@ -31,7 +39,7 @@ class MacroFeatureSmokeError(ValueError):
 _TRAIN_PARTITION = "train_snapshot_1993_2010"
 _SEARCH_START = pd.Timestamp("1998-01-01")
 _TRAIN_END = pd.Timestamp("2010-12-31")
-_EXECUTABLE_LANES = tuple(f"F{index:03d}" for index in range(32, 41))
+_EXECUTABLE_LANES = tuple(f"F{index:03d}" for index in range(32, 51))
 
 
 def _sha256(path: Path) -> str:
@@ -47,7 +55,7 @@ def build_macro_feature_smoke(
     *,
     output_dir: str | Path,
 ) -> dict[str, Any]:
-    """Normalize, execute and audit F032-F040 without mounting validation."""
+    """Normalize, execute and audit F032-F050 without mounting validation."""
 
     snapshot = Path(train_snapshot)
     if snapshot.name != _TRAIN_PARTITION:
@@ -61,6 +69,15 @@ def build_macro_feature_smoke(
         "D_CALENDAR",
         "D_GOYAL",
         "D_SHILLER",
+        "D_SPY",
+        "D_FX",
+        "D_GOLD",
+        "D_WTI",
+        "D_FRENCH_FACTORS",
+        "D_FRENCH_INDUSTRIES",
+        "D_Z1",
+        "D_FINRA_MARGIN",
+        "D_CFTC_LEGACY",
     )
     datasets: dict[str, pd.DataFrame] = {}
     for dataset_id in required_datasets:
@@ -90,13 +107,26 @@ def build_macro_feature_smoke(
         datasets["D_SHILLER"],
         sessions=sessions,
     )
-    calendar = pd.DataFrame(
-        {
-            "date": sessions,
-            "observed_at": sessions,
-            "available_at": sessions,
-        }
+    market = normalize_spy_decision_panel(datasets["D_SPY"], sessions=sessions)
+    fx = normalize_fx_cross_asset_panel(datasets["D_FX"], sessions=sessions)
+    commodities = normalize_world_bank_cross_asset_panel(
+        datasets["D_GOLD"], datasets["D_WTI"], sessions=sessions
     )
+    factors, industries = normalize_french_us_panels(
+        datasets["D_FRENCH_FACTORS"],
+        datasets["D_FRENCH_INDUSTRIES"],
+        sessions=sessions,
+    )
+    balance = normalize_revised_z1_equity_panel(
+        datasets["D_Z1"], sessions=sessions
+    )
+    margin = normalize_finra_margin_panel(
+        datasets["D_FINRA_MARGIN"], sessions=sessions
+    )
+    positioning = normalize_cftc_sp500_panel(
+        datasets["D_CFTC_LEGACY"], sessions=sessions
+    )
+    calendar = normalize_calendar_state_panel(sessions=sessions)
     panels = {
         "credit": credit,
         "rates": curve,
@@ -106,8 +136,16 @@ def build_macro_feature_smoke(
         "fomc": fomc,
         "calendar": calendar,
         "valuation": valuation,
+        "market": market,
+        "fx": fx,
+        "commodities": commodities,
+        "factors": factors,
+        "industries": industries,
+        "balance": balance,
+        "margin": margin,
+        "positioning": positioning,
     }
-    parameters: dict[str, dict[str, int]] = {
+    parameters: dict[str, dict[str, Any]] = {
         "F032": {"window": 252, "change_lag": 5},
         "F033": {"window": 252, "change_lag": 5},
         "F034": {"window": 252, "change_lag": 5},
@@ -117,6 +155,16 @@ def build_macro_feature_smoke(
         "F038": {"event_window": 20, "normalization_window": 252},
         "F039": {"window": 252},
         "F040": {"window": 24, "earnings_lag": 12},
+        "F041": {"slow_window": 8, "margin_window": 12, "positioning_window": 26},
+        "F042": {"window": 63, "duration": 7},
+        "F043": {"window": 63},
+        "F044": {"window": 63},
+        "F045": {"window": 63, "shock_threshold": 2},
+        "F046": {"window": 63, "threshold": 0},
+        "F047": {"window": 63},
+        "F048": {"window": 63},
+        "F049": {"slow_window": 8, "margin_window": 12, "positioning_window": 26},
+        "F050": {"calendar_rule": "turn_of_month", "hold": 3},
     }
     outputs = {
         lane_id: evaluate_macro_lane(lane_id, panels, parameters[lane_id])

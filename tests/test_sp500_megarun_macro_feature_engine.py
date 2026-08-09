@@ -202,3 +202,156 @@ def test_f033_is_stable_when_future_rows_are_appended() -> None:
     after = after.loc[after["date"].le(pd.Timestamp("2010-04-30"))]
 
     pd.testing.assert_frame_equal(before.reset_index(drop=True), after.reset_index(drop=True))
+
+
+def _cross_asset_panels(periods: int = 180) -> dict[str, pd.DataFrame]:
+    dates = pd.bdate_range("2010-01-04", periods=periods)
+    phase = np.arange(periods, dtype=float)
+    market = _decision_panel(
+        dates,
+        close=100.0 * np.exp(np.cumsum(0.0004 + 0.002 * np.sin(phase / 11.0))),
+    )
+    rates = _decision_panel(
+        dates,
+        yield_10y=3.0 + 0.3 * np.sin(phase / 17.0),
+    )
+    fx = _decision_panel(
+        dates,
+        broad_dollar=100.0 + 0.03 * phase + np.sin(phase / 13.0),
+        fx_cad=1.0 + 0.001 * np.sin(phase / 5.0),
+        fx_jpy=100.0 + np.sin(phase / 7.0),
+        fx_chf=1.1 + 0.002 * np.cos(phase / 8.0),
+        fx_gbp=1.6 + 0.003 * np.sin(phase / 9.0),
+    )
+    commodities = _decision_panel(
+        dates[::20],
+        gold=1000.0 + 2.0 * np.arange(len(dates[::20])),
+        oil=60.0 + np.sin(np.arange(len(dates[::20]), dtype=float)),
+    )
+    factors = _decision_panel(
+        dates,
+        market_excess=0.001 * np.sin(phase / 4.0),
+        smb=0.001 * np.cos(phase / 5.0),
+        hml=0.001 * np.sin(phase / 6.0),
+    )
+    industries = _decision_panel(
+        dates,
+        Autos=0.003 * np.sin(phase / 3.0),
+        Cnstr=0.002 * np.cos(phase / 4.0),
+        Food=0.001 * np.sin(phase / 5.0),
+        Drugs=0.0015 * np.cos(phase / 7.0),
+        Util=0.0008 * np.sin(phase / 8.0),
+    )
+    calendar = _decision_panel(
+        dates,
+        weekday=dates.weekday,
+        month=dates.month,
+        quarter=dates.quarter,
+        session_of_month=pd.Series(dates).groupby([dates.year, dates.month]).cumcount().to_numpy() + 1,
+        sessions_remaining_month=pd.Series(dates[::-1]).groupby(
+            [dates[::-1].year, dates[::-1].month]
+        ).cumcount().to_numpy()[::-1],
+    )
+    balance_dates = dates[::30]
+    balance_phase = np.arange(len(balance_dates), dtype=float)
+    balance = _decision_panel(
+        balance_dates,
+        household_equity_share=0.3 + balance_phase / 100.0,
+        mutual_fund_equity_share=0.4 + np.sin(balance_phase) / 100.0,
+    )
+    margin_dates = dates[::20]
+    margin_phase = np.arange(len(margin_dates), dtype=float)
+    margin = _decision_panel(
+        margin_dates,
+        margin_debit=100.0 + margin_phase * 3.0,
+        margin_credit=80.0 + margin_phase,
+        margin_debit_to_credit=(100.0 + margin_phase * 3.0) / (80.0 + margin_phase),
+    )
+    positioning_dates = dates[::5]
+    positioning_phase = np.arange(len(positioning_dates), dtype=float)
+    positioning = _decision_panel(
+        positioning_dates,
+        open_interest=1000.0 + positioning_phase * 10.0,
+        noncommercial_net_pct_oi=0.1 * np.sin(positioning_phase / 3.0),
+        commercial_net_pct_oi=-0.08 * np.sin(positioning_phase / 3.0),
+    )
+    return {
+        "market": market,
+        "rates": rates,
+        "fx": fx,
+        "commodities": commodities,
+        "factors": factors,
+        "industries": industries,
+        "calendar": calendar,
+        "balance": balance,
+        "margin": margin,
+        "positioning": positioning,
+    }
+
+
+@pytest.mark.parametrize("lane_id", [f"F{index:03d}" for index in range(41, 51)])
+def test_f041_f050_produce_causal_train_only_values(lane_id: str) -> None:
+    api = _engine_api()
+    panels = _cross_asset_panels()
+    parameters = {
+        "window": 20,
+        "slow_window": 3,
+        "margin_window": 4,
+        "positioning_window": 8,
+        "duration": 7,
+        "threshold": 0.0,
+        "calendar_rule": "turn_of_month",
+        "hold": 3,
+    }
+
+    result = api.evaluate_macro_lane(lane_id, panels, parameters)
+
+    assert result["value"].notna().any(), lane_id
+    finite = result["value"].dropna()
+    assert result.loc[finite.index, "observed_at"].le(
+        result.loc[finite.index, "available_at"]
+    ).all()
+    assert result["date"].max() <= pd.Timestamp("2010-12-31")
+
+
+def test_f042_is_stable_when_future_cross_asset_rows_are_appended() -> None:
+    api = _engine_api()
+    panels = _cross_asset_panels()
+    cutoff = pd.Timestamp("2010-05-31")
+    before_panels = {
+        name: panel.loc[panel["date"].le(cutoff)].copy()
+        for name, panel in panels.items()
+    }
+    parameters = {"window": 20, "duration": 7}
+
+    before = api.evaluate_macro_lane("F042", before_panels, parameters)
+    after = api.evaluate_macro_lane("F042", panels, parameters)
+    after = after.loc[after["date"].le(cutoff)]
+
+    pd.testing.assert_frame_equal(before.reset_index(drop=True), after.reset_index(drop=True))
+
+
+def test_f050_supports_each_frozen_calendar_rule() -> None:
+    api = _engine_api()
+    panels = _cross_asset_panels()
+    rules = {
+        "turn_of_month",
+        "month_end",
+        "quarter_end",
+        "weekday",
+        "month",
+        "sell_in_may",
+    }
+
+    for rule in rules:
+        result = api.evaluate_macro_lane(
+            "F050",
+            panels,
+            {
+                "calendar_rule": rule,
+                "hold": 3,
+                "target_weekday": 0,
+                "target_month": 1,
+            },
+        )
+        assert result["value"].notna().all(), rule

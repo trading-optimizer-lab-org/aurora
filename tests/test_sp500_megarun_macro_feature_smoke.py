@@ -45,6 +45,20 @@ def _write_train_snapshot(root: Path) -> Path:
     pd.DataFrame({"date": dates}).to_parquet(
         snapshot / "D_CALENDAR.parquet", index=False
     )
+    market_phase = np.arange(len(dates), dtype=float)
+    market_close = 100.0 * np.exp(
+        np.cumsum(0.0002 + 0.002 * np.sin(market_phase / 17.0))
+    )
+    pd.DataFrame(
+        {
+            "date": dates,
+            "open": market_close * 0.999,
+            "high": market_close * 1.005,
+            "low": market_close * 0.995,
+            "close": market_close,
+            "volume": 1_000_000.0 + market_phase,
+        }
+    ).to_parquet(snapshot / "D_SPY.parquet", index=False)
     pd.DataFrame(
         {
             "date": dates,
@@ -133,22 +147,118 @@ def _write_train_snapshot(root: Path) -> Path:
             "resource_id": "shiller_ie_data",
         }
     ).to_parquet(snapshot / "D_SHILLER.parquet", index=False)
+
+    fx_rows: list[dict[str, object]] = []
+    fx_series = {
+        "V0.JRXWTFB_N.B": 100.0 + market_phase / 100.0,
+        "RXI_N.B.CA": 1.1 + 0.01 * np.sin(market_phase / 9.0),
+        "RXI_N.B.JA": 100.0 + np.sin(market_phase / 7.0),
+        "RXI_N.B.SZ": 1.0 + 0.01 * np.cos(market_phase / 11.0),
+        "RXI$US_N.B.UK": 1.6 + 0.01 * np.sin(market_phase / 13.0),
+    }
+    for series_id, values in fx_series.items():
+        fx_rows.extend(
+            {"date": date, "series_id": series_id, "value": value}
+            for date, value in zip(dates, values, strict=True)
+        )
+    pd.DataFrame(fx_rows).to_parquet(snapshot / "D_FX.parquet", index=False)
+
+    commodity_dates = pd.date_range("2004-01-01", "2010-12-01", freq="MS")
+    commodity_phase = np.arange(len(commodity_dates), dtype=float)
+    pd.DataFrame(
+        {"date": commodity_dates, "value": 400.0 + commodity_phase * 4.0}
+    ).to_parquet(snapshot / "D_GOLD.parquet", index=False)
+    pd.DataFrame(
+        {"date": commodity_dates, "value": 40.0 + 5.0 * np.sin(commodity_phase / 4.0)}
+    ).to_parquet(snapshot / "D_WTI.parquet", index=False)
+
+    factor_phase = np.arange(len(dates), dtype=float)
+    pd.DataFrame(
+        {
+            "date": dates,
+            "resource_id": "ff3_daily",
+            "Mkt-RF": 0.1 * np.sin(factor_phase / 5.0),
+            "SMB": 0.1 * np.cos(factor_phase / 7.0),
+            "HML": 0.1 * np.sin(factor_phase / 9.0),
+            "RF": 0.01,
+        }
+    ).to_parquet(snapshot / "D_FRENCH_FACTORS.parquet", index=False)
+    industry_names = [
+        "Autos", "Cnstr", "Steel", "Mach", "Chips", "Fin", "Rtail", "Trans",
+        "Food", "Beer", "Smoke", "Hlth", "Drugs", "Util",
+    ]
+    industry_data: dict[str, object] = {
+        "date": dates,
+        "resource_id": "industry_48_daily",
+    }
+    for index, name in enumerate(industry_names, start=1):
+        industry_data[name] = 0.2 * np.sin(factor_phase / (3.0 + index))
+    pd.DataFrame(industry_data).to_parquet(
+        snapshot / "D_FRENCH_INDUSTRIES.parquet", index=False
+    )
+
+    z1_rows: list[dict[str, object]] = []
+    z1_dates = pd.date_range("2003-03-31", "2009-09-30", freq="QE")
+    for position, date in enumerate(z1_dates):
+        values = {
+            "FL153064105.Q": 400.0 + position * 8.0,
+            "FL154090005.Q": 1000.0 + position * 10.0,
+            "FL653064100.Q": 300.0 + position * 5.0,
+            "FL654090000.Q": 600.0 + position * 7.0,
+        }
+        z1_rows.extend(
+            {"date": date, "series_id": series_id, "value": value}
+            for series_id, value in values.items()
+        )
+    pd.DataFrame(z1_rows).to_parquet(snapshot / "D_Z1.parquet", index=False)
+
+    margin_dates = pd.date_range("2004-01-01", "2010-10-01", freq="MS")
+    margin_phase = np.arange(len(margin_dates), dtype=float)
+    pd.DataFrame(
+        {
+            "date": margin_dates,
+            "Debit Balances in Customers' Securities Margin Accounts": 100.0 + margin_phase * 2.0,
+            "Free Credit Balances in Customers' Cash Accounts": 80.0 + margin_phase,
+            "Free Credit Balances in Customers' Securities Margin Accounts": 20.0 + margin_phase / 2.0,
+        }
+    ).to_parquet(snapshot / "D_FINRA_MARGIN.parquet", index=False)
+
+    cftc_rows: list[dict[str, object]] = []
+    for position, date in enumerate(pd.date_range("2004-01-06", "2010-12-21", freq="W-TUE")):
+        cftc_rows.append(
+            {
+                "date": date,
+                "Market and Exchange Names": "E-MINI S&P 500 STOCK INDEX - CHICAGO MERCANTILE EXCHANGE",
+                "Open Interest (All)": str(1000 + position * 5),
+                "Noncommercial Positions-Long (All)": str(400 + position),
+                "Noncommercial Positions-Short (All)": str(300 + position // 2),
+                "Commercial Positions-Long (All)": str(250 + position // 3),
+                "Commercial Positions-Short (All)": str(350 + position // 4),
+                "Concentration-Net LT =4 TDR-Long (All)": "25",
+                "Concentration-Net LT =4 TDR-Short (All)": "30",
+                "resource_id": "legacy_futures_only:synthetic",
+            }
+        )
+    pd.DataFrame(cftc_rows).to_parquet(
+        snapshot / "D_CFTC_LEGACY.parquet", index=False
+    )
     return snapshot
 
 
-def test_macro_smoke_builds_f032_f040_train_only_artifacts(tmp_path: Path) -> None:
+def test_macro_smoke_builds_f032_f050_train_only_artifacts(tmp_path: Path) -> None:
     api = _smoke_api()
     snapshot = _write_train_snapshot(tmp_path)
 
     report = api.build_macro_feature_smoke(snapshot, output_dir=tmp_path / "out")
 
     assert report["ready"] is True
-    assert report["executable_lanes"] == [f"F{index:03d}" for index in range(32, 41)]
+    assert report["executable_lanes"] == [f"F{index:03d}" for index in range(32, 51)]
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
     assert (tmp_path / "out" / "features" / "F032.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F040.parquet").is_file()
+    assert (tmp_path / "out" / "features" / "F050.parquet").is_file()
 
 
 def test_macro_smoke_requires_the_physical_train_partition(tmp_path: Path) -> None:

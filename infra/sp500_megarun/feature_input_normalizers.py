@@ -51,6 +51,19 @@ _MACRO_RELEASE_SERIES: Mapping[str, tuple[str, str]] = {
     "philly_real_output_first_releases": ("output", "quarterly"),
     "philly_real_consumption_first_releases": ("consumption", "quarterly"),
 }
+_FX_SERIES: Mapping[str, str] = {
+    "V0.JRXWTFB_N.B": "broad_dollar",
+    "RXI_N.B.CA": "fx_cad",
+    "RXI_N.B.JA": "fx_jpy",
+    "RXI_N.B.SZ": "fx_chf",
+    "RXI$US_N.B.UK": "fx_gbp",
+}
+_Z1_EQUITY_SERIES: Mapping[str, str] = {
+    "FL153064105.Q": "household_corporate_equity",
+    "FL154090005.Q": "household_financial_assets",
+    "FL653064100.Q": "mutual_fund_corporate_equity",
+    "FL654090000.Q": "mutual_fund_financial_assets",
+}
 
 
 def _validated_dates(frame: pd.DataFrame, *, dataset_id: str) -> pd.DataFrame:
@@ -82,6 +95,18 @@ def _project_to_decision_session(
     elif policy == "friday_after_tuesday":
         eligible = eligible.loc[
             eligible["date"].add(pd.Timedelta(days=3)).le(normalized_sessions.max())
+        ]
+    elif policy == "next_month_third_session":
+        target_month = eligible["date"] + pd.offsets.MonthBegin(1)
+        eligible = eligible.loc[
+            target_month.ge(normalized_sessions.min().to_period("M").to_timestamp())
+            & target_month.le(normalized_sessions.max())
+        ]
+    elif policy == "second_month_tenth_session":
+        target_month = eligible["date"] + pd.offsets.MonthBegin(2)
+        eligible = eligible.loc[
+            target_month.ge(normalized_sessions.min().to_period("M").to_timestamp())
+            & target_month.le(normalized_sessions.max())
         ]
     if eligible.empty:
         raise FeatureInputNormalizerError(f"NO_PROJECTABLE_ROWS:{policy}")
@@ -430,7 +455,10 @@ def _release_session(
         pd.to_datetime(targets).to_numpy(), side="left"
     )
     result = pd.Series(pd.NaT, index=targets.index, dtype="datetime64[ns]")
-    valid = positions < len(normalized_sessions)
+    normalized_targets = pd.to_datetime(targets)
+    valid = (positions < len(normalized_sessions)) & normalized_targets.ge(
+        normalized_sessions.min()
+    ).to_numpy()
     if valid.any():
         result.loc[valid] = normalized_sessions.take(positions[valid]).to_numpy()
     return result
@@ -575,16 +603,232 @@ def normalize_lagged_valuation_panel(
     return panel.reset_index(drop=True)
 
 
+def normalize_fx_cross_asset_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Pivot the frozen daily Federal Reserve dollar and major-currency series."""
+
+    fx = _validated_dates(frame, dataset_id="D_FX")
+    required = {"series_id", "value"}
+    missing = sorted(required - set(fx.columns))
+    if missing:
+        raise FeatureInputNormalizerError(f"FX_COLUMNS_MISSING:{','.join(missing)}")
+    selected = fx.loc[fx["series_id"].isin(_FX_SERIES)].copy()
+    selected["asset"] = selected["series_id"].map(_FX_SERIES)
+    selected["value"] = pd.to_numeric(selected["value"], errors="coerce")
+    selected = selected.dropna(subset=["asset", "value"])
+    panel = selected.pivot_table(
+        index="date", columns="asset", values="value", aggfunc="last"
+    ).reset_index()
+    panel.columns.name = None
+    missing_assets = sorted(set(_FX_SERIES.values()) - set(panel.columns))
+    if missing_assets:
+        raise FeatureInputNormalizerError(
+            f"FX_FROZEN_SERIES_MISSING:{','.join(missing_assets)}"
+        )
+    return _project_to_decision_session(
+        panel, policy="next_session", sessions=sessions
+    )
+
+
+def normalize_world_bank_cross_asset_panel(
+    gold_frame: pd.DataFrame,
+    oil_frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Release monthly gold and oil only on the third train session next month."""
+
+    gold = _validated_dates(gold_frame, dataset_id="D_GOLD")
+    oil = _validated_dates(oil_frame, dataset_id="D_WTI")
+    if "value" not in gold or "value" not in oil:
+        raise FeatureInputNormalizerError("WORLD_BANK_VALUE_COLUMN_MISSING")
+    gold_values = pd.DataFrame(
+        {"date": gold["date"], "gold": pd.to_numeric(gold["value"], errors="coerce")}
+    ).dropna(subset=["gold"])
+    oil_values = pd.DataFrame(
+        {"date": oil["date"], "oil": pd.to_numeric(oil["value"], errors="coerce")}
+    ).dropna(subset=["oil"])
+    panel = gold_values.merge(oil_values, on="date", how="inner", validate="one_to_one")
+    if panel.empty:
+        raise FeatureInputNormalizerError("EMPTY_WORLD_BANK_CROSS_ASSET_PANEL")
+    return _project_to_decision_session(
+        panel, policy="next_month_third_session", sessions=sessions
+    )
+
+
+def normalize_french_us_panels(
+    factor_frame: pd.DataFrame,
+    industry_frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Prepare broad-US factor and 48-industry returns for the next session."""
+
+    factors = _validated_dates(factor_frame, dataset_id="D_FRENCH_FACTORS")
+    industries = _validated_dates(
+        industry_frame, dataset_id="D_FRENCH_INDUSTRIES"
+    )
+    if "resource_id" in factors:
+        factors = factors.loc[factors["resource_id"].astype(str).eq("ff3_daily")]
+    if "resource_id" in industries:
+        industries = industries.loc[
+            industries["resource_id"].astype(str).eq("industry_48_daily")
+        ]
+    factor_columns = {"Mkt-RF": "market_excess", "SMB": "smb", "HML": "hml"}
+    missing_factors = sorted(set(factor_columns) - set(factors.columns))
+    if missing_factors:
+        raise FeatureInputNormalizerError(
+            f"FRENCH_FACTOR_COLUMNS_MISSING:{','.join(missing_factors)}"
+        )
+    factor_panel = factors.loc[:, ["date", *factor_columns]].rename(
+        columns=factor_columns
+    )
+    for column in factor_columns.values():
+        factor_panel[column] = pd.to_numeric(
+            factor_panel[column], errors="coerce"
+        ) / 100.0
+    factor_panel = factor_panel.dropna(subset=list(factor_columns.values()))
+
+    excluded = {"date", "resource_id", "source_dataset"}
+    industry_columns = [column for column in industries.columns if column not in excluded]
+    if len(industry_columns) < 2:
+        raise FeatureInputNormalizerError("FRENCH_INDUSTRY_COLUMNS_MISSING")
+    industry_panel = industries.loc[:, ["date", *industry_columns]].copy()
+    industry_panel[industry_columns] = industry_panel[industry_columns].apply(
+        pd.to_numeric, errors="coerce"
+    ) / 100.0
+    industry_panel = industry_panel.dropna(how="all", subset=industry_columns)
+    return (
+        _project_to_decision_session(
+            factor_panel, policy="next_session", sessions=sessions
+        ),
+        _project_to_decision_session(
+            industry_panel, policy="next_session", sessions=sessions
+        ),
+    )
+
+
+def normalize_revised_z1_equity_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Build a Z.1 equity-allocation proxy after a 13-month revision guard."""
+
+    z1 = _validated_dates(frame, dataset_id="D_Z1")
+    required = {"series_id", "value"}
+    missing = sorted(required - set(z1.columns))
+    if missing:
+        raise FeatureInputNormalizerError(f"Z1_COLUMNS_MISSING:{','.join(missing)}")
+    selected = z1.loc[z1["series_id"].isin(_Z1_EQUITY_SERIES)].copy()
+    selected["item"] = selected["series_id"].map(_Z1_EQUITY_SERIES)
+    selected["value"] = pd.to_numeric(selected["value"], errors="coerce")
+    panel = selected.pivot_table(
+        index="date", columns="item", values="value", aggfunc="last"
+    ).reset_index()
+    panel.columns.name = None
+    missing_items = sorted(set(_Z1_EQUITY_SERIES.values()) - set(panel.columns))
+    if missing_items:
+        raise FeatureInputNormalizerError(
+            f"Z1_EQUITY_SERIES_MISSING:{','.join(missing_items)}"
+        )
+    household_assets = panel["household_financial_assets"].replace(0.0, np.nan)
+    mutual_assets = panel["mutual_fund_financial_assets"].replace(0.0, np.nan)
+    result = pd.DataFrame(
+        {
+            "observed_at": panel["date"],
+            "household_equity_share": panel["household_corporate_equity"]
+            / household_assets,
+            "mutual_fund_equity_share": panel["mutual_fund_corporate_equity"]
+            / mutual_assets,
+        }
+    ).dropna()
+    targets = result["observed_at"] + pd.offsets.MonthBegin(13) + pd.Timedelta(days=14)
+    result["date"] = _release_session(targets, sessions=sessions)
+    result = result.dropna(subset=["date"]).sort_values("date", kind="mergesort")
+    if result.empty:
+        raise FeatureInputNormalizerError("EMPTY_REVISED_Z1_EQUITY_PANEL")
+    result["available_at"] = result["date"]
+    return result.reset_index(drop=True)
+
+
+def normalize_finra_margin_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Publish FINRA monthly debit and credit balances with the frozen safety lag."""
+
+    margin = _validated_dates(frame, dataset_id="D_FINRA_MARGIN")
+    debit_column = "Debit Balances in Customers' Securities Margin Accounts"
+    cash_column = "Free Credit Balances in Customers' Cash Accounts"
+    securities_column = "Free Credit Balances in Customers' Securities Margin Accounts"
+    missing = sorted({debit_column, cash_column} - set(margin.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"FINRA_MARGIN_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    debit = pd.to_numeric(margin[debit_column], errors="coerce")
+    cash = pd.to_numeric(margin[cash_column], errors="coerce")
+    if securities_column in margin:
+        securities = pd.to_numeric(margin[securities_column], errors="coerce").fillna(0.0)
+    else:
+        securities = pd.Series(0.0, index=margin.index)
+    credit = (cash + securities).replace(0.0, np.nan)
+    panel = pd.DataFrame(
+        {
+            "date": margin["date"],
+            "margin_debit": debit,
+            "margin_credit": credit,
+            "margin_debit_to_credit": debit / credit,
+        }
+    ).dropna()
+    return _project_to_decision_session(
+        panel, policy="second_month_tenth_session", sessions=sessions
+    )
+
+
+def normalize_calendar_state_panel(
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Describe each bounded train session using only deterministic calendar facts."""
+
+    dates = pd.DatetimeIndex(pd.to_datetime(sessions)).normalize().unique().sort_values()
+    dates = dates[dates <= _TRAIN_END]
+    if dates.empty:
+        raise FeatureInputNormalizerError("EMPTY_TRAIN_CALENDAR")
+    frame = pd.DataFrame({"date": dates})
+    groups = frame.groupby([frame["date"].dt.year, frame["date"].dt.month], sort=False)
+    frame["weekday"] = frame["date"].dt.weekday
+    frame["month"] = frame["date"].dt.month
+    frame["quarter"] = frame["date"].dt.quarter
+    frame["session_of_month"] = groups.cumcount() + 1
+    frame["sessions_remaining_month"] = groups.cumcount(ascending=False)
+    frame["observed_at"] = frame["date"]
+    frame["available_at"] = frame["date"]
+    return frame
+
+
 __all__ = [
     "FeatureInputNormalizerError",
     "normalize_cboe_vol_panel",
     "normalize_credit_spread_panel",
     "normalize_cftc_sp500_panel",
     "normalize_financial_conditions_panel",
+    "normalize_finra_margin_panel",
     "normalize_fomc_event_panel",
+    "normalize_french_us_panels",
+    "normalize_fx_cross_asset_panel",
     "normalize_lagged_valuation_panel",
     "normalize_macro_release_panel",
     "normalize_philadelphia_realtime_growth_panel",
+    "normalize_revised_z1_equity_panel",
     "normalize_spy_decision_panel",
     "normalize_treasury_curve_panel",
+    "normalize_world_bank_cross_asset_panel",
+    "normalize_calendar_state_panel",
 ]

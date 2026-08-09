@@ -90,6 +90,20 @@ def _numeric(panel: pd.DataFrame, column: str, *, panel_name: str) -> pd.Series:
     return pd.to_numeric(panel[column], errors="coerce")
 
 
+def _log_return(level: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(level, errors="coerce").where(lambda item: item.gt(0.0))
+    return np.log(numeric).diff()
+
+
+def _rolling_log_momentum(level: pd.Series, window: int) -> pd.Series:
+    return _log_return(level).rolling(window, min_periods=window).sum()
+
+
+def _industry_columns(panel: pd.DataFrame) -> list[str]:
+    excluded = {"date", "observed_at", "available_at"}
+    return [column for column in panel.columns if column not in excluded]
+
+
 def evaluate_macro_lane(
     lane_id: str,
     input_panels: Mapping[str, pd.DataFrame],
@@ -302,6 +316,276 @@ def evaluate_macro_lane(
             axis=1,
         ).mean(axis=1, skipna=False)
         return _output(valuation, value, observed_panels=(valuation,))
+
+    if lane_id in {"F041", "F049"}:
+        market = _required_panel(input_panels, "market")
+        balance = _required_panel(input_panels, "balance")
+        margin = _required_panel(input_panels, "margin")
+        positioning = _required_panel(input_panels, "positioning")
+        slow_window = int(parameters.get("slow_window", 12))
+        margin_window = int(parameters.get("margin_window", 24))
+        positioning_window = int(parameters.get("positioning_window", 52))
+
+        household_share = _numeric(
+            balance, "household_equity_share", panel_name="balance"
+        )
+        mutual_share = _numeric(
+            balance, "mutual_fund_equity_share", panel_name="balance"
+        )
+        debit = _numeric(margin, "margin_debit", panel_name="margin")
+        margin_ratio = _numeric(
+            margin, "margin_debit_to_credit", panel_name="margin"
+        )
+        open_interest = _numeric(
+            positioning, "open_interest", panel_name="positioning"
+        )
+        noncommercial = _numeric(
+            positioning, "noncommercial_net_pct_oi", panel_name="positioning"
+        )
+        commercial = _numeric(
+            positioning, "commercial_net_pct_oi", panel_name="positioning"
+        )
+
+        balance_state = balance.copy()
+        margin_state = margin.copy()
+        positioning_state = positioning.copy()
+        if lane_id == "F041":
+            balance_state["state"] = pd.concat(
+                [
+                    _rolling_z(household_share, slow_window),
+                    _rolling_z(household_share.diff(), slow_window),
+                ],
+                axis=1,
+            ).mean(axis=1, skipna=False)
+            margin_state["state"] = _rolling_z(
+                np.log(margin_ratio), margin_window
+            ) + 0.5 * _rolling_z(np.log(margin_ratio).diff(), margin_window)
+            disagreement = (noncommercial + commercial).abs()
+            positioning_state["state"] = _rolling_z(
+                noncommercial, positioning_window
+            ) - 0.5 * _rolling_z(disagreement, positioning_window)
+        else:
+            balance_state["state"] = _rolling_z(
+                mutual_share.pct_change(fill_method=None), slow_window
+            )
+            margin_state["state"] = _rolling_z(
+                debit.pct_change(fill_method=None), margin_window
+            )
+            positioning_state["state"] = _rolling_z(
+                noncommercial.diff(), positioning_window
+            ) + 0.5 * _rolling_z(
+                open_interest.pct_change(fill_method=None), positioning_window
+            )
+
+        aligned_balance = _align_state(market, balance_state)
+        aligned_margin = _align_state(market, margin_state)
+        aligned_positioning = _align_state(market, positioning_state)
+        value = pd.concat(
+            [
+                _numeric(aligned_balance, "state", panel_name="balance"),
+                _numeric(aligned_margin, "state", panel_name="margin"),
+                _numeric(aligned_positioning, "state", panel_name="positioning"),
+            ],
+            axis=1,
+        ).mean(axis=1, skipna=False)
+        return _output(
+            market,
+            value,
+            observed_panels=(
+                market,
+                aligned_balance,
+                aligned_margin,
+                aligned_positioning,
+            ),
+        )
+
+    if lane_id == "F042":
+        market = _required_panel(input_panels, "market")
+        rates = _align_state(market, _required_panel(input_panels, "rates"))
+        duration = float(parameters.get("duration", 7))
+        equity_return = _log_return(_numeric(market, "close", panel_name="market"))
+        yield_change = _numeric(rates, "yield_10y", panel_name="rates").diff() / 100.0
+        bond_return = -duration * yield_change
+        relative_momentum = (
+            bond_return.rolling(window, min_periods=window).sum()
+            - equity_return.rolling(window, min_periods=window).sum()
+        )
+        correlation = equity_return.rolling(window, min_periods=window).corr(
+            bond_return
+        )
+        value = relative_momentum - 0.25 * correlation
+        return _output(market, value, observed_panels=(market, rates))
+
+    if lane_id == "F043":
+        market = _required_panel(input_panels, "market")
+        fx = _align_state(market, _required_panel(input_panels, "fx"))
+        commodities = _align_state(
+            market, _required_panel(input_panels, "commodities")
+        )
+        equity_momentum = _rolling_log_momentum(
+            _numeric(market, "close", panel_name="market"), window
+        )
+        dollar_momentum = _rolling_log_momentum(
+            _numeric(fx, "broad_dollar", panel_name="fx"), window
+        )
+        gold_momentum = _rolling_log_momentum(
+            _numeric(commodities, "gold", panel_name="commodities"), window
+        )
+        oil_momentum = _rolling_log_momentum(
+            _numeric(commodities, "oil", panel_name="commodities"), window
+        )
+        equity_volatility = _log_return(
+            _numeric(market, "close", panel_name="market")
+        ).rolling(window, min_periods=window).std(ddof=0)
+        cross_asset_volatility = pd.concat(
+            [
+                _log_return(_numeric(fx, "broad_dollar", panel_name="fx")),
+                _log_return(
+                    _numeric(commodities, "gold", panel_name="commodities")
+                ),
+                _log_return(
+                    _numeric(commodities, "oil", panel_name="commodities")
+                ),
+            ],
+            axis=1,
+        ).std(axis=1).rolling(window, min_periods=window).mean()
+        shock_ratio = cross_asset_volatility / equity_volatility.replace(0.0, np.nan)
+        value = pd.concat(
+            [
+                gold_momentum - equity_momentum,
+                dollar_momentum - equity_momentum,
+                oil_momentum - equity_momentum,
+                shock_ratio,
+            ],
+            axis=1,
+        ).mean(axis=1, skipna=False)
+        return _output(
+            market, value, observed_panels=(market, fx, commodities)
+        )
+
+    if lane_id in {"F044", "F046", "F047", "F048"}:
+        industries = _required_panel(input_panels, "industries")
+        columns = _industry_columns(industries)
+        returns = industries[columns].apply(pd.to_numeric, errors="coerce")
+        if returns.shape[1] < 2:
+            raise MacroFeatureEngineError("INDUSTRY_PANEL_TOO_NARROW")
+
+        if lane_id == "F044":
+            factors = _align_state(
+                industries, _required_panel(input_panels, "factors")
+            )
+            cyclical_names = {
+                "Autos", "Cnstr", "Steel", "Mach", "Chips", "Fin", "Rtail", "Trans"
+            }
+            defensive_names = {"Food", "Beer", "Smoke", "Hlth", "Drugs", "Util"}
+            cyclicals = [column for column in columns if column in cyclical_names]
+            defensives = [column for column in columns if column in defensive_names]
+            if not cyclicals or not defensives:
+                raise MacroFeatureEngineError("INDUSTRY_LEADERSHIP_GROUPS_MISSING")
+            sector_leadership = (
+                returns[cyclicals].mean(axis=1)
+                - returns[defensives].mean(axis=1)
+            ).rolling(window, min_periods=window).sum()
+            size_leadership = _numeric(factors, "smb", panel_name="factors").rolling(
+                window, min_periods=window
+            ).sum()
+            style_leadership = _numeric(factors, "hml", panel_name="factors").rolling(
+                window, min_periods=window
+            ).sum()
+            value = pd.concat(
+                [size_leadership, style_leadership, sector_leadership], axis=1
+            ).mean(axis=1, skipna=False)
+            return _output(
+                industries, value, observed_panels=(industries, factors)
+            )
+
+        if lane_id == "F046":
+            threshold = float(parameters.get("threshold", 0.0))
+            daily_breadth = returns.gt(threshold).mean(axis=1) - returns.lt(
+                -threshold
+            ).mean(axis=1)
+            value = daily_breadth.rolling(window, min_periods=window).mean()
+            return _output(industries, value, observed_panels=(industries,))
+
+        if lane_id == "F047":
+            wealth = (1.0 + returns).cumprod()
+            rolling_high = wealth.rolling(window, min_periods=window).max()
+            rolling_low = wealth.rolling(window, min_periods=window).min()
+            moving_average = wealth.rolling(window, min_periods=window).mean()
+            high_breadth = wealth.ge(rolling_high).mean(axis=1)
+            low_breadth = wealth.le(rolling_low).mean(axis=1)
+            average_breadth = wealth.gt(moving_average).mean(axis=1) - 0.5
+            value = high_breadth - low_breadth + average_breadth
+            value.loc[rolling_high.isna().all(axis=1)] = np.nan
+            return _output(industries, value, observed_panels=(industries,))
+
+        dispersion = returns.std(axis=1, ddof=0)
+        equal_weight_return = returns.mean(axis=1)
+        common_correlation = pd.concat(
+            [
+                returns[column].rolling(window, min_periods=window).corr(
+                    equal_weight_return
+                )
+                for column in columns
+            ],
+            axis=1,
+        ).mean(axis=1)
+        absolute = returns.abs()
+        shares = absolute.div(absolute.sum(axis=1).replace(0.0, np.nan), axis=0)
+        concentration = shares.pow(2).sum(axis=1)
+        value = (
+            _rolling_z(dispersion, window)
+            - _rolling_z(common_correlation, window)
+            - _rolling_z(concentration, window)
+        )
+        return _output(industries, value, observed_panels=(industries,))
+
+    if lane_id == "F045":
+        fx = _required_panel(input_panels, "fx")
+        currency_columns = [
+            column for column in fx.columns if column.startswith("fx_")
+        ]
+        if len(currency_columns) < 3:
+            raise MacroFeatureEngineError("FX_CONTAGION_PANEL_TOO_NARROW")
+        returns = fx[currency_columns].apply(_log_return)
+        standardized = returns.apply(lambda series: _rolling_z(series, window))
+        threshold = float(parameters.get("shock_threshold", 2.0))
+        stress = standardized.abs().mean(axis=1)
+        breadth = standardized.abs().gt(threshold).mean(axis=1)
+        disagreement = standardized.std(axis=1, ddof=0)
+        value = -(stress + breadth + 0.5 * disagreement)
+        value.loc[standardized.isna().any(axis=1)] = np.nan
+        return _output(fx, value, observed_panels=(fx,))
+
+    if lane_id == "F050":
+        calendar = _required_panel(input_panels, "calendar")
+        rule = str(parameters.get("calendar_rule", "turn_of_month"))
+        hold = int(parameters.get("hold", 3))
+        weekday = _numeric(calendar, "weekday", panel_name="calendar").astype(int)
+        month = _numeric(calendar, "month", panel_name="calendar").astype(int)
+        session_of_month = _numeric(
+            calendar, "session_of_month", panel_name="calendar"
+        )
+        remaining = _numeric(
+            calendar, "sessions_remaining_month", panel_name="calendar"
+        )
+        if rule == "turn_of_month":
+            active = session_of_month.le(hold) | remaining.lt(hold)
+        elif rule == "month_end":
+            active = remaining.lt(hold)
+        elif rule == "quarter_end":
+            active = month.mod(3).eq(0) & remaining.lt(hold)
+        elif rule == "weekday":
+            active = weekday.eq(int(parameters.get("target_weekday", 0)))
+        elif rule == "month":
+            active = month.eq(int(parameters.get("target_month", 1)))
+        elif rule == "sell_in_may":
+            value = pd.Series(np.where(month.isin([11, 12, 1, 2, 3, 4]), 1.0, -1.0))
+            return _output(calendar, value, observed_panels=(calendar,))
+        else:
+            raise MacroFeatureEngineError(f"UNKNOWN_CALENDAR_RULE:{rule}")
+        value = active.astype(float).mul(2.0).sub(1.0)
+        return _output(calendar, value, observed_panels=(calendar,))
 
     raise MacroFeatureEngineError(f"MACRO_LANE_NOT_IMPLEMENTED:{lane_id}")
 

@@ -363,3 +363,132 @@ def test_revised_valuation_inputs_wait_a_full_year_before_use() -> None:
     assert result.loc[0, "inverse_cape"] == pytest.approx(0.05)
     assert result.loc[0, "net_equity_issuance"] == pytest.approx(0.02)
     assert result.loc[0, "payout_ratio"] == pytest.approx(0.5)
+
+
+def test_fx_panel_uses_frozen_daily_series_only_after_next_session() -> None:
+    api = _normalizer_api()
+    observed = pd.to_datetime(["2010-01-04", "2010-01-05"])
+    rows: list[dict[str, object]] = []
+    series = {
+        "V0.JRXWTFB_N.B": [100.0, 101.0],
+        "RXI_N.B.CA": [1.05, 1.06],
+        "RXI_N.B.JA": [92.0, 91.0],
+        "RXI_N.B.SZ": [1.02, 1.01],
+        "RXI$US_N.B.UK": [1.60, 1.61],
+    }
+    for series_id, values in series.items():
+        rows.extend(
+            {"date": date, "series_id": series_id, "value": value}
+            for date, value in zip(observed, values, strict=True)
+        )
+
+    result = api.normalize_fx_cross_asset_panel(
+        pd.DataFrame(rows), sessions=_sessions()
+    )
+
+    assert result["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2010-01-05",
+        "2010-01-06",
+    ]
+    assert result.loc[0, "broad_dollar"] == pytest.approx(100.0)
+    assert {"fx_cad", "fx_jpy", "fx_chf", "fx_gbp"} <= set(result.columns)
+
+
+def test_world_bank_assets_wait_until_third_session_of_next_month() -> None:
+    api = _normalizer_api()
+    gold = pd.DataFrame({"date": pd.to_datetime(["2009-12-01"]), "value": [1100.0]})
+    oil = pd.DataFrame({"date": pd.to_datetime(["2009-12-01"]), "value": [75.0]})
+    sessions = pd.bdate_range("2009-12-01", "2010-01-15")
+
+    result = api.normalize_world_bank_cross_asset_panel(
+        gold, oil, sessions=sessions
+    )
+
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2009-12-01")
+    assert result.loc[0, "available_at"] == pd.Timestamp("2010-01-05")
+    assert result.loc[0, "gold"] == pytest.approx(1100.0)
+    assert result.loc[0, "oil"] == pytest.approx(75.0)
+
+
+def test_french_panels_use_ff3_and_48_industries_at_next_session() -> None:
+    api = _normalizer_api()
+    dates = pd.to_datetime(["2010-01-04", "2010-01-05"])
+    factors = pd.DataFrame(
+        {
+            "date": dates,
+            "resource_id": "ff3_daily",
+            "Mkt-RF": [0.1, 0.2],
+            "SMB": [0.3, 0.4],
+            "HML": [-0.1, -0.2],
+            "RF": [0.01, 0.01],
+        }
+    )
+    industries = pd.DataFrame(
+        {
+            "date": dates,
+            "resource_id": "industry_48_daily",
+            "Autos": [1.0, -1.0],
+            "Food": [-0.5, 0.5],
+            "Util": [0.2, 0.1],
+        }
+    )
+
+    factor_panel, industry_panel = api.normalize_french_us_panels(
+        factors, industries, sessions=_sessions()
+    )
+
+    assert factor_panel.loc[0, "date"] == pd.Timestamp("2010-01-05")
+    assert factor_panel.loc[0, "smb"] == pytest.approx(0.003)
+    assert industry_panel.loc[0, "Autos"] == pytest.approx(0.01)
+    assert industry_panel.loc[0, "Food"] == pytest.approx(-0.005)
+
+
+def test_revised_z1_proxy_waits_full_year_and_margin_waits_two_months() -> None:
+    api = _normalizer_api()
+    z1_rows: list[dict[str, object]] = []
+    values = {
+        "FL153064105.Q": 400.0,
+        "FL154090005.Q": 1000.0,
+        "FL653064100.Q": 300.0,
+        "FL654090000.Q": 600.0,
+    }
+    for series_id, value in values.items():
+        z1_rows.append(
+            {"date": pd.Timestamp("2008-03-31"), "series_id": series_id, "value": value}
+        )
+    sessions = pd.bdate_range("2008-03-31", "2009-06-30")
+
+    z1 = api.normalize_revised_z1_equity_panel(
+        pd.DataFrame(z1_rows), sessions=sessions
+    )
+    margin = api.normalize_finra_margin_panel(
+        pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2009-01-01"]),
+                "Debit Balances in Customers' Securities Margin Accounts": [200.0],
+                "Free Credit Balances in Customers' Cash Accounts": [100.0],
+                "Free Credit Balances in Customers' Securities Margin Accounts": [50.0],
+            }
+        ),
+        sessions=sessions,
+    )
+
+    assert z1.loc[0, "date"] == pd.Timestamp("2009-04-15")
+    assert z1.loc[0, "household_equity_share"] == pytest.approx(0.4)
+    assert z1.loc[0, "mutual_fund_equity_share"] == pytest.approx(0.5)
+    assert margin.loc[0, "date"] == pd.Timestamp("2009-03-13")
+    assert margin.loc[0, "margin_debit_to_credit"] == pytest.approx(200.0 / 150.0)
+
+
+def test_calendar_panel_is_known_on_each_session() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2010-01-25", "2010-02-05")
+
+    result = api.normalize_calendar_state_panel(sessions=sessions)
+
+    january_end = result.loc[result["date"].eq(pd.Timestamp("2010-01-29"))].iloc[0]
+    february_start = result.loc[result["date"].eq(pd.Timestamp("2010-02-01"))].iloc[0]
+    assert january_end["sessions_remaining_month"] == 0
+    assert february_start["session_of_month"] == 1
+    assert result["date"].equals(result["observed_at"])
+    assert result["date"].equals(result["available_at"])

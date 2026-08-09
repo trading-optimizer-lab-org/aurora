@@ -99,6 +99,7 @@ _REGISTERED_AVAILABLE_AT_POLICIES = frozenset(
         "next_month_third_session",
         "quarter_end_next_session",
         "second_month_tenth_session",
+        "thirteen_month_revision_guard",
         "frequency_aware",
         "max_input_available_at",
     }
@@ -115,10 +116,10 @@ _DATASET_AVAILABLE_AT_POLICIES: Mapping[str, str] = {
     "D_PHILLY_RT": "next_session",
     "D_MARGIN": "second_month_tenth_session",
     "D_EPU": "max_input_available_at",
-    "D_FRENCH_FACTORS": "next_month_third_session",
-    "D_FRENCH_INDUSTRIES": "next_month_third_session",
-    "D_GOYAL": "second_month_tenth_session",
-    "D_SHILLER": "second_month_tenth_session",
+    "D_FRENCH_FACTORS": "next_session",
+    "D_FRENCH_INDUSTRIES": "next_session",
+    "D_GOYAL": "thirteen_month_revision_guard",
+    "D_SHILLER": "thirteen_month_revision_guard",
     "D_WTI": "next_month_third_session",
     "D_GOLD": "next_month_third_session",
     "D_FX": "next_session",
@@ -130,10 +131,10 @@ _DATASET_AVAILABLE_AT_POLICIES: Mapping[str, str] = {
     "D_FED_H3_H6_H8_G19_CP": "frequency_aware",
     "D_SPF": "quarter_end_next_session",
     "D_SLOOS": "quarter_end_next_session",
-    "D_Z1": "second_month_tenth_session",
+    "D_Z1": "thirteen_month_revision_guard",
     "D_FINRA_MARGIN": "second_month_tenth_session",
-    "D_FRENCH_US": "next_month_third_session",
-    "D_FRENCH_GLOBAL": "next_month_third_session",
+    "D_FRENCH_US": "next_session",
+    "D_FRENCH_GLOBAL": "next_session",
     "D_WORLD_BANK_COMMODITIES": "next_month_third_session",
     "D_TREASURY_AUCTIONS": "next_session",
     "D_TREASURY_FISCAL": "next_session",
@@ -490,6 +491,9 @@ def apply_available_at_policy(
         available = _nth_session_of_offset_month(
             result["observed_at"], sessions, month_offset=2, session_number=10
         )
+    elif policy == "thirteen_month_revision_guard":
+        targets = result["observed_at"] + pd.offsets.MonthBegin(13) + pd.Timedelta(days=14)
+        available = _session_on_or_after(targets, sessions, strictly_after=False)
     elif policy == "quarter_end_next_session":
         quarter_end = result["observed_at"] + pd.offsets.QuarterEnd(0)
         available = _session_on_or_after(quarter_end, sessions, strictly_after=True)
