@@ -46,11 +46,13 @@ def build_price_feature_smoke(
         raise FeatureEngineError("INVALID_SPY_TIMESTAMPS")
     if dates.gt(_TRAIN_END).any():
         raise FeatureEngineError("NON_TRAIN_PRICE_ROW")
+    if len(spy_frame) < 2:
+        raise FeatureEngineError("INSUFFICIENT_SPY_SESSIONS")
 
     sessions = pd.DatetimeIndex(dates).unique().sort_values()
     available_spy = apply_available_at_policy(
-        spy_frame,
-        policy="same_session",
+        spy_frame.iloc[:-1].copy(),
+        policy="next_session",
         sessions=sessions,
     )
     outputs = evaluate_price_family_batch(available_spy)
@@ -90,7 +92,7 @@ def build_price_feature_smoke(
         "maximum_feature_date": maximum_feature_date.date().isoformat(),
         "validation_opened": False,
         "locked_opened": False,
-        "availability_policy": "same_session",
+        "availability_policy": "next_session",
         "empty_lanes": list(audit.empty_lanes),
         "exact_duplicate_groups": [list(group) for group in audit.exact_duplicate_groups],
         "near_duplicate_pairs": [list(pair) for pair in audit.near_duplicate_pairs],

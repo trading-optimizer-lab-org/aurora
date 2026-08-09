@@ -137,7 +137,7 @@ def test_every_dataset_has_a_machine_readable_availability_policy() -> None:
 
     assert set(policies) == set(data_contract.datasets)
     assert all(policy in api.registered_available_at_policies() for policy in policies.values())
-    assert policies["D_SPY"] == "same_session"
+    assert policies["D_SPY"] == "next_session"
     assert policies["D_CFTC_LEGACY"] == "friday_after_tuesday"
     assert policies["D_NOAA_NY"] == "two_calendar_days"
 

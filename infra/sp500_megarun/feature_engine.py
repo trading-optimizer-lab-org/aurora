@@ -29,10 +29,15 @@ def _validated_spy(frame: pd.DataFrame) -> pd.DataFrame:
         raise FeatureEngineError("INVALID_SPY_TIMESTAMPS")
     if spy["date"].gt(_TRAIN_END).any() or spy["available_at"].gt(_TRAIN_END).any():
         raise FeatureEngineError("NON_TRAIN_PRICE_ROW")
-    if spy["available_at"].gt(spy["date"]).any():
-        raise FeatureEngineError("SPY_VALUE_NOT_AVAILABLE_AT_DECISION")
+    if spy["available_at"].lt(spy["date"]).any():
+        raise FeatureEngineError("SPY_AVAILABLE_AT_PRECEDES_OBSERVATION")
     if spy["date"].duplicated().any() or not spy["date"].is_monotonic_increasing:
         raise FeatureEngineError("SPY_DATES_NOT_STRICTLY_ORDERED")
+    if (
+        spy["available_at"].duplicated().any()
+        or not spy["available_at"].is_monotonic_increasing
+    ):
+        raise FeatureEngineError("SPY_AVAILABILITY_NOT_STRICTLY_ORDERED")
     for column in ("open", "high", "low", "close", "volume"):
         spy[column] = pd.to_numeric(spy[column], errors="coerce")
     if spy[["open", "high", "low", "close", "volume"]].isna().any().any():
@@ -76,7 +81,8 @@ def _true_range(spy: pd.DataFrame) -> pd.Series:
 def _output(spy: pd.DataFrame, value: pd.Series) -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "date": spy["date"],
+            "date": spy["available_at"],
+            "observed_at": spy["date"],
             "available_at": spy["available_at"],
             "value": pd.to_numeric(value, errors="coerce"),
         }

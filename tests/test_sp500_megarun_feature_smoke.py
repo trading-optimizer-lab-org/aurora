@@ -43,8 +43,12 @@ def test_price_smoke_builds_twenty_train_only_feature_artifacts(tmp_path: Path) 
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
+    assert report["availability_policy"] == "next_session"
     assert len(list((tmp_path / "features").glob("F*.parquet"))) == 20
     assert (tmp_path / "feature_smoke_report.json").exists()
+    first = pd.read_parquet(tmp_path / "features" / "F001.parquet")
+    assert first["observed_at"].lt(first["available_at"]).all()
+    assert first["date"].equals(first["available_at"])
 
 
 def test_price_smoke_rejects_a_2011_row(tmp_path: Path) -> None:

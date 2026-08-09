@@ -16,6 +16,7 @@ def _engine_api():
 
 def _spy_frame(periods: int = 700) -> pd.DataFrame:
     dates = pd.bdate_range("2007-01-02", periods=periods)
+    available_at = dates + pd.offsets.BDay(1)
     close = pd.Series(np.linspace(100.0, 180.0, periods), index=dates)
     open_ = close.shift(1).fillna(close.iloc[0]) * 1.001
     return pd.DataFrame(
@@ -26,7 +27,7 @@ def _spy_frame(periods: int = 700) -> pd.DataFrame:
             "low": np.minimum(open_.to_numpy(), close.to_numpy()) - 1.0,
             "close": close.to_numpy(),
             "volume": np.linspace(1_000_000.0, 2_000_000.0, periods),
-            "available_at": dates,
+            "available_at": available_at,
         }
     )
 
@@ -88,6 +89,7 @@ def test_all_first_twenty_price_lanes_return_bounded_causal_outputs() -> None:
     for lane_id, frame in outputs.items():
         assert frame["value"].notna().any(), lane_id
         assert frame["available_at"].le(frame["date"]).all(), lane_id
+        assert frame["observed_at"].lt(frame["available_at"]).all(), lane_id
         assert frame["date"].max() <= pd.Timestamp("2010-12-31"), lane_id
 
 
@@ -101,7 +103,7 @@ def test_price_engine_rejects_validation_rows_instead_of_trimming_them() -> None
         "low": 180.0,
         "close": 181.5,
         "volume": 2_100_000.0,
-        "available_at": pd.Timestamp("2011-01-03"),
+        "available_at": pd.Timestamp("2011-01-04"),
     }
 
     with pytest.raises(api.FeatureEngineError, match="NON_TRAIN_PRICE_ROW"):

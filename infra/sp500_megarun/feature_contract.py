@@ -105,7 +105,7 @@ _REGISTERED_AVAILABLE_AT_POLICIES = frozenset(
 )
 
 _DATASET_AVAILABLE_AT_POLICIES: Mapping[str, str] = {
-    "D_SPY": "same_session",
+    "D_SPY": "next_session",
     "D_VIX": "same_session",
     "D_VXO": "same_session",
     "D_CFTC": "friday_after_tuesday",
