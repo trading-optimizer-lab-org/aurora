@@ -255,6 +255,42 @@ def test_official_formula_fetch_decodes_gzip_responses(
     assert _fetch_bytes("https://example.test/tree", attempts=1) == b'{"tree": []}'
 
 
+def test_official_formula_fetch_authenticates_only_github_api(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class FakeResponse:
+        headers: dict[str, str] = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b"{}"
+
+    requests = []
+
+    def fake_urlopen(request, timeout):
+        requests.append(request)
+        return FakeResponse()
+
+    monkeypatch.setenv("GITHUB_TOKEN", "ephemeral-actions-token")
+    monkeypatch.setattr(
+        "aurora.research.openap_181.official_formulas.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    _fetch_bytes("https://api.github.com/repos/example/repo/git/trees/sha", attempts=1)
+    _fetch_bytes("https://raw.githubusercontent.com/example/repo/sha/a.py", attempts=1)
+
+    api_headers = dict(requests[0].header_items())
+    raw_headers = dict(requests[1].header_items())
+    assert api_headers["Authorization"] == "Bearer ephemeral-actions-token"
+    assert "Authorization" not in raw_headers
+
+
 def test_formula_inventory_prefers_exact_and_explicit_official_outputs(tmp_path):
     sources = {
         "Signals/pyCode/Predictors/BM.py": b'save_predictor(df, "BM")\n',
