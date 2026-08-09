@@ -175,7 +175,7 @@ def _identity_and_expected(
             }
         )
         for month in formation_months:
-            if month >= row.accepted_at + pd.offsets.MonthEnd(0):
+            if month >= row.accepted_at.normalize() + pd.offsets.MonthEnd(0):
                 expected_rows.append(
                     {
                         "security_id": security_id,
