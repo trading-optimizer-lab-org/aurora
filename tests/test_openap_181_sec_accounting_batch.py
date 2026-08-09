@@ -598,3 +598,123 @@ def test_validation_writer_persists_frozen_metrics_sources_and_summary(tmp_path)
     )
     assert persisted_sources.loc[0, "sha256"] == "a" * 64
     assert persisted_sources.loc[0, "status"] == "downloaded"
+
+
+def test_sec_validation_cli_fails_closed_outside_github(tmp_path, monkeypatch):
+    script = (
+        Path(__file__).parents[1]
+        / "scripts"
+        / "run_openap_181_sec_accounting_validation.py"
+    )
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT", raising=False)
+    monkeypatch.setattr(sys, "argv", [str(script), "--output-dir", str(tmp_path)])
+
+    with pytest.raises(LocalRunBlocked, match="OpenAP 181 SEC accounting validation"):
+        runpy.run_path(str(script), run_name="__main__")
+
+
+def test_sec_validation_cli_requires_gate_evidence_and_stays_identity_blocked(
+    tmp_path,
+    monkeypatch,
+):
+    script = (
+        Path(__file__).parents[1]
+        / "scripts"
+        / "run_openap_181_sec_accounting_validation.py"
+    )
+    observations, reference, expected = _validation_frames()
+    sources = pd.DataFrame(
+        [
+            {
+                "source_id": "sec_fsd_2024q1",
+                "source_url": (
+                    "https://www.sec.gov/files/dera/data/"
+                    "financial-statement-data-sets/2024q1.zip"
+                ),
+                "period": "2024q1",
+                "sha256": "a" * 64,
+                "size_bytes": 1234,
+                "retrieved_at": "2026-08-09T08:00:00Z",
+                "status": "downloaded",
+                "failure_reason": "",
+            }
+        ]
+    )
+    inputs = tmp_path / "inputs"
+    output = tmp_path / "outputs"
+    inputs.mkdir()
+    observations.to_csv(inputs / "observations.csv", index=False)
+    reference.to_csv(inputs / "reference.csv", index=False)
+    expected.to_csv(inputs / "expected.csv", index=False)
+    sources.to_csv(inputs / "sources.csv", index=False)
+    (inputs / "point_in_time.json").write_text(
+        json.dumps(
+            {
+                "gate": "point_in_time",
+                "verified": True,
+                "blocking_reason": "none",
+                "verification_method": "accepted_timestamp_contract",
+                "evidence_run_url": "https://github.com/example/aurora/actions/runs/6",
+                "evidence_artifact": "openap-181-sec-accounting-validation",
+                "verification_commit": "f" * 40,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (inputs / "identity.json").write_text(
+        json.dumps(
+            {
+                "gate": "identity",
+                "verified": False,
+                "blocking_reason": "historical_cik_permno_bridge_unavailable",
+                "verification_method": "no_authorized_bridge_supplied",
+                "evidence_run_url": "https://github.com/example/aurora/actions/runs/6",
+                "evidence_artifact": "openap-181-sec-accounting-validation",
+                "verification_commit": "f" * 40,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--observations",
+            str(inputs / "observations.csv"),
+            "--reference",
+            str(inputs / "reference.csv"),
+            "--expected-universe",
+            str(inputs / "expected.csv"),
+            "--source-manifest",
+            str(inputs / "sources.csv"),
+            "--point-in-time-evidence",
+            str(inputs / "point_in_time.json"),
+            "--identity-evidence",
+            str(inputs / "identity.json"),
+            "--output-dir",
+            str(output),
+            "--evidence-run-url",
+            "https://github.com/example/aurora/actions/runs/6",
+            "--implementation-commit",
+            "f" * 40,
+        ],
+    )
+
+    with pytest.raises(SystemExit) as result:
+        runpy.run_path(str(script), run_name="__main__")
+
+    assert result.value.code == 0
+    evidence = pd.read_csv(output / "sec_accounting_batch_evidence.csv")
+    assert evidence["point_in_time_verified"].all()
+    assert not evidence["identity_verified"].any()
+    assert evidence["blocking_reason"].eq("identity_not_verified").all()
+    gates = json.loads(
+        (output / "sec_accounting_batch_gate_evidence.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert gates["point_in_time"]["verified"] is True
+    assert gates["identity"]["verified"] is False
