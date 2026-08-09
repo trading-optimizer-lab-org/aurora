@@ -112,6 +112,21 @@ def normalize_cboe_vol_panel(
     return _project_to_decision_session(panel, policy="next_session", sessions=sessions)
 
 
+def normalize_spy_decision_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Move each observed SPY close to the next available decision session."""
+
+    spy = _validated_dates(frame, dataset_id="D_SPY")
+    required = {"open", "high", "low", "close", "volume"}
+    missing = sorted(required - set(spy.columns))
+    if missing:
+        raise FeatureInputNormalizerError(f"SPY_COLUMNS_MISSING:{','.join(missing)}")
+    return _project_to_decision_session(spy, policy="next_session", sessions=sessions)
+
+
 def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     if column not in frame:
         raise FeatureInputNormalizerError(f"CFTC_COLUMN_MISSING:{column}")
@@ -250,5 +265,6 @@ __all__ = [
     "FeatureInputNormalizerError",
     "normalize_cboe_vol_panel",
     "normalize_cftc_sp500_panel",
+    "normalize_spy_decision_panel",
     "normalize_treasury_curve_panel",
 ]

@@ -14,6 +14,7 @@ on:
       - scripts/build_sp500_megarun_preflight_240.py
       - scripts/inventory_sp500_megarun_train_snapshot.py
       - scripts/run_sp500_megarun_feature_smoke_f001_f020.py
+      - scripts/run_sp500_megarun_market_feature_smoke_f021_f031.py
       - tests/test_sp500_megarun_*.py
 
 permissions:
@@ -137,6 +138,9 @@ jobs:
             tests/test_sp500_megarun_feature_audit.py \
             tests/test_sp500_megarun_feature_engine_price.py \
             tests/test_sp500_megarun_feature_smoke.py \
+            tests/test_sp500_megarun_feature_input_normalizers.py \
+            tests/test_sp500_megarun_market_feature_engine.py \
+            tests/test_sp500_megarun_market_feature_smoke.py \
             tests/test_sp500_megarun_snapshot_schema_inventory.py \
             -q
       - name: Download every bounded SPY window
@@ -178,6 +182,14 @@ jobs:
           python scripts/run_sp500_megarun_feature_smoke_f001_f020.py \
             --train-snapshot outputs/sp500_megarun_preflight_240/train_snapshot_1993_2010 \
             --output-dir outputs/sp500_megarun_feature_smoke_f001_f020
+      - name: Execute and audit F021-F031 on train only
+        id: market_feature_smoke
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python scripts/run_sp500_megarun_market_feature_smoke_f021_f031.py \
+            --train-snapshot outputs/sp500_megarun_preflight_240/train_snapshot_1993_2010 \
+            --output-dir outputs/sp500_megarun_market_feature_smoke_f021_f031
       - name: Upload first-cycle train snapshot
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -217,6 +229,15 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 90
+      - name: Upload F021-F031 market feature smoke evidence
+        if: always() && steps.market_feature_smoke.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-market-feature-smoke-F021-F031-${{ github.run_id }}
+          path: outputs/sp500_megarun_market_feature_smoke_f021_f031
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
       - name: Fail closed unless data schema and executable feature gates pass
-        if: always() && (steps.build.outcome != 'success' || steps.schema_inventory.outcome != 'success' || steps.feature_smoke.outcome != 'success')
+        if: always() && (steps.build.outcome != 'success' || steps.schema_inventory.outcome != 'success' || steps.feature_smoke.outcome != 'success' || steps.market_feature_smoke.outcome != 'success')
         run: exit 1

@@ -30,6 +30,32 @@ def _sessions() -> pd.DatetimeIndex:
     )
 
 
+def test_spy_panel_moves_close_to_the_next_decision_session() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-01-04", "2010-01-05"]),
+            "open": [99.0, 100.0],
+            "high": [101.0, 102.0],
+            "low": [98.0, 99.0],
+            "close": [100.0, 101.0],
+            "volume": [1_000.0, 1_100.0],
+        }
+    )
+
+    result = api.normalize_spy_decision_panel(frame, sessions=_sessions())
+
+    assert result["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2010-01-05",
+        "2010-01-06",
+    ]
+    assert result["observed_at"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2010-01-04",
+        "2010-01-05",
+    ]
+    assert result["close"].tolist() == [100.0, 101.0]
+
+
 def test_cboe_panel_combines_vix_and_vxo_at_next_session() -> None:
     api = _normalizer_api()
     vix = pd.DataFrame(
