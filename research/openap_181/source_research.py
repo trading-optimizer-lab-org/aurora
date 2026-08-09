@@ -14,6 +14,10 @@ import json
 
 import pandas as pd
 
+from aurora.research.openap_181.accruals_noa_batch import (
+    ACCRUALS_NOA_BLOCKERS,
+    ACCRUALS_NOA_SIGNALS,
+)
 from aurora.research.openap_181.analyst_batch import (
     ANALYST_BLOCKERS,
     ANALYST_SIGNAL_FAMILIES,
@@ -977,6 +981,11 @@ def _route_source_ids(signal: str, row: Mapping[str, Any]) -> tuple[str, ...]:
             ]
         else:
             sources += ["crsp_stock_commercial", "wrds_linking_suite"]
+    elif signal in ACCRUALS_NOA_SIGNALS:
+        sources += [
+            "sec_edgar", "sec_financial_statement_datasets", "openfigi",
+            "compustat_commercial", "crsp_stock_commercial", "wrds_linking_suite",
+        ]
     elif signal in COMPLEX_ACCOUNTING_SIGNALS:
         sources += [
             "sec_edgar", "sec_financial_statement_datasets", "openfigi",
@@ -1147,6 +1156,8 @@ def build_signal_resolution(
         ]
         if signal in ANALYST_SIGNALS:
             remaining_blocker = ANALYST_BLOCKERS[signal]
+        elif signal in ACCRUALS_NOA_SIGNALS:
+            remaining_blocker = ACCRUALS_NOA_BLOCKERS[signal]
         elif signal in COMPLEX_ACCOUNTING_SIGNALS:
             remaining_blocker = COMPLEX_ACCOUNTING_BLOCKERS[signal]
         elif signal in MICROSTRUCTURE_SIGNALS:
