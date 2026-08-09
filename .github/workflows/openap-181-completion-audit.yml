@@ -1,6 +1,9 @@
 name: OpenAP 181 Completion Audit
 
 on:
+  push:
+    branches:
+      - codex/openap-proxy44-validation
   workflow_dispatch:
     inputs:
       source_sha:
@@ -14,6 +17,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -26,11 +30,13 @@ jobs:
     timeout-minutes: 45
     env:
       GITHUB_ACTIONS: "true"
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+      CURRENT_SCORE_EVIDENCE_RUN_ID: ${{ inputs.current_score_run_id || (github.event_name == 'push' && '31270341796') || '' }}
     steps:
       - name: Checkout exact implementation revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ env.SOURCE_SHA }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
@@ -51,21 +57,21 @@ jobs:
             --output inputs/SignalDoc.csv
           test -s inputs/SignalDoc.csv
       - name: Download current-score evidence
-        if: ${{ inputs.current_score_run_id != '' }}
+        if: ${{ env.CURRENT_SCORE_EVIDENCE_RUN_ID != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-yfinance-sec-current-score-results
           path: inputs/current_score
-          run-id: ${{ inputs.current_score_run_id }}
+          run-id: ${{ env.CURRENT_SCORE_EVIDENCE_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Locate current-score coverage evidence
-        if: ${{ inputs.current_score_run_id != '' }}
+        if: ${{ env.CURRENT_SCORE_EVIDENCE_RUN_ID != '' }}
         run: |
           current_coverage="$(find inputs/current_score -name coverage_185.csv -type f -print -quit)"
           current_summary="$(find inputs/current_score -name execution_summary.json -type f -print -quit)"
           test -s "$current_coverage"
           test -s "$current_summary"
-          echo "CURRENT_SCORE_RUN_ID=${{ inputs.current_score_run_id }}" >> "$GITHUB_ENV"
+          echo "CURRENT_SCORE_RUN_ID=$CURRENT_SCORE_EVIDENCE_RUN_ID" >> "$GITHUB_ENV"
           echo "CURRENT_COVERAGE=$current_coverage" >> "$GITHUB_ENV"
           echo "CURRENT_SUMMARY=$current_summary" >> "$GITHUB_ENV"
       - name: Build fail-closed 181 manifest
