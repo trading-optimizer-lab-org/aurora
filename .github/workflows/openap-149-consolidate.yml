@@ -1,0 +1,147 @@
+name: OpenAP 149 Current Evidence Consolidation
+
+on:
+  push:
+    branches:
+      - codex/openap-proxy44-validation
+    paths:
+      - .github/workflows/openap-149-consolidate.yml
+      - research/openap_181/acquisition_149.py
+      - scripts/run_openap_149_consolidate.py
+      - tests/test_openap_149_acquisition.py
+      - tests/test_openap_149_sec_companyfacts.py
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision to execute
+        required: true
+        type: string
+      current_93_run_id:
+        description: Successful fresh OpenAP 93 full run
+        required: true
+        type: string
+      sec_current_run_id:
+        description: Successful OpenAP 149 SEC CompanyFacts run
+        required: true
+        type: string
+      formula_evidence_run_id:
+        description: Successful run containing the pinned formula inventory
+        required: true
+        default: "31331835149"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-149-current-consolidation
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and focused tests
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Verify consolidation contract
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
+          python -m pytest \
+            tests/test_openap_149_acquisition.py \
+            tests/test_openap_149_sec_companyfacts.py \
+            -q --tb=short
+
+  consolidate:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      AU_DATA_DIR: ${{ github.workspace }}/outputs
+      OUTPUT_ARTIFACT: openap-149-current-consolidated-results
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Download fresh OpenAP 93 current values
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-93-max-free-full-results
+          path: inputs/current_93
+          run-id: ${{ inputs.current_93_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download expanded SEC current values
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-149-sec-companyfacts-current
+          path: inputs/sec_current
+          run-id: ${{ inputs.sec_current_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download pinned official formula evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-completion-audit-results
+          path: inputs/formulas
+          run-id: ${{ inputs.formula_evidence_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Consolidate latest current evidence
+        run: |
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          python scripts/run_openap_149_consolidate.py \
+            --route-matrix docs/OPENAP_181_CURRENT_FREE_SOURCE_REAUDIT_2026-08-09.csv \
+            --current-93-root inputs/current_93 \
+            --sec-current-root inputs/sec_current \
+            --formula-root inputs/formulas \
+            --current-93-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.current_93_run_id }}" \
+            --sec-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.sec_current_run_id }}" \
+            --evidence-run-url "$run_url" \
+            --evidence-artifact "$OUTPUT_ARTIFACT" \
+            --output-dir openap_149_current_consolidated
+      - name: Verify consolidated result
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          root = "outputs/openap_149_current_consolidated"
+          matrix = pd.read_csv(f"{root}/OPENAP_149_ACQUISITION_MATRIX.csv")
+          summary = json.load(open(f"{root}/openap_149_acquisition_summary.json"))
+          assert len(matrix) == matrix["signal"].nunique() == 149
+          assert summary["latest_formation_at"] == "2026-08-09T00:00:00+00:00"
+          assert summary["current_values_calculated"] > 16
+          assert summary["strict_score_eligible"] == 0
+          assert not matrix["strict_score_eligible"].astype(str).str.lower().eq("true").any()
+          print(json.dumps(summary, sort_keys=True))
+          PY
+      - name: Upload consolidated current evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-149-current-consolidated-results
+          path: outputs/openap_149_current_consolidated/
+          if-no-files-found: error
+          retention-days: 90

@@ -15,6 +15,7 @@ from aurora.research.openap_181.sec_companyfacts_149 import (
     calculate_companyfacts_accounting_current,
     calculate_companyfacts_149_current,
 )
+from aurora.research.openap_93.registry import REQUIRED_93
 
 
 def _read_many(paths: list[Path], reader: object) -> pd.DataFrame:
@@ -82,7 +83,9 @@ def main() -> int:
     accounting_targets = set(
         routes.loc[routes["category"].eq("Accounting"), "signal"].astype(str)
     )
-    expanded_targets = accounting_targets.difference({"Cash", "GP", "Investment"})
+    expanded_targets = accounting_targets.difference(
+        {"Cash", "GP", "Investment"}, REQUIRED_93
+    )
     supported_targets = expanded_targets.intersection(ACCOUNTING_FEATURE_DEPENDENCIES)
     expanded_values = calculate_companyfacts_accounting_current(
         companyfacts,
