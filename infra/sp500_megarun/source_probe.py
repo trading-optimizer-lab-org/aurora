@@ -161,9 +161,12 @@ def probe_expanded_sources(
     if not sources:
         return ()
     worker_count = max(1, min(max_workers, len(sources)))
+    hosts = {urlsplit(source.url).netloc for source in sources}
     host_limiters = {
-        host: BoundedSemaphore(max(1, per_host_workers))
-        for host in {urlsplit(source.url).netloc for source in sources}
+        host: BoundedSemaphore(
+            1 if host in {"fred.stlouisfed.org", "alfred.stlouisfed.org"} else max(1, per_host_workers)
+        )
+        for host in hosts
     }
 
     def run_bounded(source: ExpandedSource) -> dict[str, object]:
