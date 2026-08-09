@@ -1022,3 +1022,70 @@ def test_relationship_source_matrix_uses_exact_family_routes_and_blockers():
         "relationship_source_blocked:"
     ).all()
     assert relationship["blocking_reason"].nunique() == 5
+
+
+def test_microstructure_source_matrix_uses_exact_family_routes_and_blockers():
+    manifest = build_completion_manifest(_signal_doc())
+    formulas = _formula_inventory_for_source_research(manifest)
+    resolution = build_signal_resolution(manifest, formulas).set_index("signal")
+    inventory = build_source_inventory().set_index("source_id")
+    matrix = build_signal_source_matrix(
+        manifest, formulas, resolution.reset_index()
+    )
+    signals = {
+        "BidAskSpread",
+        "ProbInformedTrading",
+        "zerotrade1M",
+        "zerotrade6M",
+        "zerotrade12M",
+    }
+    expected_blockers = {
+        "BidAskSpread": (
+            "microstructure_source_blocked:exact_crsp_bidlo_askhi_prc_volume_semantics+"
+            "permno_history+delistings+full_coverage_unavailable_free"
+        ),
+        "ProbInformedTrading": (
+            "microstructure_source_blocked:exact_pin_parameters_end_2012+current_exact_pin+"
+            "historical_permno_to_current_security_identity_unavailable"
+        ),
+        "zerotrade1M": (
+            "microstructure_source_blocked:daily_crsp_zero_volume_rows+pit_shrout+"
+            "permno_calendar+480000_one_month_adjustment_unavailable_free"
+        ),
+        "zerotrade6M": (
+            "microstructure_source_blocked:daily_crsp_zero_volume_rows+pit_shrout+"
+            "permno_calendar+11000_six_month_adjustment_unavailable_free"
+        ),
+        "zerotrade12M": (
+            "microstructure_source_blocked:daily_crsp_zero_volume_rows+pit_shrout+"
+            "permno_calendar+11000_twelve_month_adjustment_unavailable_free"
+        ),
+    }
+
+    assert "hvidkjaer_pin_archive" in inventory.index
+    assert bool(
+        inventory.loc["hvidkjaer_pin_archive", "aurora_project_use_authorized"]
+    ) is False
+    assert resolution.loc[list(signals), "remaining_blocker"].to_dict() == (
+        expected_blockers
+    )
+
+    routes = {
+        signal: set(matrix.loc[matrix["signal"].eq(signal), "source_name"])
+        for signal in signals
+    }
+    assert any("Twelve Data" in source for source in routes["BidAskSpread"])
+    assert any("CRSP" in source for source in routes["BidAskSpread"])
+    assert any("Hvidkjaer" in source for source in routes["ProbInformedTrading"])
+    assert any("Duarte" in source for source in routes["ProbInformedTrading"])
+    assert any("NYSE TAQ" in source for source in routes["ProbInformedTrading"])
+    for signal in {"zerotrade1M", "zerotrade6M", "zerotrade12M"}:
+        assert any("Twelve Data" in source for source in routes[signal])
+        assert any("SEC EDGAR" in source for source in routes[signal])
+        assert any("CRSP" in source for source in routes[signal])
+
+    microstructure = matrix.loc[matrix["signal"].isin(signals)]
+    assert microstructure["blocking_reason"].str.startswith(
+        "microstructure_source_blocked:"
+    ).all()
+    assert microstructure["blocking_reason"].nunique() == 5

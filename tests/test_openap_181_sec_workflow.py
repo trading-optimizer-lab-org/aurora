@@ -368,3 +368,56 @@ def test_completion_audit_consumes_relationship_evidence_without_double_counting
     assert "relationship_evidence_present" in text
     assert "relationship_signals" in text
     assert "expected_blocked_signals" in text
+
+
+def test_microstructure_source_probe_is_manual_pinned_metadata_only_and_fail_closed():
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "openap-181-microstructure-source-probe.yml"
+    )
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in text
+    assert "workflow_call:" in text
+    assert "push:" not in text
+    assert "8db892442c2c3a3779b0f1eac4370d3655be15a1" in text
+    assert "scripts/run_openap_181_microstructure_source_probe.py" in text
+    assert "microstructure_batch_evidence.csv" in text
+    assert "microstructure_source_assessment.csv" in text
+    assert "openap-181-microstructure-source-probe-results" in text
+    assert "raw_source_data_downloaded" in text
+    assert "source_access_decision_complete" in text
+    assert 'len(evidence) == evidence["signal"].nunique() == 5' in text
+    assert "retention-days: 90" in text
+    assert "OOS_LOCKED" not in text
+    assert "FORWARD" not in text
+    assert "score_eligible" not in text
+
+
+def test_completion_audit_consumes_microstructure_evidence_without_double_counting():
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "openap-181-completion-audit.yml"
+    )
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "microstructure_evidence_run_id:" in text
+    assert "microstructure_probe:" in text
+    assert (
+        "uses: ./.github/workflows/openap-181-microstructure-source-probe.yml"
+        in text
+    )
+    assert "MICROSTRUCTURE_EVIDENCE_RUN_ID" in text
+    assert "MICROSTRUCTURE_EVIDENCE_COMMIT" in text
+    assert "openap-181-microstructure-source-probe-results" in text
+    assert "microstructure_batch_evidence.csv" in text
+    assert "MICROSTRUCTURE_EVIDENCE" in text
+    assert 'evidence_args+=(--evidence "$MICROSTRUCTURE_EVIDENCE")' in text
+    assert "microstructure_source_blocked:" in text
+    assert "microstructure_evidence_present" in text
+    assert "microstructure_signals" in text
+    assert "expected_blocked_signals" in text
