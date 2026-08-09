@@ -249,3 +249,28 @@ def test_companyfacts_expanded_accounting_calculates_pure_sec_formulas() -> None
     assert pd.to_datetime(values["available_at"]).le(
         pd.to_datetime(values["formation_at"])
     ).all()
+
+
+def test_sec_submissions_calculate_firm_age_as_explicit_current_proxy() -> None:
+    submissions = _submissions()
+    future = submissions.iloc[[0]].copy()
+    future.loc[:, "accession_number"] = "future"
+    future.loc[:, "accepted_at"] = "2026-08-10T00:00:00Z"
+
+    values = _module().calculate_sec_submission_current(
+        pd.concat([submissions, future], ignore_index=True),
+        _status(),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    assert values["signal"].tolist() == ["FirmAge"]
+    assert values.iloc[0]["value"] == 31.0
+    assert values.iloc[0]["fidelity_class"] == "unvalidated_proxy"
+    assert values.iloc[0]["formula_id"] == (
+        "openap_firmage_sec_first_filing_months_proxy"
+    )
+    assert values.iloc[0]["source_id"] == "sec_edgar"
+    assert pd.Timestamp(values.iloc[0]["available_at"]) == pd.Timestamp(
+        "2024-02-15T15:00:00Z"
+    )
