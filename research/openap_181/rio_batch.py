@@ -50,7 +50,7 @@ DOCUMENT_URLS = {
     ),
     "ibes_lseg": (
         "https://www.lseg.com/en/data-analytics/financial-data/company-data/"
-        "institutional-brokers-estimate-system-ibes"
+        "ibes-estimates"
     ),
 }
 DOCUMENT_GROUPS = {name: (name,) for name in DOCUMENT_URLS}

@@ -90,6 +90,7 @@ def test_rio_universe_formula_and_requirements_are_frozen() -> None:
     assert module.OPENAP_FORMULA_FILE["sha256"] == (
         "34a01df935551f7c8f19f5521084a658f5bc401d65c54c3fcabb7746438a6afa"
     )
+    assert module.DOCUMENT_URLS["ibes_lseg"].endswith("/ibes-estimates")
     assert module.RIO_SHARED_CONTRACT["openap_size_square_coefficient"] == 0.08
     assert module.RIO_SHARED_CONTRACT["nagel_size_square_coefficient"] == 0.09
     assert module.RIO_SHARED_CONTRACT["rio_lag_months"] == 6
