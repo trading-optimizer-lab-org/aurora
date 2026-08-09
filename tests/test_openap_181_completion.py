@@ -371,6 +371,29 @@ def test_formula_inventory_remains_ambiguous_with_two_current_python_matches():
     assert "Signals/LegacyStataCode" not in match["path"]
 
 
+def test_formula_inventory_resolves_outputs_saved_from_a_literal_loop_collection():
+    path = (
+        "Signals/pyCode/Predictors/"
+        "ZZ1_RIO_MB_RIO_Disp_RIO_Turnover_RIO_Volatility.py"
+    )
+    sources = {
+        path: (
+            b'rio_predictors = ["RIO_MB", "RIO_Disp", "RIO_Turnover", '
+            b'"RIO_Volatility"]\n'
+            b"for predictor in rio_predictors:\n"
+            b"    save_predictor(result, predictor)\n"
+        )
+    }
+
+    inventory = build_formula_inventory(
+        ["RIO_MB", "RIO_Disp", "RIO_Turnover", "RIO_Volatility"], sources
+    )
+
+    assert inventory["status"].eq("resolved").all()
+    assert inventory["path"].eq(path).all()
+    assert inventory["match_method"].eq("explicit_output").all()
+
+
 def _formula_inventory_for_source_research(manifest: pd.DataFrame) -> pd.DataFrame:
     rio = {"RIO_Disp", "RIO_MB", "RIO_Turnover", "RIO_Volatility"}
     return pd.DataFrame(
@@ -1089,3 +1112,33 @@ def test_microstructure_source_matrix_uses_exact_family_routes_and_blockers():
         "microstructure_source_blocked:"
     ).all()
     assert microstructure["blocking_reason"].nunique() == 5
+
+
+def test_rio_source_matrix_uses_exact_family_routes_and_blockers():
+    from aurora.research.openap_181.rio_batch import RIO_BLOCKERS, RIO_SIGNALS
+
+    manifest = build_completion_manifest(_signal_doc())
+    formulas = _formula_inventory_for_source_research(manifest)
+    formulas.loc[formulas["signal"].isin(RIO_SIGNALS), "status"] = "resolved"
+    resolution = build_signal_resolution(manifest, formulas).set_index("signal")
+    matrix = build_signal_source_matrix(
+        manifest, formulas, resolution.reset_index()
+    )
+
+    assert resolution.loc[list(RIO_SIGNALS), "remaining_blocker"].to_dict() == (
+        RIO_BLOCKERS
+    )
+    routes = {
+        signal: set(matrix.loc[matrix["signal"].eq(signal), "source_name"])
+        for signal in RIO_SIGNALS
+    }
+    for signal in RIO_SIGNALS:
+        assert any("SEC Form 13F" in source for source in routes[signal])
+        assert any("OpenFIGI" in source for source in routes[signal])
+        assert any("CRSP" in source for source in routes[signal])
+    assert any("Compustat" in source for source in routes["RIO_MB"])
+    assert any("I/B/E/S" in source for source in routes["RIO_Disp"])
+
+    rio = matrix.loc[matrix["signal"].isin(RIO_SIGNALS)]
+    assert rio["blocking_reason"].str.startswith("rio_source_blocked:").all()
+    assert rio["blocking_reason"].nunique() == 4

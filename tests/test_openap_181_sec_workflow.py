@@ -421,3 +421,53 @@ def test_completion_audit_consumes_microstructure_evidence_without_double_counti
     assert "microstructure_evidence_present" in text
     assert "microstructure_signals" in text
     assert "expected_blocked_signals" in text
+
+
+def test_rio_source_probe_is_manual_pinned_metadata_only_and_fail_closed():
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "openap-181-rio-source-probe.yml"
+    )
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in text
+    assert "workflow_call:" in text
+    assert "push:" not in text
+    assert "8db892442c2c3a3779b0f1eac4370d3655be15a1" in text
+    assert "scripts/run_openap_181_rio_source_probe.py" in text
+    assert "rio_batch_evidence.csv" in text
+    assert "rio_source_assessment.csv" in text
+    assert "openap-181-rio-source-probe-results" in text
+    assert "raw_source_data_downloaded" in text
+    assert "source_access_decision_complete" in text
+    assert 'len(evidence) == evidence["signal"].nunique() == 4' in text
+    assert "retention-days: 90" in text
+    assert "OOS_LOCKED" not in text
+    assert "FORWARD" not in text
+    assert "score_eligible" not in text
+
+
+def test_completion_audit_consumes_rio_evidence_without_double_counting():
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "openap-181-completion-audit.yml"
+    )
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "rio_evidence_run_id:" in text
+    assert "rio_probe:" in text
+    assert "uses: ./.github/workflows/openap-181-rio-source-probe.yml" in text
+    assert "RIO_EVIDENCE_RUN_ID" in text
+    assert "RIO_EVIDENCE_COMMIT" in text
+    assert "openap-181-rio-source-probe-results" in text
+    assert "rio_batch_evidence.csv" in text
+    assert "RIO_EVIDENCE" in text
+    assert 'evidence_args+=(--evidence "$RIO_EVIDENCE")' in text
+    assert "rio_source_blocked:" in text
+    assert "rio_evidence_present" in text
+    assert "rio_signals" in text
+    assert "expected_blocked_signals" in text
