@@ -721,6 +721,59 @@ def _latest_link(links: tuple[str, ...]) -> str:
     return max(links, key=date_key)
 
 
+def select_latest_causal_finra_link(
+    links: tuple[str, ...],
+    publication_schedule: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+) -> str:
+    """Select the latest official file published by the formation timestamp."""
+
+    missing = {"settlement_date", "publication_date"}.difference(
+        publication_schedule.columns
+    )
+    if missing:
+        raise ValueError(f"FINRA publication schedule is missing columns: {sorted(missing)}")
+    schedule = publication_schedule.copy()
+    schedule["settlement_date"] = pd.to_datetime(
+        schedule["settlement_date"], errors="coerce", utc=True
+    ).dt.normalize()
+    schedule["publication_date"] = pd.to_datetime(
+        schedule["publication_date"], errors="coerce", utc=True
+    ).dt.normalize()
+    conflicts = schedule.groupby("settlement_date")["publication_date"].nunique()
+    if conflicts.gt(1).any():
+        raise ValueError("FINRA publication schedule contains conflicts")
+    publication_by_settlement = (
+        schedule.dropna(subset=["settlement_date", "publication_date"])
+        .drop_duplicates("settlement_date", keep="last")
+        .set_index("settlement_date")["publication_date"]
+        .to_dict()
+    )
+    formation = _utc_timestamp(formation_at)
+    candidates: list[tuple[pd.Timestamp, str]] = []
+    for url in links:
+        parsed = urlparse(str(url))
+        if parsed.scheme != "https" or parsed.hostname != "cdn.finra.org":
+            continue
+        date_matches = re.findall(
+            r"(?:20\d{2})[-_/]?(?:0[1-9]|1[0-2])[-_/]?(?:0[1-9]|[12]\d|3[01])",
+            parsed.path,
+        )
+        if not date_matches:
+            continue
+        compact = re.sub(r"\D", "", date_matches[-1])
+        settlement = pd.to_datetime(compact, format="%Y%m%d", errors="coerce", utc=True)
+        if pd.isna(settlement):
+            continue
+        publication = publication_by_settlement.get(settlement.normalize())
+        if publication is not None and publication <= formation:
+            candidates.append((settlement, str(url)))
+    if not candidates:
+        raise ValueError("No FINRA short-interest file was published by formation time")
+    return max(candidates, key=lambda item: (item[0], item[1]))[1]
+
+
 def run_short_interest_source_probe(
     *,
     output_dir: Path,
@@ -878,5 +931,6 @@ __all__ = [
     "parse_finra_short_interest_text",
     "parse_finra_publication_schedule",
     "run_short_interest_source_probe",
+    "select_latest_causal_finra_link",
     "summarize_finra_short_interest_rows",
 ]
