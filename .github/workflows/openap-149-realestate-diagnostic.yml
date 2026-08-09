@@ -1,6 +1,11 @@
 name: OpenAP 149 realestate SEC diagnostic
 
 on:
+  push:
+    branches:
+      - codex/openap-proxy44-validation
+    paths:
+      - .github/workflows/openap-149-realestate-diagnostic.yml
   workflow_dispatch:
     inputs:
       source_sha:
