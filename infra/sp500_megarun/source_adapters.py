@@ -111,6 +111,81 @@ def _excel_without_header(payload: bytes, *, adapter: str, **_: object) -> pd.Da
     return _nonempty(pd.concat(frames, ignore_index=True, sort=False), adapter=adapter)
 
 
+def _philadelphia_vintage_date(label: object) -> pd.Timestamp | None:
+    text = str(label).strip().upper()
+    match = re.search(r"(\d{2})([MQ])(\d{1,2})$", text)
+    if match is None:
+        return None
+    short_year = int(match.group(1))
+    year = 1900 + short_year if short_year >= 60 else 2000 + short_year
+    period_kind = match.group(2)
+    period = int(match.group(3))
+    if period_kind == "M":
+        if not 1 <= period <= 12:
+            return None
+        month = period
+    else:
+        if not 1 <= period <= 4:
+            return None
+        month = {1: 2, 2: 5, 3: 8, 4: 11}[period]
+    return pd.Timestamp(year=year, month=month, day=15)
+
+
+def _philadelphia_realtime(
+    payload: bytes,
+    *,
+    adapter: str,
+    **_: object,
+) -> pd.DataFrame:
+    try:
+        sheets = pd.read_excel(BytesIO(payload), sheet_name=None)
+    except Exception as exc:
+        try:
+            sheets = pd.read_excel(BytesIO(payload), sheet_name=None, engine="calamine")
+        except Exception as fallback_exc:
+            raise SourceAdapterError(
+                f"EXCEL_PARSE_FAILED:{adapter}:{type(exc).__name__}:{str(exc)[:120]}:"
+                f"CALAMINE:{type(fallback_exc).__name__}:{str(fallback_exc)[:120]}"
+            ) from fallback_exc
+    rows: list[pd.DataFrame] = []
+    for sheet_name, frame in sheets.items():
+        if frame.empty or str(sheet_name).strip().casefold().startswith(
+            ("note", "doc", "readme")
+        ):
+            continue
+        observation_column = frame.columns[0]
+        observation_dates = _candidate_dates(
+            frame[observation_column], column_name=str(observation_column)
+        )
+        for column in frame.columns[1:]:
+            vintage_at = _philadelphia_vintage_date(column)
+            if vintage_at is None:
+                continue
+            values = pd.to_numeric(frame[column], errors="coerce")
+            usable = observation_dates.notna() & values.notna() & observation_dates.le(vintage_at)
+            if not usable.any():
+                continue
+            rows.append(
+                pd.DataFrame(
+                    {
+                        "date": vintage_at,
+                        "observation_date": observation_dates.loc[usable],
+                        "value": values.loc[usable],
+                        "vintage_label": str(column),
+                        "source_sheet": str(sheet_name),
+                    }
+                )
+            )
+    if not rows:
+        raise SourceAdapterError(f"PHILADELPHIA_VINTAGES_MISSING:{adapter}")
+    return _nonempty(
+        pd.concat(rows, ignore_index=True).sort_values(
+            ["date", "observation_date"], kind="mergesort"
+        ),
+        adapter=adapter,
+    )
+
+
 def _html(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
     try:
         tables = pd.read_html(StringIO(payload.decode("utf-8", errors="replace")))
@@ -521,6 +596,8 @@ def _read_resource_format(
     format_name: str,
     resource_metadata: Mapping[str, object],
 ) -> pd.DataFrame:
+    if adapter == "philadelphia_realtime_bundle":
+        return _philadelphia_realtime(payload, adapter=adapter)
     if adapter == "federal_reserve_ddp_zip_xml" or format_name == "zip_xml":
         return _federal_reserve_zip_xml(payload, adapter=adapter)
     if adapter == "french_zip_csv":
@@ -550,7 +627,6 @@ def _read_resource_format(
     if format_name in {"xls", "xlsx"}:
         if adapter in {
             "alfred_philly_pit_bundle",
-            "philadelphia_realtime_bundle",
             "shiller_monthly_excel",
             "cboe_history_csv",
             "cboe_causal_vol30_bridge",

@@ -74,7 +74,10 @@ def build_financial_composites(
     joined = pd.merge_asof(joined, vol_level, on="date", direction="backward")
     joined[["rate_level", "volatility_level"]] = joined[
         ["rate_level", "volatility_level"]
-    ].ffill().bfill()
+    ].ffill()
+    joined = joined.dropna(subset=["rate_level", "volatility_level"]).reset_index(
+        drop=True
+    )
     rate_z = _causal_zscore(joined["rate_level"])
     vol_z = _causal_zscore(joined["volatility_level"])
     rate_shock_z = _causal_zscore(joined["rate_level"].diff().abs().fillna(0.0))

@@ -362,3 +362,63 @@ def test_spf_multisheet_workbook_is_read_without_assuming_one_header_row() -> No
     assert set(frame["source_sheet"]) == {"RGDP", "UNEMP"}
     assert frame["date"].min().date().isoformat() == "1998-01-01"
     assert frame["date"].max().date().isoformat() == "2020-01-01"
+
+
+def test_philadelphia_realtime_workbook_becomes_row_level_vintages() -> None:
+    workbook = BytesIO()
+    with pd.ExcelWriter(workbook, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "DATE": ["1992:Q4", "1993:Q1"],
+                "ROUTPUT93M1": [100.0, None],
+                "ROUTPUT93M2": [101.0, 102.0],
+                "ROUTPUT11M1": [999.0, 999.0],
+            }
+        ).to_excel(writer, sheet_name="ROUTPUT", index=False)
+
+    frame = normalize_resource_payload(
+        "philadelphia_realtime_bundle",
+        workbook.getvalue(),
+        format_name="xlsx",
+        resource_id="real_output_monthly_vintages",
+        maximum_observation_date="2010-12-31",
+        resource_metadata={"vintage_axis": "monthly"},
+    )
+
+    assert frame["date"].dt.strftime("%Y-%m-%d").drop_duplicates().tolist() == [
+        "1993-01-15",
+        "1993-02-15",
+    ]
+    assert set(frame["vintage_label"]) == {"ROUTPUT93M1", "ROUTPUT93M2"}
+    assert frame["observation_date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "1992-10-01",
+        "1992-10-01",
+        "1993-01-01",
+    ]
+    assert frame["value"].tolist() == [100.0, 101.0, 102.0]
+
+
+def test_philadelphia_quarterly_vintage_uses_official_midquarter_date() -> None:
+    workbook = BytesIO()
+    with pd.ExcelWriter(workbook, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "DATE": ["1993:01", "1993:02"],
+                "RUC93Q1": [7.1, 7.0],
+                "RUC93Q2": [7.0, 6.9],
+            }
+        ).to_excel(writer, sheet_name="RUC", index=False)
+
+    frame = normalize_resource_payload(
+        "philadelphia_realtime_bundle",
+        workbook.getvalue(),
+        format_name="xlsx",
+        resource_id="unemployment_quarterly_vintages",
+        maximum_observation_date="2010-12-31",
+        resource_metadata={"vintage_axis": "quarterly"},
+    )
+
+    assert frame["date"].dt.strftime("%Y-%m-%d").drop_duplicates().tolist() == [
+        "1993-02-15",
+        "1993-05-15",
+    ]
