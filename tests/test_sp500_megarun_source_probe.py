@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from threading import Barrier
 
@@ -7,6 +8,7 @@ import pytest
 
 from aurora.core.execution_policy import LocalRunBlocked
 from aurora.infra.sp500_megarun.data_contract import (
+    SourcePlanItem,
     load_and_validate_contract,
     load_and_validate_source_plan,
 )
@@ -93,3 +95,39 @@ def test_probe_expanded_sources_uses_bounded_parallel_fetches(monkeypatch: pytes
 
     assert [row["resource_id"] for row in rows] == ["one", "two"]
     assert all(row["shape_valid"] is True for row in rows)
+
+
+def test_probe_sources_uses_one_global_queue_across_datasets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rendezvous = Barrier(2, timeout=2)
+
+    class FakeResponse:
+        ok = True
+        status_code = 200
+        content = b"date,value\n2000-01-01,1\n"
+
+    def fake_get(url: str, **kwargs: object) -> FakeResponse:
+        rendezvous.wait()
+        return FakeResponse()
+
+    monkeypatch.setattr("aurora.infra.sp500_megarun.source_probe.requests.get", fake_get)
+    source_plan = {
+        dataset_id: SourcePlanItem(
+            dataset_id=dataset_id,
+            execution="github_actions_only",
+            acquisition_kind="direct",
+            adapter="academic_table",
+            maximum_observation_date=date(2010, 12, 31),
+            resources=({"id": dataset_id, "url": f"https://example.test/{dataset_id}.csv", "format": "csv"},),
+        )
+        for dataset_id in ("D_ONE", "D_TWO")
+    }
+
+    report = probe_sources(
+        source_plan,
+        output_path=tmp_path / "report.json",
+        environ={"GITHUB_ACTIONS": "true"},
+    )
+
+    assert report["ready"] is True

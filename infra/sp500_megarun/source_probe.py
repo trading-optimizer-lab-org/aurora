@@ -178,7 +178,7 @@ def probe_sources(
     require_github_only_execution("SP500_MEGARUN_FREE_DATA_SOURCE_PROBE", env)
     secrets = {"FRED_API_KEY": env.get("FRED_API_KEY", "")}
     datasets: dict[str, object] = {}
-    overall_ready = True
+    expanded_by_dataset: dict[str, tuple[ExpandedSource, ...]] = {}
     for dataset_id, item in sorted(source_plan.items()):
         if item.acquisition_kind in {"existing", "derived"}:
             datasets[dataset_id] = {
@@ -187,11 +187,25 @@ def probe_sources(
                 "resource_count": 0,
             }
             continue
-        expanded = expand_source_urls(item.resources, secrets=secrets)
-        resource_rows = probe_expanded_sources(
-            expanded,
-            fred_api_key=secrets["FRED_API_KEY"],
-        )
+        expanded_by_dataset[dataset_id] = expand_source_urls(item.resources, secrets=secrets)
+
+    flat_sources = tuple(
+        source
+        for dataset_id in sorted(expanded_by_dataset)
+        for source in expanded_by_dataset[dataset_id]
+    )
+    flat_rows = probe_expanded_sources(
+        flat_sources,
+        fred_api_key=secrets["FRED_API_KEY"],
+        max_workers=24,
+    )
+    row_offset = 0
+    overall_ready = True
+    for dataset_id in sorted(expanded_by_dataset):
+        item = source_plan[dataset_id]
+        resource_count = len(expanded_by_dataset[dataset_id])
+        resource_rows = flat_rows[row_offset : row_offset + resource_count]
+        row_offset += resource_count
         dataset_ready = bool(resource_rows) and all(row["shape_valid"] for row in resource_rows)
         datasets[dataset_id] = {
             "status": "source_reachable" if dataset_ready else "source_failed",
