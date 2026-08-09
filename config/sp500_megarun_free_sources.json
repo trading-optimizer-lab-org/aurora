@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "D_SPY": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "existing",
+      "adapter": "existing_spy_snapshot",
+      "maximum_observation_date": "2010-12-31",
+      "resources": []
+    },
+    "D_VIX": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "cboe_causal_vol30_bridge",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"vxo_1986_2003","url":"https://cdn.cboe.com/resources/us/indices/vxoarchive.xls","format":"xls","first_dissemination":"contemporaneous"},
+        {"id":"vxo_2004_2010","url":"https://cdn.cboe.com/resources/us/indices/vxocurrent.csv","format":"csv","first_dissemination":"contemporaneous"},
+        {"id":"vix_from_2003","url":"https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv","format":"csv","first_dissemination":"2003-09-22"}
+      ]
+    },
+    "D_VXO": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "cboe_history_csv",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"vxo_1986_2003","url":"https://cdn.cboe.com/resources/us/indices/vxoarchive.xls","format":"xls"},
+        {"id":"vxo_2004_2010","url":"https://cdn.cboe.com/resources/us/indices/vxocurrent.csv","format":"csv"}
+      ]
+    },
+    "D_CFTC": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "cftc_legacy_zip",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"legacy_futures_only","url_template":"https://www.cftc.gov/files/dea/history/deacot{year}.zip","years":[1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010],"format":"zip_csv"},
+        {"id":"legacy_futures_options","url_template":"https://www.cftc.gov/files/dea/history/deahistfo_{year}.zip","url_template_2010":"https://www.cftc.gov/files/dea/history/deahistfo2010.zip","years":[1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010],"format":"zip_csv"}
+      ]
+    },
+    "D_RATES": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "fred_alfred_bundle",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"fred_rates","url_template":"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd=1950-01-01&coed=2010-12-31","series_ids":["DFF","DGS3MO","DGS2","DGS5","DGS10","DGS30","T10Y2Y","T10Y3M"],"format":"csv"}
+      ]
+    },
+    "D_CREDIT": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "fred_alfred_bundle",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"fred_credit","url_template":"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd=1980-01-01&coed=2010-12-31","series_ids":["AAA","BAA","BAA10YM","BAMLC0A0CM","BAMLH0A0HYM2"],"format":"csv"}
+      ]
+    },
+    "D_FIN_COND": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "derived",
+      "adapter": "derived_conditions_composite",
+      "maximum_observation_date": "2010-12-31",
+      "resources": []
+    },
+    "D_MACRO_PIT": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "alfred_initial_bundle",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"alfred_initial_releases","url_template":"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={FRED_API_KEY}&file_type=json&realtime_start=1947-01-01&realtime_end=2010-12-31","series_ids":["CPIAUCSL","CPILFESL","PCEPI","PCEPILFE","UNRATE","PAYEMS","ICSA","INDPRO","RSAFS","HOUST","PERMIT","M2SL","BUSLOANS","TOTALSL","DPCREDIT","CP"],"format":"json","secret":"FRED_API_KEY_FREE"}
+      ]
+    },
+    "D_PHILLY_RT": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "philadelphia_realtime_bundle",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"rtdsm_index","url":"https://www.philadelphiafed.org/surveys-and-data/real-time-data-research/real-time-data-set-for-macroeconomists","format":"html_link_index"},
+        {"id":"rtdsm_real_output","url":"https://www.philadelphiafed.org/surveys-and-data/real-time-data-research/routput","format":"html_link_index"},
+        {"id":"rtdsm_unemployment","url":"https://www.philadelphiafed.org/surveys-and-data/real-time-data-research/ruc","format":"html_link_index"}
+      ]
+    },
+    "D_MARGIN": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "finra_margin_xlsx",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"finra_margin_history","url":"https://www.finra.org/rules-guidance/key-topics/margin-accounts/margin-statistics","format":"html_with_official_xlsx_link","publication_lag":"third_week_following_reference_month"}
+      ]
+    },
+    "D_AAII": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "aaii_history_xlsx",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"aaii_sentiment_history","url":"https://www.aaii.com/files/surveys/sentiment.xls","format":"xls"}
+      ]
+    },
+    "D_WURGLER": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "academic_table",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"sentiment_vintage_2003","url":"https://pages.stern.nyu.edu/jwurgler/data/BW%20sentiment%20data%20v.%2012012003.xls","format":"xls","available_at":"2003-12-09"},
+        {"id":"sentiment_vintage_2005","url":"https://pages.stern.nyu.edu/jwurgler/data/Investor%20Sentiment%20Data%20Post%20v4.xls","format":"xls","available_at":"2005-10-26"},
+        {"id":"sentiment_vintage_2007","url":"https://pages.stern.nyu.edu/jwurgler/data/Investor_Sentiment_Data_v9_post.xls","format":"xls","available_at":"2007-03-26"},
+        {"id":"sentiment_vintage_2010","url":"https://pages.stern.nyu.edu/jwurgler/data/Investor_Sentiment_V16_Post.xls","format":"xls","available_at":"2010-02-06"},
+        {"id":"equity_share_vintage_2005","url":"https://pages.stern.nyu.edu/jwurgler/data/equity%20share.xls","format":"xls","available_at":"2005-10-26"},
+        {"id":"equity_share_vintage_2010","url":"https://pages.stern.nyu.edu/jwurgler/data/Equity_Share_3.xls","format":"xls","available_at":"2010-02-06"}
+      ]
+    },
+    "D_EPU": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "derived",
+      "adapter": "derived_uncertainty_composite",
+      "maximum_observation_date": "2010-12-31",
+      "resources": []
+    },
+    "D_FRENCH_FACTORS": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "french_zip_csv",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"ff3_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip","format":"zip_csv"},
+        {"id":"size_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_ME_Daily_CSV.zip","format":"zip_csv"},
+        {"id":"book_to_market_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_BE-ME_Daily_CSV.zip","format":"zip_csv"}
+      ]
+    },
+    "D_FRENCH_INDUSTRIES": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "french_zip_csv",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"industry_48_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/48_Industry_Portfolios_daily_CSV.zip","format":"zip_csv"}
+      ]
+    },
+    "D_GOYAL": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "academic_table",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"predictor_data_original_2005","url":"https://drive.usercontent.google.com/download?id=1T0pCslc2vxMDt7EFGI0MJ6mndeQvObBT&export=download&confirm=t","format":"xls","available_at":"2006-01-01"},
+        {"id":"predictor_data_updated","url":"https://docs.google.com/spreadsheets/d/1qwpl2R_DNujpU5YUkk8lacP1tTeMb9iJ/export?format=xlsx","format":"xlsx","use_only_for_reconstructable_2006_2010_inputs":true}
+      ]
+    },
+    "D_SHILLER": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "academic_table",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"shiller_ie_data","url":"https://img1.wsimg.com/blobby/go/e5e77e0b-59d1-44d9-ab25-4763ac982e53/downloads/e27e58c1-8ae0-488c-a976-a298708c7175/ie_data.xls","format":"xls","monthly_interpolation_forbidden":true,"use_lagged_reported_annual_totals_only":true}
+      ]
+    },
+    "D_WTI": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "fred_alfred_bundle",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"wti","url":"https://fred.stlouisfed.org/graph/fredgraph.csv?id=DCOILWTICO&cosd=1986-01-01&coed=2010-12-31","format":"csv"}
+      ]
+    },
+    "D_GOLD": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "fred_alfred_bundle",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"gold","url":"https://fred.stlouisfed.org/graph/fredgraph.csv?id=GOLDAMGBD228NLBM&cosd=1968-01-01&coed=2010-12-31","format":"csv"}
+      ]
+    },
+    "D_FX": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "fred_alfred_bundle",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"h10_fx","url_template":"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd=1971-01-01&coed=2010-12-31","series_ids":["DEXJPUS","DEXUSUK","DEXSZUS","DEXCAUS"],"format":"csv"}
+      ]
+    },
+    "D_CALENDAR": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "derived",
+      "adapter": "derived_spy_calendar",
+      "maximum_observation_date": "2010-12-31",
+      "resources": []
+    }
+  }
+}
