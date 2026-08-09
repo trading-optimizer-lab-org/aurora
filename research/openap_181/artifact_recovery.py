@@ -25,6 +25,8 @@ class HttpRangeReader(RawIOBase):
         self._size = int(size)
         self._fetch_range = fetch_range
         self._position = 0
+        self.range_requests = 0
+        self.bytes_fetched = 0
 
     def readable(self) -> bool:
         return True
@@ -57,6 +59,8 @@ class HttpRangeReader(RawIOBase):
             self._size - 1, start + size - 1
         )
         payload = self._fetch_range(start, end)
+        self.range_requests += 1
+        self.bytes_fetched += len(payload)
         expected = end - start + 1
         if len(payload) != expected:
             raise OSError(

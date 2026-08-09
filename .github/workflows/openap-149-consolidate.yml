@@ -21,8 +21,13 @@ on:
         required: true
         type: string
       current_93_run_id:
-        description: Successful fresh OpenAP 93 full run
+        description: Run containing verified bounded OpenAP 93 current values
         required: true
+        type: string
+      current_93_artifact_name:
+        description: Exact OpenAP 93 current-values artifact name
+        required: true
+        default: openap-93-current-recovered-results
         type: string
       sec_current_run_id:
         description: Successful OpenAP 149 SEC CompanyFacts run
@@ -98,7 +103,7 @@ jobs:
       - name: Download fresh OpenAP 93 current values
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: openap-93-max-free-full-results
+          name: ${{ inputs.current_93_artifact_name }}
           path: inputs/current_93
           run-id: ${{ inputs.current_93_run_id }}
           repository: trading-optimizer-lab-org/aurora

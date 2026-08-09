@@ -1,0 +1,119 @@
+name: OpenAP 93 Verified Artifact Recovery
+
+on:
+  push:
+    branches:
+      - codex/openap-proxy44-validation
+    paths:
+      - .github/workflows/openap-93-artifact-recovery.yml
+      - research/openap_181/artifact_recovery.py
+      - scripts/recover_openap_93_failed_artifact.py
+      - tests/test_openap_93_artifact_recovery.py
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora recovery revision
+        required: true
+        type: string
+      source_run_id:
+        description: Failed run whose OpenAP 93 outputs passed verification
+        required: true
+        default: "31333714423"
+        type: string
+      source_artifact_name:
+        description: Exact failed-output artifact name
+        required: true
+        default: openap-93-max-free-failed-output-31333714423
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-93-verified-artifact-recovery
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+    steps:
+      - name: Checkout exact recovery revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and focused test dependency
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Verify selective recovery contract
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
+          python -m py_compile \
+            research/openap_181/artifact_recovery.py \
+            scripts/recover_openap_93_failed_artifact.py
+          python -m pytest tests/test_openap_93_artifact_recovery.py -q --tb=short
+
+  recover:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      GITHUB_TOKEN: ${{ github.token }}
+      AU_DATA_DIR: ${{ github.workspace }}/outputs
+      OUTPUT_ARTIFACT: openap-93-current-recovered-results
+    steps:
+      - name: Checkout exact recovery revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Recover only verified OpenAP 93 members
+        run: |
+          python scripts/recover_openap_93_failed_artifact.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-run-id "${{ inputs.source_run_id }}" \
+            --source-artifact-name "${{ inputs.source_artifact_name }}" \
+            --output-dir openap_93_current_recovered
+      - name: Verify bounded recovered artifact
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          root = "outputs/openap_93_current_recovered"
+          values = pd.read_csv(f"{root}/signals_93_current.csv", low_memory=False)
+          recovery = json.load(open(f"{root}/openap_93_artifact_recovery_manifest.json"))
+          source = json.load(open(f"{root}/source_run_manifest.json"))
+          assert values["signal"].nunique() == 93
+          assert len(values) == source["rows"] == 200601
+          assert source["formation_at"] == "2026-08-09T00:00:00"
+          assert recovery["current_usable_signal_count"] == 34
+          assert recovery["bytes_fetched"] < recovery["source_artifact_size_bytes"] / 100
+          assert recovery["full_artifact_downloaded"] is False
+          assert recovery["strict_score_eligible"] is False
+          assert recovery["locked_opened"] is False
+          assert recovery["validation_used_for_selection"] is False
+          print(json.dumps(recovery, sort_keys=True))
+          PY
+      - name: Upload bounded recovered OpenAP 93 evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-93-current-recovered-results
+          path: outputs/openap_93_current_recovered/
+          if-no-files-found: error
+          retention-days: 90
