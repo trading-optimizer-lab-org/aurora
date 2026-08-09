@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       sec_user_agent:
-        description: SEC-compliant User-Agent with monitored contact email
+        description: Declared research identity and contact email or HTTPS URL
         required: true
         type: string
       start_quarter:
@@ -69,7 +69,8 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
-          [[ "$SEC_USER_AGENT" =~ ^[^[:space:]@]+.*@[^[:space:]@]+\.[^[:space:]@]+$ ]]
+          test ${#SEC_USER_AGENT} -ge 20
+          [[ "$SEC_USER_AGENT" == *"@"* || "$SEC_USER_AGENT" == *"https://"* ]]
           python - <<'PY'
           import os
           from aurora.research.openap_181.sec_fsd_inputs import bounded_quarters
