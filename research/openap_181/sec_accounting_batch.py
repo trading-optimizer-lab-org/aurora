@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -954,6 +954,118 @@ def evaluate_sec_accounting_validation(
     return pd.DataFrame(rows), coverage, fidelity
 
 
+_SOURCE_MANIFEST_COLUMNS = [
+    "source_id",
+    "source_url",
+    "period",
+    "sha256",
+    "size_bytes",
+    "retrieved_at",
+    "status",
+    "failure_reason",
+]
+
+
+def _validate_sec_source_manifest(source_manifest: pd.DataFrame) -> pd.DataFrame:
+    _require_columns(
+        source_manifest,
+        set(_SOURCE_MANIFEST_COLUMNS),
+        "SEC source manifest",
+    )
+    clean = source_manifest[_SOURCE_MANIFEST_COLUMNS].copy()
+    for column in (
+        "source_id",
+        "source_url",
+        "period",
+        "sha256",
+        "retrieved_at",
+        "status",
+        "failure_reason",
+    ):
+        clean[column] = clean[column].fillna("").astype(str).str.strip()
+    if clean.empty:
+        raise ValueError("SEC source manifest cannot be empty")
+    if clean["source_id"].eq("").any() or clean["source_id"].duplicated().any():
+        raise ValueError("SEC source manifest requires unique non-empty source IDs")
+    if not clean["source_url"].str.startswith("https://").all():
+        raise ValueError("SEC source manifest requires HTTPS source URLs")
+    if clean["period"].eq("").any() or clean["retrieved_at"].eq("").any():
+        raise ValueError("SEC source manifest requires periods and retrieval timestamps")
+    if not set(clean["status"]).issubset({"downloaded", "failed"}):
+        raise ValueError("SEC source manifest has an unsupported status")
+    clean["size_bytes"] = pd.to_numeric(clean["size_bytes"], errors="coerce")
+    downloaded = clean["status"].eq("downloaded")
+    valid_hashes = clean["sha256"].str.fullmatch(r"[0-9a-fA-F]{64}")
+    valid_sizes = clean["size_bytes"].notna() & clean["size_bytes"].gt(0)
+    if not (valid_hashes.loc[downloaded] & valid_sizes.loc[downloaded]).all():
+        raise ValueError("Downloaded SEC sources require SHA-256 and positive size")
+    if clean.loc[~downloaded, "failure_reason"].eq("").any():
+        raise ValueError("Failed SEC sources require a concrete failure reason")
+    clean["size_bytes"] = clean["size_bytes"].fillna(0).astype("int64")
+    return clean.sort_values(["period", "source_id"], kind="stable").reset_index(
+        drop=True
+    )
+
+
+def write_sec_accounting_validation_outputs(
+    observations: pd.DataFrame,
+    reference: pd.DataFrame,
+    expected_universe: pd.DataFrame,
+    source_manifest: pd.DataFrame,
+    output_dir: Path | str,
+    *,
+    point_in_time_verified: bool,
+    identity_verified: bool,
+    evidence_run_url: str,
+    evidence_artifact: str,
+    implementation_commit: str,
+    thresholds: SecAccountingValidationThresholds = FROZEN_VALIDATION_THRESHOLDS,
+) -> dict[str, int]:
+    """Persist frozen validation metrics and auditable source provenance."""
+
+    clean_sources = _validate_sec_source_manifest(source_manifest)
+    evidence, coverage, fidelity = evaluate_sec_accounting_validation(
+        observations,
+        reference,
+        expected_universe,
+        point_in_time_verified=point_in_time_verified,
+        identity_verified=identity_verified,
+        evidence_run_url=evidence_run_url,
+        evidence_artifact=evidence_artifact,
+        implementation_commit=implementation_commit,
+        thresholds=thresholds,
+    )
+    summary = {
+        "coverage_passed": int(coverage["coverage_pass"].map(bool).sum()),
+        "fidelity_measured": int(evidence["fidelity_measured"].map(bool).sum()),
+        "fidelity_passed": int(fidelity["fidelity_pass"].map(bool).sum()),
+        "signals": int(evidence["signal"].nunique()),
+        "strict_approved": int(evidence["strict_gate_result"].eq("approved").sum()),
+    }
+    threshold_record = {
+        "formula_commit": OPENAP_FORMULA_COMMIT,
+        **asdict(thresholds),
+    }
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    coverage.to_csv(output / "sec_accounting_batch_coverage.csv", index=False)
+    fidelity.to_csv(output / "sec_accounting_batch_fidelity.csv", index=False)
+    evidence.to_csv(output / "sec_accounting_batch_evidence.csv", index=False)
+    clean_sources.to_csv(
+        output / "sec_accounting_batch_source_manifest.csv",
+        index=False,
+    )
+    (output / "sec_accounting_batch_thresholds.json").write_text(
+        json.dumps(threshold_record, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (output / "sec_accounting_batch_validation_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return summary
+
+
 __all__ = [
     "FORMULA_METADATA",
     "FROZEN_VALIDATION_THRESHOLDS",
@@ -964,4 +1076,5 @@ __all__ = [
     "evaluate_sec_accounting_validation",
     "normalize_sec_fsd_tables",
     "write_sec_accounting_batch_outputs",
+    "write_sec_accounting_validation_outputs",
 ]
