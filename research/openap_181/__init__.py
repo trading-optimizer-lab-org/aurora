@@ -18,6 +18,12 @@ from .implementation_status import (
     render_implementation_validation_report,
     write_implementation_outputs,
 )
+from .sec_accounting_batch import (
+    SEC_ACCOUNTING_BATCH,
+    build_sec_accounting_batch_evidence,
+    calculate_sec_accounting_batch,
+    normalize_sec_fsd_tables,
+)
 
 __all__ = [
     "CURRENT_EXACT_31",
@@ -34,4 +40,8 @@ __all__ = [
     "build_strict_score_inventory",
     "render_implementation_validation_report",
     "write_implementation_outputs",
+    "SEC_ACCOUNTING_BATCH",
+    "build_sec_accounting_batch_evidence",
+    "calculate_sec_accounting_batch",
+    "normalize_sec_fsd_tables",
 ]
