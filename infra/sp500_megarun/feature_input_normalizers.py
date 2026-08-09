@@ -34,6 +34,10 @@ _TREASURY_SERIES: Mapping[str, str] = {
     "RIFLGFCY20_N.B": "yield_20y",
     "RIFLGFCY30_N.B": "yield_30y",
 }
+_CREDIT_SERIES: Mapping[str, str] = {
+    "RIMLPAAAR_N.B": "aaa_yield",
+    "RIMLPBAAR_N.B": "baa_yield",
+}
 
 
 def _validated_dates(frame: pd.DataFrame, *, dataset_id: str) -> pd.DataFrame:
@@ -198,8 +202,11 @@ def normalize_cftc_sp500_panel(
     cftc.columns = [str(column).strip() for column in cftc.columns]
     if "Market and Exchange Names" not in cftc:
         raise FeatureInputNormalizerError("CFTC_MARKET_COLUMN_MISSING")
+    market_names = (
+        cftc["Market and Exchange Names"].astype(str).str.strip().str.upper()
+    )
     selected = cftc.loc[
-        cftc["Market and Exchange Names"].astype(str).str.upper().isin(_SP500_CFTC_MARKETS)
+        market_names.isin(_SP500_CFTC_MARKETS)
     ].copy()
     if selected.empty:
         raise FeatureInputNormalizerError("CFTC_SP500_CONTRACTS_MISSING")
@@ -261,9 +268,40 @@ def normalize_treasury_curve_panel(
     return _project_to_decision_session(panel, policy="next_session", sessions=sessions)
 
 
+def normalize_credit_spread_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Pivot official daily Moody's Aaa and Baa corporate yields."""
+
+    rates = _validated_dates(frame, dataset_id="D_RATES")
+    required = {"series_id", "value"}
+    if not required <= set(rates.columns):
+        raise FeatureInputNormalizerError("CREDIT_RATE_COLUMNS_MISSING")
+    selected = rates.loc[rates["series_id"].isin(_CREDIT_SERIES)].copy()
+    selected["credit_series"] = selected["series_id"].map(_CREDIT_SERIES)
+    selected["value"] = pd.to_numeric(selected["value"], errors="coerce")
+    selected = selected.dropna(subset=["credit_series", "value"])
+    if selected.empty:
+        raise FeatureInputNormalizerError("CREDIT_RATE_SERIES_MISSING")
+    panel = selected.pivot_table(
+        index="date",
+        columns="credit_series",
+        values="value",
+        aggfunc="last",
+    ).reset_index()
+    panel.columns.name = None
+    if not {"aaa_yield", "baa_yield"} <= set(panel.columns):
+        raise FeatureInputNormalizerError("CREDIT_RATE_PAIR_INCOMPLETE")
+    panel["baa_aaa_spread"] = panel["baa_yield"] - panel["aaa_yield"]
+    return _project_to_decision_session(panel, policy="next_session", sessions=sessions)
+
+
 __all__ = [
     "FeatureInputNormalizerError",
     "normalize_cboe_vol_panel",
+    "normalize_credit_spread_panel",
     "normalize_cftc_sp500_panel",
     "normalize_spy_decision_panel",
     "normalize_treasury_curve_panel",

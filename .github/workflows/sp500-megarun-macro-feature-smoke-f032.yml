@@ -1,0 +1,66 @@
+name: SP500 Megarun Macro Feature Smoke F032
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Verified preflight run containing the immutable train artifact
+        required: true
+        default: "31326209627"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  smoke_f032:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+    steps:
+      - name: Check out the exact smoke revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Restore bounded smoke runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install "pytest==9.0.3"
+          python -m pip install --no-deps -e .
+      - name: Verify F032 fail-closed implementation
+        run: |
+          python -m pytest \
+            tests/test_sp500_megarun_feature_input_normalizers.py \
+            tests/test_sp500_megarun_macro_feature_engine.py \
+            tests/test_sp500_megarun_macro_feature_smoke.py \
+            -q
+      - name: Download only the verified train snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-train-1993-2010-F001-F240-${{ env.SOURCE_RUN_ID }}
+          path: ${{ runner.temp }}/train_snapshot_1993_2010
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Execute and audit F032 on train only
+        run: |
+          python scripts/run_sp500_megarun_macro_feature_smoke_f032.py \
+            --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
+            --output-dir outputs/sp500_megarun_macro_feature_smoke_f032
+      - name: Upload F032 train-only evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-macro-feature-smoke-F032-${{ github.run_id }}
+          path: outputs/sp500_megarun_macro_feature_smoke_f032
+          if-no-files-found: error
+          retention-days: 90

@@ -107,7 +107,7 @@ def test_cftc_panel_filters_sp500_and_waits_until_friday() -> None:
             {
                 **base,
                 "Market and Exchange Names": (
-                    "E-MINI S&P 500 STOCK INDEX - CHICAGO MERCANTILE EXCHANGE"
+                    "  E-MINI S&P 500 STOCK INDEX - CHICAGO MERCANTILE EXCHANGE  "
                 ),
             },
             {**base, "Market and Exchange Names": "CRUDE OIL - NEW YORK"},
@@ -147,6 +147,30 @@ def test_rate_curve_uses_only_official_business_frequency_maturities() -> None:
     assert result.loc[0, "yield_3m"] == pytest.approx(0.1)
     assert result.loc[0, "yield_2y"] == pytest.approx(1.0)
     assert result.loc[0, "yield_10y"] == pytest.approx(3.0)
+
+
+def test_credit_panel_uses_daily_moodys_aaa_and_baa() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-01-05"] * 3),
+            "series_id": [
+                "RIMLPAAAR_N.B",
+                "RIMLPBAAR_N.B",
+                "RIMLPBAAR_N.M",
+            ],
+            "value": [5.25, 6.75, 99.0],
+        }
+    )
+
+    result = api.normalize_credit_spread_panel(frame, sessions=_sessions())
+
+    assert len(result) == 1
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2010-01-05")
+    assert result.loc[0, "available_at"] == pd.Timestamp("2010-01-06")
+    assert result.loc[0, "aaa_yield"] == pytest.approx(5.25)
+    assert result.loc[0, "baa_yield"] == pytest.approx(6.75)
+    assert result.loc[0, "baa_aaa_spread"] == pytest.approx(1.5)
 
 
 def test_normalizers_reject_2011_rows() -> None:

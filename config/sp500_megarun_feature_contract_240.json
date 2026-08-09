@@ -111,7 +111,7 @@
     {"lane_id":"F029","operator":"positioning_state","formula":"positioning_state(cftc_sp_equity_contracts; net_percent_oi_concentration, window, direction)"},
     {"lane_id":"F030","operator":"curve_state","formula":"curve_state(nominal_rate_panel; level_change_momentum, window, normalization)"},
     {"lane_id":"F031","operator":"curve_state","formula":"curve_state(treasury_rate_panel; slope_curvature_butterfly, window, normalization)"},
-    {"lane_id":"F032","operator":"spread_state","formula":"spread_state(credit_rate_panel, macro_vintage; credit_spread_change_acceleration, window)"},
+    {"lane_id":"F032","operator":"spread_state","formula":"rolling_z(diff(baa_yield-aaa_yield,change_lag)+diff(diff(baa_yield-aaa_yield,change_lag),change_lag),window); default change_lag=5, window=252; H15 daily observations available next SPY session"},
     {"lane_id":"F033","operator":"financial_state","formula":"financial_state(financial_conditions, philly_realtime; level_change_disagreement, window)"},
     {"lane_id":"F034","operator":"spread_state","formula":"spread_state(nominal_rates, inflation_vintage; real_rate_breakeven, window)"},
     {"lane_id":"F035","operator":"macro_vintage_state","formula":"macro_vintage_state(growth_series; level_change_acceleration_breadth, window)"},
