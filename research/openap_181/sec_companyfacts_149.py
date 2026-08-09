@@ -963,6 +963,138 @@ def calculate_companyfacts_realestate_current(
     ).reset_index(drop=True)
 
 
+def diagnose_companyfacts_realestate_coverage(
+    companyfacts: pd.DataFrame,
+    submissions: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+) -> dict[str, Any]:
+    """Trace every real-estate coverage gate without changing the signal."""
+
+    formation = pd.Timestamp(formation_at)
+    if formation.tzinfo is None:
+        formation = formation.tz_localize("UTC")
+    else:
+        formation = formation.tz_convert("UTC")
+
+    facts = _realestate_annual_facts(companyfacts, formation)
+    identity = build_companyfacts_identity(status)
+    sic = _latest_submission_sic(submissions, formation)
+    candidates = [
+        candidate
+        for _, issuer_facts in facts.groupby("cik", sort=False)
+        if (candidate := _realestate_candidate(issuer_facts)) is not None
+    ]
+    candidate_frame = pd.DataFrame(candidates)
+    candidate_ciks = (
+        set(candidate_frame["cik"].astype(int))
+        if not candidate_frame.empty
+        else set()
+    )
+    sic_ciks = set(sic["cik"].astype(int)) if not sic.empty else set()
+    identity_ciks = (
+        set(identity["cik"].astype(int)) if not identity.empty else set()
+    )
+
+    joined = pd.DataFrame()
+    eligible = pd.DataFrame()
+    if not candidate_frame.empty and not sic.empty and not identity.empty:
+        joined = candidate_frame.merge(
+            sic, on="cik", how="inner", validate="one_to_one"
+        ).merge(identity, on="cik", how="inner", validate="one_to_one")
+        if not joined.empty:
+            joined["industry_count"] = joined.groupby("sic2")["ratio"].transform(
+                "count"
+            )
+            eligible = joined.loc[joined["industry_count"].ge(5)].copy()
+
+    concepts = (
+        "assets",
+        "buildings_gross",
+        "buildings_net",
+        "land",
+        "ppe_gross",
+        "ppe_net",
+    )
+    concept_cik_counts = {
+        concept: int(facts.loc[facts["concept"].eq(concept), "cik"].nunique())
+        for concept in concepts
+    }
+    candidate_variant_counts = {
+        variant: int(
+            candidate_frame.loc[
+                candidate_frame.get(
+                    "variant", pd.Series(index=candidate_frame.index, dtype="string")
+                ).eq(variant),
+                "cik",
+            ].nunique()
+        )
+        for variant in ("gross", "net")
+    }
+
+    required = _FACT_COLUMNS | {"taxonomy", "fy", "fp"}
+    _require_columns(companyfacts, required, "SEC CompanyFacts")
+    related = companyfacts.copy()
+    related["cik"] = pd.to_numeric(related["cik"], errors="coerce")
+    related["value"] = pd.to_numeric(related["value"], errors="coerce")
+    related["period_end"] = _utc(related["period_end"])
+    related["filed_at"] = _utc(related["filed"])
+    related["available_at"] = _utc(related["available_at"])
+    related = related.loc[
+        related["cik"].notna()
+        & related["value"].notna()
+        & np.isfinite(related["value"])
+        & related["taxonomy"].fillna("").astype(str).str.lower().eq("us-gaap")
+        & related["unit"].eq("USD")
+        & related["form"].isin({"10-K", "10-K/A"})
+        & related["fp"].fillna("").astype(str).eq("FY")
+        & related["period_end"].notna()
+        & related["filed_at"].notna()
+        & related["available_at"].notna()
+        & related["available_at"].le(formation)
+        & related["tag"].fillna("").astype(str).str.contains(
+            "building|land|propertyplantandequipment",
+            case=False,
+            regex=True,
+        )
+    ].copy()
+    related_source_tags = {
+        str(tag): {
+            "rows": int(len(group)),
+            "ciks": int(group["cik"].nunique()),
+        }
+        for tag, group in related.groupby("tag", sort=True)
+    }
+
+    current = calculate_companyfacts_realestate_current(
+        companyfacts,
+        submissions,
+        status,
+        formation_at=formation,
+        retrieved_at=retrieved_at,
+    )
+    return {
+        "stage_counts": {
+            "input_companyfacts_rows": int(len(companyfacts)),
+            "causal_alias_rows": int(len(facts)),
+            "causal_alias_ciks": int(facts["cik"].nunique()),
+            "ratio_candidate_ciks": int(len(candidate_ciks)),
+            "candidate_ciks_with_sic": int(len(candidate_ciks & sic_ciks)),
+            "candidate_ciks_with_identity": int(
+                len(candidate_ciks & identity_ciks)
+            ),
+            "candidate_ciks_with_sic_and_identity": int(len(joined)),
+            "candidate_ciks_in_five_firm_sic2": int(len(eligible)),
+            "current_value_rows": int(len(current)),
+        },
+        "concept_cik_counts": concept_cik_counts,
+        "candidate_variant_counts": candidate_variant_counts,
+        "related_source_tags": related_source_tags,
+    }
+
+
 def calculate_companyfacts_herfasset_current(
     companyfacts: pd.DataFrame,
     submissions: pd.DataFrame,
@@ -1739,6 +1871,7 @@ __all__ = [
     "calculate_companyfacts_order_backlog_current",
     "calculate_companyfacts_rdability_current",
     "calculate_companyfacts_realestate_current",
+    "diagnose_companyfacts_realestate_coverage",
     "calculate_companyfacts_roaq_current",
     "calculate_companyfacts_tax_current",
     "calculate_sec_submission_current",
