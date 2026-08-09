@@ -1,6 +1,14 @@
 name: SP500 Megarun Train Normalization Probe
 
 on:
+  push:
+    branches:
+      - codex/sp500-search-method-benchmark-short
+    paths:
+      - .github/workflows/sp500-megarun-normalization-probe.yml
+      - infra/sp500_megarun/snapshot_normalization_probe.py
+      - scripts/probe_sp500_megarun_train_normalization.py
+      - tests/test_sp500_megarun_snapshot_normalization_probe.py
   workflow_dispatch:
     inputs:
       source_run_id:
@@ -19,6 +27,7 @@ jobs:
     env:
       GITHUB_ACTIONS: "true"
       PYTHONUTF8: "1"
+      SOURCE_RUN_ID: ${{ inputs.source_run_id || '31324786647' }}
     steps:
       - name: Check out the exact probe revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -45,11 +54,11 @@ jobs:
       - name: Download only the verified train snapshot
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: sp500-megarun-train-1993-2010-F001-F240-${{ inputs.source_run_id }}
+          name: sp500-megarun-train-1993-2010-F001-F240-${{ env.SOURCE_RUN_ID }}
           path: ${{ runner.temp }}/train_snapshot_1993_2010
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.source_run_id }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
       - name: Probe F021-F040 schemas without strategy evaluation
         run: |
           python scripts/probe_sp500_megarun_train_normalization.py \
