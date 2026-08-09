@@ -280,7 +280,7 @@ def materialize_primary_sources(
                     )
                     frames.append(frame)
                     receipts.append(receipt)
-                except (MaterializationError, SourceAdapterError, ValueError) as exc:
+                except Exception as exc:
                     failures.append(f"{resource_id}:{type(exc).__name__}:{exc}")
         if failures or not frames:
             report["datasets"][dataset_id] = {

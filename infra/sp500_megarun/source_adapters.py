@@ -225,13 +225,18 @@ def _cftc_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
             )
             for member in members:
                 raw = archive.read(member)
-                frame = pd.read_csv(
-                    BytesIO(raw),
-                    sep=",",
-                    encoding="cp1252",
-                    engine="python",
-                    on_bad_lines="skip",
-                )
+                if not raw.strip():
+                    continue
+                try:
+                    frame = pd.read_csv(
+                        BytesIO(raw),
+                        sep=",",
+                        encoding="cp1252",
+                        engine="python",
+                        on_bad_lines="skip",
+                    )
+                except pd.errors.EmptyDataError:
+                    continue
                 if not frame.dropna(how="all").empty:
                     frame["source_file"] = member
                     frames.append(frame)
@@ -309,7 +314,9 @@ def _read_resource_format(
 def _candidate_dates(values: pd.Series, *, column_name: str = "") -> pd.Series:
     cleaned = values.astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     result = pd.Series(pd.NaT, index=values.index, dtype="datetime64[ns]")
-    eight = cleaned.str.fullmatch(r"\d{8}")
+    eight_raw = cleaned.str.fullmatch(r"\d{8}")
+    eight_years = pd.to_numeric(cleaned.str[:4].where(eight_raw), errors="coerce")
+    eight = eight_raw & eight_years.between(1800, 2100)
     six_raw = cleaned.str.fullmatch(r"\d{6}")
     four_raw = cleaned.str.fullmatch(r"\d{4}")
     four_years = pd.to_numeric(cleaned.where(four_raw), errors="coerce")
@@ -329,22 +336,30 @@ def _candidate_dates(values: pd.Series, *, column_name: str = "") -> pd.Series:
         )
         six = valid_six
     result.loc[four] = pd.to_datetime(cleaned.loc[four], format="%Y", errors="coerce")
-    world_bank_month = cleaned.str.fullmatch(r"\d{4}M\d{2}", case=False)
+    world_bank_raw = cleaned.str.fullmatch(r"\d{4}M\d{2}", case=False)
+    world_bank_years = pd.to_numeric(cleaned.str[:4].where(world_bank_raw), errors="coerce")
+    world_bank_month = world_bank_raw & world_bank_years.between(1800, 2100)
     result.loc[world_bank_month] = pd.to_datetime(
         cleaned.loc[world_bank_month].str.replace("M", "", case=False),
         format="%Y%m",
         errors="coerce",
     )
-    quarter = cleaned.str.fullmatch(r"\d{4}Q[1-4]", case=False)
+    quarter_raw = cleaned.str.fullmatch(r"\d{4}Q[1-4]", case=False)
+    quarter_years = pd.to_numeric(cleaned.str[:4].where(quarter_raw), errors="coerce")
+    quarter = quarter_raw & quarter_years.between(1800, 2100)
     if quarter.any():
         quarter_values = cleaned.loc[quarter].str.upper()
         result.loc[quarter] = pd.PeriodIndex(quarter_values, freq="Q").to_timestamp()
-    decimal_month = cleaned.str.fullmatch(r"\d{4}\.\d{1,2}")
+    decimal_raw = cleaned.str.fullmatch(r"\d{4}\.\d{1,2}")
+    decimal_years = pd.to_numeric(cleaned.str[:4].where(decimal_raw), errors="coerce")
+    decimal_month = decimal_raw & decimal_years.between(1800, 2100)
     if decimal_month.any():
         pieces = cleaned.loc[decimal_month].str.split(".", expand=True)
         normalized = pieces[0] + pieces[1].str.zfill(2)
         result.loc[decimal_month] = pd.to_datetime(normalized, format="%Y%m", errors="coerce")
-    remaining = result.isna() & ~(eight | six | six_raw | four | world_bank_month | quarter | decimal_month)
+    remaining = result.isna() & ~(
+        eight_raw | six | six_raw | four_raw | world_bank_raw | quarter_raw | decimal_raw
+    )
     if remaining.any():
         plausible = cleaned.loc[remaining].str.match(
             r"^(?:[A-Za-z]{3,9}[- /]\d{2,4}|\d{4}[- /]\d{1,2}(?:[- /]\d{1,2})?)$"

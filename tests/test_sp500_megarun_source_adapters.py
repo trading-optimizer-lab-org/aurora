@@ -92,7 +92,7 @@ def test_quarter_and_decimal_month_dates_are_normalized() -> None:
     )
     decimal_month = normalize_resource_payload(
         "academic_table",
-        b"period,value\n1998.01,1\n2010.12,2\n2011.01,3\n",
+        b"period,value\n1998.01,1169.05\n2010.12,900.10\n2011.01,800.10\n",
         format_name="csv",
         resource_id="monthly",
         maximum_observation_date="2010-12-31",
