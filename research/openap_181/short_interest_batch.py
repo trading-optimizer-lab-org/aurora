@@ -102,6 +102,58 @@ class _VisibleTextParser(HTMLParser):
             self.parts.append(data)
 
 
+class _FinraScheduleParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.current_year: int | None = None
+        self.table_year: int | None = None
+        self.heading_parts: list[str] | None = None
+        self.row: list[str] | None = None
+        self.cell_parts: list[str] | None = None
+        self.rows: list[tuple[int, list[str]]] = []
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        del attrs
+        name = tag.lower()
+        if name == "h2":
+            self.heading_parts = []
+        elif name == "table":
+            self.table_year = self.current_year
+        elif name == "tr" and self.table_year is not None:
+            self.row = []
+        elif name in {"td", "th"} and self.row is not None:
+            self.cell_parts = []
+        elif name == "br" and self.cell_parts is not None:
+            self.cell_parts.append(" ")
+
+    def handle_data(self, data: str) -> None:
+        if self.heading_parts is not None:
+            self.heading_parts.append(data)
+        if self.cell_parts is not None:
+            self.cell_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        name = tag.lower()
+        if name == "h2" and self.heading_parts is not None:
+            heading = " ".join(self.heading_parts)
+            year = re.search(r"\b(20\d{2})\b", heading)
+            self.current_year = int(year.group(1)) if year else None
+            self.heading_parts = None
+        elif name in {"td", "th"} and self.cell_parts is not None:
+            if self.row is not None:
+                self.row.append(" ".join("".join(self.cell_parts).split()))
+            self.cell_parts = None
+        elif name == "tr" and self.row is not None:
+            if self.table_year is not None and len(self.row) >= 3:
+                self.rows.append((self.table_year, self.row))
+            self.row = None
+            self.cell_parts = None
+        elif name == "table":
+            self.table_year = None
+
+
 def extract_visible_text(html: str) -> str:
     """Convert official HTML to normalized visible text for semantic checks."""
 
@@ -111,6 +163,70 @@ def extract_visible_text(html: str) -> str:
     for dash in ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2212"):
         text = text.replace(dash, "-")
     return " ".join(text.replace("\xa0", " ").split())
+
+
+def parse_finra_publication_schedule(html: str) -> pd.DataFrame:
+    """Parse official settlement/publication dates into a causal UTC schedule."""
+
+    parser = _FinraScheduleParser()
+    parser.feed(str(html))
+    month_pattern = (
+        r"\b(January|February|March|April|May|June|July|August|September|"
+        r"October|November|December)\s+(\d{1,2})\b"
+    )
+    month_numbers = {
+        month: number
+        for number, month in enumerate(
+            (
+                "january",
+                "february",
+                "march",
+                "april",
+                "may",
+                "june",
+                "july",
+                "august",
+                "september",
+                "october",
+                "november",
+                "december",
+            ),
+            start=1,
+        )
+    }
+    rows: list[dict[str, pd.Timestamp]] = []
+    for year, cells in parser.rows:
+        settlement_match = re.search(month_pattern, cells[0], re.I)
+        publication_match = re.search(month_pattern, cells[-1], re.I)
+        if not settlement_match or not publication_match:
+            continue
+        settlement = pd.Timestamp(
+            year=year,
+            month=month_numbers[settlement_match.group(1).lower()],
+            day=int(settlement_match.group(2)),
+            tz="UTC",
+        )
+        publication = pd.Timestamp(
+            year=year,
+            month=month_numbers[publication_match.group(1).lower()],
+            day=int(publication_match.group(2)),
+            tz="UTC",
+        )
+        if publication < settlement:
+            publication += pd.DateOffset(years=1)
+        rows.append(
+            {
+                "settlement_date": settlement,
+                "publication_date": publication,
+            }
+        )
+    if not rows:
+        raise ValueError("No FINRA short-interest publication dates found")
+    schedule = pd.DataFrame(rows).sort_values("settlement_date")
+    conflicts = schedule.groupby("settlement_date")["publication_date"].nunique().gt(1)
+    if conflicts.any():
+        raise ValueError("Conflicting FINRA publication dates found")
+    return schedule.drop_duplicates("settlement_date", keep="last").reset_index(drop=True)
 
 
 def extract_finra_file_links(html: str) -> tuple[str, ...]:
@@ -523,6 +639,7 @@ __all__ = [
     "extract_finra_file_links",
     "extract_visible_text",
     "parse_finra_short_interest_text",
+    "parse_finra_publication_schedule",
     "run_short_interest_source_probe",
     "summarize_finra_short_interest_rows",
 ]
