@@ -52,10 +52,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 81)]
+    ] == [f"F{index:03d}" for index in range(1, 91)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[80:]
+        for lane in feature_contract.lanes[90:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -113,6 +113,37 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "attenuate",
     )
     assert all(lane.minimum_history >= 5 for lane in microstructure_lanes)
+    positioning_lanes = feature_contract.lanes[80:90]
+    assert positioning_lanes[0].required_datasets == (
+        "D_SPY",
+        "D_Z1",
+        "D_FINRA_MARGIN",
+    )
+    assert positioning_lanes[2].parameter_space["statistic"] == (
+        "noncommercial_short",
+        "reportable_short",
+        "short_pressure",
+    )
+    assert positioning_lanes[4].parameter_space["statistic"] == (
+        "close_location",
+        "range_volume_pressure",
+        "signed_volume_shock",
+        "persistence",
+    )
+    assert positioning_lanes[7].parameter_space["statistic"] == (
+        "top4_level",
+        "top8_level",
+        "top4_top8_share",
+        "combined_gap",
+        "change",
+    )
+    assert positioning_lanes[9].parameter_space["statistic"] == (
+        "common_correlation",
+        "variance_gap",
+        "correlation_gap",
+        "interaction",
+    )
+    assert all(lane.minimum_history >= 4 for lane in positioning_lanes)
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:

@@ -183,6 +183,12 @@ def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     return pd.to_numeric(frame[column], errors="coerce")
 
 
+def _optional_numeric(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame:
+        return pd.Series(np.nan, index=frame.index, dtype=float)
+    return pd.to_numeric(frame[column], errors="coerce")
+
+
 def _aggregate_cftc_mode(frame: pd.DataFrame, *, suffix: str) -> pd.DataFrame:
     numeric = pd.DataFrame(
         {
@@ -194,6 +200,9 @@ def _aggregate_cftc_mode(frame: pd.DataFrame, *, suffix: str) -> pd.DataFrame:
             "noncommercial_short": _numeric(
                 frame, "Noncommercial Positions-Short (All)"
             ),
+            "reportable_short": _optional_numeric(
+                frame, "Total Reportable Positions-Short (All)"
+            ),
             "commercial_long": _numeric(frame, "Commercial Positions-Long (All)"),
             "commercial_short": _numeric(frame, "Commercial Positions-Short (All)"),
             "concentration_long": _numeric(
@@ -201,6 +210,12 @@ def _aggregate_cftc_mode(frame: pd.DataFrame, *, suffix: str) -> pd.DataFrame:
             ),
             "concentration_short": _numeric(
                 frame, "Concentration-Net LT =4 TDR-Short (All)"
+            ),
+            "concentration8_long": _optional_numeric(
+                frame, "Concentration-Net LT =8 TDR-Long (All)"
+            ),
+            "concentration8_short": _optional_numeric(
+                frame, "Concentration-Net LT =8 TDR-Short (All)"
             ),
         }
     ).dropna(subset=["open_interest"])
@@ -211,6 +226,12 @@ def _aggregate_cftc_mode(frame: pd.DataFrame, *, suffix: str) -> pd.DataFrame:
     )
     numeric["concentration_short_weighted"] = (
         numeric["concentration_short"] * numeric["open_interest"]
+    )
+    numeric["concentration8_long_weighted"] = (
+        numeric["concentration8_long"] * numeric["open_interest"]
+    )
+    numeric["concentration8_short_weighted"] = (
+        numeric["concentration8_short"] * numeric["open_interest"]
     )
     grouped = numeric.groupby("date", as_index=False, sort=True).sum(min_count=1)
     denominator = grouped["open_interest"].replace(0.0, np.nan)
@@ -226,9 +247,21 @@ def _aggregate_cftc_mode(frame: pd.DataFrame, *, suffix: str) -> pd.DataFrame:
                 grouped["commercial_long"] - grouped["commercial_short"]
             )
             / denominator,
+            f"noncommercial_short_pct_oi{suffix}": grouped[
+                "noncommercial_short"
+            ]
+            / denominator,
+            f"reportable_short_pct_oi{suffix}": grouped["reportable_short"]
+            / denominator,
             f"top4_net_concentration{suffix}": (
                 grouped["concentration_long_weighted"]
                 - grouped["concentration_short_weighted"]
+            )
+            / denominator
+            / 100.0,
+            f"top8_net_concentration{suffix}": (
+                grouped["concentration8_long_weighted"]
+                - grouped["concentration8_short_weighted"]
             )
             / denominator
             / 100.0,
@@ -663,6 +696,34 @@ def normalize_world_bank_cross_asset_panel(
     )
 
 
+def normalize_french_industry_panel(
+    industry_frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Prepare only the 48-industry returns required by realized-correlation lanes."""
+
+    industries = _validated_dates(
+        industry_frame, dataset_id="D_FRENCH_INDUSTRIES"
+    )
+    if "resource_id" in industries:
+        industries = industries.loc[
+            industries["resource_id"].astype(str).eq("industry_48_daily")
+        ]
+    excluded = {"date", "resource_id", "source_dataset"}
+    industry_columns = [column for column in industries.columns if column not in excluded]
+    if len(industry_columns) < 2:
+        raise FeatureInputNormalizerError("FRENCH_INDUSTRY_COLUMNS_MISSING")
+    industry_panel = industries.loc[:, ["date", *industry_columns]].copy()
+    industry_panel[industry_columns] = industry_panel[industry_columns].apply(
+        pd.to_numeric, errors="coerce"
+    ) / 100.0
+    industry_panel = industry_panel.dropna(how="all", subset=industry_columns)
+    return _project_to_decision_session(
+        industry_panel, policy="next_session", sessions=sessions
+    )
+
+
 def normalize_french_us_panels(
     factor_frame: pd.DataFrame,
     industry_frame: pd.DataFrame,
@@ -672,15 +733,8 @@ def normalize_french_us_panels(
     """Prepare broad-US factor and 48-industry returns for the next session."""
 
     factors = _validated_dates(factor_frame, dataset_id="D_FRENCH_FACTORS")
-    industries = _validated_dates(
-        industry_frame, dataset_id="D_FRENCH_INDUSTRIES"
-    )
     if "resource_id" in factors:
         factors = factors.loc[factors["resource_id"].astype(str).eq("ff3_daily")]
-    if "resource_id" in industries:
-        industries = industries.loc[
-            industries["resource_id"].astype(str).eq("industry_48_daily")
-        ]
     factor_columns = {"Mkt-RF": "market_excess", "SMB": "smb", "HML": "hml"}
     missing_factors = sorted(set(factor_columns) - set(factors.columns))
     if missing_factors:
@@ -695,23 +749,14 @@ def normalize_french_us_panels(
             factor_panel[column], errors="coerce"
         ) / 100.0
     factor_panel = factor_panel.dropna(subset=list(factor_columns.values()))
-
-    excluded = {"date", "resource_id", "source_dataset"}
-    industry_columns = [column for column in industries.columns if column not in excluded]
-    if len(industry_columns) < 2:
-        raise FeatureInputNormalizerError("FRENCH_INDUSTRY_COLUMNS_MISSING")
-    industry_panel = industries.loc[:, ["date", *industry_columns]].copy()
-    industry_panel[industry_columns] = industry_panel[industry_columns].apply(
-        pd.to_numeric, errors="coerce"
-    ) / 100.0
-    industry_panel = industry_panel.dropna(how="all", subset=industry_columns)
+    industry_panel = normalize_french_industry_panel(
+        industry_frame, sessions=sessions
+    )
     return (
         _project_to_decision_session(
             factor_panel, policy="next_session", sessions=sessions
         ),
-        _project_to_decision_session(
-            industry_panel, policy="next_session", sessions=sessions
-        ),
+        industry_panel,
     )
 
 
@@ -825,6 +870,7 @@ __all__ = [
     "normalize_financial_conditions_panel",
     "normalize_finra_margin_panel",
     "normalize_fomc_event_panel",
+    "normalize_french_industry_panel",
     "normalize_french_us_panels",
     "normalize_fx_cross_asset_panel",
     "normalize_lagged_valuation_panel",

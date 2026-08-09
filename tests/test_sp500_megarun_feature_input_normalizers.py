@@ -128,6 +128,10 @@ def test_cftc_panel_filters_sp500_and_waits_until_friday() -> None:
         "Commercial Positions-Short (All)": "350",
         "Concentration-Net LT =4 TDR-Long (All)": "25",
         "Concentration-Net LT =4 TDR-Short (All)": "30",
+        "Concentration-Net LT =8 TDR-Long (All)": "40",
+        "Concentration-Net LT =8 TDR-Short (All)": "50",
+        " Total Reportable Positions-Long (All)": "700",
+        "Total Reportable Positions-Short (All)": "650",
         "resource_id": "legacy_futures_only:2010",
     }
     frame = pd.DataFrame(
@@ -150,7 +154,10 @@ def test_cftc_panel_filters_sp500_and_waits_until_friday() -> None:
     assert result.loc[0, "available_at"] == pd.Timestamp("2010-01-08")
     assert result.loc[0, "noncommercial_net_pct_oi"] == pytest.approx(0.1)
     assert result.loc[0, "commercial_net_pct_oi"] == pytest.approx(-0.15)
+    assert result.loc[0, "noncommercial_short_pct_oi"] == pytest.approx(0.3)
+    assert result.loc[0, "reportable_short_pct_oi"] == pytest.approx(0.65)
     assert result.loc[0, "top4_net_concentration"] == pytest.approx(-0.05)
+    assert result.loc[0, "top8_net_concentration"] == pytest.approx(-0.1)
 
 
 def test_rate_curve_uses_only_official_business_frequency_maturities() -> None:
@@ -469,6 +476,10 @@ def test_french_panels_use_ff3_and_48_industries_at_next_session() -> None:
     assert factor_panel.loc[0, "smb"] == pytest.approx(0.003)
     assert industry_panel.loc[0, "Autos"] == pytest.approx(0.01)
     assert industry_panel.loc[0, "Food"] == pytest.approx(-0.005)
+    standalone = api.normalize_french_industry_panel(
+        industries, sessions=_sessions()
+    )
+    pd.testing.assert_frame_equal(standalone, industry_panel)
 
 
 def test_revised_z1_proxy_waits_full_year_and_margin_waits_two_months() -> None:
