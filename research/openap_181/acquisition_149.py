@@ -416,6 +416,25 @@ def overlay_preferred_current_evidence(
     )
 
 
+def replace_current_signal_batches(
+    primary: pd.DataFrame,
+    replacement: pd.DataFrame,
+) -> pd.DataFrame:
+    """Replace every primary row for signals present in a replacement batch."""
+
+    if replacement.empty:
+        return primary.copy()
+    replacement_rows = _validate_current_rows(replacement)
+    replacement_signals = set(replacement_rows["signal"].astype(str))
+    if not replacement_signals or "" in replacement_signals:
+        raise AcquisitionContractError("replacement batch contains a blank signal")
+    primary_rows = _validate_current_rows(primary)
+    remaining_primary = primary_rows.loc[
+        ~primary_rows["signal"].astype(str).isin(replacement_signals)
+    ].copy()
+    return merge_current_evidence([remaining_primary, replacement_rows])
+
+
 def build_acquisition_matrix(
     routes: pd.DataFrame,
     current_rows: pd.DataFrame,
@@ -696,5 +715,6 @@ __all__ = [
     "load_target_routes",
     "merge_current_evidence",
     "overlay_preferred_current_evidence",
+    "replace_current_signal_batches",
     "write_acquisition_outputs",
 ]
