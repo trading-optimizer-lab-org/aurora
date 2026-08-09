@@ -88,6 +88,9 @@ _ALIAS_LOOKUP = {
 }
 _ALLOWED_FORMS = frozenset({"10-K", "10-K/A", "10-Q", "10-Q/A"})
 _ANNUAL_FORMS = frozenset({"10-K", "10-K/A"})
+_MEASUREMENT_SECURITY_TYPES = frozenset(
+    {"common_stock", "issuer_internal_unverified"}
+)
 _IDENTITY_COLUMNS = frozenset(
     {
         "security_id",
@@ -284,7 +287,7 @@ def _active_identities(identity: pd.DataFrame, formation_at: pd.Timestamp) -> pd
         & frame["valid_from"].le(formation_at)
         & (frame["valid_to"].isna() | frame["valid_to"].ge(formation_at))
         & frame["is_primary"].eq(True)
-        & frame["security_type"].eq("common_stock")
+        & frame["security_type"].isin(_MEASUREMENT_SECURITY_TYPES)
     ].copy()
     duplicate_ciks = frame.loc[frame["cik"].duplicated(keep=False), "cik"].unique()
     return frame.loc[~frame["cik"].isin(duplicate_ciks)].drop_duplicates("security_id")

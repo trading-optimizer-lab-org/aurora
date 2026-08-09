@@ -170,7 +170,7 @@ def _identity_and_expected(
                 "valid_from": row.accepted_at,
                 "valid_to": pd.NaT,
                 "is_primary": True,
-                "security_type": "unknown_not_available_in_sec_fsd",
+                "security_type": "issuer_internal_unverified",
                 "mapping_source": "sec_cik_internal_not_openap_identity_bridge",
             }
         )
