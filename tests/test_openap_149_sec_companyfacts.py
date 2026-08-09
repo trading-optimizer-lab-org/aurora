@@ -627,3 +627,40 @@ def test_companyfacts_realestate_rejects_evidence_not_yet_retrieved() -> None:
     )
 
     assert values.empty
+
+
+def test_companyfacts_tax_uses_current_federal_and_foreign_expense() -> None:
+    facts = _facts()
+    template = facts.loc[
+        facts["accession_number"].eq("fy2025") & facts["tag"].eq("Assets")
+    ].iloc[0]
+    extra: list[dict[str, object]] = []
+    for tag, amount in (
+        ("IncomeLossFromContinuingOperations", 100.0),
+        ("CurrentFederalTaxExpenseBenefit", 21.0),
+        ("CurrentForeignTaxExpenseBenefit", 14.0),
+        ("IncomeTaxExpenseBenefit", 40.0),
+        ("DeferredIncomeTaxExpenseBenefit", 5.0),
+    ):
+        row = template.copy()
+        row["tag"] = tag
+        row["value"] = amount * 1_000_000.0
+        row["period_start"] = "2025-01-01"
+        extra.append(row.to_dict())
+
+    values = _module().calculate_companyfacts_tax_current(
+        pd.concat([facts, pd.DataFrame(extra)], ignore_index=True),
+        _status(),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    assert values["signal"].tolist() == ["Tax"]
+    assert values.iloc[0]["value"] == pytest.approx(1.0)
+    assert values.iloc[0]["fidelity_class"] == "unvalidated_proxy"
+    assert values.iloc[0]["formula_id"] == (
+        "openap_tax_sec_companyfacts_current_proxy"
+    )
+    assert pd.Timestamp(values.iloc[0]["available_at"]) <= pd.Timestamp(
+        values.iloc[0]["retrieved_at"]
+    )
