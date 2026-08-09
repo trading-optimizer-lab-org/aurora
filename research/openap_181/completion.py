@@ -613,12 +613,12 @@ def _specific_blocker(
 ) -> str:
     """Return the most concrete known blocker instead of a generic label."""
 
-    if baseline_group == "statistically_excluded_or_not_selected":
-        return "statistical_or_definition_review_required"
     if signal in OPTION_IV_SIGNALS:
         return "authorized_current_option_surface_missing"
     if signal in OPTION_VOLUME_SIGNALS:
         return "issuer_option_volume_definition_and_validation_missing"
+    if baseline_group == "statistically_excluded_or_not_selected":
+        return "statistical_or_definition_review_required"
     if signal in SHORT_INTEREST_SIGNALS:
         return "listed_short_interest_history_and_stock_validation_required"
     if signal == "CitationsRD":
