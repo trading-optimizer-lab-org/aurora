@@ -148,9 +148,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
+          cache: pip
+      - name: Install focused evidence runtime
+        run: python -m pip install --disable-pip-version-check -e .
       - name: Download all runner evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -162,7 +170,13 @@ jobs:
           python - <<'PY'
           import csv
           import json
+          import os
           from pathlib import Path
+
+          import pandas as pd
+          from aurora.research.openap_181.sec_accounting_batch import (
+              build_sec_transport_matrix_blocker_evidence,
+          )
 
           paths = sorted(
               Path("inputs/transport").rglob("sec_official_transport_summary.json")
@@ -193,6 +207,21 @@ jobs:
               writer = csv.DictWriter(handle, fieldnames=fieldnames)
               writer.writeheader()
               writer.writerows(sorted(rows, key=lambda row: row["runner"]))
+          run_url = (
+              f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/"
+              f"runs/{os.environ['GITHUB_RUN_ID']}"
+          )
+          evidence = build_sec_transport_matrix_blocker_evidence(
+              pd.DataFrame(rows),
+              evidence_run_url=run_url,
+              evidence_artifact=(
+                  "openap-181-sec-official-transport-probe-summary"
+              ),
+              implementation_commit=os.environ["SOURCE_SHA"],
+          )
+          evidence.to_csv(
+              output / "sec_accounting_batch_evidence.csv", index=False
+          )
           (output / "sec_official_transport_decision.json").write_text(
               json.dumps(decision, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",

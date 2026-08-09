@@ -13,6 +13,9 @@ import pandas as pd
 
 OPENAP_FORMULA_COMMIT = "8db892442c2c3a3779b0f1eac4370d3655be15a1"
 SEC_ACCOUNTING_BATCH = ("Cash", "GP", "Investment")
+SEC_HOSTED_RUNNER_FAMILIES = frozenset(
+    {"ubuntu-24.04", "windows-2025", "macos-15"}
+)
 
 FORMULA_METADATA = {
     "Cash": {
@@ -1070,6 +1073,116 @@ def build_sec_accounting_access_blocker_evidence(
     )
 
 
+def build_sec_transport_matrix_blocker_evidence(
+    transport_matrix: pd.DataFrame,
+    *,
+    evidence_run_url: str,
+    evidence_artifact: str,
+    implementation_commit: str,
+) -> pd.DataFrame:
+    """Convert an all-runner official SEC 403 matrix into strict blocker evidence."""
+
+    required = {
+        "runner",
+        "source_sha",
+        "companyfacts_downloaded",
+        "companyfacts_http_status",
+        "companyfacts_failure_reason",
+        "fsd_downloaded",
+        "fsd_http_status",
+        "fsd_failure_reason",
+        "proxy_used",
+        "locked_opened",
+        "validation_used_for_selection",
+    }
+    missing = sorted(required - set(transport_matrix.columns))
+    if missing:
+        raise ValueError(f"SEC transport matrix is missing columns: {missing}")
+    clean = transport_matrix.copy()
+    clean["runner"] = clean["runner"].fillna("").astype(str).str.strip()
+    if len(clean) != 3 or clean["runner"].duplicated().any():
+        raise ValueError("SEC transport matrix requires three unique runner rows")
+    if set(clean["runner"]) != SEC_HOSTED_RUNNER_FAMILIES:
+        raise ValueError("SEC transport matrix requires every hosted runner family")
+    commit = str(implementation_commit).strip()
+    invalid_hex = any(
+        character not in "0123456789abcdefABCDEF" for character in commit
+    )
+    if len(commit) != 40 or invalid_hex:
+        raise ValueError("SEC transport evidence requires a 40-character commit SHA")
+    source_shas = clean["source_sha"].fillna("").astype(str).str.strip()
+    if not source_shas.eq(commit).all():
+        raise ValueError("SEC transport matrix source SHA does not match implementation")
+    if not str(evidence_run_url).startswith("https://"):
+        raise ValueError("SEC transport evidence requires an HTTPS run URL")
+    if not str(evidence_artifact).strip():
+        raise ValueError("SEC transport evidence requires a non-empty artifact")
+    boolean_columns = {
+        "companyfacts_downloaded",
+        "fsd_downloaded",
+        "proxy_used",
+        "locked_opened",
+        "validation_used_for_selection",
+    }
+    for column in boolean_columns:
+        if not clean[column].map(
+            lambda value: isinstance(value, (bool, np.bool_))
+        ).all():
+            raise ValueError(f"SEC transport matrix {column} must be boolean")
+    if clean["companyfacts_downloaded"].any() or clean["fsd_downloaded"].any():
+        raise ValueError(
+            "SEC transport blocker requires every official transport to fail"
+        )
+    safety_columns = {
+        "proxy_used",
+        "locked_opened",
+        "validation_used_for_selection",
+    }
+    for column in safety_columns:
+        if clean[column].any():
+            raise ValueError(f"SEC transport blocker forbids {column}")
+    status_columns = {"companyfacts_http_status", "fsd_http_status"}
+    if any(
+        not clean[column].astype(int).eq(403).all()
+        for column in status_columns
+    ):
+        raise ValueError("SEC transport blocker requires HTTP 403 on every surface")
+    reason_columns = {"companyfacts_failure_reason", "fsd_failure_reason"}
+    if any(
+        not clean[column]
+        .fillna("")
+        .astype(str)
+        .str.startswith("http_403_after_")
+        .all()
+        for column in reason_columns
+    ):
+        raise ValueError("SEC transport blocker requires concrete HTTP 403 reasons")
+    return pd.DataFrame(
+        [
+            {
+                "signal": signal,
+                "formula_implemented": True,
+                "data_pipeline_implemented": True,
+                "point_in_time_verified": False,
+                "identity_verified": False,
+                "coverage_measured": False,
+                "fidelity_measured": False,
+                "coverage_result": "not_measured",
+                "fidelity_result": "not_measured",
+                "strict_gate_result": "blocked",
+                "blocking_reason": (
+                    "official_sec_access_blocked_all_github_hosted_"
+                    "runner_families_http_403"
+                ),
+                "evidence_run_url": str(evidence_run_url),
+                "evidence_artifact": str(evidence_artifact).strip(),
+                "implementation_commit": commit,
+            }
+            for signal in SEC_ACCOUNTING_BATCH
+        ]
+    )
+
+
 def write_sec_accounting_validation_outputs(
     observations: pd.DataFrame,
     reference: pd.DataFrame,
@@ -1134,7 +1247,9 @@ __all__ = [
     "FROZEN_VALIDATION_THRESHOLDS",
     "OPENAP_FORMULA_COMMIT",
     "SEC_ACCOUNTING_BATCH",
+    "SEC_HOSTED_RUNNER_FAMILIES",
     "build_sec_accounting_access_blocker_evidence",
+    "build_sec_transport_matrix_blocker_evidence",
     "build_sec_accounting_batch_evidence",
     "calculate_sec_accounting_batch",
     "evaluate_sec_accounting_validation",
