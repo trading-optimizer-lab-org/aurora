@@ -7,8 +7,8 @@
     "D_VIX": {"maximum_observation_date":"2020-12-31"},
     "D_VXO": {"maximum_observation_date":"2020-12-31"},
     "D_CFTC": {"maximum_observation_date":"2020-12-31","resources":[
-      {"id":"legacy_futures_only","url_template":"https://www.cftc.gov/files/dea/history/deacot{year}.zip","years":[1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020],"format":"zip_csv"},
-      {"id":"legacy_futures_options_early","url_template":"https://www.cftc.gov/files/dea/history/deahistfo_{year}.zip","years":[1998,1999,2000,2001,2002,2003],"format":"zip_csv"},
+      {"id":"legacy_futures_only","url_template":"https://www.cftc.gov/files/dea/history/deacot{year}.zip","years":[1986,1987,1988,1989,1990,1991,1992,1993,1994,1995,1996,1997,1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020],"format":"zip_csv"},
+      {"id":"legacy_futures_options_early","url_template":"https://www.cftc.gov/files/dea/history/deahistfo_{year}.zip","years":[1995,1996,1997,1998,1999,2000,2001,2002,2003],"format":"zip_csv"},
       {"id":"legacy_futures_options_late","url_template":"https://www.cftc.gov/files/dea/history/deahistfo{year}.zip","years":[2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020],"format":"zip_csv"}
     ]},
     "D_RATES": {"maximum_observation_date":"2020-12-31"},

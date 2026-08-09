@@ -106,8 +106,8 @@ _REGISTERED_AVAILABLE_AT_POLICIES = frozenset(
 
 _DATASET_AVAILABLE_AT_POLICIES: Mapping[str, str] = {
     "D_SPY": "next_session",
-    "D_VIX": "same_session",
-    "D_VXO": "same_session",
+    "D_VIX": "next_session",
+    "D_VXO": "next_session",
     "D_CFTC": "friday_after_tuesday",
     "D_RATES": "next_session",
     "D_FIN_COND": "max_input_available_at",
@@ -123,7 +123,7 @@ _DATASET_AVAILABLE_AT_POLICIES: Mapping[str, str] = {
     "D_GOLD": "next_month_third_session",
     "D_FX": "next_session",
     "D_CALENDAR": "same_session",
-    "D_CBOE_VOL": "same_session",
+    "D_CBOE_VOL": "next_session",
     "D_CBOE_PCR": "friday_after_tuesday",
     "D_CFTC_LEGACY": "friday_after_tuesday",
     "D_FED_H15_H10": "frequency_aware",

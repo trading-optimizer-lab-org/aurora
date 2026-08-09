@@ -65,6 +65,12 @@ def test_repository_source_plan_is_github_only_and_stops_at_2020() -> None:
         for item in source_plan.values()
     )
     assert {dataset.adapter for dataset in contract.datasets.values()} <= registered_adapter_names()
+    cftc_resources = {
+        str(resource["id"]): tuple(resource.get("years", ()))
+        for resource in source_plan["D_CFTC"].resources
+    }
+    assert min(cftc_resources["legacy_futures_only"]) == 1986
+    assert min(cftc_resources["legacy_futures_options_early"]) == 1995
 
 
 def test_partition_gate_keeps_train_and_validation_separate_and_rejects_2021() -> None:
