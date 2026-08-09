@@ -1,9 +1,6 @@
 name: OpenAP 181 SEC Official Transport Probe
 
 on:
-  push:
-    branches:
-      - codex/openap-proxy44-validation
   workflow_dispatch:
     inputs:
       source_sha:
@@ -20,7 +17,7 @@ concurrency:
 
 env:
   GITHUB_ACTIONS: "true"
-  SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+  SOURCE_SHA: ${{ inputs.source_sha }}
   SEC_USER_AGENT: "Aurora Research gomez5757@users.noreply.github.com"
   CIKS: "320193"
   START_QUARTER: "2024q4"

@@ -18,7 +18,12 @@ on:
       sec_accounting_evidence_run_id:
         description: Optional successful SEC accounting run providing blocker evidence
         required: false
-        default: "31307096969"
+        default: ""
+        type: string
+      sec_transport_evidence_run_id:
+        description: Optional all-runner official SEC transport probe providing blocker evidence
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -38,6 +43,7 @@ jobs:
       SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
       CURRENT_SCORE_EVIDENCE_RUN_ID: ${{ inputs.current_score_run_id || (github.event_name == 'push' && '31270341796') || '' }}
       SEC_ACCOUNTING_EVIDENCE_RUN_ID: ${{ inputs.sec_accounting_evidence_run_id || (github.event_name == 'push' && '31307096969') || '' }}
+      SEC_TRANSPORT_EVIDENCE_RUN_ID: ${{ inputs.sec_transport_evidence_run_id || '' }}
       TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
     steps:
       - name: Checkout exact implementation revision
@@ -82,7 +88,7 @@ jobs:
           echo "CURRENT_COVERAGE=$current_coverage" >> "$GITHUB_ENV"
           echo "CURRENT_SUMMARY=$current_summary" >> "$GITHUB_ENV"
       - name: Download SEC accounting blocker evidence
-        if: ${{ env.SEC_ACCOUNTING_EVIDENCE_RUN_ID != '' }}
+        if: ${{ env.SEC_ACCOUNTING_EVIDENCE_RUN_ID != '' && env.SEC_TRANSPORT_EVIDENCE_RUN_ID == '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-181-sec-accounting-validation
@@ -90,11 +96,31 @@ jobs:
           run-id: ${{ env.SEC_ACCOUNTING_EVIDENCE_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Locate SEC accounting blocker evidence
-        if: ${{ env.SEC_ACCOUNTING_EVIDENCE_RUN_ID != '' }}
+        if: ${{ env.SEC_ACCOUNTING_EVIDENCE_RUN_ID != '' && env.SEC_TRANSPORT_EVIDENCE_RUN_ID == '' }}
         run: |
           sec_evidence="$(find inputs/sec_accounting -name sec_accounting_batch_evidence.csv -type f -print -quit)"
           test -s "$sec_evidence"
           echo "SEC_ACCOUNTING_EVIDENCE=$sec_evidence" >> "$GITHUB_ENV"
+          echo "SEC_ACCOUNTING_EVIDENCE_EFFECTIVE_RUN_ID=$SEC_ACCOUNTING_EVIDENCE_RUN_ID" >> "$GITHUB_ENV"
+          echo "SEC_ACCOUNTING_EVIDENCE_ARTIFACT=openap-181-sec-accounting-validation" >> "$GITHUB_ENV"
+          echo "SEC_ACCOUNTING_BLOCKER_REASON=official_sec_fsd_access_blocked_http_403" >> "$GITHUB_ENV"
+      - name: Download all-runner official SEC transport blocker evidence
+        if: ${{ env.SEC_TRANSPORT_EVIDENCE_RUN_ID != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-sec-official-transport-probe-summary
+          path: inputs/sec_transport
+          run-id: ${{ env.SEC_TRANSPORT_EVIDENCE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prefer all-runner official SEC transport blocker evidence
+        if: ${{ env.SEC_TRANSPORT_EVIDENCE_RUN_ID != '' }}
+        run: |
+          sec_evidence="$(find inputs/sec_transport -name sec_accounting_batch_evidence.csv -type f -print -quit)"
+          test -s "$sec_evidence"
+          echo "SEC_ACCOUNTING_EVIDENCE=$sec_evidence" >> "$GITHUB_ENV"
+          echo "SEC_ACCOUNTING_EVIDENCE_EFFECTIVE_RUN_ID=$SEC_TRANSPORT_EVIDENCE_RUN_ID" >> "$GITHUB_ENV"
+          echo "SEC_ACCOUNTING_EVIDENCE_ARTIFACT=openap-181-sec-official-transport-probe-summary" >> "$GITHUB_ENV"
+          echo "SEC_ACCOUNTING_BLOCKER_REASON=official_sec_access_blocked_all_github_hosted_runner_families_http_403" >> "$GITHUB_ENV"
       - name: Build fail-closed 181 manifest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -219,13 +245,13 @@ jobs:
           if sec_evidence_present:
               assert sec_status["strict_gate_result"].eq("blocked").all()
               assert sec_status["blocking_reason"].eq(
-                  "official_sec_fsd_access_blocked_http_403"
+                  os.environ["SEC_ACCOUNTING_BLOCKER_REASON"]
               ).all()
               assert sec_status["evidence_run_url"].eq(
-                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['SEC_ACCOUNTING_EVIDENCE_RUN_ID']}"
+                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['SEC_ACCOUNTING_EVIDENCE_EFFECTIVE_RUN_ID']}"
               ).all()
               assert sec_status["evidence_artifact"].eq(
-                  "openap-181-sec-accounting-validation"
+                  os.environ["SEC_ACCOUNTING_EVIDENCE_ARTIFACT"]
               ).all()
           else:
               assert sec_status["strict_gate_result"].eq("not_attempted").all()
