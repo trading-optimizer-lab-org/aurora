@@ -60,6 +60,13 @@ def test_finra_file_link_extractor_accepts_only_https_finra_cdn_links():
     with pytest.raises(ValueError, match="FINRA short-interest file"):
         module.extract_finra_file_links("<html>no files</html>")
 
+    assert module.extract_finra_file_links(
+        '<a href="https://cdn.finra.org/equity/otcmarket/biweekly/'
+        'shrt20260715.csv">official current pattern</a>'
+    ) == (
+        "https://cdn.finra.org/equity/otcmarket/biweekly/shrt20260715.csv",
+    )
+
 
 def test_finra_document_contract_uses_visible_text_across_markup_and_entities():
     module = _module()

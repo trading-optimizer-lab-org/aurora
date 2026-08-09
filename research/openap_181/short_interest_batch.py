@@ -118,7 +118,13 @@ def extract_finra_file_links(html: str) -> tuple[str, ...]:
         parsed = urlparse(href)
         if parsed.scheme != "https" or parsed.hostname != "cdn.finra.org":
             continue
-        if not re.search(r"short[-_]?interest|shortinterest", parsed.path, re.I):
+        named_short_interest = re.search(
+            r"short[-_]?interest|shortinterest", parsed.path, re.I
+        )
+        dated_biweekly = re.fullmatch(
+            r"/equity/otcmarket/biweekly/shrt\d{8}\.csv", parsed.path, re.I
+        )
+        if not named_short_interest and not dated_biweekly:
             continue
         if href not in seen:
             seen.add(href)
