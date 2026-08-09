@@ -82,6 +82,42 @@ def test_finra_document_contract_uses_visible_text_across_markup_and_entities():
     assert "exchange-listed" in visible
 
 
+def test_finra_publication_schedule_parser_preserves_point_in_time_dates():
+    module = _module()
+    html = """
+    <h2>2026 Short Interest Reporting Dates</h2>
+    <table>
+      <thead>
+        <tr><th>Settlement Date</th><th>Due Date</th><th>Publication Date</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>July 15<br>(Wednesday)</td>
+          <td>July 17 - 6:00 p.m.<br>(Friday)</td>
+          <td>July 24<br>(Friday)</td>
+        </tr>
+        <tr>
+          <td>December 31<br>(Thursday)</td>
+          <td>January 5 - 6:00 p.m.<br>(Monday)</td>
+          <td>January 12<br>(Monday)</td>
+        </tr>
+      </tbody>
+    </table>
+    """
+
+    schedule = module.parse_finra_publication_schedule(html)
+
+    assert schedule["settlement_date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2026-07-15",
+        "2026-12-31",
+    ]
+    assert schedule["publication_date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2026-07-24",
+        "2027-01-12",
+    ]
+    assert str(schedule["publication_date"].dt.tz) == "UTC"
+
+
 def test_finra_pipe_file_parser_and_source_summary_are_fail_closed():
     module = _module()
     text = "\n".join(
