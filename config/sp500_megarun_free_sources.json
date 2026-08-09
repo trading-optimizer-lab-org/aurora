@@ -190,6 +190,15 @@
       "adapter": "derived_spy_calendar",
       "maximum_observation_date": "2010-12-31",
       "resources": []
+    },
+    "D_FOMC_PUBLIC": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "fomc_public_archive",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"fomc_historical_public_documents","url":"https://www.federalreserve.gov/monetarypolicy/fomc_historical_year.htm","format":"html_archive","years":[1993,1994,1995,1996,1997,1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010],"document_kinds":["meeting","statement","minutes","transcript"]}
+      ]
     }
   }
 }

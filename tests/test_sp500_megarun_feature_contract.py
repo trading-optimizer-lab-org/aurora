@@ -52,10 +52,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 91)]
+    ] == [f"F{index:03d}" for index in range(1, 101)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[90:]
+        for lane in feature_contract.lanes[100:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -144,6 +144,44 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "interaction",
     )
     assert all(lane.minimum_history >= 4 for lane in positioning_lanes)
+    tail_macro_lanes = feature_contract.lanes[90:100]
+    assert tail_macro_lanes[0].parameter_space["statistic"] == (
+        "vol_of_vol",
+        "methodology_disagreement",
+        "realized_tail",
+        "convexity_interaction",
+    )
+    assert tail_macro_lanes[1].parameter_space["statistic"] == (
+        "variance_premium",
+        "continuous_premium",
+        "jump_share",
+        "risk_compensation",
+    )
+    assert tail_macro_lanes[4].parameter_space["statistic"] == (
+        "rate_volatility",
+        "volatility_ratio",
+        "divergence",
+        "shock",
+    )
+    assert tail_macro_lanes[7].parameter_space["statistic"] == (
+        "surprise_breadth",
+        "surprise_magnitude",
+        "growth_surprise",
+        "dispersion",
+    )
+    assert tail_macro_lanes[9].required_datasets == (
+        "D_RATES",
+        "D_MACRO_PIT",
+        "D_CALENDAR",
+        "D_FOMC_PUBLIC",
+    )
+    assert tail_macro_lanes[9].parameter_space["statistic"] == (
+        "policy_change",
+        "real_rate",
+        "rule_gap",
+        "event_interaction",
+    )
+    assert all(lane.minimum_history >= 13 for lane in tail_macro_lanes)
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:

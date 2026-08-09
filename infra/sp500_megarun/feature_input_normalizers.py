@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Mapping
 
 import numpy as np
@@ -15,6 +16,7 @@ class FeatureInputNormalizerError(ValueError):
 
 
 _TRAIN_END = pd.Timestamp("2010-12-31")
+_VIX_PUBLIC_METHODOLOGY_START = pd.Timestamp("2003-09-22")
 _SP500_CFTC_MARKETS = {
     "E-MINI S&P 500 STOCK INDEX - CHICAGO MERCANTILE EXCHANGE",
     "E-MINI S&P 500 STOCK INDEX - INTERNATIONAL MONETARY MARKET",
@@ -37,6 +39,19 @@ _TREASURY_SERIES: Mapping[str, str] = {
 _CREDIT_SERIES: Mapping[str, str] = {
     "RIMLPAAAR_N.B": "aaa_yield",
     "RIMLPBAAR_N.B": "baa_yield",
+}
+_POLICY_RATE_SERIES = "RIFSPFF_N.B"
+_MONETARY_LIQUIDITY_SERIES: Mapping[str, tuple[str, str]] = {
+    "RESMO14A_N.WW": ("monetary_base", "h3_weekly"),
+    "RESTR14A_N.WW": ("total_reserves", "h3_weekly"),
+    "M2.WM": ("m2", "h6_weekly"),
+}
+_CREDIT_MONEY_SERIES: Mapping[str, tuple[str, str]] = {
+    "B1001NCBA": ("bank_credit", "h8_weekly"),
+    "B1020NCBA": ("loans_and_leases", "h8_weekly"),
+    "M2.WM": ("m2", "h6_weekly"),
+    "H1.DTBSPCK.M": ("commercial_paper", "cp_monthly_old"),
+    "DTBSPCK_N.WW": ("commercial_paper", "cp_weekly_new"),
 }
 _MACRO_RELEASE_SERIES: Mapping[str, tuple[str, str]] = {
     "philly_cpi_first_releases": ("cpi", "monthly"),
@@ -144,9 +159,12 @@ def normalize_cboe_vol_panel(
     vix_values = pd.DataFrame(
         {
             "date": vix["date"],
-            "vix_close": pd.to_numeric(vix["CLOSE"], errors="coerce"),
+            "modern_vix_close": pd.to_numeric(vix["CLOSE"], errors="coerce"),
         }
-    ).dropna(subset=["vix_close"])
+    ).dropna(subset=["modern_vix_close"])
+    vix_values = vix_values.loc[
+        vix_values["date"].ge(_VIX_PUBLIC_METHODOLOGY_START)
+    ]
 
     old_close = pd.to_numeric(vxo.get("4"), errors="coerce")
     new_close = pd.to_numeric(vxo.get("Unnamed: 4"), errors="coerce")
@@ -164,9 +182,14 @@ def normalize_cboe_vol_panel(
     # The official histories contain a handful of isolated blank observations.
     # Carry only already-published closes and cap the carry so a stale series
     # cannot silently bridge a prolonged source outage.
-    panel[["vix_close", "vxo_close"]] = panel[["vix_close", "vxo_close"]].ffill(
-        limit=5
+    panel[["modern_vix_close", "vxo_close"]] = panel[
+        ["modern_vix_close", "vxo_close"]
+    ].ffill(limit=5)
+    panel["vix_close"] = panel["modern_vix_close"].where(
+        panel["date"].ge(_VIX_PUBLIC_METHODOLOGY_START),
+        panel["vxo_close"],
     )
+    panel = panel.drop(columns="modern_vix_close")
     if panel[["vix_close", "vxo_close"]].dropna(how="all").empty:
         raise FeatureInputNormalizerError("EMPTY_CBOE_VOL_PANEL")
     return _project_to_decision_session(panel, policy="next_session", sessions=sessions)
@@ -507,6 +530,177 @@ def _release_session(
     return result
 
 
+def _release_targets(observed: pd.Series, *, schedule: str) -> pd.Series:
+    if schedule == "h3_weekly":
+        return observed + pd.Timedelta(days=8)
+    if schedule == "h6_weekly":
+        return observed + pd.Timedelta(days=10)
+    if schedule == "h8_weekly":
+        return observed + pd.Timedelta(days=9)
+    if schedule == "cp_weekly_new":
+        return observed + pd.Timedelta(days=7)
+    if schedule == "cp_monthly_old":
+        return observed + pd.offsets.MonthBegin(2)
+    raise FeatureInputNormalizerError(f"UNKNOWN_RELEASE_SCHEDULE:{schedule}")
+
+
+def _project_release_series(
+    frame: pd.DataFrame,
+    *,
+    series_id: str,
+    value_name: str,
+    schedule: str,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    selected = frame.loc[frame["series_id"].astype(str).eq(series_id)].copy()
+    if selected.empty:
+        return pd.DataFrame(
+            columns=["date", "observed_at", "available_at", value_name]
+        )
+    selected[value_name] = pd.to_numeric(selected["value"], errors="coerce")
+    selected = selected.dropna(subset=[value_name])
+    released = pd.DataFrame(
+        {
+            "observed_at": selected["date"],
+            "date": _release_session(
+                _release_targets(selected["date"], schedule=schedule),
+                sessions=sessions,
+            ),
+            value_name: selected[value_name],
+        }
+    ).dropna(subset=["date", value_name])
+    released = (
+        released.sort_values(["date", "observed_at"], kind="mergesort")
+        .drop_duplicates("date", keep="last")
+        .reset_index(drop=True)
+    )
+    released["available_at"] = released["date"]
+    return released
+
+
+def _merge_release_states(
+    states: Mapping[str, pd.DataFrame],
+) -> pd.DataFrame:
+    missing = [name for name, state in states.items() if state.empty]
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"RELEASE_SERIES_MISSING:{','.join(sorted(missing))}"
+        )
+    dates = pd.DatetimeIndex(
+        sorted({date for state in states.values() for date in state["date"]})
+    )
+    result = pd.DataFrame({"date": dates})
+    observed_columns: list[str] = []
+    for value_name, state in states.items():
+        observed_name = f"_{value_name}_observed_at"
+        aligned = pd.merge_asof(
+            result.loc[:, ["date"]],
+            state.loc[:, ["date", "observed_at", value_name]].rename(
+                columns={"observed_at": observed_name}
+            ),
+            on="date",
+            direction="backward",
+        )
+        result[value_name] = aligned[value_name]
+        result[observed_name] = aligned[observed_name]
+        observed_columns.append(observed_name)
+    result = result.dropna(subset=list(states)).reset_index(drop=True)
+    result["observed_at"] = result[observed_columns].max(axis=1)
+    result["available_at"] = result["date"]
+    return result.drop(columns=observed_columns)
+
+
+def normalize_policy_rate_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Project the official effective federal-funds rate to the next session."""
+
+    rates = _validated_dates(frame, dataset_id="D_RATES")
+    if not {"series_id", "value"} <= set(rates.columns):
+        raise FeatureInputNormalizerError("POLICY_RATE_COLUMNS_MISSING")
+    selected = rates.loc[
+        rates["series_id"].astype(str).eq(_POLICY_RATE_SERIES),
+        ["date", "value"],
+    ].copy()
+    selected["effective_fed_funds"] = pd.to_numeric(
+        selected.pop("value"), errors="coerce"
+    )
+    selected = selected.dropna(subset=["effective_fed_funds"])
+    if selected.empty:
+        raise FeatureInputNormalizerError("POLICY_RATE_SERIES_MISSING")
+    return _project_to_decision_session(
+        selected, policy="next_session", sessions=sessions
+    )
+
+
+def normalize_monetary_liquidity_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Build H.3/H.6 liquidity states only after their conservative releases."""
+
+    macro = _validated_dates(frame, dataset_id="D_MACRO_PIT")
+    if not {"series_id", "value"} <= set(macro.columns):
+        raise FeatureInputNormalizerError("MONETARY_LIQUIDITY_COLUMNS_MISSING")
+    states = {
+        value_name: _project_release_series(
+            macro,
+            series_id=series_id,
+            value_name=value_name,
+            schedule=schedule,
+            sessions=sessions,
+        )
+        for series_id, (value_name, schedule) in _MONETARY_LIQUIDITY_SERIES.items()
+    }
+    return _merge_release_states(states)
+
+
+def normalize_credit_money_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Build causal H.8, H.6 and bridged commercial-paper balance sheets."""
+
+    macro = _validated_dates(frame, dataset_id="D_MACRO_PIT")
+    if not {"series_id", "value"} <= set(macro.columns):
+        raise FeatureInputNormalizerError("CREDIT_MONEY_COLUMNS_MISSING")
+    projected = {
+        series_id: _project_release_series(
+            macro,
+            series_id=series_id,
+            value_name=value_name,
+            schedule=schedule,
+            sessions=sessions,
+        )
+        for series_id, (value_name, schedule) in _CREDIT_MONEY_SERIES.items()
+    }
+    old_cp = projected["H1.DTBSPCK.M"]
+    new_cp = projected["DTBSPCK_N.WW"]
+    if not new_cp.empty:
+        old_cp = old_cp.loc[old_cp["date"].lt(new_cp["date"].min())]
+    cp_parts = [state for state in (old_cp, new_cp) if not state.empty]
+    if cp_parts:
+        commercial_paper = (
+            pd.concat(cp_parts, ignore_index=True)
+            .sort_values(["date", "observed_at"], kind="mergesort")
+            .drop_duplicates("date", keep="last")
+            .reset_index(drop=True)
+        )
+    else:
+        commercial_paper = old_cp
+    states = {
+        "bank_credit": projected["B1001NCBA"],
+        "loans_and_leases": projected["B1020NCBA"],
+        "m2": projected["M2.WM"],
+        "commercial_paper": commercial_paper,
+    }
+    return _merge_release_states(states)
+
+
 def normalize_macro_release_panel(
     frame: pd.DataFrame,
     *,
@@ -580,6 +774,65 @@ def normalize_fomc_event_panel(
         events,
         policy="next_session",
         sessions=sessions,
+    )
+
+
+def _fomc_decision_date(date: pd.Timestamp, reference: object) -> pd.Timestamp:
+    text = str(reference)
+    match = re.search(
+        r"(January|February|March|April|May|June|July|August|"
+        r"September|October|November|December)\s+\d{1,2}\s*[-\u2013]\s*"
+        r"(\d{1,2})\s+Meeting\s*[-\u2013]\s*((?:19|20)\d{2})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return pd.Timestamp(date).normalize()
+    return pd.Timestamp(f"{match.group(1)} {match.group(2)}, {match.group(3)}")
+
+
+def normalize_fomc_decision_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Keep policy-decision events and expose them only on the next session."""
+
+    fomc = _validated_dates(frame, dataset_id="D_FOMC_PUBLIC")
+    required = {"document_kind", "document_reference"}
+    missing = sorted(required - set(fomc.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"FOMC_DECISION_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    selected = fomc.loc[
+        fomc["document_kind"].astype(str).isin(["meeting", "statement"])
+    ].copy()
+    if selected.empty:
+        raise FeatureInputNormalizerError("FOMC_DECISIONS_MISSING")
+    selected["date"] = [
+        _fomc_decision_date(date, reference)
+        if kind == "meeting"
+        else pd.Timestamp(date).normalize()
+        for date, reference, kind in zip(
+            selected["date"],
+            selected["document_reference"],
+            selected["document_kind"].astype(str),
+            strict=True,
+        )
+    ]
+    selected["meeting_count"] = selected["document_kind"].eq("meeting").astype(int)
+    selected["statement_count"] = selected["document_kind"].eq("statement").astype(int)
+    selected["conference_call"] = selected["document_reference"].astype(
+        str
+    ).str.contains("Conference Call", case=False, regex=False).astype(int)
+    events = selected.groupby("date", as_index=False, sort=True).agg(
+        meeting_count=("meeting_count", "sum"),
+        statement_count=("statement_count", "sum"),
+        conference_call=("conference_call", "max"),
+    )
+    return _project_to_decision_session(
+        events, policy="next_session", sessions=sessions
     )
 
 
@@ -867,6 +1120,38 @@ def normalize_calendar_state_panel(
     frame["quarter"] = frame["date"].dt.quarter
     frame["session_of_month"] = groups.cumcount() + 1
     frame["sessions_remaining_month"] = groups.cumcount(ascending=False)
+    expiry_dates: list[pd.Timestamp] = []
+    for period in pd.PeriodIndex(dates, freq="M").unique():
+        month_start = period.start_time.normalize()
+        first_friday = month_start + pd.Timedelta(
+            days=(4 - month_start.weekday()) % 7
+        )
+        third_friday = first_friday + pd.Timedelta(days=14)
+        month_sessions = dates[
+            (dates.year == period.year) & (dates.month == period.month)
+        ]
+        eligible = month_sessions[month_sessions <= third_friday]
+        if len(eligible):
+            expiry_dates.append(pd.Timestamp(eligible[-1]))
+    expiries = pd.DatetimeIndex(expiry_dates)
+    frame["is_standard_expiry"] = frame["date"].isin(expiries).astype(int)
+    frame["is_quarterly_expiry"] = (
+        frame["is_standard_expiry"].eq(1) & frame["month"].isin([3, 6, 9, 12])
+    ).astype(int)
+    session_positions = {date: index for index, date in enumerate(dates)}
+    sessions_until: list[int] = []
+    for index, date in enumerate(dates):
+        position = expiries.searchsorted(date, side="left")
+        if position < len(expiries):
+            sessions_until.append(session_positions[expiries[position]] - index)
+            continue
+        next_month = (date + pd.offsets.MonthBegin(1)).normalize()
+        first_friday = next_month + pd.Timedelta(
+            days=(4 - next_month.weekday()) % 7
+        )
+        next_expiry = first_friday + pd.Timedelta(days=14)
+        sessions_until.append(len(pd.bdate_range(date, next_expiry)) - 1)
+    frame["sessions_until_standard_expiry"] = sessions_until
     frame["observed_at"] = frame["date"]
     frame["available_at"] = frame["date"]
     return frame
@@ -876,16 +1161,20 @@ __all__ = [
     "FeatureInputNormalizerError",
     "normalize_cboe_vol_panel",
     "normalize_credit_spread_panel",
+    "normalize_credit_money_panel",
     "normalize_cftc_sp500_panel",
     "normalize_financial_conditions_panel",
     "normalize_finra_margin_panel",
+    "normalize_fomc_decision_panel",
     "normalize_fomc_event_panel",
     "normalize_french_industry_panel",
     "normalize_french_us_panels",
     "normalize_fx_cross_asset_panel",
     "normalize_lagged_valuation_panel",
     "normalize_macro_release_panel",
+    "normalize_monetary_liquidity_panel",
     "normalize_philadelphia_realtime_growth_panel",
+    "normalize_policy_rate_panel",
     "normalize_revised_z1_equity_panel",
     "normalize_spy_decision_panel",
     "normalize_treasury_curve_panel",

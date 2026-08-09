@@ -147,6 +147,40 @@ def test_cboe_panel_causally_carries_short_isolated_source_gaps() -> None:
     assert january_seven["vxo_close"] == pytest.approx(20.0)
 
 
+def test_cboe_panel_rejects_recalculated_vix_before_public_methodology() -> None:
+    api = _normalizer_api()
+    observations = pd.to_datetime(["1998-01-05", "2003-09-22"])
+    sessions = pd.bdate_range("1998-01-05", "2003-09-23")
+    vix = pd.DataFrame(
+        {
+            "date": observations,
+            "CLOSE": [30.0, 21.0],
+            "resource_id": "vix_from_2003",
+        }
+    )
+    vxo = pd.DataFrame(
+        {
+            "date": observations,
+            "4": [18.0, 20.0],
+            "Unnamed: 4": np.nan,
+            "resource_id": "vxo_1986_2003",
+        }
+    )
+
+    result = api.normalize_cboe_vol_panel(vix, vxo, sessions=sessions)
+
+    pre_methodology = result.loc[
+        result["date"].eq(pd.Timestamp("1998-01-06"))
+    ].iloc[0]
+    introduction = result.loc[
+        result["date"].eq(pd.Timestamp("2003-09-23"))
+    ].iloc[0]
+    assert pre_methodology["vix_close"] == pytest.approx(18.0)
+    assert pre_methodology["vxo_close"] == pytest.approx(18.0)
+    assert introduction["vix_close"] == pytest.approx(21.0)
+    assert introduction["vxo_close"] == pytest.approx(20.0)
+
+
 def test_cboe_panel_does_not_carry_a_close_beyond_five_source_rows() -> None:
     api = _normalizer_api()
     observations = pd.bdate_range("2010-01-04", periods=8)
@@ -172,6 +206,156 @@ def test_cboe_panel_does_not_carry_a_close_beyond_five_source_rows() -> None:
     sixth_gap_decision = observations[6] + pd.offsets.BDay(1)
     sixth_gap = result.loc[result["date"].eq(sixth_gap_decision)].iloc[0]
     assert pd.isna(sixth_gap["vix_close"])
+
+
+def test_policy_rate_panel_uses_only_the_official_effective_funds_series() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["2010-01-04", "2010-01-04", "2010-01-05"]
+            ),
+            "series_id": ["RIFSPFF_N.B", "OTHER_RATE", "RIFSPFF_N.B"],
+            "value": [0.12, 99.0, 0.13],
+        }
+    )
+
+    result = api.normalize_policy_rate_panel(frame, sessions=_sessions())
+
+    assert result["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2010-01-05",
+        "2010-01-06",
+    ]
+    assert result["effective_fed_funds"].tolist() == [0.12, 0.13]
+    assert result["observed_at"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2010-01-04",
+        "2010-01-05",
+    ]
+
+
+def test_monetary_liquidity_panel_applies_h3_and_h6_release_delays() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2009-12-28", "2010-01-29")
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["2010-01-06", "2010-01-06", "2010-01-04"]
+            ),
+            "series_id": ["RESMO14A_N.WW", "RESTR14A_N.WW", "M2.WM"],
+            "resource_id": [
+                "federal_reserve_h3_all",
+                "federal_reserve_h3_all",
+                "federal_reserve_h6_all",
+            ],
+            "value": [2_000.0, 1_000.0, 8_000.0],
+        }
+    )
+
+    result = api.normalize_monetary_liquidity_panel(frame, sessions=sessions)
+
+    h3_release = result.loc[result["date"].eq(pd.Timestamp("2010-01-14"))].iloc[0]
+    h6_release = result.loc[result["date"].eq(pd.Timestamp("2010-01-14"))].iloc[0]
+    assert h3_release["monetary_base"] == pytest.approx(2_000.0)
+    assert h3_release["total_reserves"] == pytest.approx(1_000.0)
+    assert h6_release["m2"] == pytest.approx(8_000.0)
+    assert h3_release["observed_at"] == pd.Timestamp("2010-01-06")
+    assert h3_release["available_at"] == pd.Timestamp("2010-01-14")
+
+
+def test_credit_money_panel_bridges_old_monthly_and_new_weekly_cp_causally() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2000-12-20", "2001-03-15")
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                [
+                    "2000-12-31",
+                    "2001-01-03",
+                    "2001-01-03",
+                    "2001-01-01",
+                    "2001-01-03",
+                ]
+            ),
+            "series_id": [
+                "H1.DTBSPCK.M",
+                "DTBSPCK_N.WW",
+                "B1001NCBA",
+                "M2.WM",
+                "B1020NCBA",
+            ],
+            "resource_id": [
+                "federal_reserve_cp_all",
+                "federal_reserve_cp_all",
+                "federal_reserve_h8_all",
+                "federal_reserve_h6_all",
+                "federal_reserve_h8_all",
+            ],
+            "value": [1_500.0, 1_600.0, 4_000.0, 8_000.0, 3_000.0],
+        }
+    )
+
+    result = api.normalize_credit_money_panel(frame, sessions=sessions)
+    old_only = api.normalize_credit_money_panel(
+        frame.loc[frame["series_id"].ne("DTBSPCK_N.WW")],
+        sessions=sessions,
+    )
+
+    weekly_release = result.loc[
+        result["date"].eq(pd.Timestamp("2001-01-12"))
+    ].iloc[0]
+    old_monthly_release = old_only.loc[
+        old_only["date"].eq(pd.Timestamp("2001-02-01"))
+    ].iloc[0]
+    assert weekly_release["bank_credit"] == pytest.approx(4_000.0)
+    assert weekly_release["loans_and_leases"] == pytest.approx(3_000.0)
+    assert weekly_release["m2"] == pytest.approx(8_000.0)
+    assert weekly_release["commercial_paper"] == pytest.approx(1_600.0)
+    assert old_monthly_release["commercial_paper"] == pytest.approx(1_500.0)
+    assert old_monthly_release["observed_at"] == pd.Timestamp("2001-01-03")
+
+
+def test_fomc_decision_panel_uses_last_day_and_next_session() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["1998-02-03", "1998-02-03", "1998-04-02"]
+            ),
+            "document_kind": ["meeting", "minutes", "minutes_release"],
+            "document_reference": [
+                "February 3-4 Meeting - 1998",
+                "/fomc/minutes/19980203.htm",
+                "Released April 2, 1998",
+            ],
+        }
+    )
+    sessions = pd.bdate_range("1998-02-02", "1998-04-06")
+
+    result = api.normalize_fomc_decision_panel(frame, sessions=sessions)
+
+    assert len(result) == 1
+    assert result.loc[0, "observed_at"] == pd.Timestamp("1998-02-04")
+    assert result.loc[0, "date"] == pd.Timestamp("1998-02-05")
+    assert result.loc[0, "meeting_count"] == 1
+    assert result.loc[0, "conference_call"] == 0
+
+
+def test_calendar_marks_holiday_adjusted_standard_expiry() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2008-03-17", "2008-04-18").drop(
+        pd.Timestamp("2008-03-21")
+    )
+
+    result = api.normalize_calendar_state_panel(sessions=sessions)
+
+    expiry = result.loc[result["date"].eq(pd.Timestamp("2008-03-20"))].iloc[0]
+    prior = result.loc[result["date"].eq(pd.Timestamp("2008-03-19"))].iloc[0]
+    after = result.loc[result["date"].eq(pd.Timestamp("2008-03-24"))].iloc[0]
+    assert expiry["is_standard_expiry"] == 1
+    assert expiry["is_quarterly_expiry"] == 1
+    assert expiry["sessions_until_standard_expiry"] == 0
+    assert prior["sessions_until_standard_expiry"] == 1
+    assert after["sessions_until_standard_expiry"] > 0
 
 
 def test_cftc_panel_filters_sp500_and_waits_until_friday() -> None:
