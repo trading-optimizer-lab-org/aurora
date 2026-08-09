@@ -122,6 +122,31 @@ def test_finra_pipe_file_parser_and_source_summary_are_fail_closed():
         module.summarize_finra_short_interest_rows([pd.DataFrame({"Symbol": ["AAA"]})])
 
 
+def test_finra_current_csv_api_headers_map_to_canonical_source_schema():
+    module = _module()
+    text = "\n".join(
+        (
+            "settlementDate,issueName,issueSymbolIdentifier,marketCategoryCode,"
+            "currentShortShareNumber,previousShortShareNumber,revisionFlag",
+            "2026-07-15,Issuer A,AAA,N,100,90,",
+        )
+    )
+
+    rows = module.parse_finra_short_interest_text(text)
+
+    assert list(rows.columns) == [
+        "settlement_date",
+        "issue_name",
+        "symbol",
+        "market",
+        "current_short",
+        "previous_short",
+        "revision_flag",
+    ]
+    assert rows.loc[0, "symbol"] == "AAA"
+    assert rows.loc[0, "market"] == "N"
+
+
 def test_short_interest_evidence_records_three_concrete_blockers_without_promotion():
     module = _module()
     probe = {

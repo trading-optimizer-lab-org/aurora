@@ -60,13 +60,17 @@ _HEADER_ALIASES = {
     "settlementdate": "settlement_date",
     "issuename": "issue_name",
     "symbol": "symbol",
+    "issuesymbolidentifier": "symbol",
     "market": "market",
+    "marketcategorycode": "market",
     "currentshort": "current_short",
     "currentshortposition": "current_short",
     "currentshortpositionquantity": "current_short",
+    "currentshortsharenumber": "current_short",
     "previousshort": "previous_short",
     "previousshortposition": "previous_short",
     "previousshortpositionquantity": "previous_short",
+    "previousshortsharenumber": "previous_short",
     "revisionflag": "revision_flag",
 }
 
