@@ -774,6 +774,37 @@ def select_latest_causal_finra_link(
     return max(candidates, key=lambda item: (item[0], item[1]))[1]
 
 
+def acquire_finra_short_interest_current(
+    *,
+    formation_at: str | pd.Timestamp,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """Fetch one causal official FINRA file without persisting redistributable raw data."""
+
+    files_payload, _ = _fetch(FINRA_FILES_URL)
+    schedule_payload, _ = _fetch(FINRA_SCHEDULE_URL)
+    files_html = files_payload.decode("utf-8", errors="replace")
+    schedule_html = schedule_payload.decode("utf-8", errors="replace")
+    links = extract_finra_file_links(files_html)
+    schedule = parse_finra_publication_schedule(schedule_html)
+    selected_url = select_latest_causal_finra_link(
+        links,
+        schedule,
+        formation_at=formation_at,
+    )
+    public_payload, content_type = _fetch(selected_url)
+    rows = parse_finra_short_interest_text(_decode_public_file(public_payload))
+    metadata = {
+        "source_url": selected_url,
+        "source_sha256": sha256(public_payload).hexdigest(),
+        "source_size_bytes": len(public_payload),
+        "source_content_type": content_type,
+        "public_file_links_found": len(links),
+        "raw_redistribution_authorized": False,
+        "raw_files_in_artifact": False,
+    }
+    return rows, schedule, metadata
+
+
 def run_short_interest_source_probe(
     *,
     output_dir: Path,
@@ -924,6 +955,7 @@ __all__ = [
     "FINRA_SCHEDULE_URL",
     "OPENAP_COMMIT",
     "OPENAP_FORMULA_SOURCES",
+    "acquire_finra_short_interest_current",
     "build_short_interest_batch_evidence",
     "calculate_finra_short_interest_current",
     "extract_finra_file_links",
