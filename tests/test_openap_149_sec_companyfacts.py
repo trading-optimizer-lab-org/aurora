@@ -365,7 +365,7 @@ def test_companyfacts_calculates_deferred_revenue_change_as_explicit_proxy() -> 
     )
 
 
-def test_companyfacts_rdability_uses_causal_rolling_regressions_and_top_tercile() -> None:
+def _rdability_frames(years: range) -> tuple[pd.DataFrame, pd.DataFrame]:
     fact_rows: list[dict[str, object]] = []
     status_rows: list[dict[str, object]] = []
     for cik, symbol, intensity_scale in (
@@ -383,9 +383,9 @@ def test_companyfacts_rdability_uses_causal_rolling_regressions_and_top_tercile(
             for surface in ("companyfacts", "submissions")
         )
         sales = 100_000_000.0
-        for sequence, year in enumerate(range(2010, 2026), start=1):
+        for sequence, year in enumerate(years, start=1):
             rd_intensity_log = intensity_scale * sequence / 100.0
-            if year > 2010:
+            if sequence > 1:
                 sales *= exp(2.0 * rd_intensity_log)
             rd = sales * (exp(rd_intensity_log) - 1.0)
             accepted = f"{year + 1}-02-15T15:00:00Z"
@@ -419,9 +419,14 @@ def test_companyfacts_rdability_uses_causal_rolling_regressions_and_top_tercile(
                     }
                 )
 
+    return pd.DataFrame(fact_rows), pd.DataFrame(status_rows)
+
+
+def test_companyfacts_rdability_uses_causal_rolling_regressions_and_top_tercile() -> None:
+    facts, status = _rdability_frames(range(2010, 2026))
     values = _module().calculate_companyfacts_rdability_current(
-        pd.DataFrame(fact_rows),
-        pd.DataFrame(status_rows),
+        facts,
+        status,
         formation_at="2026-08-09",
         retrieved_at="2026-08-08T18:44:14Z",
     )
@@ -436,3 +441,18 @@ def test_companyfacts_rdability_uses_causal_rolling_regressions_and_top_tercile(
     assert pd.Timestamp(values.iloc[0]["available_at"]) <= pd.Timestamp(
         values.iloc[0]["formation_at"]
     )
+
+
+def test_companyfacts_rdability_accepts_six_valid_regression_pairs() -> None:
+    facts, status = _rdability_frames(range(2019, 2026))
+
+    values = _module().calculate_companyfacts_rdability_current(
+        facts,
+        status,
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    assert values["signal"].tolist() == ["RDAbility"]
+    assert values.iloc[0]["security_id"] == "US-SEC-0000000003-CCC"
+    assert values.iloc[0]["value"] == pytest.approx(2.0)
