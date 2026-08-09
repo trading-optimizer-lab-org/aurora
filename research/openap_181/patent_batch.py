@@ -64,6 +64,8 @@ _PATENT_COLUMNS = frozenset(
 _MATCH_COLUMNS = frozenset({"patent_num", "permco", "permno"})
 _CPC_COLUMNS = frozenset({"patent_num", "cpc"})
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_FIRST_KPSS_ISSUE_DATE = pd.Timestamp("1926-01-01")
+_LAST_KPSS_ISSUE_DATE = pd.Timestamp("2024-12-31")
 
 
 def parse_lfs_pointer(text: str) -> dict[str, Any]:
@@ -90,6 +92,29 @@ def _nonblank_values(series: pd.Series) -> set[str]:
     return set(values.loc[values.ne("")])
 
 
+def _parse_kpss_dates(series: pd.Series) -> pd.Series:
+    """Parse KPSS YYYYMMDD numbers without treating them as nanoseconds."""
+
+    text = series.astype("string").str.strip()
+    compact_mask = text.str.fullmatch(r"\d{8}(?:\.0+)?", na=False)
+    parsed = pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns]")
+    if compact_mask.any():
+        compact = text.loc[compact_mask].str.replace(r"\.0+$", "", regex=True)
+        parsed.loc[compact_mask] = pd.to_datetime(
+            compact,
+            format="%Y%m%d",
+            errors="coerce",
+        )
+    fallback_mask = text.notna() & text.ne("") & ~compact_mask
+    if fallback_mask.any():
+        parsed.loc[fallback_mask] = pd.to_datetime(
+            text.loc[fallback_mask],
+            errors="coerce",
+            format="mixed",
+        )
+    return parsed
+
+
 def summarize_kpss_patent_chunks(
     chunks: Iterable[pd.DataFrame],
 ) -> dict[str, Any]:
@@ -103,8 +128,12 @@ def summarize_kpss_patent_chunks(
     missing_cites = 0
     first_issue: pd.Timestamp | None = None
     last_issue: pd.Timestamp | None = None
+    first_filing: pd.Timestamp | None = None
+    last_filing: pd.Timestamp | None = None
     raw_issue_date_samples: list[str] = []
+    raw_filing_date_samples: list[str] = []
     issue_date_dtypes: set[str] = set()
+    filing_date_dtypes: set[str] = set()
     observed = False
     for chunk in chunks:
         observed = True
@@ -118,19 +147,41 @@ def summarize_kpss_patent_chunks(
         missing_filing_date += int(chunk["filing_date"].isna().sum())
         missing_cites += int(chunk["cites"].isna().sum())
         issue_date_dtypes.add(str(chunk["issue_date"].dtype))
+        filing_date_dtypes.add(str(chunk["filing_date"].dtype))
         if len(raw_issue_date_samples) < 10:
             samples = chunk["issue_date"].dropna().astype(str).head(
                 10 - len(raw_issue_date_samples)
             )
             raw_issue_date_samples.extend(samples.tolist())
-        issue = pd.to_datetime(chunk["issue_date"], errors="coerce", format="mixed")
+        if len(raw_filing_date_samples) < 10:
+            samples = chunk["filing_date"].dropna().astype(str).head(
+                10 - len(raw_filing_date_samples)
+            )
+            raw_filing_date_samples.extend(samples.tolist())
+        issue = _parse_kpss_dates(chunk["issue_date"])
+        filing = _parse_kpss_dates(chunk["filing_date"])
         if issue.notna().any():
             chunk_first = issue.min()
             chunk_last = issue.max()
             first_issue = chunk_first if first_issue is None else min(first_issue, chunk_first)
             last_issue = chunk_last if last_issue is None else max(last_issue, chunk_last)
+        if filing.notna().any():
+            chunk_first = filing.min()
+            chunk_last = filing.max()
+            first_filing = (
+                chunk_first if first_filing is None else min(first_filing, chunk_first)
+            )
+            last_filing = (
+                chunk_last if last_filing is None else max(last_filing, chunk_last)
+            )
     if not observed or rows == 0:
         raise ValueError("KPSS patent panel contains no rows")
+    if first_issue is None or last_issue is None:
+        raise ValueError("KPSS patent panel contains no valid issue dates")
+    if first_issue < _FIRST_KPSS_ISSUE_DATE or last_issue > _LAST_KPSS_ISSUE_DATE:
+        raise ValueError(
+            "KPSS patent issue dates fall outside the pinned 1926-2024 contract"
+        )
     return {
         "rows": rows,
         "unique_patents": len(patents),
@@ -140,8 +191,17 @@ def summarize_kpss_patent_chunks(
         "missing_cites": missing_cites,
         "first_issue_date": first_issue.date().isoformat() if first_issue is not None else "",
         "last_issue_date": last_issue.date().isoformat() if last_issue is not None else "",
+        "first_filing_date": (
+            first_filing.date().isoformat() if first_filing is not None else ""
+        ),
+        "last_filing_date": (
+            last_filing.date().isoformat() if last_filing is not None else ""
+        ),
         "raw_issue_date_samples": raw_issue_date_samples,
+        "raw_filing_date_samples": raw_filing_date_samples,
         "issue_date_dtypes": sorted(issue_date_dtypes),
+        "filing_date_dtypes": sorted(filing_date_dtypes),
+        "issue_date_range_verified": True,
         "signal_coverage_measured": False,
     }
 

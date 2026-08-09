@@ -77,6 +77,13 @@ jobs:
           assert summary["strict_approved"] == 0
           assert summary["locked_opened"] is False
           assert summary["validation_used_for_selection"] is False
+          patent_panel = summary["patent_panel"]
+          assert patent_panel["issue_date_range_verified"] is True
+          assert patent_panel["first_issue_date"] >= "1926-01-01"
+          assert patent_panel["last_issue_date"] <= "2024-12-31"
+          assert patent_panel["first_filing_date"]
+          assert patent_panel["last_filing_date"]
+          assert patent_panel["raw_issue_date_samples"][0] == "19260126"
           assert len(integrity) == 3
           assert integrity["download_verified"].astype(str).str.lower().eq("true").all()
           assert set(evidence["signal"]) == {"CitationsRD", "PatentsRD"}

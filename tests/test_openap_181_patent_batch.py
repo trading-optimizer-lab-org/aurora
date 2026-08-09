@@ -82,6 +82,9 @@ def test_patent_panel_summary_measures_the_source_without_claiming_signal_covera
     assert summary["missing_cites"] == 1
     assert summary["first_issue_date"] == "1976-01-03"
     assert summary["last_issue_date"] == "1978-07-04"
+    assert summary["first_filing_date"] == "1974-01-03"
+    assert summary["last_filing_date"] == "1975-06-02"
+    assert summary["issue_date_range_verified"] is True
     assert summary["signal_coverage_measured"] is False
 
 
@@ -103,6 +106,29 @@ def test_patent_panel_summary_parses_kpss_numeric_yyyymmdd_dates():
     assert summary["last_issue_date"] == "2024-12-31"
     assert summary["first_filing_date"] == "1925-01-02"
     assert summary["last_filing_date"] == "2023-01-15"
+    assert summary["raw_issue_date_samples"] == ["19260126", "20241231"]
+    assert summary["raw_filing_date_samples"] == ["19250102", "20230115"]
+    assert summary["issue_date_dtypes"] == ["int64"]
+    assert summary["filing_date_dtypes"] == ["int64"]
+    assert summary["issue_date_range_verified"] is True
+
+
+@pytest.mark.parametrize("issue_date", [19251231, 20250101])
+def test_patent_panel_summary_rejects_issue_dates_outside_pinned_range(issue_date):
+    chunk = pd.DataFrame(
+        {
+            "patent_num": [1],
+            "permno": [10001],
+            "issue_date": [issue_date],
+            "filing_date": [19250102],
+            "xi_nominal": [1.0],
+            "xi_real": [0.5],
+            "cites": [3],
+        }
+    )
+
+    with pytest.raises(ValueError, match="outside the pinned 1926-2024 contract"):
+        summarize_kpss_patent_chunks([chunk])
 
 
 def test_patent_evidence_is_partial_and_fail_closed_for_both_signals():
