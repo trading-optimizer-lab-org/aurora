@@ -685,6 +685,57 @@ def test_companyfacts_realestate_diagnostics_report_zero_candidates() -> None:
     assert diagnostics["candidate_variant_counts"] == {"gross": 0, "net": 0}
 
 
+def test_companyfacts_convdebt_diagnostics_profile_nonzero_tags() -> None:
+    facts = _facts()
+    template = facts.loc[facts["accession_number"].eq("fy2025")].iloc[0]
+    extra: list[dict[str, object]] = []
+    for tag, unit, value in (
+        ("ConvertibleDebtNoncurrent", "USD", 50_000_000.0),
+        (
+            "CommonStockSharesReservedForConversionOfConvertibleSecurities",
+            "shares",
+            2_000_000.0,
+        ),
+        ("DeferredCharges", "USD", 0.0),
+    ):
+        row = template.copy()
+        row["tag"] = tag
+        row["unit"] = unit
+        row["value"] = value
+        extra.append(row.to_dict())
+
+    diagnostics = _module().diagnose_companyfacts_convdebt_coverage(
+        pd.concat([facts, pd.DataFrame(extra)], ignore_index=True),
+        formation_at="2026-08-09",
+    )
+
+    assert diagnostics["stage_counts"] == {
+        "causal_related_rows": 3,
+        "positive_related_rows": 2,
+        "positive_related_ciks": 1,
+    }
+    assert diagnostics["related_source_tags"] == {
+        "CommonStockSharesReservedForConversionOfConvertibleSecurities": {
+            "rows": 1,
+            "ciks": 1,
+            "positive_rows": 1,
+            "units": ["shares"],
+        },
+        "ConvertibleDebtNoncurrent": {
+            "rows": 1,
+            "ciks": 1,
+            "positive_rows": 1,
+            "units": ["USD"],
+        },
+        "DeferredCharges": {
+            "rows": 1,
+            "ciks": 1,
+            "positive_rows": 0,
+            "units": ["USD"],
+        },
+    }
+
+
 def test_companyfacts_tax_uses_current_federal_and_foreign_expense() -> None:
     facts = _facts()
     template = facts.loc[
