@@ -15,6 +15,8 @@ from .implementation_status import (
     STRICT_INVENTORY_COLUMNS,
     build_signal_implementation_status,
     build_strict_score_inventory,
+    render_implementation_validation_report,
+    write_implementation_outputs,
 )
 
 __all__ = [
@@ -30,4 +32,6 @@ __all__ = [
     "STRICT_INVENTORY_COLUMNS",
     "build_signal_implementation_status",
     "build_strict_score_inventory",
+    "render_implementation_validation_report",
+    "write_implementation_outputs",
 ]

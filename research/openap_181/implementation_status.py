@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -231,9 +232,190 @@ def build_strict_score_inventory(status: pd.DataFrame) -> pd.DataFrame:
     return result.sort_values("signal").reset_index(drop=True)
 
 
+def _markdown_values(values: list[str]) -> str:
+    if not values:
+        return "None."
+    return ", ".join(f"`{value}`" for value in values)
+
+
+def render_implementation_validation_report(
+    status: pd.DataFrame,
+    strict_inventory: pd.DataFrame,
+) -> str:
+    """Render the implementation decisions without converting absence into evidence."""
+
+    clean_status = _clean_signal_column(status, label="implementation status")
+    missing_status = [
+        column for column in IMPLEMENTATION_STATUS_COLUMNS if column not in clean_status
+    ]
+    if missing_status or len(clean_status) != 181:
+        raise ValueError("Implementation report requires the complete 181-row status")
+    clean_inventory = _clean_signal_column(strict_inventory, label="strict inventory")
+    missing_inventory = [
+        column for column in STRICT_INVENTORY_COLUMNS if column not in clean_inventory
+    ]
+    if missing_inventory:
+        raise ValueError("Implementation report received an invalid strict inventory")
+
+    attempted = clean_status.loc[
+        clean_status["strict_gate_result"].ne("not_attempted"), "signal"
+    ].sort_values().tolist()
+    approved = clean_status.loc[
+        clean_status["score_eligible"].map(bool), "signal"
+    ].sort_values().tolist()
+    rejected = clean_status.loc[
+        clean_status["strict_gate_result"].eq("blocked"), "signal"
+    ].sort_values().tolist()
+    prior = clean_inventory.loc[
+        clean_inventory["eligibility_basis"].eq("preexisting_exact_31"), "signal"
+    ].sort_values().tolist()
+    promoted = clean_inventory.loc[
+        clean_inventory["eligibility_basis"].eq(
+            "openap_181_complete_strict_gates"
+        ),
+        "signal",
+    ].sort_values().tolist()
+    evidence = clean_status.loc[
+        clean_status["evidence_run_url"].astype(str).str.startswith("https://"),
+        ["evidence_run_url", "evidence_artifact", "implementation_commit"],
+    ].drop_duplicates()
+    documentary = clean_status.loc[
+        clean_status["blocking_reason"].astype(str).str.contains(
+            r"formula|legal|licen[cs]e|permission|commercial|document|source",
+            case=False,
+            regex=True,
+        ),
+        "signal",
+    ].sort_values().tolist()
+    coverage_counts = clean_status["coverage_result"].value_counts().sort_index()
+    fidelity_counts = clean_status["fidelity_result"].value_counts().sort_index()
+
+    lines = [
+        "# OpenAP 181 Implementation Validation Report",
+        "",
+        "## Decision summary",
+        "",
+        f"- Signals in implementation registry: {len(clean_status)}",
+        f"- Signals attempted: {len(attempted)}",
+        f"- Signals approved: {len(approved)}",
+        f"- Signals rejected after an attempt: {len(rejected)}",
+        f"- Signals blocked or pending: {len(clean_status) - len(approved)}",
+        f"- Strict score signals: {len(clean_inventory)}",
+        "",
+        "No signal is promoted merely because it produces a value. Promotion requires "
+        "formula, data pipeline, point-in-time, identity, measured coverage, measured "
+        "fidelity, and complete run evidence to pass together.",
+        "",
+        "## Attempted, approved, and rejected signals",
+        "",
+        f"- Attempted: {_markdown_values(attempted)}",
+        f"- Approved: {_markdown_values(approved)}",
+        f"- Rejected: {_markdown_values(rejected)}",
+        "",
+        "## Coverage and fidelity",
+        "",
+        "Coverage results: "
+        + ", ".join(f"`{key}`={int(value)}" for key, value in coverage_counts.items()),
+        "Fidelity results: "
+        + ", ".join(f"`{key}`={int(value)}" for key, value in fidelity_counts.items()),
+        "No unmeasured coverage or fidelity value is presented as a successful result.",
+        "",
+        "## Legal, source, formula, and documentary blockers",
+        "",
+        _markdown_values(documentary),
+        "",
+        "The row-level registry remains authoritative for the concrete blocker of every "
+        "unfinished signal.",
+        "",
+        "## Independent OpenAP comparison",
+        "",
+    ]
+    if clean_status["fidelity_measured"].map(bool).any():
+        lines.append(
+            "Measured fidelity decisions and differences are recorded per signal in the "
+            "registry and in the linked evidence artifacts. No formula or threshold was "
+            "selected from these results."
+        )
+    else:
+        lines.append(
+            "Fidelity has not been measured for this baseline. No agreement or difference "
+            "with historical OpenAP values is claimed."
+        )
+    lines.extend(["", "## Evidence runs and artifacts", ""])
+    if evidence.empty:
+        lines.append("No implementation evidence run is attached to this baseline.")
+    else:
+        for row in evidence.sort_values("evidence_run_url").itertuples(index=False):
+            lines.append(
+                f"- {row.evidence_run_url} — `{row.evidence_artifact}` — "
+                f"`{row.implementation_commit}`"
+            )
+    lines.extend(
+        [
+            "",
+            "## Real strict-score changes",
+            "",
+            f"- Pre-existing exact signals retained: {len(prior)}",
+            f"- Newly promoted signals: {len(promoted)}",
+            f"- Newly promoted list: {_markdown_values(promoted)}",
+            "",
+            "## Exact final usable signal list",
+            "",
+            _markdown_values(sorted(clean_inventory["signal"].tolist())),
+            "",
+            "## Per-signal implementation decision",
+            "",
+            "| Signal | Strict gate | Score eligible | Coverage | Fidelity | Blocker | Evidence |",
+            "|---|---|---:|---|---|---|---|",
+        ]
+    )
+    for row in clean_status.sort_values("signal").itertuples(index=False):
+        blocker = str(row.blocking_reason).replace("|", "/").replace("\n", " ")
+        evidence_url = str(row.evidence_run_url).strip() or "none"
+        lines.append(
+            f"| `{row.signal}` | `{row.strict_gate_result}` | "
+            f"`{str(bool(row.score_eligible)).lower()}` | `{row.coverage_result}` | "
+            f"`{row.fidelity_result}` | {blocker} | {evidence_url} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def write_implementation_outputs(
+    manifest: pd.DataFrame,
+    resolution: pd.DataFrame,
+    output_dir: Path | str,
+    evidence: pd.DataFrame | None = None,
+) -> dict[str, int]:
+    """Write the mandatory implementation registry, strict inventory, and report."""
+
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    status = build_signal_implementation_status(manifest, resolution, evidence)
+    inventory = build_strict_score_inventory(status)
+    report = render_implementation_validation_report(status, inventory)
+    status.to_csv(output / "signal_implementation_status_181.csv", index=False)
+    inventory.to_csv(output / "strict_score_signal_inventory.csv", index=False)
+    (output / "IMPLEMENTATION_VALIDATION_REPORT.md").write_text(
+        report,
+        encoding="utf-8",
+    )
+    attempted = int(status["strict_gate_result"].ne("not_attempted").sum())
+    approved = int(status["score_eligible"].sum())
+    return {
+        "signals": int(len(status)),
+        "unique_signals": int(status["signal"].nunique()),
+        "attempted": attempted,
+        "approved": approved,
+        "blocked": int(len(status) - approved),
+        "strict_inventory_signals": int(len(inventory)),
+    }
+
+
 __all__ = [
     "IMPLEMENTATION_STATUS_COLUMNS",
     "STRICT_INVENTORY_COLUMNS",
     "build_signal_implementation_status",
     "build_strict_score_inventory",
+    "render_implementation_validation_report",
+    "write_implementation_outputs",
 ]
