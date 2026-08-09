@@ -157,7 +157,7 @@ def test_completion_audit_can_consume_patent_source_evidence():
     assert "patent_evidence_run_id:" in text
     assert "patent_probe:" in text
     assert "uses: ./.github/workflows/openap-181-patent-source-probe.yml" in text
-    assert "needs: patent_probe" in text
+    assert "needs: [patent_probe, short_interest_probe]" in text
     assert "PATENT_EVIDENCE_RUN_ID" in text
     assert "openap-181-patent-source-probe-results" in text
     assert "patent_batch_evidence.csv" in text
