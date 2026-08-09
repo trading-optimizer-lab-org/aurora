@@ -1022,17 +1022,16 @@ def diagnose_companyfacts_realestate_coverage(
         concept: int(facts.loc[facts["concept"].eq(concept), "cik"].nunique())
         for concept in concepts
     }
-    candidate_variant_counts = {
-        variant: int(
-            candidate_frame.loc[
-                candidate_frame.get(
-                    "variant", pd.Series(index=candidate_frame.index, dtype="string")
-                ).eq(variant),
-                "cik",
-            ].nunique()
-        )
-        for variant in ("gross", "net")
-    }
+    candidate_variant_counts = {"gross": 0, "net": 0}
+    if not candidate_frame.empty:
+        candidate_variant_counts = {
+            variant: int(
+                candidate_frame.loc[
+                    candidate_frame["variant"].eq(variant), "cik"
+                ].nunique()
+            )
+            for variant in candidate_variant_counts
+        }
 
     required = _FACT_COLUMNS | {"taxonomy", "fy", "fp"}
     _require_columns(companyfacts, required, "SEC CompanyFacts")
