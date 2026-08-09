@@ -525,6 +525,7 @@ def test_documentary_blockers_create_evidence_without_promoting_plausible_routes
         "source_access_unverified",
     }
     assert evidence["strict_gate_result"].eq("blocked").all()
+    assert not evidence["formula_implemented"].any()
     assert not evidence["data_pipeline_implemented"].any()
     assert status["strict_gate_result"].eq("blocked").sum() == 56
     assert status["strict_gate_result"].eq("not_attempted").sum() == 125
@@ -571,9 +572,14 @@ def test_implementation_cli_attaches_documentary_blocker_evidence(
 
     assert result.value.code == 0
     status = pd.read_csv(output / "signal_implementation_status_181.csv")
+    report = (output / "IMPLEMENTATION_VALIDATION_REPORT.md").read_text(
+        encoding="utf-8"
+    )
     assert status["strict_gate_result"].eq("blocked").sum() == 56
     assert status["strict_gate_result"].eq("not_attempted").sum() == 125
     assert not status["score_eligible"].any()
+    assert "- Signals blocked with evidence: 56" in report
+    assert "- Signals not attempted: 125" in report
 
 
 def test_strict_inventory_starts_at_31_and_only_accepts_fully_gated_signals():
@@ -622,7 +628,8 @@ def test_implementation_writer_creates_three_auditable_baseline_artifacts(tmp_pa
         "unique_signals": 181,
         "attempted": 0,
         "approved": 0,
-        "blocked": 181,
+        "blocked": 0,
+        "not_attempted": 181,
         "strict_inventory_signals": 31,
     }
     assert len(status) == status["signal"].nunique() == 181
