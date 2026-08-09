@@ -20,8 +20,7 @@ OPENAP_FORMULA_FILE: dict[str, str] = {
         "Signals/pyCode/Predictors/"
         "ZZ1_RIO_MB_RIO_Disp_RIO_Turnover_RIO_Volatility.py"
     ),
-    # The first live GitHub probe reports the digest and this pin is then frozen.
-    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "sha256": "34a01df935551f7c8f19f5521084a658f5bc401d65c54c3fcabb7746438a6afa",
 }
 
 DOCUMENT_URLS = {
