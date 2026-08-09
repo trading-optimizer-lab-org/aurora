@@ -165,13 +165,13 @@ def build_formula_inventory(
                 signal, "unresolved", "", "", 0, OPENAP_FORMULA_COMMIT, "", ""
             )
         else:
-            best_score = max(item[0] for item in eligible)
-            best_score_matches = [item for item in eligible if item[0] == best_score]
-            best_priority = max(_source_priority(item[1]) for item in best_score_matches)
+            best_priority = max(_source_priority(item[1]) for item in eligible)
+            priority_matches = [
+                item for item in eligible if _source_priority(item[1]) == best_priority
+            ]
+            best_score = max(item[0] for item in priority_matches)
             best = sorted(
-                item
-                for item in best_score_matches
-                if _source_priority(item[1]) == best_priority
+                item for item in priority_matches if item[0] == best_score
             )
             if len(best) != 1:
                 match = FormulaMatch(
