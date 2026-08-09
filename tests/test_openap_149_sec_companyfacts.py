@@ -475,10 +475,20 @@ def test_companyfacts_rdability_regression_keeps_rows_across_fiscal_gaps() -> No
     assert values.iloc[0]["value"] == pytest.approx(2.0)
 
 
-def test_companyfacts_realestate_subtracts_five_firm_sic2_mean() -> None:
+def _realestate_frames(
+    *, variant: str = "gross"
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     fact_rows: list[dict[str, object]] = []
     submission_rows: list[dict[str, object]] = []
     status_rows: list[dict[str, object]] = []
+    if variant == "gross":
+        buildings_tag = "BuildingsAndImprovementsGross"
+        ppe_tag = "PropertyPlantAndEquipmentGross"
+    elif variant == "net":
+        buildings_tag = "BuildingsAndImprovementsNet"
+        ppe_tag = "PropertyPlantAndEquipmentNet"
+    else:
+        raise ValueError(f"Unsupported test variant: {variant}")
     for cik, symbol, realestate_ratio in (
         (1, "AAA", 0.1),
         (2, "BBB", 0.2),
@@ -508,11 +518,11 @@ def test_companyfacts_realestate_subtracts_five_firm_sic2_mean() -> None:
         for tag, value in (
             ("Assets", 1_000_000_000.0),
             (
-                "BuildingsAndImprovementsGross",
+                buildings_tag,
                 realestate_ratio * 100_000_000.0,
             ),
             ("LandAndLandImprovements", 0.0),
-            ("PropertyPlantAndEquipmentGross", 100_000_000.0),
+            (ppe_tag, 100_000_000.0),
         ):
             fact_rows.append(
                 {
@@ -539,11 +549,20 @@ def test_companyfacts_realestate_subtracts_five_firm_sic2_mean() -> None:
                     "source_mode": "sec_official_api",
                 }
             )
-
-    values = _module().calculate_companyfacts_realestate_current(
+    return (
         pd.DataFrame(fact_rows),
         pd.DataFrame(submission_rows),
         pd.DataFrame(status_rows),
+    )
+
+
+def test_companyfacts_realestate_subtracts_five_firm_sic2_mean() -> None:
+    facts, submissions, status = _realestate_frames()
+
+    values = _module().calculate_companyfacts_realestate_current(
+        facts,
+        submissions,
+        status,
         formation_at="2026-08-09",
         retrieved_at="2026-08-08T18:44:14Z",
     )
@@ -560,3 +579,51 @@ def test_companyfacts_realestate_subtracts_five_firm_sic2_mean() -> None:
     assert pd.to_datetime(values["available_at"]).le(
         pd.to_datetime(values["formation_at"])
     ).all()
+
+
+def test_companyfacts_realestate_requires_five_firms_in_sic2() -> None:
+    facts, submissions, status = _realestate_frames()
+    facts = facts.loc[facts["cik"].ne(5)].copy()
+    submissions = submissions.loc[submissions["cik"].ne(5)].copy()
+    status = status.loc[status["cik"].ne(5)].copy()
+
+    values = _module().calculate_companyfacts_realestate_current(
+        facts,
+        submissions,
+        status,
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    assert values.empty
+
+
+def test_companyfacts_realestate_falls_back_to_net_ppe_fields() -> None:
+    facts, submissions, status = _realestate_frames(variant="net")
+
+    values = _module().calculate_companyfacts_realestate_current(
+        facts,
+        submissions,
+        status,
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    indexed = values.set_index("ticker")
+    assert indexed.loc["AAA", "value"] == pytest.approx(-0.2)
+    assert indexed.loc["EEE", "value"] == pytest.approx(0.2)
+    assert values["caveat"].str.contains("net PP&E", regex=False).all()
+
+
+def test_companyfacts_realestate_rejects_evidence_not_yet_retrieved() -> None:
+    facts, submissions, status = _realestate_frames()
+
+    values = _module().calculate_companyfacts_realestate_current(
+        facts,
+        submissions,
+        status,
+        formation_at="2026-08-09",
+        retrieved_at="2026-01-01T00:00:00Z",
+    )
+
+    assert values.empty
