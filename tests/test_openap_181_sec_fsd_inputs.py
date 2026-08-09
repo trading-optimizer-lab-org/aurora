@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import runpy
+import sys
 import zipfile
 from importlib import import_module
+from pathlib import Path
 
 import pandas as pd
 import pytest
+
+from aurora.core.execution_policy import LocalRunBlocked
 
 
 def _module():
@@ -163,3 +168,17 @@ def test_quarter_range_rejects_reversed_or_unbounded_requests():
         module.bounded_quarters("2024q2", "2024q1")
     with pytest.raises(ValueError, match="at most 16"):
         module.bounded_quarters("2020q1", "2024q1")
+
+
+def test_sec_fsd_preparation_cli_fails_closed_outside_github(tmp_path, monkeypatch):
+    script = (
+        Path(__file__).parents[1]
+        / "scripts"
+        / "run_openap_181_sec_fsd_inputs.py"
+    )
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT", raising=False)
+    monkeypatch.setattr(sys, "argv", [str(script), "--output-dir", str(tmp_path)])
+
+    with pytest.raises(LocalRunBlocked, match="OpenAP 181 SEC FSD preparation"):
+        runpy.run_path(str(script), run_name="__main__")
