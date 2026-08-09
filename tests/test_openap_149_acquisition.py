@@ -266,3 +266,30 @@ def test_acquisition_status_discloses_latest_formation_date_without_trailing_spa
     assert summary["latest_formation_at"] == "2026-08-09T00:00:00+00:00"
     assert "Fecha maxima de formacion: `2026-08-09T00:00:00+00:00`" in status
     assert not any(line.endswith(" ") for line in status.splitlines())
+
+
+def test_current_evidence_merge_uses_only_latest_complete_signal_formation() -> None:
+    old = _current_rows().iloc[[0]].copy()
+    old.loc[:, "formation_at"] = "2026-08-05"
+    old.loc[:, "retrieved_at"] = "2026-08-05T10:00:00Z"
+    fresh = _current_rows().iloc[[0]].copy()
+    fresh.loc[:, "formation_at"] = "2026-08-09"
+    fresh.loc[:, "retrieved_at"] = "2026-08-08T18:44:14Z"
+    fresh.loc[:, "value"] = 0.30
+
+    merged = _module().merge_current_evidence([old, fresh])
+
+    assert len(merged) == 1
+    assert merged.iloc[0]["value"] == 0.30
+    assert pd.Timestamp(merged.iloc[0]["formation_at"]) == pd.Timestamp(
+        "2026-08-09T00:00:00Z"
+    )
+
+
+def test_current_evidence_merge_rejects_conflicts_at_same_formation() -> None:
+    left = _current_rows().iloc[[0]].copy()
+    right = left.copy()
+    right.loc[:, "value"] = 0.75
+
+    with pytest.raises(_module().AcquisitionContractError, match="conflicting evidence"):
+        _module().merge_current_evidence([left, right])
