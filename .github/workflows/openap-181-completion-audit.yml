@@ -1085,6 +1085,13 @@ jobs:
               os.environ["SOURCE_SHA"]
           ).all()
           sec_status = implementation.loc[implementation["signal"].isin(sec_signals)]
+          sec_uncovered_status = sec_status.loc[
+              ~sec_status["signal"].isin(
+                  operating_accounting_signals
+                  if operating_accounting_evidence_present
+                  else set()
+              )
+          ]
           if sec_evidence_present:
               assert sec_status["strict_gate_result"].eq("blocked").all()
               assert sec_status["blocking_reason"].eq(
@@ -1097,9 +1104,16 @@ jobs:
                   os.environ["SEC_ACCOUNTING_EVIDENCE_ARTIFACT"]
               ).all()
           else:
-              assert sec_status["strict_gate_result"].eq("not_attempted").all()
+              assert sec_uncovered_status["strict_gate_result"].eq(
+                  "not_attempted"
+              ).all()
           operating_accounting_status = implementation.loc[
               implementation["signal"].isin(operating_accounting_signals)
+          ]
+          operating_accounting_uncovered_status = operating_accounting_status.loc[
+              ~operating_accounting_status["signal"].isin(
+                  sec_signals if sec_evidence_present else set()
+              )
           ]
           if operating_accounting_evidence_present:
               assert len(operating_accounting_status) == 12
@@ -1130,9 +1144,9 @@ jobs:
                   os.environ["OPERATING_ACCOUNTING_EVIDENCE_COMMIT"]
               ).all()
           else:
-              assert operating_accounting_status["strict_gate_result"].eq(
-                  "not_attempted"
-              ).all()
+              assert operating_accounting_uncovered_status[
+                  "strict_gate_result"
+              ].eq("not_attempted").all()
           financing_issuance_status = implementation.loc[
               implementation["signal"].isin(financing_issuance_signals)
           ]
