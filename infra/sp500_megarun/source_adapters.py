@@ -7,6 +7,7 @@ same code path.
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from io import BytesIO, StringIO
 import re
@@ -258,20 +259,28 @@ def _cftc_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
                     or raw[:2048].count(b"\x00") > 100
                     else "cp1252"
                 )
+                decoded = raw.decode(text_encoding, errors="replace").replace("\x00", "")
                 try:
-                    frame = pd.read_csv(
-                        StringIO(raw.decode(text_encoding, errors="replace")),
-                        sep=",",
-                        engine="python",
-                        on_bad_lines="skip",
-                    )
-                except pd.errors.EmptyDataError:
+                    parsed_rows: list[list[str]] = []
+                    for line in decoded.splitlines():
+                        if not line.strip():
+                            continue
+                        row = next(csv.reader([line]))
+                        if len(row) == 1 and "," in row[0]:
+                            row = next(csv.reader([row[0].strip('"')]))
+                        parsed_rows.append(row)
+                    width = max((len(row) for row in parsed_rows), default=0)
+                    if width > 1 and len(parsed_rows) > 1:
+                        header = parsed_rows[0]
+                        body = [row for row in parsed_rows[1:] if len(row) == len(header)]
+                        frame = pd.DataFrame(body, columns=header)
+                    else:
+                        frame = pd.DataFrame()
+                except (csv.Error, ValueError):
                     frame = pd.DataFrame()
                 if frame.dropna(how="all").empty:
                     try:
-                        frame = pd.read_fwf(
-                            StringIO(raw.decode(text_encoding, errors="replace"))
-                        )
+                        frame = pd.read_fwf(StringIO(decoded))
                     except Exception:
                         frame = pd.DataFrame()
                 if not frame.dropna(how="all").empty:
