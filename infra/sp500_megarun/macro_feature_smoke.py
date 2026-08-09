@@ -155,7 +155,7 @@ def build_macro_feature_smoke(
         "F038": {"event_window": 20, "normalization_window": 252},
         "F039": {"window": 252},
         "F040": {"window": 24, "earnings_lag": 12},
-        "F041": {"slow_window": 8, "margin_window": 12, "positioning_window": 26},
+        "F041": {"slow_window": 8, "margin_window": 9, "positioning_window": 26},
         "F042": {"window": 63, "duration": 7},
         "F043": {"window": 63},
         "F044": {"window": 63},
@@ -163,7 +163,7 @@ def build_macro_feature_smoke(
         "F046": {"window": 63, "threshold": 0},
         "F047": {"window": 63},
         "F048": {"window": 63},
-        "F049": {"slow_window": 8, "margin_window": 12, "positioning_window": 26},
+        "F049": {"slow_window": 8, "margin_window": 9, "positioning_window": 26},
         "F050": {"calendar_rule": "turn_of_month", "hold": 3},
     }
     outputs = {
