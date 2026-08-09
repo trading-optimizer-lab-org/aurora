@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable
 
 import numpy as np
@@ -526,6 +528,51 @@ def build_sec_accounting_batch_evidence(
     )
 
 
+def write_sec_accounting_batch_outputs(
+    sub: pd.DataFrame,
+    tag: pd.DataFrame,
+    num: pd.DataFrame,
+    pre: pd.DataFrame,
+    identity: pd.DataFrame,
+    formation_months: Iterable[pd.Timestamp | str],
+    output_dir: Path | str,
+    *,
+    evidence_run_url: str,
+    evidence_artifact: str,
+    implementation_commit: str,
+) -> dict[str, int]:
+    """Persist deterministic batch inputs, observations, evidence, and counts."""
+
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    normalized = normalize_sec_fsd_tables(sub, tag, num, pre)
+    observations = calculate_sec_accounting_batch(
+        normalized,
+        identity,
+        formation_months,
+    )
+    evidence = build_sec_accounting_batch_evidence(
+        evidence_run_url=evidence_run_url,
+        evidence_artifact=evidence_artifact,
+        implementation_commit=implementation_commit,
+    )
+    summary = {
+        "normalized_facts": int(len(normalized)),
+        "observations": int(len(observations)),
+        "finite_values": int(observations["value"].notna().sum()),
+        "signals": int(evidence["signal"].nunique()),
+        "strict_approved": int(evidence["strict_gate_result"].eq("approved").sum()),
+    }
+    normalized.to_csv(output / "sec_accounting_batch_normalized_facts.csv", index=False)
+    observations.to_csv(output / "sec_accounting_batch_observations.csv", index=False)
+    evidence.to_csv(output / "sec_accounting_batch_evidence.csv", index=False)
+    (output / "sec_accounting_batch_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return summary
+
+
 __all__ = [
     "FORMULA_METADATA",
     "OPENAP_FORMULA_COMMIT",
@@ -533,4 +580,5 @@ __all__ = [
     "build_sec_accounting_batch_evidence",
     "calculate_sec_accounting_batch",
     "normalize_sec_fsd_tables",
+    "write_sec_accounting_batch_outputs",
 ]
