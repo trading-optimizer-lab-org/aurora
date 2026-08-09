@@ -276,6 +276,30 @@ def test_world_bank_all_commodities_finds_date_after_leading_blank_columns() -> 
     assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-01", "2020-12-01"]
 
 
+def test_world_bank_all_commodities_accepts_blank_date_header_cell() -> None:
+    workbook = BytesIO()
+    with pd.ExcelWriter(workbook, engine="openpyxl") as writer:
+        pd.DataFrame(
+            [
+                ["World Bank commodity prices", None, None],
+                [None, "Crude oil, WTI", "Gold"],
+                ["1998M01", 17.0, 290.0],
+                ["2020M12", 47.0, 1887.0],
+            ]
+        ).to_excel(writer, sheet_name="Monthly Prices", header=False, index=False)
+
+    frame = normalize_resource_payload(
+        "world_bank_all_commodities",
+        workbook.getvalue(),
+        format_name="xlsx",
+        resource_id="pink_all_blank_date_header",
+        maximum_observation_date="2020-12-31",
+    )
+
+    assert {"Crude oil, WTI", "Gold"} <= set(frame.columns)
+    assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-01", "2020-12-01"]
+
+
 def test_fomc_archive_keeps_meetings_statements_and_minutes_release_dates() -> None:
     payload = b"""
     <h5>February 3-4 Meeting - 1998</h5>

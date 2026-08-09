@@ -347,6 +347,12 @@ def _world_bank_all(payload: bytes, *, adapter: str, **_: object) -> pd.DataFram
             date_indexes = [
                 index for index, value in enumerate(labels) if value.casefold() == "date"
             ]
+            if not date_indexes and sum(bool(label) for label in labels) >= 2:
+                for index in range(len(labels)):
+                    sample = raw.iloc[row_index + 1 : row_index + 9, index]
+                    if _candidate_dates(sample, column_name="date").notna().sum() >= 2:
+                        date_indexes = [index]
+                        break
             if not date_indexes:
                 continue
             date_index = date_indexes[0]
@@ -359,7 +365,9 @@ def _world_bank_all(payload: bytes, *, adapter: str, **_: object) -> pd.DataFram
             frame.columns = [
                 labels[index] or f"column_{index}" for index in kept_indexes
             ]
-            frame = frame.rename(columns={labels[date_index]: "date"})
+            frame = frame.rename(
+                columns={labels[date_index] or f"column_{date_index}": "date"}
+            )
             frame["source_sheet"] = str(sheet_name)
             return _nonempty(frame, adapter=adapter)
     raise SourceAdapterError(f"WORLD_BANK_MONTHLY_TABLE_NOT_FOUND:{adapter}")

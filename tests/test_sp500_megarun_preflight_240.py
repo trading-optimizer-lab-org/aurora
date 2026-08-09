@@ -43,6 +43,15 @@ def test_repository_contract_freezes_240_lanes_and_three_physical_periods() -> N
     assert contract.boundaries.locked_opened is False
     assert all(dataset.cost == "free" for dataset in contract.datasets.values())
     assert all(dataset.available_at_rule for dataset in contract.datasets.values())
+    assert "D_SEC_INDEX" not in contract.datasets
+    lane_dependencies = {
+        lane.lane_id: set(lane.required_datasets) for lane in contract.lanes
+    }
+    assert lane_dependencies["F231"] == {"D_PHILLY_RT"}
+    assert lane_dependencies["F232"] == {"D_TREASURY_AUCTIONS"}
+    assert lane_dependencies["F233"] == {"D_FOMC_PUBLIC"}
+    assert lane_dependencies["F234"] == {"D_TIC"}
+    assert "D_SEC_INDEX" not in lane_dependencies["F240"]
 
 
 def test_repository_source_plan_is_github_only_and_stops_at_2020() -> None:

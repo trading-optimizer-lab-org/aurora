@@ -78,6 +78,16 @@ def test_weekly_or_monthly_sources_may_start_after_calendar_boundary() -> None:
     )
 
 
+def test_quarterly_source_may_end_at_start_of_final_quarter() -> None:
+    assert coverage_spans_research_window(
+        minimum_date="1998-01-01",
+        maximum_date="2020-10-01",
+        search_start="1998-01-01",
+        evaluation_end="2020-12-31",
+        evaluation_end_tolerance_days=100,
+    )
+
+
 def test_resource_expansion_builds_year_quarter_cross_product() -> None:
     rows = _expand_resource(
         {

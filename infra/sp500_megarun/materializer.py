@@ -193,6 +193,7 @@ def coverage_spans_research_window(
     maximum_date: str | date,
     search_start: str | date,
     evaluation_end: str | date,
+    evaluation_end_tolerance_days: int = 31,
 ) -> bool:
     """Accept the first/last scheduled observation near calendar boundaries."""
 
@@ -201,7 +202,7 @@ def coverage_spans_research_window(
 
     return parsed(minimum_date) <= parsed(search_start) + timedelta(days=31) and parsed(
         maximum_date
-    ) >= parsed(evaluation_end) - timedelta(days=31)
+    ) >= parsed(evaluation_end) - timedelta(days=evaluation_end_tolerance_days)
 
 
 def _write_report(report: Mapping[str, Any], output_dir: Path) -> None:
@@ -354,6 +355,7 @@ def materialize_primary_sources(
             maximum_date=maximum,
             search_start=contract.boundaries.search_start,
             evaluation_end=contract.boundaries.evaluation_end,
+            evaluation_end_tolerance_days=100 if dataset_id == "D_SPF" else 31,
         )
         target = normalized_dir / f"{dataset_id}.parquet"
         combined = parquet_safe_frame(combined)
