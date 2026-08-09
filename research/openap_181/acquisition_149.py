@@ -245,6 +245,9 @@ def _validate_current_rows(frame: pd.DataFrame) -> pd.DataFrame:
         offenders = sorted(rows.loc[lookahead, "signal"].astype(str).unique())
         raise AcquisitionContractError(f"lookahead detected for signals: {offenders}")
     invalid_checks = (
+        (finite & rows["formation_at"].isna(), "formation_at_missing"),
+        (finite & rows["period_end"].isna(), "effective_period_missing"),
+        (finite & rows["available_at"].isna(), "available_at_missing"),
         (
             finite
             & rows["available_at"].notna()
