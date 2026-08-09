@@ -792,3 +792,82 @@ def test_companyfacts_order_backlog_uses_average_assets_and_ratio_change() -> No
         "openap_orderbacklogchg_sec_companyfacts_current_proxy"
     )
     assert values["fidelity_class"].eq("unvalidated_proxy").all()
+
+
+def test_companyfacts_herfasset_averages_three_annual_sic4_concentrations() -> None:
+    fact_rows: list[dict[str, object]] = []
+    submission_rows: list[dict[str, object]] = []
+    status_rows: list[dict[str, object]] = []
+    assets_by_cik = {
+        1: (100.0, 100.0, 300.0),
+        2: (100.0, 300.0, 100.0),
+        3: (500.0, 500.0, 500.0),
+    }
+    sic_by_cik = {1: 3571, 2: 3571, 3: 4911}
+    for cik, annual_assets in assets_by_cik.items():
+        symbol = chr(64 + cik) * 3
+        for surface in ("companyfacts", "submissions"):
+            status_rows.append(
+                {
+                    "cik": cik,
+                    "symbol": symbol,
+                    "surface": surface,
+                    "status": "ok",
+                }
+            )
+        for year, assets in zip((2023, 2024, 2025), annual_assets, strict=True):
+            accepted = f"{year + 1}-02-15T15:00:00Z"
+            accession = f"{cik}-fy{year}"
+            fact_rows.append(
+                {
+                    "cik": cik,
+                    "entity_name": f"Issuer {cik}",
+                    "taxonomy": "us-gaap",
+                    "tag": "Assets",
+                    "unit": "USD",
+                    "value": assets,
+                    "period_start": "",
+                    "period_end": f"{year}-12-31",
+                    "fy": year,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": accepted[:10],
+                    "accession_number": accession,
+                    "frame": "",
+                    "available_at": accepted,
+                    "available_at_quality": "sec_acceptance_timestamp",
+                    "source": (
+                        "https://data.sec.gov/api/xbrl/companyfacts/"
+                        f"CIK{cik:010d}.json"
+                    ),
+                    "source_mode": "sec_official_api",
+                }
+            )
+            submission_rows.append(
+                {
+                    "cik": cik,
+                    "accession_number": accession,
+                    "accepted_at": accepted,
+                    "sic": sic_by_cik[cik],
+                }
+            )
+
+    values = _module().calculate_companyfacts_herfasset_current(
+        pd.DataFrame(fact_rows),
+        pd.DataFrame(submission_rows),
+        pd.DataFrame(status_rows),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    assert set(values["ticker"]) == {"AAA", "BBB"}
+    assert values["signal"].eq("HerfAsset").all()
+    expected = (0.5 + 0.625 + 0.625) / 3
+    assert values["value"].tolist() == pytest.approx([expected, expected])
+    assert values["fidelity_class"].eq("unvalidated_proxy").all()
+    assert values["formula_id"].eq(
+        "openap_herfasset_sec_companyfacts_current_proxy"
+    ).all()
+    assert pd.to_datetime(values["available_at"]).le(
+        pd.to_datetime(values["retrieved_at"])
+    ).all()
