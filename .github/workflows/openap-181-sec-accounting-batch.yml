@@ -1,6 +1,26 @@
 name: OpenAP 181 SEC Accounting Batch
 
 on:
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+      sec_user_agent:
+        required: true
+        type: string
+      start_quarter:
+        required: true
+        type: string
+      end_quarter:
+        required: true
+        type: string
+      formation_start:
+        required: true
+        type: string
+      formation_end:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       source_sha:

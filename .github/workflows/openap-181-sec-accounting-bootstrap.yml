@@ -1,0 +1,24 @@
+name: OpenAP 181 SEC Accounting Bootstrap
+
+on:
+  push:
+    branches:
+      - codex/openap-proxy44-validation
+    paths:
+      - .github/workflows/openap-181-sec-accounting-bootstrap.yml
+      - .github/workflows/openap-181-sec-accounting-batch.yml
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  execute:
+    uses: ./.github/workflows/openap-181-sec-accounting-batch.yml
+    with:
+      source_sha: ${{ github.sha }}
+      sec_user_agent: "Aurora OpenAP Research https://github.com/trading-optimizer-lab-org/aurora"
+      start_quarter: "2021q1"
+      end_quarter: "2024q4"
+      formation_start: "2021-01-31"
+      formation_end: "2024-12-31"
