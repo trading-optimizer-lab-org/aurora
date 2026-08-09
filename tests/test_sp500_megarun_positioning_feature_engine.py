@@ -293,6 +293,18 @@ def test_f086_supports_each_combined_minus_futures_participation_proxy(
     assert result["value"].notna().any()
 
 
+def test_f086_raw_participation_gap_is_available_on_first_cftc_release() -> None:
+    api = _engine_api()
+
+    result = api.evaluate_positioning_lane(
+        "F086",
+        _panels(),
+        {"statistic": "participation_gap", "window": 13, "lag": 1},
+    )
+
+    assert result["value"].first_valid_index() == 0
+
+
 @pytest.mark.parametrize(
     "statistic", ["noncommercial_gap", "commercial_gap", "gap_change", "open_interest_share"]
 )
@@ -306,6 +318,23 @@ def test_f087_supports_each_futures_combined_positioning_gap(statistic: str) -> 
     )
 
     assert result["value"].notna().any()
+
+
+def test_f087_raw_noncommercial_gap_is_available_on_first_cftc_release() -> None:
+    api = _engine_api()
+
+    result = api.evaluate_positioning_lane(
+        "F087",
+        _panels(),
+        {
+            "statistic": "noncommercial_gap",
+            "window": 13,
+            "lag": 1,
+            "direction": "continuation",
+        },
+    )
+
+    assert result["value"].first_valid_index() == 0
 
 
 @pytest.mark.parametrize(
@@ -359,6 +388,30 @@ def test_f090_common_correlation_waits_for_both_complete_windows() -> None:
     )
 
     assert result["value"].first_valid_index() == 78
+
+
+def test_f090_uses_the_available_industry_subset_during_isolated_gaps() -> None:
+    api = _engine_api()
+    panels = _panels(220)
+    panels["industries"].loc[150:170, "industry_0"] = np.nan
+
+    result = api.evaluate_positioning_lane(
+        "F090", panels, {"statistic": "common_correlation", "window": 40}
+    )
+
+    assert result["value"].iloc[-40:].notna().all()
+
+
+def test_f090_rejects_dates_below_the_frozen_industry_coverage_floor() -> None:
+    api = _engine_api()
+    panels = _panels(260)
+    panels["industries"].loc[150:, ["industry_0", "industry_1"]] = np.nan
+
+    result = api.evaluate_positioning_lane(
+        "F090", panels, {"statistic": "common_correlation", "window": 40}
+    )
+
+    assert result["value"].iloc[-1:].isna().all()
 
 
 def test_positioning_batch_contains_exactly_f081_f090() -> None:

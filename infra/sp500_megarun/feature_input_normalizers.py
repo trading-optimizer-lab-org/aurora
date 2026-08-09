@@ -156,7 +156,17 @@ def normalize_cboe_vol_panel(
             "vxo_close": old_close.combine_first(new_close),
         }
     ).dropna(subset=["vxo_close"])
-    panel = vix_values.merge(vxo_values, on="date", how="outer", validate="one_to_one")
+    panel = (
+        vix_values.merge(vxo_values, on="date", how="outer", validate="one_to_one")
+        .sort_values("date", kind="mergesort")
+        .reset_index(drop=True)
+    )
+    # The official histories contain a handful of isolated blank observations.
+    # Carry only already-published closes and cap the carry so a stale series
+    # cannot silently bridge a prolonged source outage.
+    panel[["vix_close", "vxo_close"]] = panel[["vix_close", "vxo_close"]].ffill(
+        limit=5
+    )
     if panel[["vix_close", "vxo_close"]].dropna(how="all").empty:
         raise FeatureInputNormalizerError("EMPTY_CBOE_VOL_PANEL")
     return _project_to_decision_session(panel, policy="next_session", sessions=sessions)

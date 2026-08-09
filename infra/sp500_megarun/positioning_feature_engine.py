@@ -346,7 +346,7 @@ def _f086(
     gap = ((combined - futures) / combined.replace(0.0, np.nan)).clip(0.0, 1.0)
     statistic = str(parameters.get("statistic", "participation_gap"))
     if statistic == "participation_gap":
-        value = _rolling_z(gap, window)
+        value = gap
     elif statistic == "change":
         value = _rolling_z(gap.diff(lag), window)
     elif statistic == "volume_scaled":
@@ -376,13 +376,15 @@ def _f087(
     combined = _numeric(cftc, "open_interest_combined", panel_name="cftc")
     statistic = str(parameters.get("statistic", "noncommercial_gap"))
     if statistic == "noncommercial_gap":
-        value = _rolling_z(noncommercial_gap, window)
+        value = noncommercial_gap
     elif statistic == "commercial_gap":
-        value = _rolling_z(commercial_gap, window)
+        value = commercial_gap
     elif statistic == "gap_change":
         value = _rolling_z(noncommercial_gap.diff(lag), window)
     elif statistic == "open_interest_share":
-        value = _rolling_z((combined - futures) / combined.replace(0.0, np.nan), window)
+        value = ((combined - futures) / combined.replace(0.0, np.nan)).clip(
+            0.0, 1.0
+        )
     else:
         raise PositioningFeatureEngineError(f"F087_UNKNOWN_STATISTIC:{statistic}")
     direction = str(parameters.get("direction", "continuation"))
@@ -479,19 +481,25 @@ def _f090(
     if len(industry_columns) < 2:
         raise PositioningFeatureEngineError("F090_INSUFFICIENT_INDUSTRIES")
     returns = industries[industry_columns].apply(pd.to_numeric, errors="coerce")
-    mean = returns.rolling(window, min_periods=window).mean()
-    deviation = returns.rolling(window, min_periods=window).std(ddof=0)
+    rolling_minimum = max(2, int(np.ceil(0.9 * window)))
+    mean = returns.rolling(window, min_periods=rolling_minimum).mean()
+    deviation = returns.rolling(window, min_periods=rolling_minimum).std(ddof=0)
     standardized = (returns - mean) / deviation.replace(0.0, np.nan)
-    count = float(len(industry_columns))
+    available_count = standardized.notna().sum(axis=1).astype(float)
+    minimum_industries = max(2, int(np.ceil(0.8 * len(industry_columns))))
     daily_pair_product = (
         standardized.sum(axis=1).pow(2) - standardized.pow(2).sum(axis=1)
-    ) / (count * (count - 1.0))
+    ) / (available_count * (available_count - 1.0))
     daily_pair_product = daily_pair_product.where(
-        standardized.notna().all(axis=1)
+        available_count.ge(float(minimum_industries))
     )
     common_correlation = daily_pair_product.rolling(
-        window, min_periods=window
+        window, min_periods=rolling_minimum
     ).mean().clip(-1.0, 1.0)
+    # Preserve the original two-complete-window warm-up on uninterrupted data;
+    # the relaxed counts above apply only to later isolated source gaps.
+    warmup_rows = min(len(common_correlation), 2 * window - 2)
+    common_correlation.iloc[:warmup_rows] = np.nan
     vix = _numeric(vol, "vix_close", panel_name="vol")
     spy_return = np.log(_numeric(spy, "close", panel_name="spy")).diff()
     realized_variance = 252.0 * spy_return.pow(2).rolling(
@@ -557,7 +565,7 @@ _POSITIONING_BATCH_PARAMETERS: Mapping[str, Mapping[str, Any]] = {
     },
     "F082": {
         "statistic": "change",
-        "window": 12,
+        "window": 6,
         "lag": 1,
         "direction": "continuation",
     },
@@ -574,7 +582,7 @@ _POSITIONING_BATCH_PARAMETERS: Mapping[str, Mapping[str, Any]] = {
         "positioning_window": 13,
     },
     "F085": {"statistic": "signed_volume_shock", "window": 126},
-    "F086": {"statistic": "volume_scaled", "window": 26, "lag": 1},
+    "F086": {"statistic": "participation_gap", "window": 26, "lag": 1},
     "F087": {
         "statistic": "noncommercial_gap",
         "window": 26,

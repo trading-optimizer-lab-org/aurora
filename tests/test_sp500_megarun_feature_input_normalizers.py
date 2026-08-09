@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -115,6 +116,62 @@ def test_cboe_panel_keeps_latest_observation_when_dates_share_next_session() -> 
     assert result.loc[0, "observed_at"] == pd.Timestamp("2010-01-09")
     assert result.loc[0, "vix_close"] == pytest.approx(21.0)
     assert result.loc[0, "vxo_close"] == pytest.approx(20.0)
+
+
+def test_cboe_panel_causally_carries_short_isolated_source_gaps() -> None:
+    api = _normalizer_api()
+    observations = pd.to_datetime(["2010-01-04", "2010-01-05", "2010-01-06"])
+    vix = pd.DataFrame(
+        {
+            "date": observations,
+            "CLOSE": [20.0, np.nan, 22.0],
+            "resource_id": "vix_from_2003",
+        }
+    )
+    vxo = pd.DataFrame(
+        {
+            "date": observations,
+            "4": [19.0, 20.0, np.nan],
+            "Unnamed: 4": np.nan,
+            "resource_id": "vxo_1986_2003",
+        }
+    )
+
+    result = api.normalize_cboe_vol_panel(vix, vxo, sessions=_sessions())
+
+    january_six = result.loc[result["date"].eq(pd.Timestamp("2010-01-06"))].iloc[0]
+    january_seven = result.loc[result["date"].eq(pd.Timestamp("2010-01-07"))].iloc[0]
+    assert january_six["vix_close"] == pytest.approx(20.0)
+    assert january_six["vxo_close"] == pytest.approx(20.0)
+    assert january_seven["vix_close"] == pytest.approx(22.0)
+    assert january_seven["vxo_close"] == pytest.approx(20.0)
+
+
+def test_cboe_panel_does_not_carry_a_close_beyond_five_source_rows() -> None:
+    api = _normalizer_api()
+    observations = pd.bdate_range("2010-01-04", periods=8)
+    sessions = pd.bdate_range("2010-01-04", periods=9)
+    vix = pd.DataFrame(
+        {
+            "date": observations,
+            "CLOSE": [20.0, *([np.nan] * 6), 22.0],
+            "resource_id": "vix_from_2003",
+        }
+    )
+    vxo = pd.DataFrame(
+        {
+            "date": observations,
+            "4": np.linspace(19.0, 20.0, len(observations)),
+            "Unnamed: 4": np.nan,
+            "resource_id": "vxo_1986_2003",
+        }
+    )
+
+    result = api.normalize_cboe_vol_panel(vix, vxo, sessions=sessions)
+
+    sixth_gap_decision = observations[6] + pd.offsets.BDay(1)
+    sixth_gap = result.loc[result["date"].eq(sixth_gap_decision)].iloc[0]
+    assert pd.isna(sixth_gap["vix_close"])
 
 
 def test_cftc_panel_filters_sp500_and_waits_until_friday() -> None:
