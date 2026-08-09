@@ -121,11 +121,17 @@ def test_prepare_fsd_batch_reduces_zip_and_builds_cik_cohort(tmp_path):
                     "https://www.sec.gov/files/dera/data/"
                     "financial-statement-data-sets/2024q1.zip"
                 ),
+                "access_url": (
+                    "https://www.sec.gov/files/dera/data/"
+                    "financial-statement-data-sets/2024q1.zip"
+                ),
+                "access_method": "sec_official_direct_fair_access",
                 "period": "2024q1",
                 "sha256": hashlib.sha256(payload).hexdigest(),
                 "size_bytes": len(payload),
                 "retrieved_at": "2026-08-09T08:00:00Z",
                 "status": "downloaded",
+                "http_status": 200,
                 "failure_reason": "",
             }
         ]
@@ -159,6 +165,13 @@ def test_prepare_fsd_batch_reduces_zip_and_builds_cik_cohort(tmp_path):
     assert expected["security_id"].eq("CIK-0000000001").all()
     assert expected["exchange"].eq("unknown_not_available_in_sec_fsd").all()
     assert expected["security_type"].eq("unknown_not_available_in_sec_fsd").all()
+    persisted_source = pd.read_csv(output / "source_manifest.csv")
+    assert persisted_source.loc[0, "access_url"].endswith("/2024q1.zip")
+    assert (
+        persisted_source.loc[0, "access_method"]
+        == "sec_official_direct_fair_access"
+    )
+    assert persisted_source.loc[0, "http_status"] == 200
     batch = import_module("aurora.research.openap_181.sec_accounting_batch")
     normalized = batch.normalize_sec_fsd_tables(
         pd.read_csv(output / "sub.csv"),

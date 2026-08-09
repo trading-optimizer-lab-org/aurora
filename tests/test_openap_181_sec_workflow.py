@@ -42,6 +42,9 @@ def test_sec_accounting_workflow_is_manual_bounded_pinned_and_fail_closed():
     assert "Declared research identity and contact email or HTTPS URL" in text
     assert '${#SEC_USER_AGENT} -ge 20' in text
     assert "--header \"User-Agent: ${SEC_USER_AGENT}\"" in text
+    assert "scripts/run_openap_181_sec_fsd_access.py" in text
+    assert "FSD_AVAILABLE" in text
+    assert "official_sec_fsd_access_blocked" in text
     assert "scripts/run_openap_181_sec_fsd_inputs.py" in text
     assert "scripts/run_openap_181_sec_accounting_batch.py" in text
     assert "scripts/run_openap_181_sec_accounting_validation.py" in text

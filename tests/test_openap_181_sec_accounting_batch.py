@@ -540,11 +540,17 @@ def test_validation_writer_persists_frozen_metrics_sources_and_summary(tmp_path)
                     "https://www.sec.gov/files/dera/data/"
                     "financial-statement-data-sets/2024q1.zip"
                 ),
+                "access_url": (
+                    "https://www.sec.gov/files/dera/data/"
+                    "financial-statement-data-sets/2024q1.zip"
+                ),
+                "access_method": "sec_official_direct_fair_access",
                 "period": "2024q1",
                 "sha256": "a" * 64,
                 "size_bytes": 1234,
                 "retrieved_at": "2026-08-09T08:00:00Z",
                 "status": "downloaded",
+                "http_status": 200,
                 "failure_reason": "",
             }
         ]
@@ -598,6 +604,10 @@ def test_validation_writer_persists_frozen_metrics_sources_and_summary(tmp_path)
     )
     assert persisted_sources.loc[0, "sha256"] == "a" * 64
     assert persisted_sources.loc[0, "status"] == "downloaded"
+    assert persisted_sources.loc[0, "access_method"] == (
+        "sec_official_direct_fair_access"
+    )
+    assert persisted_sources.loc[0, "http_status"] == 200
 
 
 def test_access_blocker_evidence_keeps_all_sec_signals_out_of_strict_score():
@@ -684,11 +694,17 @@ def test_sec_validation_cli_requires_gate_evidence_and_stays_identity_blocked(
                     "https://www.sec.gov/files/dera/data/"
                     "financial-statement-data-sets/2024q1.zip"
                 ),
+                "access_url": (
+                    "https://www.sec.gov/files/dera/data/"
+                    "financial-statement-data-sets/2024q1.zip"
+                ),
+                "access_method": "sec_official_direct_fair_access",
                 "period": "2024q1",
                 "sha256": "a" * 64,
                 "size_bytes": 1234,
                 "retrieved_at": "2026-08-09T08:00:00Z",
                 "status": "downloaded",
+                "http_status": 200,
                 "failure_reason": "",
             }
         ]

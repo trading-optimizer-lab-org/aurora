@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import hashlib
 from importlib import import_module
+from pathlib import Path
+import runpy
+import sys
 
 import pandas as pd
+import pytest
+
+from aurora.core.execution_policy import LocalRunBlocked
 
 
 class _Response:
@@ -124,3 +130,17 @@ def test_official_fsd_http_403_is_bounded_and_persisted_as_a_blocker(tmp_path):
     assert manifest.loc[0, "status"] == "failed"
     assert manifest.loc[0, "http_status"] == 403
     assert manifest.loc[0, "failure_reason"] == "http_403_after_2_attempts"
+
+
+def test_sec_fsd_access_cli_fails_closed_outside_github(tmp_path, monkeypatch):
+    script = (
+        Path(__file__).parents[1]
+        / "scripts"
+        / "run_openap_181_sec_fsd_access.py"
+    )
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT", raising=False)
+    monkeypatch.setattr(sys, "argv", [str(script), "--output-dir", str(tmp_path)])
+
+    with pytest.raises(LocalRunBlocked, match="OpenAP 181 SEC FSD access"):
+        runpy.run_path(str(script), run_name="__main__")
