@@ -15,6 +15,7 @@ from aurora.research.openap_181.sec_companyfacts_149 import (
     calculate_companyfacts_accounting_current,
     calculate_companyfacts_149_current,
     calculate_companyfacts_rdability_current,
+    calculate_companyfacts_realestate_current,
     calculate_sec_submission_current,
 )
 from aurora.research.openap_93.registry import REQUIRED_93
@@ -108,8 +109,21 @@ def main() -> int:
         formation_at=args.formation_at,
         retrieved_at=retrieved_at,
     )
+    realestate_values = calculate_companyfacts_realestate_current(
+        companyfacts,
+        submissions,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
     values = pd.concat(
-        [core_values, expanded_values, submission_values, rdability_values],
+        [
+            core_values,
+            expanded_values,
+            submission_values,
+            rdability_values,
+            realestate_values,
+        ],
         ignore_index=True,
     )
     if values.duplicated(["security_id", "signal", "formation_at"]).any():

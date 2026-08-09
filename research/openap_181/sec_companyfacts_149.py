@@ -53,6 +53,18 @@ _RDABILITY_ALIAS_LOOKUP = {
     for concept in ("revenue", "rd")
     for priority, alias in enumerate(SEC_CONCEPT_ALIASES[concept])
 }
+_REALESTATE_ALIAS_LOOKUP = {
+    "Assets": ("assets", 0),
+    "BuildingsAndImprovementsGross": ("buildings_gross", 0),
+    "BuildingsAndImprovementsNet": ("buildings_net", 0),
+    "LandAndLandImprovements": ("land", 0),
+    "PropertyPlantAndEquipmentGross": ("ppe_gross", 0),
+    "PropertyPlantAndEquipmentNet": ("ppe_net", 0),
+    (
+        "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfter"
+        "AccumulatedDepreciationAndAmortization"
+    ): ("ppe_net", 1),
+}
 _OUTPUT_COLUMNS = (
     "security_id",
     "ticker",
@@ -696,11 +708,243 @@ def calculate_companyfacts_rdability_current(
     ).reset_index(drop=True)
 
 
+def _realestate_annual_facts(
+    companyfacts: pd.DataFrame,
+    formation: pd.Timestamp,
+) -> pd.DataFrame:
+    required = _FACT_COLUMNS | {"taxonomy", "fy", "fp"}
+    _require_columns(companyfacts, required, "SEC CompanyFacts")
+    frame = companyfacts.copy()
+    frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce")
+    frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+    frame["fiscal_year"] = pd.to_numeric(frame["fy"], errors="coerce")
+    frame["period_end"] = _utc(frame["period_end"])
+    frame["filed_at"] = _utc(frame["filed"])
+    frame["available_at"] = _utc(frame["available_at"])
+    frame = frame.loc[
+        frame["cik"].notna()
+        & frame["value"].notna()
+        & np.isfinite(frame["value"])
+        & frame["fiscal_year"].notna()
+        & frame["taxonomy"].fillna("").astype(str).str.lower().eq("us-gaap")
+        & frame["tag"].isin(_REALESTATE_ALIAS_LOOKUP)
+        & frame["unit"].eq("USD")
+        & frame["form"].isin({"10-K", "10-K/A"})
+        & frame["fp"].fillna("").astype(str).eq("FY")
+        & frame["period_end"].notna()
+        & frame["filed_at"].notna()
+        & frame["available_at"].notna()
+        & frame["available_at"].le(formation)
+    ].copy()
+    if frame.empty:
+        return frame
+    frame["concept"] = frame["tag"].map(
+        lambda tag: _REALESTATE_ALIAS_LOOKUP[str(tag)][0]
+    )
+    frame["alias_priority"] = frame["tag"].map(
+        lambda tag: _REALESTATE_ALIAS_LOOKUP[str(tag)][1]
+    )
+    group = ["cik", "period_end", "concept"]
+    best_priority = frame.groupby(group)["alias_priority"].transform("min")
+    frame = frame.loc[frame["alias_priority"].eq(best_priority)].copy()
+    latest_available = frame.groupby(group)["available_at"].transform("max")
+    frame = frame.loc[frame["available_at"].eq(latest_available)].copy()
+    conflicts = frame.groupby(group)["value"].transform("nunique").gt(1)
+    frame = frame.loc[~conflicts].copy()
+    return frame.sort_values(group + ["filed_at", "accession_number"]).drop_duplicates(
+        group, keep="last"
+    )
+
+
+def _realestate_candidate(issuer_facts: pd.DataFrame) -> dict[str, Any] | None:
+    for period_end in sorted(issuer_facts["period_end"].unique(), reverse=True):
+        period = issuer_facts.loc[issuer_facts["period_end"].eq(period_end)].copy()
+        lookup = period.set_index("concept")
+        if "assets" not in lookup.index:
+            continue
+        assets = float(lookup.loc["assets", "value"])
+        if not np.isfinite(assets):
+            continue
+
+        new_concepts = ("buildings_gross", "land", "ppe_gross")
+        old_concepts = ("buildings_net", "land", "ppe_net")
+        used_concepts: tuple[str, ...] | None = None
+        variant = ""
+        ratio: float | None = None
+        for candidate_concepts, candidate_variant in (
+            (new_concepts, "gross"),
+            (old_concepts, "net"),
+        ):
+            if not set(candidate_concepts).issubset(lookup.index):
+                continue
+            buildings, land, ppe = (
+                float(lookup.loc[concept, "value"])
+                for concept in candidate_concepts
+            )
+            if not all(np.isfinite(value) for value in (buildings, land, ppe)):
+                continue
+            if ppe <= 0:
+                continue
+            candidate_ratio = (buildings + land) / ppe
+            if not np.isfinite(candidate_ratio):
+                continue
+            ratio = float(candidate_ratio)
+            used_concepts = ("assets", *candidate_concepts)
+            variant = candidate_variant
+            break
+        if ratio is None or used_concepts is None:
+            continue
+
+        used = period.loc[period["concept"].isin(used_concepts)]
+        return {
+            "cik": int(issuer_facts["cik"].iloc[0]),
+            "ratio": ratio,
+            "variant": variant,
+            "period_end": used["period_end"].max(),
+            "filed_at": used["filed_at"].max(),
+            "available_at": used["available_at"].max(),
+            "observation_count": int(len(used)),
+        }
+    return None
+
+
+def _latest_submission_sic(
+    submissions: pd.DataFrame,
+    formation: pd.Timestamp,
+) -> pd.DataFrame:
+    _require_columns(submissions, _SUBMISSION_COLUMNS, "SEC submissions")
+    filings = submissions.copy()
+    filings["cik"] = pd.to_numeric(filings["cik"], errors="coerce")
+    filings["sic"] = pd.to_numeric(filings["sic"], errors="coerce")
+    filings["accepted_at"] = _utc(filings["accepted_at"])
+    filings["accession_number"] = (
+        filings["accession_number"].fillna("").astype(str).str.strip()
+    )
+    filings = filings.loc[
+        filings["cik"].notna()
+        & filings["accepted_at"].notna()
+        & filings["accepted_at"].le(formation)
+    ].copy()
+    if filings.empty:
+        return pd.DataFrame(columns=["cik", "sic", "sic_available_at"])
+    filings = filings.sort_values(
+        ["cik", "accepted_at", "accession_number"]
+    ).drop_duplicates(["cik", "accepted_at", "accession_number"], keep="last")
+    latest_accepted = filings.groupby("cik")["accepted_at"].transform("max")
+    latest = filings.loc[filings["accepted_at"].eq(latest_accepted)].copy()
+    conflicts = latest.groupby("cik")["sic"].transform("nunique").gt(1)
+    latest = latest.loc[~conflicts & latest["sic"].notna()].copy()
+    latest = latest.sort_values(["cik", "accession_number"]).drop_duplicates(
+        "cik", keep="last"
+    )
+    latest["sic"] = latest["sic"].astype(int)
+    latest = latest.loc[latest["sic"].between(1, 9999)].copy()
+    latest["sic2"] = latest["sic"].map(lambda sic: f"{sic:04d}"[:2])
+    return latest.rename(columns={"accepted_at": "sic_available_at"})[
+        ["cik", "sic", "sic2", "sic_available_at"]
+    ]
+
+
+def calculate_companyfacts_realestate_current(
+    companyfacts: pd.DataFrame,
+    submissions: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+) -> pd.DataFrame:
+    """Build a causal SEC proxy for OpenAP's industry-adjusted real estate."""
+
+    formation = pd.Timestamp(formation_at)
+    if formation.tzinfo is None:
+        formation = formation.tz_localize("UTC")
+    else:
+        formation = formation.tz_convert("UTC")
+    retrieved = pd.Timestamp(retrieved_at)
+    if retrieved.tzinfo is None:
+        retrieved = retrieved.tz_localize("UTC")
+    else:
+        retrieved = retrieved.tz_convert("UTC")
+
+    identity = build_companyfacts_identity(status)
+    facts = _realestate_annual_facts(companyfacts, formation)
+    candidates = [
+        candidate
+        for _, issuer_facts in facts.groupby("cik", sort=False)
+        if (candidate := _realestate_candidate(issuer_facts)) is not None
+    ]
+    candidate_frame = pd.DataFrame(candidates)
+    if candidate_frame.empty or identity.empty:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+    sic = _latest_submission_sic(submissions, formation)
+    candidate_frame = (
+        candidate_frame.merge(sic, on="cik", how="inner", validate="one_to_one")
+        .merge(identity, on="cik", how="inner", validate="one_to_one")
+    )
+    if candidate_frame.empty:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+    candidate_frame["industry_count"] = candidate_frame.groupby("sic2")[
+        "ratio"
+    ].transform("count")
+    candidate_frame = candidate_frame.loc[
+        candidate_frame["industry_count"].ge(5)
+    ].copy()
+    if candidate_frame.empty:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+    candidate_frame["industry_mean"] = candidate_frame.groupby("sic2")[
+        "ratio"
+    ].transform("mean")
+    candidate_frame["value"] = (
+        candidate_frame["ratio"] - candidate_frame["industry_mean"]
+    )
+
+    rows: list[dict[str, Any]] = []
+    for row in candidate_frame.itertuples(index=False):
+        available_at = max(
+            pd.Timestamp(row.available_at), pd.Timestamp(row.sic_available_at)
+        )
+        if available_at > formation or not np.isfinite(row.value):
+            continue
+        rows.append(
+            {
+                "security_id": str(row.security_id),
+                "ticker": str(row.symbol),
+                "cik": f"{int(row.cik):010d}",
+                "signal": "realestate",
+                "formation_at": formation.isoformat(),
+                "period_end": pd.Timestamp(row.period_end).isoformat(),
+                "filed_at": pd.Timestamp(row.filed_at).isoformat(),
+                "available_at": available_at.isoformat(),
+                "retrieved_at": retrieved.isoformat(),
+                "value": float(row.value),
+                "fidelity_class": "unvalidated_proxy",
+                "current_usable": True,
+                "source_id": "sec_edgar",
+                "source_url": (
+                    "https://data.sec.gov/api/xbrl/companyfacts/"
+                    f"CIK{int(row.cik):010d}.json"
+                ),
+                "formula_id": "openap_realestate_sec_companyfacts_current_proxy",
+                "formula_sha256": "",
+                "observation_count": int(row.observation_count),
+                "reason_if_missing": "",
+                "caveat": (
+                    f"SEC CompanyFacts {row.variant} PP&E and current SEC SIC2 "
+                    "proxy; not validated as Compustat/CRSP-equivalent"
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
+        "security_id"
+    ).reset_index(drop=True)
+
+
 __all__ = [
     "build_companyfacts_identity",
     "calculate_companyfacts_accounting_current",
     "calculate_companyfacts_149_current",
     "calculate_companyfacts_rdability_current",
+    "calculate_companyfacts_realestate_current",
     "calculate_sec_submission_current",
     "normalize_companyfacts_for_accounting",
 ]
