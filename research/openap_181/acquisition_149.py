@@ -307,6 +307,62 @@ def _contract_fields(
     return required_text, history
 
 
+def merge_current_evidence(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Merge batches without mixing formation dates or hiding conflicts."""
+
+    if not frames:
+        return pd.DataFrame(columns=VALUE_COLUMNS)
+    parts = []
+    for batch_index, frame in enumerate(frames):
+        validated = _validate_current_rows(frame)
+        validated["_batch_index"] = batch_index
+        if "retrieved_at" in validated:
+            validated["_retrieved_at"] = pd.to_datetime(
+                validated["retrieved_at"], errors="coerce", utc=True
+            )
+        else:
+            validated["_retrieved_at"] = pd.NaT
+        parts.append(validated)
+    combined = pd.concat(parts, ignore_index=True, sort=False)
+    latest_formation = combined.groupby("signal")["formation_at"].transform("max")
+    combined = combined.loc[combined["formation_at"].eq(latest_formation)].copy()
+
+    key = ["security_id", "signal", "formation_at"]
+    duplicate = combined.duplicated(key, keep=False)
+    conflict_columns = [
+        "value",
+        "source_id",
+        "formula_id",
+        "period_end",
+        "available_at",
+    ]
+    if duplicate.any():
+        grouped = combined.loc[duplicate].groupby(key, dropna=False)
+        conflicts = grouped[conflict_columns].nunique(dropna=False).gt(1).any(axis=1)
+        if conflicts.any():
+            offenders = [
+                f"{security_id}:{signal}:{formation_at.isoformat()}"
+                for security_id, signal, formation_at in conflicts.index[conflicts]
+            ]
+            raise AcquisitionContractError(
+                "conflicting evidence at the same formation: " + "|".join(offenders)
+            )
+    combined = combined.sort_values(
+        key + ["_retrieved_at", "_batch_index"],
+        na_position="first",
+    ).drop_duplicates(key, keep="last")
+    combined = combined.drop(
+        columns=["_batch_index", "_retrieved_at", "_contract_invalid_reason"],
+        errors="ignore",
+    )
+    for column in ("formation_at", "period_end", "filed_at", "available_at"):
+        if column in combined:
+            combined[column] = pd.to_datetime(
+                combined[column], errors="coerce", utc=True
+            ).map(lambda value: value.isoformat() if pd.notna(value) else "")
+    return combined.sort_values(["signal", "security_id"]).reset_index(drop=True)
+
+
 def build_acquisition_matrix(
     routes: pd.DataFrame,
     current_rows: pd.DataFrame,
@@ -585,5 +641,6 @@ __all__ = [
     "TARGET_SIGNAL_COUNT",
     "build_acquisition_matrix",
     "load_target_routes",
+    "merge_current_evidence",
     "write_acquisition_outputs",
 ]
