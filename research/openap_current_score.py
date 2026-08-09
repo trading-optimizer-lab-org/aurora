@@ -927,6 +927,10 @@ ACCOUNTING_PROXY_LIMITS: dict[str, str] = {
     "NetDebtPrice": "Missing preferred stock, arrears, treasury stock and official filters",
     "OPLeverage": "Official operating-leverage formula and sample timing are incomplete",
     "OperProf": "Official smallest-size-tercile exclusion is not applied",
+    "OperProfRD": (
+        "Official share-code, market-equity, book-equity and financial-industry "
+        "filters are not available in the SEC-only reconstruction"
+    ),
     "XFIN": "Complete equity and debt financing cash-flow mapping is unavailable",
     "ShareIss1Y": "Uses annual SEC growth rather than shares from months t-18 to t-6",
     "ShareIss5Y": "Uses annual SEC observations rather than official monthly formation dates",
@@ -983,6 +987,16 @@ ACCOUNTING_FEATURE_DEPENDENCIES: dict[str, tuple[tuple[str, int], ...]] = {
     "NetDebtPrice": (("debt_current", 0), ("debt_long", 0), ("cash", 0)),
     "OPLeverage": (("sga", 0), ("cogs", 0), ("assets", 0)),
     "OperProf": (("revenue", 0), ("cogs", 0), ("sga", 0), ("interest", 0), ("equity", 0)),
+    "OperProfRD": (("revenue", 0), ("cogs", 0), ("sga", 0), ("assets", 0)),
+    "GrSaleToGrOverhead": (
+        ("revenue", 0),
+        ("revenue", 1),
+        ("revenue", 2),
+        ("sga", 0),
+        ("sga", 1),
+        ("sga", 2),
+    ),
+    "ShareRepurchase": (("repurchases", 0),),
     "XFIN": (("share_issuance", 0), ("dividends", 0), ("repurchases", 0), ("debt_issuance", 0), ("debt_reduction", 0), ("assets", 0)),
     "ShareIss1Y": (("shares", 0), ("shares", 1)),
     "ShareIss5Y": (("shares", 0), ("shares", 5)),
@@ -1439,6 +1453,21 @@ def calculate_accounting_features(
         difference(sales_growth, inventory_growth),
         "sales_growth_minus_inventory_growth_using_two_year_average",
     )
+    average_lag_sales = average_required(value("revenue", 1), value("revenue", 2))
+    average_lag_sga = average_required(value("sga", 1), value("sga", 2))
+    sales_growth_overhead = _safe_ratio(
+        difference(revenue, average_lag_sales), average_lag_sales
+    )
+    overhead_growth = _safe_ratio(difference(sga, average_lag_sga), average_lag_sga)
+    if sales_growth_overhead is None:
+        sales_growth_overhead = growth("revenue")
+    if overhead_growth is None:
+        overhead_growth = growth("sga")
+    result["GrSaleToGrOverhead"] = exact(
+        "GrSaleToGrOverhead",
+        difference(sales_growth_overhead, overhead_growth),
+        "sales_growth_minus_sga_growth_two_year_average_with_one_year_fallback",
+    )
     result["PayoutYield"] = exact(
         "PayoutYield",
         _safe_ratio(sum_required(dividends, repurchases), market_cap),
@@ -1499,6 +1528,17 @@ def calculate_accounting_features(
         _safe_ratio(operating_profit, equity),
         "revenue_minus_cogs_sga_interest_over_book_equity",
     )
+    operating_profit_rd = weighted_sum_required(
+        (1.0, revenue),
+        (-1.0, cogs),
+        (-1.0, sga),
+        (1.0, rd if rd is not None else 0.0),
+    )
+    result["OperProfRD"] = exact(
+        "OperProfRD",
+        _safe_ratio(operating_profit_rd, assets),
+        "revenue_minus_cogs_sga_plus_rd_over_assets",
+    )
     debt_reduction = value("debt_reduction")
     external_finance = sum_required(
         issuance,
@@ -1514,6 +1554,11 @@ def calculate_accounting_features(
     )
     result["ShareIss1Y"] = exact("ShareIss1Y", growth("shares"), "shares_growth_1y")
     result["ShareIss5Y"] = exact("ShareIss5Y", growth("shares", 5), "shares_growth_5y")
+    result["ShareRepurchase"] = exact(
+        "ShareRepurchase",
+        float(repurchases > 0) if repurchases is not None else None,
+        "share_repurchase_positive_indicator",
+    )
     tangible = None
     receivables = value("receivables")
     if assets is not None:
