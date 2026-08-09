@@ -10,7 +10,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from threading import BoundedSemaphore
 from typing import Mapping, Sequence
+from urllib.parse import urlsplit
 
 import requests
 
@@ -152,17 +154,24 @@ def probe_expanded_sources(
     *,
     fred_api_key: str = "",
     max_workers: int = 16,
+    per_host_workers: int = 4,
 ) -> tuple[dict[str, object], ...]:
     """Probe one source bundle concurrently while preserving declared order."""
 
     if not sources:
         return ()
     worker_count = max(1, min(max_workers, len(sources)))
+    host_limiters = {
+        host: BoundedSemaphore(max(1, per_host_workers))
+        for host in {urlsplit(source.url).netloc for source in sources}
+    }
+
+    def run_bounded(source: ExpandedSource) -> dict[str, object]:
+        with host_limiters[urlsplit(source.url).netloc]:
+            return _probe_one_source(source, fred_api_key=fred_api_key)
+
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        rows = executor.map(
-            lambda source: _probe_one_source(source, fred_api_key=fred_api_key),
-            sources,
-        )
+        rows = executor.map(run_bounded, sources)
         return tuple(rows)
 
 

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Lock
+import time
 
 import pytest
 
@@ -131,3 +132,36 @@ def test_probe_sources_uses_one_global_queue_across_datasets(
     )
 
     assert report["ready"] is True
+
+
+def test_probe_expanded_sources_limits_parallelism_per_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock = Lock()
+    active = 0
+    maximum_active = 0
+
+    class FakeResponse:
+        ok = True
+        status_code = 200
+        content = b"date,value\n2000-01-01,1\n"
+
+    def fake_get(url: str, **kwargs: object) -> FakeResponse:
+        nonlocal active, maximum_active
+        with lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        time.sleep(0.1)
+        with lock:
+            active -= 1
+        return FakeResponse()
+
+    monkeypatch.setattr("aurora.infra.sp500_megarun.source_probe.requests.get", fake_get)
+    sources = tuple(
+        ExpandedSource(str(index), f"https://one.example/{index}.csv", "csv")
+        for index in range(4)
+    )
+
+    probe_expanded_sources(sources, max_workers=4, per_host_workers=2)
+
+    assert maximum_active == 2
