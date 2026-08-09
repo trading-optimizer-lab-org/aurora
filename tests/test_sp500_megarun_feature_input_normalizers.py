@@ -826,6 +826,10 @@ def test_french_panels_use_ff3_and_48_industries_at_next_session() -> None:
         industries, sessions=_sessions()
     )
     pd.testing.assert_frame_equal(standalone, industry_panel)
+    standalone_factors = api.normalize_french_factor_panel(
+        factors, sessions=_sessions()
+    )
+    pd.testing.assert_frame_equal(standalone_factors, factor_panel)
 
 
 def test_revised_z1_proxy_waits_full_year_and_margin_waits_two_months() -> None:

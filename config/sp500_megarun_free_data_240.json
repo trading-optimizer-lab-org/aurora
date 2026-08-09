@@ -65,6 +65,8 @@
     "F103": {"required_datasets":["D_GOYAL","D_SHILLER"],"fidelity":"proxy","replacement_note":"Use conservatively lagged aggregate earnings, dividends and payout only; no aggregate margin or historical-vintage claim is made."},
     "F104": {"required_datasets":["D_GOYAL","D_Z1"],"fidelity":"proxy","replacement_note":"Use aggregate net equity issuance and public Z.1 transactions; buyback and insider components are omitted."},
     "F109": {"required_datasets":["D_Z1","D_EPU","D_CFTC_LEGACY","D_CBOE_VOL"],"fidelity":"proxy","replacement_note":"Compose public balance-sheet, uncertainty, positioning and volatility inputs; no analyst or retail survey is claimed."}
+    ,"F119": {"required_datasets":["D_SPY","D_CBOE_VOL","D_RATES","D_FIN_COND","D_MACRO_PIT","D_FRENCH_FACTORS","D_FRENCH_INDUSTRIES"],"fidelity":"redesigned","replacement_note":"Combine seven preregistered causal states without outcome-fitted weights; use the contemporaneously public VXO/VIX bridge."}
+    ,"F120": {"required_datasets":["D_SPY","D_CBOE_VOL","D_RATES","D_FIN_COND","D_MACRO_PIT","D_FRENCH_FACTORS","D_FRENCH_INDUSTRIES"],"fidelity":"exact","replacement_note":"Search only historical state vectors whose forward return is already known after the frozen embargo; use the contemporaneously public VXO/VIX bridge."}
   },
   "lanes": [
     {"lane_id":"F121","required_datasets":["D_SPY"],"fidelity":"exact","original_dependency":"52-week highs lows and record distance","replacement_note":""},

@@ -52,10 +52,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 111)]
+    ] == [f"F{index:03d}" for index in range(1, 121)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[110:]
+        for lane in feature_contract.lanes[120:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -210,6 +210,15 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "shock_divergence",
     )
     assert all(lane.minimum_history >= 20 for lane in fundamental_lanes)
+    cross_section_lanes = feature_contract.lanes[110:120]
+    assert cross_section_lanes[0].parameter_space["statistic"] == (
+        "cyclical_defensive_spread", "leadership_breadth", "rotation", "dispersion_gap"
+    )
+    assert cross_section_lanes[8].required_datasets[1] == "D_CBOE_VOL"
+    assert cross_section_lanes[8].parameter_space["statistic"] == (
+        "mean_forecast", "median_forecast", "consensus", "disagreement"
+    )
+    assert cross_section_lanes[9].parameter_space["features"] == (3, 5, 7)
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:

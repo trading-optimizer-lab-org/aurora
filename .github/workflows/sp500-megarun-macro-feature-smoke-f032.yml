@@ -1,4 +1,4 @@
-name: SP500 Megarun Train Feature Smoke F001-F110
+name: SP500 Megarun Train Feature Smoke F001-F120
 
 on:
   push:
@@ -23,6 +23,8 @@ on:
       - infra/sp500_megarun/tail_macro_feature_smoke.py
       - infra/sp500_megarun/fundamental_feature_engine.py
       - infra/sp500_megarun/fundamental_feature_smoke.py
+      - infra/sp500_megarun/cross_section_feature_engine.py
+      - infra/sp500_megarun/cross_section_feature_smoke.py
       - config/sp500_megarun_feature_contract_240.json
       - config/sp500_megarun_free_data_120.json
       - config/sp500_megarun_free_data_240.json
@@ -36,6 +38,7 @@ on:
       - scripts/run_sp500_megarun_positioning_feature_smoke_f081.py
       - scripts/run_sp500_megarun_tail_macro_feature_smoke_f091.py
       - scripts/run_sp500_megarun_fundamental_feature_smoke_f101.py
+      - scripts/run_sp500_megarun_cross_section_feature_smoke_f111.py
       - tests/test_sp500_megarun_data_contract.py
       - tests/test_sp500_megarun_feature_contract.py
       - tests/test_sp500_megarun_feature_engine_price.py
@@ -57,6 +60,8 @@ on:
       - tests/test_sp500_megarun_tail_macro_feature_smoke.py
       - tests/test_sp500_megarun_fundamental_feature_engine.py
       - tests/test_sp500_megarun_fundamental_feature_smoke.py
+      - tests/test_sp500_megarun_cross_section_feature_engine.py
+      - tests/test_sp500_megarun_cross_section_feature_smoke.py
   workflow_dispatch:
     inputs:
       source_run_id:
@@ -69,7 +74,7 @@ permissions:
   contents: read
 
 jobs:
-  smoke_f001_f110:
+  smoke_f001_f120:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -93,7 +98,7 @@ jobs:
           python -m pip install --require-hashes -r requirements/github-performance.lock
           python -m pip install "pytest==9.0.3"
           python -m pip install --no-deps -e .
-      - name: Verify F001-F110 fail-closed implementations
+      - name: Verify F001-F120 fail-closed implementations
         run: |
           python -m pytest \
             tests/test_sp500_megarun_feature_contract.py \
@@ -117,6 +122,8 @@ jobs:
             tests/test_sp500_megarun_tail_macro_feature_smoke.py \
             tests/test_sp500_megarun_fundamental_feature_engine.py \
             tests/test_sp500_megarun_fundamental_feature_smoke.py \
+            tests/test_sp500_megarun_cross_section_feature_engine.py \
+            tests/test_sp500_megarun_cross_section_feature_smoke.py \
             -q
       - name: Download only the verified train snapshot
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -174,6 +181,11 @@ jobs:
           python scripts/run_sp500_megarun_fundamental_feature_smoke_f101.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_fundamental_feature_smoke_f101_f110
+      - name: Execute and audit F111-F120 on train only
+        run: |
+          python scripts/run_sp500_megarun_cross_section_feature_smoke_f111.py \
+            --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
+            --output-dir outputs/sp500_megarun_cross_section_feature_smoke_f111_f120
       - name: Upload F001-F020 train-only evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -235,5 +247,12 @@ jobs:
         with:
           name: sp500-megarun-fundamental-feature-smoke-F101-F110-${{ github.run_id }}
           path: outputs/sp500_megarun_fundamental_feature_smoke_f101_f110
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload F111-F120 train-only evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-cross-section-feature-smoke-F111-F120-${{ github.run_id }}
+          path: outputs/sp500_megarun_cross_section_feature_smoke_f111_f120
           if-no-files-found: error
           retention-days: 90

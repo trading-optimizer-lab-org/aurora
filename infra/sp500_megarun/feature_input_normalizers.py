@@ -1202,6 +1202,22 @@ def normalize_french_us_panels(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Prepare broad-US factor and 48-industry returns for the next session."""
 
+    factor_panel = normalize_french_factor_panel(
+        factor_frame, sessions=sessions
+    )
+    industry_panel = normalize_french_industry_panel(
+        industry_frame, sessions=sessions
+    )
+    return factor_panel, industry_panel
+
+
+def normalize_french_factor_panel(
+    factor_frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Prepare the broad-US daily FF3 factors without an industry dependency."""
+
     factors = _validated_dates(factor_frame, dataset_id="D_FRENCH_FACTORS")
     if "resource_id" in factors:
         factors = factors.loc[factors["resource_id"].astype(str).eq("ff3_daily")]
@@ -1219,14 +1235,8 @@ def normalize_french_us_panels(
             factor_panel[column], errors="coerce"
         ) / 100.0
     factor_panel = factor_panel.dropna(subset=list(factor_columns.values()))
-    industry_panel = normalize_french_industry_panel(
-        industry_frame, sessions=sessions
-    )
-    return (
-        _project_to_decision_session(
-            factor_panel, policy="next_session", sessions=sessions
-        ),
-        industry_panel,
+    return _project_to_decision_session(
+        factor_panel, policy="next_session", sessions=sessions
     )
 
 
@@ -1413,6 +1423,7 @@ __all__ = [
     "normalize_fomc_decision_panel",
     "normalize_fomc_event_panel",
     "normalize_french_industry_panel",
+    "normalize_french_factor_panel",
     "normalize_french_us_panels",
     "normalize_fx_cross_asset_panel",
     "normalize_lagged_valuation_panel",
