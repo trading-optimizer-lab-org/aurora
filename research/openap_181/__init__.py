@@ -22,6 +22,7 @@ from .sec_accounting_batch import (
     SEC_ACCOUNTING_BATCH,
     build_sec_accounting_batch_evidence,
     calculate_sec_accounting_batch,
+    evaluate_sec_accounting_validation,
     normalize_sec_fsd_tables,
     write_sec_accounting_batch_outputs,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "SEC_ACCOUNTING_BATCH",
     "build_sec_accounting_batch_evidence",
     "calculate_sec_accounting_batch",
+    "evaluate_sec_accounting_validation",
     "normalize_sec_fsd_tables",
     "write_sec_accounting_batch_outputs",
 ]

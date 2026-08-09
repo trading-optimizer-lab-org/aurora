@@ -39,6 +39,19 @@ class ConceptSpec:
     statement: str
 
 
+@dataclass(frozen=True)
+class SecAccountingValidationThresholds:
+    minimum_paired_rows: int = 60
+    minimum_paired_months: int = 12
+    minimum_cross_sectional_coverage: float = 0.80
+    minimum_spearman: float = 0.95
+    minimum_sign_agreement: float = 0.95
+    minimum_extreme_decile_agreement: float = 0.80
+
+
+FROZEN_VALIDATION_THRESHOLDS = SecAccountingValidationThresholds()
+
+
 CONCEPT_SPECS = {
     "assets": ConceptSpec(("Assets",), "BS"),
     "cash_combined": ConceptSpec(("CashAndShortTermInvestments",), "BS"),
@@ -573,12 +586,378 @@ def write_sec_accounting_batch_outputs(
     return summary
 
 
+def _month_end(values: pd.Series) -> pd.Series:
+    dates = pd.to_datetime(values, errors="coerce")
+    if getattr(dates.dt, "tz", None) is not None:
+        dates = dates.dt.tz_localize(None)
+    return dates + pd.offsets.MonthEnd(0)
+
+
+def _jaccard(left: set[object], right: set[object]) -> float:
+    union = left | right
+    return float(len(left & right) / len(union)) if union else np.nan
+
+
+def _extreme_decile_agreement(pair: pd.DataFrame) -> float:
+    monthly = []
+    for _, group in pair.groupby("formation_at", sort=True):
+        if len(group) < 2:
+            continue
+        count = max(1, int(np.ceil(len(group) * 0.10)))
+        observed = group["value"].sort_values()
+        reference = group["reference_value"].sort_values()
+        low = _jaccard(set(observed.index[:count]), set(reference.index[:count]))
+        high = _jaccard(set(observed.index[-count:]), set(reference.index[-count:]))
+        monthly.append(float(np.nanmean([low, high])))
+    return float(np.mean(monthly)) if monthly else np.nan
+
+
+def _coverage_breakdown(
+    expected: pd.DataFrame,
+    found_keys: set[tuple[str, pd.Timestamp]],
+    column: str,
+) -> str:
+    if column not in expected.columns:
+        return "{}"
+    records: dict[str, dict[str, float | int]] = {}
+    for value, group in expected.groupby(column, dropna=False):
+        keys = set(zip(group["security_id"], group["formation_at"], strict=False))
+        found = len(keys & found_keys)
+        records[str(value)] = {
+            "expected": len(keys),
+            "found": found,
+            "coverage": found / len(keys) if keys else 0.0,
+        }
+    return json.dumps(records, sort_keys=True)
+
+
+def _coverage_metrics(
+    observations: pd.DataFrame,
+    expected_universe: pd.DataFrame,
+    thresholds: SecAccountingValidationThresholds,
+) -> pd.DataFrame:
+    _require_columns(
+        expected_universe,
+        {"security_id", "formation_at"},
+        "expected universe",
+    )
+    expected = expected_universe.copy()
+    expected["security_id"] = expected["security_id"].astype(str).str.strip()
+    expected["formation_at"] = _month_end(expected["formation_at"])
+    expected = expected.dropna(subset=["security_id", "formation_at"]).drop_duplicates(
+        ["security_id", "formation_at"]
+    )
+    expected_keys = set(zip(expected["security_id"], expected["formation_at"], strict=False))
+    rows = []
+    for signal in SEC_ACCOUNTING_BATCH:
+        found = observations.loc[
+            observations["signal"].eq(signal) & observations["value"].notna(),
+            ["security_id", "formation_at"],
+        ].drop_duplicates()
+        found_keys = set(zip(found["security_id"], found["formation_at"], strict=False))
+        matched = expected_keys & found_keys
+        matched_frame = pd.DataFrame(list(matched), columns=["security_id", "formation_at"])
+        expected_companies = int(expected["security_id"].nunique())
+        found_companies = int(matched_frame["security_id"].nunique()) if matched else 0
+        expected_months = int(expected["formation_at"].nunique())
+        valid_months = int(matched_frame["formation_at"].nunique()) if matched else 0
+        ratio = len(matched) / len(expected_keys) if expected_keys else 0.0
+        delisted_expected = (
+            int(expected["delisted"].fillna(False).map(bool).sum())
+            if "delisted" in expected
+            else 0
+        )
+        delisted_found = 0
+        if "delisted" in expected and matched:
+            delisted_found = int(
+                expected.loc[
+                    expected.apply(
+                        lambda row: (row["security_id"], row["formation_at"]) in matched,
+                        axis=1,
+                    ),
+                    "delisted",
+                ]
+                .fillna(False)
+                .map(bool)
+                .sum()
+            )
+        rows.append(
+            {
+                "signal": signal,
+                "expected_rows": int(len(expected_keys)),
+                "found_rows": int(len(matched)),
+                "coverage_ratio": float(ratio),
+                "expected_companies": expected_companies,
+                "found_companies": found_companies,
+                "expected_months": expected_months,
+                "valid_months": valid_months,
+                "first_expected_period": expected["formation_at"].min(),
+                "last_expected_period": expected["formation_at"].max(),
+                "first_valid_period": (
+                    matched_frame["formation_at"].min() if matched else pd.NaT
+                ),
+                "last_valid_period": (
+                    matched_frame["formation_at"].max() if matched else pd.NaT
+                ),
+                "expected_delisted_rows": delisted_expected,
+                "found_delisted_rows": delisted_found,
+                "coverage_by_exchange": _coverage_breakdown(
+                    expected, matched, "exchange"
+                ),
+                "coverage_by_security_type": _coverage_breakdown(
+                    expected, matched, "security_type"
+                ),
+                "minimum_cross_sectional_coverage": (
+                    thresholds.minimum_cross_sectional_coverage
+                ),
+                "coverage_pass": bool(
+                    expected_keys
+                    and ratio >= thresholds.minimum_cross_sectional_coverage
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _empty_fidelity_row(
+    signal: str,
+    thresholds: SecAccountingValidationThresholds,
+    status: str,
+) -> dict[str, Any]:
+    return {
+        "signal": signal,
+        "measurement_status": status,
+        "paired_rows": 0,
+        "paired_months": 0,
+        "paired_companies": 0,
+        "pearson": np.nan,
+        "spearman": np.nan,
+        "sign_agreement": np.nan,
+        "extreme_decile_agreement": np.nan,
+        "mean_absolute_error": np.nan,
+        "mean_relative_error": np.nan,
+        "monthly_spearman_std": np.nan,
+        "minimum_paired_rows": thresholds.minimum_paired_rows,
+        "minimum_paired_months": thresholds.minimum_paired_months,
+        "minimum_spearman": thresholds.minimum_spearman,
+        "minimum_sign_agreement": thresholds.minimum_sign_agreement,
+        "minimum_extreme_decile_agreement": (
+            thresholds.minimum_extreme_decile_agreement
+        ),
+        "fidelity_pass": False,
+    }
+
+
+def _fidelity_metrics(
+    observations: pd.DataFrame,
+    reference: pd.DataFrame,
+    thresholds: SecAccountingValidationThresholds,
+    *,
+    identity_verified: bool,
+) -> pd.DataFrame:
+    if not identity_verified:
+        return pd.DataFrame(
+            [
+                _empty_fidelity_row(
+                    signal,
+                    thresholds,
+                    "blocked_identity_not_verified",
+                )
+                for signal in SEC_ACCOUNTING_BATCH
+            ]
+        )
+    _require_columns(
+        reference,
+        {"security_id", "formation_at", "signal", "reference_value"},
+        "OpenAP reference",
+    )
+    official = reference.copy()
+    official["security_id"] = official["security_id"].astype(str).str.strip()
+    official["formation_at"] = _month_end(official["formation_at"])
+    official["reference_value"] = pd.to_numeric(
+        official["reference_value"], errors="coerce"
+    )
+    official = official.dropna(
+        subset=["security_id", "formation_at", "signal", "reference_value"]
+    ).drop_duplicates(["security_id", "formation_at", "signal"])
+    rows = []
+    for signal in SEC_ACCOUNTING_BATCH:
+        measured = observations.loc[
+            observations["signal"].eq(signal),
+            ["security_id", "formation_at", "value"],
+        ]
+        target = official.loc[
+            official["signal"].eq(signal),
+            ["security_id", "formation_at", "reference_value"],
+        ]
+        pair = measured.merge(
+            target,
+            on=["security_id", "formation_at"],
+            how="inner",
+            validate="one_to_one",
+        ).dropna(subset=["value", "reference_value"])
+        if pair.empty:
+            rows.append(
+                _empty_fidelity_row(signal, thresholds, "no_aligned_reference_rows")
+            )
+            continue
+        pearson = pair["value"].corr(pair["reference_value"], method="pearson")
+        spearman = pair["value"].corr(pair["reference_value"], method="spearman")
+        signs = pair.loc[pair["value"].ne(0) & pair["reference_value"].ne(0)]
+        sign_agreement = (
+            float((np.sign(signs["value"]) == np.sign(signs["reference_value"])).mean())
+            if not signs.empty
+            else np.nan
+        )
+        extreme = _extreme_decile_agreement(pair)
+        absolute_error = (pair["value"] - pair["reference_value"]).abs()
+        relative = absolute_error.loc[pair["reference_value"].ne(0)] / pair.loc[
+            pair["reference_value"].ne(0), "reference_value"
+        ].abs()
+        monthly_spearman = pd.Series(
+            [
+                group["value"].corr(group["reference_value"], method="spearman")
+                for _, group in pair.groupby("formation_at", sort=True)
+            ],
+            dtype=float,
+        )
+        paired_months = int(pair["formation_at"].nunique())
+        passed = bool(
+            len(pair) >= thresholds.minimum_paired_rows
+            and paired_months >= thresholds.minimum_paired_months
+            and pd.notna(spearman)
+            and float(spearman) >= thresholds.minimum_spearman
+            and pd.notna(sign_agreement)
+            and sign_agreement >= thresholds.minimum_sign_agreement
+            and pd.notna(extreme)
+            and extreme >= thresholds.minimum_extreme_decile_agreement
+        )
+        rows.append(
+            {
+                "signal": signal,
+                "measurement_status": "measured",
+                "paired_rows": int(len(pair)),
+                "paired_months": paired_months,
+                "paired_companies": int(pair["security_id"].nunique()),
+                "pearson": float(pearson) if pd.notna(pearson) else np.nan,
+                "spearman": float(spearman) if pd.notna(spearman) else np.nan,
+                "sign_agreement": sign_agreement,
+                "extreme_decile_agreement": extreme,
+                "mean_absolute_error": float(absolute_error.mean()),
+                "mean_relative_error": (
+                    float(relative.mean()) if not relative.empty else np.nan
+                ),
+                "monthly_spearman_std": float(monthly_spearman.std(ddof=0)),
+                "minimum_paired_rows": thresholds.minimum_paired_rows,
+                "minimum_paired_months": thresholds.minimum_paired_months,
+                "minimum_spearman": thresholds.minimum_spearman,
+                "minimum_sign_agreement": thresholds.minimum_sign_agreement,
+                "minimum_extreme_decile_agreement": (
+                    thresholds.minimum_extreme_decile_agreement
+                ),
+                "fidelity_pass": passed,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def evaluate_sec_accounting_validation(
+    observations: pd.DataFrame,
+    reference: pd.DataFrame,
+    expected_universe: pd.DataFrame,
+    *,
+    point_in_time_verified: bool,
+    identity_verified: bool,
+    evidence_run_url: str,
+    evidence_artifact: str,
+    implementation_commit: str,
+    thresholds: SecAccountingValidationThresholds = FROZEN_VALIDATION_THRESHOLDS,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Measure the frozen gates without using results to alter mappings or thresholds."""
+
+    _require_columns(
+        observations,
+        {"security_id", "formation_at", "signal", "value"},
+        "SEC observations",
+    )
+    measured = observations.copy()
+    measured["security_id"] = measured["security_id"].astype(str).str.strip()
+    measured["formation_at"] = _month_end(measured["formation_at"])
+    measured["value"] = pd.to_numeric(measured["value"], errors="coerce")
+    measured = measured.loc[measured["signal"].isin(SEC_ACCOUNTING_BATCH)].drop_duplicates(
+        ["security_id", "formation_at", "signal"]
+    )
+    coverage = _coverage_metrics(measured, expected_universe, thresholds)
+    fidelity = _fidelity_metrics(
+        measured,
+        reference,
+        thresholds,
+        identity_verified=identity_verified,
+    )
+    coverage_index = coverage.set_index("signal")
+    fidelity_index = fidelity.set_index("signal")
+    rows = []
+    for signal in SEC_ACCOUNTING_BATCH:
+        coverage_pass = bool(coverage_index.loc[signal, "coverage_pass"])
+        fidelity_measured = bool(
+            identity_verified
+            and fidelity_index.loc[signal, "measurement_status"] == "measured"
+        )
+        fidelity_pass = bool(fidelity_index.loc[signal, "fidelity_pass"])
+        approved = bool(
+            point_in_time_verified
+            and identity_verified
+            and coverage_pass
+            and fidelity_measured
+            and fidelity_pass
+        )
+        if not point_in_time_verified:
+            blocker = "point_in_time_not_verified"
+        elif not identity_verified:
+            blocker = "identity_not_verified"
+        elif not coverage_pass:
+            blocker = "coverage_below_frozen_threshold"
+        elif not fidelity_measured:
+            blocker = "fidelity_not_measured"
+        elif not fidelity_pass:
+            blocker = "fidelity_below_frozen_threshold"
+        else:
+            blocker = "none"
+        rows.append(
+            {
+                "signal": signal,
+                "formula_implemented": True,
+                "data_pipeline_implemented": True,
+                "point_in_time_verified": bool(point_in_time_verified),
+                "identity_verified": bool(identity_verified),
+                "coverage_measured": True,
+                "fidelity_measured": fidelity_measured,
+                "coverage_result": "pass" if coverage_pass else "fail",
+                "fidelity_result": (
+                    "pass"
+                    if fidelity_pass
+                    else "fail"
+                    if fidelity_measured
+                    else "not_measured"
+                ),
+                "strict_gate_result": "approved" if approved else "blocked",
+                "blocking_reason": blocker,
+                "evidence_run_url": evidence_run_url,
+                "evidence_artifact": evidence_artifact,
+                "implementation_commit": implementation_commit,
+            }
+        )
+    return pd.DataFrame(rows), coverage, fidelity
+
+
 __all__ = [
     "FORMULA_METADATA",
+    "FROZEN_VALIDATION_THRESHOLDS",
     "OPENAP_FORMULA_COMMIT",
     "SEC_ACCOUNTING_BATCH",
     "build_sec_accounting_batch_evidence",
     "calculate_sec_accounting_batch",
+    "evaluate_sec_accounting_validation",
     "normalize_sec_fsd_tables",
     "write_sec_accounting_batch_outputs",
 ]
