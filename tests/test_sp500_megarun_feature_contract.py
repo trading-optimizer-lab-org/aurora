@@ -52,11 +52,17 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 51)]
+    ] == [f"F{index:03d}" for index in range(1, 61)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[50:]
+        for lane in feature_contract.lanes[60:]
     )
+    model_lanes = feature_contract.lanes[50:60]
+    assert all("approved_features" not in lane.formula for lane in model_lanes)
+    assert all(lane.minimum_history >= 5 for lane in model_lanes)
+    assert model_lanes[5].parameter_space["model"] == ("logit", "probit")
+    assert model_lanes[6].parameter_space["model"] == ("gam", "pls")
+    assert model_lanes[7].parameter_space["model"] == ("tree", "boosted_stumps")
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:

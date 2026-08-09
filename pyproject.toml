@@ -17,6 +17,7 @@ dependencies = [
     "matplotlib>=3.7",
     "yfinance>=0.2.40",
     "pyarrow>=14",
+    "openpyxl>=3.1",
     "duckdb>=1.1,<2",
     "pyyaml>=6",
     "numba>=0.58",
@@ -94,6 +95,7 @@ packages = [
     "aurora.infra.gtbi_v7_readiness",
     "aurora.infra.sp500_autonomous_discovery",
     "aurora.infra.sp500_long_short_daily",
+    "aurora.infra.sp500_megarun",
     "aurora.infra.sp500_search_method_benchmark",
     "aurora.marketdata",
     "aurora.markets",
@@ -148,6 +150,7 @@ packages = [
 "aurora.infra.gtbi_v7_readiness" = "infra/gtbi_v7_readiness"
 "aurora.infra.sp500_autonomous_discovery" = "infra/sp500_autonomous_discovery"
 "aurora.infra.sp500_long_short_daily" = "infra/sp500_long_short_daily"
+"aurora.infra.sp500_megarun" = "infra/sp500_megarun"
 "aurora.infra.sp500_search_method_benchmark" = "infra/sp500_search_method_benchmark"
 "aurora.marketdata" = "marketdata"
 "aurora.markets" = "markets"
