@@ -14,6 +14,7 @@ from aurora.research.openap_181.acquisition_149 import load_target_routes
 from aurora.research.openap_181.sec_companyfacts_149 import (
     calculate_companyfacts_accounting_current,
     calculate_companyfacts_149_current,
+    calculate_sec_submission_current,
 )
 from aurora.research.openap_93.registry import REQUIRED_93
 
@@ -94,12 +95,21 @@ def main() -> int:
         retrieved_at=retrieved_at,
         target_signals=supported_targets,
     )
-    values = pd.concat([core_values, expanded_values], ignore_index=True)
+    submission_values = calculate_sec_submission_current(
+        submissions,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
+    values = pd.concat(
+        [core_values, expanded_values, submission_values], ignore_index=True
+    )
     if values.duplicated(["security_id", "signal", "formation_at"]).any():
         raise RuntimeError("Conflicting duplicate SEC accounting values")
     current = values.loc[values["current_usable"] & values["value"].notna()].copy()
-    if not {"Cash", "GP", "Investment"}.issubset(set(current["signal"])):
-        raise RuntimeError("The SEC batch did not produce all three target signals")
+    required_signals = {"Cash", "FirmAge", "GP", "Investment"}
+    if not required_signals.issubset(set(current["signal"])):
+        raise RuntimeError("The SEC batch did not produce all required signals")
 
     formula_matches = sorted(args.formula_root.rglob("openap_181_formula_inventory.csv"))
     if len(formula_matches) != 1:

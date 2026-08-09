@@ -199,6 +199,90 @@ def build_companyfacts_identity(status: pd.DataFrame) -> pd.DataFrame:
     ].sort_values("security_id")
 
 
+def calculate_sec_submission_current(
+    submissions: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+) -> pd.DataFrame:
+    """Calculate a causal SEC-first-filing proxy for OpenAP FirmAge."""
+
+    _require_columns(submissions, _SUBMISSION_COLUMNS, "SEC submissions")
+    identity = build_companyfacts_identity(status)
+    formation = pd.Timestamp(formation_at)
+    if formation.tzinfo is None:
+        formation = formation.tz_localize("UTC")
+    else:
+        formation = formation.tz_convert("UTC")
+    retrieved = pd.Timestamp(retrieved_at)
+    if retrieved.tzinfo is None:
+        retrieved = retrieved.tz_localize("UTC")
+    else:
+        retrieved = retrieved.tz_convert("UTC")
+
+    filings = submissions.copy()
+    filings["cik"] = pd.to_numeric(filings["cik"], errors="coerce")
+    filings["accepted_at"] = _utc(filings["accepted_at"])
+    filings = filings.loc[
+        filings["cik"].notna()
+        & filings["accepted_at"].notna()
+        & filings["accepted_at"].le(formation)
+    ].copy()
+    if filings.empty or identity.empty:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+
+    first_filings = (
+        filings.groupby("cik", as_index=False)
+        .agg(
+            first_accepted_at=("accepted_at", "min"),
+            observation_count=("accepted_at", "size"),
+        )
+        .merge(identity, on="cik", how="inner", validate="one_to_one")
+    )
+    rows: list[dict[str, Any]] = []
+    for row in first_filings.itertuples(index=False):
+        first = pd.Timestamp(row.first_accepted_at)
+        age_months = (
+            (formation.year - first.year) * 12
+            + formation.month
+            - first.month
+            + 1
+        )
+        rows.append(
+            {
+                "security_id": str(row.security_id),
+                "ticker": str(row.symbol),
+                "cik": f"{int(row.cik):010d}",
+                "signal": "FirmAge",
+                "formation_at": formation.isoformat(),
+                "period_end": formation.isoformat(),
+                "filed_at": first.isoformat(),
+                "available_at": first.isoformat(),
+                "retrieved_at": retrieved.isoformat(),
+                "value": float(age_months),
+                "fidelity_class": "unvalidated_proxy",
+                "current_usable": True,
+                "source_id": "sec_edgar",
+                "source_url": (
+                    "https://data.sec.gov/submissions/"
+                    f"CIK{int(row.cik):010d}.json"
+                ),
+                "formula_id": "openap_firmage_sec_first_filing_months_proxy",
+                "formula_sha256": "",
+                "observation_count": int(row.observation_count),
+                "reason_if_missing": "",
+                "caveat": (
+                    "SEC first-filing proxy; OpenAP uses months since first "
+                    "CRSP coverage and excludes original CRSP firms"
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
+        "security_id"
+    ).reset_index(drop=True)
+
+
 def calculate_companyfacts_149_current(
     companyfacts: pd.DataFrame,
     submissions: pd.DataFrame,
@@ -419,5 +503,6 @@ __all__ = [
     "build_companyfacts_identity",
     "calculate_companyfacts_accounting_current",
     "calculate_companyfacts_149_current",
+    "calculate_sec_submission_current",
     "normalize_companyfacts_for_accounting",
 ]

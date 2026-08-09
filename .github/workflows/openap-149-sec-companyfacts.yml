@@ -113,7 +113,9 @@ jobs:
           import pandas as pd
           path = "outputs/openap_149_sec_companyfacts/openap_149_sec_companyfacts_current.csv"
           values = pd.read_csv(path)
-          assert {"Cash", "GP", "Investment"}.issubset(set(values["signal"]))
+          assert {"Cash", "FirmAge", "GP", "Investment"}.issubset(
+              set(values["signal"])
+          )
           assert values["signal"].nunique() > 3
           assert values["value"].notna().all()
           assert values["source_id"].eq("sec_edgar").all()
