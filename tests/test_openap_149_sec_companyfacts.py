@@ -667,6 +667,24 @@ def test_companyfacts_realestate_diagnostics_trace_every_filter() -> None:
     }
 
 
+def test_companyfacts_realestate_diagnostics_report_zero_candidates() -> None:
+    facts, submissions, status = _realestate_frames()
+    facts = facts.loc[facts["tag"].ne("LandAndLandImprovements")].copy()
+
+    diagnostics = _module().diagnose_companyfacts_realestate_coverage(
+        facts,
+        submissions,
+        status,
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    assert diagnostics["stage_counts"]["ratio_candidate_ciks"] == 0
+    assert diagnostics["stage_counts"]["current_value_rows"] == 0
+    assert diagnostics["concept_cik_counts"]["land"] == 0
+    assert diagnostics["candidate_variant_counts"] == {"gross": 0, "net": 0}
+
+
 def test_companyfacts_tax_uses_current_federal_and_foreign_expense() -> None:
     facts = _facts()
     template = facts.loc[
