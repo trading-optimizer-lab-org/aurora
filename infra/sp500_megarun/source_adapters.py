@@ -114,6 +114,8 @@ _ADAPTERS = {
     "fred_alfred_bundle": _auto_table,
     "alfred_initial_bundle": _auto_table,
     "alfred_philly_pit_bundle": _auto_table,
+    "federal_reserve_ddp_zip_xml": _auto_table,
+    "world_bank_pink_sheet": _auto_table,
     "philadelphia_realtime_bundle": _auto_table,
     "derived_conditions_composite": _auto_table,
     "derived_uncertainty_composite": _auto_table,

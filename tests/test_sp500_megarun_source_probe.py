@@ -165,3 +165,35 @@ def test_probe_expanded_sources_limits_parallelism_per_host(
     probe_expanded_sources(sources, max_workers=4, per_host_workers=2)
 
     assert maximum_active == 2
+
+
+def test_prefix_probe_streams_only_a_bounded_sample(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        ok = True
+        status_code = 206
+        headers = {"Content-Length": "1000000"}
+
+        def iter_content(self, chunk_size: int) -> object:
+            assert chunk_size == 65536
+            yield b"PK\x03\x04sample"
+
+        def close(self) -> None:
+            return None
+
+    def fake_get(url: str, **kwargs: object) -> FakeResponse:
+        assert kwargs["stream"] is True
+        return FakeResponse()
+
+    monkeypatch.setattr("aurora.infra.sp500_megarun.source_probe.requests.get", fake_get)
+    source = ExpandedSource(
+        "large_zip",
+        "https://large.example/data.zip",
+        "zip_xml",
+        probe_mode="prefix",
+    )
+
+    row = probe_expanded_sources((source,), max_workers=1)[0]
+
+    assert row["shape_valid"] is True
+    assert row["byte_count"] == 10
+    assert row["declared_byte_count"] == 1000000

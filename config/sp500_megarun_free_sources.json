@@ -42,20 +42,11 @@
     },
     "D_RATES": {
       "execution": "github_actions_only",
-      "acquisition_kind": "bundle",
-      "adapter": "fred_alfred_bundle",
+      "acquisition_kind": "direct",
+      "adapter": "federal_reserve_ddp_zip_xml",
       "maximum_observation_date": "2010-12-31",
       "resources": [
-        {"id":"fred_rates","url_template":"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd=1950-01-01&coed=2010-12-31","series_ids":["DFF","DGS3MO","DGS2","DGS5","DGS10","DGS30","T10Y2Y","T10Y3M"],"format":"csv"}
-      ]
-    },
-    "D_CREDIT": {
-      "execution": "github_actions_only",
-      "acquisition_kind": "bundle",
-      "adapter": "fred_alfred_bundle",
-      "maximum_observation_date": "2010-12-31",
-      "resources": [
-        {"id":"fred_credit","url_template":"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd=1980-01-01&coed=2010-12-31","series_ids":["AAA","BAA","BAA10YM","BAMLC0A0CM","BAMLH0A0HYM2"],"format":"csv"}
+        {"id":"federal_reserve_h15_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=H15","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31","includes":"Treasury maturities, federal funds and Moody's corporate yields"}
       ]
     },
     "D_FIN_COND": {
@@ -71,7 +62,11 @@
       "adapter": "alfred_philly_pit_bundle",
       "maximum_observation_date": "2010-12-31",
       "resources": [
-        {"id":"fred_lagged_aggregates","url_template":"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd=1947-01-01&coed=2010-12-31","series_ids":["ICSA","RSAFS","PERMIT","M2SL","BUSLOANS","TOTALSL","DPCREDIT","CP"],"format":"csv","decision_lag":"one_full_publication_period_plus_one_session","point_in_time_claim_forbidden":true},
+        {"id":"federal_reserve_h3_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=H3","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31"},
+        {"id":"federal_reserve_h6_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=H6","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31"},
+        {"id":"federal_reserve_h8_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=H8","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31"},
+        {"id":"federal_reserve_g19_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=G19","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31"},
+        {"id":"federal_reserve_cp_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=CP","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31"},
         {"id":"philly_real_output_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/routput_first_second_third.xlsx","format":"xlsx"},
         {"id":"philly_real_consumption_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/rcon_first_second_third.xlsx","format":"xlsx"},
         {"id":"philly_cpi_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/pcpi_first_second_third.xlsx","format":"xlsx"},
@@ -165,28 +160,28 @@
     "D_WTI": {
       "execution": "github_actions_only",
       "acquisition_kind": "direct",
-      "adapter": "fred_alfred_bundle",
+      "adapter": "world_bank_pink_sheet",
       "maximum_observation_date": "2010-12-31",
       "resources": [
-        {"id":"wti","url":"https://fred.stlouisfed.org/graph/fredgraph.csv?id=DCOILWTICO&cosd=1986-01-01&coed=2010-12-31","format":"csv"}
+        {"id":"world_bank_monthly_commodities","url":"https://thedocs.worldbank.org/en/doc/18675f1d1639c7a34d463f59263ba0a2-0050012025/related/CMO-Historical-Data-Monthly.xlsx","format":"xlsx","series":"Crude oil, WTI","decision_lag":"second_business_day_of_following_month_plus_one_session"}
       ]
     },
     "D_GOLD": {
       "execution": "github_actions_only",
       "acquisition_kind": "direct",
-      "adapter": "fred_alfred_bundle",
+      "adapter": "world_bank_pink_sheet",
       "maximum_observation_date": "2010-12-31",
       "resources": [
-        {"id":"gold","url":"https://fred.stlouisfed.org/graph/fredgraph.csv?id=GOLDAMGBD228NLBM&cosd=1968-01-01&coed=2010-12-31","format":"csv"}
+        {"id":"world_bank_monthly_commodities","url":"https://thedocs.worldbank.org/en/doc/18675f1d1639c7a34d463f59263ba0a2-0050012025/related/CMO-Historical-Data-Monthly.xlsx","format":"xlsx","series":"Gold","decision_lag":"second_business_day_of_following_month_plus_one_session"}
       ]
     },
     "D_FX": {
       "execution": "github_actions_only",
-      "acquisition_kind": "bundle",
-      "adapter": "fred_alfred_bundle",
+      "acquisition_kind": "direct",
+      "adapter": "federal_reserve_ddp_zip_xml",
       "maximum_observation_date": "2010-12-31",
       "resources": [
-        {"id":"h10_fx","url_template":"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd=1971-01-01&coed=2010-12-31","series_ids":["DEXJPUS","DEXUSUK","DEXSZUS","DEXCAUS"],"format":"csv"}
+        {"id":"federal_reserve_h10_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=H10","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31","series":"JPY, GBP, CHF and CAD daily exchange rates"}
       ]
     },
     "D_CALENDAR": {

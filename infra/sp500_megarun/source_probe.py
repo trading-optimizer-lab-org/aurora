@@ -25,6 +25,7 @@ class ExpandedSource:
     resource_id: str
     url: str
     format: str
+    probe_mode: str = "full"
 
 
 def _replace_secrets(template: str, secrets: Mapping[str, str]) -> str:
@@ -71,6 +72,7 @@ def expand_source_urls(
                     resource_id=resource_id,
                     url=_replace_secrets(str(resource["url"]), secrets),
                     format=format_name,
+                    probe_mode=str(resource.get("probe_mode", "full")),
                 )
             )
             continue
@@ -82,6 +84,7 @@ def expand_source_urls(
                     resource_id=f"{resource_id}:{series_id}",
                     url=_replace_secrets(url, secrets),
                     format=format_name,
+                    probe_mode=str(resource.get("probe_mode", "full")),
                 )
             )
         for raw_year in resource.get("years", []):
@@ -94,6 +97,7 @@ def expand_source_urls(
                     resource_id=f"{resource_id}:{year}",
                     url=_replace_secrets(year_template.replace("{year}", str(year)), secrets),
                     format=format_name,
+                    probe_mode=str(resource.get("probe_mode", "full")),
                 )
             )
     return tuple(expanded)
@@ -103,8 +107,8 @@ def _payload_shape_valid(payload: bytes, format_name: str) -> bool:
     prefix = payload[:512].lstrip().lower()
     if not payload:
         return False
-    if format_name in {"csv", "zip_csv"}:
-        return payload.startswith(b"PK\x03\x04") if format_name == "zip_csv" else b"\n" in payload
+    if format_name in {"csv", "zip_csv", "zip_xml"}:
+        return payload.startswith(b"PK\x03\x04") if format_name.startswith("zip_") else b"\n" in payload
     if format_name == "json":
         try:
             json.loads(payload)
@@ -127,10 +131,20 @@ def _probe_one_source(source: ExpandedSource, *, fred_api_key: str) -> dict[str,
             source.url,
             headers={"User-Agent": "Aurora-SP500-Free-Data-Audit/1.0"},
             timeout=(15, 45),
+            stream=source.probe_mode == "prefix",
         )
-        payload = response.content
+        declared_byte_count: int | None = None
+        if source.probe_mode == "prefix":
+            try:
+                payload = next(iter(response.iter_content(chunk_size=65536)), b"")
+                raw_declared = response.headers.get("Content-Length")
+                declared_byte_count = int(raw_declared) if raw_declared else None
+            finally:
+                response.close()
+        else:
+            payload = response.content
         shape_valid = response.ok and _payload_shape_valid(payload, source.format)
-        return {
+        row: dict[str, object] = {
             "resource_id": source.resource_id,
             "url": safe_url,
             "http_status": response.status_code,
@@ -139,6 +153,9 @@ def _probe_one_source(source: ExpandedSource, *, fred_api_key: str) -> dict[str,
             "format": source.format,
             "shape_valid": shape_valid,
         }
+        if declared_byte_count is not None:
+            row["declared_byte_count"] = declared_byte_count
+        return row
     except requests.RequestException as exc:
         return {
             "resource_id": source.resource_id,
