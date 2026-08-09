@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
@@ -268,3 +269,29 @@ def test_macro_smoke_requires_the_physical_train_partition(tmp_path: Path) -> No
 
     with pytest.raises(api.MacroFeatureSmokeError, match="TRAIN_PARTITION_REQUIRED"):
         api.build_macro_feature_smoke(wrong, output_dir=tmp_path / "out")
+
+
+def test_macro_smoke_cli_accepts_the_f032_f050_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cli = importlib.import_module("scripts.run_sp500_megarun_macro_feature_smoke_f032")
+    monkeypatch.setattr(cli, "require_github_only_execution", lambda _: None)
+    monkeypatch.setattr(
+        cli,
+        "build_macro_feature_smoke",
+        lambda *_args, **_kwargs: {"ready": True, "executable_lane_count": 19},
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "smoke",
+            "--train-snapshot",
+            str(tmp_path / "train_snapshot_1993_2010"),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ],
+    )
+
+    assert cli.main() == 0
