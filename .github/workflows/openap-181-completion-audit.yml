@@ -194,11 +194,11 @@ jobs:
           expected_market_blockers = 36 if credential_missing else 0
           sec_evidence_present = bool(os.environ.get("SEC_ACCOUNTING_EVIDENCE", ""))
           expected_sec_blockers = 3 if sec_evidence_present else 0
-          assert documentary.sum() == 56
+          assert documentary.sum() == 60
           assert len(TWELVE_DATA_MARKET_SIGNALS) == 36
           assert set(TWELVE_DATA_MARKET_SIGNALS).issubset(set(resolution["signal"]))
-          assert implementation["strict_gate_result"].eq("blocked").sum() == 56 + expected_market_blockers + expected_sec_blockers
-          assert implementation["strict_gate_result"].eq("not_attempted").sum() == 125 - expected_market_blockers - expected_sec_blockers
+          assert implementation["strict_gate_result"].eq("blocked").sum() == 60 + expected_market_blockers + expected_sec_blockers
+          assert implementation["strict_gate_result"].eq("not_attempted").sum() == 121 - expected_market_blockers - expected_sec_blockers
           assert not implementation["score_eligible"].astype(str).str.lower().eq("true").any()
           assert implementation["blocking_reason"].fillna("").astype(str).str.strip().ne("").all()
           blocked = implementation.loc[implementation["strict_gate_result"].eq("blocked")]

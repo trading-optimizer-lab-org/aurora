@@ -351,8 +351,8 @@ jobs:
           assert not attempted["score_eligible"].astype(str).str.lower().eq("true").any()
           credential_missing = not bool(os.environ.get("TWELVE_DATA_API_KEY", ""))
           expected_market_blockers = 36 if credential_missing else 0
-          assert status["strict_gate_result"].eq("blocked").sum() == 59 + expected_market_blockers
-          assert status["strict_gate_result"].eq("not_attempted").sum() == 122 - expected_market_blockers
+          assert status["strict_gate_result"].eq("blocked").sum() == 63 + expected_market_blockers
+          assert status["strict_gate_result"].eq("not_attempted").sum() == 118 - expected_market_blockers
           assert len(strict_inventory) == 31
           assert strict_inventory["signal"].nunique() == 31
           required = {

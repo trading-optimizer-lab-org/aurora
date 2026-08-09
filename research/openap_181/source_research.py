@@ -626,6 +626,9 @@ SHORT_INTEREST_SIGNALS = frozenset(
 IPO_SIGNALS = frozenset({"AgeIPO", "IndIPO", "RDIPO"})
 BEA_NETWORK_SIGNALS = frozenset({"iomom_cust", "iomom_supp"})
 ZERO_TRADE_SIGNALS = frozenset({"zerotrade1M", "zerotrade6M", "zerotrade12M"})
+IBES_REQUIRED_SIGNALS = frozenset(
+    {"AnalystValue", "ChNAnalyst", "ConsRecomm", "REV6"}
+)
 
 PROXY_ONLY_SIGNALS = frozenset(
     {"DivYieldST", "DivInit", "DivOmit", "DivSeason", "Spinoff"}
@@ -641,7 +644,7 @@ HISTORICAL_BLOCKED_SIGNALS = frozenset(
         "AnnouncementReturn", "DelBreadth", "ExchSwitch", "Governance",
         "ProbInformedTrading", "betaVIX",
     }
-) | OPTION_SIGNALS | SHORT_INTEREST_SIGNALS
+) | OPTION_SIGNALS | SHORT_INTEREST_SIGNALS | IBES_REQUIRED_SIGNALS
 
 
 def _clean_text(value: Any, fallback: str) -> str:
@@ -891,9 +894,12 @@ def build_signal_resolution(
     for record in manifest.sort_values("signal").to_dict(orient="records"):
         signal = str(record["signal"])
         formula_status, formula_url = _formula_record(signal, formula_inventory)
+        blocker_code = _clean_text(record.get("blocker_code"), "not_documented")
+        if signal in IBES_REQUIRED_SIGNALS:
+            blocker_code = "point_in_time_ibes_history_missing_or_unvalidated"
         classification = classify_signal(
             signal,
-            blocker_code=_clean_text(record.get("blocker_code"), "not_documented"),
+            blocker_code=blocker_code,
             formula_status=formula_status,
         )
         sources = _route_source_ids(signal, record)
@@ -933,9 +939,7 @@ def build_signal_resolution(
                     else "candidate_sources_authorized"
                 ),
                 "final_research_classification": classification,
-                "remaining_blocker": _clean_text(
-                    record.get("blocker_code"), "not_documented"
-                )
+                "remaining_blocker": blocker_code
                 + ": "
                 + _classification_detail(classification),
                 "next_exact_action": _next_action(signal, classification),
