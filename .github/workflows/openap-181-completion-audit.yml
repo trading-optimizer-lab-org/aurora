@@ -15,6 +15,11 @@ on:
         required: false
         default: ""
         type: string
+      sec_accounting_evidence_run_id:
+        description: Optional successful SEC accounting run providing blocker evidence
+        required: false
+        default: "31307096969"
+        type: string
 
 permissions:
   actions: read
@@ -32,6 +37,7 @@ jobs:
       GITHUB_ACTIONS: "true"
       SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
       CURRENT_SCORE_EVIDENCE_RUN_ID: ${{ inputs.current_score_run_id || (github.event_name == 'push' && '31270341796') || '' }}
+      SEC_ACCOUNTING_EVIDENCE_RUN_ID: ${{ inputs.sec_accounting_evidence_run_id || (github.event_name == 'push' && '31307096969') || '' }}
       TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
     steps:
       - name: Checkout exact implementation revision
@@ -75,6 +81,20 @@ jobs:
           echo "CURRENT_SCORE_RUN_ID=$CURRENT_SCORE_EVIDENCE_RUN_ID" >> "$GITHUB_ENV"
           echo "CURRENT_COVERAGE=$current_coverage" >> "$GITHUB_ENV"
           echo "CURRENT_SUMMARY=$current_summary" >> "$GITHUB_ENV"
+      - name: Download SEC accounting blocker evidence
+        if: ${{ env.SEC_ACCOUNTING_EVIDENCE_RUN_ID != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-sec-accounting-validation
+          path: inputs/sec_accounting
+          run-id: ${{ env.SEC_ACCOUNTING_EVIDENCE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Locate SEC accounting blocker evidence
+        if: ${{ env.SEC_ACCOUNTING_EVIDENCE_RUN_ID != '' }}
+        run: |
+          sec_evidence="$(find inputs/sec_accounting -name sec_accounting_batch_evidence.csv -type f -print -quit)"
+          test -s "$sec_evidence"
+          echo "SEC_ACCOUNTING_EVIDENCE=$sec_evidence" >> "$GITHUB_ENV"
       - name: Build fail-closed 181 manifest
         run: |
           python scripts/fetch_openap_181_official_formulas.py \
@@ -98,11 +118,16 @@ jobs:
           if [[ -n "${TWELVE_DATA_API_KEY:-}" ]]; then
             twelve_data_args+=(--twelve-data-credential-available)
           fi
+          sec_evidence_args=()
+          if [[ -n "${SEC_ACCOUNTING_EVIDENCE:-}" ]]; then
+            sec_evidence_args+=(--evidence "$SEC_ACCOUNTING_EVIDENCE")
+          fi
           python scripts/run_openap_181_implementation_status.py \
             --manifest outputs/openap_181_completion/openap_181_completion_manifest.csv \
             --resolution outputs/openap_181_completion/signal_resolution_181.csv \
             --documentary-blockers \
             "${twelve_data_args[@]}" \
+            "${sec_evidence_args[@]}" \
             --evidence-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --evidence-artifact openap-181-completion-audit-results \
             --implementation-commit "$SOURCE_SHA" \
@@ -167,23 +192,41 @@ jobs:
           )
           credential_missing = not bool(os.environ.get("TWELVE_DATA_API_KEY", ""))
           expected_market_blockers = 36 if credential_missing else 0
+          sec_evidence_present = bool(os.environ.get("SEC_ACCOUNTING_EVIDENCE", ""))
+          expected_sec_blockers = 3 if sec_evidence_present else 0
           assert documentary.sum() == 56
           assert len(TWELVE_DATA_MARKET_SIGNALS) == 36
           assert set(TWELVE_DATA_MARKET_SIGNALS).issubset(set(resolution["signal"]))
-          assert implementation["strict_gate_result"].eq("blocked").sum() == 56 + expected_market_blockers
-          assert implementation["strict_gate_result"].eq("not_attempted").sum() == 125 - expected_market_blockers
+          assert implementation["strict_gate_result"].eq("blocked").sum() == 56 + expected_market_blockers + expected_sec_blockers
+          assert implementation["strict_gate_result"].eq("not_attempted").sum() == 125 - expected_market_blockers - expected_sec_blockers
           assert not implementation["score_eligible"].astype(str).str.lower().eq("true").any()
           assert implementation["blocking_reason"].fillna("").astype(str).str.strip().ne("").all()
           blocked = implementation.loc[implementation["strict_gate_result"].eq("blocked")]
-          assert blocked["evidence_run_url"].eq(
+          sec_signals = {"Cash", "GP", "Investment"}
+          generated = blocked.loc[~blocked["signal"].isin(sec_signals)]
+          assert generated["evidence_run_url"].eq(
               f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
           ).all()
-          assert blocked["evidence_artifact"].eq(
+          assert generated["evidence_artifact"].eq(
               "openap-181-completion-audit-results"
           ).all()
-          assert blocked["implementation_commit"].eq(
+          assert generated["implementation_commit"].eq(
               os.environ["SOURCE_SHA"]
           ).all()
+          sec_status = implementation.loc[implementation["signal"].isin(sec_signals)]
+          if sec_evidence_present:
+              assert sec_status["strict_gate_result"].eq("blocked").all()
+              assert sec_status["blocking_reason"].eq(
+                  "official_sec_fsd_access_blocked_http_403"
+              ).all()
+              assert sec_status["evidence_run_url"].eq(
+                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['SEC_ACCOUNTING_EVIDENCE_RUN_ID']}"
+              ).all()
+              assert sec_status["evidence_artifact"].eq(
+                  "openap-181-sec-accounting-validation"
+              ).all()
+          else:
+              assert sec_status["strict_gate_result"].eq("not_attempted").all()
           market_status = implementation.loc[
               implementation["signal"].isin(TWELVE_DATA_MARKET_SIGNALS)
           ]
