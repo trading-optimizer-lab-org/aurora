@@ -239,3 +239,30 @@ def test_acquisition_matrix_quarantines_missing_available_at() -> None:
     assert not bool(row["data_acquired"])
     assert not bool(row["current_value_calculated"])
     assert values.empty
+
+
+def test_acquisition_status_discloses_latest_formation_date_without_trailing_spaces(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    formulas = pd.DataFrame([{"signal": "Cash", "formula_sha256": "a" * 64}])
+    matrix, values = module.build_acquisition_matrix(
+        _routes().iloc[[0]],
+        _current_rows().iloc[[0]],
+        formula_inventory=formulas,
+    )
+
+    summary = module.write_acquisition_outputs(
+        matrix,
+        values,
+        tmp_path,
+        source_values_sha256="b" * 64,
+        formula_inventory_sha256="c" * 64,
+    )
+    status = (tmp_path / "OPENAP_149_ACQUISITION_STATUS.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert summary["latest_formation_at"] == "2026-08-09T00:00:00+00:00"
+    assert "Fecha maxima de formacion: `2026-08-09T00:00:00+00:00`" in status
+    assert not any(line.endswith(" ") for line in status.splitlines())
