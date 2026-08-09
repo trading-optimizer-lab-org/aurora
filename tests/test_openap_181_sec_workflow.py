@@ -14,7 +14,6 @@ def test_sec_accounting_workflow_is_manual_bounded_pinned_and_fail_closed():
 
     assert "workflow_dispatch:" in text
     assert "workflow_call:" in text
-    assert "workflow_call:" in text
     assert "  push:" not in text
     assert "  pull_request:" not in text
     for required_input in {
@@ -133,6 +132,7 @@ def test_patent_source_probe_is_manual_pinned_and_fail_closed():
     text = workflow.read_text(encoding="utf-8")
 
     assert "workflow_dispatch:" in text
+    assert "workflow_call:" in text
     assert "push:" not in text
     assert "2ee29097f7ca05fc0e56905e82474ad426c387b9" in text
     assert "60215d8db687b0c40060de1649cf0f14364cbac2cbdd16b5cb3dee2dcdb85f27" in text

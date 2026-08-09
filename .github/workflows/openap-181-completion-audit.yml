@@ -40,7 +40,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  patent_probe:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.patent_evidence_run_id == '' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/openap-181-patent-source-probe.yml
+    with:
+      source_sha: ${{ inputs.source_sha || github.sha }}
+    secrets: inherit
+
   audit:
+    needs: patent_probe
+    if: ${{ always() && (needs.patent_probe.result == 'success' || needs.patent_probe.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -135,8 +146,14 @@ jobs:
           path: inputs/patent
           run-id: ${{ env.PATENT_EVIDENCE_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download in-run pinned patent source evidence
+        if: ${{ github.event_name == 'workflow_dispatch' && env.PATENT_EVIDENCE_RUN_ID == '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-patent-source-probe-results
+          path: inputs/patent
       - name: Locate pinned patent source evidence
-        if: ${{ env.PATENT_EVIDENCE_RUN_ID != '' }}
+        if: ${{ env.PATENT_EVIDENCE_RUN_ID != '' || github.event_name == 'workflow_dispatch' }}
         run: |
           patent_evidence="$(find inputs/patent -name patent_batch_evidence.csv -type f -print -quit)"
           patent_summary="$(find inputs/patent -name patent_source_probe.json -type f -print -quit)"
@@ -145,6 +162,9 @@ jobs:
           grep -q '"source_commit": "2ee29097f7ca05fc0e56905e82474ad426c387b9"' "$patent_summary"
           grep -q 'patent_source_partial:' "$patent_evidence"
           echo "PATENT_EVIDENCE=$patent_evidence" >> "$GITHUB_ENV"
+          if [[ -z "${PATENT_EVIDENCE_RUN_ID:-}" ]]; then
+            echo "PATENT_EVIDENCE_RUN_ID=$GITHUB_RUN_ID" >> "$GITHUB_ENV"
+          fi
       - name: Build fail-closed 181 manifest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
