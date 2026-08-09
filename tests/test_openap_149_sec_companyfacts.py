@@ -59,16 +59,33 @@ def _facts() -> pd.DataFrame:
         (2024, 120.0, 72.0, 24.0),
         (2025, 200.0, 120.0, 60.0),
     ):
+        scale = 1_000_000.0
         available = f"{year + 1}-02-15T15:00:00Z"
         accession = f"fy{year}"
         start = f"{year}-01-01"
         end = f"{year}-12-31"
-        add("Assets", 100.0, end, available, accession, form="10-K")
-        add("Revenues", revenue, end, available, accession, form="10-K", period_start=start)
-        add("CostOfRevenue", cogs, end, available, accession, form="10-K", period_start=start)
+        add("Assets", 100.0 * scale, end, available, accession, form="10-K")
+        add(
+            "Revenues",
+            revenue * scale,
+            end,
+            available,
+            accession,
+            form="10-K",
+            period_start=start,
+        )
+        add(
+            "CostOfRevenue",
+            cogs * scale,
+            end,
+            available,
+            accession,
+            form="10-K",
+            period_start=start,
+        )
         add(
             "PaymentsToAcquirePropertyPlantAndEquipment",
-            capex,
+            capex * scale,
             end,
             available,
             accession,
