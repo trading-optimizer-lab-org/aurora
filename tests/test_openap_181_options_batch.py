@@ -111,6 +111,23 @@ def test_document_contract_distinguishes_partial_free_routes_from_exact_benchmar
     assert summary["strict_approved"] == 0
 
 
+def test_occ_http_403_is_a_concrete_fail_closed_access_blocker() -> None:
+    documents = _official_document_fixtures()
+    documents["occ_data"] = ""
+
+    summary = evaluate_options_source_documents(
+        documents,
+        access_errors={"occ_data": "HTTP Error 403: Forbidden"},
+    )
+
+    assert summary["official_documents_verified"] is False
+    assert summary["source_access_decision_complete"] is True
+    assert summary["access_blocked_documents"] == ["occ_data"]
+    assert summary["unresolved_documents"] == []
+    assert summary["exact_free_authorized_source_found"] is False
+    assert summary["strict_approved"] == 0
+
+
 def test_options_evidence_covers_all_nine_signals_without_promotion() -> None:
     evidence = build_options_batch_evidence(
         _valid_probe(),
