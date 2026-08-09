@@ -156,6 +156,20 @@ def test_cftc_comma_zip_parses_legacy_rows() -> None:
     assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-06", "2010-12-28"]
 
 
+def test_cftc_utf16_zip_parses_official_legacy_encoding() -> None:
+    text = "Market and Exchange Names,As of Date in Form YYMMDD,Open Interest (All)\r\nS&P 500,980106,100\r\n"
+
+    frame = normalize_resource_payload(
+        "cftc_legacy_zip",
+        _zip_bytes("annual.txt", text.encode("utf-16")),
+        format_name="zip_csv",
+        resource_id="cftc_utf16",
+        maximum_observation_date="2010-12-31",
+    )
+
+    assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-06"]
+
+
 def test_normalized_resource_has_a_stable_content_hash_input() -> None:
     payload = b"date,value\n1998-01-02,1.5\n"
 

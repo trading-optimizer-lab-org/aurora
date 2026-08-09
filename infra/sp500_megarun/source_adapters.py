@@ -252,11 +252,16 @@ def _cftc_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
                     frame["source_file"] = member
                     frames.append(frame)
                     continue
+                text_encoding = (
+                    "utf-16"
+                    if raw.startswith((b"\xff\xfe", b"\xfe\xff"))
+                    or raw[:2048].count(b"\x00") > 100
+                    else "cp1252"
+                )
                 try:
                     frame = pd.read_csv(
-                        BytesIO(raw),
+                        StringIO(raw.decode(text_encoding, errors="replace")),
                         sep=",",
-                        encoding="cp1252",
                         engine="python",
                         on_bad_lines="skip",
                     )
@@ -264,7 +269,9 @@ def _cftc_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
                     frame = pd.DataFrame()
                 if frame.dropna(how="all").empty:
                     try:
-                        frame = pd.read_fwf(StringIO(raw.decode("cp1252", errors="replace")))
+                        frame = pd.read_fwf(
+                            StringIO(raw.decode(text_encoding, errors="replace"))
+                        )
                     except Exception:
                         frame = pd.DataFrame()
                 if not frame.dropna(how="all").empty:
