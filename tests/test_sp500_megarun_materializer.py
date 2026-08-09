@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from aurora.infra.sp500_megarun.materializer import discover_official_data_links
+import pandas as pd
+
+from aurora.infra.sp500_megarun.materializer import (
+    discover_official_data_links,
+    parquet_safe_frame,
+)
 
 
 def test_official_data_link_discovery_resolves_relative_links_and_deduplicates() -> None:
@@ -40,3 +45,12 @@ def test_official_data_link_discovery_accepts_zip_csv_and_xls_only() -> None:
         "https://www.philadelphiafed.org/data/book.xls",
         "https://www.philadelphiafed.org/data/data.csv",
     )
+
+
+def test_parquet_safe_frame_stabilizes_mixed_object_columns() -> None:
+    frame = pd.DataFrame({"mixed": [1.5, "18.13", None], "number": [1.0, 2.0, 3.0]})
+
+    safe = parquet_safe_frame(frame)
+
+    assert str(safe["mixed"].dtype) == "string"
+    assert str(safe["number"].dtype) == "float64"

@@ -143,6 +143,23 @@ def _frame_hash(frame: pd.DataFrame) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def parquet_safe_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Stabilize mixed spreadsheet columns before Arrow conversion."""
+
+    safe = frame.copy()
+    for column in safe.columns:
+        if pd.api.types.is_object_dtype(safe[column].dtype):
+            safe[column] = safe[column].astype("string")
+    return safe
+
+
+def _write_report(report: Mapping[str, Any], output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "primary_materialization_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+
 def _normalize_download(
     *,
     dataset_id: str,
@@ -230,12 +247,14 @@ def materialize_primary_sources(
         "locked_opened": False,
         "datasets": {},
     }
+    _write_report(report, output_dir)
     for dataset_id in sorted(source_plan):
         item = source_plan[dataset_id]
         if item.acquisition_kind in {"existing", "derived"}:
             report["datasets"][dataset_id] = {
                 "status": f"awaiting_{item.acquisition_kind}_materialization"
             }
+            _write_report(report, output_dir)
             continue
         frames: list[pd.DataFrame] = []
         receipts: list[MaterializedResource] = []
@@ -262,6 +281,7 @@ def materialize_primary_sources(
                 "failures": failures or ["NO_NORMALIZED_RESOURCES"],
                 "resources": [asdict(row) for row in receipts],
             }
+            _write_report(report, output_dir)
             continue
         combined = pd.concat(frames, ignore_index=True, sort=False)
         combined = combined.loc[combined["date"].notna()].sort_values("date", kind="mergesort")
@@ -269,6 +289,7 @@ def materialize_primary_sources(
         maximum = combined["date"].max().date()
         coverage_valid = minimum <= contract.boundaries.search_start and maximum.year >= 2010
         target = normalized_dir / f"{dataset_id}.parquet"
+        combined = parquet_safe_frame(combined)
         combined.to_parquet(target, index=False)
         report["datasets"][dataset_id] = {
             "status": "ready" if coverage_valid else "failed",
@@ -280,13 +301,11 @@ def materialize_primary_sources(
             "resources": [asdict(row) for row in receipts],
             "failures": [] if coverage_valid else ["SEARCH_OR_EVALUATION_COVERAGE_GAP"],
         }
+        _write_report(report, output_dir)
     ready = all(
         row.get("status") in {"ready", "awaiting_existing_materialization", "awaiting_derived_materialization"}
         for row in report["datasets"].values()
     )
     report["primary_sources_ready"] = ready
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "primary_materialization_report.json").write_text(
-        json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    _write_report(report, output_dir)
     return report
