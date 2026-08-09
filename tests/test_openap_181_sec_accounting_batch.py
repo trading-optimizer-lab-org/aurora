@@ -400,3 +400,129 @@ def test_sec_batch_cli_fails_closed_outside_github(tmp_path, monkeypatch):
 
     with pytest.raises(LocalRunBlocked, match="OpenAP 181 SEC accounting batch"):
         runpy.run_path(str(script), run_name="__main__")
+
+
+def _validation_frames(*, reverse_gp: bool = False):
+    expected_rows = []
+    observation_rows = []
+    reference_rows = []
+    for month_index, month in enumerate(pd.date_range("2020-01-31", periods=12, freq="ME")):
+        for firm_index in range(10):
+            security_id = f"PERMNO-{firm_index}"
+            expected_rows.append(
+                {
+                    "security_id": security_id,
+                    "formation_at": month,
+                    "exchange": "NASDAQ" if firm_index % 2 else "NYSE",
+                    "security_type": "common_stock",
+                    "delisted": False,
+                }
+            )
+            for signal_index, signal in enumerate(("Cash", "GP", "Investment")):
+                value = float(firm_index + signal_index * 20 + month_index / 100)
+                reference_value = -value if reverse_gp and signal == "GP" else value
+                observation_rows.append(
+                    {
+                        "security_id": security_id,
+                        "formation_at": month,
+                        "signal": signal,
+                        "value": value,
+                    }
+                )
+                reference_rows.append(
+                    {
+                        "security_id": security_id,
+                        "formation_at": month,
+                        "signal": signal,
+                        "reference_value": reference_value,
+                    }
+                )
+    return (
+        pd.DataFrame(observation_rows),
+        pd.DataFrame(reference_rows),
+        pd.DataFrame(expected_rows),
+    )
+
+
+def test_validation_approves_only_complete_evidence_above_frozen_thresholds():
+    module = _module()
+    observations, reference, expected = _validation_frames()
+
+    evidence, coverage, fidelity = module.evaluate_sec_accounting_validation(
+        observations,
+        reference,
+        expected,
+        point_in_time_verified=True,
+        identity_verified=True,
+        evidence_run_url="https://github.com/example/aurora/actions/runs/2",
+        evidence_artifact="openap-181-sec-accounting-validation",
+        implementation_commit="b" * 40,
+    )
+
+    assert evidence["signal"].tolist() == ["Cash", "GP", "Investment"]
+    assert evidence["coverage_result"].eq("pass").all()
+    assert evidence["fidelity_result"].eq("pass").all()
+    assert evidence["strict_gate_result"].eq("approved").all()
+    assert evidence["blocking_reason"].eq("none").all()
+    assert coverage["expected_rows"].eq(120).all()
+    assert coverage["found_rows"].eq(120).all()
+    assert coverage["coverage_ratio"].eq(1.0).all()
+    assert fidelity["paired_rows"].eq(120).all()
+    assert fidelity["paired_months"].eq(12).all()
+    assert fidelity["spearman"].eq(1.0).all()
+    assert fidelity["sign_agreement"].eq(1.0).all()
+    assert fidelity["extreme_decile_agreement"].eq(1.0).all()
+    assert fidelity["minimum_paired_rows"].eq(60).all()
+    assert fidelity["minimum_paired_months"].eq(12).all()
+    assert fidelity["minimum_spearman"].eq(0.95).all()
+    assert fidelity["minimum_sign_agreement"].eq(0.95).all()
+    assert fidelity["minimum_extreme_decile_agreement"].eq(0.80).all()
+
+
+def test_validation_rejects_low_fidelity_without_changing_frozen_thresholds():
+    module = _module()
+    observations, reference, expected = _validation_frames(reverse_gp=True)
+
+    evidence, _, fidelity = module.evaluate_sec_accounting_validation(
+        observations,
+        reference,
+        expected,
+        point_in_time_verified=True,
+        identity_verified=True,
+        evidence_run_url="https://github.com/example/aurora/actions/runs/3",
+        evidence_artifact="openap-181-sec-accounting-validation",
+        implementation_commit="c" * 40,
+    )
+    indexed = evidence.set_index("signal")
+    fidelity_indexed = fidelity.set_index("signal")
+
+    assert indexed.loc["Cash", "strict_gate_result"] == "approved"
+    assert indexed.loc["GP", "strict_gate_result"] == "blocked"
+    assert indexed.loc["GP", "blocking_reason"] == "fidelity_below_frozen_threshold"
+    assert fidelity_indexed.loc["GP", "spearman"] == pytest.approx(-1.0)
+    assert fidelity_indexed.loc["GP", "minimum_spearman"] == 0.95
+
+
+def test_validation_refuses_fidelity_when_historical_identity_is_not_verified():
+    module = _module()
+    observations, reference, expected = _validation_frames()
+
+    evidence, coverage, fidelity = module.evaluate_sec_accounting_validation(
+        observations,
+        reference,
+        expected,
+        point_in_time_verified=True,
+        identity_verified=False,
+        evidence_run_url="https://github.com/example/aurora/actions/runs/4",
+        evidence_artifact="openap-181-sec-accounting-validation",
+        implementation_commit="d" * 40,
+    )
+
+    assert evidence["coverage_measured"].all()
+    assert evidence["coverage_result"].eq("pass").all()
+    assert not evidence["fidelity_measured"].any()
+    assert evidence["fidelity_result"].eq("not_measured").all()
+    assert evidence["strict_gate_result"].eq("blocked").all()
+    assert evidence["blocking_reason"].eq("identity_not_verified").all()
+    assert coverage["coverage_ratio"].eq(1.0).all()
+    assert fidelity["measurement_status"].eq("blocked_identity_not_verified").all()
