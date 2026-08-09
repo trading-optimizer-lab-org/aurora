@@ -94,6 +94,8 @@ def test_source_semantics_prevent_false_substitutions():
     assert not source_can_satisfy("SmileSlope", "marketdata_options_free")
     assert not source_can_satisfy("SmileSlope", "tradier_personal_api")
     assert not source_can_satisfy("SmileSlope", "occ_option_volume")
+    assert not source_can_satisfy("dVolPut", "massive_options_basic")
+    assert not source_can_satisfy("OptionVolume1", "cboe_public_aggregate")
     assert not source_can_satisfy("PatentsRD", "uspto_patentsview_bulk")
     assert not source_can_satisfy("CitationsRD", "kpss_patent_crsp_extended")
     assert not source_can_satisfy("PatentsRD", "kpss_patent_crsp_extended")
@@ -103,6 +105,10 @@ def test_manifest_uses_concrete_family_blockers():
     manifest = build_completion_manifest(_signal_doc()).set_index("signal")
     assert (
         manifest.loc["SmileSlope", "blocker_code"]
+        == "authorized_current_option_surface_missing"
+    )
+    assert (
+        manifest.loc["dVolPut", "blocker_code"]
         == "authorized_current_option_surface_missing"
     )
     assert (
@@ -156,6 +162,9 @@ def test_source_catalog_documents_rights_and_scope():
     assert not bool(catalog.loc["occ_option_volume", "authorized_automation"])
     assert bool(catalog.loc["tradier_personal_api", "free"])
     assert bool(catalog.loc["tradier_personal_api", "authorized_automation"])
+    assert bool(catalog.loc["massive_options_basic", "free"])
+    assert not bool(catalog.loc["massive_options_basic", "authorized_automation"])
+    assert not bool(catalog.loc["alpha_vantage_options_premium", "free"])
     assert not bool(catalog.loc["optionmetrics_ivydb_us", "free"])
     assert not bool(catalog.loc["crsp_stock_commercial", "free"])
     assert not bool(catalog.loc["compustat_commercial", "free"])
@@ -446,13 +455,24 @@ def test_source_research_inventory_and_matrix_cover_manifest():
         "sec_financial_statement_datasets", "aurora_project_use_authorized"
     ])
     assert not bool(inventory.loc["occ_option_volume", "aurora_project_use_authorized"])
-    assert bool(inventory.loc["tradier_personal_api", "aurora_project_use_authorized"])
+    assert not bool(
+        inventory.loc["tradier_personal_api", "aurora_project_use_authorized"]
+    )
+    assert not bool(
+        inventory.loc["massive_options_basic", "aurora_project_use_authorized"]
+    )
+    assert (
+        inventory.loc["alpha_vantage_options_premium", "free_access_class"]
+        == "commercial"
+    )
     assert inventory.loc["optionmetrics_ivydb_us", "free_access_class"] == "commercial"
     assert matrix["coverage_verified"].eq(False).all()
     matrix_sources = matrix.groupby("signal")["source_name"].agg(set)
     assert "SEC Financial Statement Data Sets" in matrix_sources["AM"]
     assert "S&P Compustat North America and historical segments" in matrix_sources["AM"]
     assert "Tradier personal brokerage API" in matrix_sources["SmileSlope"]
+    assert "Massive Options Basic" in matrix_sources["SmileSlope"]
+    assert "Alpha Vantage Historical Options" in matrix_sources["SmileSlope"]
     assert "OptionMetrics IvyDB US" in matrix_sources["SmileSlope"]
     assert "LSEG I/B/E/S" in matrix_sources["AnalystRevision"]
 
