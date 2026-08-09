@@ -402,3 +402,121 @@ def test_source_research_writer_creates_five_mandatory_files(tmp_path):
         "RESEARCH_REPORT.md",
     }:
         assert (tmp_path / name).is_file()
+
+
+def _implementation_status_module():
+    from importlib import import_module
+
+    return import_module("aurora.research.openap_181.implementation_status")
+
+
+def _implementation_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
+    manifest = build_completion_manifest(_signal_doc())
+    formulas = _formula_inventory_for_source_research(manifest)
+    resolution = build_signal_resolution(manifest, formulas)
+    return manifest, resolution
+
+
+def _cash_evidence(*, fidelity_measured: bool) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "signal": "Cash",
+                "formula_implemented": True,
+                "data_pipeline_implemented": True,
+                "point_in_time_verified": True,
+                "identity_verified": True,
+                "coverage_measured": True,
+                "fidelity_measured": fidelity_measured,
+                "coverage_result": "pass",
+                "fidelity_result": "pass" if fidelity_measured else "not_measured",
+                "strict_gate_result": "approved",
+                "blocking_reason": "none" if fidelity_measured else "fidelity_not_measured",
+                "evidence_run_url": "https://github.com/example/aurora/actions/runs/1",
+                "evidence_artifact": "openap-cash-validation",
+                "implementation_commit": "a" * 40,
+            }
+        ]
+    )
+
+
+def test_implementation_status_defaults_all_181_signals_fail_closed():
+    module = _implementation_status_module()
+    manifest, resolution = _implementation_inputs()
+
+    status = module.build_signal_implementation_status(manifest, resolution)
+
+    assert list(status.columns) == [
+        "signal",
+        "formula_implemented",
+        "data_pipeline_implemented",
+        "point_in_time_verified",
+        "identity_verified",
+        "coverage_measured",
+        "fidelity_measured",
+        "coverage_result",
+        "fidelity_result",
+        "strict_gate_result",
+        "score_eligible",
+        "blocking_reason",
+        "evidence_run_url",
+        "evidence_artifact",
+        "implementation_commit",
+    ]
+    assert len(status) == status["signal"].nunique() == 181
+    assert set(status["signal"]) == set(manifest["signal"])
+    assert not status["score_eligible"].any()
+    assert status["strict_gate_result"].eq("not_attempted").all()
+    assert status["blocking_reason"].astype(str).str.strip().ne("").all()
+
+
+def test_implementation_status_requires_every_gate_and_complete_evidence():
+    module = _implementation_status_module()
+    manifest, resolution = _implementation_inputs()
+
+    partial = module.build_signal_implementation_status(
+        manifest,
+        resolution,
+        _cash_evidence(fidelity_measured=False),
+    ).set_index("signal")
+    approved = module.build_signal_implementation_status(
+        manifest,
+        resolution,
+        _cash_evidence(fidelity_measured=True),
+    ).set_index("signal")
+
+    assert not bool(partial.loc["Cash", "score_eligible"])
+    assert partial.loc["Cash", "strict_gate_result"] == "blocked"
+    assert partial.loc["Cash", "blocking_reason"] == "fidelity_not_measured"
+    assert bool(approved.loc["Cash", "score_eligible"])
+    assert approved.loc["Cash", "strict_gate_result"] == "approved"
+    assert approved.loc["Cash", "blocking_reason"] == "none"
+
+
+def test_strict_inventory_starts_at_31_and_only_accepts_fully_gated_signals():
+    module = _implementation_status_module()
+    manifest, resolution = _implementation_inputs()
+    baseline = module.build_signal_implementation_status(manifest, resolution)
+    partial = module.build_signal_implementation_status(
+        manifest,
+        resolution,
+        _cash_evidence(fidelity_measured=False),
+    )
+    approved = module.build_signal_implementation_status(
+        manifest,
+        resolution,
+        _cash_evidence(fidelity_measured=True),
+    )
+
+    baseline_inventory = module.build_strict_score_inventory(baseline)
+    partial_inventory = module.build_strict_score_inventory(partial)
+    approved_inventory = module.build_strict_score_inventory(approved)
+
+    assert set(baseline_inventory["signal"]) == set(CURRENT_EXACT_31)
+    assert set(partial_inventory["signal"]) == set(CURRENT_EXACT_31)
+    assert len(baseline_inventory) == len(partial_inventory) == 31
+    assert set(approved_inventory["signal"]) == set(CURRENT_EXACT_31) | {"Cash"}
+    assert len(approved_inventory) == 32
+    promoted = approved_inventory.set_index("signal").loc["Cash"]
+    assert promoted["eligibility_basis"] == "openap_181_complete_strict_gates"
+    assert promoted["evidence_artifact"] == "openap-cash-validation"
