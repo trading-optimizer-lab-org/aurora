@@ -1,0 +1,208 @@
+name: OpenAP 181 SEC Official Transport Probe
+
+on:
+  push:
+    branches:
+      - codex/openap-proxy44-validation
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision to probe
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openap-181-sec-official-transport-probe
+  cancel-in-progress: false
+
+env:
+  GITHUB_ACTIONS: "true"
+  SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+  SEC_USER_AGENT: "Aurora Research gomez5757@users.noreply.github.com"
+  CIKS: "320193"
+  START_QUARTER: "2024q4"
+  END_QUARTER: "2024q4"
+
+jobs:
+  direct-official-access:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - windows-2025
+          - macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install focused runtime
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Validate immutable and bounded probe contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+
+          observed = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
+          assert observed == os.environ["SOURCE_SHA"]
+          assert os.environ["CIKS"] == "320193"
+          assert os.environ["START_QUARTER"] == os.environ["END_QUARTER"] == "2024q4"
+          assert len(os.environ["SEC_USER_AGENT"]) >= 20
+          assert "@" in os.environ["SEC_USER_AGENT"]
+          PY
+      - name: Probe official SEC CompanyFacts directly
+        shell: bash
+        run: >-
+          python scripts/run_openap_181_sec_companyfacts_access.py
+          --output-dir outputs/companyfacts
+          --ciks "$CIKS"
+          --user-agent "$SEC_USER_AGENT"
+      - name: Probe official SEC FSD directly
+        shell: bash
+        run: >-
+          python scripts/run_openap_181_sec_fsd_access.py
+          --zip-dir outputs/fsd/zips
+          --source-manifest outputs/fsd/sec_fsd_source_manifest.csv
+          --start-quarter "$START_QUARTER"
+          --end-quarter "$END_QUARTER"
+          --user-agent "$SEC_USER_AGENT"
+      - name: Build runner evidence without score claims
+        shell: bash
+        env:
+          RUNNER_LABEL: ${{ matrix.runner }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          import pandas as pd
+
+          companyfacts = pd.read_csv(
+              "outputs/companyfacts/sec_companyfacts_source_manifest.csv"
+          )
+          fsd = pd.read_csv("outputs/fsd/sec_fsd_source_manifest.csv")
+          assert len(companyfacts) == 1
+          assert len(fsd) == 1
+          assert companyfacts["access_method"].eq(
+              "sec_official_companyfacts_fair_access"
+          ).all()
+          assert fsd["access_method"].eq(
+              "sec_official_direct_fair_access"
+          ).all()
+          summary = {
+              "runner": os.environ["RUNNER_LABEL"],
+              "source_sha": os.environ["SOURCE_SHA"],
+              "companyfacts_downloaded": bool(
+                  companyfacts["status"].eq("downloaded").all()
+              ),
+              "companyfacts_http_status": int(companyfacts.iloc[0]["http_status"]),
+              "companyfacts_failure_reason": str(
+                  companyfacts.iloc[0]["failure_reason"]
+              ),
+              "fsd_downloaded": bool(fsd["status"].eq("downloaded").all()),
+              "fsd_http_status": int(fsd.iloc[0]["http_status"]),
+              "fsd_failure_reason": str(fsd.iloc[0]["failure_reason"]),
+              "proxy_used": False,
+              "locked_opened": False,
+              "validation_used_for_selection": False,
+          }
+          output = Path("outputs/transport")
+          output.mkdir(parents=True, exist_ok=True)
+          (output / "sec_official_transport_summary.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(summary, sort_keys=True))
+          PY
+      - name: Upload immutable runner evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-181-sec-official-transport-probe-${{ matrix.runner }}
+          path: |
+            outputs/companyfacts/sec_companyfacts_access_summary.json
+            outputs/companyfacts/sec_companyfacts_source_manifest.csv
+            outputs/fsd/sec_fsd_source_manifest.csv
+            outputs/transport/sec_official_transport_summary.json
+          if-no-files-found: error
+          retention-days: 90
+
+  summarize:
+    needs: direct-official-access
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Download all runner evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: openap-181-sec-official-transport-probe-*
+          path: inputs/transport
+      - name: Build fail-closed transport decision
+        shell: bash
+        run: |
+          python - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          paths = sorted(
+              Path("inputs/transport").rglob("sec_official_transport_summary.json")
+          )
+          assert len(paths) == 3
+          rows = [json.loads(path.read_text(encoding="utf-8")) for path in paths]
+          assert {row["runner"] for row in rows} == {
+              "ubuntu-24.04", "windows-2025", "macos-15"
+          }
+          assert all(row["proxy_used"] is False for row in rows)
+          decision = {
+              "runner_results": rows,
+              "companyfacts_runner_available": any(
+                  row["companyfacts_downloaded"] for row in rows
+              ),
+              "fsd_runner_available": any(row["fsd_downloaded"] for row in rows),
+              "strict_approved": 0,
+              "transport_probe_only": True,
+              "locked_opened": False,
+              "validation_used_for_selection": False,
+          }
+          output = Path("outputs/summary")
+          output.mkdir(parents=True, exist_ok=True)
+          fieldnames = list(rows[0])
+          with (output / "sec_official_transport_matrix.csv").open(
+              "w", newline="", encoding="utf-8"
+          ) as handle:
+              writer = csv.DictWriter(handle, fieldnames=fieldnames)
+              writer.writeheader()
+              writer.writerows(sorted(rows, key=lambda row: row["runner"]))
+          (output / "sec_official_transport_decision.json").write_text(
+              json.dumps(decision, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(decision, sort_keys=True))
+          PY
+      - name: Upload aggregate transport evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-181-sec-official-transport-probe-summary
+          path: outputs/summary/
+          if-no-files-found: error
+          retention-days: 90
