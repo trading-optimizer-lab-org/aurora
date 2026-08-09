@@ -1256,3 +1256,48 @@ def test_valuation_accounting_source_matrix_uses_exact_routes_and_blockers():
         "valuation_accounting_source_blocked:"
     ).all()
     assert attempted.groupby("signal")["blocking_reason"].nunique().eq(1).all()
+
+
+def test_financing_issuance_source_matrix_uses_exact_routes_and_blockers():
+    from aurora.research.openap_181.financing_issuance_batch import (
+        FINANCING_ISSUANCE_BLOCKERS,
+        FINANCING_ISSUANCE_CRSP_ONLY_SIGNALS,
+        FINANCING_ISSUANCE_SIGNALS,
+    )
+
+    manifest = build_completion_manifest(_signal_doc())
+    formulas = _formula_inventory_for_source_research(manifest)
+    formulas.loc[
+        formulas["signal"].isin(FINANCING_ISSUANCE_SIGNALS), "status"
+    ] = "resolved"
+    resolution = build_signal_resolution(manifest, formulas).set_index("signal")
+    matrix = build_signal_source_matrix(
+        manifest, formulas, resolution.reset_index()
+    )
+
+    assert resolution.loc[
+        list(FINANCING_ISSUANCE_SIGNALS), "remaining_blocker"
+    ].to_dict() == FINANCING_ISSUANCE_BLOCKERS
+    routes = {
+        signal: set(matrix.loc[matrix["signal"].eq(signal), "source_name"])
+        for signal in FINANCING_ISSUANCE_SIGNALS
+    }
+    for signal in FINANCING_ISSUANCE_SIGNALS:
+        assert any("OpenFIGI" in source for source in routes[signal])
+        assert any("CRSP" in source for source in routes[signal])
+        assert not any("Tiingo" in source for source in routes[signal])
+        assert not any("Twelve Data" in source for source in routes[signal])
+    for signal in FINANCING_ISSUANCE_SIGNALS - FINANCING_ISSUANCE_CRSP_ONLY_SIGNALS:
+        assert any("SEC" in source for source in routes[signal])
+        assert any("Compustat" in source for source in routes[signal])
+    for signal in FINANCING_ISSUANCE_CRSP_ONLY_SIGNALS:
+        assert not any("SEC" in source for source in routes[signal])
+        assert not any("Compustat" in source for source in routes[signal])
+
+    attempted = matrix.loc[
+        matrix["signal"].isin(FINANCING_ISSUANCE_SIGNALS)
+    ]
+    assert attempted["blocking_reason"].str.startswith(
+        "financing_issuance_source_blocked:"
+    ).all()
+    assert attempted.groupby("signal")["blocking_reason"].nunique().eq(1).all()
