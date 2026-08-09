@@ -10,6 +10,12 @@ from .completion import (
     build_source_catalog,
     write_completion_outputs,
 )
+from .implementation_status import (
+    IMPLEMENTATION_STATUS_COLUMNS,
+    STRICT_INVENTORY_COLUMNS,
+    build_signal_implementation_status,
+    build_strict_score_inventory,
+)
 
 __all__ = [
     "CURRENT_EXACT_31",
@@ -20,4 +26,8 @@ __all__ = [
     "build_completion_manifest",
     "build_source_catalog",
     "write_completion_outputs",
+    "IMPLEMENTATION_STATUS_COLUMNS",
+    "STRICT_INVENTORY_COLUMNS",
+    "build_signal_implementation_status",
+    "build_strict_score_inventory",
 ]
