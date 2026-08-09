@@ -9,8 +9,10 @@ on:
       - .github/workflows/sp500-megarun-preflight-240.yml
       - config/sp500_megarun_free_data_240.json
       - config/sp500_megarun_free_sources_240.json
+      - config/sp500_megarun_feature_contract_240.json
       - infra/sp500_megarun/**
       - scripts/build_sp500_megarun_preflight_240.py
+      - scripts/run_sp500_megarun_feature_smoke_f001_f020.py
       - tests/test_sp500_megarun_*.py
 
 permissions:
@@ -130,6 +132,10 @@ jobs:
             tests/test_sp500_megarun_source_adapters.py \
             tests/test_sp500_megarun_materializer.py \
             tests/test_sp500_megarun_source_probe.py \
+            tests/test_sp500_megarun_feature_contract.py \
+            tests/test_sp500_megarun_feature_audit.py \
+            tests/test_sp500_megarun_feature_engine_price.py \
+            tests/test_sp500_megarun_feature_smoke.py \
             -q
       - name: Download every bounded SPY window
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -154,6 +160,14 @@ jobs:
             --spy-csv "$RUNNER_TEMP/spy-merged/stooq_spy_us_history.csv" \
             --work-dir "$RUNNER_TEMP/preflight-240" \
             --output-dir outputs/sp500_megarun_preflight_240
+      - name: Execute and audit F001-F020 on train only
+        id: feature_smoke
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python scripts/run_sp500_megarun_feature_smoke_f001_f020.py \
+            --train-snapshot outputs/sp500_megarun_preflight_240/train_snapshot_1993_2010 \
+            --output-dir outputs/sp500_megarun_feature_smoke_f001_f020
       - name: Upload first-cycle train snapshot
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -181,8 +195,18 @@ jobs:
             outputs/sp500_megarun_preflight_240/*.json
             config/sp500_megarun_free_data_240.json
             config/sp500_megarun_free_sources_240.json
+            config/sp500_megarun_feature_contract_240.json
           if-no-files-found: error
           retention-days: 90
-      - name: Fail closed unless GitHub proves 240 of 240 ready
-        if: always() && steps.build.outcome != 'success'
+      - name: Upload F001-F020 feature smoke evidence
+        if: always() && steps.feature_smoke.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-feature-smoke-F001-F020-${{ github.run_id }}
+          path: outputs/sp500_megarun_feature_smoke_f001_f020
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+      - name: Fail closed unless data and executable feature gates pass
+        if: always() && (steps.build.outcome != 'success' || steps.feature_smoke.outcome != 'success')
         run: exit 1
