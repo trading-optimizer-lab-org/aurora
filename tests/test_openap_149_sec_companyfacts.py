@@ -473,3 +473,90 @@ def test_companyfacts_rdability_regression_keeps_rows_across_fiscal_gaps() -> No
     assert values["signal"].tolist() == ["RDAbility"]
     assert values.iloc[0]["security_id"] == "US-SEC-0000000003-CCC"
     assert values.iloc[0]["value"] == pytest.approx(2.0)
+
+
+def test_companyfacts_realestate_subtracts_five_firm_sic2_mean() -> None:
+    fact_rows: list[dict[str, object]] = []
+    submission_rows: list[dict[str, object]] = []
+    status_rows: list[dict[str, object]] = []
+    for cik, symbol, realestate_ratio in (
+        (1, "AAA", 0.1),
+        (2, "BBB", 0.2),
+        (3, "CCC", 0.3),
+        (4, "DDD", 0.4),
+        (5, "EEE", 0.5),
+    ):
+        accepted = "2026-02-15T15:00:00Z"
+        accession = f"{cik}-2025"
+        submission_rows.append(
+            {
+                "cik": cik,
+                "accession_number": accession,
+                "accepted_at": accepted,
+                "sic": 3571,
+            }
+        )
+        status_rows.extend(
+            {
+                "cik": cik,
+                "symbol": symbol,
+                "surface": surface,
+                "status": "ok",
+            }
+            for surface in ("companyfacts", "submissions")
+        )
+        for tag, value in (
+            ("Assets", 1_000_000_000.0),
+            (
+                "BuildingsAndImprovementsGross",
+                realestate_ratio * 100_000_000.0,
+            ),
+            ("LandAndLandImprovements", 0.0),
+            ("PropertyPlantAndEquipmentGross", 100_000_000.0),
+        ):
+            fact_rows.append(
+                {
+                    "cik": cik,
+                    "entity_name": f"{symbol} Corp",
+                    "taxonomy": "us-gaap",
+                    "tag": tag,
+                    "unit": "USD",
+                    "value": value,
+                    "period_start": "",
+                    "period_end": "2025-12-31",
+                    "fy": 2025,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": "2026-02-15",
+                    "accession_number": accession,
+                    "frame": "",
+                    "available_at": accepted,
+                    "available_at_quality": "sec_acceptance_timestamp",
+                    "source": (
+                        "https://data.sec.gov/api/xbrl/companyfacts/"
+                        f"CIK{cik:010d}.json"
+                    ),
+                    "source_mode": "sec_official_api",
+                }
+            )
+
+    values = _module().calculate_companyfacts_realestate_current(
+        pd.DataFrame(fact_rows),
+        pd.DataFrame(submission_rows),
+        pd.DataFrame(status_rows),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    indexed = values.set_index("ticker")
+    assert values["signal"].eq("realestate").all()
+    assert indexed.loc["AAA", "value"] == pytest.approx(-0.2)
+    assert indexed.loc["CCC", "value"] == pytest.approx(0.0)
+    assert indexed.loc["EEE", "value"] == pytest.approx(0.2)
+    assert values["fidelity_class"].eq("unvalidated_proxy").all()
+    assert values["formula_id"].eq(
+        "openap_realestate_sec_companyfacts_current_proxy"
+    ).all()
+    assert pd.to_datetime(values["available_at"]).le(
+        pd.to_datetime(values["formation_at"])
+    ).all()
