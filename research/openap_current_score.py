@@ -885,6 +885,12 @@ SEC_CONCEPT_ALIASES: dict[str, tuple[str, ...]] = {
     "shares": ("EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"),
     "employees": ("EntityNumberOfEmployees",),
     "backlog": ("OrderBacklog",),
+    "deferred_revenue": (
+        "ContractWithCustomerLiabilityCurrent",
+        "ContractWithCustomerLiability",
+        "DeferredRevenueCurrent",
+        "DeferredRevenue",
+    ),
 }
 
 
@@ -909,6 +915,10 @@ ACCOUNTING_PROXY_LIMITS: dict[str, str] = {
     "InvGrowth": "Missing GNP deflation and official industry filters",
     "DelCOA": "SEC aliases do not reproduce every official current operating-asset component",
     "DelCOL": "SEC aliases do not reproduce every official current operating-liability component",
+    "DelDRC": (
+        "SEC contract liabilities reconstruct deferred revenue, but the historical "
+        "CRSP industry filter and Compustat semantics are not fully reproduced"
+    ),
     "DelEqu": "Annual SEC mapping does not reproduce every official equity adjustment",
     "DelFINL": "Preferred-stock and financing-liability mappings are incomplete",
     "DelLTI": "Long-term investments and advances are not mapped completely",
@@ -963,6 +973,14 @@ ACCOUNTING_FEATURE_DEPENDENCIES: dict[str, tuple[tuple[str, int], ...]] = {
     "PctAcc": (("net_income", 0), ("operating_cash_flow", 0)),
     "DelCOA": (("current_assets", 0), ("current_assets", 1), ("cash", 0), ("cash", 1), ("assets", 0), ("assets", 1)),
     "DelCOL": (("current_liabilities", 0), ("current_liabilities", 1), ("debt_current", 0), ("debt_current", 1), ("assets", 0), ("assets", 1)),
+    "DelDRC": (
+        ("deferred_revenue", 0),
+        ("deferred_revenue", 1),
+        ("assets", 0),
+        ("assets", 1),
+        ("equity", 0),
+        ("revenue", 0),
+    ),
     "DelEqu": (("equity", 0), ("equity", 1), ("assets", 0), ("assets", 1)),
     "DelFINL": (("debt_current", 0), ("debt_current", 1), ("debt_long", 0), ("debt_long", 1), ("preferred_stock", 0), ("preferred_stock", 1), ("assets", 0), ("assets", 1)),
     "DelLTI": (("long_investments", 0), ("long_investments", 1), ("assets", 0), ("assets", 1)),
@@ -1344,6 +1362,20 @@ def calculate_accounting_features(
         "DelCOL",
         _safe_ratio(difference(current_operating_liabilities, lag_operating_liabilities), average_assets),
         "change_current_operating_liabilities_over_average_assets",
+    )
+    deferred_revenue = value("deferred_revenue")
+    deferred_revenue_change = delta("deferred_revenue")
+    del_drc = _safe_ratio(deferred_revenue_change, average_assets)
+    if (
+        (equity is not None and equity <= 0)
+        or (revenue is not None and revenue < 5_000_000)
+        or (deferred_revenue == 0 and deferred_revenue_change == 0)
+    ):
+        del_drc = None
+    result["DelDRC"] = exact(
+        "DelDRC",
+        del_drc,
+        "change_deferred_revenue_over_average_assets",
     )
     result["DelEqu"] = exact(
         "DelEqu",
