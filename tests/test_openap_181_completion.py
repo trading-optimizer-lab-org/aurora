@@ -357,6 +357,13 @@ def test_source_research_classifies_all_181_fail_closed():
     assert resolution.loc[
         "iomom_supp", "final_research_classification"
     ] == "identifier_bridge_missing"
+    for signal in {"AnalystValue", "ChNAnalyst", "ConsRecomm", "REV6"}:
+        assert resolution.loc[
+            signal, "final_research_classification"
+        ] == "historical_point_in_time_missing"
+        assert resolution.loc[signal, "remaining_blocker"].startswith(
+            "point_in_time_ibes_history_missing_or_unvalidated:"
+        )
     assert resolution.loc["DivInit", "final_research_classification"] == "proxy_only"
     assert not resolution.astype(str).apply(
         lambda column: column.str.lower().eq("nan").any()
@@ -513,7 +520,7 @@ def test_documentary_blockers_create_evidence_without_promoting_plausible_routes
         evidence,
     )
 
-    assert len(evidence) == evidence["signal"].nunique() == 56
+    assert len(evidence) == evidence["signal"].nunique() == 60
     assert set(
         evidence["blocking_reason"].str.split(":", n=1).str[0]
     ) == {
@@ -527,8 +534,8 @@ def test_documentary_blockers_create_evidence_without_promoting_plausible_routes
     assert evidence["strict_gate_result"].eq("blocked").all()
     assert not evidence["formula_implemented"].any()
     assert not evidence["data_pipeline_implemented"].any()
-    assert status["strict_gate_result"].eq("blocked").sum() == 56
-    assert status["strict_gate_result"].eq("not_attempted").sum() == 125
+    assert status["strict_gate_result"].eq("blocked").sum() == 60
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 121
     assert not status["score_eligible"].any()
     plausible = status.loc[status["signal"].eq("Cash")].iloc[0]
     assert plausible["strict_gate_result"] == "not_attempted"
@@ -575,11 +582,11 @@ def test_implementation_cli_attaches_documentary_blocker_evidence(
     report = (output / "IMPLEMENTATION_VALIDATION_REPORT.md").read_text(
         encoding="utf-8"
     )
-    assert status["strict_gate_result"].eq("blocked").sum() == 56
-    assert status["strict_gate_result"].eq("not_attempted").sum() == 125
+    assert status["strict_gate_result"].eq("blocked").sum() == 60
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 121
     assert not status["score_eligible"].any()
-    assert "- Signals blocked with evidence: 56" in report
-    assert "- Signals not attempted: 125" in report
+    assert "- Signals blocked with evidence: 60" in report
+    assert "- Signals not attempted: 121" in report
 
 
 def test_missing_twelve_data_credential_blocks_only_dependent_market_routes():
@@ -654,8 +661,8 @@ def test_missing_twelve_data_credential_blocks_only_dependent_market_routes():
     assert not missing["formula_implemented"].any()
     assert not missing["data_pipeline_implemented"].any()
     assert available.empty
-    assert status["strict_gate_result"].eq("blocked").sum() == 92
-    assert status["strict_gate_result"].eq("not_attempted").sum() == 89
+    assert status["strict_gate_result"].eq("blocked").sum() == 96
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 85
     assert not status["score_eligible"].any()
 
 
@@ -698,8 +705,8 @@ def test_implementation_cli_attaches_missing_twelve_data_credential_blockers(
 
     assert result.value.code == 0
     status = pd.read_csv(output / "signal_implementation_status_181.csv")
-    assert status["strict_gate_result"].eq("blocked").sum() == 92
-    assert status["strict_gate_result"].eq("not_attempted").sum() == 89
+    assert status["strict_gate_result"].eq("blocked").sum() == 96
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 85
     assert not status["score_eligible"].any()
 
 
