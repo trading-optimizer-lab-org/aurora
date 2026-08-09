@@ -254,3 +254,58 @@ def test_completion_audit_can_consume_options_source_evidence():
     assert "options_batch_evidence.csv" in text
     assert "OPTIONS_EVIDENCE" in text
     assert "options_source_blocked:" in text
+
+
+def test_analyst_source_probe_is_manual_pinned_metadata_only_and_fail_closed():
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "openap-181-analyst-source-probe.yml"
+    )
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in text
+    assert "workflow_call:" in text
+    assert "push:" not in text
+    assert "8db892442c2c3a3779b0f1eac4370d3655be15a1" in text
+    assert "scripts/run_openap_181_analyst_source_probe.py" in text
+    assert "analyst_batch_evidence.csv" in text
+    assert "analyst_source_assessment.csv" in text
+    assert "openap-181-analyst-source-probe-results" in text
+    assert "raw_source_data_downloaded" in text
+    assert "source_access_decision_complete" in text
+    assert "len(evidence) == evidence[\"signal\"].nunique() == 18" in text
+    assert "retention-days: 90" in text
+    assert "OOS_LOCKED" not in text
+    assert "FORWARD" not in text
+    assert "score_eligible" not in text
+
+
+def test_completion_audit_consumes_analyst_evidence_without_double_counting():
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "openap-181-completion-audit.yml"
+    )
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "analyst_evidence_run_id:" in text
+    assert "analyst_probe:" in text
+    assert "uses: ./.github/workflows/openap-181-analyst-source-probe.yml" in text
+    assert (
+        "needs: [analyst_probe, patent_probe, short_interest_probe, options_probe]"
+        in text
+    )
+    assert "ANALYST_EVIDENCE_RUN_ID" in text
+    assert "ANALYST_EVIDENCE_COMMIT" in text
+    assert "openap-181-analyst-source-probe-results" in text
+    assert "analyst_batch_evidence.csv" in text
+    assert "ANALYST_EVIDENCE" in text
+    assert 'evidence_args+=(--evidence "$ANALYST_EVIDENCE")' in text
+    assert "analyst_source_blocked:" in text
+    assert "analyst_evidence_present" in text
+    assert "analyst_signals" in text
+    assert "expected_blocked_signals" in text
+    assert "len(expected_blocked_signals)" in text

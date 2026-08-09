@@ -9,6 +9,11 @@ import pandas as pd
 import pytest
 
 from aurora.core.execution_policy import LocalRunBlocked
+from aurora.research.openap_181.analyst_batch import (
+    ANALYST_BLOCKERS,
+    ANALYST_SIGNAL_FAMILIES,
+    ANALYST_SIGNALS,
+)
 from aurora.research.openap_181.completion import (
     CURRENT_EXACT_31,
     CURRENT_EXCLUDED_27,
@@ -475,6 +480,64 @@ def test_source_research_inventory_and_matrix_cover_manifest():
     assert "Alpha Vantage Historical Options" in matrix_sources["SmileSlope"]
     assert "OptionMetrics IvyDB US" in matrix_sources["SmileSlope"]
     assert "LSEG I/B/E/S" in matrix_sources["AnalystRevision"]
+
+
+def test_analyst_source_matrix_uses_family_specific_sources_and_blockers():
+    manifest = build_completion_manifest(_signal_doc())
+    formulas = _formula_inventory_for_source_research(manifest)
+    resolution = build_signal_resolution(manifest, formulas).set_index("signal")
+    inventory = build_source_inventory().set_index("source_id")
+
+    assert {
+        "nasdaq_zacks_premium",
+        "zacks_data_commercial",
+        "intrinio_zacks_enterprise",
+        "simfin_free",
+    }.issubset(set(inventory.index))
+    assert not bool(
+        inventory.loc["nasdaq_zacks_premium", "aurora_project_use_authorized"]
+    )
+    assert not bool(
+        inventory.loc["zacks_data_commercial", "aurora_project_use_authorized"]
+    )
+    assert not bool(
+        inventory.loc["intrinio_zacks_enterprise", "aurora_project_use_authorized"]
+    )
+    assert bool(inventory.loc["simfin_free", "aurora_project_use_authorized"])
+
+    for signal in ANALYST_SIGNALS:
+        row = resolution.loc[signal]
+        sources = set(str(row["sources_required"]).split("|"))
+        assert row["remaining_blocker"] == ANALYST_BLOCKERS[signal]
+        assert {
+            "openap_official",
+            "lseg_ibes_commercial",
+            "alpha_vantage_free",
+            "fmp_basic",
+            "twelve_data_basic",
+            "nasdaq_zacks_premium",
+            "zacks_data_commercial",
+            "intrinio_zacks_enterprise",
+        }.issubset(sources)
+        assert "yahoo_public" not in sources
+        assert "tiingo_starter" not in sources
+
+        family = ANALYST_SIGNAL_FAMILIES[signal]
+        if family in {
+            "accounting_compustat",
+            "ibes_mixed",
+            "ibes_compustat_crsp_cross_section",
+        }:
+            assert {
+                "sec_edgar",
+                "sec_financial_statement_datasets",
+                "simfin_free",
+                "compustat_commercial",
+                "crsp_stock_commercial",
+                "wrds_linking_suite",
+            }.issubset(sources)
+        else:
+            assert "sec_financial_statement_datasets" not in sources
 
 
 def test_source_research_writer_creates_five_mandatory_files(tmp_path):

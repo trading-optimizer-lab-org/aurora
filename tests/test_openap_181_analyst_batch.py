@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
+import aurora.research.openap_181.analyst_batch as analyst_batch
 from aurora.research.openap_181.analyst_batch import (
     ANALYST_FORMULA_REQUIREMENTS,
     ANALYST_SIGNAL_FAMILIES,
@@ -302,3 +304,58 @@ def test_analyst_probe_outputs_are_metadata_only(tmp_path: Path) -> None:
         for path in tmp_path.iterdir()
         for token in ("raw", "estimate_records", "recommendation_records", "filings")
     )
+
+
+def test_live_analyst_probe_verifies_pinned_formulas_and_writes_metadata_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    formula_payload = b"# pinned analyst formula fixture\n"
+    formula_hash = sha256(formula_payload).hexdigest()
+    formula_sources = {
+        signal: {
+            "path": f"Signals/pyCode/Predictors/{signal}.py",
+            "sha256": formula_hash,
+        }
+        for signal in EXPECTED_ANALYST_SIGNALS
+    }
+    documents = _official_document_fixtures()
+    document_urls = {
+        f"fixture_{name}": f"https://official.example/{name}"
+        for name in documents
+    }
+    document_groups = {
+        name: (f"fixture_{name}",)
+        for name in documents
+    }
+
+    def fake_fetch(url: str, *, attempts: int = 4) -> bytes:
+        assert attempts >= 1
+        if "raw.githubusercontent.com" in url:
+            return formula_payload
+        name = url.rsplit("/", 1)[-1]
+        return documents[name].encode("utf-8")
+
+    monkeypatch.setattr(analyst_batch, "OPENAP_FORMULA_SOURCES", formula_sources)
+    monkeypatch.setattr(analyst_batch, "DOCUMENT_URLS", document_urls)
+    monkeypatch.setattr(analyst_batch, "DOCUMENT_GROUPS", document_groups)
+    monkeypatch.setattr(analyst_batch, "_fetch", fake_fetch)
+
+    summary = analyst_batch.run_analyst_source_probe(
+        output_dir=tmp_path,
+        evidence_run_url="https://github.com/example/aurora/actions/runs/13",
+        evidence_artifact="openap-181-analyst-source-probe-results",
+        implementation_commit="c" * 40,
+    )
+
+    assert summary["formula_sources_verified"] is True
+    assert summary["formula_signals"] == 18
+    assert summary["source_access_decision_complete"] is True
+    assert summary["exact_free_authorized_source_found"] is False
+    assert summary["raw_source_data_downloaded"] is False
+    assert summary["raw_files_in_artifact"] is False
+    assert summary["locked_opened"] is False
+    assert summary["validation_used_for_selection"] is False
+    evidence = pd.read_csv(tmp_path / "analyst_batch_evidence.csv")
+    assert len(evidence) == evidence["signal"].nunique() == 18
+    assert evidence["strict_gate_result"].eq("blocked").all()
