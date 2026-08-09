@@ -103,6 +103,8 @@ def summarize_kpss_patent_chunks(
     missing_cites = 0
     first_issue: pd.Timestamp | None = None
     last_issue: pd.Timestamp | None = None
+    raw_issue_date_samples: list[str] = []
+    issue_date_dtypes: set[str] = set()
     observed = False
     for chunk in chunks:
         observed = True
@@ -115,6 +117,12 @@ def summarize_kpss_patent_chunks(
         missing_permno += int(chunk["permno"].isna().sum())
         missing_filing_date += int(chunk["filing_date"].isna().sum())
         missing_cites += int(chunk["cites"].isna().sum())
+        issue_date_dtypes.add(str(chunk["issue_date"].dtype))
+        if len(raw_issue_date_samples) < 10:
+            samples = chunk["issue_date"].dropna().astype(str).head(
+                10 - len(raw_issue_date_samples)
+            )
+            raw_issue_date_samples.extend(samples.tolist())
         issue = pd.to_datetime(chunk["issue_date"], errors="coerce", format="mixed")
         if issue.notna().any():
             chunk_first = issue.min()
@@ -132,6 +140,8 @@ def summarize_kpss_patent_chunks(
         "missing_cites": missing_cites,
         "first_issue_date": first_issue.date().isoformat() if first_issue is not None else "",
         "last_issue_date": last_issue.date().isoformat() if last_issue is not None else "",
+        "raw_issue_date_samples": raw_issue_date_samples,
+        "issue_date_dtypes": sorted(issue_date_dtypes),
         "signal_coverage_measured": False,
     }
 
