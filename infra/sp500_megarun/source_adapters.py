@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from io import BytesIO, StringIO
+import json
 import re
 from typing import Mapping
 import zipfile
@@ -331,6 +332,53 @@ def _world_bank_monthly(
     raise SourceAdapterError(f"WORLD_BANK_SERIES_NOT_FOUND:{adapter}:{requested}")
 
 
+def _world_bank_all(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
+    """Keep the complete monthly Pink Sheet table instead of one selected series."""
+
+    try:
+        sheets = pd.read_excel(BytesIO(payload), sheet_name=None, header=None)
+    except Exception as exc:
+        raise SourceAdapterError(f"WORLD_BANK_EXCEL_PARSE_FAILED:{adapter}") from exc
+    for sheet_name, raw in sheets.items():
+        for row_index in range(min(30, len(raw))):
+            labels = [str(value).strip() if pd.notna(value) else "" for value in raw.iloc[row_index]]
+            if not labels or labels[0].casefold() != "date":
+                continue
+            frame = raw.iloc[row_index + 1 :].copy()
+            frame.columns = [label or f"column_{index}" for index, label in enumerate(labels)]
+            frame = frame.rename(columns={frame.columns[0]: "date"})
+            frame["source_sheet"] = str(sheet_name)
+            return _nonempty(frame, adapter=adapter)
+    raise SourceAdapterError(f"WORLD_BANK_MONTHLY_TABLE_NOT_FOUND:{adapter}")
+
+
+def _json_rows(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
+    try:
+        decoded = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SourceAdapterError(f"JSON_PARSE_FAILED:{adapter}") from exc
+    rows = decoded.get("data") if isinstance(decoded, Mapping) else decoded
+    if not isinstance(rows, list):
+        raise SourceAdapterError(f"JSON_DATA_ROWS_MISSING:{adapter}")
+    return _nonempty(pd.DataFrame(rows), adapter=adapter)
+
+
+def _sec_master_index(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
+    text = payload.decode("latin-1", errors="replace")
+    lines = text.splitlines()
+    header_index = next(
+        (index for index, line in enumerate(lines) if line.startswith("CIK|Company Name|")),
+        None,
+    )
+    if header_index is None:
+        raise SourceAdapterError(f"SEC_MASTER_HEADER_MISSING:{adapter}")
+    try:
+        frame = pd.read_csv(StringIO("\n".join(lines[header_index:])), sep="|")
+    except Exception as exc:
+        raise SourceAdapterError(f"SEC_MASTER_PARSE_FAILED:{adapter}") from exc
+    return _nonempty(frame, adapter=adapter)
+
+
 def _read_resource_format(
     payload: bytes,
     *,
@@ -350,6 +398,14 @@ def _read_resource_format(
             adapter=adapter,
             resource_metadata=resource_metadata,
         )
+    if adapter == "world_bank_all_commodities":
+        return _world_bank_all(payload, adapter=adapter)
+    if adapter == "treasury_fiscal_json" or format_name == "json":
+        return _json_rows(payload, adapter=adapter)
+    if adapter == "sec_edgar_index_bundle" or format_name == "idx":
+        return _sec_master_index(payload, adapter=adapter)
+    if adapter == "french_global_zip_csv":
+        return _french_zip(payload, adapter=adapter)
     if format_name in {"zip_csv", "zip_txt"}:
         return _zip_table(payload, adapter=adapter)
     if format_name in {"xls", "xlsx"}:
@@ -460,6 +516,11 @@ def _normalize_and_bound_dates(
     preferred = {
         "date",
         "observation_date",
+        "record_date",
+        "auction_date",
+        "date filed",
+        "filing_date",
+        "release_date",
         "time_period",
         "month",
         "year",
@@ -522,6 +583,24 @@ _ADAPTERS = {
     "french_zip_csv": _zip_table,
     "occ_historical_volume": _auto_table,
     "derived_spy_calendar": _derived_calendar,
+    "derived_cboe_vol_bundle": _auto_table,
+    "cboe_put_call_or_cftc_fallback": _auto_table,
+    "derived_cftc_legacy": _auto_table,
+    "derived_fed_h15_h10": _auto_table,
+    "derived_fed_macro_bundle": _auto_table,
+    "philadelphia_spf_bundle": _auto_table,
+    "federal_reserve_sloos_bundle": _auto_table,
+    "federal_reserve_z1_bundle": _auto_table,
+    "derived_finra_margin": _auto_table,
+    "derived_french_us": _auto_table,
+    "french_global_zip_csv": _auto_table,
+    "world_bank_all_commodities": _auto_table,
+    "treasury_fiscal_json": _auto_table,
+    "treasury_tic_bundle": _auto_table,
+    "fomc_public_archive": _auto_table,
+    "sec_edgar_index_bundle": _auto_table,
+    "noaa_gsod_bundle": _auto_table,
+    "derived_causal_ledger": _auto_table,
 }
 
 

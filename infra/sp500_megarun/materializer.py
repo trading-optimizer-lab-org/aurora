@@ -128,7 +128,21 @@ def _expand_resource(
             )
         )
     year_template = str(resource.get("year_url_template", template))
+    quarters = tuple(resource.get("quarters", ()))
     for year in resource.get("years", []):
+        if quarters:
+            for quarter in quarters:
+                expanded.append(
+                    (
+                        f"{resource_id}:{year}:Q{quarter}",
+                        year_template.replace("{year}", str(year)).replace(
+                            "{quarter}", str(quarter)
+                        ),
+                        format_name,
+                        resource,
+                    )
+                )
+            continue
         expanded.append(
             (
                 f"{resource_id}:{year}",

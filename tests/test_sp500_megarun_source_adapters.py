@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+import json
 import zipfile
 
 import pandas as pd
@@ -189,3 +190,63 @@ def test_normalized_resource_has_a_stable_content_hash_input() -> None:
     )
 
     pd.testing.assert_frame_equal(first, second)
+
+
+def test_treasury_fiscal_json_normalizes_nested_api_rows_and_bounds_locked_data() -> None:
+    payload = json.dumps(
+        {
+            "data": [
+                {"record_date": "2020-12-31", "tot_pub_debt_out_amt": "27747798266968.05"},
+                {"record_date": "2021-01-04", "tot_pub_debt_out_amt": "27755349741662.05"},
+            ]
+        }
+    ).encode()
+
+    frame = normalize_resource_payload(
+        "treasury_fiscal_json",
+        payload,
+        format_name="json",
+        resource_id="debt",
+        maximum_observation_date="2020-12-31",
+    )
+
+    assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["2020-12-31"]
+
+
+def test_sec_master_index_normalizes_filing_dates() -> None:
+    payload = b"Description\nCIK|Company Name|Form Type|Date Filed|Filename\n1|Example|8-K|2020-12-31|edgar/data/1/a.txt\n"
+
+    frame = normalize_resource_payload(
+        "sec_edgar_index_bundle",
+        payload,
+        format_name="idx",
+        resource_id="2020q4",
+        maximum_observation_date="2020-12-31",
+    )
+
+    assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["2020-12-31"]
+    assert frame["Form Type"].tolist() == ["8-K"]
+
+
+def test_world_bank_all_commodities_keeps_every_series() -> None:
+    workbook = BytesIO()
+    with pd.ExcelWriter(workbook, engine="openpyxl") as writer:
+        pd.DataFrame(
+            [
+                ["World Bank commodity prices", None, None],
+                ["Date", "Crude oil, WTI", "Gold"],
+                ["1998M01", 17.0, 290.0],
+                ["2020M12", 47.0, 1887.0],
+            ]
+        ).to_excel(writer, sheet_name="Monthly Prices", header=False, index=False)
+
+    frame = normalize_resource_payload(
+        "world_bank_all_commodities",
+        workbook.getvalue(),
+        format_name="xlsx",
+        resource_id="pink_all",
+        maximum_observation_date="2020-12-31",
+    )
+
+    assert {"Crude oil, WTI", "Gold"} <= set(frame.columns)
+    assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["1998-01-01", "2020-12-01"]

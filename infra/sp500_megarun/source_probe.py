@@ -35,7 +35,9 @@ def _replace_secrets(template: str, secrets: Mapping[str, str]) -> str:
     return result
 
 
-def _expand_vintage_schedule(resource: Mapping[str, object], template: str) -> str:
+def _expand_vintage_schedule(
+    resource: Mapping[str, object], template: str, *, maximum_observation_date: dt.date
+) -> str:
     raw_schedule = resource.get("vintage_schedule")
     if not isinstance(raw_schedule, Mapping):
         return template
@@ -43,7 +45,7 @@ def _expand_vintage_schedule(resource: Mapping[str, object], template: str) -> s
         raise ValueError("UNSUPPORTED_VINTAGE_FREQUENCY")
     start = dt.date.fromisoformat(str(raw_schedule["start"]))
     end = dt.date.fromisoformat(str(raw_schedule["end"]))
-    if end > dt.date(2010, 12, 31):
+    if end > maximum_observation_date:
         raise ValueError(f"POST_EVALUATION_VINTAGE_DATE:{end.isoformat()}")
     cursor = dt.date(start.year, start.month, 1)
     vintages: list[str] = []
@@ -58,7 +60,10 @@ def _expand_vintage_schedule(resource: Mapping[str, object], template: str) -> s
 
 
 def expand_source_urls(
-    resources: Sequence[Mapping[str, object]], *, secrets: Mapping[str, str]
+    resources: Sequence[Mapping[str, object]],
+    *,
+    secrets: Mapping[str, str],
+    maximum_observation_date: dt.date = dt.date(2010, 12, 31),
 ) -> tuple[ExpandedSource, ...]:
     """Expand deterministic series/year source templates into concrete URLs."""
 
@@ -76,7 +81,11 @@ def expand_source_urls(
                 )
             )
             continue
-        template = _expand_vintage_schedule(resource, str(resource.get("url_template", "")))
+        template = _expand_vintage_schedule(
+            resource,
+            str(resource.get("url_template", "")),
+            maximum_observation_date=maximum_observation_date,
+        )
         for series_id in resource.get("series_ids", []):
             url = template.replace("{series_id}", str(series_id))
             expanded.append(
@@ -89,9 +98,26 @@ def expand_source_urls(
             )
         for raw_year in resource.get("years", []):
             year = int(raw_year)
-            if year > 2010:
+            if year > maximum_observation_date.year:
                 raise ValueError(f"POST_EVALUATION_SOURCE_YEAR:{resource_id}:{year}")
             year_template = str(resource.get("url_template_2010", template)) if year == 2010 else template
+            quarters = tuple(resource.get("quarters", ()))
+            if quarters:
+                for quarter in quarters:
+                    expanded.append(
+                        ExpandedSource(
+                            resource_id=f"{resource_id}:{year}:Q{quarter}",
+                            url=_replace_secrets(
+                                year_template.replace("{year}", str(year)).replace(
+                                    "{quarter}", str(quarter)
+                                ),
+                                secrets,
+                            ),
+                            format=format_name,
+                            probe_mode=str(resource.get("probe_mode", "full")),
+                        )
+                    )
+                continue
             expanded.append(
                 ExpandedSource(
                     resource_id=f"{resource_id}:{year}",
@@ -216,7 +242,11 @@ def probe_sources(
                 "resource_count": 0,
             }
             continue
-        expanded_by_dataset[dataset_id] = expand_source_urls(item.resources, secrets=secrets)
+        expanded_by_dataset[dataset_id] = expand_source_urls(
+            item.resources,
+            secrets=secrets,
+            maximum_observation_date=item.maximum_observation_date,
+        )
 
     flat_sources = tuple(
         source
@@ -248,7 +278,9 @@ def probe_sources(
         "ready": overall_ready,
         "validation_opened": False,
         "locked_opened": False,
-        "maximum_observation_date": "2010-12-31",
+        "maximum_observation_date": max(
+            item.maximum_observation_date for item in source_plan.values()
+        ).isoformat(),
         "datasets": datasets,
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)

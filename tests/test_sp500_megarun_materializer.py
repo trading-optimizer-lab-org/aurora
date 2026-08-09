@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from aurora.infra.sp500_megarun.materializer import (
+    _expand_resource,
     coverage_spans_research_window,
     discover_official_data_links,
     parquet_safe_frame,
@@ -64,3 +65,17 @@ def test_weekly_or_monthly_sources_may_start_after_calendar_boundary() -> None:
         search_start="1998-01-01",
         evaluation_end="2010-12-31",
     )
+
+
+def test_resource_expansion_builds_year_quarter_cross_product() -> None:
+    rows = _expand_resource(
+        {
+            "id": "sec",
+            "url_template": "https://example.test/{year}/QTR{quarter}/master.idx",
+            "years": [2019, 2020],
+            "quarters": [1, 4],
+            "format": "idx",
+        }
+    )
+
+    assert [row[0] for row in rows] == ["sec:2019:Q1", "sec:2019:Q4", "sec:2020:Q1", "sec:2020:Q4"]

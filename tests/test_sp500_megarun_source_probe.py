@@ -65,6 +65,29 @@ def test_expand_source_urls_expands_series_and_year_templates_without_post_2010_
     assert all("2011" not in item.url for item in expanded)
 
 
+def test_expand_source_urls_allows_bounded_2020_contract_and_quarters() -> None:
+    expanded = expand_source_urls(
+        (
+            {
+                "id": "sec",
+                "url_template": "https://example.test/{year}/QTR{quarter}/master.idx",
+                "years": [2019, 2020],
+                "quarters": [1, 4],
+                "format": "idx",
+            },
+        ),
+        secrets={},
+        maximum_observation_date=date(2020, 12, 31),
+    )
+
+    assert [row.resource_id for row in expanded] == [
+        "sec:2019:Q1",
+        "sec:2019:Q4",
+        "sec:2020:Q1",
+        "sec:2020:Q4",
+    ]
+
+
 def test_source_probe_is_blocked_locally_even_with_valid_contract(tmp_path: Path) -> None:
     contract = load_and_validate_contract(CONTRACT_PATH)
     source_plan = load_and_validate_source_plan(SOURCE_PLAN_PATH, contract)
