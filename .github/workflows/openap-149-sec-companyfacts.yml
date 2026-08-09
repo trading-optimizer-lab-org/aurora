@@ -6,6 +6,7 @@ on:
       - codex/openap-proxy44-validation
     paths:
       - .github/workflows/openap-149-sec-companyfacts.yml
+      - research/openap_current_score.py
       - research/openap_181/sec_companyfacts_149.py
       - scripts/run_openap_149_sec_companyfacts.py
       - tests/test_openap_149_sec_companyfacts.py
