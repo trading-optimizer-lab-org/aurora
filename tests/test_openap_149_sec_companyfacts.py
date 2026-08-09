@@ -365,7 +365,7 @@ def test_companyfacts_calculates_deferred_revenue_change_as_explicit_proxy() -> 
     )
 
 
-def _rdability_frames(years: range) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _rdability_frames(years: range | list[int]) -> tuple[pd.DataFrame, pd.DataFrame]:
     fact_rows: list[dict[str, object]] = []
     status_rows: list[dict[str, object]] = []
     for cik, symbol, intensity_scale in (
@@ -445,6 +445,23 @@ def test_companyfacts_rdability_uses_causal_rolling_regressions_and_top_tercile(
 
 def test_companyfacts_rdability_accepts_six_valid_regression_pairs() -> None:
     facts, status = _rdability_frames(range(2019, 2026))
+
+    values = _module().calculate_companyfacts_rdability_current(
+        facts,
+        status,
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    assert values["signal"].tolist() == ["RDAbility"]
+    assert values.iloc[0]["security_id"] == "US-SEC-0000000003-CCC"
+    assert values.iloc[0]["value"] == pytest.approx(2.0)
+
+
+def test_companyfacts_rdability_regression_keeps_rows_across_fiscal_gaps() -> None:
+    facts, status = _rdability_frames(
+        [2017, 2018, 2020, 2021, 2022, 2023, 2024, 2025]
+    )
 
     values = _module().calculate_companyfacts_rdability_current(
         facts,
