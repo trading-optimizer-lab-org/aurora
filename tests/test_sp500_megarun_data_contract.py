@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -146,7 +147,7 @@ def test_contract_rejects_missing_dataset_reference(tmp_path: Path) -> None:
 def test_snapshot_manifest_requires_every_dataset_and_forbids_post_evaluation_rows() -> None:
     payload = _minimal_contract()
     contract_path = Path("contract.json")
-    manifest = {
+    manifest: dict[str, Any] = {
         "contract_sha256": "a" * 64,
         "datasets": {
             "FREE_DAILY": {

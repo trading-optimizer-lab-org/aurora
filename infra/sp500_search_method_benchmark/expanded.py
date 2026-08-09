@@ -722,7 +722,15 @@ def run_unit(method: str, seed: int, data_root: Path, output_dir: Path) -> dict[
         nonlocal cost_used, proposal
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [
-                pool.submit(_expanded_candidate, method, int(seed), proposal + index, genome, fidelity, data)
+                pool.submit(
+                    _expanded_candidate,
+                    method,
+                    int(seed),
+                    proposal + index,
+                    genome.tolist(),
+                    fidelity,
+                    data,
+                )
                 for index, (genome, fidelity) in enumerate(actions)
             ]
             rows = [future.result() for future in futures]
@@ -765,7 +773,7 @@ def run_unit(method: str, seed: int, data_root: Path, output_dir: Path) -> dict[
             else:
                 _after_bracket_action(state, row)
         else:
-            batch = []
+            batch: list[tuple[np.ndarray, float]] = []
             for _ in range(2):
                 if cost_used + len(batch) + 1.0 > MAX_COST_UNITS + 1e-9:
                     break

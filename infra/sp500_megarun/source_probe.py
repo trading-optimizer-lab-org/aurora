@@ -1,4 +1,4 @@
-"""GitHub-only acquisition probe for the free 120-lane data contract."""
+"""GitHub-only acquisition probe for the free 240-lane data contract."""
 
 from __future__ import annotations
 
@@ -18,6 +18,13 @@ import requests
 
 from aurora.core.execution_policy import require_github_only_execution
 from aurora.infra.sp500_megarun.data_contract import SourcePlanItem
+
+
+def _sequence_setting(resource: Mapping[str, object], key: str) -> Sequence[object]:
+    value = resource.get(key, ())
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"INVALID_SOURCE_SEQUENCE:{key}")
+    return value
 
 
 @dataclass(frozen=True)
@@ -86,7 +93,7 @@ def expand_source_urls(
             str(resource.get("url_template", "")),
             maximum_observation_date=maximum_observation_date,
         )
-        for series_id in resource.get("series_ids", []):
+        for series_id in _sequence_setting(resource, "series_ids"):
             url = template.replace("{series_id}", str(series_id))
             expanded.append(
                 ExpandedSource(
@@ -96,12 +103,14 @@ def expand_source_urls(
                     probe_mode=str(resource.get("probe_mode", "full")),
                 )
             )
-        for raw_year in resource.get("years", []):
-            year = int(raw_year)
+        for raw_year in _sequence_setting(resource, "years"):
+            year = int(str(raw_year))
             if year > maximum_observation_date.year:
                 raise ValueError(f"POST_EVALUATION_SOURCE_YEAR:{resource_id}:{year}")
             year_template = str(resource.get("url_template_2010", template)) if year == 2010 else template
-            quarters = tuple(resource.get("quarters", ()))
+            quarters: tuple[object, ...] = tuple(
+                _sequence_setting(resource, "quarters")
+            )
             if quarters:
                 for quarter in quarters:
                     expanded.append(

@@ -224,7 +224,9 @@ def _normalize_download(
     cache_dir: Path,
 ) -> tuple[pd.DataFrame, MaterializedResource]:
     payload, raw_sha256 = _download(url, cache_dir=cache_dir)
-    targets = ((resource_id, url, format_name, payload, raw_sha256),)
+    targets: tuple[tuple[str, str, str, bytes, str], ...] = (
+        (resource_id, url, format_name, payload, raw_sha256),
+    )
     if format_name.startswith("html") and bool(
         resource_metadata.get("discover_tabular_links", True)
     ):
