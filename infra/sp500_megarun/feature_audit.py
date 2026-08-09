@@ -149,6 +149,11 @@ def audit_feature_outputs(
             ).dropna(subset=["value_left", "value_right"])
             if len(joined) < 3:
                 continue
+            if (
+                joined["value_left"].nunique(dropna=True) < 2
+                or joined["value_right"].nunique(dropna=True) < 2
+            ):
+                continue
             correlation = joined["value_left"].corr(joined["value_right"], method="spearman")
             if pd.notna(correlation) and abs(float(correlation)) >= near_duplicate_threshold:
                 near_pairs.append((left, right))

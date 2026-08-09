@@ -52,10 +52,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 61)]
+    ] == [f"F{index:03d}" for index in range(1, 71)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[60:]
+        for lane in feature_contract.lanes[70:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -63,6 +63,33 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert model_lanes[5].parameter_space["model"] == ("logit", "probit")
     assert model_lanes[6].parameter_space["model"] == ("gam", "pls")
     assert model_lanes[7].parameter_space["model"] == ("tree", "boosted_stumps")
+    advanced_lanes = feature_contract.lanes[60:70]
+    assert all(lane.required_datasets == ("D_SPY",) for lane in advanced_lanes)
+    assert advanced_lanes[1].parameter_space["kind"] == (
+        "local_level",
+        "local_trend",
+        "kalman_slope",
+    )
+    assert "states" not in advanced_lanes[1].parameter_space
+    assert advanced_lanes[3].parameter_space == {
+        "period": (5, 10, 20, 40, 63),
+        "window": (126, 252, 504),
+        "detrend": ("mean", "linear"),
+        "phase_stability": (0.0, 0.25, 0.5, 0.75),
+    }
+    assert advanced_lanes[4].parameter_space["statistic"] == (
+        "binary_entropy",
+        "lempel_ziv",
+    )
+    assert "bins" not in advanced_lanes[5].parameter_space
+    assert advanced_lanes[8].parameter_space["student_df"] == (5, 8, 12)
+    assert advanced_lanes[9].parameter_space["estimator"] == (
+        "close",
+        "parkinson",
+        "garman_klass",
+        "rogers_satchell",
+    )
+    assert all(lane.minimum_history >= 252 for lane in advanced_lanes)
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:

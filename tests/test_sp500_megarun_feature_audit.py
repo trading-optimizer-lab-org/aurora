@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import warnings
 
 import pandas as pd
 import pytest
@@ -72,3 +73,21 @@ def test_audit_rejects_validation_or_locked_rows() -> None:
             search_start=pd.Timestamp("1998-01-01"),
             search_end=pd.Timestamp("2010-12-31"),
         )
+
+
+def test_audit_skips_near_duplicate_correlation_for_constant_lanes() -> None:
+    api = _audit_api()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        report = api.audit_feature_outputs(
+            {
+                "F001": _frame([0.0, 0.0, 0.0, 0.0]),
+                "F002": _frame([0.0, 1.0, 0.0, 1.0]),
+            },
+            expected_lane_ids=("F001", "F002"),
+            search_start=pd.Timestamp("2010-01-04"),
+            search_end=pd.Timestamp("2010-12-31"),
+        )
+
+    assert report.near_duplicate_pairs == ()
