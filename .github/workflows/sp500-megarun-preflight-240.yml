@@ -2,6 +2,16 @@ name: SP500 Megarun F001-F240 Data Preflight
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/sp500-search-method-benchmark-short
+    paths:
+      - .github/workflows/sp500-megarun-preflight-240.yml
+      - config/sp500_megarun_free_data_240.json
+      - config/sp500_megarun_free_sources_240.json
+      - infra/sp500_megarun/**
+      - scripts/build_sp500_megarun_preflight_240.py
+      - tests/test_sp500_megarun_*.py
 
 permissions:
   contents: read
