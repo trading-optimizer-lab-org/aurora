@@ -14,6 +14,7 @@ from aurora.research.openap_181.acquisition_149 import load_target_routes
 from aurora.research.openap_181.sec_companyfacts_149 import (
     calculate_companyfacts_accounting_current,
     calculate_companyfacts_149_current,
+    calculate_companyfacts_order_backlog_current,
     calculate_companyfacts_rdability_current,
     calculate_companyfacts_realestate_current,
     calculate_companyfacts_roaq_current,
@@ -89,7 +90,8 @@ def main() -> int:
         routes.loc[routes["category"].eq("Accounting"), "signal"].astype(str)
     )
     expanded_targets = accounting_targets.difference(
-        {"Cash", "GP", "Investment"}, REQUIRED_93
+        {"Cash", "GP", "Investment", "OrderBacklog", "OrderBacklogChg"},
+        REQUIRED_93,
     )
     supported_targets = expanded_targets.intersection(ACCOUNTING_FEATURE_DEPENDENCIES)
     expanded_values = calculate_companyfacts_accounting_current(
@@ -130,6 +132,12 @@ def main() -> int:
         formation_at=args.formation_at,
         retrieved_at=retrieved_at,
     )
+    backlog_values = calculate_companyfacts_order_backlog_current(
+        companyfacts,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
     values = pd.concat(
         [
             core_values,
@@ -139,6 +147,7 @@ def main() -> int:
             realestate_values,
             tax_values,
             roaq_values,
+            backlog_values,
         ],
         ignore_index=True,
     )

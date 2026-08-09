@@ -80,6 +80,10 @@ _ROAQ_ALIAS_LOOKUP = {
     "NetIncomeLoss": ("income", 1),
     "ProfitLoss": ("income", 2),
 }
+_BACKLOG_ALIAS_LOOKUP = {
+    "Assets": ("assets", 0),
+    "OrderBacklog": ("backlog", 0),
+}
 _OUTPUT_COLUMNS = (
     "security_id",
     "ticker",
@@ -1297,10 +1301,214 @@ def calculate_companyfacts_roaq_current(
     ).reset_index(drop=True)
 
 
+def _backlog_annual_facts(
+    companyfacts: pd.DataFrame,
+    formation: pd.Timestamp,
+) -> pd.DataFrame:
+    required = _FACT_COLUMNS | {"taxonomy", "fy", "fp"}
+    _require_columns(companyfacts, required, "SEC CompanyFacts")
+    frame = companyfacts.copy()
+    frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce")
+    frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+    frame["fiscal_year"] = pd.to_numeric(frame["fy"], errors="coerce")
+    frame["period_end"] = _utc(frame["period_end"])
+    frame["filed_at"] = _utc(frame["filed"])
+    frame["available_at"] = _utc(frame["available_at"])
+    frame = frame.loc[
+        frame["cik"].notna()
+        & frame["value"].notna()
+        & np.isfinite(frame["value"])
+        & frame["fiscal_year"].notna()
+        & frame["taxonomy"].fillna("").astype(str).str.lower().eq("us-gaap")
+        & frame["tag"].isin(_BACKLOG_ALIAS_LOOKUP)
+        & frame["unit"].eq("USD")
+        & frame["form"].isin({"10-K", "10-K/A"})
+        & frame["fp"].fillna("").astype(str).eq("FY")
+        & frame["period_end"].notna()
+        & frame["filed_at"].notna()
+        & frame["available_at"].notna()
+        & frame["available_at"].le(formation)
+    ].copy()
+    if frame.empty:
+        return frame
+    frame["concept"] = frame["tag"].map(
+        lambda tag: _BACKLOG_ALIAS_LOOKUP[str(tag)][0]
+    )
+    frame["alias_priority"] = frame["tag"].map(
+        lambda tag: _BACKLOG_ALIAS_LOOKUP[str(tag)][1]
+    )
+    group = ["cik", "period_end", "concept"]
+    best_priority = frame.groupby(group)["alias_priority"].transform("min")
+    frame = frame.loc[frame["alias_priority"].eq(best_priority)].copy()
+    latest_available = frame.groupby(group)["available_at"].transform("max")
+    frame = frame.loc[frame["available_at"].eq(latest_available)].copy()
+    conflicts = frame.groupby(group)["value"].transform("nunique").gt(1)
+    frame = frame.loc[~conflicts].copy()
+    return frame.sort_values(group + ["filed_at", "accession_number"]).drop_duplicates(
+        group, keep="last"
+    )
+
+
+def _backlog_candidates(issuer_facts: pd.DataFrame) -> list[dict[str, Any]]:
+    periods = sorted(issuer_facts["period_end"].unique())
+    ratios: list[dict[str, Any]] = []
+    for index in range(1, len(periods)):
+        current_end = periods[index]
+        prior_end = periods[index - 1]
+        gap_days = (pd.Timestamp(current_end) - pd.Timestamp(prior_end)).days
+        if not 300 <= gap_days <= 430:
+            continue
+        current = issuer_facts.loc[issuer_facts["period_end"].eq(current_end)]
+        prior = issuer_facts.loc[issuer_facts["period_end"].eq(prior_end)]
+        current_lookup = current.set_index("concept")
+        prior_lookup = prior.set_index("concept")
+        if not {"assets", "backlog"}.issubset(current_lookup.index):
+            continue
+        if "assets" not in prior_lookup.index:
+            continue
+        assets = float(current_lookup.loc["assets", "value"])
+        assets_lag = float(prior_lookup.loc["assets", "value"])
+        backlog = float(current_lookup.loc["backlog", "value"])
+        denominator = 0.5 * (assets + assets_lag)
+        if (
+            backlog == 0
+            or denominator <= 0
+            or not all(np.isfinite(value) for value in (assets, assets_lag, backlog))
+        ):
+            continue
+        used = pd.concat(
+            [
+                current.loc[current["concept"].isin({"assets", "backlog"})],
+                prior.loc[prior["concept"].eq("assets")],
+            ],
+            ignore_index=True,
+        )
+        ratios.append(
+            {
+                "period_end": pd.Timestamp(current_end),
+                "ratio": float(backlog / denominator),
+                "filed_at": used["filed_at"].max(),
+                "available_at": used["available_at"].max(),
+                "observation_count": int(len(used)),
+            }
+        )
+    if not ratios:
+        return []
+    latest = ratios[-1]
+    output = [
+        {
+            **latest,
+            "cik": int(issuer_facts["cik"].iloc[0]),
+            "signal": "OrderBacklog",
+            "value": latest["ratio"],
+            "formula_id": "openap_orderbacklog_sec_companyfacts_current_proxy",
+        }
+    ]
+    if len(ratios) >= 2:
+        previous = ratios[-2]
+        gap_days = (latest["period_end"] - previous["period_end"]).days
+        if 300 <= gap_days <= 430:
+            output.append(
+                {
+                    **latest,
+                    "cik": int(issuer_facts["cik"].iloc[0]),
+                    "signal": "OrderBacklogChg",
+                    "value": latest["ratio"] - previous["ratio"],
+                    "formula_id": (
+                        "openap_orderbacklogchg_sec_companyfacts_current_proxy"
+                    ),
+                    "filed_at": max(latest["filed_at"], previous["filed_at"]),
+                    "available_at": max(
+                        latest["available_at"], previous["available_at"]
+                    ),
+                    "observation_count": int(
+                        latest["observation_count"] + previous["observation_count"]
+                    ),
+                }
+            )
+    return output
+
+
+def calculate_companyfacts_order_backlog_current(
+    companyfacts: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+) -> pd.DataFrame:
+    """Build causal SEC proxies for the two OpenAP order-backlog signals."""
+
+    formation = pd.Timestamp(formation_at)
+    if formation.tzinfo is None:
+        formation = formation.tz_localize("UTC")
+    else:
+        formation = formation.tz_convert("UTC")
+    retrieved = pd.Timestamp(retrieved_at)
+    if retrieved.tzinfo is None:
+        retrieved = retrieved.tz_localize("UTC")
+    else:
+        retrieved = retrieved.tz_convert("UTC")
+    identity = build_companyfacts_identity(status)
+    facts = _backlog_annual_facts(companyfacts, formation)
+    candidates = [
+        candidate
+        for _, issuer_facts in facts.groupby("cik", sort=False)
+        for candidate in _backlog_candidates(issuer_facts)
+    ]
+    candidate_frame = pd.DataFrame(candidates)
+    if candidate_frame.empty or identity.empty:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+    selected = candidate_frame.merge(
+        identity, on="cik", how="inner", validate="many_to_one"
+    )
+    rows: list[dict[str, Any]] = []
+    for row in selected.itertuples(index=False):
+        available_at = pd.Timestamp(row.available_at)
+        if (
+            available_at > formation
+            or available_at > retrieved
+            or not np.isfinite(row.value)
+        ):
+            continue
+        rows.append(
+            {
+                "security_id": str(row.security_id),
+                "ticker": str(row.symbol),
+                "cik": f"{int(row.cik):010d}",
+                "signal": str(row.signal),
+                "formation_at": formation.isoformat(),
+                "period_end": pd.Timestamp(row.period_end).isoformat(),
+                "filed_at": pd.Timestamp(row.filed_at).isoformat(),
+                "available_at": available_at.isoformat(),
+                "retrieved_at": retrieved.isoformat(),
+                "value": float(row.value),
+                "fidelity_class": "unvalidated_proxy",
+                "current_usable": True,
+                "source_id": "sec_edgar",
+                "source_url": (
+                    "https://data.sec.gov/api/xbrl/companyfacts/"
+                    f"CIK{int(row.cik):010d}.json"
+                ),
+                "formula_id": str(row.formula_id),
+                "formula_sha256": "",
+                "observation_count": int(row.observation_count),
+                "reason_if_missing": "",
+                "caveat": (
+                    "SEC CompanyFacts OrderBacklog and annual assets proxy; "
+                    "not validated as Compustat/GVKEY-equivalent"
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
+        ["security_id", "signal"]
+    ).reset_index(drop=True)
+
+
 __all__ = [
     "build_companyfacts_identity",
     "calculate_companyfacts_accounting_current",
     "calculate_companyfacts_149_current",
+    "calculate_companyfacts_order_backlog_current",
     "calculate_companyfacts_rdability_current",
     "calculate_companyfacts_realestate_current",
     "calculate_companyfacts_roaq_current",
