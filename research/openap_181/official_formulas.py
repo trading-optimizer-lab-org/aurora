@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Mapping
 import gzip
 import json
+import os
 import re
 import time
 import urllib.request
@@ -70,11 +71,20 @@ def _tree_url() -> str:
     )
 
 
+def _request_headers(url: str) -> dict[str, str]:
+    headers = public_headers()
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token and url.startswith("https://api.github.com/"):
+        headers["Authorization"] = f"Bearer {token}"
+        headers["X-GitHub-Api-Version"] = "2022-11-28"
+    return headers
+
+
 def _fetch_bytes(url: str, *, attempts: int = 4, timeout: int = 60) -> bytes:
     last_error: Exception | None = None
     for attempt in range(attempts):
         try:
-            request = urllib.request.Request(url, headers=public_headers())
+            request = urllib.request.Request(url, headers=_request_headers(url))
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 body = response.read()
                 encoding = str(response.headers.get("Content-Encoding", "")).lower()

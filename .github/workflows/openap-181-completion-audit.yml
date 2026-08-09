@@ -96,6 +96,8 @@ jobs:
           test -s "$sec_evidence"
           echo "SEC_ACCOUNTING_EVIDENCE=$sec_evidence" >> "$GITHUB_ENV"
       - name: Build fail-closed 181 manifest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python scripts/fetch_openap_181_official_formulas.py \
             --signal-doc inputs/SignalDoc.csv \
