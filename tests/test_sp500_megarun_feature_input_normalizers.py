@@ -406,8 +406,13 @@ def test_fx_panel_causally_carries_prior_local_holiday_quotes() -> None:
         "RXI$US_N.B.UK",
     ]:
         rows.append({"date": observed[0], "series_id": series_id, "value": 100.0})
-        if series_id != "RXI_N.B.JA":
-            rows.append({"date": observed[1], "series_id": series_id, "value": 101.0})
+        rows.append(
+            {
+                "date": observed[1],
+                "series_id": series_id,
+                "value": -9999.0 if series_id == "RXI_N.B.JA" else 101.0,
+            }
+        )
 
     result = api.normalize_fx_cross_asset_panel(
         pd.DataFrame(rows), sessions=_sessions()

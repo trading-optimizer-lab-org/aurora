@@ -618,6 +618,7 @@ def normalize_fx_cross_asset_panel(
     selected = fx.loc[fx["series_id"].isin(_FX_SERIES)].copy()
     selected["asset"] = selected["series_id"].map(_FX_SERIES)
     selected["value"] = pd.to_numeric(selected["value"], errors="coerce")
+    selected["value"] = selected["value"].where(selected["value"].gt(0.0))
     selected = selected.dropna(subset=["asset", "value"])
     panel = selected.pivot_table(
         index="date", columns="asset", values="value", aggfunc="last"
