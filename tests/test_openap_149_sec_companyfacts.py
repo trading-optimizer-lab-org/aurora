@@ -945,3 +945,77 @@ def test_companyfacts_herf_averages_three_annual_sic4_sales_concentrations() -> 
     assert values["formula_id"].eq(
         "openap_herf_sec_companyfacts_current_proxy"
     ).all()
+
+
+def test_companyfacts_herfbe_averages_three_annual_sic4_equity_concentrations() -> None:
+    fact_rows: list[dict[str, object]] = []
+    submission_rows: list[dict[str, object]] = []
+    status_rows: list[dict[str, object]] = []
+    equity_by_cik = {
+        1: (100.0, 100.0, 300.0),
+        2: (100.0, 300.0, 100.0),
+    }
+    for cik, annual_equity in equity_by_cik.items():
+        symbol = chr(64 + cik) * 3
+        for surface in ("companyfacts", "submissions"):
+            status_rows.append(
+                {
+                    "cik": cik,
+                    "symbol": symbol,
+                    "surface": surface,
+                    "status": "ok",
+                }
+            )
+        for year, equity in zip((2023, 2024, 2025), annual_equity, strict=True):
+            accepted = f"{year + 1}-02-15T15:00:00Z"
+            accession = f"{cik}-fy{year}"
+            fact_rows.append(
+                {
+                    "cik": cik,
+                    "entity_name": f"Issuer {cik}",
+                    "taxonomy": "us-gaap",
+                    "tag": "StockholdersEquity",
+                    "unit": "USD",
+                    "value": equity,
+                    "period_start": "",
+                    "period_end": f"{year}-12-31",
+                    "fy": year,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": accepted[:10],
+                    "accession_number": accession,
+                    "frame": "",
+                    "available_at": accepted,
+                    "available_at_quality": "sec_acceptance_timestamp",
+                    "source": (
+                        "https://data.sec.gov/api/xbrl/companyfacts/"
+                        f"CIK{cik:010d}.json"
+                    ),
+                    "source_mode": "sec_official_api",
+                }
+            )
+            submission_rows.append(
+                {
+                    "cik": cik,
+                    "accession_number": accession,
+                    "accepted_at": accepted,
+                    "sic": 3571,
+                }
+            )
+
+    values = _module().calculate_companyfacts_herfbe_current(
+        pd.DataFrame(fact_rows),
+        pd.DataFrame(submission_rows),
+        pd.DataFrame(status_rows),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    expected = (0.5 + 0.625 + 0.625) / 3
+    assert set(values["ticker"]) == {"AAA", "BBB"}
+    assert values["signal"].eq("HerfBE").all()
+    assert values["value"].tolist() == pytest.approx([expected, expected])
+    assert values["fidelity_class"].eq("unvalidated_proxy").all()
+    assert values["formula_id"].eq(
+        "openap_herfbe_sec_companyfacts_current_proxy"
+    ).all()
