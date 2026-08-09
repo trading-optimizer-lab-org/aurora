@@ -108,6 +108,7 @@ def evaluate_market_lane(
     close = pd.to_numeric(spy["close"], errors="coerce")
     returns = close.pct_change(fill_method=None)
     window = int(parameters.get("window", 63))
+    inputs: Sequence[str]
 
     if lane_id == "F021":
         value = _rolling_z(pd.to_numeric(cboe["vix_close"], errors="coerce"), window)
