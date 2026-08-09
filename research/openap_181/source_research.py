@@ -20,6 +20,10 @@ from aurora.research.openap_181.analyst_batch import (
     ANALYST_SIGNALS,
 )
 from aurora.research.openap_181.completion import SOURCE_CATALOG
+from aurora.research.openap_181.relationship_batch import (
+    RELATIONSHIP_BLOCKERS,
+    RELATIONSHIP_SIGNALS,
+)
 
 
 RESEARCH_CHECKED_DATE = "2026-08-09"
@@ -679,6 +683,23 @@ SOURCE_METADATA = {
             redistribution="separate S&P Global license required",
         ),
         _meta(
+            "factset_supply_chain_commercial",
+            "FactSet Research Systems",
+            "https://www.factset.com/marketplace/catalog/product/factset-supply-chain-relationships",
+            "https://www.factset.com/terms-of-use",
+            account=True,
+            card=True,
+            auth="commercial FactSet subscription and Supply Chain entitlement",
+            rate="contract and delivery dependent",
+            start="2003 for North America; other regions start later",
+            frequency="daily",
+            lag="daily vendor update schedule",
+            identifiers="FactSet entity and symbology identifiers",
+            available_at="relationship observation and vendor delivery timestamps",
+            pit="commercial direct and reverse relationship graph through time",
+            redistribution="FactSet license required",
+        ),
+        _meta(
             "lseg_ibes_commercial",
             "LSEG",
             "https://wrds-www.wharton.upenn.edu/pages/about/data-vendors/vendor-partner-ibes/",
@@ -867,10 +888,20 @@ def _route_source_ids(signal: str, row: Mapping[str, Any]) -> tuple[str, ...]:
     elif signal in BEA_NETWORK_SIGNALS:
         sources += [
             "bea_input_output", "census_naics_concordance", "sec_edgar",
-            "tiingo_starter", "compustat_commercial", "wrds_linking_suite",
+            "openfigi", "compustat_commercial", "crsp_stock_commercial",
+            "wrds_linking_suite",
         ]
-    elif signal == "CustomerMomentum" or signal == "sinAlgo":
-        sources += ["sec_edgar", "openfigi", "compustat_commercial", "wrds_linking_suite"]
+    elif signal == "CustomerMomentum":
+        sources += [
+            "sec_edgar", "openfigi", "compustat_commercial",
+            "factset_supply_chain_commercial", "crsp_stock_commercial",
+            "wrds_linking_suite",
+        ]
+    elif signal in {"retConglomerate", "sinAlgo"}:
+        sources += [
+            "sec_edgar", "openfigi", "compustat_commercial",
+            "crsp_stock_commercial", "wrds_linking_suite",
+        ]
     elif signal == "betaVIX":
         sources += ["fred_vxo_vix", "tiingo_starter"]
     elif signal in ZERO_TRADE_SIGNALS:
@@ -1060,11 +1091,14 @@ def build_signal_resolution(
             for source_id in sources
             if not _source_is_project_usable(source_id)
         ]
-        remaining_blocker = (
-            ANALYST_BLOCKERS[signal]
-            if signal in ANALYST_SIGNALS
-            else blocker_code + ": " + _classification_detail(classification)
-        )
+        if signal in ANALYST_SIGNALS:
+            remaining_blocker = ANALYST_BLOCKERS[signal]
+        elif signal in RELATIONSHIP_SIGNALS:
+            remaining_blocker = RELATIONSHIP_BLOCKERS[signal]
+        else:
+            remaining_blocker = blocker_code + ": " + _classification_detail(
+                classification
+            )
         rows.append(
             {
                 "signal": signal,

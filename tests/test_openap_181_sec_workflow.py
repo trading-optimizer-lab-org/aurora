@@ -158,7 +158,7 @@ def test_completion_audit_can_consume_patent_source_evidence():
     assert "patent_probe:" in text
     assert "uses: ./.github/workflows/openap-181-patent-source-probe.yml" in text
     assert (
-        "needs: [analyst_probe, patent_probe, short_interest_probe, options_probe]"
+        "needs: [relationship_probe, analyst_probe, patent_probe, short_interest_probe, options_probe]"
         in text
     )
     assert "PATENT_EVIDENCE_RUN_ID" in text
@@ -208,7 +208,7 @@ def test_completion_audit_can_consume_short_interest_source_evidence():
         in text
     )
     assert (
-        "needs: [analyst_probe, patent_probe, short_interest_probe, options_probe]"
+        "needs: [relationship_probe, analyst_probe, patent_probe, short_interest_probe, options_probe]"
         in text
     )
     assert "SHORT_INTEREST_EVIDENCE_RUN_ID" in text
@@ -301,7 +301,7 @@ def test_completion_audit_consumes_analyst_evidence_without_double_counting():
     assert "analyst_probe:" in text
     assert "uses: ./.github/workflows/openap-181-analyst-source-probe.yml" in text
     assert (
-        "needs: [analyst_probe, patent_probe, short_interest_probe, options_probe]"
+        "needs: [relationship_probe, analyst_probe, patent_probe, short_interest_probe, options_probe]"
         in text
     )
     assert "ANALYST_EVIDENCE_RUN_ID" in text

@@ -535,6 +535,19 @@ SOURCE_CATALOG: tuple[SourceEvidence, ...] = (
         "the WRDS subscription does not include the required S&P license.",
     ),
     SourceEvidence(
+        "factset_supply_chain_commercial", "FactSet Supply Chain Relationships",
+        "https://www.factset.com/marketplace/catalog/product/factset-supply-chain-relationships",
+        "commercial_data_feed", False, False,
+        "Global direct and reverse customer, supplier, partner and competitor relationships",
+        (
+            "customer_relationships", "supplier_relationships", "relationship_direction",
+            "relationship_relevance", "revenue_dependency", "factset_entity_identity",
+        ),
+        ("compustat_segment_equivalence", "permanent_free_access"),
+        "Commercial relationship graph with North American history advertised from 2003. "
+        "It is not the Compustat Historical Segments panel used by the OpenAP formulas.",
+    ),
+    SourceEvidence(
         "lseg_ibes_commercial", "LSEG I/B/E/S",
         "https://wrds-www.wharton.upenn.edu/pages/about/data-vendors/vendor-partner-ibes/",
         "wrds_subscription_and_vendor_license", False, False,

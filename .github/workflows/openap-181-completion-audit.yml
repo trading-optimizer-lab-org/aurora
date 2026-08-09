@@ -45,6 +45,11 @@ on:
         required: false
         default: ""
         type: string
+      relationship_evidence_run_id:
+        description: Optional pinned relationship source probe providing per-signal blocker evidence
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: read
@@ -55,6 +60,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  relationship_probe:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.relationship_evidence_run_id == '' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/openap-181-relationship-source-probe.yml
+    with:
+      source_sha: ${{ inputs.source_sha || github.sha }}
+    secrets: inherit
+
   analyst_probe:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.analyst_evidence_run_id == '' }}
     permissions:
@@ -92,8 +106,8 @@ jobs:
     secrets: inherit
 
   audit:
-    needs: [analyst_probe, patent_probe, short_interest_probe, options_probe]
-    if: ${{ always() && (needs.analyst_probe.result == 'success' || needs.analyst_probe.result == 'skipped') && (needs.patent_probe.result == 'success' || needs.patent_probe.result == 'skipped') && (needs.short_interest_probe.result == 'success' || needs.short_interest_probe.result == 'skipped') && (needs.options_probe.result == 'success' || needs.options_probe.result == 'skipped') }}
+    needs: [relationship_probe, analyst_probe, patent_probe, short_interest_probe, options_probe]
+    if: ${{ always() && (needs.relationship_probe.result == 'success' || needs.relationship_probe.result == 'skipped') && (needs.analyst_probe.result == 'success' || needs.analyst_probe.result == 'skipped') && (needs.patent_probe.result == 'success' || needs.patent_probe.result == 'skipped') && (needs.short_interest_probe.result == 'success' || needs.short_interest_probe.result == 'skipped') && (needs.options_probe.result == 'success' || needs.options_probe.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -106,6 +120,7 @@ jobs:
       SHORT_INTEREST_EVIDENCE_RUN_ID: ${{ inputs.short_interest_evidence_run_id || '' }}
       OPTIONS_EVIDENCE_RUN_ID: ${{ inputs.options_evidence_run_id || '' }}
       ANALYST_EVIDENCE_RUN_ID: ${{ inputs.analyst_evidence_run_id || '' }}
+      RELATIONSHIP_EVIDENCE_RUN_ID: ${{ inputs.relationship_evidence_run_id || '' }}
       TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
     steps:
       - name: Checkout exact implementation revision
@@ -121,9 +136,9 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e . pytest
       - name: Compile and test completion contract
         run: |
-          python -m py_compile research/openap_181/completion.py research/openap_181/official_formulas.py research/openap_181/source_research.py research/openap_181/implementation_status.py research/openap_181/analyst_batch.py research/openap_181/options_batch.py research/openap_181/patent_batch.py research/openap_181/short_interest_batch.py research/openap_181/sec_accounting_batch.py research/openap_181/sec_companyfacts_access.py research/openap_181/sec_fsd_access.py research/openap_181/sec_fsd_inputs.py
-          python -m py_compile scripts/run_openap_181_completion.py scripts/fetch_openap_181_official_formulas.py scripts/run_openap_181_source_research.py scripts/run_openap_181_implementation_status.py scripts/run_openap_181_analyst_source_probe.py scripts/run_openap_181_options_source_probe.py scripts/run_openap_181_patent_source_probe.py scripts/run_openap_181_short_interest_source_probe.py scripts/run_openap_181_sec_accounting_batch.py scripts/run_openap_181_sec_accounting_validation.py scripts/run_openap_181_sec_companyfacts_access.py scripts/run_openap_181_sec_fsd_access.py scripts/run_openap_181_sec_fsd_inputs.py
-          python -m pytest tests/test_openap_181_completion.py tests/test_openap_181_analyst_batch.py tests/test_openap_181_options_batch.py tests/test_openap_181_patent_batch.py tests/test_openap_181_short_interest_batch.py tests/test_openap_181_sec_accounting_batch.py tests/test_openap_181_sec_companyfacts_access.py tests/test_openap_181_sec_fsd_access.py tests/test_openap_181_sec_fsd_inputs.py tests/test_openap_181_sec_workflow.py tests/test_openap_93_max_free.py -q --tb=short
+          python -m py_compile research/openap_181/completion.py research/openap_181/official_formulas.py research/openap_181/source_research.py research/openap_181/implementation_status.py research/openap_181/relationship_batch.py research/openap_181/analyst_batch.py research/openap_181/options_batch.py research/openap_181/patent_batch.py research/openap_181/short_interest_batch.py research/openap_181/sec_accounting_batch.py research/openap_181/sec_companyfacts_access.py research/openap_181/sec_fsd_access.py research/openap_181/sec_fsd_inputs.py
+          python -m py_compile scripts/run_openap_181_completion.py scripts/fetch_openap_181_official_formulas.py scripts/run_openap_181_source_research.py scripts/run_openap_181_implementation_status.py scripts/run_openap_181_relationship_source_probe.py scripts/run_openap_181_analyst_source_probe.py scripts/run_openap_181_options_source_probe.py scripts/run_openap_181_patent_source_probe.py scripts/run_openap_181_short_interest_source_probe.py scripts/run_openap_181_sec_accounting_batch.py scripts/run_openap_181_sec_accounting_validation.py scripts/run_openap_181_sec_companyfacts_access.py scripts/run_openap_181_sec_fsd_access.py scripts/run_openap_181_sec_fsd_inputs.py
+          python -m pytest tests/test_openap_181_completion.py tests/test_openap_181_relationship_batch.py tests/test_openap_181_analyst_batch.py tests/test_openap_181_options_batch.py tests/test_openap_181_patent_batch.py tests/test_openap_181_short_interest_batch.py tests/test_openap_181_sec_accounting_batch.py tests/test_openap_181_sec_companyfacts_access.py tests/test_openap_181_sec_fsd_access.py tests/test_openap_181_sec_fsd_inputs.py tests/test_openap_181_sec_workflow.py tests/test_openap_93_max_free.py -q --tb=short
       - name: Download pinned official SignalDoc
         run: |
           mkdir -p inputs
@@ -257,6 +272,47 @@ jobs:
           if [[ -z "${SHORT_INTEREST_EVIDENCE_RUN_ID:-}" ]]; then
             echo "SHORT_INTEREST_EVIDENCE_RUN_ID=$GITHUB_RUN_ID" >> "$GITHUB_ENV"
           fi
+      - name: Download pinned relationship source evidence
+        if: ${{ env.RELATIONSHIP_EVIDENCE_RUN_ID != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-relationship-source-probe-results
+          path: inputs/relationship
+          run-id: ${{ env.RELATIONSHIP_EVIDENCE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download in-run pinned relationship source evidence
+        if: ${{ github.event_name == 'workflow_dispatch' && env.RELATIONSHIP_EVIDENCE_RUN_ID == '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-relationship-source-probe-results
+          path: inputs/relationship
+      - name: Locate pinned relationship source evidence
+        if: ${{ env.RELATIONSHIP_EVIDENCE_RUN_ID != '' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          relationship_evidence="$(find inputs/relationship -name relationship_batch_evidence.csv -type f -print -quit)"
+          relationship_summary="$(find inputs/relationship -name relationship_source_probe.json -type f -print -quit)"
+          test -s "$relationship_evidence"
+          test -s "$relationship_summary"
+          grep -q '"exact_free_authorized_source_found": false' "$relationship_summary"
+          grep -q 'relationship_source_blocked:' "$relationship_evidence"
+          relationship_commit="$(python - "$relationship_evidence" <<'PY'
+          import re
+          import sys
+          import pandas as pd
+          evidence = pd.read_csv(sys.argv[1])
+          assert len(evidence) == evidence["signal"].nunique() == 5
+          assert evidence["formula_implemented"].eq(True).all()
+          assert evidence["strict_gate_result"].eq("blocked").all()
+          commits = evidence["implementation_commit"].astype(str).unique()
+          assert len(commits) == 1 and re.fullmatch(r"[0-9a-f]{40}", commits[0])
+          print(commits[0])
+          PY
+          )"
+          echo "RELATIONSHIP_EVIDENCE=$relationship_evidence" >> "$GITHUB_ENV"
+          echo "RELATIONSHIP_EVIDENCE_COMMIT=$relationship_commit" >> "$GITHUB_ENV"
+          if [[ -z "${RELATIONSHIP_EVIDENCE_RUN_ID:-}" ]]; then
+            echo "RELATIONSHIP_EVIDENCE_RUN_ID=$GITHUB_RUN_ID" >> "$GITHUB_ENV"
+          fi
       - name: Download pinned analyst source evidence
         if: ${{ env.ANALYST_EVIDENCE_RUN_ID != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -376,6 +432,9 @@ jobs:
           if [[ -n "${OPTIONS_EVIDENCE:-}" ]]; then
             evidence_args+=(--evidence "$OPTIONS_EVIDENCE")
           fi
+          if [[ -n "${RELATIONSHIP_EVIDENCE:-}" ]]; then
+            evidence_args+=(--evidence "$RELATIONSHIP_EVIDENCE")
+          fi
           if [[ -n "${ANALYST_EVIDENCE:-}" ]]; then
             evidence_args+=(--evidence "$ANALYST_EVIDENCE")
           fi
@@ -398,6 +457,10 @@ jobs:
           from aurora.research.openap_181.analyst_batch import (
               ANALYST_BLOCKERS,
               ANALYST_SIGNALS,
+          )
+          from aurora.research.openap_181.relationship_batch import (
+              RELATIONSHIP_BLOCKERS,
+              RELATIONSHIP_SIGNALS,
           )
           from aurora.research.openap_181.implementation_status import (
               TWELVE_DATA_MARKET_SIGNALS,
@@ -458,6 +521,9 @@ jobs:
           short_interest_evidence_present = bool(os.environ.get("SHORT_INTEREST_EVIDENCE", ""))
           options_evidence_present = bool(os.environ.get("OPTIONS_EVIDENCE", ""))
           analyst_evidence_present = bool(os.environ.get("ANALYST_EVIDENCE", ""))
+          relationship_evidence_present = bool(
+              os.environ.get("RELATIONSHIP_EVIDENCE", "")
+          )
           assert documentary.sum() == 58
           assert len(TWELVE_DATA_MARKET_SIGNALS) == 36
           assert set(TWELVE_DATA_MARKET_SIGNALS).issubset(set(resolution["signal"]))
@@ -469,6 +535,7 @@ jobs:
               "dVolCall", "dVolPut", "OptionVolume1", "OptionVolume2",
           }
           analyst_signals = set(ANALYST_SIGNALS)
+          relationship_signals = set(RELATIONSHIP_SIGNALS)
           expected_blocked_signals = set(
               resolution.loc[documentary, "signal"].astype(str)
           )
@@ -484,6 +551,8 @@ jobs:
               expected_blocked_signals.update(option_signals)
           if analyst_evidence_present:
               expected_blocked_signals.update(analyst_signals)
+          if relationship_evidence_present:
+              expected_blocked_signals.update(relationship_signals)
           blocked = implementation.loc[implementation["strict_gate_result"].eq("blocked")]
           assert set(blocked["signal"]) == expected_blocked_signals
           assert len(blocked) == len(expected_blocked_signals)
@@ -501,6 +570,8 @@ jobs:
               externally_evidenced.update(option_signals)
           if analyst_evidence_present:
               externally_evidenced.update(analyst_signals)
+          if relationship_evidence_present:
+              externally_evidenced.update(relationship_signals)
           generated = blocked.loc[~blocked["signal"].isin(externally_evidenced)]
           assert generated["evidence_run_url"].eq(
               f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
@@ -600,6 +671,27 @@ jobs:
               ).all()
               assert analyst_status["implementation_commit"].eq(
                   os.environ["ANALYST_EVIDENCE_COMMIT"]
+              ).all()
+          relationship_status = implementation.loc[
+              implementation["signal"].isin(relationship_signals)
+          ]
+          if relationship_evidence_present:
+              assert len(relationship_status) == relationship_status["signal"].nunique() == 5
+              assert relationship_status["formula_implemented"].astype(str).str.lower().eq("true").all()
+              assert relationship_status["strict_gate_result"].eq("blocked").all()
+              assert relationship_status["blocking_reason"].str.startswith(
+                  "relationship_source_blocked:"
+              ).all()
+              assert relationship_status["blocking_reason"].nunique() == 5
+              assert relationship_status.set_index("signal")["blocking_reason"].to_dict() == RELATIONSHIP_BLOCKERS
+              assert relationship_status["evidence_run_url"].eq(
+                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['RELATIONSHIP_EVIDENCE_RUN_ID']}"
+              ).all()
+              assert relationship_status["evidence_artifact"].eq(
+                  "openap-181-relationship-source-probe-results"
+              ).all()
+              assert relationship_status["implementation_commit"].eq(
+                  os.environ["RELATIONSHIP_EVIDENCE_COMMIT"]
               ).all()
           market_status = implementation.loc[
               implementation["signal"].isin(TWELVE_DATA_MARKET_SIGNALS)
