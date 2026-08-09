@@ -27,6 +27,7 @@ from .sec_accounting_batch import (
     write_sec_accounting_batch_outputs,
     write_sec_accounting_validation_outputs,
 )
+from .sec_fsd_inputs import bounded_quarters, prepare_sec_fsd_batch_inputs
 
 __all__ = [
     "CURRENT_EXACT_31",
@@ -50,4 +51,6 @@ __all__ = [
     "normalize_sec_fsd_tables",
     "write_sec_accounting_batch_outputs",
     "write_sec_accounting_validation_outputs",
+    "bounded_quarters",
+    "prepare_sec_fsd_batch_inputs",
 ]
