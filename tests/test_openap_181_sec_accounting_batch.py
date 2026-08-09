@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import runpy
 import sys
 from importlib import import_module
@@ -526,3 +527,74 @@ def test_validation_refuses_fidelity_when_historical_identity_is_not_verified():
     assert evidence["blocking_reason"].eq("identity_not_verified").all()
     assert coverage["coverage_ratio"].eq(1.0).all()
     assert fidelity["measurement_status"].eq("blocked_identity_not_verified").all()
+
+
+def test_validation_writer_persists_frozen_metrics_sources_and_summary(tmp_path):
+    module = _module()
+    observations, reference, expected = _validation_frames()
+    sources = pd.DataFrame(
+        [
+            {
+                "source_id": "sec_fsd_2024q1",
+                "source_url": (
+                    "https://www.sec.gov/files/dera/data/"
+                    "financial-statement-data-sets/2024q1.zip"
+                ),
+                "period": "2024q1",
+                "sha256": "a" * 64,
+                "size_bytes": 1234,
+                "retrieved_at": "2026-08-09T08:00:00Z",
+                "status": "downloaded",
+                "failure_reason": "",
+            }
+        ]
+    )
+
+    summary = module.write_sec_accounting_validation_outputs(
+        observations,
+        reference,
+        expected,
+        sources,
+        tmp_path,
+        point_in_time_verified=True,
+        identity_verified=True,
+        evidence_run_url="https://github.com/example/aurora/actions/runs/5",
+        evidence_artifact="openap-181-sec-accounting-validation",
+        implementation_commit="e" * 40,
+    )
+
+    assert summary == {
+        "coverage_passed": 3,
+        "fidelity_measured": 3,
+        "fidelity_passed": 3,
+        "signals": 3,
+        "strict_approved": 3,
+    }
+    expected_files = {
+        "sec_accounting_batch_coverage.csv",
+        "sec_accounting_batch_evidence.csv",
+        "sec_accounting_batch_fidelity.csv",
+        "sec_accounting_batch_source_manifest.csv",
+        "sec_accounting_batch_thresholds.json",
+        "sec_accounting_batch_validation_summary.json",
+    }
+    assert expected_files.issubset({path.name for path in tmp_path.iterdir()})
+    thresholds = json.loads(
+        (tmp_path / "sec_accounting_batch_thresholds.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert thresholds == {
+        "formula_commit": module.OPENAP_FORMULA_COMMIT,
+        "minimum_cross_sectional_coverage": 0.8,
+        "minimum_extreme_decile_agreement": 0.8,
+        "minimum_paired_months": 12,
+        "minimum_paired_rows": 60,
+        "minimum_sign_agreement": 0.95,
+        "minimum_spearman": 0.95,
+    }
+    persisted_sources = pd.read_csv(
+        tmp_path / "sec_accounting_batch_source_manifest.csv"
+    )
+    assert persisted_sources.loc[0, "sha256"] == "a" * 64
+    assert persisted_sources.loc[0, "status"] == "downloaded"
