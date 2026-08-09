@@ -993,11 +993,6 @@ def build_source_inventory() -> pd.DataFrame:
         if metadata is None:
             raise ValueError(f"Missing research metadata for source {source.source_id}")
         meta = asdict(metadata)
-        remaining_blocker = (
-            ANALYST_BLOCKERS[signal]
-            if signal in ANALYST_SIGNALS
-            else blocker_code + ": " + _classification_detail(classification)
-        )
         rows.append(
             {
                 "source_id": source.source_id,
@@ -1065,6 +1060,11 @@ def build_signal_resolution(
             for source_id in sources
             if not _source_is_project_usable(source_id)
         ]
+        remaining_blocker = (
+            ANALYST_BLOCKERS[signal]
+            if signal in ANALYST_SIGNALS
+            else blocker_code + ": " + _classification_detail(classification)
+        )
         rows.append(
             {
                 "signal": signal,
