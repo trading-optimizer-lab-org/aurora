@@ -85,6 +85,26 @@ def test_patent_panel_summary_measures_the_source_without_claiming_signal_covera
     assert summary["signal_coverage_measured"] is False
 
 
+def test_patent_panel_summary_parses_kpss_numeric_yyyymmdd_dates():
+    chunk = pd.DataFrame(
+        {
+            "patent_num": [1, 2],
+            "permno": [10001, 10002],
+            "issue_date": [19260126, 20241231],
+            "filing_date": [19250102, 20230115],
+            "xi_nominal": [1.0, 2.0],
+            "xi_real": [0.5, 1.0],
+            "cites": [3, 4],
+        }
+    )
+    summary = summarize_kpss_patent_chunks([chunk])
+
+    assert summary["first_issue_date"] == "1926-01-26"
+    assert summary["last_issue_date"] == "2024-12-31"
+    assert summary["first_filing_date"] == "1925-01-02"
+    assert summary["last_filing_date"] == "2023-01-15"
+
+
 def test_patent_evidence_is_partial_and_fail_closed_for_both_signals():
     probe = {
         "source_commit": KPSS_COMMIT,
