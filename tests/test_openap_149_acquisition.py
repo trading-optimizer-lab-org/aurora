@@ -219,3 +219,23 @@ def test_acquisition_matrix_quarantines_pre_period_availability() -> None:
     assert not bool(row["data_acquired"])
     assert not bool(row["current_value_calculated"])
     assert values.empty
+
+
+def test_acquisition_matrix_quarantines_missing_available_at() -> None:
+    module = _module()
+    invalid = _current_rows().iloc[[0]].copy()
+    invalid.loc[:, "available_at"] = ""
+    formulas = pd.DataFrame([{"signal": "Cash", "formula_sha256": "a" * 64}])
+
+    matrix, values = module.build_acquisition_matrix(
+        _routes().iloc[[0]],
+        invalid,
+        formula_inventory=formulas,
+    )
+
+    row = matrix.iloc[0]
+    assert row["status"] == "blocked_fidelity"
+    assert "available_at_missing" in row["remaining_blocker"]
+    assert not bool(row["data_acquired"])
+    assert not bool(row["current_value_calculated"])
+    assert values.empty
