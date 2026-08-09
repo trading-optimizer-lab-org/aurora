@@ -77,9 +77,15 @@ def _excel_without_header(payload: bytes, *, adapter: str, **_: object) -> pd.Da
     try:
         sheets = pd.read_excel(BytesIO(payload), sheet_name=None, header=None)
     except Exception as exc:
-        raise SourceAdapterError(
-            f"EXCEL_PARSE_FAILED:{adapter}:{type(exc).__name__}:{str(exc)[:200]}"
-        ) from exc
+        try:
+            sheets = pd.read_excel(
+                BytesIO(payload), sheet_name=None, header=None, engine="calamine"
+            )
+        except Exception as fallback_exc:
+            raise SourceAdapterError(
+                f"EXCEL_PARSE_FAILED:{adapter}:{type(exc).__name__}:{str(exc)[:120]}:"
+                f"CALAMINE:{type(fallback_exc).__name__}:{str(fallback_exc)[:120]}"
+            ) from fallback_exc
     frames: list[pd.DataFrame] = []
     for sheet_name, frame in sheets.items():
         if frame.dropna(how="all").empty:
@@ -180,11 +186,7 @@ def _french_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     try:
         with zipfile.ZipFile(BytesIO(payload)) as archive:
-            members = sorted(
-                name
-                for name in archive.namelist()
-                if not name.endswith("/") and name.lower().endswith((".csv", ".txt"))
-            )
+            members = sorted(name for name in archive.namelist() if not name.endswith("/"))
             for member in members:
                 text = archive.read(member).decode("utf-8-sig", errors="replace")
                 lines = text.splitlines()
@@ -266,7 +268,11 @@ def _world_bank_monthly(
             labels = [str(value).strip() if pd.notna(value) else "" for value in raw.iloc[row_index]]
             lowered = [value.casefold() for value in labels]
             date_indexes = [index for index, value in enumerate(lowered) if value == "date"]
-            series_indexes = [index for index, value in enumerate(lowered) if value == requested]
+            series_indexes = [
+                index
+                for index, value in enumerate(lowered)
+                if requested in value or value in requested
+            ]
             if not date_indexes or not series_indexes:
                 continue
             date_index = date_indexes[0]
@@ -301,7 +307,11 @@ def _read_resource_format(
     if format_name in {"zip_csv", "zip_txt"}:
         return _zip_table(payload, adapter=adapter)
     if format_name in {"xls", "xlsx"}:
-        if adapter in {"alfred_philly_pit_bundle", "philadelphia_realtime_bundle"}:
+        if adapter in {
+            "alfred_philly_pit_bundle",
+            "philadelphia_realtime_bundle",
+            "shiller_monthly_excel",
+        }:
             return _excel_without_header(payload, adapter=adapter)
         return _excel(payload, adapter=adapter)
     if format_name == "csv":
@@ -350,6 +360,15 @@ def _candidate_dates(values: pd.Series, *, column_name: str = "") -> pd.Series:
     if quarter.any():
         quarter_values = cleaned.loc[quarter].str.upper()
         result.loc[quarter] = pd.PeriodIndex(quarter_values, freq="Q").to_timestamp()
+    quarter_variant_raw = cleaned.str.fullmatch(r"\d{4}\s*[: -]?\s*Q[1-4]", case=False)
+    quarter_variant = quarter_variant_raw & ~quarter_raw
+    if quarter_variant.any():
+        normalized_quarters = cleaned.loc[quarter_variant].str.upper().str.replace(
+            r"\s*[: -]?\s*Q", "Q", regex=True
+        )
+        result.loc[quarter_variant] = pd.PeriodIndex(
+            normalized_quarters, freq="Q"
+        ).to_timestamp()
     decimal_raw = cleaned.str.fullmatch(r"\d{4}\.\d{1,2}")
     decimal_years = pd.to_numeric(cleaned.str[:4].where(decimal_raw), errors="coerce")
     decimal_month = decimal_raw & decimal_years.between(1800, 2100)
@@ -362,7 +381,7 @@ def _candidate_dates(values: pd.Series, *, column_name: str = "") -> pd.Series:
     )
     if remaining.any():
         plausible = cleaned.loc[remaining].str.match(
-            r"^(?:[A-Za-z]{3,9}[- /]\d{2,4}|\d{4}[- /]\d{1,2}(?:[- /]\d{1,2})?)$"
+            r"^(?:[A-Za-z]{3,9}[- /]\d{2,4}|\d{1,2}/\d{1,2}/\d{2,4}|\d{4}[- /]\d{1,2}(?:[- /]\d{1,2})?)$"
         )
         indexes = plausible.index[plausible]
         result.loc[indexes] = pd.to_datetime(cleaned.loc[indexes], errors="coerce")
@@ -394,7 +413,8 @@ def _normalize_and_bound_dates(
             selected = parsed
             selected_score = score
     if selected is None:
-        raise SourceAdapterError(f"DATE_COLUMN_MISSING:{adapter}")
+        sample = frame.iloc[:5, :3].astype(str).to_dict(orient="list")
+        raise SourceAdapterError(f"DATE_COLUMN_MISSING:{adapter}:{str(sample)[:500]}")
     bounded = frame.copy()
     bounded["date"] = selected
     ceiling = pd.Timestamp(maximum_observation_date)
@@ -428,6 +448,7 @@ _ADAPTERS = {
     "alfred_philly_pit_bundle": _auto_table,
     "federal_reserve_ddp_zip_xml": _auto_table,
     "world_bank_pink_sheet": _auto_table,
+    "shiller_monthly_excel": _auto_table,
     "philadelphia_realtime_bundle": _auto_table,
     "derived_conditions_composite": _auto_table,
     "derived_uncertainty_composite": _auto_table,

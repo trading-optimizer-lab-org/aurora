@@ -350,7 +350,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --require-hashes -r requirements/github-performance.lock
-          python -m pip install "pytest==9.0.3" "openpyxl==3.1.5" "xlrd==2.0.2"
+          python -m pip install "pytest==9.0.3" "openpyxl==3.1.5" "xlrd==2.0.2" "python-calamine==0.6.1"
           python -m pip install --no-deps -e .
       - name: Verify materializer and temporal guards
         run: |

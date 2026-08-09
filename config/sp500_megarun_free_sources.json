@@ -151,7 +151,7 @@
     "D_SHILLER": {
       "execution": "github_actions_only",
       "acquisition_kind": "direct",
-      "adapter": "academic_table",
+      "adapter": "shiller_monthly_excel",
       "maximum_observation_date": "2010-12-31",
       "resources": [
         {"id":"shiller_ie_data","url":"https://img1.wsimg.com/blobby/go/e5e77e0b-59d1-44d9-ab25-4763ac982e53/downloads/e27e58c1-8ae0-488c-a976-a298708c7175/ie_data.xls","format":"xls","monthly_interpolation_forbidden":true,"use_lagged_reported_annual_totals_only":true}
