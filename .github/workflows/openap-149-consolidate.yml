@@ -310,6 +310,18 @@ jobs:
           assert not bool(quarantined["current_value_calculated"])
           assert quarantined["status"] == "blocked_fidelity"
           assert "declared_current_unusable" in quarantined["remaining_blocker"]
+          hire = matrix_by_signal.loc["hire"]
+          assert bool(hire["data_acquired"])
+          assert bool(hire["current_value_calculated"])
+          assert hire["current_value_count"] == 40
+          assert hire["fidelity"] == "reconstructed"
+          assert hire["source_used"] == "sec_edgar"
+          assert not bool(hire["strict_score_eligible"])
+          hire_values = values.loc[values["signal"].eq("hire")]
+          assert len(hire_values) == 40
+          assert hire_values["source_id"].eq("sec_edgar").all()
+          assert hire_values["fidelity_class"].eq("reconstructed").all()
+          assert hire_values["formula_id"].eq("openap_employee_growth_sec").all()
           short_interest = matrix_by_signal.loc["ShortInterest"]
           assert bool(short_interest["data_acquired"])
           assert bool(short_interest["current_value_calculated"])
