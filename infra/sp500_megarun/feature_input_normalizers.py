@@ -1182,12 +1182,22 @@ def normalize_french_industry_panel(
         ]
     excluded = {"date", "resource_id", "source_dataset"}
     industry_columns = [column for column in industries.columns if column not in excluded]
+    numeric = industries.loc[:, industry_columns].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    numeric = numeric.mask(numeric.isin((-99.99, -999.0)))
+    industry_columns = [
+        column for column in industry_columns if numeric[column].notna().any()
+    ]
     if len(industry_columns) < 2:
         raise FeatureInputNormalizerError("FRENCH_INDUSTRY_COLUMNS_MISSING")
-    industry_panel = industries.loc[:, ["date", *industry_columns]].copy()
-    industry_panel[industry_columns] = industry_panel[industry_columns].apply(
-        pd.to_numeric, errors="coerce"
-    ) / 100.0
+    industry_panel = pd.concat(
+        (
+            industries.loc[:, ["date"]].reset_index(drop=True),
+            numeric.loc[:, industry_columns].reset_index(drop=True) / 100.0,
+        ),
+        axis=1,
+    )
     industry_panel = industry_panel.dropna(how="all", subset=industry_columns)
     return _project_to_decision_session(
         industry_panel, policy="next_session", sessions=sessions

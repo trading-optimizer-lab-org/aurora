@@ -811,6 +811,7 @@ def test_french_panels_use_ff3_and_48_industries_at_next_session() -> None:
             "Autos": [1.0, -1.0],
             "Food": [-0.5, 0.5],
             "Util": [0.2, 0.1],
+            "Lo 20": [np.nan, np.nan],
         }
     )
 
@@ -822,6 +823,7 @@ def test_french_panels_use_ff3_and_48_industries_at_next_session() -> None:
     assert factor_panel.loc[0, "smb"] == pytest.approx(0.003)
     assert industry_panel.loc[0, "Autos"] == pytest.approx(0.01)
     assert industry_panel.loc[0, "Food"] == pytest.approx(-0.005)
+    assert "Lo 20" not in industry_panel
     standalone = api.normalize_french_industry_panel(
         industries, sessions=_sessions()
     )

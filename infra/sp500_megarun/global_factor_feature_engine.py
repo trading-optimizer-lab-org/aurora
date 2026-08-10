@@ -58,6 +58,7 @@ _LANE_SOURCES: Mapping[str, tuple[str, ...]] = {
     "F170": tuple(_FACTOR_UNIVERSES["all_available"]),
 }
 _TIMESTAMPS = ("date", "observed_at", "available_at")
+_MINIMUM_CROSS_SECTION_COVERAGE = 0.8
 
 
 def _validated(frame: pd.DataFrame, *, label: str) -> pd.DataFrame:
@@ -258,13 +259,23 @@ def _momentum_aggregation(
         raise GlobalFactorFeatureEngineError(
             f"INVALID_SELECTION_FRACTION:{fraction}"
         )
-    count = max(1, ceil(cumulative.shape[1] * fraction))
-    sorted_values = np.sort(cumulative.to_numpy(dtype=float), axis=1)
-    low = pd.DataFrame(sorted_values[:, :count], index=cumulative.index)
-    high = pd.DataFrame(sorted_values[:, -count:], index=cumulative.index)
-    if aggregation == "mean":
-        return high.mean(axis=1) - low.mean(axis=1)
-    return high.median(axis=1) - low.median(axis=1)
+    minimum_count = ceil(
+        cumulative.shape[1] * _MINIMUM_CROSS_SECTION_COVERAGE
+    )
+    output = np.full(len(cumulative), np.nan)
+    use_median = aggregation == "median"
+    for index, row in enumerate(cumulative.to_numpy(dtype=float)):
+        available = np.sort(row[np.isfinite(row)])
+        if len(available) < minimum_count:
+            continue
+        count = max(1, ceil(len(available) * fraction))
+        low = available[:count]
+        high = available[-count:]
+        if use_median:
+            output[index] = float(np.median(high) - np.median(low))
+        else:
+            output[index] = float(np.mean(high) - np.mean(low))
+    return pd.Series(output, index=cumulative.index)
 
 
 def _rolling_mean_correlation(matrix: pd.DataFrame, window: int) -> pd.Series:

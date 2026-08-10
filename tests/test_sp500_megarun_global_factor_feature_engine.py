@@ -224,6 +224,31 @@ def test_f161_level_matches_frozen_industry_breadth_formula() -> None:
     pd.testing.assert_series_equal(result["value"], expected, check_names=False)
 
 
+def test_f162_ignores_sparse_industry_gaps_but_requires_eighty_percent() -> None:
+    api = _api()
+    market, panels = _inputs(120)
+    panels["industries"].loc[:, "Industry15"] = np.nan
+
+    accepted = api.evaluate_global_factor_lane(
+        "F162", market, panels, _parameters("F162")
+    )
+
+    assert accepted["value"].notna().any()
+    industries = panels["industries"].filter(like="Industry")
+    trailing = np.log1p(industries).shift(5).rolling(20, min_periods=20).sum()
+    last = np.sort(trailing.iloc[-1].dropna().to_numpy(dtype=float))
+    tail_count = int(np.ceil(len(last) * 0.25))
+    expected = last[-tail_count:].mean() - last[:tail_count].mean()
+    assert accepted["value"].iloc[-1] == pytest.approx(expected)
+
+    for index in range(4):
+        panels["industries"].loc[:, f"Industry{index:02d}"] = np.nan
+    rejected = api.evaluate_global_factor_lane(
+        "F162", market, panels, _parameters("F162")
+    )
+    assert rejected["value"].isna().all()
+
+
 def test_global_factor_engine_rejects_validation_rows() -> None:
     api = _api()
     market, panels = _inputs(120)
