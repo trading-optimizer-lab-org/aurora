@@ -12,11 +12,6 @@ on:
         required: true
         default: "31270341796"
         type: string
-      market_source_run_id:
-        description: Run containing the verified current SEC security master
-        required: true
-        default: "31270341796"
-        type: string
       formula_evidence_run_id:
         description: Run containing the pinned OpenAP formula inventory
         required: true
@@ -25,7 +20,7 @@ on:
       formation_at:
         description: Causal current formation timestamp
         required: true
-        default: "2026-08-09T23:59:59Z"
+        default: "2026-08-10T23:59:59Z"
         type: string
 
 permissions:
@@ -74,6 +69,8 @@ jobs:
       SOURCE_SHA: ${{ inputs.source_sha }}
       FORMATION_AT: ${{ inputs.formation_at }}
       SEC_USER_AGENT: "Aurora Research gomez5757@users.noreply.github.com"
+      SEC_IDENTITY_SOURCE_URL: https://www.sec.gov/files/company_tickers_exchange.json
+      SEC_IDENTITY_READTHROUGH_URL: https://r.jina.ai/http://www.sec.gov/files/company_tickers_exchange.json
       GITHUB_ACTIONS: "true"
       AU_DATA_DIR: ${{ github.workspace }}/outputs
     steps:
@@ -96,16 +93,75 @@ jobs:
           run-id: ${{ inputs.sec_artifact_run_id }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
-      - name: Selectively recover verified current SEC identity
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - name: Acquire audited official SEC current identity
         run: |
-          python scripts/recover_openap_market_security_master.py \
-            --repository trading-optimizer-lab-org/aurora \
-            --source-run-id "${{ inputs.market_source_run_id }}" \
-            --source-artifact-name openap-yfinance-sec-current-score-results \
-            --maximum-compressed-bytes 67108864 \
-            --output-dir openap_market_identity
+          mkdir -p inputs/sec_current
+          transport=inputs/sec_current/transport_response.txt
+          set +e
+          curl --fail --location --retry 2 --retry-all-errors \
+            --max-filesize 16777216 \
+            --header "User-Agent: $SEC_USER_AGENT" \
+            "$SEC_IDENTITY_SOURCE_URL" \
+            --output "$transport"
+          direct_status=$?
+          set -e
+          if [ "$direct_status" -eq 0 ]; then
+            access_method=sec_official_direct
+            access_url="$SEC_IDENTITY_SOURCE_URL"
+          else
+            rm -f "$transport"
+            curl --fail --location --retry 4 --retry-all-errors \
+              --max-filesize 16777216 \
+              --header "Accept: text/plain" \
+              --header "X-No-Cache: true" \
+              "$SEC_IDENTITY_READTHROUGH_URL" \
+              --output "$transport"
+            access_method=sec_via_jina_readthrough
+            access_url="$SEC_IDENTITY_READTHROUGH_URL"
+          fi
+          identity_retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          export IDENTITY_ACCESS_METHOD="$access_method"
+          export IDENTITY_ACCESS_URL="$access_url"
+          export IDENTITY_RETRIEVED_AT="$identity_retrieved_at"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          from aurora.research.openap_181.sec_listing_identity import (
+              parse_current_sec_identity_response,
+          )
+
+          root = Path("inputs/sec_current")
+          transport = root / "transport_response.txt"
+          content = transport.read_bytes()
+          payload = parse_current_sec_identity_response(
+              content,
+              access_method=os.environ["IDENTITY_ACCESS_METHOD"],
+          )
+          canonical = json.dumps(
+              payload,
+              ensure_ascii=True,
+              separators=(",", ":"),
+              sort_keys=True,
+          ).encode("utf-8")
+          destination = root / "company_tickers_exchange.json"
+          destination.write_bytes(canonical)
+          manifest = {
+              "source_url": os.environ["SEC_IDENTITY_SOURCE_URL"],
+              "access_url": os.environ["IDENTITY_ACCESS_URL"],
+              "access_method": os.environ["IDENTITY_ACCESS_METHOD"],
+              "retrieved_at": os.environ["IDENTITY_RETRIEVED_AT"],
+              "transport_sha256": hashlib.sha256(content).hexdigest(),
+              "canonical_sha256": hashlib.sha256(canonical).hexdigest(),
+          }
+          (root / "identity_transport_manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          echo "IDENTITY_RETRIEVED_AT=$identity_retrieved_at" >> "$GITHUB_ENV"
       - name: Download pinned official formula evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -118,9 +174,10 @@ jobs:
         run: |
           python scripts/run_openap_149_sec_spinoff.py \
             --sec-root inputs/sec \
-            --security-master outputs/openap_market_identity/security_master.parquet \
-            --source-manifest outputs/openap_market_identity/source_manifest.csv \
-            --source-recovery-manifest outputs/openap_market_identity/openap_market_security_master_recovery_manifest.json \
+            --current-sec-identity-json inputs/sec_current/company_tickers_exchange.json \
+            --current-sec-identity-source-url "$SEC_IDENTITY_SOURCE_URL" \
+            --identity-retrieved-at "$IDENTITY_RETRIEVED_AT" \
+            --identity-transport-manifest inputs/sec_current/identity_transport_manifest.json \
             --formula-root inputs/formulas \
             --sec-source-run-id "${{ inputs.sec_artifact_run_id }}" \
             --formula-source-run-id "${{ inputs.formula_evidence_run_id }}" \
@@ -159,6 +216,14 @@ jobs:
           ).any()
           assert manifest["raw_filing_documents_retained"] is False
           assert manifest["classification"] == "reconstructed_not_strict"
+          assert manifest["identity_source_url"] == (
+              "https://www.sec.gov/files/company_tickers_exchange.json"
+          )
+          assert manifest["identity_access_method"] in {
+              "sec_official_direct",
+              "sec_via_jina_readthrough",
+          }
+          assert manifest["current_universe_rows"] > 1000
           assert manifest["strict_score_eligible"] is False
           assert manifest["locked_opened"] is False
           assert manifest["forward_opened"] is False
@@ -168,5 +233,12 @@ jobs:
         with:
           name: openap-149-sec-spinoff-current
           path: outputs/openap_149_sec_spinoff/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload SEC identity access evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-149-sec-spinoff-source-evidence
+          path: inputs/sec_current/identity_transport_manifest.json
           if-no-files-found: error
           retention-days: 90

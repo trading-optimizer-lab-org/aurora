@@ -15,8 +15,8 @@ from aurora.core.execution_policy import (
     require_github_actions_or_explicit_local_permission,
 )
 from aurora.core.runtime_paths import base_data_dir
-from aurora.research.openap_181.artifact_recovery import (
-    validate_materialized_market_security_master_recovery,
+from aurora.research.openap_181.sec_listing_identity import (
+    build_current_sec_universe,
 )
 from aurora.research.openap_181.sec_spinoff import (
     SPINOFF_FORMULA_SHA256,
@@ -26,9 +26,6 @@ from aurora.research.openap_181.sec_spinoff import (
 )
 from aurora.research.openap_181.sec_spinoff_access import (
     download_sec_spinoff_candidate_documents,
-)
-from aurora.research.openap_181.twelve_data_market_batch import (
-    prepare_twelve_data_universe,
 )
 
 
@@ -145,12 +142,58 @@ def _formula_contract(root: Path) -> Path:
     return matches[0]
 
 
+def _identity_transport_contract(
+    path: Path,
+    *,
+    canonical_json: Path,
+    source_url: str,
+    retrieved_at: str,
+) -> dict[str, Any]:
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("SEC identity transport manifest is invalid") from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError("SEC identity transport manifest must be an object")
+    method = str(manifest.get("access_method") or "")
+    expected_access_url = (
+        source_url
+        if method == "sec_official_direct"
+        else "https://r.jina.ai/http://" + source_url.removeprefix("https://")
+    )
+    retrieved = pd.to_datetime(retrieved_at, errors="coerce", utc=True)
+    manifest_retrieved = pd.to_datetime(
+        manifest.get("retrieved_at"), errors="coerce", utc=True
+    )
+    if (
+        method not in {"sec_official_direct", "sec_via_jina_readthrough"}
+        or str(manifest.get("source_url") or "") != source_url
+        or str(manifest.get("access_url") or "") != expected_access_url
+        or pd.isna(retrieved)
+        or pd.isna(manifest_retrieved)
+        or retrieved != manifest_retrieved
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(manifest.get("transport_sha256") or "")
+        )
+        is None
+        or str(manifest.get("canonical_sha256") or "")
+        != _sha256(canonical_json)
+    ):
+        raise RuntimeError("SEC identity transport provenance does not match")
+    return manifest
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sec-root", type=Path, required=True)
-    parser.add_argument("--security-master", type=Path, required=True)
-    parser.add_argument("--source-manifest", type=Path, required=True)
-    parser.add_argument("--source-recovery-manifest", type=Path, required=True)
+    parser.add_argument("--current-sec-identity-json", type=Path, required=True)
+    parser.add_argument("--current-sec-identity-source-url", required=True)
+    parser.add_argument("--identity-retrieved-at", required=True)
+    parser.add_argument(
+        "--identity-transport-manifest",
+        type=Path,
+        required=True,
+    )
     parser.add_argument("--formula-root", type=Path, required=True)
     parser.add_argument("--sec-source-run-id", required=True)
     parser.add_argument("--formula-source-run-id", required=True)
@@ -186,15 +229,47 @@ def main() -> int:
     )
     if len(submissions) != int(sec_evidence["submissions_rows"]):
         raise RuntimeError("SEC submissions rows do not match shard summaries")
-    recovery = validate_materialized_market_security_master_recovery(
-        args.source_recovery_manifest,
-        args.security_master,
-        args.source_manifest,
+    try:
+        identity_payload = json.loads(
+            args.current_sec_identity_json.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("official SEC current identity JSON is invalid") from exc
+    identity_transport = _identity_transport_contract(
+        args.identity_transport_manifest,
+        canonical_json=args.current_sec_identity_json,
+        source_url=args.current_sec_identity_source_url,
+        retrieved_at=args.identity_retrieved_at,
     )
-    security_master = pd.read_parquet(args.security_master)
-    current_universe, current_rejections = prepare_twelve_data_universe(
-        security_master
+    identity_retrieved = pd.to_datetime(
+        args.identity_retrieved_at,
+        errors="coerce",
+        utc=True,
     )
+    if pd.isna(identity_retrieved) or identity_retrieved > formation:
+        raise RuntimeError("SEC current identity is unavailable at formation")
+    current_universe, current_rejections = build_current_sec_universe(
+        identity_payload,
+        retrieved_at=args.identity_retrieved_at,
+        source_url=args.current_sec_identity_source_url,
+    )
+    ambiguous_classes = current_universe.loc[
+        current_universe["issuer_share_class_count"].ne(1)
+    ].copy()
+    if not ambiguous_classes.empty:
+        ambiguous_rejections = ambiguous_classes[
+            ["cik", "ticker", "exchange_family"]
+        ].rename(columns={"exchange_family": "exchange"})
+        ambiguous_rejections["reason_if_rejected"] = (
+            "ambiguous_current_issuer_share_classes"
+        )
+        current_rejections = pd.concat(
+            [current_rejections, ambiguous_rejections],
+            ignore_index=True,
+        )
+    current_universe = current_universe.loc[
+        current_universe["issuer_share_class_count"].eq(1)
+    ].reset_index(drop=True)
     if current_universe.empty:
         raise RuntimeError("no unambiguous official SEC current securities remain")
     formula_inventory = _formula_contract(args.formula_root)
@@ -254,17 +329,21 @@ def main() -> int:
         "formation_at": pd.Timestamp(formation).isoformat(),
         "sec_source_run_id": str(args.sec_source_run_id),
         "formula_source_run_id": str(args.formula_source_run_id),
-        "market_identity_source_run_id": int(recovery["source_run_id"]),
-        "market_identity_source_head_sha": str(recovery["source_head_sha"]),
-        "security_master_sha256": _sha256(args.security_master),
-        "source_manifest_sha256": _sha256(args.source_manifest),
-        "source_recovery_manifest_sha256": _sha256(
-            args.source_recovery_manifest
+        "identity_source_url": str(args.current_sec_identity_source_url),
+        "identity_source_mode": "sec_official_live_with_audited_transport",
+        "identity_source_sha256": _sha256(args.current_sec_identity_json),
+        "identity_access_url": str(identity_transport["access_url"]),
+        "identity_access_method": str(identity_transport["access_method"]),
+        "identity_transport_sha256": str(identity_transport["transport_sha256"]),
+        "identity_transport_manifest_sha256": _sha256(
+            args.identity_transport_manifest
         ),
+        "identity_retrieved_at": pd.Timestamp(identity_retrieved).isoformat(),
         "formula_inventory_sha256": _sha256(formula_inventory),
         "formula_sha256": SPINOFF_FORMULA_SHA256,
         "sec_source_evidence": sec_evidence,
         "current_universe_rows": int(len(current_universe)),
+        "current_universe_rejected_rows": int(len(current_rejections)),
         "candidate_filing_rows": int(len(candidates)),
         "access_summary": access_summary,
         "completion_evidence_rows": int(len(evidence)),

@@ -15,7 +15,9 @@ import pandas as pd
 from .sec_spinoff import extract_sec_spinoff_completion_evidence
 
 
-SEC_SPINOFF_ACCESS_METHOD = "sec_official_filing_direct_fair_access"
+SEC_SPINOFF_DIRECT_ACCESS_METHOD = "sec_official_filing_direct_fair_access"
+SEC_SPINOFF_READTHROUGH_ACCESS_METHOD = "sec_via_jina_readthrough"
+SEC_SPINOFF_ACCESS_METHOD = SEC_SPINOFF_DIRECT_ACCESS_METHOD
 SEC_SPINOFF_ACCESS_MANIFEST_COLUMNS = (
     "security_id",
     "ticker",
@@ -23,6 +25,7 @@ SEC_SPINOFF_ACCESS_MANIFEST_COLUMNS = (
     "accession_number",
     "form",
     "source_url",
+    "access_url",
     "access_method",
     "retrieved_at",
     "sha256",
@@ -144,6 +147,38 @@ def _decoded_document(payload: bytes, content_type: str) -> str:
     return payload.decode("utf-8", errors="replace")
 
 
+def _readthrough_url(source_url: str, cik: str) -> str:
+    if not _official_url(source_url, cik):
+        raise ValueError("SEC Spinoff readthrough source is not exact official SEC")
+    return "https://r.jina.ai/http://" + source_url.removeprefix("https://")
+
+
+def _decoded_readthrough_document(
+    payload: bytes,
+    content_type: str,
+    *,
+    source_url: str,
+    cik: str,
+) -> str:
+    text = _decoded_document(payload, content_type)
+    marker = "Markdown Content:"
+    if marker not in text:
+        raise ValueError("SEC filing readthrough response lacks content marker")
+    header, document = text.split(marker, 1)
+    match = re.search(r"(?m)^URL Source:\s*(\S+)\s*$", header)
+    reported_url = match.group(1).strip() if match else ""
+    if reported_url.startswith("http://www.sec.gov/"):
+        reported_url = "https://www.sec.gov/" + reported_url.removeprefix(
+            "http://www.sec.gov/"
+        )
+    if reported_url != source_url or not _official_url(reported_url, cik):
+        raise ValueError("SEC filing readthrough source provenance does not match")
+    document = document.strip()
+    if not document:
+        raise ValueError("SEC filing readthrough response is empty")
+    return document
+
+
 def download_sec_spinoff_candidate_documents(
     candidates: pd.DataFrame,
     *,
@@ -179,6 +214,9 @@ def download_sec_spinoff_candidate_documents(
     document_rows: list[dict[str, Any]] = []
     manifest_rows: list[dict[str, Any]] = []
     attempts = len(retry_delays) + 1
+    direct_access_blocked = False
+    direct_downloaded = 0
+    readthrough_downloaded = 0
     try:
         for index, candidate in enumerate(
             candidates.sort_values(
@@ -194,39 +232,80 @@ def download_sec_spinoff_candidate_documents(
             digest = ""
             size = 0
             text = ""
-            for attempt in range(attempts):
-                try:
-                    with client.get(
-                        source_url,
-                        headers={
-                            "User-Agent": identity,
-                            "Accept": "text/html,text/plain;q=0.9",
-                        },
-                        timeout=(30, 180),
-                    ) as response:
-                        last_status = int(response.status_code)
-                        response.raise_for_status()
-                        payload = bytes(response.content)
-                        size = len(payload)
-                        text = _decoded_document(
-                            payload,
-                            str(response.headers.get("Content-Type", "")),
-                        )
-                        digest = hashlib.sha256(payload).hexdigest()
-                        last_error = None
-                        break
-                except Exception as exc:
-                    last_error = exc
-                    error_code = getattr(exc, "code", None)
-                    if error_code:
-                        last_status = int(error_code)
-                    response = getattr(exc, "response", None)
-                    if response is not None and getattr(
-                        response, "status_code", None
-                    ):
-                        last_status = int(response.status_code)
-                    if attempt < len(retry_delays):
-                        time.sleep(retry_delays[attempt])
+            access_method = SEC_SPINOFF_DIRECT_ACCESS_METHOD
+            access_url = source_url
+            access_modes = (
+                (SEC_SPINOFF_READTHROUGH_ACCESS_METHOD,)
+                if direct_access_blocked
+                else (
+                    SEC_SPINOFF_DIRECT_ACCESS_METHOD,
+                    SEC_SPINOFF_READTHROUGH_ACCESS_METHOD,
+                )
+            )
+            for mode in access_modes:
+                access_method = mode
+                access_url = (
+                    source_url
+                    if mode == SEC_SPINOFF_DIRECT_ACCESS_METHOD
+                    else _readthrough_url(source_url, cik)
+                )
+                for attempt in range(attempts):
+                    try:
+                        with client.get(
+                            access_url,
+                            headers={
+                                "User-Agent": identity,
+                                "Accept": (
+                                    "text/html,text/plain;q=0.9"
+                                    if mode == SEC_SPINOFF_DIRECT_ACCESS_METHOD
+                                    else "text/plain"
+                                ),
+                            },
+                            timeout=(30, 180),
+                        ) as response:
+                            last_status = int(response.status_code)
+                            response.raise_for_status()
+                            payload = bytes(response.content)
+                            size = len(payload)
+                            content_type = str(
+                                response.headers.get("Content-Type", "")
+                            )
+                            text = (
+                                _decoded_document(payload, content_type)
+                                if mode == SEC_SPINOFF_DIRECT_ACCESS_METHOD
+                                else _decoded_readthrough_document(
+                                    payload,
+                                    content_type,
+                                    source_url=source_url,
+                                    cik=cik,
+                                )
+                            )
+                            digest = hashlib.sha256(payload).hexdigest()
+                            last_error = None
+                            if mode == SEC_SPINOFF_DIRECT_ACCESS_METHOD:
+                                direct_downloaded += 1
+                            else:
+                                readthrough_downloaded += 1
+                            break
+                    except Exception as exc:
+                        last_error = exc
+                        error_code = getattr(exc, "code", None)
+                        if error_code:
+                            last_status = int(error_code)
+                        response = getattr(exc, "response", None)
+                        if response is not None and getattr(
+                            response, "status_code", None
+                        ):
+                            last_status = int(response.status_code)
+                        if attempt < len(retry_delays):
+                            time.sleep(retry_delays[attempt])
+                if last_error is None:
+                    break
+                if (
+                    mode == SEC_SPINOFF_DIRECT_ACCESS_METHOD
+                    and last_status == 403
+                ):
+                    direct_access_blocked = True
             base = {
                 "security_id": _clean_text(candidate["security_id"]),
                 "ticker": _clean_text(candidate["ticker"]).upper(),
@@ -236,7 +315,8 @@ def download_sec_spinoff_candidate_documents(
                 ),
                 "form": _clean_text(candidate["form"]).upper(),
                 "source_url": source_url,
-                "access_method": SEC_SPINOFF_ACCESS_METHOD,
+                "access_url": access_url,
+                "access_method": access_method,
                 "retrieved_at": requested_at.isoformat(),
             }
             if last_error is None:
@@ -308,6 +388,9 @@ def download_sec_spinoff_candidate_documents(
         "downloaded": downloaded,
         "failed": failed,
         "completion_evidence_rows": int(len(evidence)),
+        "direct_downloaded": direct_downloaded,
+        "readthrough_downloaded": readthrough_downloaded,
+        "direct_access_blocked": direct_access_blocked,
         "all_downloaded": downloaded == len(candidates) and failed == 0,
         "raw_filing_documents_retained": False,
     }
@@ -317,5 +400,7 @@ def download_sec_spinoff_candidate_documents(
 __all__ = [
     "SEC_SPINOFF_ACCESS_MANIFEST_COLUMNS",
     "SEC_SPINOFF_ACCESS_METHOD",
+    "SEC_SPINOFF_DIRECT_ACCESS_METHOD",
+    "SEC_SPINOFF_READTHROUGH_ACCESS_METHOD",
     "download_sec_spinoff_candidate_documents",
 ]
