@@ -331,6 +331,15 @@ def test_market_security_master_recovery_requires_success_and_safe_summary() -> 
         )
 
     jobs[0]["steps"][1]["conclusion"] = "success"
+    jobs[0]["steps"][0]["name"] = "Merge unverified lake"
+    with pytest.raises(ValueError, match="acceptance steps"):
+        module.validate_recovered_market_security_master(
+            run, jobs, artifact, members
+        )
+
+    jobs[0]["steps"][0]["name"] = (
+        "Merge repaired lake and calculate current scores"
+    )
     fallback_manifest = pd.DataFrame(
         [
             {

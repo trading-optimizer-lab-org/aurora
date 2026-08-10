@@ -352,11 +352,14 @@ def validate_recovered_market_security_master(
         str(step.get("name", "")): str(step.get("conclusion", ""))
         for step in merge_jobs[0].get("steps", [])
     }
-    required_steps = {
+    accepted_merge_steps = {
         "Merge lake and calculate current scores",
-        "Validate final acceptance contract",
+        "Merge repaired lake and calculate current scores",
     }
-    if any(steps.get(name) != "success" for name in required_steps):
+    if (
+        not any(steps.get(name) == "success" for name in accepted_merge_steps)
+        or steps.get("Validate final acceptance contract") != "success"
+    ):
         raise ValueError("market source run lacks successful acceptance steps")
 
     artifact_id = int(artifact.get("id", 0))
