@@ -320,12 +320,21 @@ def test_fundamental_smoke_builds_f101_f110_train_only_artifacts(
     assert report["empty_lanes"] == []
     assert report["exact_duplicate_groups"] == []
     assert report["near_duplicate_pairs"] == []
+    parameter_audit = report["parameter_choice_audit"]
+    assert parameter_audit["ready"] is True
+    assert parameter_audit["expected_choice_probe_count"] == 114
+    assert parameter_audit["choice_probe_count"] == 114
+    assert parameter_audit["failed_probes"] == []
+    assert parameter_audit["inactive_choice_groups"] == []
     assert all(
         item["yearly_non_null_fraction"][1998] == pytest.approx(1.0)
         for item in report["coverage"]
     )
     assert (tmp_path / "out" / "features" / "F101.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F110.parquet").is_file()
+    assert (
+        tmp_path / "out" / "parameter_choice_audit_F101_F110.json"
+    ).is_file()
 
 
 def test_fundamental_smoke_requires_physical_train_partition(tmp_path: Path) -> None:

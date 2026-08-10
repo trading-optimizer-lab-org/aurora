@@ -297,6 +297,63 @@ def _forbidden_parameter_pairs(
             for statistic in ("policy_change", "real_rate", "rule_gap")
             for window in space["normalization_window"][1:]
         )
+    if lane.lane_id == "F101":
+        pairs.extend(
+            ("statistic", statistic, "window", window)
+            for statistic in ("earnings_news", "dividend_news")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id == "F102":
+        pairs.extend(
+            ("statistic", statistic, "window", window)
+            for statistic in (
+                "earnings_momentum",
+                "earnings_yield_change",
+                "acceleration",
+            )
+            for window in space["window"][1:]
+        )
+    if lane.lane_id == "F103":
+        pairs.extend(
+            ("statistic", statistic, "window", window)
+            for statistic in ("earnings_growth", "dividend_growth", "payout_change")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id == "F104":
+        pairs.extend(
+            ("statistic", "market_issuance", "change_lag", lag)
+            for lag in space["change_lag"][1:]
+        )
+    if lane.lane_id == "F105":
+        pairs.extend(
+            ("statistic", "funding_stress", "growth_lag", lag)
+            for lag in space["growth_lag"][1:]
+        )
+    if lane.lane_id == "F106":
+        pairs.extend(
+            ("statistic", statistic, "persistence_window", window)
+            for statistic in (
+                "uncertainty_level",
+                "stress_composite",
+                "disagreement",
+            )
+            for window in space["persistence_window"][1:]
+        )
+    if lane.lane_id == "F108":
+        pairs.extend(
+            ("statistic", "activity_state", "trend_window", window)
+            for window in space["trend_window"][1:]
+        )
+    if lane.lane_id == "F110":
+        pairs.extend(
+            ("statistic", "oil_gold_ratio", parameter, choice)
+            for parameter in ("window", "momentum_lag")
+            for choice in space[parameter][1:]
+        )
+        pairs.extend(
+            ("statistic", "relative_momentum", "window", window)
+            for window in space["window"][1:]
+        )
     return tuple(pairs)
 
 
