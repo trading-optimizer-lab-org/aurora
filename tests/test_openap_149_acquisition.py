@@ -864,6 +864,7 @@ def test_consolidation_workflow_downloads_audited_event_batches() -> None:
     )
 
     dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert dispatch_inputs["formula_evidence_run_id"]["default"] == "31396163422"
     expected = {
         "exchange_switch_current_run_id": (
             "Download SEC exchange-switch current values",
