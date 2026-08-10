@@ -6,6 +6,8 @@ on:
       - codex/openap-proxy44-validation
     paths:
       - .github/workflows/openap-149-sec-filing-probe.yml
+      - research/openap_181/realestate_rendered_batch.py
+      - tests/test_openap_149_realestate_rendered_batch.py
   workflow_dispatch:
     inputs:
       source_sha:
