@@ -922,11 +922,22 @@ def test_consolidation_workflow_verifies_causal_firmage_evidence() -> None:
         if "name" in step
     }
     verify = steps["Verify consolidated result"]["run"]
-    assert 'summary["data_acquired"] == 57' in verify
-    assert 'summary["current_values_calculated"] == 51' in verify
-    assert 'summary["reconstructed_not_strict"] == 19' in verify
-    assert 'summary["blocked"] == summary["pending"] == 98' in verify
-    assert 'summary["value_rows"] == 97914' in verify
+    assert 'summary["data_acquired"] == int(data_acquired.sum())' in verify
+    assert (
+        'summary["current_values_calculated"] == int(current_calculated.sum())'
+        in verify
+    )
+    assert (
+        'summary["reconstructed_not_strict"] '
+        '== int((current_calculated & reconstructed).sum())'
+        in verify
+    )
+    assert (
+        'summary["blocked"] == summary["pending"] '
+        '== int((~current_calculated).sum())'
+        in verify
+    )
+    assert 'summary["value_rows"] == len(values)' in verify
     assert 'matrix.set_index("signal").loc["FirmAge"]' in verify
     assert 'firm_age["current_value_count"] == 4434' in verify
     assert 'firm_age["fidelity"] == "unvalidated_proxy"' in verify
