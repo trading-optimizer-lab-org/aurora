@@ -1543,7 +1543,9 @@ jobs:
           ]
           if credential_missing:
               assert generic_market_status["blocking_reason"].eq(
-                  "credential_missing:twelve_data_basic_api_key_not_configured"
+                  "credential_missing:twelve_data_basic_free_api_key_not_configured;"
+                  "resumable_private_route_prepared_unexecuted;"
+                  "historical_ticker_intervals_formula_coverage_and_fidelity_pending"
               ).all()
               assert generic_market_status["strict_gate_result"].eq("blocked").all()
           else:

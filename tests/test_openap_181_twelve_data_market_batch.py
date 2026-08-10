@@ -609,6 +609,9 @@ def test_market_runner_and_workflow_preserve_manual_private_boundaries() -> None
     workflow = (
         ROOT / ".github" / "workflows" / "openap-149-twelve-data-market.yml"
     ).read_text(encoding="utf-8")
+    consolidation = (
+        ROOT / ".github" / "workflows" / "openap-149-consolidate.yml"
+    ).read_text(encoding="utf-8")
 
     assert "require_github_actions_or_explicit_local_permission" in runner
     assert "--source-recovery-manifest" in runner
@@ -629,6 +632,15 @@ def test_market_runner_and_workflow_preserve_manual_private_boundaries() -> None
     assert "tests/test_openap_181_twelve_data_market_signals.py" in workflow
     assert "twelve_data_direct_signal_observations.parquet" in workflow
     assert "twelve_data_factor_signal_observations.parquet" in workflow
+    for path in (
+        "research/openap_181/twelve_data_factor_signals.py",
+        "research/openap_181/twelve_data_market_batch.py",
+        "research/openap_181/twelve_data_market_signals.py",
+        "tests/test_openap_181_twelve_data_factor_signals.py",
+        "tests/test_openap_181_twelve_data_market_batch.py",
+        "tests/test_openap_181_twelve_data_market_signals.py",
+    ):
+        assert path in consolidation
     assert "restricted_internal_factors" in workflow
     assert "workflow_dispatch:" in workflow
     assert "push:" not in workflow
