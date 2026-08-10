@@ -3,6 +3,7 @@ from __future__ import annotations
 from importlib import import_module
 
 import pandas as pd
+import pytest
 
 
 def _module():
@@ -115,3 +116,73 @@ def test_select_sector_pilot_uses_causal_assets_and_complete_sec_identity() -> N
     assert all(row["formation_at"] == formation_at for row in selected)
     assert all(row["fidelity"] == "reconstructed_not_strict" for row in selected)
     assert all(row["strict_score_eligible"] is False for row in selected)
+
+
+def test_assemble_sector_pilot_computes_only_matching_annual_periods() -> None:
+    module = _module()
+    formation_at = "2026-08-09T23:59:59Z"
+    candidates = []
+    evidence = []
+    for index, raw in enumerate((0.1, 0.2, 0.3, 0.4, 0.5), start=1):
+        cik = str(index)
+        report_date = f"2025-12-{index:02d}"
+        candidates.append(
+            {
+                "cik": cik,
+                "security_id": f"US-SEC-{index:010d}-S{index}",
+                "symbol": f"S{index}",
+                "sic2": "35",
+                "accession_number": f"{index:010d}-25-000001",
+                "report_date": report_date,
+                "formation_at": formation_at,
+                "assets": 1_000.0 + index,
+                "assets_available_at": "2026-02-02T12:00:00Z",
+                "assets_source_sha256": f"{index:x}" * 64,
+                "fidelity": "reconstructed_not_strict",
+                "strict_score_eligible": False,
+            }
+        )
+        evidence.append(
+            {
+                "signal": "realestate",
+                "status": "raw_data_acquired",
+                "raw_data_acquired": True,
+                "records": [
+                    {
+                        "cik": cik,
+                        "period_end": "2024-12-31",
+                        "available_at": "2025-02-01T12:00:00Z",
+                        "realestate_raw": 9.9,
+                        "source_sha256": "f" * 64,
+                    },
+                    {
+                        "cik": cik,
+                        "period_end": report_date,
+                        "available_at": "2026-02-01T12:00:00Z",
+                        "realestate_raw": raw,
+                        "source_sha256": f"{index + 5:x}" * 64,
+                    },
+                ],
+            }
+        )
+
+    result = module.assemble_realestate_sector_pilot(candidates, evidence)
+    by_symbol = {row["symbol"]: row for row in result["records"]}
+
+    assert result["signal"] == "realestate"
+    assert result["status"] == "current_signal_computed"
+    assert result["candidates_selected"] == 5
+    assert result["raw_issuers_acquired"] == 5
+    assert result["current_values_computed"] == 5
+    assert result["strict_score_eligible"] is False
+    assert result["fidelity"] == "reconstructed_not_strict"
+    assert result["remaining_blocker"] == (
+        "strict_crsp_sic_and_compustat_equivalence_unvalidated"
+    )
+    assert by_symbol["S1"]["industry_mean_realestate_raw"] == pytest.approx(0.3)
+    assert by_symbol["S1"]["realestate_value"] == pytest.approx(-0.2)
+    assert by_symbol["S5"]["realestate_value"] == pytest.approx(0.2)
+    assert by_symbol["S1"]["period_end"] == "2025-12-01"
+    assert by_symbol["S1"]["available_at"] == "2026-02-02T12:00:00+00:00"
+    assert by_symbol["S1"]["source_sha256"] == "6" * 64
+    assert all(row["realestate_raw"] != 9.9 for row in result["records"])
