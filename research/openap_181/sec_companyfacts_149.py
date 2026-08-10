@@ -293,7 +293,7 @@ def calculate_sec_submission_current(
                 "cik": f"{int(row.cik):010d}",
                 "signal": "FirmAge",
                 "formation_at": formation.isoformat(),
-                "period_end": formation.isoformat(),
+                "period_end": first.isoformat(),
                 "filed_at": first.isoformat(),
                 "available_at": first.isoformat(),
                 "retrieved_at": retrieved.isoformat(),
