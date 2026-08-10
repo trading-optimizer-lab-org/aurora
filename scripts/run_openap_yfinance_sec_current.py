@@ -852,7 +852,18 @@ def _companyfacts_rows(
                     if str(tag) in long_history_tags
                     else observations_per_tag
                 )
-                for observation in deduplicated[-recent_limit:] + annual:
+                recent = deduplicated[-recent_limit:]
+                if str(tag) in EARNINGS_CONSISTENCY_COMPANYFACT_TAGS:
+                    recent = [
+                        observation
+                        for observation in recent
+                        if not (
+                            str(observation.get("fp") or "").upper() == "FY"
+                            or str(observation.get("form") or "").upper()
+                            in ANNUAL_FILING_FORMS
+                        )
+                    ]
+                for observation in recent + annual:
                     key = (
                         str(observation.get("end") or ""),
                         str(observation.get("start") or ""),
