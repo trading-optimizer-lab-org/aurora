@@ -66,6 +66,10 @@ def test_select_sector_pilot_uses_causal_assets_and_complete_sec_identity() -> N
                 "primary_document": f"issuer-{cik}.htm",
                 "is_xbrl": True,
                 "sic": "3571",
+                "source": (
+                    f"https://data.sec.gov/submissions/CIK{cik:010d}.json"
+                ),
+                "source_mode": "sec_official_api",
             }
         )
         facts.append(
@@ -145,6 +149,14 @@ def test_select_sector_pilot_uses_causal_assets_and_complete_sec_identity() -> N
     assert selected[1]["symbol"] == "S105"
     assert selected[1]["assets_tag"] == "Assets"
     assert selected[1]["assets_unit"] == "USD"
+    assert selected[1]["submission_source_url"] == (
+        "https://data.sec.gov/submissions/CIK0000000105.json"
+    )
+    assert selected[1]["submission_source_mode"] == "sec_official_api"
+    assert selected[1]["assets_source_url"] == (
+        "https://data.sec.gov/api/xbrl/companyfacts/CIK0000000105.json"
+    )
+    assert selected[1]["assets_source_mode"] == "sec_official_api"
     assert selected[1]["assets_source_sha256"] == "6" * 64
     assert selected[1]["accession_number"] != "0000000105-26-999999"
     assert all(row["formation_at"] == formation_at for row in selected)
@@ -579,6 +591,8 @@ def _write_complete_sector_lake(root: Path) -> None:
         "primary_document",
         "is_xbrl",
         "sic",
+        "source",
+        "source_mode",
     ]
     status_columns = [
         "cik",
@@ -630,6 +644,11 @@ def _write_complete_sector_lake(root: Path) -> None:
                     "primary_document": f"issuer-{cik}.htm",
                     "is_xbrl": True,
                     "sic": "3571",
+                    "source": (
+                        "https://data.sec.gov/submissions/"
+                        f"CIK{cik:010d}.json"
+                    ),
+                    "source_mode": "sec_official_api",
                 }
             )
             for surface in ("companyfacts", "submissions"):
