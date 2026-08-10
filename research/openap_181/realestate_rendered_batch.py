@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import requests
 
+from .acquisition_149 import VALUE_COLUMNS
 from .sec_companyfacts_149 import build_companyfacts_identity
 from .sec_rendered_reports import (
     build_rendered_realestate_evidence,
@@ -379,6 +380,42 @@ def _retrieved_at(value: object | None) -> str:
     )
 
 
+def _canonical_current_values(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    retrieved_at: str,
+) -> pd.DataFrame:
+    caveat = (
+        "reconstructed_not_strict;"
+        f"access_method={_READTHROUGH_METHOD};"
+        "strict_crsp_sic_and_compustat_equivalence_unvalidated"
+    )
+    rows = [
+        {
+            "security_id": str(record.get("security_id") or ""),
+            "ticker": str(record.get("symbol") or ""),
+            "cik": str(record.get("cik") or ""),
+            "signal": "realestate",
+            "formation_at": str(record.get("formation_at") or ""),
+            "period_end": str(record.get("period_end") or ""),
+            "filed_at": str(
+                record.get("accepted_at") or record.get("filing_date") or ""
+            ),
+            "available_at": str(record.get("available_at") or ""),
+            "retrieved_at": retrieved_at,
+            "value": record.get("realestate_value"),
+            "fidelity_class": "reconstructed",
+            "source_id": "sec_edgar",
+            "source_url": str(record.get("source_url") or ""),
+            "formula_id": "realestate",
+            "observation_count": record.get("industry_observations"),
+            "caveat": caveat,
+        }
+        for record in records
+    ]
+    return pd.DataFrame(rows, columns=VALUE_COLUMNS)
+
+
 def _readthrough_access_url(source_url: str) -> str:
     return f"https://r.jina.ai/http://{source_url.removeprefix('https://')}"
 
@@ -672,7 +709,10 @@ def run_rendered_realestate_sector_batch(
         output / "openap_149_realestate_raw_records.csv",
         index=False,
     )
-    current = pd.DataFrame(current_records)
+    current = _canonical_current_values(
+        current_records,
+        retrieved_at=timestamp,
+    )
     current.to_csv(output / "openap_149_realestate_current.csv", index=False)
     current.to_parquet(
         output / "openap_149_realestate_current.parquet",
