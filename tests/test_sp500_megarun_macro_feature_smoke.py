@@ -157,6 +157,9 @@ def _write_train_snapshot(root: Path) -> Path:
         "RXI_N.B.SZ": 1.0 + 0.01 * np.cos(market_phase / 11.0),
         "RXI$US_N.B.UK": 1.6 + 0.01 * np.sin(market_phase / 13.0),
     }
+    shock_rows = np.arange(80, len(dates), 137)
+    for series_index, values in enumerate(fx_series.values(), start=1):
+        values[shock_rows] *= 1.0 + 0.003 * series_index
     for series_id, values in fx_series.items():
         fx_rows.extend(
             {"date": date, "series_id": series_id, "value": value}
@@ -257,9 +260,16 @@ def test_macro_smoke_builds_f032_f050_train_only_artifacts(tmp_path: Path) -> No
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
+    assert report["parameter_choice_audit"]["ready"] is True
+    assert report["parameter_choice_audit"]["choice_probe_count"] == report[
+        "parameter_choice_audit"
+    ]["expected_choice_probe_count"]
+    assert report["parameter_choice_audit"]["validation_opened"] is False
+    assert report["parameter_choice_audit"]["locked_opened"] is False
     assert (tmp_path / "out" / "features" / "F032.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F040.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F050.parquet").is_file()
+    assert (tmp_path / "out" / "parameter_choice_audit_F032_F050.json").is_file()
 
 
 def test_macro_smoke_requires_the_physical_train_partition(tmp_path: Path) -> None:

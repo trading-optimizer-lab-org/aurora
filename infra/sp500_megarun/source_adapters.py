@@ -803,7 +803,7 @@ _ADAPTERS = {
     "occ_historical_volume": _auto_table,
     "derived_spy_calendar": _derived_calendar,
     "derived_cboe_vol_bundle": _auto_table,
-    "cboe_put_call_or_cftc_fallback": _auto_table,
+    "cftc_cross_market_fallback": _auto_table,
     "derived_cftc_legacy": _auto_table,
     "derived_fed_h15_h10": _auto_table,
     "derived_fed_macro_bundle": _auto_table,

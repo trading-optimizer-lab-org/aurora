@@ -21,7 +21,7 @@ def test_campaign_contract_freezes_exact_inputs_and_closed_boundaries() -> None:
         "9b2a971c1d1ad0374ad63e03e03c91127bf634e0ed822195c06180140acfa2c8"
     )
     assert contract.feature_contract_sha256 == (
-        "fb64fee0b479d445926ac0c28becb732463e093dbb20c8c5bc7a5b555991baf0"
+        "768b10c01f7540aee7c631a10935ce748cacb2f254bd0f8565d40cdfd82cbe33"
     )
     assert contract.dehb_lock_domain_sha256 == (
         "89617c4ca6fe54739804e039177c61b8a62933b921cd65617d93fce634a06734"

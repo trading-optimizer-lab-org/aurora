@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 import importlib
 import json
+import math
 from typing import Any, Mapping
 
 from aurora.infra.sp500_megarun.feature_contract import (
@@ -30,6 +31,7 @@ class LaneConfigSpace:
     seed: int
     dimensions: tuple[str, ...]
     canonical_sha256: str
+    forbidden_configuration_count: int
     configspace: Any
 
 
@@ -68,6 +70,55 @@ def _lane_by_id(contract: FrozenFeatureContract, lane_id: str) -> FeatureLaneSpe
     return lane
 
 
+def _forbidden_parameter_pairs(
+    lane: FeatureLaneSpec,
+) -> tuple[tuple[str, Any, str, Any], ...]:
+    space = lane.parameter_space
+    pairs: list[tuple[str, Any, str, Any]] = []
+    if lane.lane_id == "F002":
+        pairs.extend(
+            ("fast", fast, "slow", slow)
+            for fast in space["fast"]
+            for slow in space["slow"]
+            if int(fast) >= int(slow)
+        )
+    if lane.lane_id == "F120":
+        pairs.extend(
+            ("embargo", embargo, "horizon", horizon)
+            for embargo in space["embargo"]
+            for horizon in space["horizon"]
+            if int(embargo) < int(horizon)
+        )
+    if lane.lane_id in {"F172", "F180"}:
+        pairs.extend(
+            ("window", window, "long_window", long_window)
+            for window in space["window"]
+            for long_window in space["long_window"]
+            if int(long_window) <= int(window)
+        )
+    if lane.lane_id in {"F023", "F026", "F030", "F031"}:
+        pairs.extend(
+            ("window", 1, "normalization", normalization)
+            for normalization in space["normalization"]
+            if normalization != "none"
+        )
+    if lane.lane_id == "F026":
+        pairs.extend(
+            ("window", 1, "form", form)
+            for form in ("correlation", "divergence")
+        )
+    if lane.lane_id == "F022":
+        for window in space["window"]:
+            seen_effective_tails: set[int] = set()
+            for tail in space["tail"]:
+                effective_tail_count = math.ceil(float(tail) * int(window))
+                if effective_tail_count in seen_effective_tails:
+                    pairs.append(("window", window, "tail", tail))
+                else:
+                    seen_effective_tails.add(effective_tail_count)
+    return tuple(pairs)
+
+
 def build_lane_configspace(
     contract: FrozenFeatureContract,
     lane_id: str,
@@ -90,6 +141,16 @@ def build_lane_configspace(
             for name, choices in lane.parameter_space.items()
         ]
         space.add(hyperparameters)
+        forbidden_pairs = _forbidden_parameter_pairs(lane)
+        forbidden_clauses = [
+            module.ForbiddenAndConjunction(
+                module.ForbiddenEqualsClause(space[left_name], left_value),
+                module.ForbiddenEqualsClause(space[right_name], right_value),
+            )
+            for left_name, left_value, right_name, right_value in forbidden_pairs
+        ]
+        if forbidden_clauses:
+            space.add(forbidden_clauses)
     except (AttributeError, TypeError, ValueError) as exc:
         raise DehbConfigSpaceError(f"CONFIGSPACE_BUILD_FAILED:{lane_id}:{exc}") from exc
     return LaneConfigSpace(
@@ -97,6 +158,7 @@ def build_lane_configspace(
         seed=int(seed),
         dimensions=tuple(lane.parameter_space),
         canonical_sha256=lane.canonical_sha256,
+        forbidden_configuration_count=len(forbidden_pairs),
         configspace=space,
     )
 
@@ -181,6 +243,12 @@ def build_dehb_space_manifest(
             "parameter_space": {
                 name: list(choices) for name, choices in lane.parameter_space.items()
             },
+            "forbidden_parameter_pairs": [
+                [left_name, left_value, right_name, right_value]
+                for left_name, left_value, right_name, right_value in (
+                    _forbidden_parameter_pairs(lane)
+                )
+            ],
         }
         for lane in contract.lanes
     ]

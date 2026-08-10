@@ -20,7 +20,7 @@ def _smoke_api():
 def _write_train_snapshot(root: Path) -> Path:
     snapshot = root / "train_snapshot_1993_2010"
     snapshot.mkdir()
-    dates = pd.bdate_range("2007-01-02", "2010-12-31")
+    dates = pd.bdate_range("1993-01-22", "2010-12-31")
     phase = np.arange(len(dates), dtype=float)
     close = 100.0 + 0.02 * phase + 2.0 * np.sin(phase / 17.0)
     pd.DataFrame(
@@ -101,7 +101,14 @@ def test_market_smoke_builds_f021_f031_train_only_artifacts(tmp_path: Path) -> N
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
+    assert report["parameter_choice_audit"]["ready"] is True
+    assert report["parameter_choice_audit"]["choice_probe_count"] == report[
+        "parameter_choice_audit"
+    ]["expected_choice_probe_count"]
+    assert report["parameter_choice_audit"]["validation_opened"] is False
+    assert report["parameter_choice_audit"]["locked_opened"] is False
     assert len(list((tmp_path / "out" / "features").glob("F*.parquet"))) == 11
+    assert (tmp_path / "out" / "parameter_choice_audit_F021_F031.json").is_file()
 
 
 def test_market_smoke_requires_the_physical_train_partition(tmp_path: Path) -> None:

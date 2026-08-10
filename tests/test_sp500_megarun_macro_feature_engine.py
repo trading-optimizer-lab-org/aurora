@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -14,6 +16,16 @@ def _engine_api():
         )
     except ModuleNotFoundError as exc:  # pragma: no cover - removed by implementation
         pytest.fail(f"macro feature engine is missing: {exc}")
+
+
+def _f032_frozen_space() -> dict[str, list[object]]:
+    path = Path(__file__).parents[1] / "config" / "sp500_megarun_feature_contract_240.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return next(
+        row["parameter_space"]
+        for row in payload["lanes"]
+        if row["lane_id"] == "F032"
+    )
 
 
 def _credit_panel(periods: int = 500) -> pd.DataFrame:
@@ -62,6 +74,27 @@ def test_f032_is_causal_under_future_append() -> None:
     ).iloc[:80]
 
     pd.testing.assert_frame_equal(before.reset_index(drop=True), after.reset_index(drop=True))
+
+
+def test_f032_executes_every_frozen_parameter_choice() -> None:
+    api = _engine_api()
+    panel = _credit_panel(500)
+    baseline: dict[str, object] = {"window": 63, "change_lag": 5}
+    for name, choices in _f032_frozen_space().items():
+        signatures: set[int] = set()
+        for choice in choices:
+            parameters = dict(baseline)
+            parameters[name] = choice
+            result = api.evaluate_macro_lane("F032", {"credit": panel}, parameters)
+            assert result["value"].notna().any(), (name, choice)
+            signatures.add(
+                int(
+                    pd.util.hash_pandas_object(
+                        result["value"].round(12), index=False
+                    ).sum()
+                )
+            )
+        assert len(signatures) > 1, f"ignored frozen dimension: F032.{name}"
 
 
 def test_macro_engine_rejects_validation_rows() -> None:

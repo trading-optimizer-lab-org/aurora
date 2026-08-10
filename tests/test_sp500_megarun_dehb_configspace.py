@@ -28,18 +28,39 @@ class _FakeCategoricalHyperparameter:
         self.default_value = default_value
 
 
+class _FakeForbiddenEqualsClause:
+    def __init__(self, hyperparameter: _FakeCategoricalHyperparameter, value: object) -> None:
+        self.hyperparameter = hyperparameter
+        self.value = value
+
+
+class _FakeForbiddenAndConjunction:
+    def __init__(self, *clauses: _FakeForbiddenEqualsClause) -> None:
+        self.clauses = clauses
+
+
 class _FakeConfigurationSpace:
     def __init__(self, *, seed: int) -> None:
         self.seed = seed
         self.hyperparameters: list[_FakeCategoricalHyperparameter] = []
+        self.forbidden_clauses: list[_FakeForbiddenAndConjunction] = []
 
-    def add(self, hyperparameters: list[_FakeCategoricalHyperparameter]) -> None:
-        self.hyperparameters.extend(hyperparameters)
+    def add(self, items: list[object]) -> None:
+        for item in items:
+            if isinstance(item, _FakeCategoricalHyperparameter):
+                self.hyperparameters.append(item)
+            else:
+                self.forbidden_clauses.append(item)
+
+    def __getitem__(self, name: str) -> _FakeCategoricalHyperparameter:
+        return next(item for item in self.hyperparameters if item.name == name)
 
 
 FAKE_CONFIGSPACE = SimpleNamespace(
     ConfigurationSpace=_FakeConfigurationSpace,
     CategoricalHyperparameter=_FakeCategoricalHyperparameter,
+    ForbiddenEqualsClause=_FakeForbiddenEqualsClause,
+    ForbiddenAndConjunction=_FakeForbiddenAndConjunction,
 )
 
 
@@ -109,6 +130,78 @@ def test_single_lane_space_rejects_unknown_or_non_executable_lane(feature_contra
             seed=1,
             configspace_module=FAKE_CONFIGSPACE,
         )
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "left", "right", "expected_count"),
+    [
+        ("F002", "fast", "slow", 3),
+        ("F120", "embargo", "horizon", 3),
+        ("F172", "window", "long_window", 3),
+        ("F180", "window", "long_window", 3),
+    ],
+)
+def test_relationally_invalid_pairs_are_physically_forbidden(
+    feature_contract,
+    lane_id: str,
+    left: str,
+    right: str,
+    expected_count: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=19,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    assert row.forbidden_configuration_count == expected_count
+    pairs = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+    }
+    assert all(
+        {name for name, _value in pair} == {left, right}
+        for pair in pairs
+    )
+
+
+def test_empty_window_normalization_combinations_are_forbidden(feature_contract) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F023",
+        seed=23,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    assert row.forbidden_configuration_count == 2
+    assert len(row.configspace.forbidden_clauses) == 2
+
+
+def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F022",
+        seed=22,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    assert row.forbidden_configuration_count == 3
+    forbidden = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+    }
+    assert (("window", 20), ("tail", 0.025)) in forbidden
+    assert (("window", 20), ("tail", 0.05)) in forbidden
+    assert (("window", 40), ("tail", 0.025)) in forbidden
 
 
 def test_manifest_freezes_fidelities_versions_boundaries_and_exact_choices(

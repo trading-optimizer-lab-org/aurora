@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -14,6 +16,33 @@ def _engine_api():
         )
     except ModuleNotFoundError as exc:  # pragma: no cover - removed by implementation
         pytest.fail(f"market feature engine is missing: {exc}")
+
+
+def _frozen_space(lane_id: str) -> dict[str, list[object]]:
+    path = Path(__file__).parents[1] / "config" / "sp500_megarun_feature_contract_240.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    lane = next(row for row in payload["lanes"] if row["lane_id"] == lane_id)
+    return lane.get("parameter_space") or payload["operator_spaces"].get(
+        lane["operator"], payload["operator_spaces"]["*"]
+    )
+
+
+def _baseline_parameters(lane_id: str) -> dict[str, object]:
+    space = _frozen_space(lane_id)
+    baseline = {name: values[0] for name, values in space.items()}
+    if "window" in baseline:
+        windows = [int(value) for value in space["window"]]
+        baseline["window"] = min(
+            (value for value in windows if value >= 20), default=max(windows)
+        )
+    if "normalization" in baseline:
+        baseline["normalization"] = "none"
+    return baseline
+
+
+def _value_signature(frame: pd.DataFrame) -> int:
+    values = frame["value"].replace([np.inf, -np.inf], np.nan).round(12)
+    return int(pd.util.hash_pandas_object(values, index=False).sum())
 
 
 def _panels(periods: int = 900) -> dict[str, pd.DataFrame]:
@@ -97,6 +126,30 @@ def test_all_f021_f031_smoke_outputs_are_nonempty_and_causal() -> None:
         assert frame["available_at"].le(frame["date"]).all(), lane_id
         assert frame["observed_at"].le(frame["available_at"]).all(), lane_id
         assert frame["date"].max() <= pd.Timestamp("2010-12-31"), lane_id
+
+
+@pytest.mark.parametrize("lane_id", [f"F{index:03d}" for index in range(21, 32)])
+def test_f021_f031_execute_every_frozen_parameter_choice(lane_id: str) -> None:
+    api = _engine_api()
+    panels = _panels()
+    for name, choices in _frozen_space(lane_id).items():
+        signatures: set[int] = set()
+        for choice in choices:
+            parameters = _baseline_parameters(lane_id)
+            parameters[name] = choice
+            if name == "normalization":
+                parameters["window"] = 63
+            output = api.evaluate_market_lane(lane_id, panels, parameters)
+            assert output["value"].notna().any(), (lane_id, name, choice)
+            signatures.add(_value_signature(output))
+        if len(choices) > 1:
+            assert len(signatures) > 1, f"ignored frozen dimension: {lane_id}.{name}"
+
+
+def test_market_engine_rejects_parameters_outside_the_frozen_lane_space() -> None:
+    api = _engine_api()
+    with pytest.raises(api.MarketFeatureEngineError, match="UNKNOWN_PARAMETER:F021:invented"):
+        api.evaluate_market_lane("F021", _panels(), {"window": 20, "invented": 1})
 
 
 def test_market_engine_rejects_validation_rows() -> None:

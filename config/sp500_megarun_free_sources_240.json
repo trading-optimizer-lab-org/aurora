@@ -42,7 +42,7 @@
   },
   "sources": {
     "D_CBOE_VOL": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_cboe_vol_bundle","maximum_observation_date":"2020-12-31","resources":[]},
-    "D_CBOE_PCR": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"cboe_put_call_or_cftc_fallback","maximum_observation_date":"2020-12-31","resources":[],"frozen_variant":"CFTC_CROSS_MARKET_FALLBACK_UNLESS_CBOE_STITCH_PASSES"},
+    "D_CBOE_PCR": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"cftc_cross_market_fallback","maximum_observation_date":"2020-12-31","resources":[],"frozen_variant":"CFTC_CROSS_MARKET_FALLBACK_ONLY"},
     "D_CFTC_LEGACY": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_cftc_legacy","maximum_observation_date":"2020-12-31","resources":[]},
     "D_FED_H15_H10": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_fed_h15_h10","maximum_observation_date":"2020-12-31","resources":[]},
     "D_FED_H3_H6_H8_G19_CP": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_fed_macro_bundle","maximum_observation_date":"2020-12-31","resources":[]},
