@@ -330,6 +330,29 @@ def test_parse_rendered_ppe_report_extracts_exact_realestate_inputs():
     ]
 
 
+def test_parse_rendered_ppe_report_accepts_jina_javascript_links():
+    module = _rendered_module()
+    report = """
+| **Property, Plant and Equipment - USD ($) $ in Millions** | Sep. 27, 2025 |
+| --- | --- |
+| [**Property, Plant and Equipment [Line Items]**](javascript:void(0);) |  |
+| [Gross property, plant and equipment](javascript:void(0);) | $ 125,848 |
+| [Total property, plant and equipment, net](javascript:void(0);) | 49,834 |
+| [Land and buildings](javascript:void(0);) |  |
+| [**Property, Plant and Equipment [Line Items]**](javascript:void(0);) |  |
+| [Gross property, plant and equipment](javascript:void(0);) | 27,337 |
+"""
+
+    rows = module.extract_rendered_realestate_inputs(report)
+
+    assert len(rows) == 1
+    assert rows[0]["period_end"] == "2025-09-27"
+    assert rows[0]["ppe_gross"] == 125848.0
+    assert rows[0]["ppe_net"] == 49834.0
+    assert rows[0]["land_and_buildings_gross"] == 27337.0
+    assert rows[0]["realestate_raw"] == pytest.approx(27337.0 / 125848.0)
+
+
 def test_build_rendered_realestate_evidence_preserves_pit_and_stays_uncomputed():
     module = _rendered_module()
     report = """
