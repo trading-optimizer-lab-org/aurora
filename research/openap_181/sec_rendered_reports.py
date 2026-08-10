@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
@@ -302,8 +303,86 @@ def select_current_realestate_pilot_filings(
     return selected
 
 
+def compute_current_realestate_cross_section(
+    input_records: Iterable[Mapping[str, Any]],
+    *,
+    minimum_observations: int = 5,
+) -> list[dict[str, Any]]:
+    """Demean current raw real-estate ratios within causal month and SEC SIC2."""
+
+    if minimum_observations < 5:
+        raise ValueError("realestate requires at least five industry observations")
+
+    output: list[dict[str, Any]] = []
+    valid_groups: dict[tuple[str, str], list[int]] = {}
+    for source_row in input_records:
+        row = dict(source_row)
+        formation = _utc_datetime(row.get("formation_at"))
+        available = _utc_datetime(row.get("available_at"))
+        sic2 = str(row.get("sic2") or "").strip()
+        try:
+            raw = float(row.get("realestate_raw"))
+            assets = float(row.get("assets"))
+        except (TypeError, ValueError):
+            raw = math.nan
+            assets = math.nan
+        valid = (
+            formation is not None
+            and available is not None
+            and available <= formation
+            and re.fullmatch(r"\d{2}", sic2) is not None
+            and math.isfinite(raw)
+            and math.isfinite(assets)
+        )
+        prepared = {
+            **row,
+            "signal": "realestate",
+            "formation_month": formation.strftime("%Y-%m") if formation else "",
+            "industry_observations": 0,
+            "industry_mean_realestate_raw": None,
+            "realestate_value": None,
+            "current_signal_computed": False,
+            "strict_score_eligible": False,
+            "fidelity": "reconstructed_not_strict",
+            "status": "blocked_fidelity" if not valid else "blocked_coverage",
+            "remaining_blocker": (
+                "invalid_or_noncausal_realestate_input"
+                if not valid
+                else "fewer_than_5_same_sic2_observations"
+            ),
+        }
+        output.append(prepared)
+        if valid:
+            key = (prepared["formation_month"], sic2)
+            valid_groups.setdefault(key, []).append(len(output) - 1)
+
+    for indexes in valid_groups.values():
+        count = len(indexes)
+        if count < minimum_observations:
+            for index in indexes:
+                output[index]["industry_observations"] = count
+            continue
+        mean = sum(float(output[index]["realestate_raw"]) for index in indexes) / count
+        for index in indexes:
+            row = output[index]
+            row.update(
+                {
+                    "industry_observations": count,
+                    "industry_mean_realestate_raw": mean,
+                    "realestate_value": float(row["realestate_raw"]) - mean,
+                    "current_signal_computed": True,
+                    "status": "current_signal_computed",
+                    "remaining_blocker": (
+                        "strict_crsp_sic_and_compustat_equivalence_unvalidated"
+                    ),
+                }
+            )
+    return output
+
+
 __all__ = [
     "build_rendered_realestate_evidence",
+    "compute_current_realestate_cross_section",
     "extract_rendered_realestate_inputs",
     "locate_rendered_ppe_report",
     "select_current_realestate_pilot_filings",
