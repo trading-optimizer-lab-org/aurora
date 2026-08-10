@@ -1,9 +1,35 @@
 from __future__ import annotations
 
+import hashlib
 from importlib import import_module
 
 import pandas as pd
 import pytest
+
+
+class _ReadthroughResponse:
+    def __init__(self, payload: bytes, status_code: int = 200) -> None:
+        self.content = payload
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            import requests
+
+            raise requests.HTTPError(
+                f"{self.status_code} response",
+                response=self,
+            )
+
+
+class _ReadthroughSession:
+    def __init__(self, responses: list[_ReadthroughResponse]) -> None:
+        self.responses = iter(responses)
+        self.calls: list[dict[str, object]] = []
+
+    def get(self, url: str, **kwargs):
+        self.calls.append({"url": url, **kwargs})
+        return next(self.responses)
 
 
 def _module():
@@ -186,3 +212,80 @@ def test_assemble_sector_pilot_computes_only_matching_annual_periods() -> None:
     assert by_symbol["S1"]["available_at"] == "2026-02-02T12:00:00+00:00"
     assert by_symbol["S1"]["source_sha256"] == "6" * 64
     assert all(row["realestate_raw"] != 9.9 for row in result["records"])
+
+
+def test_acquire_rendered_filing_preserves_origin_access_hashes_and_text(
+    tmp_path,
+) -> None:
+    module = _module()
+    summary = b"""Markdown Content:
+R43.htm
+Cash and Marketable Securities (Details)
+R46.htm
+Gross Property, Plant and Equipment by Major Asset Class (Details)
+"""
+    report = b"""Markdown Content:
+| Property, Plant and Equipment - USD ($) $ in Millions | Sep. 27, 2025 |
+| --- | --- |
+| Property, Plant and Equipment [Line Items] |  |
+| Gross property, plant and equipment | $ 125,848 |
+| Total property, plant and equipment, net | 49,834 |
+| Land and buildings |  |
+| Property, Plant and Equipment [Line Items] |  |
+| Gross property, plant and equipment | 27,337 |
+"""
+    session = _ReadthroughSession(
+        [_ReadthroughResponse(summary), _ReadthroughResponse(report)]
+    )
+    selected = {
+        "cik": "320193",
+        "accession_number": "0000320193-25-000079",
+        "form": "10-K",
+        "report_date": "2025-09-27",
+        "filing_date": "2025-10-31",
+        "accepted_at": "2025-10-31T10:01:26Z",
+        "formation_at": "2026-08-09T23:59:59Z",
+    }
+
+    evidence = module.acquire_rendered_realestate_filing(
+        selected,
+        output_dir=tmp_path,
+        session=session,
+        retry_delays=(),
+        retrieved_at="2026-08-10T01:00:00Z",
+    )
+
+    origin = (
+        "https://www.sec.gov/Archives/edgar/data/320193/"
+        "000032019325000079"
+    )
+    assert [call["url"] for call in session.calls] == [
+        f"https://r.jina.ai/http://{origin.removeprefix('https://')}/FilingSummary.xml",
+        f"https://r.jina.ai/http://{origin.removeprefix('https://')}/R46.htm",
+    ]
+    assert evidence["raw_data_acquired"] is True
+    assert evidence["current_signal_computed"] is False
+    assert evidence["strict_score_eligible"] is False
+    assert [row["filename"] for row in evidence["source_files"]] == [
+        "FilingSummary.xml",
+        "R46.htm",
+    ]
+    assert evidence["source_files"][1]["source_url"] == f"{origin}/R46.htm"
+    assert evidence["source_files"][1]["access_method"] == (
+        "sec_via_jina_readthrough"
+    )
+    assert evidence["source_files"][1]["sha256"] == hashlib.sha256(
+        report
+    ).hexdigest()
+    assert evidence["source_files"][1]["retrieved_at"] == (
+        "2026-08-10T01:00:00Z"
+    )
+    assert evidence["records"][0]["realestate_raw"] == pytest.approx(
+        27337.0 / 125848.0
+    )
+    assert evidence["records"][0]["source_sha256"] == hashlib.sha256(
+        report
+    ).hexdigest()
+    stored = tmp_path / "CIK0000320193"
+    assert (stored / "FilingSummary.xml.txt").read_bytes() == summary
+    assert (stored / "R46.htm.txt").read_bytes() == report
