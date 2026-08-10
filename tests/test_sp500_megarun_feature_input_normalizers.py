@@ -1581,3 +1581,121 @@ def test_calendar_panel_is_known_on_each_session() -> None:
     assert february_start["session_of_month"] == 1
     assert result["date"].equals(result["observed_at"])
     assert result["date"].equals(result["available_at"])
+
+
+def test_fomc_publication_panels_use_only_public_dates_and_next_session() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2008-01-02", "2008-06-30")
+    frame = pd.DataFrame(
+        [
+            {
+                "date": "2008-01-29",
+                "document_kind": "meeting",
+                "document_reference": "January 29-30 Meeting - 2008",
+            },
+            {
+                "date": "2008-01-30",
+                "document_kind": "statement",
+                "document_reference": "/newsevents/pressreleases/monetary20080130a.htm",
+            },
+            {
+                "date": "2008-02-20",
+                "document_kind": "minutes_release",
+                "document_reference": "/monetarypolicy/fomcminutes20080130.htm",
+            },
+            {
+                "date": "2008-03-18",
+                "document_kind": "statement",
+                "document_reference": "/newsevents/pressreleases/monetary20080318a.htm",
+            },
+            {
+                "date": "2008-04-08",
+                "document_kind": "minutes_release",
+                "document_reference": "/monetarypolicy/fomcminutes20080318.htm",
+            },
+        ]
+    )
+
+    panels = api.normalize_fomc_publication_panels(frame, sessions=sessions)
+
+    assert tuple(panels) == ("statements", "minutes")
+    statements = panels["statements"]
+    minutes = panels["minutes"]
+    assert statements.loc[0, "observed_at"] == pd.Timestamp("2008-01-30")
+    assert statements.loc[0, "available_at"] == pd.Timestamp("2008-01-31")
+    assert statements.loc[1, "gap_days"] == pytest.approx(48.0)
+    assert minutes.loc[0, "available_at"] == pd.Timestamp("2008-02-21")
+    assert minutes.loc[0, "decision_lag_days"] == pytest.approx(21.0)
+    assert minutes.loc[1, "gap_days"] == pytest.approx(48.0)
+
+
+def test_treasury_auction_panel_uses_record_date_and_common_full_history_fields() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2008-01-02", "2008-02-15")
+    frame = pd.DataFrame(
+        [
+            {
+                "date": "2008-01-10",
+                "offering_amt": "10000000000",
+                "total_accepted": "10500000000",
+                "total_tendered": "30000000000",
+                "high_yield": "4.00",
+                "high_investment_rate": "null",
+                "high_discnt_rate": "null",
+                "issue_date": "2008-01-10",
+                "maturity_date": "2010-01-10",
+                "security_type": "Note",
+                "reopening": "No",
+            },
+            {
+                "date": "2008-01-10",
+                "offering_amt": "5000000000",
+                "total_accepted": "5000000000",
+                "total_tendered": "20000000000",
+                "high_yield": "null",
+                "high_investment_rate": "3.00",
+                "high_discnt_rate": "2.95",
+                "issue_date": "2008-01-10",
+                "maturity_date": "2008-07-10",
+                "security_type": "Bill",
+                "reopening": "Yes",
+            },
+        ]
+    )
+
+    result = api.normalize_treasury_auction_results_panel(frame, sessions=sessions)
+
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2008-01-10")
+    assert result.loc[0, "available_at"] == pd.Timestamp("2008-01-11")
+    assert result.loc[0, "auction_count"] == 2
+    assert result.loc[0, "offering_amount"] == pytest.approx(15_000_000_000.0)
+    assert result.loc[0, "bid_to_cover"] == pytest.approx(50.0 / 15.5)
+    assert result.loc[0, "bill_share"] == pytest.approx(1.0 / 3.0)
+    assert result.loc[0, "reopening_share"] == pytest.approx(1.0 / 3.0)
+    assert 0.9 < result.loc[0, "weighted_maturity_years"] < 2.0
+
+
+def test_federal_debt_panel_keeps_total_history_and_optional_composition() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2008-01-02", "2008-01-15")
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2008-01-03", "2008-01-04"]),
+            "tot_pub_debt_out_amt": [9_000.0, 9_010.0],
+            "debt_held_public_amt": [5_000.0, 5_005.0],
+            "intragov_hold_amt": [4_000.0, 4_005.0],
+        }
+    )
+
+    result = api.normalize_federal_debt_panel(frame, sessions=sessions)
+
+    assert result["observed_at"].tolist() == [
+        pd.Timestamp("2008-01-03"),
+        pd.Timestamp("2008-01-04"),
+    ]
+    assert result["available_at"].tolist() == [
+        pd.Timestamp("2008-01-04"),
+        pd.Timestamp("2008-01-07"),
+    ]
+    assert result.loc[0, "total_debt"] == pytest.approx(9_000.0)
+    assert result.loc[0, "public_debt"] == pytest.approx(5_000.0)

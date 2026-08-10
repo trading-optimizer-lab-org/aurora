@@ -1,4 +1,4 @@
-name: SP500 Megarun Train Feature Smoke F001-F220
+name: SP500 Megarun Train Feature Smoke F001-F230
 
 on:
   push:
@@ -45,6 +45,8 @@ on:
       - infra/sp500_megarun/financial_accounts_feature_smoke.py
       - infra/sp500_megarun/volatility_positioning_feature_engine.py
       - infra/sp500_megarun/volatility_positioning_feature_smoke.py
+      - infra/sp500_megarun/policy_treasury_feature_engine.py
+      - infra/sp500_megarun/policy_treasury_feature_smoke.py
       - config/sp500_megarun_feature_contract_240.json
       - config/sp500_megarun_free_data_120.json
       - config/sp500_megarun_free_data_240.json
@@ -70,6 +72,7 @@ on:
       - scripts/run_sp500_megarun_realtime_survey_feature_smoke_f191.py
       - scripts/run_sp500_megarun_financial_accounts_feature_smoke_f201.py
       - scripts/run_sp500_megarun_volatility_positioning_feature_smoke_f211.py
+      - scripts/run_sp500_megarun_policy_treasury_feature_smoke_f221.py
       - tests/test_sp500_megarun_data_contract.py
       - tests/test_sp500_megarun_feature_contract.py
       - tests/test_sp500_megarun_feature_engine_price.py
@@ -113,6 +116,8 @@ on:
       - tests/test_sp500_megarun_financial_accounts_feature_smoke.py
       - tests/test_sp500_megarun_volatility_positioning_feature_engine.py
       - tests/test_sp500_megarun_volatility_positioning_feature_smoke.py
+      - tests/test_sp500_megarun_policy_treasury_feature_engine.py
+      - tests/test_sp500_megarun_policy_treasury_feature_smoke.py
   workflow_dispatch:
     inputs:
       source_run_id:
@@ -125,7 +130,7 @@ permissions:
   contents: read
 
 jobs:
-  smoke_f001_f220:
+  smoke_f001_f230:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -150,7 +155,7 @@ jobs:
           python -m pip install --require-hashes -r requirements/github-performance.lock
           python -m pip install "pytest==9.0.3"
           python -m pip install --no-deps -e .
-      - name: Verify F001-F220 fail-closed implementations
+      - name: Verify F001-F230 fail-closed implementations
         run: |
           python -m pytest \
             tests/test_sp500_megarun_feature_contract.py \
@@ -196,6 +201,8 @@ jobs:
             tests/test_sp500_megarun_financial_accounts_feature_smoke.py \
             tests/test_sp500_megarun_volatility_positioning_feature_engine.py \
             tests/test_sp500_megarun_volatility_positioning_feature_smoke.py \
+            tests/test_sp500_megarun_policy_treasury_feature_engine.py \
+            tests/test_sp500_megarun_policy_treasury_feature_smoke.py \
             -q
       - name: Download only the verified train snapshot
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -311,6 +318,11 @@ jobs:
           python scripts/run_sp500_megarun_volatility_positioning_feature_smoke_f211.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_volatility_positioning_feature_smoke_f211_f220
+      - name: Execute and audit F221-F230 on train only
+        run: |
+          python scripts/run_sp500_megarun_policy_treasury_feature_smoke_f221.py \
+            --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
+            --output-dir outputs/sp500_megarun_policy_treasury_feature_smoke_f221_f230
       - name: Upload F001-F020 train-only evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -449,5 +461,12 @@ jobs:
         with:
           name: sp500-megarun-volatility-positioning-feature-smoke-F211-F220-${{ github.run_id }}
           path: outputs/sp500_megarun_volatility_positioning_feature_smoke_f211_f220
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload F221-F230 train-only evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-policy-treasury-feature-smoke-F221-F230-${{ github.run_id }}
+          path: outputs/sp500_megarun_policy_treasury_feature_smoke_f221_f230
           if-no-files-found: error
           retention-days: 90

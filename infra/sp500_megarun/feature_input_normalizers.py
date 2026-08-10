@@ -1843,6 +1843,266 @@ def normalize_fomc_decision_panel(
     return _project_to_decision_session(events, policy="next_session", sessions=sessions)
 
 
+def normalize_fomc_publication_panels(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> Mapping[str, pd.DataFrame]:
+    """Expose statement and minutes-release timing without pretending text exists."""
+
+    fomc = _validated_dates(frame, dataset_id="D_FOMC_PUBLIC")
+    required = {"document_kind", "document_reference"}
+    missing = sorted(required - set(fomc.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"FOMC_PUBLICATION_COLUMNS_MISSING:{','.join(missing)}"
+        )
+
+    meetings = fomc.loc[fomc["document_kind"].astype(str).eq("meeting")].copy()
+    meetings["date"] = [
+        _fomc_decision_date(date, reference)
+        for date, reference in zip(
+            meetings["date"], meetings["document_reference"], strict=True
+        )
+    ]
+    meeting_dates = (
+        meetings.loc[:, ["date"]]
+        .drop_duplicates()
+        .sort_values("date", kind="mergesort")
+        .rename(columns={"date": "decision_date"})
+    )
+
+    panels: dict[str, pd.DataFrame] = {}
+    for output_name, kind in (
+        ("statements", "statement"),
+        ("minutes", "minutes_release"),
+    ):
+        selected = fomc.loc[
+            fomc["document_kind"].astype(str).eq(kind), ["date"]
+        ].copy()
+        if selected.empty:
+            raise FeatureInputNormalizerError(
+                f"FOMC_PUBLICATION_KIND_MISSING:{kind}"
+            )
+        events = (
+            selected.groupby("date", as_index=False, sort=True)
+            .size()
+            .rename(columns={"size": "event_count"})
+        )
+        events["gap_days"] = events["date"].diff().dt.days.astype(float)
+        events["frequency_per_year"] = 365.25 / events["gap_days"].replace(0.0, np.nan)
+        if output_name == "minutes":
+            if meeting_dates.empty:
+                raise FeatureInputNormalizerError("FOMC_MEETINGS_MISSING_FOR_MINUTES")
+            events = pd.merge_asof(
+                events.sort_values("date", kind="mergesort"),
+                meeting_dates,
+                left_on="date",
+                right_on="decision_date",
+                direction="backward",
+            )
+            events["decision_lag_days"] = (
+                events["date"] - events["decision_date"]
+            ).dt.days.astype(float)
+            events = events.drop(columns="decision_date")
+        panels[output_name] = _project_to_decision_session(
+            events,
+            policy="next_session",
+            sessions=sessions,
+        )
+    return panels
+
+
+def normalize_treasury_auction_results_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Aggregate common auction-result fields after the conservative record date."""
+
+    auctions = _validated_dates(frame, dataset_id="D_TREASURY_AUCTIONS")
+    required = {
+        "offering_amt",
+        "total_accepted",
+        "total_tendered",
+        "high_yield",
+        "high_investment_rate",
+        "high_discnt_rate",
+        "issue_date",
+        "maturity_date",
+        "security_type",
+        "reopening",
+    }
+    missing = sorted(required - set(auctions.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"TREASURY_AUCTION_COLUMNS_MISSING:{','.join(missing)}"
+        )
+
+    numeric_names = {
+        "offering_amt": "offering_amount",
+        "total_accepted": "accepted_amount",
+        "total_tendered": "tendered_amount",
+        "high_yield": "high_yield",
+        "high_investment_rate": "high_investment_rate",
+        "high_discnt_rate": "high_discount_rate",
+    }
+    for source, target in numeric_names.items():
+        auctions[target] = pd.to_numeric(
+            auctions[source].replace({"null": np.nan, "": np.nan}),
+            errors="coerce",
+        )
+    auctions["issue_date"] = pd.to_datetime(auctions["issue_date"], errors="coerce")
+    auctions["maturity_date"] = pd.to_datetime(
+        auctions["maturity_date"], errors="coerce"
+    )
+    auctions["maturity_years"] = (
+        (auctions["maturity_date"] - auctions["issue_date"]).dt.days / 365.25
+    )
+    auctions["clearing_rate"] = (
+        auctions["high_yield"]
+        .combine_first(auctions["high_investment_rate"])
+        .combine_first(auctions["high_discount_rate"])
+    )
+    auctions = auctions.dropna(
+        subset=[
+            "offering_amount",
+            "accepted_amount",
+            "tendered_amount",
+            "maturity_years",
+        ]
+    )
+    auctions = auctions.loc[
+        auctions["offering_amount"].gt(0.0)
+        & auctions["accepted_amount"].gt(0.0)
+        & auctions["tendered_amount"].ge(0.0)
+        & auctions["maturity_years"].gt(0.0)
+    ].copy()
+    if auctions.empty:
+        raise FeatureInputNormalizerError("EMPTY_TREASURY_AUCTION_PANEL")
+
+    security = auctions["security_type"].astype(str).str.lower()
+    offering = auctions["offering_amount"]
+    accepted = auctions["accepted_amount"]
+    auctions["clearing_rate_weighted"] = auctions["clearing_rate"] * accepted
+    auctions["clearing_rate_weight"] = accepted.where(
+        auctions["clearing_rate"].notna(), 0.0
+    )
+    auctions["maturity_weighted"] = auctions["maturity_years"] * offering
+    auctions["bill_offering"] = offering.where(security.eq("bill"), 0.0)
+    auctions["note_bond_offering"] = offering.where(
+        security.isin(["note", "bond"]), 0.0
+    )
+    auctions["long_term_offering"] = offering.where(
+        auctions["maturity_years"].ge(10.0), 0.0
+    )
+    auctions["reopening_offering"] = offering.where(
+        auctions["reopening"].astype(str).str.lower().eq("yes"), 0.0
+    )
+    for kind in ("bill", "note", "bond"):
+        auctions[f"{kind}_offering"] = offering.where(security.eq(kind), 0.0)
+
+    grouped = auctions.groupby("date", as_index=False, sort=True).agg(
+        auction_count=("offering_amount", "size"),
+        offering_amount=("offering_amount", "sum"),
+        accepted_amount=("accepted_amount", "sum"),
+        tendered_amount=("tendered_amount", "sum"),
+        clearing_rate_weighted=("clearing_rate_weighted", "sum"),
+        clearing_rate_weight=("clearing_rate_weight", "sum"),
+        maturity_weighted=("maturity_weighted", "sum"),
+        bill_offering=("bill_offering", "sum"),
+        note_bond_offering=("note_bond_offering", "sum"),
+        long_term_offering=("long_term_offering", "sum"),
+        reopening_offering=("reopening_offering", "sum"),
+        note_offering=("note_offering", "sum"),
+        bond_offering=("bond_offering", "sum"),
+    )
+    denominator = grouped["offering_amount"].replace(0.0, np.nan)
+    grouped["acceptance_to_offer"] = grouped["accepted_amount"] / denominator
+    grouped["bid_to_cover"] = grouped["tendered_amount"] / grouped[
+        "accepted_amount"
+    ].replace(0.0, np.nan)
+    grouped["clearing_rate"] = grouped["clearing_rate_weighted"] / grouped[
+        "clearing_rate_weight"
+    ].replace(0.0, np.nan)
+    grouped["weighted_maturity_years"] = grouped["maturity_weighted"] / denominator
+    grouped["bill_share"] = grouped["bill_offering"] / denominator
+    grouped["note_bond_share"] = grouped["note_bond_offering"] / denominator
+    grouped["long_term_share"] = grouped["long_term_offering"] / denominator
+    grouped["reopening_share"] = grouped["reopening_offering"] / denominator
+    grouped["maturity_hhi"] = sum(
+        (grouped[f"{kind}_offering"] / denominator).pow(2)
+        for kind in ("bill", "note", "bond")
+    )
+    grouped = grouped.drop(
+        columns=[
+            "clearing_rate_weighted",
+            "clearing_rate_weight",
+            "maturity_weighted",
+            "bill_offering",
+            "note_bond_offering",
+            "long_term_offering",
+            "reopening_offering",
+            "note_offering",
+            "bond_offering",
+        ]
+    )
+    return _project_to_decision_session(
+        grouped,
+        policy="next_session",
+        sessions=sessions,
+    )
+
+
+def normalize_federal_debt_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Expose daily federal debt totals and optional composition next session."""
+
+    debt = _validated_dates(frame, dataset_id="D_TREASURY_FISCAL")
+    required = {
+        "tot_pub_debt_out_amt",
+        "debt_held_public_amt",
+        "intragov_hold_amt",
+    }
+    missing = sorted(required - set(debt.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"FEDERAL_DEBT_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    result = pd.DataFrame(
+        {
+            "date": debt["date"],
+            "total_debt": pd.to_numeric(
+                debt["tot_pub_debt_out_amt"].replace({"null": np.nan, "": np.nan}),
+                errors="coerce",
+            ),
+            "public_debt": pd.to_numeric(
+                debt["debt_held_public_amt"].replace({"null": np.nan, "": np.nan}),
+                errors="coerce",
+            ),
+            "intragov_debt": pd.to_numeric(
+                debt["intragov_hold_amt"].replace({"null": np.nan, "": np.nan}),
+                errors="coerce",
+            ),
+        }
+    ).dropna(subset=["total_debt"])
+    result = (
+        result.sort_values("date", kind="mergesort")
+        .drop_duplicates("date", keep="last")
+        .reset_index(drop=True)
+    )
+    if result.empty:
+        raise FeatureInputNormalizerError("EMPTY_FEDERAL_DEBT_PANEL")
+    return _project_to_decision_session(
+        result,
+        policy="next_session",
+        sessions=sessions,
+    )
+
+
 def normalize_lagged_valuation_panel(
     goyal_frame: pd.DataFrame,
     shiller_frame: pd.DataFrame,
@@ -2553,8 +2813,10 @@ __all__ = [
     "normalize_financial_conditions_panel",
     "normalize_uncertainty_panel",
     "normalize_finra_margin_panel",
+    "normalize_federal_debt_panel",
     "normalize_fomc_decision_panel",
     "normalize_fomc_event_panel",
+    "normalize_fomc_publication_panels",
     "normalize_french_industry_panel",
     "normalize_french_factor_panel",
     "normalize_french_characteristic_panels",
@@ -2576,6 +2838,7 @@ __all__ = [
     "normalize_tic_foreign_flow_panel",
     "normalize_z1_corporate_issuance_panel",
     "normalize_spy_decision_panel",
+    "normalize_treasury_auction_results_panel",
     "normalize_treasury_curve_panel",
     "normalize_world_bank_cross_asset_panel",
     "normalize_world_bank_commodity_panel",
