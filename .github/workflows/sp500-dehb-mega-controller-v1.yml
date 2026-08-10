@@ -17,6 +17,9 @@ on:
       runtime_input_run_id:
         description: Exact immutable train-only runtime-input artifact run
         required: true
+      technical_evidence_run_id:
+        description: Exact immutable official-DEHB technical evidence run
+        required: true
       prior_decision_run_id:
         description: Immediate prior controller run, or zero for first wave
         required: true
@@ -190,6 +193,15 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Download immutable technical evidence for complete global reduction
+        if: steps.evidence.outputs.complete_workers == '360'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-official-dehb-smoke-${{ inputs.technical_evidence_run_id }}
+          path: ${{ runner.temp }}/dehb_technical_evidence
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.technical_evidence_run_id }}
       - name: Run global multiplicity and 60-gate reconciliation
         id: global
         if: steps.evidence.outputs.complete_workers == '360'
@@ -200,6 +212,7 @@ jobs:
             --feature-contract config/sp500_megarun_feature_contract_240.json \
             --worker-root outputs/combined_workers \
             --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs" \
+            --technical-evidence "$RUNNER_TEMP/dehb_technical_evidence/technical_evidence.json" \
             --output-dir outputs/global_reduce
       - name: Reduce complete wave with global gates
         id: controller_complete
@@ -282,6 +295,7 @@ jobs:
             -f wave="$next_wave" \
             -f restart_ordinal="$next_restart" \
             -f runtime_input_run_id="${{ inputs.runtime_input_run_id }}" \
+            -f technical_evidence_run_id="${{ inputs.technical_evidence_run_id }}" \
             -f prior_decision_run_id="${{ github.run_id }}" \
             -f evidence_run_ids="$evidence_ids" \
             -f checkpoint_run_ids="$checkpoint_ids" \

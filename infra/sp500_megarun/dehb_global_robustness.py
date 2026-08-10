@@ -225,6 +225,12 @@ def evaluate_global_robustness(
         str(key): float(value)
         for key, value in inference.get("candidate_spa_pvalues", {}).items()
     }
+    bootstrap_se = {
+        str(key): float(value)
+        for key, value in inference.get(
+            "candidate_mean_differential_bootstrap_se", {}
+        ).items()
+    }
     fingerprint_groups: dict[str, list[str]] = {}
     for candidate_id, fingerprint in strategy_fingerprints.items():
         fingerprint_groups.setdefault(str(fingerprint), []).append(str(candidate_id))
@@ -239,15 +245,31 @@ def evaluate_global_robustness(
     finalist_rows = {}
     superior = set(mcs["superior_set"])
     for candidate_id in finalist_ids:
+        candidate_mean = float(differentials[candidate_id].mean())
+        candidate_bootstrap_se = bootstrap_se.get(candidate_id, float("inf"))
+        trial_count_t = (
+            candidate_mean / candidate_bootstrap_se
+            if candidate_bootstrap_se > 0.0
+            and math.isfinite(candidate_bootstrap_se)
+            else float("inf")
+            if candidate_mean > 0.0
+            else 0.0
+        )
+        trial_count_threshold = math.sqrt(
+            2.0 * math.log(max(2.0, float(raw_trial_count) / alpha))
+        )
+        gate_43 = trial_count_t >= trial_count_threshold
         gate_44 = global_process_pass and spa_candidates.get(candidate_id, 1.0) <= alpha
         gate_45 = holm.get(candidate_id, 1.0) <= alpha and fdr.get(candidate_id, 1.0) <= alpha
         gate_46 = pbo.get("pbo") is not None and float(pbo["pbo"]) <= maximum_pbo
         gate_47 = candidate_id in superior
         gate_48 = len(fingerprint_groups[strategy_fingerprints[candidate_id]]) >= 1
         finalist_rows[candidate_id] = {
-            "passed": bool(gate_44 and gate_45 and gate_46 and gate_47 and gate_48),
+            "passed": bool(
+                gate_43 and gate_44 and gate_45 and gate_46 and gate_47 and gate_48
+            ),
             "gates": {
-                "43": True,
+                "43": bool(gate_43),
                 "44": bool(gate_44),
                 "45": bool(gate_45),
                 "46": bool(gate_46),
@@ -257,6 +279,9 @@ def evaluate_global_robustness(
             "holm_adjusted_pvalue": holm.get(candidate_id),
             "fdr_qvalue": fdr.get(candidate_id),
             "spa_familywise_pvalue": spa_candidates.get(candidate_id),
+            "trial_count_adjusted_t": trial_count_t,
+            "trial_count_threshold": trial_count_threshold,
+            "trial_count_penalty_uses_raw_trials": int(raw_trial_count),
         }
     return {
         "schema_version": 1,

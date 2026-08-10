@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pandas as pd
+
 
 def _champion(*, replicate: int, fingerprint: str, local: bool = True) -> dict:
     return {
@@ -48,3 +50,32 @@ def test_seed_consensus_excludes_local_robustness_failure() -> None:
         ]
     )
     assert finalists == []
+
+
+def test_prefix_comparison_detects_any_changed_past_value() -> None:
+    from aurora.infra.sp500_megarun.dehb_global_merge import (
+        compare_prefix_feature_frames,
+    )
+
+    full = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2000-01-03", "2000-01-04", "2006-01-03"]),
+            "available_at": pd.to_datetime(
+                ["2000-01-03", "2000-01-04", "2006-01-03"]
+            ),
+            "value": [1.0, 2.0, 3.0],
+        }
+    )
+    same = full.iloc[:2].copy()
+
+    assert compare_prefix_feature_frames(
+        full, same, cutoff="2005-12-31"
+    )["passed"] is True
+
+    changed = same.copy()
+    changed.loc[1, "value"] = 2.1
+    report = compare_prefix_feature_frames(
+        full, changed, cutoff="2005-12-31"
+    )
+    assert report["passed"] is False
+    assert report["reason"] == "PREFIX_VALUES_CHANGED"

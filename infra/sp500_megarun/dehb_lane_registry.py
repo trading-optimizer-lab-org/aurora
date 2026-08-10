@@ -92,6 +92,7 @@ class TrainLaneEvaluator:
         default_configurations: Mapping[str, Mapping[str, Any]],
         baseline_feature_dirs: Mapping[str, Path] | None = None,
         adapters: Sequence[FamilyAdapter] | None = None,
+        maximum_date: str | pd.Timestamp | None = None,
     ) -> None:
         self.snapshot = Path(train_snapshot).resolve()
         if self.snapshot.name != _TRAIN_PARTITION:
@@ -117,6 +118,13 @@ class TrainLaneEvaluator:
         if not isinstance(spy_row, Mapping) or spy_row.get("sha256") != expected_spy_sha256:
             raise LaneRegistryError("TRAIN_SPY_MANIFEST_SHA256_MISMATCH")
         self._datasets = datasets
+        self._maximum_date = (
+            pd.Timestamp(maximum_date).normalize()
+            if maximum_date is not None
+            else None
+        )
+        if self._maximum_date is not None and self._maximum_date > _TRAIN_END:
+            raise LaneRegistryError("PREFIX_DATE_AFTER_TRAIN_END")
         self._default_configurations = {
             str(lane): dict(configuration)
             for lane, configuration in default_configurations.items()
@@ -158,6 +166,10 @@ class TrainLaneEvaluator:
         dates = pd.to_datetime(frame["date"], errors="coerce").dt.normalize()
         if dates.isna().any() or dates.gt(_TRAIN_END).any():
             raise LaneRegistryError(f"NON_TRAIN_DATASET_ROW:{dataset_id}")
+        if self._maximum_date is not None:
+            frame = frame.loc[dates.le(self._maximum_date)].copy()
+            if frame.empty:
+                raise LaneRegistryError(f"EMPTY_TRAIN_DATASET_PREFIX:{dataset_id}")
         self._frames[dataset_id] = frame
         return frame
 
@@ -219,7 +231,15 @@ class TrainLaneEvaluator:
                 or artifact.get("sha256") != _sha256_file(target)
             ):
                 raise LaneRegistryError(f"BASELINE_FEATURE_SHA256_MISMATCH:{lane_id}")
-            result[lane_id] = pd.read_parquet(target)
+            feature = pd.read_parquet(target)
+            if self._maximum_date is not None:
+                dates = pd.to_datetime(feature["date"], errors="raise").dt.normalize()
+                feature = feature.loc[dates.le(self._maximum_date)].copy()
+                if feature.empty:
+                    raise LaneRegistryError(
+                        f"EMPTY_BASELINE_FEATURE_PREFIX:{lane_id}"
+                    )
+            result[lane_id] = feature
         return result
 
     def __call__(self, lane_id: str, configuration: Mapping[str, Any]) -> pd.DataFrame:

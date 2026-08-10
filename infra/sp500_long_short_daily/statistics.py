@@ -94,6 +94,7 @@ def reality_check_and_spa(
             "candidate_raw_pvalues": {},
             "candidate_fdr_qvalues": {},
             "candidate_mean_differential_ci_95": {},
+            "candidate_mean_differential_bootstrap_se": {},
             "block_sensitivity": {},
             "bootstrap_method": "politis_romano_stationary_circular",
             "reason": "INSUFFICIENT_COMMON_OBSERVATIONS",
@@ -164,6 +165,10 @@ def reality_check_and_spa(
         ]
         for index, column in enumerate(frame.columns)
     }
+    candidate_bootstrap_se = {
+        column: float(selected_bootstrap_means[:, index].std(ddof=1))
+        for index, column in enumerate(frame.columns)
+    }
     selected = sensitivity[str(automatic)]
     return {
         **selected,
@@ -171,6 +176,7 @@ def reality_check_and_spa(
         "candidate_raw_pvalues": candidate_raw_pvalues,
         "candidate_fdr_qvalues": candidate_qvalues,
         "candidate_mean_differential_ci_95": candidate_ci,
+        "candidate_mean_differential_bootstrap_se": candidate_bootstrap_se,
         "automatic_block_length": automatic,
         "bootstrap_samples": samples,
         "bootstrap_method": "politis_romano_stationary_circular",

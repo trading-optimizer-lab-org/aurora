@@ -41,12 +41,38 @@ def test_full_fidelity_robustness_reports_metrics_neighbors_bootstrap_and_60_gat
     assert report["neighbor_count"] == 4
     assert report["bootstrap"]["paths"] == 64
     assert 0.0 <= report["bootstrap"]["all_year_gate_survival_rate"] <= 1.0
+    assert set(report["bootstrap"]["intervals"]["0.95"]) == {
+        "annualized_alpha",
+        "beta",
+        "minimum_annual_active_return",
+        "minimum_annual_strategy_return",
+    }
     assert report["period_metrics"]["monthly"]["period_count"] > 0
+    assert len(report["time_stability"]["leave_one_year_out"]) == 2
+    assert set(report["decision_rule_variants"]["confirmation"]) == {"1", "2", "3"}
+    assert set(report["feature_perturbations"]["numeric_precision"]) == {
+        "2",
+        "4",
+        "6",
+        "8",
+    }
+    assert set(report["return_stress"]["remove_largest_gain"]) == {
+        "day",
+        "week",
+        "month",
+        "quarter",
+        "year",
+    }
     assert report["direction_metrics"]["short_sessions"] > 0
     assert len(report["gate_matrix"]) == 60
     assert {row["gate_id"] for row in report["gate_matrix"]} == set(range(1, 61))
     assert all(row["name"] for row in report["gate_matrix"])
-    assert {43, 44, 45, 46, 47, 48} <= set(report["pending_global_gate_ids"])
+    assert report["pending_global_gate_ids"] == [43, 44, 45, 46, 47, 48]
+    assert report["pending_validation_gate_ids"] == [49, 50, 51, 52, 53, 54]
+    assert report["pending_technical_gate_ids"] == [55, 56, 57, 58, 59, 60]
+    gate_34 = next(row for row in report["gate_matrix"] if row["gate_id"] == 34)
+    assert gate_34["status"] == "MEASURED"
+    assert gate_34["evidence_key"] == "return_stress.remove_largest_gain"
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False
 

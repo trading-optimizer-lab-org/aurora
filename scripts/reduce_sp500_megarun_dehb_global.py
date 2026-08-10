@@ -17,9 +17,15 @@ from aurora.infra.sp500_megarun.dehb_campaign_contract import (
 from aurora.infra.sp500_megarun.dehb_global_merge import (
     collect_verified_campaign_inventory,
     reconstruct_candidate_returns,
+    review_candidate_prefix_invariance,
 )
 from aurora.infra.sp500_megarun.dehb_global_robustness import (
     evaluate_global_robustness,
+)
+from aurora.infra.sp500_megarun.dehb_finalist_robustness import (
+    apply_finalist_train_gate_evidence,
+    blocked_signal_placebo_test,
+    load_runtime_regime_review,
 )
 from aurora.infra.sp500_megarun.feature_contract import (
     load_and_validate_feature_contract,
@@ -29,11 +35,19 @@ from aurora.infra.sp500_megarun.feature_contract import (
 def _reconcile_finalist(
     finalist: Mapping[str, Any],
     multiplicity: Mapping[str, Any],
+    *,
+    train_gate_matrix: list[Mapping[str, Any]] | None = None,
 ) -> Mapping[str, Any]:
     candidate_id = str(finalist["strategy_fingerprint"])
     global_row = multiplicity["finalists"].get(candidate_id, {})
     local = finalist.get("robustness")
-    gate_rows = list(local.get("gate_matrix", ())) if isinstance(local, Mapping) else []
+    gate_rows = (
+        list(train_gate_matrix)
+        if train_gate_matrix is not None
+        else list(local.get("gate_matrix", ()))
+        if isinstance(local, Mapping)
+        else []
+    )
     by_gate = {
         int(row["gate_id"]): dict(row)
         for row in gate_rows
@@ -78,6 +92,7 @@ def main() -> int:
     parser.add_argument("--feature-contract", type=Path, required=True)
     parser.add_argument("--worker-root", type=Path, required=True)
     parser.add_argument("--runtime-input-pack", type=Path, required=True)
+    parser.add_argument("--technical-evidence", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
 
@@ -92,6 +107,7 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
     multiplicity: Mapping[str, Any] | None = None
     reconciled: list[Mapping[str, Any]] = []
+    train_finalist_evidence: dict[str, Mapping[str, Any]] = {}
     if finalists:
         returns, spy = reconstruct_candidate_returns(
             campaign,
@@ -114,10 +130,71 @@ def main() -> int:
             },
             seed=campaign.master_seed,
         )
-        reconciled = [
-            _reconcile_finalist(finalist, multiplicity)
-            for finalist in finalists
-        ]
+        technical_evidence = json.loads(args.technical_evidence.read_text("utf-8"))
+        train_manifest = json.loads(
+            (
+                args.runtime_input_pack
+                / "train_snapshot_1993_2010"
+                / "snapshot_manifest.json"
+            ).read_text("utf-8")
+        )
+        candidates_by_id = {
+            str(row["candidate_id"]): row for row in inventory["candidates"]
+        }
+        lanes_by_id = {lane.lane_id: lane for lane in feature_contract.lanes}
+        for finalist in finalists:
+            candidate_id = str(finalist["strategy_fingerprint"])
+            candidate_record = candidates_by_id[candidate_id]
+            strategy = returns[candidate_id]
+            prefix = review_candidate_prefix_invariance(
+                campaign,
+                feature_contract,
+                runtime_input_pack=args.runtime_input_pack,
+                candidate_record=candidate_record,
+            )
+            placebo = blocked_signal_placebo_test(
+                strategy,
+                spy,
+                seed=campaign.master_seed
+                + int(candidate_id[:8], 16),
+            )
+            regimes = load_runtime_regime_review(
+                args.runtime_input_pack,
+                strategy,
+                spy,
+            )
+            local = finalist.get("robustness")
+            if not isinstance(local, Mapping):
+                raise ValueError("FINALIST_LOCAL_ROBUSTNESS_MISSING")
+            lane_id = str(finalist["lane_id"])
+            gate_matrix = apply_finalist_train_gate_evidence(
+                list(local.get("gate_matrix", ())),
+                campaign_sha256=campaign.sha256,
+                lane_id=lane_id,
+                required_datasets=lanes_by_id[lane_id].required_datasets,
+                seed_consensus=int(finalist["seed_consensus"]),
+                prefix_review=prefix,
+                placebo_review=placebo,
+                regime_review=regimes,
+                train_manifest=train_manifest,
+                technical_evidence=technical_evidence,
+                reconstruction_verified=True,
+            )
+            train_finalist_evidence[candidate_id] = {
+                "prefix_invariance": prefix,
+                "blocked_signal_placebos": placebo,
+                "regimes": regimes,
+                "gate_matrix": gate_matrix,
+                "validation_opened": False,
+                "locked_opened": False,
+            }
+            reconciled.append(
+                _reconcile_finalist(
+                    finalist,
+                    multiplicity,
+                    train_gate_matrix=gate_matrix,
+                )
+            )
     candidate_frame = pd.DataFrame(
         {
             **dict(row),
@@ -137,7 +214,11 @@ def main() -> int:
         "unique_candidate_count": inventory["unique_candidate_count"],
         "seed_consensus_finalist_count": len(finalists),
         "multiplicity": multiplicity,
+        "train_finalist_evidence": train_finalist_evidence,
         "eligible_finalists": reconciled,
+        "train_freeze_winner_found": any(
+            row["train_freeze_eligible"] for row in reconciled
+        ),
         "all_60_gate_winner_found": any(
             row["all_60_gates_passed"] for row in reconciled
         ),

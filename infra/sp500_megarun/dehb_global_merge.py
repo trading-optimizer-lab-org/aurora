@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+import numpy as np
 import pandas as pd
 
 from aurora.infra.sp500_megarun.dehb_objective import score_ledger_decisions
@@ -25,6 +26,168 @@ class GlobalMergeError(ValueError):
 
 
 BundleVerifier = Callable[..., Mapping[str, Any]]
+
+
+def compare_prefix_feature_frames(
+    full_feature: pd.DataFrame,
+    prefix_feature: pd.DataFrame,
+    *,
+    cutoff: str,
+) -> Mapping[str, Any]:
+    """Prove that recomputing with a verified data prefix cannot alter the past."""
+
+    required = ["date", "available_at", "value"]
+
+    def normalize(frame: pd.DataFrame) -> pd.DataFrame:
+        missing = sorted(set(required) - set(frame.columns))
+        if missing:
+            raise GlobalMergeError(
+                f"PREFIX_FEATURE_COLUMN_MISSING:{','.join(missing)}"
+            )
+        result = frame.loc[:, required].copy()
+        result["date"] = pd.to_datetime(result["date"], errors="raise").dt.normalize()
+        result["available_at"] = pd.to_datetime(
+            result["available_at"], errors="raise"
+        ).dt.normalize()
+        result["value"] = pd.to_numeric(result["value"], errors="raise").astype(float)
+        return result.sort_values("date", kind="mergesort").reset_index(drop=True)
+
+    boundary = pd.Timestamp(cutoff).normalize()
+    expected = normalize(full_feature)
+    expected = expected.loc[expected["date"].le(boundary)].reset_index(drop=True)
+    actual = normalize(prefix_feature)
+    if actual["date"].gt(boundary).any():
+        return {
+            "cutoff": boundary.date().isoformat(),
+            "passed": False,
+            "reason": "PREFIX_OUTPUT_AFTER_CUTOFF",
+            "expected_rows": int(len(expected)),
+            "actual_rows": int(len(actual)),
+        }
+    if len(expected) != len(actual) or not expected[["date", "available_at"]].equals(
+        actual[["date", "available_at"]]
+    ):
+        return {
+            "cutoff": boundary.date().isoformat(),
+            "passed": False,
+            "reason": "PREFIX_DATES_CHANGED",
+            "expected_rows": int(len(expected)),
+            "actual_rows": int(len(actual)),
+        }
+    same_values = np.allclose(
+        expected["value"].to_numpy(dtype=float),
+        actual["value"].to_numpy(dtype=float),
+        rtol=1e-12,
+        atol=1e-12,
+        equal_nan=True,
+    )
+    return {
+        "cutoff": boundary.date().isoformat(),
+        "passed": bool(same_values),
+        "reason": None if same_values else "PREFIX_VALUES_CHANGED",
+        "expected_rows": int(len(expected)),
+        "actual_rows": int(len(actual)),
+    }
+
+
+def review_candidate_prefix_invariance(
+    contract: Any,
+    feature_contract: Any,
+    *,
+    runtime_input_pack: Path,
+    candidate_record: Mapping[str, Any],
+    cutoffs: Sequence[str] = ("2001-12-31", "2005-12-31", "2008-12-31"),
+) -> Mapping[str, Any]:
+    """Recompute one candidate against several physically hidden train prefixes."""
+
+    from aurora.infra.sp500_megarun.dehb_lane_registry import (
+        LaneRegistryError,
+        TrainLaneEvaluator,
+        default_lane_configurations,
+    )
+
+    pack = Path(runtime_input_pack).resolve()
+    common = {
+        "train_snapshot": pack / "train_snapshot_1993_2010",
+        "expected_manifest_sha256": contract.train_snapshot_manifest_sha256,
+        "expected_spy_sha256": contract.train_spy_sha256,
+        "default_configurations": default_lane_configurations(feature_contract),
+        "baseline_feature_dirs": {
+            "price": pack / "baseline_price",
+            "market": pack / "baseline_market",
+            "macro": pack / "baseline_macro",
+        },
+    }
+    lane_id = str(candidate_record["lane_id"])
+    configuration = candidate_record.get("configuration")
+    if not isinstance(configuration, Mapping):
+        raise GlobalMergeError("CANDIDATE_CONFIGURATION_INVALID")
+    warm_evaluator = TrainLaneEvaluator(**common)
+    full = warm_evaluator(lane_id, configuration)
+    hot = warm_evaluator(lane_id, configuration)
+    cold = TrainLaneEvaluator(**common)(lane_id, configuration)
+    hot_cache = compare_prefix_feature_frames(
+        full, hot, cutoff=str(contract.search_end)
+    )
+    cold_cache = compare_prefix_feature_frames(
+        full, cold, cutoff=str(contract.search_end)
+    )
+    rows: list[Mapping[str, Any]] = []
+    for cutoff in cutoffs:
+        expected_count = int(
+            pd.to_datetime(full["date"], errors="raise")
+            .dt.normalize()
+            .le(pd.Timestamp(cutoff).normalize())
+            .sum()
+        )
+        if expected_count == 0:
+            rows.append(
+                {
+                    "cutoff": cutoff,
+                    "passed": None,
+                    "reason": "NO_CANDIDATE_OUTPUT_YET",
+                    "expected_rows": 0,
+                    "actual_rows": 0,
+                }
+            )
+            continue
+        try:
+            prefix = TrainLaneEvaluator(**common, maximum_date=cutoff)(
+                lane_id, configuration
+            )
+        except LaneRegistryError as exc:
+            rows.append(
+                {
+                    "cutoff": cutoff,
+                    "passed": False,
+                    "reason": f"PREFIX_RECOMPUTE_FAILED:{exc}",
+                    "expected_rows": expected_count,
+                    "actual_rows": 0,
+                }
+            )
+            continue
+        rows.append(compare_prefix_feature_frames(full, prefix, cutoff=cutoff))
+    evaluated = [row for row in rows if row["passed"] is not None]
+    cache_reproduction_passed = (
+        hot_cache["passed"] is True and cold_cache["passed"] is True
+    )
+    return {
+        "schema_version": 1,
+        "lane_id": lane_id,
+        "strategy_fingerprint": str(candidate_record["candidate_id"]),
+        "cutoffs": rows,
+        "evaluated_prefix_count": len(evaluated),
+        "hot_cache_reproduction": hot_cache,
+        "cold_cache_reproduction": cold_cache,
+        "cache_reproduction_passed": cache_reproduction_passed,
+        "passed": (
+            bool(evaluated)
+            and all(row["passed"] is True for row in evaluated)
+            and cache_reproduction_passed
+        ),
+        "validation_opened": False,
+        "locked_opened": False,
+    }
 
 
 def select_seed_consensus_finalists(
@@ -257,7 +420,9 @@ def reconstruct_candidate_returns(
 
 __all__ = [
     "GlobalMergeError",
+    "compare_prefix_feature_frames",
     "collect_verified_campaign_inventory",
     "reconstruct_candidate_returns",
+    "review_candidate_prefix_invariance",
     "select_seed_consensus_finalists",
 ]

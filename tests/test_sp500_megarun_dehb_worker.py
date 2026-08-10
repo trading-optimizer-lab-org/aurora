@@ -350,3 +350,60 @@ def test_train_lane_registry_verifies_baseline_feature_report_and_hash(
     )
     with pytest.raises(LaneRegistryError, match="BASELINE_FEATURE_SHA256_MISMATCH"):
         second("F001", {})
+
+
+def test_train_lane_registry_verified_prefix_hides_later_dataset_rows(
+    tmp_path: Path,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_lane_registry import (
+        FamilyAdapter,
+        LaneRegistryError,
+        TrainLaneEvaluator,
+        supported_lane_ids,
+    )
+
+    snapshot = tmp_path / "train_snapshot_1993_2010"
+    snapshot.mkdir()
+    spy_path = snapshot / "D_SPY.parquet"
+    pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2004-12-31", "2005-01-03", "2008-01-02"]),
+            "value": [1.0, 2.0, 3.0],
+        }
+    ).to_parquet(spy_path, index=False)
+    spy_hash = hashlib.sha256(spy_path.read_bytes()).hexdigest()
+    manifest_path = snapshot / "snapshot_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "partition": "train",
+                "validation_opened": False,
+                "locked_opened": False,
+                "mountable_by_first_cycle": True,
+                "datasets": {"D_SPY": {"sha256": spy_hash}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def builder(owner):
+        frame = owner._read("D_SPY")
+        return lambda _lane, _config: frame
+
+    common = {
+        "train_snapshot": snapshot,
+        "expected_manifest_sha256": hashlib.sha256(
+            manifest_path.read_bytes()
+        ).hexdigest(),
+        "expected_spy_sha256": spy_hash,
+        "default_configurations": {lane: {} for lane in supported_lane_ids()},
+        "adapters": (FamilyAdapter(1, 240, builder),),
+    }
+    prefix = TrainLaneEvaluator(**common, maximum_date="2005-12-31")
+
+    result = prefix("F001", {})
+
+    assert result["date"].max() == pd.Timestamp("2005-01-03")
+    assert len(result) == 2
+    with pytest.raises(LaneRegistryError, match="PREFIX_DATE_AFTER_TRAIN_END"):
+        TrainLaneEvaluator(**common, maximum_date="2011-01-01")

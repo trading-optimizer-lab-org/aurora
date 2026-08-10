@@ -39,6 +39,8 @@ def test_global_robustness_counts_trials_dedupes_and_never_uses_sharpe() -> None
     assert set(report["finalists"]["winner"]["gates"]) == {
         "43", "44", "45", "46", "47", "48"
     }
+    assert report["finalists"]["winner"]["trial_count_penalty_uses_raw_trials"] == 1000
+    assert report["finalists"]["winner"]["trial_count_threshold"] > 0.0
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False
 
