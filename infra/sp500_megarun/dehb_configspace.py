@@ -168,6 +168,18 @@ def _forbidden_parameter_pairs(
             ("distribution", "normal", "student_df", student_df)
             for student_df in space["student_df"][1:]
         )
+    if lane.lane_id == "F074":
+        pairs.extend(
+            ("statistic", "breakout_pressure", parameter, choice)
+            for parameter in ("pivot_span", "tolerance")
+            for choice in space[parameter][1:]
+        )
+    if lane.lane_id == "F079":
+        pairs.extend(
+            ("statistic", statistic, "zero_tolerance_bps", tolerance)
+            for statistic in ("volume_drought", "volume_shock")
+            for tolerance in space["zero_tolerance_bps"][1:]
+        )
     return tuple(pairs)
 
 
