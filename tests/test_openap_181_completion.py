@@ -747,6 +747,31 @@ def test_explicit_evidence_replaces_only_matching_generic_documentary_blocker():
         "short_interest_source_partial:"
     )
     assert merged.loc["ShortInterest", "evidence_run_url"].endswith("/9")
+
+    broader = explicit.copy()
+    broader["blocking_reason"] = "generic_source_blocked"
+    broader["evidence_artifact"] = "openap-181-generic-source-probe-results"
+    specific = explicit.copy()
+    specific["data_pipeline_implemented"] = True
+    specific["blocking_reason"] = "official_source_transport_blocked"
+    specific["evidence_run_url"] = (
+        "https://github.com/example/aurora/actions/runs/10"
+    )
+    specific["evidence_artifact"] = "openap-181-specific-source-probe-results"
+
+    resolved = module.merge_generated_and_explicit_evidence(
+        [documentary],
+        [broader, specific],
+    ).set_index("signal")
+
+    assert len(resolved) == 58
+    assert bool(resolved.loc["ShortInterest", "data_pipeline_implemented"])
+    assert (
+        resolved.loc["ShortInterest", "blocking_reason"]
+        == "official_source_transport_blocked"
+    )
+    assert resolved.loc["ShortInterest", "evidence_run_url"].endswith("/10")
+
     with pytest.raises(ValueError, match="duplicate signals"):
         module.merge_generated_and_explicit_evidence(
             [documentary],
