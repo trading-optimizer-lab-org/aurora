@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from importlib import util
 from importlib import import_module
+import json
 from pathlib import Path
+import sys
 
 import pandas as pd
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -345,3 +349,188 @@ def test_current_evidence_replacement_swaps_complete_signal_batches() -> None:
         primary, replacement.iloc[0:0]
     )
     assert unchanged.reset_index(drop=True).equals(primary.reset_index(drop=True))
+
+
+def test_consolidation_cli_includes_realestate_as_a_complete_signal_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script_path = ROOT / "scripts" / "run_openap_149_consolidate.py"
+    spec = util.spec_from_file_location("run_openap_149_consolidate", script_path)
+    assert spec is not None and spec.loader is not None
+    script = util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+
+    columns = [
+        "security_id",
+        "ticker",
+        "cik",
+        "signal",
+        "formation_at",
+        "period_end",
+        "filed_at",
+        "available_at",
+        "retrieved_at",
+        "value",
+        "fidelity_class",
+        "current_usable",
+        "source_id",
+        "source_url",
+        "formula_id",
+        "observation_count",
+        "caveat",
+    ]
+    cash = {
+        "security_id": "US-SEC-0000000001-CASH",
+        "ticker": "CASH",
+        "cik": "1",
+        "signal": "Cash",
+        "formation_at": "2026-08-09T23:59:59Z",
+        "period_end": "2025-12-31",
+        "filed_at": "2026-02-01T12:00:00Z",
+        "available_at": "2026-02-01T12:00:00Z",
+        "retrieved_at": "2026-08-09T12:00:00Z",
+        "value": 0.25,
+        "fidelity_class": "reconstructed",
+        "current_usable": True,
+        "source_id": "sec_edgar",
+        "source_url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000000001.json",
+        "formula_id": "cash_over_assets",
+        "observation_count": 1,
+        "caveat": "SEC reconstruction",
+    }
+    realestate = {
+        "security_id": "US-SEC-0000320193-AAPL",
+        "ticker": "AAPL",
+        "cik": "320193",
+        "signal": "realestate",
+        "formation_at": "2026-08-09T23:59:59Z",
+        "period_end": "2025-09-27",
+        "filed_at": "2025-10-31T10:01:26Z",
+        "available_at": "2025-10-31T10:01:26Z",
+        "retrieved_at": "2026-08-08T18:15:54Z",
+        "value": -0.024747824396012474,
+        "fidelity_class": "reconstructed",
+        "current_usable": True,
+        "source_id": "sec_edgar",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/320193/report.htm",
+        "formula_id": "realestate",
+        "observation_count": 7,
+        "caveat": "reconstructed_not_strict",
+    }
+
+    current_93_root = tmp_path / "current_93"
+    sec_root = tmp_path / "sec"
+    finra_root = tmp_path / "finra"
+    realestate_root = tmp_path / "realestate"
+    formula_root = tmp_path / "formulas"
+    output_root = tmp_path / "output"
+    for root in (
+        current_93_root,
+        sec_root,
+        finra_root,
+        realestate_root,
+        formula_root,
+    ):
+        root.mkdir()
+    pd.DataFrame([cash], columns=columns).to_csv(
+        current_93_root / "signals_93_current.csv", index=False
+    )
+    pd.DataFrame(columns=columns).to_csv(
+        sec_root / "openap_149_sec_companyfacts_current.csv", index=False
+    )
+    pd.DataFrame(columns=columns).to_csv(
+        finra_root / "openap_149_finra_short_interest_current.csv", index=False
+    )
+    pd.DataFrame([realestate], columns=columns).to_csv(
+        realestate_root / "openap_149_realestate_current.csv", index=False
+    )
+    routes = _module().load_target_routes(ROUTE_MATRIX)
+    pd.DataFrame(
+        {
+            "signal": routes["signal"],
+            "formula_sha256": ["a" * 64] * len(routes),
+        }
+    ).to_csv(formula_root / "openap_181_formula_inventory.csv", index=False)
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script_path),
+            "--route-matrix",
+            str(ROUTE_MATRIX),
+            "--current-93-root",
+            str(current_93_root),
+            "--sec-current-root",
+            str(sec_root),
+            "--finra-current-root",
+            str(finra_root),
+            "--realestate-current-root",
+            str(realestate_root),
+            "--formula-root",
+            str(formula_root),
+            "--signals-93",
+            str(ROOT / "config" / "openap_93" / "signals_93.yaml"),
+            "--current-93-run-url",
+            "https://github.com/org/repo/actions/runs/1",
+            "--sec-current-run-url",
+            "https://github.com/org/repo/actions/runs/2",
+            "--finra-current-run-url",
+            "https://github.com/org/repo/actions/runs/3",
+            "--realestate-current-run-url",
+            "https://github.com/org/repo/actions/runs/4",
+            "--evidence-run-url",
+            "https://github.com/org/repo/actions/runs/5",
+            "--evidence-artifact",
+            "openap-149-current-consolidated-results",
+            "--output-dir",
+            str(output_root),
+        ],
+    )
+
+    assert script.main() == 0
+
+    matrix = pd.read_csv(output_root / "OPENAP_149_ACQUISITION_MATRIX.csv")
+    manifest = json.loads(
+        (output_root / "openap_149_consolidation_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    row = matrix.set_index("signal").loc["realestate"]
+    assert bool(row["data_acquired"])
+    assert bool(row["current_value_calculated"])
+    assert row["current_value_count"] == 1
+    assert row["fidelity"] == "reconstructed"
+    assert row["source_evidence_run"] == "https://github.com/org/repo/actions/runs/4"
+    assert not bool(row["strict_score_eligible"])
+    assert manifest["realestate_current_run_url"] == (
+        "https://github.com/org/repo/actions/runs/4"
+    )
+    assert "openap_149_realestate_current.csv" in manifest["source_files"]
+
+
+def test_consolidation_workflow_downloads_and_verifies_realestate_evidence() -> None:
+    workflow_path = ROOT / ".github" / "workflows" / "openap-149-consolidate.yml"
+    workflow = yaml.load(
+        workflow_path.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+    dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert "realestate_current_run_id" in dispatch_inputs
+    consolidate = workflow["jobs"]["consolidate"]
+    steps = {step["name"]: step for step in consolidate["steps"] if "name" in step}
+    download = steps["Download rendered realestate current values"]
+    assert download["with"]["name"] == "openap-149-realestate-rendered-current"
+    assert download["with"]["path"] == "inputs/realestate_current"
+    assert download["with"]["run-id"] == "${{ inputs.realestate_current_run_id }}"
+    command = steps["Consolidate latest current evidence"]["run"]
+    assert "--realestate-current-root inputs/realestate_current" in command
+    assert "--realestate-current-run-url" in command
+    verify = steps["Verify consolidated result"]["run"]
+    assert 'matrix.set_index("signal").loc["realestate"]' in verify
+    assert 'realestate["current_value_count"] == 7' in verify
+    assert 'realestate["fidelity"] == "reconstructed"' in verify
+    assert 'not bool(realestate["strict_score_eligible"])' in verify
