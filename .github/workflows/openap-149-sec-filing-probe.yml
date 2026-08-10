@@ -310,6 +310,10 @@ jobs:
           import requests
 
           from aurora.core.runtime_paths import base_data_dir
+          from aurora.research.openap_181.sec_rendered_reports import (
+              build_rendered_realestate_evidence,
+              locate_rendered_ppe_report,
+          )
 
           output = base_data_dir() / "openap_149_sec_filing_probe"
           selected = json.loads(
@@ -322,18 +326,15 @@ jobs:
               "Gross Property, Plant and Equipment by Major Asset Class",
               "Property, Plant and Equipment (Details)",
           )
-          report_filename = ""
-          matched_title = ""
-          for needle in needles:
-              title_match = re.search(re.escape(needle), summary_text, re.I)
-              if title_match:
-                  preceding = summary_text[max(0, title_match.start() - 2500):title_match.start()]
-                  filenames = re.findall(r"R\d+\.htm", preceding, re.I)
-                  if not filenames:
-                      continue
-                  report_filename = filenames[-1]
-                  matched_title = needle
-                  break
+          report_filename = locate_rendered_ppe_report(summary_text)
+          matched_title = next(
+              (
+                  needle
+                  for needle in needles
+                  if re.search(re.escape(needle), summary_text, re.I)
+              ),
+              "",
+          )
           if not report_filename:
               report = {
                   "report_filename": "",
@@ -361,8 +362,17 @@ jobs:
                   "validation_used_for_selection": False,
                   "cost_eur": 0,
               }
+              realestate_evidence = build_rendered_realestate_evidence(
+                  selected_filing=selected,
+                  report_metadata=report,
+                  report_text="",
+              )
               (output / "sec_filing_ppe_report_probe.json").write_text(
                   json.dumps(report, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
+              (output / "rendered_realestate_evidence.json").write_text(
+                  json.dumps(realestate_evidence, indent=2, sort_keys=True) + "\n",
                   encoding="utf-8",
               )
               print(json.dumps(report, sort_keys=True))
@@ -423,8 +433,17 @@ jobs:
               "validation_used_for_selection": False,
               "cost_eur": 0,
           }
+          realestate_evidence = build_rendered_realestate_evidence(
+              selected_filing=selected,
+              report_metadata=report,
+              report_text=markdown_content,
+          )
           (output / "sec_filing_ppe_report_probe.json").write_text(
               json.dumps(report, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          (output / "rendered_realestate_evidence.json").write_text(
+              json.dumps(realestate_evidence, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
           print(json.dumps(report, sort_keys=True))
@@ -455,6 +474,11 @@ jobs:
                   encoding="utf-8"
               )
           )
+          realestate = json.loads(
+              (root / "rendered_realestate_evidence.json").read_text(
+                  encoding="utf-8"
+              )
+          )
           assert len(manifest) == 1
           assert manifest.loc[0, "access_method"] == "sec_official_filing_fair_access"
           assert summary["downloaded"] + summary["failed"] == 1
@@ -468,6 +492,31 @@ jobs:
           assert ppe_report["proxy_used"] is True
           assert ppe_report["strict_score_eligible"] is False
           assert ppe_report["http_status"] in {0, 200}
+          assert realestate["signal"] == "realestate"
+          assert realestate["proxy_used"] is True
+          assert realestate["current_signal_computed"] is False
+          assert realestate["strict_score_eligible"] is False
+          assert realestate["minimum_industry_observations"] == 5
+          assert realestate["remaining_blocker"] in {
+              "rendered_ppe_inputs_missing",
+              "sic2_month_mean_requires_at_least_5_issuers",
+          }
+          if realestate["raw_data_acquired"]:
+              latest = next(
+                  row
+                  for row in realestate["records"]
+                  if row["period_end"] == row["report_date"]
+              )
+              assert latest["cik"] == "320193"
+              assert latest["accession_number"] == "0000320193-25-000079"
+              assert latest["ppe_gross"] == 125848.0
+              assert latest["land_and_buildings_gross"] == 27337.0
+              assert latest["realestate_raw"] == 27337.0 / 125848.0
+              assert pd.Timestamp(latest["available_at"]) <= pd.Timestamp(
+                  latest["formation_at"]
+              )
+              assert latest["access_method"] == "sec_via_jina_readthrough"
+              assert len(latest["source_sha256"]) == 64
           if summary["downloaded"] == 1:
               document = root / "filing" / manifest.loc[0, "primary_document"]
               assert document.stat().st_size == int(manifest.loc[0, "size_bytes"])
