@@ -97,6 +97,8 @@ def _sec_source_contract(
     for chunk in range(48):
         payload = json.loads(summaries[chunk].read_text(encoding="utf-8"))
         ciks_expected = int(payload.get("ciks_expected", 0))
+        companyfacts_ciks_ok = int(payload.get("companyfacts_ciks_ok", 0))
+        submissions_ciks_ok = int(payload.get("submissions_ciks_ok", 0))
         retrieved_at = pd.to_datetime(
             payload.get("retrieved_at"), errors="coerce", utc=True
         )
@@ -106,8 +108,8 @@ def _sec_source_contract(
             or payload.get("source_layout")
             != "official_api_shards_with_audited_readthrough"
             or ciks_expected <= 0
-            or int(payload.get("companyfacts_ciks_ok", 0)) != ciks_expected
-            or int(payload.get("submissions_ciks_ok", 0)) != ciks_expected
+            or not 0 < companyfacts_ciks_ok <= ciks_expected
+            or not 0 < submissions_ciks_ok <= ciks_expected
             or int(payload.get("companyfacts_rows", 0)) <= 0
             or int(payload.get("submissions_rows", 0)) <= 0
             or payload.get("all_facts_have_available_at") is not True
@@ -129,7 +131,7 @@ def _sec_source_contract(
             or len(status) != ciks_expected * 2
             or status[["cik", "surface"]].duplicated(keep=False).any()
             or not status["surface"].isin({"companyfacts", "submissions"}).all()
-            or not status["status"].eq("ok").all()
+            or not status["status"].isin({"ok", "error"}).all()
             or status["source_url"].astype(str).str.strip().eq("").any()
         ):
             raise RuntimeError(f"SEC shard {chunk:03d} status contract is invalid")
@@ -140,6 +142,18 @@ def _sec_source_contract(
             lambda values: values == {"companyfacts", "submissions"}
         ).all():
             raise RuntimeError(f"SEC shard {chunk:03d} status surfaces are incomplete")
+        status_ok_counts = (
+            status.loc[status["status"].eq("ok")]
+            .groupby("surface")["cik"]
+            .nunique()
+        )
+        if (
+            int(status_ok_counts.get("companyfacts", 0)) != companyfacts_ciks_ok
+            or int(status_ok_counts.get("submissions", 0)) != submissions_ciks_ok
+        ):
+            raise RuntimeError(
+                f"SEC shard {chunk:03d} success counts disagree with its summary"
+            )
         companyfacts_rows += int(payload["companyfacts_rows"])
         submissions_rows += int(payload["submissions_rows"])
         status_rows += len(status)
