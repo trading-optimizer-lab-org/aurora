@@ -102,6 +102,9 @@ def test_objective_and_plateau_policy_match_the_requested_scientific_order() -> 
     )
     assert contract.no_global_time_limit is True
     assert contract.terminal_no_strategy_allowed is False
+    assert contract.island_slice_minutes == 135
+    assert contract.job_timeout_minutes == 330
+    assert contract.island_slice_minutes * 2 + contract.setup_and_upload_reserve_minutes <= contract.job_timeout_minutes
     assert plateau_action(
         contract,
         completed_since_improvement=127,
@@ -115,7 +118,7 @@ def test_objective_and_plateau_policy_match_the_requested_scientific_order() -> 
     assert plateau_action(
         contract,
         completed_since_improvement=128,
-        minutes_since_improvement=360,
+        minutes_since_improvement=120,
     ) == "checkpoint_and_restart_diverse_population"
 
     forbidden = {"sharpe", "drawdown", "cost"}
@@ -162,3 +165,19 @@ def test_campaign_manifest_is_deterministic_and_hash_bound() -> None:
     assert first["island_count"] == 720
     assert first["validation_opened"] is False
     assert first["locked_opened"] is False
+
+
+def test_campaign_bindings_match_the_actual_frozen_repository_files() -> None:
+    from aurora.infra.sp500_megarun.dehb_campaign_contract import (
+        load_and_validate_campaign_contract,
+        validate_campaign_bindings,
+    )
+
+    contract = load_and_validate_campaign_contract(CONTRACT_PATH)
+    receipt = validate_campaign_bindings(contract, repo_root=REPO_ROOT)
+
+    assert receipt["verified"] is True
+    assert receipt["data_contract_file_sha256"] == contract.data_contract_file_sha256
+    assert receipt["data_contract_canonical_sha256"] == contract.data_contract_canonical_sha256
+    assert receipt["feature_contract_sha256"] == contract.feature_contract_sha256
+    assert receipt["dehb_lock_domain_sha256"] == contract.dehb_lock_domain_sha256

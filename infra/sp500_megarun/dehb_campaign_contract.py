@@ -109,6 +109,9 @@ class FrozenCampaignContract:
     jobs_per_shard: int
     islands_per_job: int
     n_workers_per_island: int
+    island_slice_minutes: int
+    job_timeout_minutes: int
+    setup_and_upload_reserve_minutes: int
     master_seed: int
     lane_seed_multiplier: int
     replicate_seed_offsets: tuple[int, ...]
@@ -222,6 +225,11 @@ def load_and_validate_campaign_contract(path: Path) -> FrozenCampaignContract:
         "jobs_per_shard": 120,
         "islands_per_job": 2,
         "n_workers_per_island": 4,
+        "island_execution": "sequential",
+        "island_slice_minutes": 135,
+        "runner_slice_action": "checkpoint_and_resume_same_population",
+        "job_timeout_minutes": 330,
+        "setup_and_upload_reserve_minutes": 60,
         "island_order": "replicate_major_then_lane",
         "job_pairing": "job_j_receives_island_j_and_j_plus_360",
         "replicate_seed_offsets": [104729, 130363, 155921],
@@ -265,6 +273,15 @@ def load_and_validate_campaign_contract(path: Path) -> FrozenCampaignContract:
         raise CampaignContractError("GLOBAL_TIME_LIMIT_FORBIDDEN")
     if plateau.get("terminal_no_strategy_allowed") is not False:
         raise CampaignContractError("TERMINAL_NO_STRATEGY_FORBIDDEN")
+    slice_minutes = int(topology["island_slice_minutes"])
+    job_timeout = int(topology["job_timeout_minutes"])
+    reserve_minutes = int(topology["setup_and_upload_reserve_minutes"])
+    if slice_minutes * int(topology["islands_per_job"]) + reserve_minutes > job_timeout:
+        raise CampaignContractError("RUNNER_SLICES_EXCEED_JOB_TIMEOUT")
+    if not 0 < int(plateau["minutes_without_improvement"]) < slice_minutes:
+        raise CampaignContractError("PLATEAU_TIME_MUST_FIT_ISLAND_SLICE")
+    if job_timeout > 360:
+        raise CampaignContractError("GITHUB_JOB_TIMEOUT_EXCEEDS_SIX_HOURS")
 
     contract = FrozenCampaignContract(
         source_path=source_path,
@@ -293,6 +310,11 @@ def load_and_validate_campaign_contract(path: Path) -> FrozenCampaignContract:
         jobs_per_shard=int(topology["jobs_per_shard"]),
         islands_per_job=int(topology["islands_per_job"]),
         n_workers_per_island=int(topology["n_workers_per_island"]),
+        island_slice_minutes=int(topology["island_slice_minutes"]),
+        job_timeout_minutes=int(topology["job_timeout_minutes"]),
+        setup_and_upload_reserve_minutes=int(
+            topology["setup_and_upload_reserve_minutes"]
+        ),
         master_seed=int(topology["master_seed"]),
         lane_seed_multiplier=int(topology["lane_seed_multiplier"]),
         replicate_seed_offsets=tuple(
@@ -424,6 +446,57 @@ def build_campaign_manifest(contract: FrozenCampaignContract) -> Mapping[str, An
     return payload
 
 
+def validate_campaign_bindings(
+    contract: FrozenCampaignContract,
+    *,
+    repo_root: Path,
+) -> Mapping[str, Any]:
+    """Verify that the repository bytes still match every frozen campaign input."""
+
+    from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
+    from aurora.infra.sp500_megarun.dehb_official_smoke import verify_dependency_lock
+    from aurora.infra.sp500_megarun.feature_contract import (
+        load_and_validate_feature_contract,
+    )
+
+    root = Path(repo_root).resolve()
+    inputs = _mapping(contract.raw["scientific_inputs"], "scientific_inputs")
+
+    def bound_path(key: str) -> Path:
+        candidate = (root / str(inputs[key])).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise CampaignContractError(f"BOUND_PATH_ESCAPES_REPOSITORY:{key}") from exc
+        if not candidate.is_file():
+            raise CampaignContractError(f"BOUND_FILE_MISSING:{key}")
+        return candidate
+
+    data_path = bound_path("data_contract_path")
+    feature_path = bound_path("feature_contract_path")
+    lock_path = bound_path("dehb_lock_path")
+    data_file_hash = hashlib.sha256(data_path.read_bytes()).hexdigest()
+    if data_file_hash != contract.data_contract_file_sha256:
+        raise CampaignContractError("BOUND_DATA_FILE_HASH_MISMATCH")
+    data_contract = load_and_validate_contract(data_path)
+    if data_contract.sha256 != contract.data_contract_canonical_sha256:
+        raise CampaignContractError("BOUND_DATA_CANONICAL_HASH_MISMATCH")
+    feature_contract = load_and_validate_feature_contract(feature_path, data_contract)
+    if feature_contract.sha256 != contract.feature_contract_sha256:
+        raise CampaignContractError("BOUND_FEATURE_HASH_MISMATCH")
+    lock_receipt = verify_dependency_lock(lock_path)
+    if lock_receipt["domain_sha256"] != contract.dehb_lock_domain_sha256:
+        raise CampaignContractError("BOUND_DEHB_LOCK_HASH_MISMATCH")
+    return {
+        "verified": True,
+        "data_contract_file_sha256": data_file_hash,
+        "data_contract_canonical_sha256": data_contract.sha256,
+        "feature_contract_sha256": feature_contract.sha256,
+        "dehb_lock_domain_sha256": lock_receipt["domain_sha256"],
+        "dehb_lock_bytes": lock_receipt["byte_count"],
+    }
+
+
 __all__ = [
     "CampaignContractError",
     "FidelitySpec",
@@ -434,4 +507,5 @@ __all__ = [
     "build_island_schedule",
     "load_and_validate_campaign_contract",
     "plateau_action",
+    "validate_campaign_bindings",
 ]
