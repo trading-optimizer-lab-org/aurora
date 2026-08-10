@@ -325,13 +325,13 @@ jobs:
           report_filename = ""
           matched_title = ""
           for needle in needles:
-              match = re.search(
-                  rf"(R\d+\.htm)[\s\S]{{0,1200}}?{re.escape(needle)}",
-                  summary_text,
-                  re.I,
-              )
-              if match:
-                  report_filename = match.group(1)
+              title_match = re.search(re.escape(needle), summary_text, re.I)
+              if title_match:
+                  preceding = summary_text[max(0, title_match.start() - 2500):title_match.start()]
+                  filenames = re.findall(r"R\d+\.htm", preceding, re.I)
+                  if not filenames:
+                      continue
+                  report_filename = filenames[-1]
                   matched_title = needle
                   break
           if not report_filename:
