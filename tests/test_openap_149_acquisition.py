@@ -245,6 +245,26 @@ def test_acquisition_matrix_quarantines_missing_available_at() -> None:
     assert values.empty
 
 
+def test_acquisition_matrix_quarantines_explicitly_unusable_current_rows() -> None:
+    module = _module()
+    unusable = _current_rows().iloc[[0]].copy()
+    unusable.loc[:, "current_usable"] = False
+    formulas = pd.DataFrame([{"signal": "Cash", "formula_sha256": "a" * 64}])
+
+    matrix, values = module.build_acquisition_matrix(
+        _routes().iloc[[0]],
+        unusable,
+        formula_inventory=formulas,
+    )
+
+    row = matrix.iloc[0]
+    assert row["status"] == "blocked_fidelity"
+    assert "declared_current_unusable" in row["remaining_blocker"]
+    assert not bool(row["data_acquired"])
+    assert not bool(row["current_value_calculated"])
+    assert values.empty
+
+
 def test_acquisition_status_discloses_latest_formation_date_without_trailing_spaces(
     tmp_path: Path,
 ) -> None:
