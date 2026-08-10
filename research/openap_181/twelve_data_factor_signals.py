@@ -809,6 +809,9 @@ def calculate_twelve_data_factor_signals(
     *,
     formation_at: str | pd.Timestamp,
     retrieved_at: str | pd.Timestamp,
+    source_id: str = "twelve_data_basic",
+    source_url: str = TIME_SERIES_ENDPOINT,
+    source_label: str = "Twelve Data",
 ) -> pd.DataFrame:
     """Calculate the prepared free-factor signals without strict promotion."""
 
@@ -817,7 +820,17 @@ def calculate_twelve_data_factor_signals(
     if pd.isna(formation) or pd.isna(retrieved):
         raise ValueError("market formation_at or retrieved_at is invalid")
     cutoff = min(formation, retrieved)
-    normalised = _normalise_bars(bars, cutoff=cutoff)
+    source_id = str(source_id).strip()
+    source_url = str(source_url).strip()
+    source_label = str(source_label).strip()
+    if not source_id or not source_url or not source_label:
+        raise ValueError("market source provenance must be non-empty")
+    normalised = _normalise_bars(
+        bars,
+        cutoff=cutoff,
+        expected_source_id=source_id,
+        source_label=source_label,
+    )
     daily = _normalise_factors(
         ff3_daily,
         cutoff=cutoff,
@@ -858,9 +871,19 @@ def calculate_twelve_data_factor_signals(
             retrieved=retrieved,
         )
     )
-    return pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
+    result = pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
         ["security_id", "signal"]
     ).reset_index(drop=True)
+    result["source_id"] = f"{source_id}|kenneth_french"
+    result["source_url"] = (
+        f"{source_url}|{KENNETH_FRENCH_DAILY_URL}|{KENNETH_FRENCH_MONTHLY_URL}"
+    )
+    result["caveat"] = result["caveat"].str.replace(
+        "Twelve Data",
+        source_label,
+        regex=False,
+    )
+    return result
 
 
 __all__ = [

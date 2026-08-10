@@ -10,7 +10,7 @@ Al reevaluar las 181 senales con un objetivo distinto y explicito —calcular el
 
 | Clase actual | Senales | Interpretacion |
 |---|---:|---|
-| Ruta gratuita automatizable documentada | 149 | Hay una combinacion gratuita de SEC, FINRA, Twelve Data, OpenFIGI, USPTO, BEA, Cboe, Kenneth French u otra fuente publica que permite intentar la reconstruccion actual. |
+| Ruta gratuita automatizable documentada | 149 | Hay una combinacion gratuita de SEC, FINRA, artefactos de mercado ya adquiridos, Twelve Data como respaldo, OpenFIGI, USPTO, BEA, Cboe, Kenneth French u otra fuente publica que permite intentar la reconstruccion actual. |
 | Ruta gratuita con cuenta de opciones pendiente | 6 | Tradier documenta cadenas actuales con IV y griegas, pero exige una cuenta de brokerage y su uso es personal; falta comprobar que el titular puede abrirla y usarla en Aurora. |
 | Datos de analistas visibles pero sin fuente gratuita autorizada equivalente | 20 | Alpha Vantage y FMP documentan estimaciones o ratings, pero sus terminos gratuitos no permiten usar esos datos como panel de investigacion derivado equivalente a IBES. |
 | Falta el IV historico del mes anterior | 3 | La cadena actual no basta para calcular el cambio mensual; no se encontro un archivo gratuito y autorizado de superficies IV expiradas. |
@@ -41,6 +41,11 @@ La primera pregunta sigue siendo muy exigente. La segunda es la que corresponde 
   `/dividends` cuesta 20 creditos por simbolo y la documentacion vigente lo
   limita a Grow para particulares o Venture para empresas y niveles superiores.
   No forma parte de la ruta Basic gratuita descrita para OHLCV.
+- [Pastor-Stambaugh Liquidity Data](https://faculty.chicagobooth.edu/lubos-pastor/data):
+  la pagina oficial de Chicago Booth publica gratuitamente nivel, innovacion
+  no negociada y factor negociado hasta diciembre de 2025. La innovacion es la
+  entrada correcta de `BetaLiquidityPS`; para una formacion de julio de 2026
+  queda desfasada y no se declara actual.
 - [FINRA Equity Short Interest](https://www.finra.org/finra-data/browse-catalog/equity-short-interest): posiciones cortas dos veces al mes, archivos historicos y hasta cinco anos por API; FINRA tambien documenta la [automatizacion de descargas](https://www.finra.org/sites/default/files/Equity_Short_Interest_Data_File_Download_API.pdf).
 - [Tradier Options Chains](https://docs.tradier.com/reference/brokerage-api-markets-get-options-chains): cadenas actuales con IV y griegas; [API sin coste para titulares de cuenta](https://production.tradier.com/individuals/pricing), limitada a uso personal segun su [FAQ](https://docs.tradier.com/docs/faq).
 - [OpenFIGI](https://www.openfigi.com/api/documentation): mapeo gratuito de CUSIP, ISIN, ticker y FIGI, con y sin clave.
@@ -57,7 +62,9 @@ La primera pregunta sigue siendo muy exigente. La segunda es la que corresponde 
 
 ### Contabilidad y fundamentales: 87
 
-Ruta principal: SEC EDGAR `companyfacts` + FSD/Notes + fecha de aceptacion; Twelve Data para precio, volumen o capitalizacion; OpenFIGI/SEC para identidad actual.
+Ruta principal: SEC EDGAR `companyfacts` + FSD/Notes + fecha de aceptacion;
+artefactos de mercado ya adquiridos para precio, volumen o capitalizacion;
+OpenFIGI/SEC para identidad actual. Twelve Data queda como respaldo.
 
 AbnormalAccruals, Accruals, AccrualsBM, AdExp, AM, BM, BMdec, BookLeverage, BPEBM, BrandInvest, Cash, CashProd, CBOperProf, CF, cfp, ChAssetTurnover, ChInvIA, ChNNCOA, ChTax, CompEquIss, CompositeDebtIssuance, ConvDebt, DebtIssuance, DelCOA, DelCOL, DelDRC, DelEqu, DelFINL, DelLTI, DelNetFin, DivYieldST, dNoa, EarningsConsistency, EarningsSurprise, EarnSupBig, EBM, EntMult, EP, EquityDuration, FR, Frontier, GP, GrLTNOA, GrSaleToGrInv, GrSaleToGrOverhead, IntanBM, IntanCFP, IntanEP, IntanSP, Investment, InvGrowth, Leverage, MeanRankRevGrowth, MS, NetDebtFinance, NetDebtPrice, NetEquityFinance, NetPayoutYield, NOA, NumEarnIncrease, OperProf, OperProfRD, OPLeverage, OrderBacklog, OrderBacklogChg, OrgCap, OScore, PayoutYield, PctTotAcc, PS, RD, RDAbility, RDcap, RDS, realestate, RevenueSurprise, roaq, ShareIss1Y, ShareIss5Y, ShareRepurchase, SP, SurpriseRD, tang, Tax, TotalAccruals, VarCF, XFIN.
 
@@ -191,7 +198,9 @@ GVKEY/PERMNO historico. No se ha ejecutado y no cambia los recuentos.
 
 ### Institucionales y 13F: 7
 
-Ruta principal: SEC 13F + SEC/Twelve Data para acciones y capitalizacion + OpenFIGI para CUSIP/FIGI/ticker.
+Ruta principal: SEC 13F + SEC y artefactos de mercado ya adquiridos para
+acciones o capitalizacion + OpenFIGI para CUSIP/FIGI/ticker. Twelve Data queda
+como respaldo.
 
 Activism1, Activism2, DelBreadth, IO_ShortInterest, RIO_MB, RIO_Turnover, RIO_Volatility.
 
@@ -244,11 +253,26 @@ prohibido iniciar un nuevo run, esta ruta permanece `prepared_unexecuted`, sin
 cobertura medida, sin valores publicados y sin cambios en los recuentos ni en
 el score estricto.
 
+`Activism1` y `Activism2` tienen un bloqueo adicional distinto de 13F. El
+[codigo OpenAP fijado](https://raw.githubusercontent.com/OpenSourceAP/CrossSection/8db892442c2c3a3779b0f1eac4370d3655be15a1/Signals/pyCode/Predictors/ZZ1_Activism1_Activism2.py)
+exige conjuntamente `maxinstown_perc`, el G-index, la clase dual y la identidad
+historica. `Activism1` emite `24-G` solo en el cuartil superior de propiedad
+institucional y excluye clase dual; `Activism2` conserva el bloque institucional
+superior al 5 % solo si `24-G >= 19` y tambien excluye clase dual. El dataset
+CCG Index de Harvard Dataverse (`doi:10.7910/DVN/T8UTXL`) es una ruta historica
+gratuita con licencia CC BY-SA 4.0, pero su descarga exige completar un
+guestbook con datos y aceptacion del usuario, y no ofrece un panel actual 2026
+equivalente a las 24 provisiones. No se inventaron esos datos ni se aceptaron
+condiciones en nombre del usuario. Por tanto, ambas senales siguen sin valor
+actual calculable y su ruta solo puede considerarse historica/incompleta hasta
+obtener un G-index y un historial de clases duales causales y validables.
+
 ### Eventos: 8
 
 Ruta principal: submissions y filings SEC, prospectos, 8-K, 10-12B y hechos
-XBRL. Twelve Data solo es necesario cuando la formula consume retornos; no es
-una entrada de `AgeIPO`, `IndIPO` ni `RDIPO`.
+XBRL. Cuando la formula consume retornos, la entrada principal son los
+artefactos de mercado ya adquiridos y Twelve Data queda como respaldo; ninguna
+es una entrada de `AgeIPO`, `IndIPO` ni `RDIPO`.
 
 AgeIPO, DivInit, DivOmit, DivSeason, ExchSwitch, IndIPO, RDIPO, Spinoff.
 
@@ -348,7 +372,9 @@ CRSP `cd3`, por lo que tampoco sera estricta. No se ha ejecutado ni medido.
 
 ### Precio: 27
 
-Ruta principal: Twelve Data OHLCV + factores Kenneth French + Cboe/FRED cuando corresponda + SEC para eventos o clasificacion.
+Ruta principal para las formulas OHLCV: los 48 artefactos YFinance ya
+adquiridos y ligados por hash + factores Kenneth French + Cboe/FRED cuando
+corresponda + SEC para eventos o clasificacion. Twelve Data queda como respaldo.
 
 AnnouncementReturn, Beta, BetaFP, BetaLiquidityPS, BetaTailRisk, betaVIX, CoskewACX, Coskewness, FirmAgeMom, High52, IdioVol3F, IdioVolAHT, IndMom, IndRetBig, Mom6mJunk, MomOffSeason11YrPlus, MomRev, MomVol, PriceDelayRsq, PriceDelaySlope, PriceDelayTstat, RealizedVol, ResidualMomentum, retConglomerate, ReturnSkew3F, Size, TrendFactor.
 
@@ -356,29 +382,32 @@ AnnouncementReturn, Beta, BetaFP, BetaLiquidityPS, BetaTailRisk, betaVIX, Coskew
 
 ### Trading: 9
 
-Ruta principal: Twelve Data OHLCV, FINRA short interest, SEC shares outstanding y calendario bursatil.
+Ruta principal para OHLCV: los 48 artefactos YFinance ya adquiridos y ligados
+por hash; FINRA para short interest, SEC para acciones y calendario bursatil.
+Twelve Data queda como respaldo.
 
 BidAskSpread, ShortInterest, std_turn, VolMkt, VolSD, VolumeTrend, zerotrade12M, zerotrade1M, zerotrade6M.
 
 FINRA short interest es la posicion corta real y no debe sustituirse por volumen corto diario.
 
-### Ruta de mercado preparada, no ejecutada: 31
+### Ruta de mercado por artefactos existentes, preparada y no ejecutada: 31
 
 Las 31 senales congeladas cuyo bloqueo especifico es OHLCV son las recogidas
 por el contrato `TWELVE_DATA_MARKET_SIGNALS`. La auditoria de la formula
 oficial elimina del grupo provisional de 36 a `Activism1`, `Activism2`, `Herf`,
 `HerfAsset` y `HerfBE`: ninguna consume precio o volumen. Las dos primeras
 requieren 13F, G-index y clase de accion; las tres ultimas, contabilidad SEC e
-industria. Twelve Data aporta solo la pata de mercado y no convierte por si
-sola ninguna formula en calculada.
+industria. Cualquier fuente OHLCV aporta solo la pata de mercado y no convierte
+por si sola ninguna formula en calculada.
 
-La mejor ruta gratuita documentada sigue siendo Twelve Data Basic. Requiere
-registro y una clave gratuita, admite 8 creditos por minuto y 800 al dia, y sus
-terminos permiten almacenamiento y uso interno, pero prohiben redistribuir el
-dato bruto y usar el plan Free comercialmente. No se encontro una alternativa
-sin cuenta que demostrase a la vez 15 anos de historia diaria estadounidense,
-ajustes explicitamente controlables, cobertura suficiente y permiso de
-automatizacion.
+La ruta principal ya no necesita registro ni clave. El run `31256096194`
+conserva 48 artefactos de una adquisicion ya realizada y sus 48 jobs de precios
+terminaron correctamente. El merge auditado `31270341796` reutilizo ese run y
+publico `yfinance_source_manifest.csv` con el SHA-256 de cada parquet. El nuevo
+recuperador usa HTTP Range para extraer unicamente `prices_NNN.parquet`, valida
+hash, filas, simbolos y retrieval time, y mantiene el bruto en artefacto
+privado. No contiene endpoints de Yahoo ni realiza peticiones nuevas al
+proveedor.
 
 La reauditoria oficial del 2026-08-10 encontro una segunda ruta gratuita con
 cuenta: [Tiingo](https://www.tiingo.com/about/pricing). Su plan Free ofrece
@@ -386,48 +415,50 @@ decadas de EOD bruto y ajustado para uso interno, pero solo 500 simbolos unicos
 al mes; cubrir 2.157 empresas exigiria al menos cinco meses. Finnhub Free no
 incluye OHLC historico en su tabla de producto; EODHD Free limita el historico
 al ultimo ano y 20 llamadas diarias; Marketstack Free, a un ano y 100 llamadas
-mensuales. Ninguna mejora el plan operativo de seis cupos diarios de Twelve
-Data. Tiingo queda documentado como respaldo lento, no como fuente primaria ni
-como excusa para mezclar proveedores durante una reanudacion.
+mensuales. Ninguna mejora la recuperacion inmediata, sin cuenta nueva, de los
+48 artefactos existentes. Tiingo y Twelve Data quedan documentados como
+respaldos, no como fuentes primarias ni como excusa para mezclar proveedores
+durante una reanudacion.
 
-La implementacion preparada aplica estas puertas:
+La implementacion principal preparada aplica estas puertas:
 
 - Recuperacion selectiva por rangos de `security_master.parquet`,
-  `execution_summary.json` y `source_manifest.csv` desde el run base correcto,
-  con SHA-256 y aceptacion del job fuente; no descarga su ZIP completo. El
+  `execution_summary.json`, `source_manifest.csv` y
+  `yfinance_source_manifest.csv` desde el run base correcto, con SHA-256 y
+  aceptacion del job fuente; no descarga su ZIP completo. El
   contrato exige `source_sec=sec_company_tickers_exchange`,
   `retrieved_at_sec` valido y el manifiesto oficial SEC; no acepta el fallback
   derivado ni confunde la procedencia Yahoo con la observacion SEC.
-- Universo actual fail-closed por `security_id + CIK + ticker + bolsa SEC`, y
-  corroboracion del proveedor por simbolo, bolsa, MIC, tipo, USD y zona horaria.
-- Dos peticiones por titulo: `adjust=all` y `adjust=none`, 182 meses, URL sin
-  secreto y `available_at` causal conservador. Para las 2.157 identidades del
-  universo existente son 4.314 creditos, minimo 6 dias de cuota y 540 minutos
-  sin reintentos.
-- Calculo directo, solo tras completar correctamente las 4.314 peticiones, de
-  `High52`, `MomOffSeason11YrPlus`, `RealizedVol`, `VolSD`, `VolumeTrend`,
-  `zerotrade1M`, `zerotrade6M` y `zerotrade12M`. El runner exige ambos
-  historicos por empresa, verifica sus hashes, excluye sesiones incompletas y
-  publica solo las observaciones derivadas. Si falta una peticion no calcula
-  ninguna de las ocho.
-- Workflow solo manual, reanudable, limitado a 800 creditos por invocacion y
-  obligado a repositorio privado. Los OHLCV se separan en un artefacto interno
-  de 10 dias; el artefacto publicable no los incluye. El checkpoint se liga por
-  SHA-256 al commit, fuente, security master, fecha, plan, 31 senales y contrato
-  temporal, de modo que no se puedan mezclar revisiones distintas.
+- Universo actual fail-closed por `security_id + CIK + ticker + bolsa SEC`.
+  Cada simbolo debe aparecer en los shards recuperados; una identidad SEC sin
+  historial queda rechazada expresamente y no se transforma en un valor.
+- Construccion local dentro de Actions de las dos vistas necesarias,
+  `adjust=all` y `adjust=none`, a partir del parquet recuperado. Se limita la
+  memoria a 16 anos, suficiente para la ventana oficial maxima de 15 anos, y
+  usa `available_at` causal conservador.
+- Calculo directo, solo tras validar los 48 hashes, de 12 objetivos:
+  `BidAskSpread`, `BetaTailRisk`, `High52`, `MomOffSeason11YrPlus`, `MomRev`,
+  `MomVol`, `RealizedVol`, `VolSD`, `VolumeTrend`, `zerotrade1M`,
+  `zerotrade6M` y `zerotrade12M`. El runner construye las vistas nominal y
+  ajustada, excluye sesiones incompletas y publica solo observaciones derivadas.
+- Workflow solo manual y obligado a repositorio privado. Los OHLCV se separan
+  en un artefacto interno; el artefacto derivado mantiene 31 observaciones por
+  titulo, el origen y las formulas, siempre con score estricto cero.
 
-No se ha creado una cuenta, no existe `TWELVE_DATA_API_KEY` en el entorno y no
-se ha iniciado ningun run de mercado. Las 31 permanecen `prepared_unexecuted`.
-Ya hay 23 calculadores preparados: 12 directos y 11 que combinan Twelve Data con los ZIP
-publicos diario y mensual de Kenneth French (`Beta`, `BetaFP`, dos variantes
+No se ha iniciado ningun run nuevo de mercado. Las 31 permanecen
+`prepared_unexecuted`. Ya hay 31 calculadores preparados: 12 directos, 11 que
+combinan el panel recuperado con los ZIP publicos diario y mensual de Kenneth
+French (`Beta`, `BetaFP`, dos variantes
 de coskewness, dos momentos residuales FF3, `IdioVolAHT`,
 `ResidualMomentum` y las tres
 variantes `PriceDelay`). Los factores se congelan por SHA-256 durante todas las
 reanudaciones. El ensamblado calcula ademas `BetaTailRisk`, `MomRev` y `MomVol`
-sobre el universo completo, como exigen sus cortes transversales. Faltan
-intervalos historicos de ticker, las transformaciones adicionales de 8 rutas,
-cobertura y fidelidad. No cambian los recuentos ejecutados ni el score estricto
-de 31.
+sobre el universo completo, como exigen sus cortes transversales. Los 8
+calculadores adicionales usan el `security_master` auditado y, para
+`BetaLiquidityPS`, la serie oficial gratuita de Chicago Booth. Esta ultima
+solo llega a diciembre de 2025, por lo que se etiqueta historica y no actual
+para julio de 2026. Faltan ejecucion, intervalos historicos de ticker, cobertura
+y fidelidad. No cambian los recuentos ejecutados ni el score estricto de 31.
 
 La duodecima ruta directa es `BidAskSpread`. Calcula el estimador estandar
 Corwin-Schultz de dos dias con los maximos y minimos nominales del ultimo mes
@@ -454,7 +485,9 @@ fuente. Esta implementacion preparada no aumenta ningun recuento.
 
 ### Otras: 11
 
-Ruta principal segun senal: USPTO para patentes; BEA/Census para redes industriales; SEC Notes/filings para empleados, segmentos y clientes; Twelve Data para retornos.
+Ruta principal segun senal: USPTO para patentes; BEA/Census para redes
+industriales; SEC Notes/filings para empleados, segmentos y clientes;
+artefactos de mercado ya adquiridos para retornos, con Twelve Data de respaldo.
 
 CitationsRD, CustomerMomentum, FirmAge, Herf, HerfAsset, HerfBE, hire, iomom_cust, iomom_supp, PatentsRD, sinAlgo.
 

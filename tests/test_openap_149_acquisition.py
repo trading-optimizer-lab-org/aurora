@@ -159,9 +159,17 @@ def test_current_sec_event_source_aliases_match_documented_free_routes() -> None
         "sec_edgar_submissions_and_filings|sec_company_tickers_exchange",
         "sec_edgar|sec_company_tickers_exchange",
     )
+    assert module._source_allowed(
+        "recovered_yfinance_artifacts_31256096194|kenneth_french|pastor_stambaugh",
+        "recovered_yfinance_artifacts|kenneth_french_factors|pastor_stambaugh",
+    )
+    assert module.SOURCE_TERMS["recovered_yfinance_artifacts"] != (
+        "terms_not_yet_verified"
+    )
+    assert module.SOURCE_TERMS["pastor_stambaugh"] != "terms_not_yet_verified"
 
 
-def test_all_31_frozen_market_routes_record_the_prepared_free_key_blocker() -> None:
+def test_all_31_frozen_market_routes_record_the_recovered_artifact_route() -> None:
     from aurora.research.openap_181.implementation_status import (
         TWELVE_DATA_MARKET_SIGNALS,
     )
@@ -177,7 +185,7 @@ def test_all_31_frozen_market_routes_record_the_prepared_free_key_blocker() -> N
 
     assert len(selected) == 31
     assert selected["primary_free_sources"].str.contains(
-        "twelve_data_basic",
+        "recovered_yfinance_artifacts",
         regex=False,
     ).all()
     direct = selected.loc[list(TWELVE_DATA_DIRECT_SIGNAL_TARGETS)]
@@ -191,31 +199,39 @@ def test_all_31_frozen_market_routes_record_the_prepared_free_key_blocker() -> N
     assert len(factor) == 11
     assert len(additional) == 8
     assert direct.drop(index="BidAskSpread")["current_remaining_blocker"].eq(
-        "twelve_data_basic_free_api_key_missing_4314_credit_resumable_private_"
-        "route_and_11_direct_formula_calculators_prepared_unexecuted_historical_"
+        "recovered_yfinance_48_shards_hash_bound_route_and_11_direct_formula_"
+        "calculators_prepared_unexecuted_historical_"
         "ticker_intervals_coverage_and_fidelity_pending"
     ).all()
     assert direct.loc["BidAskSpread", "current_remaining_blocker"] == (
-        "twelve_data_basic_free_api_key_missing_4314_credit_resumable_private_"
-        "route_and_1_corwin_schultz_proxy_calculator_prepared_unexecuted_openap_"
+        "recovered_yfinance_48_shards_hash_bound_route_and_1_corwin_schultz_"
+        "proxy_calculator_prepared_unexecuted_openap_"
         "sas_preprocessing_historical_ticker_intervals_coverage_and_fidelity_"
         "pending"
     )
     assert factor.drop(index="IdioVolAHT")["current_remaining_blocker"].eq(
-        "twelve_data_basic_free_api_key_missing_4314_credit_resumable_private_"
-        "route_and_10_free_french_factor_calculators_prepared_unexecuted_"
+        "recovered_yfinance_48_shards_hash_bound_route_and_10_french_factor_"
+        "calculators_prepared_unexecuted_"
         "historical_ticker_intervals_coverage_and_fidelity_pending"
     ).all()
     assert factor.loc["IdioVolAHT", "current_remaining_blocker"] == (
-        "twelve_data_basic_free_api_key_missing_4314_credit_resumable_private_"
-        "route_and_1_capm_rmse_calculator_prepared_unexecuted_historical_"
+        "recovered_yfinance_48_shards_hash_bound_route_and_1_capm_rmse_"
+        "calculator_prepared_unexecuted_historical_"
         "ticker_intervals_coverage_and_fidelity_pending"
     )
-    assert additional["current_remaining_blocker"].eq(
-        "twelve_data_basic_free_api_key_missing_4314_credit_resumable_private_"
-        "route_prepared_unexecuted_historical_ticker_intervals_formula_coverage_"
+    assert additional.drop(index="BetaLiquidityPS")[
+        "current_remaining_blocker"
+    ].eq(
+        "recovered_yfinance_48_shards_hash_bound_route_and_7_other_extended_"
+        "calculators_prepared_unexecuted_historical_ticker_intervals_coverage_"
         "and_fidelity_pending"
     ).all()
+    assert additional.loc["BetaLiquidityPS", "current_remaining_blocker"] == (
+        "recovered_yfinance_48_shards_hash_bound_route_and_official_pastor_"
+        "stambaugh_formula_prepared_unexecuted_factor_latest_2025_12_not_current_"
+        "for_2026_07_historical_ticker_intervals_and_fidelity_pending"
+    )
+    assert selected["source_checked_at"].eq("2026-08-10").all()
     assert selected["strict_score_eligible"].astype(str).str.lower().eq(
         "false"
     ).all()

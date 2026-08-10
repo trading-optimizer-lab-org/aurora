@@ -153,15 +153,41 @@ recuentos globales demostrados permanecen `56/50/18/99/96814`.
   dos digitos, no SIC historico CRSP/FF17, y aun debe demostrar continuidad de
   historia, cobertura e identidad antes de una validacion de solapamiento.
 
-## Credencial gratuita pendiente para mercado
+## Mercado sin credencial: artefactos existentes recuperables
 
-Las 31 rutas cuyo bloqueo especifico es el OHLCV de Twelve Data requieren el
-secreto `TWELVE_DATA_API_KEY`. El plan Basic es gratuito, permite uso interno
-no visible y ofrece 8 creditos por minuto y 800 al dia. La ausencia de esa
-clave es un bloqueo de credencial gratuita, no prueba de que los datos sean
-de pago o imposibles de obtener.
+Las 31 rutas de mercado ya no dependen de obtener una clave nueva. El run
+`31256096194` completo correctamente sus 48 jobs `yfinance (0)..(47)` y
+conserva 48 artefactos `openap-yfinance-*`. El run auditado `31270341796`
+reutilizo exactamente ese origen y publico el manifiesto de 48 hashes junto
+con `security_master.parquet`. La ruta nueva recupera por rangos solo cada
+`prices_NNN.parquet`, comprueba el SHA-256 contra ese manifiesto, pone en
+cuarentena las filas OHLCV invalidas y nunca llama de nuevo a Yahoo.
 
-La ruta de adquisicion queda preparada en codigo, pero no ejecutada:
+El workflow manual
+`.github/workflows/openap-149-recovered-yfinance-market.yml` calcula 31
+salidas no estrictas: 12 directas, 11 con factores Kenneth French y 8
+adicionales (`BetaLiquidityPS`, `FirmAgeMom`, `IndMom`, `IndRetBig`, `Size`,
+`TrendFactor`, `VolMkt` y `std_turn`). La innovacion de liquidez procede de la
+pagina oficial de Lubos Pastor en Chicago Booth. Esa serie llega hasta
+diciembre de 2025: permite calcular historicamente `BetaLiquidityPS`, pero no
+declararla actual para la formacion de julio de 2026. El resto conserva
+explicitamente las limitaciones de identidad, industria, acciones y
+capitalizacion actuales frente a CRSP historico.
+
+Estado exacto: `prepared_unexecuted`. No se ha lanzado ningun run nuevo y, por
+tanto, ninguna de las 31 se marca aun como adquirida o calculada en el
+consolidado. Todas siguen con `strict_score_eligible=false`; el incremento del
+score estricto es cero. Los recuentos ejecutados permanecen
+`56/50/18/99/96814` y el score estricto confirmado permanece en 31.
+
+### Respaldo con Twelve Data
+
+La ruta anterior sigue disponible como respaldo y requiere el secreto
+`TWELVE_DATA_API_KEY`. El plan Basic es gratuito, permite uso interno no
+visible y ofrece 8 creditos por minuto y 800 al dia. Esa credencial ya no es
+necesaria para la ruta principal basada en artefactos existentes.
+
+La ruta de adquisicion Twelve Data queda preparada en codigo, pero no ejecutada:
 
 - Parte del `security_master.parquet` del run verificado `31270341796`. Lo
   recupera por rangos junto con `execution_summary.json` y
@@ -223,21 +249,24 @@ La ruta de adquisicion queda preparada en codigo, pero no ejecutada:
   moviles de 36 meses para momentum residual. `IdioVolAHT` replica por separado
   el RMSE CAPM de 252 observaciones con minimo 100.
 
-Estado exacto: `prepared_unexecuted`. Falta que el usuario facilite una clave
-gratuita de Twelve Data y una ejecucion privada compatible con sus terminos.
-Hay 23 calculadores preparados: 12 directos y 11 con factores franceses
-gratuitos. `BidAskSpread` usa el estimador estandar Corwin-Schultz sobre maximos
-y minimos nominales, pero permanece como proxy no estricto porque OpenAP carga
-un fichero preprocesado por SAS cuyo tratamiento exacto no esta publicado. Las
-otras 8 rutas necesitan sus entradas o transformaciones adicionales. En todas habra
-que completar los intervalos
-historicos de ticker y medir cobertura y fidelidad. Por ello las 31 siguen sin
-valor nuevo y con
+Estado exacto del respaldo: `prepared_unexecuted`. Ya no se necesita que el
+usuario facilite una clave para la ruta principal. Hay 23 calculadores
+compartidos: 12 directos y 11 con factores franceses gratuitos.
+`BidAskSpread` usa el estimador estandar Corwin-Schultz sobre maximos y minimos
+nominales, pero permanece como proxy no estricto porque OpenAP carga un fichero
+preprocesado por SAS cuyo tratamiento exacto no esta publicado. La ruta de
+artefactos añade los 8 calculadores restantes. En todas habra que completar
+los intervalos historicos de ticker y medir cobertura y fidelidad. Por ello
+las 31 siguen sin valor nuevo consolidado y con
 `strict_score_eligible=false`. Esta cifra corrige el grupo provisional de 36:
 `Activism1`, `Activism2`, `Herf`, `HerfAsset` y `HerfBE` no consumen OHLCV en
 su formula oficial. Los tres `Herf` ya estaban entre los valores SEC
 calculados; las dos `Activism` siguen bloqueadas por gobierno corporativo,
-clase de accion e identidad, no por la clave de mercado. Los recuentos
+clase de accion e identidad, no por la clave de mercado. La formula exacta
+necesita el G-index de 24 provisiones y excluye clases duales. El dataset CCG
+Index (`doi:10.7910/DVN/T8UTXL`) es historico, exige un guestbook que no se ha
+aceptado en nombre del usuario y no aporta un panel actual 2026 equivalente;
+no se fabricaran esas entradas. Los recuentos
 ejecutados permanecen `56/50/18/99/96814` y el score estricto confirmado
 permanece en 31.
 
@@ -250,8 +279,8 @@ capacidad gratuita, no de inexistencia de datos:
   historico EOD de mas de 30 anos, precios brutos y ajustados, 1.000 peticiones
   diarias y uso interno. Sin embargo, limita la API a 500 simbolos unicos al
   mes. Cubrir las 2.157 empresas exigiria al menos cinco meses y tambien un
-  token gratuito; queda como respaldo lento, no como sustituto operativo de
-  Twelve Data.
+  token gratuito; queda como respaldo lento, no como sustituto de la
+  recuperacion inmediata de los artefactos ya existentes.
 - [Finnhub](https://finnhub.io/pricing) permite 60 llamadas por minuto en el
   plan gratuito, pero su tabla oficial no incluye OHLC historico; el historico
   diario aparece en planes de mercado de pago.
@@ -261,10 +290,10 @@ capacidad gratuita, no de inexistencia de datos:
 - [Marketstack](https://marketstack.com/pricing/) limita el plan gratuito a
   100 llamadas mensuales y un ano de historia, tambien insuficiente.
 
-La mejor ruta gratuita operativa sigue siendo Twelve Data Basic: cubre el
-historico requerido en unos seis cupos diarios y no obliga a esperar varios
-meses. Requiere que el usuario cree la cuenta gratuita y anada el secreto
-`TWELVE_DATA_API_KEY`; no se usara ninguna clave publica o ajena.
+La mejor ruta operativa ahora es recuperar los 48 artefactos existentes: no
+requiere cuenta ni clave nueva y mantiene el vinculo de hashes del merge
+auditado. Twelve Data Basic queda como respaldo para una adquisicion
+independiente futura; no se usara ninguna clave publica o ajena.
 
 La SEC ofrece una base gratuita para corroborar identidad historica, pero no
 un intervalo listo para usar. Los filings Inline XBRL pueden etiquetar

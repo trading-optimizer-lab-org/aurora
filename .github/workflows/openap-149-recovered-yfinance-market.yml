@@ -1,0 +1,143 @@
+name: OpenAP 149 Recovered YFinance Market Signals
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora commit to check out and execute
+        required: true
+        type: string
+      yfinance_source_run_id:
+        description: Pinned run containing the 48 successful YFinance artifacts
+        required: true
+        default: "31256096194"
+        type: string
+      audited_market_run_id:
+        description: Pinned successful merge containing audited source hashes
+        required: true
+        default: "31270341796"
+        type: string
+      formation_at:
+        description: Causal current-score formation timestamp
+        required: true
+        default: "2026-08-09T23:59:59Z"
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: openap-149-recovered-yfinance-market
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    if: ${{ github.event.repository.private }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ inputs.source_sha }}
+      - name: Reject an unpinned checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.source_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "${#EXPECTED_SHA}" -eq 40
+      - name: Install focused validation dependencies
+        run: python -m pip install --disable-pip-version-check -e . pytest pyarrow
+      - name: Validate selective recovery and provider-neutral calculations
+        run: |
+          python -m pytest \
+            tests/test_openap_149_recovered_yfinance_market.py \
+            tests/test_openap_181_twelve_data_market_signals.py \
+            tests/test_openap_181_twelve_data_factor_signals.py -q
+
+  recover_and_calculate:
+    needs: contract
+    if: ${{ github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      QF_DATA_DIR: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ inputs.source_sha }}
+      - name: Install runtime dependencies
+        run: python -m pip install --disable-pip-version-check -e . pyarrow
+      - name: Recover only the 48 existing price parquet members
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.yfinance_source_run_id }}
+          AUDITED_RUN_ID: ${{ inputs.audited_market_run_id }}
+        run: |
+          python scripts/recover_openap_yfinance_price_shards.py \
+            --repository "${{ github.repository }}" \
+            --source-run-id "$SOURCE_RUN_ID" \
+            --audited-market-run-id "$AUDITED_RUN_ID" \
+            --output-dir outputs/recovery
+      - name: Download free public Kenneth French factor inputs
+        run: |
+          mkdir -p inputs/factors
+          curl --fail --location --silent --show-error \
+            --output inputs/factors/ff3_daily.zip \
+            https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip
+          curl --fail --location --silent --show-error \
+            --output inputs/factors/ff3_monthly.zip \
+            https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_CSV.zip
+          curl --fail --location --silent --show-error \
+            --output inputs/factors/pastor_stambaugh.txt \
+            https://faculty.chicagobooth.edu/-/media/faculty/lubos-pastor/data/liq_data_1962_2025.txt
+          test -s inputs/factors/ff3_daily.zip
+          test -s inputs/factors/ff3_monthly.zip
+          test -s inputs/factors/pastor_stambaugh.txt
+      - name: Calculate non-strict current market observations
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          FORMATION_AT: ${{ inputs.formation_at }}
+        run: |
+          python scripts/run_openap_149_recovered_yfinance_market.py \
+            --recovery-root outputs/recovery \
+            --formation-at "$FORMATION_AT" \
+            --implementation-sha "$SOURCE_SHA" \
+            --ff3-daily-zip inputs/factors/ff3_daily.zip \
+            --ff3-monthly-zip inputs/factors/ff3_monthly.zip \
+            --pastor-stambaugh-file inputs/factors/pastor_stambaugh.txt \
+            --output-dir outputs/calculated
+      - name: Enforce private non-strict output contract
+        run: |
+          test -s outputs/recovery/recovered_yfinance_price_manifest.json
+          test -s outputs/calculated/recovered_yfinance_market_manifest.json
+          test -s outputs/calculated/recovered_yfinance_market_current.csv
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          recovery = json.loads(
+              Path("outputs/recovery/recovered_yfinance_price_manifest.json").read_text()
+          )
+          calculated = json.loads(
+              Path("outputs/calculated/recovered_yfinance_market_manifest.json").read_text()
+          )
+          assert recovery["recovered_price_shard_count"] == 48
+          assert recovery["fresh_provider_request_made"] is False
+          assert calculated["strict_score_eligible"] is False
+          assert calculated["strict_score_increment"] == 0
+          assert calculated["locked_opened"] is False
+          PY
+      - name: Upload restricted recovered inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-149-recovered-yfinance-restricted
+          path: outputs/recovery/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload derived non-strict signal observations
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-149-recovered-yfinance-market-results
+          path: outputs/calculated/
+          if-no-files-found: error
+          retention-days: 30

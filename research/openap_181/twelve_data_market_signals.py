@@ -126,8 +126,10 @@ def _normalise_bars(
     bars: pd.DataFrame,
     *,
     cutoff: pd.Timestamp,
+    expected_source_id: str = "twelve_data_basic",
+    source_label: str = "Twelve Data",
 ) -> pd.DataFrame:
-    _require_columns(bars, _BAR_COLUMNS, "Twelve Data bars")
+    _require_columns(bars, _BAR_COLUMNS, f"{source_label} bars")
     frame = bars.copy()
     frame["security_id"] = frame["security_id"].fillna("").astype(str).str.strip()
     frame["ticker"] = frame["ticker"].fillna("").astype(str).str.strip().str.upper()
@@ -153,14 +155,14 @@ def _normalise_bars(
         identity_conflicts["ticker_count"].gt(1)
         | identity_conflicts["cik_count"].gt(1)
     ).any():
-        raise ValueError("Twelve Data bars contain conflicting current identities")
+        raise ValueError(f"{source_label} bars contain conflicting current identities")
     invalid_provenance = (
-        ~frame["source_id"].fillna("").astype(str).eq("twelve_data_basic")
+        ~frame["source_id"].fillna("").astype(str).eq(expected_source_id)
         | frame["historical_ticker_interval_verified"].ne(False)  # noqa: E712
         | frame["strict_score_eligible"].ne(False)  # noqa: E712
     )
     if invalid_provenance.any():
-        raise ValueError("Twelve Data bars violate the non-strict source contract")
+        raise ValueError(f"{source_label} bars violate the non-strict source contract")
     frame = frame.loc[
         frame["security_id"].ne("")
         & frame["ticker"].ne("")
@@ -185,7 +187,9 @@ def _normalise_bars(
         & frame["retrieved_at"].notna()
     ].copy()
     if frame.duplicated(["security_id", "adjust", "date"]).any():
-        raise ValueError("Twelve Data bars contain duplicate security/adjust/date rows")
+        raise ValueError(
+            f"{source_label} bars contain duplicate security/adjust/date rows"
+        )
     return frame.sort_values(["security_id", "adjust", "date"]).reset_index(
         drop=True
     )
@@ -742,6 +746,9 @@ def calculate_twelve_data_direct_signals(
     *,
     formation_at: str | pd.Timestamp,
     retrieved_at: str | pd.Timestamp,
+    source_id: str = "twelve_data_basic",
+    source_url: str = TIME_SERIES_ENDPOINT,
+    source_label: str = "Twelve Data",
 ) -> pd.DataFrame:
     """Calculate direct market signals without external factor inputs."""
 
@@ -749,7 +756,17 @@ def calculate_twelve_data_direct_signals(
     retrieved = _timestamp(retrieved_at)
     if pd.isna(formation) or pd.isna(retrieved):
         raise ValueError("market formation_at or retrieved_at is invalid")
-    normalised = _normalise_bars(bars, cutoff=min(formation, retrieved))
+    source_id = str(source_id).strip()
+    source_url = str(source_url).strip()
+    source_label = str(source_label).strip()
+    if not source_id or not source_url or not source_label:
+        raise ValueError("market source provenance must be non-empty")
+    normalised = _normalise_bars(
+        bars,
+        cutoff=min(formation, retrieved),
+        expected_source_id=source_id,
+        source_label=source_label,
+    )
     rows: list[dict[str, Any]] = []
     for _, security in normalised.groupby("security_id", sort=True):
         rows.extend(
@@ -773,9 +790,17 @@ def calculate_twelve_data_direct_signals(
             retrieved=retrieved,
         )
     )
-    return pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
+    result = pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
         ["security_id", "signal"]
     ).reset_index(drop=True)
+    result["source_id"] = source_id
+    result["source_url"] = source_url
+    result["caveat"] = result["caveat"].str.replace(
+        "Twelve Data",
+        source_label,
+        regex=False,
+    )
+    return result
 
 
 __all__ = [

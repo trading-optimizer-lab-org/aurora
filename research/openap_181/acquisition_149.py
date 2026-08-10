@@ -117,6 +117,9 @@ SOURCE_ALIASES = {
     "uspto_patentsview": "uspto_patentsview",
     "finra_equity_short_interest": "finra_equity_short_interest",
     "twelve_data_basic": "twelve_data_basic",
+    "recovered_yfinance_artifacts": "recovered_yfinance_artifacts",
+    "recovered_yfinance_artifacts_31256096194": "recovered_yfinance_artifacts",
+    "pastor_stambaugh": "pastor_stambaugh",
 }
 
 SOURCE_TERMS = {
@@ -136,6 +139,13 @@ SOURCE_TERMS = {
     "uspto_patentsview": "USPTO PatentsView public data terms and rate limits",
     "finra_equity_short_interest": "FINRA public data terms; short interest is not short volume",
     "twelve_data_basic": "Twelve Data Basic free-plan terms and request limits",
+    "recovered_yfinance_artifacts": (
+        "Previously acquired private YFinance artifacts; internal derived use only; "
+        "raw redistribution prohibited"
+    ),
+    "pastor_stambaugh": (
+        "Chicago Booth public academic liquidity-factor data; attribution required"
+    ),
 }
 
 FIDELITY_ORDER = {
