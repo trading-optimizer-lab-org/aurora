@@ -439,3 +439,196 @@ def test_realestate_sector_batch_cli_fails_closed_outside_github(
         match="OpenAP 149 rendered realestate sector batch",
     ):
         runpy.run_path(str(script), run_name="__main__")
+
+
+def _write_complete_sector_lake(root: Path) -> None:
+    fact_columns = [
+        "cik",
+        "taxonomy",
+        "tag",
+        "unit",
+        "value",
+        "period_end",
+        "form",
+        "accession_number",
+        "available_at",
+        "source",
+        "source_mode",
+    ]
+    submission_columns = [
+        "cik",
+        "accession_number",
+        "filing_date",
+        "accepted_at",
+        "report_date",
+        "form",
+        "primary_document",
+        "is_xbrl",
+        "sic",
+    ]
+    status_columns = [
+        "cik",
+        "symbol",
+        "surface",
+        "status",
+        "canonical_json_sha256",
+        "source_mode",
+        "source_url",
+    ]
+    ciks = (320193, 100, 101, 102, 103)
+    for shard in range(48):
+        directory = root / f"openap-sec-repair-lake-{shard}"
+        directory.mkdir(parents=True)
+        facts = []
+        submissions = []
+        statuses = []
+        if shard < len(ciks):
+            cik = ciks[shard]
+            report_date = "2025-09-27" if cik == 320193 else "2025-12-31"
+            accession = f"{cik:010d}-25-{shard + 1:06d}"
+            source = (
+                "https://data.sec.gov/api/xbrl/companyfacts/"
+                f"CIK{cik:010d}.json"
+            )
+            facts.append(
+                {
+                    "cik": cik,
+                    "taxonomy": "us-gaap",
+                    "tag": "Assets",
+                    "unit": "USD",
+                    "value": float(10_000 - shard * 100),
+                    "period_end": report_date,
+                    "form": "10-K",
+                    "accession_number": accession,
+                    "available_at": "2026-02-01T12:00:00Z",
+                    "source": source,
+                    "source_mode": "sec_official_api",
+                }
+            )
+            submissions.append(
+                {
+                    "cik": cik,
+                    "accession_number": accession,
+                    "filing_date": "2026-02-01",
+                    "accepted_at": "2026-02-01T12:00:00Z",
+                    "report_date": report_date,
+                    "form": "10-K",
+                    "primary_document": f"issuer-{cik}.htm",
+                    "is_xbrl": True,
+                    "sic": "3571",
+                }
+            )
+            for surface in ("companyfacts", "submissions"):
+                statuses.append(
+                    {
+                        "cik": cik,
+                        "symbol": "AAPL" if cik == 320193 else f"S{cik}",
+                        "surface": surface,
+                        "status": "ok",
+                        "canonical_json_sha256": f"{shard + 1:x}" * 64,
+                        "source_mode": "sec_official_api",
+                        "source_url": source,
+                    }
+                )
+        pd.DataFrame(facts, columns=fact_columns).to_parquet(
+            directory / f"sec_companyfacts_{shard}.parquet",
+            index=False,
+        )
+        pd.DataFrame(submissions, columns=submission_columns).to_parquet(
+            directory / f"sec_submissions_{shard}.parquet",
+            index=False,
+        )
+        pd.DataFrame(statuses, columns=status_columns).to_csv(
+            directory / f"sec_status_{shard}.csv",
+            index=False,
+        )
+        (directory / f"sec_summary_{shard}.json").write_text(
+            json.dumps({"retrieved_at": "2026-08-10T00:00:00Z"}) + "\n",
+            encoding="utf-8",
+        )
+
+
+def test_realestate_sector_batch_cli_reads_complete_lake_and_writes_runtime_output(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    module = _module()
+    script = (
+        Path(__file__).parents[1]
+        / "scripts"
+        / "run_openap_149_realestate_rendered_batch.py"
+    )
+    sec_root = tmp_path / "sec"
+    runtime_root = tmp_path / "runtime"
+    _write_complete_sector_lake(sec_root)
+
+    def acquire(selected, **kwargs):
+        cik = str(int(selected["cik"]))
+        raw = (int(cik) % 10) / 10.0
+        return {
+            "signal": "realestate",
+            "status": "raw_data_acquired",
+            "raw_data_acquired": True,
+            "current_signal_computed": False,
+            "strict_score_eligible": False,
+            "fidelity": "reconstructed_not_strict",
+            "source_files": [],
+            "records": [
+                {
+                    "cik": cik,
+                    "period_end": selected["report_date"],
+                    "available_at": "2026-02-01T12:00:00Z",
+                    "realestate_raw": raw,
+                    "source_sha256": "a" * 64,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(module, "acquire_rendered_realestate_filing", acquire)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("AU_DATA_DIR", str(runtime_root))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--sec-root",
+            str(sec_root),
+            "--formation-at",
+            "2026-08-09T23:59:59Z",
+            "--target-sic2",
+            "35",
+            "--anchor-cik",
+            "320193",
+            "--minimum-issuers",
+            "5",
+            "--maximum-issuers",
+            "5",
+            "--source-run-id",
+            "31270341796",
+            "--output-dir",
+            "openap_149_realestate_rendered_batch",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        runpy.run_path(str(script), run_name="__main__")
+
+    assert exit_info.value.code == 0
+    output = runtime_root / "openap_149_realestate_rendered_batch"
+    summary = json.loads(
+        (output / "openap_149_realestate_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    current = pd.read_csv(output / "openap_149_realestate_current.csv")
+    assert summary["source_file_counts"] == {
+        "companyfacts": 48,
+        "submissions": 48,
+        "status": 48,
+        "summary": 48,
+    }
+    assert summary["source_run_id"] == "31270341796"
+    assert summary["current_values_computed"] == 5
+    assert len(current) == 5
+    assert not current["strict_score_eligible"].any()
