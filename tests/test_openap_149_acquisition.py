@@ -832,6 +832,30 @@ def test_consolidation_cli_includes_realestate_and_audited_event_batches(
     assert not bool(ageipo_event["strict_score_eligible"])
 
 
+def test_consolidation_workflow_pins_verified_source_runs() -> None:
+    workflow_path = ROOT / ".github" / "workflows" / "openap-149-consolidate.yml"
+    workflow = yaml.load(
+        workflow_path.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+    dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    expected = {
+        "current_93_run_id": "31341580689",
+        "sec_current_run_id": "31392473937",
+        "finra_current_run_id": "31384007094",
+        "realestate_current_run_id": "31384049772",
+        "exchange_switch_current_run_id": "31389285731",
+        "field_ritter_current_run_id": "31395454942",
+        "spinoff_current_run_id": "31393646423",
+        "formula_evidence_run_id": "31396163422",
+    }
+    assert {
+        input_name: dispatch_inputs[input_name].get("default")
+        for input_name in expected
+    } == expected
+
+
 def test_consolidation_workflow_downloads_and_verifies_realestate_evidence() -> None:
     workflow_path = ROOT / ".github" / "workflows" / "openap-149-consolidate.yml"
     workflow = yaml.load(
