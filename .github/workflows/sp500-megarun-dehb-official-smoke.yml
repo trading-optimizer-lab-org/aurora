@@ -2,6 +2,20 @@ name: SP500 Megarun Official DEHB Infrastructure Smoke
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/sp500-search-method-benchmark-short
+    paths:
+      - .github/workflows/sp500-megarun-dehb-official-smoke.yml
+      - infra/sp500_megarun/dehb_configspace.py
+      - infra/sp500_megarun/dehb_official_smoke.py
+      - requirements/dehb-official.in
+      - requirements/dehb-official.lock
+      - scripts/run_sp500_megarun_dehb_official_smoke.py
+      - tests/test_sp500_megarun_dehb_configspace.py
+      - tests/test_sp500_megarun_dehb_official_smoke.py
+      - config/sp500_megarun_feature_contract_240.json
+      - config/sp500_megarun_free_data_240.json
 
 permissions:
   contents: read
