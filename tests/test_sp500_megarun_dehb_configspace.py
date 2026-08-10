@@ -281,6 +281,15 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F178", 3),
         ("F179", 3),
         ("F180", 12),
+        ("F181", 14),
+        ("F182", 26),
+        ("F183", 9),
+        ("F184", 30),
+        ("F185", 47),
+        ("F186", 18),
+        ("F187", 26),
+        ("F188", 41),
+        ("F190", 9),
     ],
 )
 def test_conditionally_inactive_model_parameters_are_forbidden(
@@ -407,6 +416,42 @@ def test_f180_long_window_rules_are_scoped_to_the_statistics_that_use_it(
         for statistic in ("decoupling", "sign_change")
         for window, long_window in ((126, 126), (252, 126), (252, 252))
     }
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "scoped_statistic", "excluded_statistic", "expected_triplets"),
+    [
+        ("F184", "baa_aaa", "credit_stress_composite", 24),
+        ("F185", "quality_spread", "spread_volume_composite", 32),
+        ("F188", "total_growth", "consumer_credit_stress", 32),
+    ],
+)
+def test_internal_composites_keep_their_window_while_raw_simple_statistics_do_not(
+    feature_contract,
+    lane_id: str,
+    scoped_statistic: str,
+    excluded_statistic: str,
+    expected_triplets: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    triplets = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 3
+    }
+
+    assert len(triplets) == expected_triplets
+    assert any(("statistic", scoped_statistic) in item for item in triplets)
+    assert all(("statistic", excluded_statistic) not in item for item in triplets)
+
+
 def test_manifest_freezes_fidelities_versions_boundaries_and_exact_choices(
     feature_contract,
 ) -> None:

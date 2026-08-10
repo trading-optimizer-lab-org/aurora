@@ -123,6 +123,12 @@ def _write_snapshot(root: Path) -> Path:
     )
 
     spf_rows: list[dict[str, object]] = []
+    basis_offsets = {
+        1: (0.0, 0.1, 0.2),
+        2: (0.2, 0.0, 0.1),
+        3: (0.1, 0.2, 0.0),
+        4: (0.0, 0.2, 0.1),
+    }
     for year in range(2003, 2011):
         for quarter in range(1, 5):
             for offset, sheet in enumerate(("RR1_TBILL_CPI", "RR1_TBILL_PCE", "RR1_TBILL_PGDP")):
@@ -130,7 +136,12 @@ def _write_snapshot(root: Path) -> Path:
                     {
                         "0": year,
                         "1": quarter,
-                        "6": 1.0 + 0.1 * offset + 0.03 * (year - 2003) + 0.02 * quarter,
+                        "6": (
+                            1.0
+                            + basis_offsets[quarter][offset]
+                            + 0.03 * (year - 2003)
+                            + 0.02 * quarter
+                        ),
                         "date": pd.Timestamp(year, 1, 1),
                         "source_sheet": sheet,
                         "resource_id": "spf_median_level",
@@ -185,6 +196,12 @@ def test_rates_credit_smoke_builds_f181_f190_train_only_artifacts(tmp_path: Path
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
     assert report["empty_lanes"] == []
+    parameter_audit = report["parameter_choice_audit"]
+    assert parameter_audit["ready"] is True
+    assert parameter_audit["expected_choice_probe_count"] == 201
+    assert parameter_audit["choice_probe_count"] == 201
+    assert parameter_audit["failed_probes"] == []
+    assert parameter_audit["inactive_choice_groups"] == []
     assert (tmp_path / "out" / "features" / "F181.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F190.parquet").is_file()
 
@@ -234,3 +251,48 @@ def test_rates_credit_smoke_cli_accepts_contract(
     )
 
     assert cli.main() == 0
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "parameter", "configuration", "expected"),
+    [
+        ("F181", "window", {"normalization": "raw"}, {"normalization": "rolling_zscore"}),
+        ("F181", "change_lag", {"normalization": "raw"}, {"normalization": "change"}),
+        ("F182", "shock_lag", {"statistic": "forward_2y5y"}, {"statistic": "slope_shock"}),
+        ("F183", "window", {"statistic": "level"}, {"statistic": "change"}),
+        ("F184", "window", {"normalization": "raw"}, {"normalization": "rolling_zscore"}),
+        ("F185", "lag", {"statistic": "quality_spread"}, {"statistic": "outstanding_contraction"}),
+        ("F186", "lag", {"statistic": "loan_share"}, {"statistic": "bank_credit_growth"}),
+        ("F187", "lag", {"statistic": "liquid_share"}, {"statistic": "money_growth"}),
+        ("F188", "lag", {"statistic": "revolving_share"}, {"statistic": "total_growth"}),
+        ("F190", "threshold", {"statistic": "joint_mean"}, {"statistic": "shock_breadth"}),
+    ],
+)
+def test_rates_credit_parameter_witnesses_activate_conditional_choices(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    repaired = _api()._repair_rates_credit_configuration(
+        lane_id,
+        parameter,
+        configuration.copy(),
+    )
+
+    for name, value in expected.items():
+        assert repaired[name] == value
+
+
+def test_rates_credit_physical_smoke_has_an_isolated_dispatch_scope() -> None:
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "sp500-megarun-macro-feature-smoke-f032.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "- f181_f190" in workflow
+    assert "smoke_f181_f190:" in workflow
+    assert "inputs.scope == 'f181_f190'" in workflow
+    assert "timeout-minutes: 15" in workflow

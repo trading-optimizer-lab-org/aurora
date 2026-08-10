@@ -441,6 +441,120 @@ def _forbidden_parameter_pairs(
             for statistic in ("correlation", "beta")
             for window in space["long_window"][1:]
         )
+    if lane.lane_id == "F181":
+        pairs.extend(
+            ("normalization", normalization, "window", window)
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+        pairs.extend(
+            ("normalization", normalization, "change_lag", lag)
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
+    if lane.lane_id == "F182":
+        pairs.extend(
+            ("normalization", normalization, "window", window)
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+        pairs.extend(
+            ("normalization", normalization, "change_lag", lag)
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
+        pairs.extend(
+            ("statistic", statistic, "shock_lag", lag)
+            for statistic in (
+                "forward_2y5y",
+                "forward_5y10y",
+                "forward_slope",
+                "butterfly",
+            )
+            for lag in space["shock_lag"][1:]
+        )
+    if lane.lane_id == "F183":
+        pairs.extend(
+            ("statistic", statistic, "window", window)
+            for statistic in ("level", "dispersion")
+            for window in space["window"][1:]
+        )
+        pairs.extend(
+            ("statistic", "dispersion", "inflation_basis", basis)
+            for basis in space["inflation_basis"][1:]
+        )
+    if lane.lane_id == "F184":
+        pairs.extend(
+            ("normalization", normalization, "change_lag", lag)
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
+    if lane.lane_id == "F185":
+        pairs.extend(
+            ("statistic", statistic, "lag", lag)
+            for statistic in (
+                "quality_spread",
+                "financial_spread",
+                "issuance_intensity",
+            )
+            for lag in space["lag"][1:]
+        )
+        pairs.extend(
+            ("normalization", normalization, "change_lag", lag)
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
+    if lane.lane_id == "F186":
+        pairs.extend(
+            ("statistic", "loan_share", "lag", lag)
+            for lag in space["lag"][1:]
+        )
+        pairs.extend(
+            ("normalization", normalization, "window", window)
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+        pairs.extend(
+            ("normalization", normalization, "change_lag", lag)
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
+    if lane.lane_id == "F187":
+        pairs.extend(
+            ("statistic", statistic, "lag", lag)
+            for statistic in (
+                "liquid_share",
+                "borrowing_pressure",
+                "credit_money_ratio",
+            )
+            for lag in space["lag"][1:]
+        )
+        pairs.extend(
+            ("normalization", normalization, "window", window)
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+        pairs.extend(
+            ("normalization", normalization, "change_lag", lag)
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
+    if lane.lane_id == "F188":
+        pairs.extend(
+            ("statistic", "revolving_share", "lag", lag)
+            for lag in space["lag"][1:]
+        )
+        pairs.extend(
+            ("normalization", normalization, "change_lag", lag)
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
+    if lane.lane_id == "F190":
+        pairs.extend(
+            ("statistic", statistic, "threshold", threshold)
+            for statistic in ("joint_mean", "joint_max", "triple_interaction")
+            for threshold in space["threshold"][1:]
+        )
     if lane.lane_id in {"F023", "F026", "F030", "F031"}:
         pairs.extend(
             ("window", 1, "normalization", normalization)
@@ -785,6 +899,35 @@ def _forbidden_parameter_triplets(
             for window in space["window"]
             for long_window in space["long_window"]
             if int(long_window) <= int(window)
+        )
+    if lane.lane_id in {"F184", "F185", "F188"}:
+        simple_statistics = {
+            "F184": ("baa_aaa", "aaa_treasury", "baa_treasury"),
+            "F185": (
+                "quality_spread",
+                "financial_spread",
+                "outstanding_contraction",
+                "issuance_intensity",
+            ),
+            "F188": (
+                "total_growth",
+                "revolving_growth",
+                "revolving_share",
+                "revolving_relative_growth",
+            ),
+        }
+        triplets.extend(
+            (
+                "statistic",
+                statistic,
+                "normalization",
+                normalization,
+                "window",
+                window,
+            )
+            for statistic in simple_statistics[lane.lane_id]
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
         )
     return tuple(triplets)
 
