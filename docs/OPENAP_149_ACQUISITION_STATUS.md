@@ -507,9 +507,12 @@ corte. No requiere precio ni capitalizacion.
   prueba de que la ruta SEC 13F + OpenFIGI funciona. Sus 2.157 filas de
   `IO_ShortInterest` siguen vacias porque proceden del pipeline Yahoo anterior,
   no de una union con FINRA.
+- El run manual `31384007094` termino correctamente y publico el artefacto
+  `openap-149-finra-short-interest-current`: 2.988 valores de `ShortInterest` y
+  1 valor reconstruido de `IO_ShortInterest`.
 
 Por ello se elimina Twelve Data de esta ruta. El calculador y su conexion con
-el runner FINRA quedan preparados, sin ejecutar:
+el runner FINRA ya se ejecutaron:
 
 - Calcula el percentil 99 sobre todo el universo FINRA/SEC antes de aplicar la
   cobertura 13F/OpenFIGI.
@@ -520,14 +523,19 @@ el runner FINRA quedan preparados, sin ejecutar:
   conservadora, con el nombre SEC del CIK. Tambien rechaza denominadores
   futuros y ausencias de propiedad institucional no demostrables; no inventa
   ceros.
-- Recupera por rangos HTTP unicamente los tres parquets institucionales del
-  artefacto `31333714423`, comprueba sus hashes y aborta antes de descargarlos
-  si superan en conjunto 128 MiB comprimidos. El directorio central remoto
+- La ejecucion recupero por rangos HTTP unicamente los tres parquets
+  institucionales del artefacto `31333714423`, comprobo sus hashes y mantuvo
+  un limite fail-closed de 128 MiB comprimidos. El directorio central remoto
   declara 85.159.102 bytes para esos tres miembros y el manifiesto, frente a
   2.741.147.673 bytes del ZIP completo; no descarga el ZIP completo.
-- Etiqueta cualquier resultado futuro como `reconstructed`, nunca estricto,
+- Etiqueta el resultado como `reconstructed`, nunca estricto,
   porque SEC 13F/OpenFIGI/SEC shares no equivalen al panel Thomson/CRSP.
 
-La prohibicion de iniciar un nuevo run mantiene la ruta en
-`prepared_unexecuted`: cobertura sin medir, cero valores actuales publicados y
-ningun aumento del recuento ejecutado ni del score estricto.
+El manifiesto declara coste cero, 6.975.953 posiciones 13F, 4.182.960 posiciones
+enlazadas, 29.103 correspondencias OpenFIGI y una union que prohibe ticker-only.
+El unico valor de `IO_ShortInterest` tiene `available_at=2026-07-24`, ocho
+observaciones y la formula
+`openap_io_shortinterest_finra_sec13f_current_reconstruction`. La cobertura es
+demasiado baja y la fidelidad Thomson/CRSP no esta demostrada: sigue sin ser
+estricta. El lote de origen no se ha consolidado, por lo que tampoco cambia los
+recuentos globales demostrados.
