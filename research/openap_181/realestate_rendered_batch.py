@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
+import time
 from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+import requests
 
 from .sec_companyfacts_149 import build_companyfacts_identity
 from .sec_rendered_reports import (
+    build_rendered_realestate_evidence,
     compute_current_realestate_cross_section,
+    locate_rendered_ppe_report,
     select_current_realestate_pilot_filings,
 )
 
@@ -36,6 +44,8 @@ _STATUS_EVIDENCE_COLUMNS = {
     "source_mode",
     "source_url",
 }
+_SEC_ARCHIVE_ROOT = "https://www.sec.gov/Archives/edgar/data"
+_READTHROUGH_METHOD = "sec_via_jina_readthrough"
 
 
 def _require_columns(frame: pd.DataFrame, required: set[str], label: str) -> None:
@@ -360,7 +370,180 @@ def assemble_realestate_sector_pilot(
     }
 
 
+def _retrieved_at(value: object | None) -> str:
+    if value is not None:
+        return str(value)
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
+
+
+def _readthrough_access_url(source_url: str) -> str:
+    return f"https://r.jina.ai/http://{source_url.removeprefix('https://')}"
+
+
+def _markdown_content(content: bytes) -> str:
+    text = content.decode("utf-8", errors="replace")
+    if "Markdown Content:" in text:
+        return text.split("Markdown Content:", 1)[1].strip()
+    return text.strip()
+
+
+def _acquire_readthrough_file(
+    *,
+    filename: str,
+    source_url: str,
+    destination: Path,
+    client: Any,
+    retry_delays: tuple[float, ...],
+    retrieved_at: str,
+) -> tuple[dict[str, Any], str]:
+    access_url = _readthrough_access_url(source_url)
+    last_error: Exception | None = None
+    status_code = 0
+    attempts = len(retry_delays) + 1
+    for attempt in range(attempts):
+        try:
+            response = client.get(
+                access_url,
+                headers={
+                    "User-Agent": "Aurora Research rendered SEC readthrough",
+                    "X-No-Cache": "true",
+                },
+                timeout=(30, 300),
+            )
+            status_code = int(response.status_code)
+            response.raise_for_status()
+            content = bytes(response.content)
+            markdown = _markdown_content(content)
+            if len(markdown.encode("utf-8")) < 100:
+                raise ValueError("rendered SEC readthrough returned empty content")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
+            return (
+                {
+                    "filename": filename,
+                    "source_url": source_url,
+                    "access_url": access_url,
+                    "access_method": _READTHROUGH_METHOD,
+                    "status": "downloaded",
+                    "http_status": status_code,
+                    "failure_reason": "",
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                    "size_bytes": len(content),
+                    "retrieved_at": retrieved_at,
+                },
+                markdown,
+            )
+        except Exception as exc:
+            last_error = exc
+            response = getattr(exc, "response", None)
+            if response is not None and getattr(response, "status_code", None):
+                status_code = int(response.status_code)
+            if attempt < len(retry_delays):
+                time.sleep(retry_delays[attempt])
+    return (
+        {
+            "filename": filename,
+            "source_url": source_url,
+            "access_url": access_url,
+            "access_method": _READTHROUGH_METHOD,
+            "status": "failed",
+            "http_status": status_code,
+            "failure_reason": (
+                f"{type(last_error).__name__}_after_{attempts}_attempts"
+            ),
+            "sha256": "",
+            "size_bytes": 0,
+            "retrieved_at": retrieved_at,
+        },
+        "",
+    )
+
+
+def acquire_rendered_realestate_filing(
+    selected_filing: Mapping[str, Any],
+    *,
+    output_dir: Path | str,
+    session: Any | None = None,
+    retry_delays: tuple[float, ...] = (1.0, 2.0),
+    retrieved_at: object | None = None,
+) -> dict[str, Any]:
+    """Acquire one rendered PP&E report with SEC origin and proxy provenance."""
+
+    filing = dict(selected_filing)
+    try:
+        cik = str(int(str(filing["cik"])))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("rendered filing requires a numeric SEC CIK") from exc
+    accession = str(filing.get("accession_number") or "").strip()
+    if re.fullmatch(r"\d{10}-\d{2}-\d{6}", accession) is None:
+        raise ValueError("rendered filing requires a canonical SEC accession")
+    accession_compact = accession.replace("-", "")
+    origin_root = f"{_SEC_ARCHIVE_ROOT}/{cik}/{accession_compact}"
+    issuer_dir = Path(output_dir) / f"CIK{int(cik):010d}"
+    timestamp = _retrieved_at(retrieved_at)
+    client = session if session is not None else requests.Session()
+    owns_session = session is None
+    source_files: list[dict[str, Any]] = []
+    try:
+        summary_filename = "FilingSummary.xml"
+        summary_row, summary_text = _acquire_readthrough_file(
+            filename=summary_filename,
+            source_url=f"{origin_root}/{summary_filename}",
+            destination=issuer_dir / f"{summary_filename}.txt",
+            client=client,
+            retry_delays=retry_delays,
+            retrieved_at=timestamp,
+        )
+        source_files.append(summary_row)
+        report_filename = locate_rendered_ppe_report(summary_text)
+        if not report_filename:
+            evidence = build_rendered_realestate_evidence(
+                selected_filing=filing,
+                report_metadata={
+                    "report_filename": "",
+                    "source_url": "",
+                    "access_url": "",
+                    "access_method": _READTHROUGH_METHOD,
+                    "sha256": "",
+                    "size_bytes": 0,
+                },
+                report_text="",
+            )
+            evidence["remaining_blocker"] = "rendered_ppe_report_not_located"
+            evidence["source_files"] = source_files
+            return evidence
+        report_row, report_text = _acquire_readthrough_file(
+            filename=report_filename,
+            source_url=f"{origin_root}/{report_filename}",
+            destination=issuer_dir / f"{report_filename}.txt",
+            client=client,
+            retry_delays=retry_delays,
+            retrieved_at=timestamp,
+        )
+        source_files.append(report_row)
+        evidence = build_rendered_realestate_evidence(
+            selected_filing=filing,
+            report_metadata={
+                "report_filename": report_filename,
+                "source_url": report_row["source_url"],
+                "access_url": report_row["access_url"],
+                "access_method": report_row["access_method"],
+                "sha256": report_row["sha256"],
+                "size_bytes": report_row["size_bytes"],
+            },
+            report_text=report_text,
+        )
+        evidence["source_files"] = source_files
+        return evidence
+    finally:
+        if owns_session:
+            client.close()
+
+
 __all__ = [
+    "acquire_rendered_realestate_filing",
     "assemble_realestate_sector_pilot",
     "select_realestate_sector_pilot_candidates",
 ]
