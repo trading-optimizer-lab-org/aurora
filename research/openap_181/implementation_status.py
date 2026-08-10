@@ -71,8 +71,6 @@ DOCUMENTARY_BLOCKING_CLASSIFICATIONS = frozenset(
 )
 TWELVE_DATA_MARKET_SIGNALS = frozenset(
     {
-        "Activism1",
-        "Activism2",
         "Beta",
         "BetaFP",
         "BetaLiquidityPS",
@@ -81,9 +79,6 @@ TWELVE_DATA_MARKET_SIGNALS = frozenset(
         "CoskewACX",
         "Coskewness",
         "FirmAgeMom",
-        "Herf",
-        "HerfAsset",
-        "HerfBE",
         "High52",
         "IdioVol3F",
         "IdioVolAHT",
@@ -338,7 +333,9 @@ def build_twelve_data_credential_blocker_evidence(
             "fidelity_result": "not_measured",
             "strict_gate_result": "blocked",
             "blocking_reason": (
-                "credential_missing:twelve_data_basic_api_key_not_configured"
+                "credential_missing:twelve_data_basic_free_api_key_not_configured;"
+                "resumable_private_route_prepared_unexecuted;"
+                "historical_ticker_intervals_formula_coverage_and_fidelity_pending"
             ),
             "evidence_run_url": str(evidence_run_url),
             "evidence_artifact": str(evidence_artifact).strip(),

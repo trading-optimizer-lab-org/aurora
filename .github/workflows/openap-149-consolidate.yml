@@ -177,11 +177,11 @@ jobs:
           summary = json.load(open(f"{root}/openap_149_acquisition_summary.json"))
           assert len(matrix) == matrix["signal"].nunique() == 149
           assert summary["latest_formation_at"] == "2026-08-09T23:59:59+00:00"
-          assert summary["data_acquired"] == 56
-          assert summary["current_values_calculated"] == 50
-          assert summary["reconstructed_not_strict"] == 18
-          assert summary["blocked"] == summary["pending"] == 99
-          assert summary["value_rows"] == 96814
+          assert summary["data_acquired"] == 57
+          assert summary["current_values_calculated"] == 51
+          assert summary["reconstructed_not_strict"] == 19
+          assert summary["blocked"] == summary["pending"] == 98
+          assert summary["value_rows"] == 97914
           assert summary["strict_score_eligible"] == 0
           assert not matrix["strict_score_eligible"].astype(str).str.lower().eq("true").any()
           firm_age = matrix.set_index("signal").loc["FirmAge"]
@@ -206,6 +206,19 @@ jobs:
               assert not bool(quarantined["current_value_calculated"])
               assert quarantined["status"] == "blocked_fidelity"
               assert "declared_current_unusable" in quarantined["remaining_blocker"]
+          oscore = matrix.set_index("signal").loc["OScore"]
+          assert bool(oscore["data_acquired"])
+          assert bool(oscore["current_value_calculated"])
+          assert oscore["current_value_count"] == 1100
+          assert oscore["fidelity"] == "reconstructed"
+          assert oscore["source_used"] == "fred|sec_edgar"
+          assert not bool(oscore["strict_score_eligible"])
+          oscore_values = values.loc[values["signal"].eq("OScore")]
+          assert len(oscore_values) == 1100
+          assert oscore_values["source_id"].eq("sec_edgar|fred_public_csv").all()
+          assert oscore_values["formula_id"].eq(
+              "openap_ohlson_oscore_decile_sec_gnpdefl"
+          ).all()
           realestate = matrix.set_index("signal").loc["realestate"]
           assert bool(realestate["data_acquired"])
           assert bool(realestate["current_value_calculated"])

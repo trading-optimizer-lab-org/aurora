@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
@@ -13,31 +13,21 @@ from aurora.core.execution_policy import require_github_actions_or_explicit_loca
 from aurora.core.runtime_paths import base_data_dir
 from aurora.research.openap_181.artifact_recovery import (
     HttpRangeReader,
-    INSTITUTIONAL_RECOVERY_MEMBERS,
+    MARKET_SECURITY_MASTER_RECOVERY_MEMBERS,
     inspect_zip_members,
     read_zip_members,
-    validate_recovered_openap_93,
-    validate_recovered_openap_93_institutional_inputs,
+    validate_recovered_market_security_master,
 )
 
 
 API_ROOT = "https://api.github.com"
-RECOVERY_MEMBERS = (
-    "coverage_93.csv",
-    "signals_93_current.csv",
-    "run_manifest.json",
-)
-RECOVERY_PROFILES = {
-    "current_results": RECOVERY_MEMBERS,
-    "institutional_inputs": INSTITUTIONAL_RECOVERY_MEMBERS,
-}
 
 
 def _headers(token: str) -> dict[str, str]:
     return {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {token}",
-        "User-Agent": "Aurora-OpenAP-Artifact-Recovery/1.0",
+        "User-Agent": "Aurora-OpenAP-Market-Identity-Recovery/1.0",
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
@@ -81,7 +71,7 @@ def _select_artifact(payload: Any, artifact_name: str) -> dict[str, Any]:
     matches = [artifact for artifact in artifacts if artifact.get("name") == artifact_name]
     if len(matches) != 1:
         raise RuntimeError(
-            f"Expected one source artifact {artifact_name}, found {len(matches)}"
+            f"expected one source artifact {artifact_name}, found {len(matches)}"
         )
     return dict(matches[0])
 
@@ -92,15 +82,15 @@ def _range_fetcher(url: str, total_size: int):
             url,
             headers={
                 "Range": f"bytes={start}-{end}",
-                "User-Agent": "Aurora-OpenAP-Artifact-Recovery/1.0",
+                "User-Agent": "Aurora-OpenAP-Market-Identity-Recovery/1.0",
             },
         )
         with urllib.request.urlopen(request, timeout=120) as response:
             if response.status != 206:
-                raise RuntimeError(f"Range request returned HTTP {response.status}")
+                raise RuntimeError(f"range request returned HTTP {response.status}")
             expected_range = f"bytes {start}-{end}/{total_size}"
             if response.headers.get("Content-Range") != expected_range:
-                raise RuntimeError("Range response Content-Range mismatch")
+                raise RuntimeError("range response Content-Range mismatch")
             return response.read()
 
     return fetch
@@ -110,56 +100,64 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repository", required=True)
     parser.add_argument("--source-run-id", type=int, required=True)
-    parser.add_argument("--source-artifact-name", required=True)
     parser.add_argument(
-        "--profile",
-        choices=tuple(RECOVERY_PROFILES),
-        default="current_results",
+        "--source-artifact-name",
+        default="openap-yfinance-sec-current-score-results",
     )
     parser.add_argument(
         "--maximum-compressed-bytes",
         type=int,
-        default=128 * 1024 * 1024,
+        default=64 * 1024 * 1024,
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     require_github_actions_or_explicit_local_permission(
-        "OpenAP 93 failed artifact selective recovery"
+        "OpenAP market security-master selective recovery"
     )
+    if args.maximum_compressed_bytes <= 0:
+        raise ValueError("maximum compressed bytes must be positive")
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token:
         raise RuntimeError("GITHUB_TOKEN is required for artifact recovery")
+
     run_url = f"{API_ROOT}/repos/{args.repository}/actions/runs/{args.source_run_id}"
     run = _read_json(run_url, token)
     jobs = _read_json(f"{run_url}/jobs?per_page=100", token).get("jobs", [])
     artifacts = _read_json(f"{run_url}/artifacts?per_page=100", token)
     artifact = _select_artifact(artifacts, args.source_artifact_name)
     artifact_size = int(artifact["size_in_bytes"])
-    signed_url = _artifact_download_url(args.repository, int(artifact["id"]), token)
+    signed_url = _artifact_download_url(
+        args.repository,
+        int(artifact["id"]),
+        token,
+    )
     reader = HttpRangeReader(
         artifact_size,
         _range_fetcher(signed_url, artifact_size),
     )
-    member_names = RECOVERY_PROFILES[args.profile]
-    inspection = inspect_zip_members(reader, member_names)
+    inspection = inspect_zip_members(
+        reader,
+        MARKET_SECURITY_MASTER_RECOVERY_MEMBERS,
+    )
     declared_compressed_bytes = sum(
         row["compress_size"] for row in inspection.values()
     )
-    if args.maximum_compressed_bytes <= 0:
-        raise ValueError("maximum compressed bytes must be positive")
     if declared_compressed_bytes > args.maximum_compressed_bytes:
         raise RuntimeError(
-            "Selective recovery exceeds compressed-byte limit: "
+            "selective market identity recovery exceeds compressed-byte limit: "
             f"declared={declared_compressed_bytes}:"
             f"limit={args.maximum_compressed_bytes}"
         )
-    members = read_zip_members(reader, member_names)
-    if args.profile == "institutional_inputs":
-        recovery = validate_recovered_openap_93_institutional_inputs(
-            run, jobs, artifact, members
-        )
-    else:
-        recovery = validate_recovered_openap_93(run, jobs, artifact, members)
+    members = read_zip_members(
+        reader,
+        MARKET_SECURITY_MASTER_RECOVERY_MEMBERS,
+    )
+    recovery = validate_recovered_market_security_master(
+        run,
+        jobs,
+        artifact,
+        members,
+    )
 
     output = (
         args.output_dir
@@ -168,30 +166,32 @@ def main() -> int:
     )
     output.mkdir(parents=True, exist_ok=True)
     for name, payload in members.items():
-        if name == "run_manifest.json":
-            target_name = "source_run_manifest.json"
-        elif args.profile == "institutional_inputs":
-            target_name = Path(name).name
-        else:
-            target_name = name
+        target_name = (
+            "source_execution_summary.json"
+            if name == "execution_summary.json"
+            else name
+        )
         (output / target_name).write_bytes(payload)
     recovery.update(
         {
             "source_run_url": (
-                f"https://github.com/{args.repository}/actions/runs/{args.source_run_id}"
+                f"https://github.com/{args.repository}/actions/runs/"
+                f"{args.source_run_id}"
             ),
             "range_requests": reader.range_requests,
             "bytes_fetched": reader.bytes_fetched,
-            "recovery_profile": args.profile,
             "member_inspection": inspection,
             "declared_compressed_bytes": declared_compressed_bytes,
             "maximum_compressed_bytes": args.maximum_compressed_bytes,
             "full_artifact_downloaded": False,
-            "recovered_at": datetime.now(timezone.utc).isoformat(),
+            "recovered_at": datetime.now(UTC).isoformat(),
+            "identity_input_only": True,
+            "current_signal_computed": False,
             "strict_score_eligible": False,
         }
     )
-    (output / "openap_93_artifact_recovery_manifest.json").write_text(
+    manifest = output / "openap_market_security_master_recovery_manifest.json"
+    manifest.write_text(
         json.dumps(recovery, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )

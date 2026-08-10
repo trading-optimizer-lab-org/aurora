@@ -12,8 +12,10 @@ from aurora.core.runtime_paths import base_data_dir
 from aurora.research.openap_current_score import ACCOUNTING_FEATURE_DEPENDENCIES
 from aurora.research.openap_181.acquisition_149 import load_target_routes
 from aurora.research.openap_181.sec_companyfacts_149 import (
+    COMPANYFACTS_RETENTION_CONTRACT,
     calculate_companyfacts_accounting_current,
     calculate_companyfacts_149_current,
+    calculate_companyfacts_convdebt_current,
     calculate_companyfacts_herfbe_current,
     calculate_companyfacts_herf_current,
     calculate_companyfacts_herfasset_current,
@@ -23,6 +25,26 @@ from aurora.research.openap_181.sec_companyfacts_149 import (
     calculate_companyfacts_roaq_current,
     calculate_companyfacts_tax_current,
     calculate_sec_submission_current,
+)
+from aurora.research.openap_181.sec_chinvia import (
+    calculate_sec_chinvia_current,
+)
+from aurora.research.openap_181.sec_delnetfin import (
+    calculate_sec_delnetfin_current,
+)
+from aurora.research.openap_181.sec_dividend_events import (
+    calculate_sec_divinit_current,
+    calculate_sec_divomit_current,
+    calculate_sec_divseason_current,
+)
+from aurora.research.openap_181.sec_earnings_consistency import (
+    calculate_sec_earnings_consistency_current,
+)
+from aurora.research.openap_181.sec_quarterly_surprise import (
+    calculate_sec_quarterly_surprises_current,
+)
+from aurora.research.openap_181.sec_sin_stock import (
+    calculate_sec_sinalgo_current,
 )
 from aurora.research.openap_93.registry import REQUIRED_93
 
@@ -45,6 +67,12 @@ def _latest_retrieved_at(paths: list[Path]) -> str:
     values = []
     for path in paths:
         payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("companyfacts_retention_contract") != (
+            COMPANYFACTS_RETENTION_CONTRACT
+        ):
+            raise RuntimeError(
+                "SEC shards predate the required CompanyFacts retention contract"
+            )
         values.append(pd.Timestamp(payload["retrieved_at"]))
     if not values:
         raise RuntimeError("SEC shard summaries are missing")
@@ -162,6 +190,61 @@ def main() -> int:
         formation_at=args.formation_at,
         retrieved_at=retrieved_at,
     )
+    convdebt_values = calculate_companyfacts_convdebt_current(
+        companyfacts,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
+    quarterly_surprise_values = calculate_sec_quarterly_surprises_current(
+        companyfacts,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
+    earnings_consistency_values = calculate_sec_earnings_consistency_current(
+        companyfacts,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
+    delnetfin_values = calculate_sec_delnetfin_current(
+        companyfacts,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
+    divinit_values = calculate_sec_divinit_current(
+        companyfacts,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
+    divomit_values = calculate_sec_divomit_current(
+        companyfacts,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
+    divseason_values = calculate_sec_divseason_current(
+        companyfacts,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
+    sinalgo_values = calculate_sec_sinalgo_current(
+        submissions,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
+    chinvia_values = calculate_sec_chinvia_current(
+        companyfacts,
+        submissions,
+        status,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
     values = pd.concat(
         [
             core_values,
@@ -175,6 +258,15 @@ def main() -> int:
             tax_values,
             roaq_values,
             backlog_values,
+            convdebt_values,
+            quarterly_surprise_values,
+            earnings_consistency_values,
+            delnetfin_values,
+            divinit_values,
+            divomit_values,
+            divseason_values,
+            sinalgo_values,
+            chinvia_values,
         ],
         ignore_index=True,
     )

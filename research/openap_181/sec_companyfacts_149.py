@@ -29,6 +29,10 @@ from .sec_accounting_batch import (
 )
 
 
+COMPANYFACTS_RETENTION_CONTRACT = (
+    "openap_companyfacts_v4_annual8_quarterly48_epsbasic_convdebt_delnetfin_dividends"
+)
+
 _FACT_COLUMNS = {
     "cik",
     "tag",
@@ -84,6 +88,62 @@ _BACKLOG_ALIAS_LOOKUP = {
     "Assets": ("assets", 0),
     "OrderBacklog": ("backlog", 0),
 }
+CONVDEBT_DC_INPUT_TAGS = frozenset({"DeferredCharges"})
+CONVDEBT_CSHRC_INPUT_TAGS = frozenset(
+    {"CommonStockSharesReservedForConversionOfConvertibleSecurities"}
+)
+CONVDEBT_POSITIVE_RECONSTRUCTION_TAGS = frozenset(
+    {
+        "ConvertibleDebt",
+        "ConvertibleDebtCurrent",
+        "ConvertibleDebtNoncurrent",
+        "ConvertibleLongTermNotesPayable",
+        "ConvertibleNotesPayable",
+        "ConvertibleNotesPayableCurrent",
+        "ConvertibleSubordinatedDebt",
+        "ConvertibleSubordinatedDebtCurrent",
+        "ConvertibleSubordinatedDebtNoncurrent",
+        "DebtInstrumentConvertibleNumberOfEquityInstruments",
+        "IncrementalCommonSharesAttributableToConversionOfDebtSecurities",
+    }
+)
+CONVDEBT_BROAD_NONUSABLE_TAGS = frozenset(
+    {"CommonStockCapitalSharesReservedForFutureIssuance"}
+)
+CONVDEBT_COMPANYFACT_TAGS = frozenset(
+    CONVDEBT_DC_INPUT_TAGS
+    | CONVDEBT_CSHRC_INPUT_TAGS
+    | CONVDEBT_POSITIVE_RECONSTRUCTION_TAGS
+    | CONVDEBT_BROAD_NONUSABLE_TAGS
+)
+_CONVDEBT_USABLE_POSITIVE_TAGS = frozenset(
+    CONVDEBT_DC_INPUT_TAGS
+    | CONVDEBT_CSHRC_INPUT_TAGS
+    | CONVDEBT_POSITIVE_RECONSTRUCTION_TAGS
+)
+_CONVDEBT_MONETARY_TAGS = frozenset(
+    {
+        "Assets",
+        "DeferredCharges",
+        "ConvertibleDebt",
+        "ConvertibleDebtCurrent",
+        "ConvertibleDebtNoncurrent",
+        "ConvertibleLongTermNotesPayable",
+        "ConvertibleNotesPayable",
+        "ConvertibleNotesPayableCurrent",
+        "ConvertibleSubordinatedDebt",
+        "ConvertibleSubordinatedDebtCurrent",
+        "ConvertibleSubordinatedDebtNoncurrent",
+    }
+)
+_CONVDEBT_SHARE_OR_COUNT_TAGS = frozenset(
+    {
+        "CommonStockSharesReservedForConversionOfConvertibleSecurities",
+        "CommonStockCapitalSharesReservedForFutureIssuance",
+        "DebtInstrumentConvertibleNumberOfEquityInstruments",
+        "IncrementalCommonSharesAttributableToConversionOfDebtSecurities",
+    }
+)
 _OUTPUT_COLUMNS = (
     "security_id",
     "ticker",
@@ -1150,7 +1210,158 @@ def diagnose_companyfacts_convdebt_coverage(
             "positive_related_ciks": int(positive["cik"].nunique()),
         },
         "related_source_tags": related_source_tags,
+        "configured_candidate_tags": sorted(CONVDEBT_COMPANYFACT_TAGS),
+        "configured_usable_positive_tags": sorted(
+            _CONVDEBT_USABLE_POSITIVE_TAGS
+        ),
+        "configured_broad_nonusable_tags": sorted(
+            CONVDEBT_BROAD_NONUSABLE_TAGS
+        ),
+        "scope": (
+            "retained_companyfacts_input_only;zero_rows_do_not_prove_global_sec_absence"
+        ),
     }
+
+
+def _convdebt_current_facts(
+    companyfacts: pd.DataFrame,
+    formation: pd.Timestamp,
+) -> pd.DataFrame:
+    required = _FACT_COLUMNS | {"taxonomy", "fy", "fp"}
+    _require_columns(companyfacts, required, "SEC CompanyFacts")
+    frame = companyfacts.copy()
+    frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce")
+    frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+    frame["period_end"] = _utc(frame["period_end"])
+    frame["filed_at"] = _utc(frame["filed"])
+    frame["available_at"] = _utc(frame["available_at"])
+    tag = frame["tag"].fillna("").astype(str)
+    unit = frame["unit"].fillna("").astype(str)
+    valid_unit = (
+        tag.isin(_CONVDEBT_MONETARY_TAGS) & unit.str.upper().eq("USD")
+    ) | (
+        tag.isin(_CONVDEBT_SHARE_OR_COUNT_TAGS)
+        & unit.str.lower().isin({"shares", "pure"})
+    )
+    frame = frame.loc[
+        frame["cik"].notna()
+        & frame["value"].notna()
+        & np.isfinite(frame["value"])
+        & frame["taxonomy"].fillna("").astype(str).str.lower().eq("us-gaap")
+        & tag.isin(CONVDEBT_COMPANYFACT_TAGS | {"Assets"})
+        & valid_unit
+        & frame["form"].isin({"10-K", "10-K/A"})
+        & frame["fp"].fillna("").astype(str).eq("FY")
+        & frame["period_end"].notna()
+        & frame["filed_at"].notna()
+        & frame["available_at"].notna()
+        & frame["available_at"].le(formation)
+    ].copy()
+    if frame.empty:
+        return frame
+
+    group = ["cik", "period_end", "tag"]
+    latest_available = frame.groupby(group)["available_at"].transform("max")
+    frame = frame.loc[frame["available_at"].eq(latest_available)].copy()
+    conflicts = frame.groupby(group)["value"].transform("nunique").gt(1)
+    frame = frame.loc[~conflicts].copy()
+    return frame.sort_values(
+        group + ["filed_at", "accession_number"]
+    ).drop_duplicates(group, keep="last")
+
+
+def calculate_companyfacts_convdebt_current(
+    companyfacts: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+) -> pd.DataFrame:
+    """Build a causal positive-only reconstruction of OpenAP ConvDebt.
+
+    Missing SEC tags never become zero.  A row is emitted only when the latest
+    annual balance-sheet period has positive evidence from a bounded tag whose
+    semantics identify deferred charges, conversion-reserved shares, or an
+    outstanding convertible debt instrument.  The broader aggregate count of
+    shares reserved for any future issuance is retained for diagnostics but is
+    deliberately excluded from the calculation.
+    """
+
+    formation = pd.Timestamp(formation_at)
+    if formation.tzinfo is None:
+        formation = formation.tz_localize("UTC")
+    else:
+        formation = formation.tz_convert("UTC")
+    retrieved = pd.Timestamp(retrieved_at)
+    if retrieved.tzinfo is None:
+        retrieved = retrieved.tz_localize("UTC")
+    else:
+        retrieved = retrieved.tz_convert("UTC")
+
+    identity = build_companyfacts_identity(status)
+    facts = _convdebt_current_facts(companyfacts, formation)
+    if facts.empty or identity.empty:
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+
+    rows: list[dict[str, Any]] = []
+    for cik, issuer_facts in facts.groupby("cik", sort=False):
+        assets = issuer_facts.loc[issuer_facts["tag"].eq("Assets")]
+        if assets.empty:
+            continue
+        current_period = assets["period_end"].max()
+        current_assets = assets.loc[assets["period_end"].eq(current_period)]
+        evidence = issuer_facts.loc[
+            issuer_facts["period_end"].eq(current_period)
+            & issuer_facts["tag"].isin(_CONVDEBT_USABLE_POSITIVE_TAGS)
+            & issuer_facts["value"].ne(0)
+        ].copy()
+        if evidence.empty:
+            continue
+        issuer_identity = identity.loc[identity["cik"].eq(cik)]
+        if len(issuer_identity) != 1:
+            continue
+        used = pd.concat([current_assets, evidence], ignore_index=True)
+        available_at = used["available_at"].max()
+        filed_at = used["filed_at"].max()
+        if available_at > formation or available_at > retrieved:
+            continue
+        identity_row = issuer_identity.iloc[0]
+        evidence_tags = sorted(evidence["tag"].astype(str).unique().tolist())
+        rows.append(
+            {
+                "security_id": str(identity_row["security_id"]),
+                "ticker": str(identity_row["symbol"]),
+                "cik": f"{int(cik):010d}",
+                "signal": "ConvDebt",
+                "formation_at": formation.isoformat(),
+                "period_end": pd.Timestamp(current_period).isoformat(),
+                "filed_at": pd.Timestamp(filed_at).isoformat(),
+                "available_at": pd.Timestamp(available_at).isoformat(),
+                "retrieved_at": retrieved.isoformat(),
+                "value": 1.0,
+                "fidelity_class": "reconstructed",
+                "current_usable": True,
+                "source_id": "sec_edgar",
+                "source_url": (
+                    "https://data.sec.gov/api/xbrl/companyfacts/"
+                    f"CIK{int(cik):010d}.json"
+                ),
+                "formula_id": (
+                    "openap_convdebt_positive_only_sec_companyfacts_reconstruction"
+                ),
+                "formula_sha256": "",
+                "observation_count": int(len(used)),
+                "reason_if_missing": "",
+                "caveat": (
+                    "SEC positive-only reconstruction; missing tags never become zero; "
+                    "candidate tags do not prove exact Compustat dc/cshrc equivalence; "
+                    f"evidence_tags={','.join(evidence_tags)}"
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=_OUTPUT_COLUMNS).sort_values(
+        "security_id"
+    ).reset_index(drop=True)
 
 
 def calculate_companyfacts_herfasset_current(
@@ -1920,9 +2131,16 @@ def calculate_companyfacts_order_backlog_current(
 
 
 __all__ = [
+    "COMPANYFACTS_RETENTION_CONTRACT",
+    "CONVDEBT_BROAD_NONUSABLE_TAGS",
+    "CONVDEBT_COMPANYFACT_TAGS",
+    "CONVDEBT_CSHRC_INPUT_TAGS",
+    "CONVDEBT_DC_INPUT_TAGS",
+    "CONVDEBT_POSITIVE_RECONSTRUCTION_TAGS",
     "build_companyfacts_identity",
     "calculate_companyfacts_accounting_current",
     "calculate_companyfacts_149_current",
+    "calculate_companyfacts_convdebt_current",
     "calculate_companyfacts_herfbe_current",
     "calculate_companyfacts_herf_current",
     "calculate_companyfacts_herfasset_current",

@@ -12,6 +12,7 @@ from aurora.core.execution_policy import require_github_actions_or_explicit_loca
 from aurora.core.runtime_paths import base_data_dir
 from aurora.research.openap_181.short_interest_batch import (
     acquire_finra_short_interest_current,
+    calculate_finra_io_short_interest_current,
     calculate_finra_short_interest_current,
 )
 
@@ -33,9 +34,11 @@ def _sha256(path: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sec-root", type=Path, required=True)
+    parser.add_argument("--institutional-root", type=Path, required=True)
     parser.add_argument("--formula-root", type=Path, required=True)
     parser.add_argument("--formation-at", required=True)
     parser.add_argument("--source-run-id", required=True)
+    parser.add_argument("--institutional-source-run-id", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     require_github_actions_or_explicit_local_permission(
@@ -54,7 +57,7 @@ def main() -> int:
         acquire_finra_short_interest_current(formation_at=args.formation_at)
     )
     retrieved_at = datetime.now(UTC).isoformat()
-    current = calculate_finra_short_interest_current(
+    short_interest = calculate_finra_short_interest_current(
         finra_rows,
         companyfacts,
         status,
@@ -63,8 +66,79 @@ def main() -> int:
         retrieved_at=retrieved_at,
         finra_source_url=str(source_metadata["source_url"]),
     )
-    if current.empty or set(current["signal"]) != {"ShortInterest"}:
+    if short_interest.empty or set(short_interest["signal"]) != {"ShortInterest"}:
         raise RuntimeError("FINRA batch did not produce current ShortInterest values")
+
+    institutional_paths = {
+        "filings": sorted(args.institutional_root.rglob("sec_13f_filings.parquet")),
+        "holdings": sorted(args.institutional_root.rglob("sec_13f_holdings.parquet")),
+        "mapping": sorted(args.institutional_root.rglob("openfigi_cusip_map.parquet")),
+        "recovery": sorted(
+            args.institutional_root.rglob("openap_93_artifact_recovery_manifest.json")
+        ),
+    }
+    if any(len(paths) != 1 for paths in institutional_paths.values()):
+        raise RuntimeError(
+            "Expected one selectively recovered institutional input of each type: "
+            f"{ {name: len(paths) for name, paths in institutional_paths.items()} }"
+        )
+    recovery = json.loads(
+        institutional_paths["recovery"][0].read_text(encoding="utf-8")
+    )
+    if (
+        recovery.get("recovery_profile") != "institutional_inputs"
+        or str(recovery.get("source_run_id")) != str(args.institutional_source_run_id)
+        or recovery.get("full_artifact_downloaded") is not False
+        or recovery.get("locked_opened") is not False
+        or recovery.get("validation_used_for_selection") is not False
+    ):
+        raise RuntimeError("Institutional selective-recovery contract is invalid")
+    recovered_hashes = recovery.get("recovered_hashes", {})
+    if not isinstance(recovered_hashes, dict):
+        raise RuntimeError("Institutional recovery hashes are missing")
+    for kind in ("filings", "holdings", "mapping"):
+        path = institutional_paths[kind][0]
+        expected_hashes = [
+            str(value)
+            for name, value in recovered_hashes.items()
+            if Path(str(name)).name == path.name
+        ]
+        if len(expected_hashes) != 1 or _sha256(path) != expected_hashes[0]:
+            raise RuntimeError(f"Recovered institutional input hash mismatch: {path.name}")
+
+    filings = pd.read_parquet(institutional_paths["filings"][0])
+    holdings = pd.read_parquet(institutional_paths["holdings"][0])
+    mapping = pd.read_parquet(institutional_paths["mapping"][0])
+    expected_rows = {
+        "filings": int(recovery.get("sec_13f_filing_rows", 0)),
+        "holdings": int(recovery.get("sec_13f_holding_rows", 0)),
+        "mapping": int(recovery.get("openfigi_mapping_rows", 0)),
+    }
+    actual_rows = {
+        "filings": len(filings),
+        "holdings": len(holdings),
+        "mapping": len(mapping),
+    }
+    if min(expected_rows.values()) <= 0 or actual_rows != expected_rows:
+        raise RuntimeError(
+            f"Recovered institutional row counts mismatch: expected={expected_rows}:"
+            f"actual={actual_rows}"
+        )
+    io_short_interest = calculate_finra_io_short_interest_current(
+        short_interest,
+        companyfacts,
+        status,
+        filings,
+        holdings,
+        mapping,
+        formation_at=args.formation_at,
+        retrieved_at=retrieved_at,
+    )
+    if io_short_interest.empty or set(io_short_interest["signal"]) != {
+        "IO_ShortInterest"
+    }:
+        raise RuntimeError("FINRA/SEC 13F batch did not produce IO_ShortInterest values")
+    current = pd.concat([short_interest, io_short_interest], ignore_index=True)
 
     formula_matches = sorted(args.formula_root.rglob("openap_181_formula_inventory.csv"))
     if len(formula_matches) != 1:
@@ -72,10 +146,13 @@ def main() -> int:
     formulas = pd.read_csv(formula_matches[0], keep_default_na=False)
     hash_column = "formula_sha256" if "formula_sha256" in formulas else "sha256"
     expected = formulas.set_index("signal")[hash_column].astype(str).to_dict()
-    formula_hash = expected.get("ShortInterest", "")
-    if not pd.Series([formula_hash]).str.fullmatch(r"[0-9a-f]{64}").all():
-        raise RuntimeError("Pinned ShortInterest formula hash is missing")
-    current["formula_sha256"] = formula_hash
+    formula_hashes = {
+        signal: expected.get(signal, "")
+        for signal in ("ShortInterest", "IO_ShortInterest")
+    }
+    if not pd.Series(list(formula_hashes.values())).str.fullmatch(r"[0-9a-f]{64}").all():
+        raise RuntimeError("Pinned short-interest formula hashes are missing")
+    current["formula_sha256"] = current["signal"].map(formula_hashes)
 
     output = (
         args.output_dir
@@ -94,6 +171,7 @@ def main() -> int:
     ).dt.date.astype(str)
     manifest = {
         "source_run_id": str(args.source_run_id),
+        "institutional_source_run_id": str(args.institutional_source_run_id),
         "formation_at": pd.Timestamp(args.formation_at).isoformat(),
         "retrieved_at": retrieved_at,
         "sec_source_file_counts": counts,
@@ -102,9 +180,27 @@ def main() -> int:
         "finra_rows": int(len(finra_rows)),
         "current_value_rows": int(len(current)),
         "current_value_securities": int(current["security_id"].nunique()),
+        "current_value_signal_counts": {
+            str(signal): int(count)
+            for signal, count in current.groupby("signal").size().items()
+        },
+        "institutional_input_rows": actual_rows,
+        "institutional_recovery": recovery,
+        "identity_bridge": {
+            "13f_security_key": "cusip",
+            "openfigi_security_key": "unique_common_stock_shareClassFIGI",
+            "openfigi_exchange_constraint": "exchCode_US",
+            "sec_issuer_key": "cik_plus_current_ticker_plus_normalized_entity_name",
+            "join_contract": (
+                "cusip_to_unique_share_class_figi_then_ticker_and_13f_issuer_name_"
+                "must_match_unambiguous_sec_cik_identity"
+            ),
+            "ticker_only_join_allowed": False,
+            "ambiguous_identity_behavior": "omit_value_fail_closed",
+        },
         "settlement_dates": sorted(selected_settlements.unique().tolist()),
         "formula_inventory_sha256": _sha256(formula_matches[0]),
-        "formula_sha256": formula_hash,
+        "formula_sha256": formula_hashes,
         "locked_opened": False,
         "forward_opened": False,
         "validation_used_for_selection": False,

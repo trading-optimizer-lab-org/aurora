@@ -594,6 +594,8 @@ def calculate_price_features(
     frame: pd.DataFrame,
     *,
     as_of: pd.Timestamp | None = None,
+    source_id: str = "yfinance",
+    source_label: str = "Yahoo",
 ) -> dict[str, FeatureValue]:
     """Calculate current price and trading characteristics.
 
@@ -622,10 +624,10 @@ def calculate_price_features(
     dollar_volume = close * volume
 
     def exact(name: str, value: float | None, formula: str, note: str = "") -> FeatureValue:
-        return FeatureValue(name, value, "exact", "yfinance", formula, note)
+        return FeatureValue(name, value, "exact", source_id, formula, note)
 
     def proxy(name: str, value: float | None, formula: str, note: str) -> FeatureValue:
-        return FeatureValue(name, value, "proxy", "yfinance", formula, note)
+        return FeatureValue(name, value, "proxy", source_id, formula, note)
 
     result: dict[str, FeatureValue] = {}
     result["Price"] = exact("Price", current, "price_abs_current")
@@ -665,7 +667,8 @@ def calculate_price_features(
             "RealizedVol",
             float(recent_returns.std(ddof=1)) if len(recent_returns) >= 15 else None,
             "openap_daily_return_std_completed_month_min15",
-            "Official formula reconstructed; Yahoo adjusted returns replace CRSP excess returns",
+            f"Official formula reconstructed; {source_label} adjusted returns "
+            "replace CRSP excess returns",
         )
         result["ReturnSkew"] = exact("ReturnSkew", float(recent_returns.skew()), "daily_return_skew_last_month")
     monthly_volume = (
@@ -711,7 +714,8 @@ def calculate_price_features(
             "VolSD",
             vol_sd,
             "openap_monthly_volume_rolling_std_36m_min24",
-            "Official formula reconstructed; Yahoo consolidated volume replaces CRSP volume",
+            f"Official formula reconstructed; {source_label} consolidated volume "
+            "replaces CRSP volume",
         )
 
         volume_window_60m = monthly_volume.tail(60)
@@ -735,7 +739,8 @@ def calculate_price_features(
             "VolumeTrend",
             volume_trend,
             "openap_monthly_volume_ols_trend_60m_min30_over_mean",
-            "Official time-series formula reconstructed before cross-sectional 1/99 trim; Yahoo consolidated volume replaces CRSP volume",
+            "Official time-series formula reconstructed before cross-sectional "
+            f"1/99 trim; {source_label} consolidated volume replaces CRSP volume",
         )
         result["std_turn"] = FeatureValue(
             "std_turn",
@@ -748,7 +753,13 @@ def calculate_price_features(
     for name, sessions in (("zerotrade1M", 21), ("zerotrade6M", 126), ("zerotrade12M", 252)):
         if len(volume) >= sessions:
             zero_days = float((volume.iloc[-sessions:] <= 0).mean())
-            result[name] = proxy(name, zero_days, f"zero_volume_share_{sessions}d", "Yahoo reports consolidated volume, not CRSP zero-trade adjustment")
+            result[name] = proxy(
+                name,
+                zero_days,
+                f"zero_volume_share_{sessions}d",
+                f"{source_label} reports consolidated volume, not CRSP "
+                "zero-trade adjustment",
+            )
     result["TrendFactor"] = FeatureValue(
         "TrendFactor",
         None,
@@ -833,6 +844,12 @@ def calculate_price_features(
         lag_average(off_season_lags(60, 120)),
         "openap_mean_ret_lags_60_to_119_excluding_seasonal",
         "Pinned OpenAP MomOffSeason06YrPlus.py",
+    )
+    result["MomOffSeason11YrPlus"] = exact(
+        "MomOffSeason11YrPlus",
+        lag_average(off_season_lags(120, 180)),
+        "openap_mean_ret_lags_120_to_179_excluding_seasonal",
+        "Pinned OpenAP MomOffSeason11YrPlus.py; missing months fail closed",
     )
     result["MomOffSeason16YrPlus"] = exact(
         "MomOffSeason16YrPlus",

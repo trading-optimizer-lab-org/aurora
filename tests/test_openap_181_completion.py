@@ -828,8 +828,6 @@ def test_missing_twelve_data_credential_blocks_only_dependent_market_routes():
         pd.concat([documentary, missing], ignore_index=True),
     )
     expected = {
-        "Activism1",
-        "Activism2",
         "Beta",
         "BetaFP",
         "BetaLiquidityPS",
@@ -838,9 +836,6 @@ def test_missing_twelve_data_credential_blocks_only_dependent_market_routes():
         "CoskewACX",
         "Coskewness",
         "FirmAgeMom",
-        "Herf",
-        "HerfAsset",
-        "HerfBE",
         "High52",
         "IdioVol3F",
         "IdioVolAHT",
@@ -866,10 +861,12 @@ def test_missing_twelve_data_credential_blocks_only_dependent_market_routes():
         "zerotrade6M",
     }
 
-    assert len(missing) == missing["signal"].nunique() == 36
+    assert len(missing) == missing["signal"].nunique() == 31
     assert set(missing["signal"]) == expected
     assert missing["blocking_reason"].eq(
-        "credential_missing:twelve_data_basic_api_key_not_configured"
+        "credential_missing:twelve_data_basic_free_api_key_not_configured;"
+        "resumable_private_route_prepared_unexecuted;"
+        "historical_ticker_intervals_formula_coverage_and_fidelity_pending"
     ).all()
     assert not missing["formula_implemented"].any()
     assert not missing["data_pipeline_implemented"].any()

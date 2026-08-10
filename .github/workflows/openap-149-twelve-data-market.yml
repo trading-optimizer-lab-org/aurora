@@ -1,0 +1,256 @@
+name: OpenAP 149 Twelve Data Market Inputs
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision to execute
+        required: true
+        type: string
+      market_source_run_id:
+        description: Successful base run containing the verified security master
+        required: true
+        default: "31270341796"
+        type: string
+      formation_at:
+        description: Causal formation timestamp
+        required: true
+        default: "2026-08-09T23:59:59Z"
+        type: string
+      resume_run_id:
+        description: Prior run containing the restricted checkpoint artifact
+        required: false
+        default: ""
+        type: string
+      daily_credit_budget:
+        description: Maximum Basic-plan credits consumed in this invocation
+        required: true
+        default: "800"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-149-twelve-data-market
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and focused tests
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Verify frozen market acquisition contracts
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
+          python -m py_compile \
+            research/openap_181/artifact_recovery.py \
+            research/openap_181/sec_listing_identity.py \
+            research/openap_181/twelve_data_market_batch.py \
+            research/openap_181/twelve_data_market_signals.py \
+            research/openap_181/twelve_data_factor_signals.py \
+            scripts/recover_openap_market_security_master.py \
+            scripts/run_openap_149_twelve_data_market.py
+          python -m pytest \
+            tests/test_openap_93_artifact_recovery.py \
+            tests/test_openap_181_sec_listing_identity.py \
+            tests/test_openap_181_twelve_data_market_batch.py \
+            tests/test_openap_181_twelve_data_market_signals.py \
+            tests/test_openap_181_twelve_data_factor_signals.py \
+            -q --tb=short
+
+  acquire:
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      GITHUB_ACTIONS: "true"
+      AU_DATA_DIR: ${{ github.workspace }}/outputs
+      TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+    steps:
+      - name: Refuse public repository or absent free credential
+        run: |
+          test "${{ github.event.repository.private }}" = "true"
+          test -n "$TWELVE_DATA_API_KEY"
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Selectively recover verified market identity input
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/recover_openap_market_security_master.py \
+            --repository trading-optimizer-lab-org/aurora \
+            --source-run-id "${{ inputs.market_source_run_id }}" \
+            --source-artifact-name openap-yfinance-sec-current-score-results \
+            --maximum-compressed-bytes 67108864 \
+            --output-dir openap_market_identity
+      - name: Recover prior restricted checkpoint
+        if: ${{ inputs.resume_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-149-twelve-data-market-restricted
+          path: outputs/openap_149_twelve_data_market
+          run-id: ${{ inputs.resume_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Freeze free Kenneth French factor inputs for all resumptions
+        run: |
+          mkdir -p outputs/openap_149_twelve_data_market/restricted_internal_factors
+          daily=outputs/openap_149_twelve_data_market/restricted_internal_factors/ff3_daily.zip
+          monthly=outputs/openap_149_twelve_data_market/restricted_internal_factors/ff3_monthly.zip
+          if [ ! -f "$daily" ]; then
+            curl --fail --location --retry 4 --retry-all-errors \
+              --output "$daily" \
+              https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip
+          fi
+          if [ ! -f "$monthly" ]; then
+            curl --fail --location --retry 4 --retry-all-errors \
+              --output "$monthly" \
+              https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_CSV.zip
+          fi
+          test -s "$daily"
+          test -s "$monthly"
+      - name: Acquire one bounded free daily quota
+        run: |
+          python scripts/run_openap_149_twelve_data_market.py \
+            --security-master outputs/openap_market_identity/security_master.parquet \
+            --source-manifest outputs/openap_market_identity/source_manifest.csv \
+            --source-recovery-manifest outputs/openap_market_identity/openap_market_security_master_recovery_manifest.json \
+            --implementation-sha "$SOURCE_SHA" \
+            --formation-at "${{ inputs.formation_at }}" \
+            --ff3-daily-zip outputs/openap_149_twelve_data_market/restricted_internal_factors/ff3_daily.zip \
+            --ff3-monthly-zip outputs/openap_149_twelve_data_market/restricted_internal_factors/ff3_monthly.zip \
+            --daily-credit-budget "${{ inputs.daily_credit_budget }}" \
+            --minimum-request-spacing-seconds 7.6 \
+            --output-dir openap_149_twelve_data_market
+      - name: Verify restricted and publishable boundaries
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import pandas as pd
+
+          root = Path("outputs/openap_149_twelve_data_market")
+          manifest = json.loads(
+              (root / "twelve_data_market_acquisition_manifest.json").read_text()
+          )
+          plan = pd.read_csv(root / "twelve_data_request_plan_safe.csv")
+          assert manifest["market_signal_count"] == 31
+          assert len(manifest["market_signals"]) == 31
+          assert manifest["request_plan"]["credits"] == 2 * manifest["accepted_security_rows"]
+          assert manifest["implementation_sha"] == os.environ["SOURCE_SHA"].lower()
+          assert len(manifest["resume_contract_sha256"]) == 64
+          assert manifest["daily_credit_budget"] <= 800
+          assert manifest["minimum_request_spacing_seconds"] >= 7.5
+          assert manifest["credential_persisted"] is False
+          assert manifest["raw_market_data_internal_use_only"] is True
+          assert manifest["raw_market_data_redistribution_allowed"] is False
+          assert manifest["historical_ticker_interval_verified"] is False
+          assert manifest["direct_signal_target_count"] == 11
+          assert len(manifest["direct_signal_targets"]) == 11
+          assert set(manifest["direct_formula_sha256"]) == set(
+              manifest["direct_signal_targets"]
+          )
+          assert all(
+              len(value) == 64
+              for value in manifest["direct_formula_sha256"].values()
+          )
+          direct_csv = root / "twelve_data_direct_signal_observations.csv"
+          direct_parquet = root / "twelve_data_direct_signal_observations.parquet"
+          assert manifest["factor_signal_target_count"] == 11
+          assert len(manifest["factor_signal_targets"]) == 11
+          assert set(manifest["factor_formula_sha256"]) == set(
+              manifest["factor_signal_targets"]
+          )
+          assert len(manifest["ff3_daily_sha256"]) == 64
+          assert len(manifest["ff3_monthly_sha256"]) == 64
+          factor_csv = root / "twelve_data_factor_signal_observations.csv"
+          factor_parquet = root / "twelve_data_factor_signal_observations.parquet"
+          if (
+              manifest["pending_request_count"] == 0
+              and manifest["terminal_error_request_count"] == 0
+          ):
+              assert manifest["successful_request_count"] == len(plan)
+              assert manifest["current_signal_computed"] is True
+              assert direct_csv.is_file() and direct_parquet.is_file()
+              direct = pd.read_csv(direct_csv)
+              assert len(direct) == manifest["direct_observation_rows"]
+              assert set(direct["signal"]) == set(manifest["direct_signal_targets"])
+              assert direct["strict_score_eligible"].eq(False).all()
+              assert direct["formula_sha256"].str.fullmatch(r"[0-9a-f]{64}").all()
+              assert factor_csv.is_file() and factor_parquet.is_file()
+              factor = pd.read_csv(factor_csv)
+              assert len(factor) == manifest["factor_observation_rows"]
+              assert set(factor["signal"]) == set(manifest["factor_signal_targets"])
+              assert factor["strict_score_eligible"].eq(False).all()
+              assert factor["formula_sha256"].str.fullmatch(r"[0-9a-f]{64}").all()
+          else:
+              assert manifest["current_signal_computed"] is False
+              assert manifest["direct_observation_rows"] == 0
+              assert not direct_csv.exists() and not direct_parquet.exists()
+              assert manifest["factor_observation_rows"] == 0
+              assert not factor_csv.exists() and not factor_parquet.exists()
+          assert manifest["strict_score_eligible"] is False
+          assert manifest["locked_opened"] is False
+          assert manifest["forward_opened"] is False
+          assert manifest["validation_used_for_selection"] is False
+          assert not plan["safe_url"].str.contains("apikey", case=False).any()
+          secret = os.environ["TWELVE_DATA_API_KEY"].encode()
+          assert secret
+          for path in root.rglob("*"):
+              if path.is_file():
+                  assert secret not in path.read_bytes(), path
+          PY
+      - name: Upload restricted internal checkpoint and market rows
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-149-twelve-data-market-restricted
+          path: |
+            outputs/openap_149_twelve_data_market/restricted_internal_raw/
+            outputs/openap_149_twelve_data_market/restricted_internal_factors/
+            outputs/openap_149_twelve_data_market/twelve_data_checkpoint.jsonl
+            outputs/openap_149_twelve_data_market/twelve_data_market_acquisition_manifest.json
+          if-no-files-found: error
+          retention-days: 10
+          compression-level: 0
+      - name: Upload publishable acquisition evidence without raw market rows
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-149-twelve-data-market-evidence
+          path: |
+            outputs/openap_149_twelve_data_market/twelve_data_universe_accepted.csv
+            outputs/openap_149_twelve_data_market/twelve_data_universe_rejected.csv
+            outputs/openap_149_twelve_data_market/twelve_data_request_plan_safe.csv
+            outputs/openap_149_twelve_data_market/twelve_data_direct_signal_observations.csv
+            outputs/openap_149_twelve_data_market/twelve_data_direct_signal_observations.parquet
+            outputs/openap_149_twelve_data_market/twelve_data_factor_signal_observations.csv
+            outputs/openap_149_twelve_data_market/twelve_data_factor_signal_observations.parquet
+            outputs/openap_149_twelve_data_market/twelve_data_market_acquisition_manifest.json
+          if-no-files-found: error
+          retention-days: 90

@@ -148,6 +148,150 @@ def test_authoritative_route_matrix_contains_exactly_149_unique_free_routes() ->
     assert routes["current_free_data_feasibility"].eq("free_route_documented").all()
 
 
+def test_all_31_frozen_market_routes_record_the_prepared_free_key_blocker() -> None:
+    from aurora.research.openap_181.implementation_status import (
+        TWELVE_DATA_MARKET_SIGNALS,
+    )
+    from aurora.research.openap_181.twelve_data_market_signals import (
+        TWELVE_DATA_DIRECT_SIGNAL_TARGETS,
+    )
+    from aurora.research.openap_181.twelve_data_factor_signals import (
+        TWELVE_DATA_FACTOR_SIGNAL_TARGETS,
+    )
+
+    routes = _module().load_target_routes(ROUTE_MATRIX).set_index("signal")
+    selected = routes.loc[sorted(TWELVE_DATA_MARKET_SIGNALS)]
+
+    assert len(selected) == 31
+    assert selected["primary_free_sources"].str.contains(
+        "twelve_data_basic",
+        regex=False,
+    ).all()
+    direct = selected.loc[list(TWELVE_DATA_DIRECT_SIGNAL_TARGETS)]
+    factor = selected.loc[list(TWELVE_DATA_FACTOR_SIGNAL_TARGETS)]
+    prepared = [
+        *TWELVE_DATA_DIRECT_SIGNAL_TARGETS,
+        *TWELVE_DATA_FACTOR_SIGNAL_TARGETS,
+    ]
+    additional = selected.drop(index=prepared)
+    assert len(direct) == 11
+    assert len(factor) == 11
+    assert len(additional) == 9
+    assert direct["current_remaining_blocker"].eq(
+        "twelve_data_basic_free_api_key_missing_4314_credit_resumable_private_"
+        "route_and_11_direct_formula_calculators_prepared_unexecuted_historical_"
+        "ticker_intervals_coverage_and_fidelity_pending"
+    ).all()
+    assert factor.drop(index="IdioVolAHT")["current_remaining_blocker"].eq(
+        "twelve_data_basic_free_api_key_missing_4314_credit_resumable_private_"
+        "route_and_10_free_french_factor_calculators_prepared_unexecuted_"
+        "historical_ticker_intervals_coverage_and_fidelity_pending"
+    ).all()
+    assert factor.loc["IdioVolAHT", "current_remaining_blocker"] == (
+        "twelve_data_basic_free_api_key_missing_4314_credit_resumable_private_"
+        "route_and_1_capm_rmse_calculator_prepared_unexecuted_historical_"
+        "ticker_intervals_coverage_and_fidelity_pending"
+    )
+    assert additional["current_remaining_blocker"].eq(
+        "twelve_data_basic_free_api_key_missing_4314_credit_resumable_private_"
+        "route_prepared_unexecuted_historical_ticker_intervals_formula_coverage_"
+        "and_fidelity_pending"
+    ).all()
+    assert selected["strict_score_eligible"].astype(str).str.lower().eq(
+        "false"
+    ).all()
+
+
+def test_authoritative_oscore_and_orgcap_routes_accept_fred() -> None:
+    routes = _module().load_target_routes(ROUTE_MATRIX).set_index("signal")
+
+    oscore_sources = set(routes.loc["OScore", "primary_free_sources"].split("|"))
+    orgcap_sources = set(routes.loc["OrgCap", "primary_free_sources"].split("|"))
+
+    assert "fred_public_csv" in oscore_sources
+    assert "fred_public_csv" in orgcap_sources
+
+
+def test_custom_xbrl_accounting_routes_do_not_require_market_data() -> None:
+    routes = _module().load_target_routes(ROUTE_MATRIX).set_index("signal")
+
+    for signal in (
+        "ChInvIA",
+        "ConvDebt",
+        "DelDRC",
+        "OrgCap",
+        "OrderBacklog",
+        "OrderBacklogChg",
+    ):
+        sources = set(routes.loc[signal, "primary_free_sources"].split("|"))
+        assert "sec_edgar" in sources
+        assert "sec_financial_statement_notes" in sources
+        assert "twelve_data_basic" not in sources
+
+    convdebt_blocker = routes.loc["ConvDebt", "current_remaining_blocker"]
+    assert "existing_sec_shards_filtered_out_convdebt_candidate_tags" in convdebt_blocker
+    assert "exact_dc_cshrc_semantics" in convdebt_blocker
+
+
+def test_patent_routes_record_complementary_free_sources_and_concrete_gaps() -> None:
+    routes = _module().load_target_routes(ROUTE_MATRIX).set_index("signal")
+
+    for signal in ("CitationsRD", "PatentsRD"):
+        sources = set(routes.loc[signal, "primary_free_sources"].split("|"))
+        assert {"uspto_patentsview", "kpss_patent_crsp_extended", "sec_edgar"} <= sources
+        assert routes.loc[signal, "current_remaining_blocker"] != (
+            "implementation_pit_identity_coverage_and_fidelity_pending"
+        )
+        assert str(routes.loc[signal, "strict_score_eligible"]).lower() == "false"
+
+
+def test_io_short_interest_route_uses_acquired_regulatory_inputs_not_market_data() -> None:
+    routes = _module().load_target_routes(ROUTE_MATRIX).set_index("signal")
+
+    sources = set(routes.loc["IO_ShortInterest", "primary_free_sources"].split("|"))
+    blocker = routes.loc["IO_ShortInterest", "current_remaining_blocker"]
+
+    assert sources == {
+        "sec_13f",
+        "sec_edgar",
+        "finra_equity_short_interest",
+        "openfigi",
+    }
+    assert "twelve_data_basic" not in sources
+    assert "acquired_separately" in blocker
+    assert "selective_13f_recovery_and_join_prepared_unexecuted" in blocker
+    assert "coverage_measurement_pending" in blocker
+    assert str(routes.loc["IO_ShortInterest", "strict_score_eligible"]).lower() == "false"
+
+
+def test_io_short_interest_runner_uses_bounded_selective_institutional_recovery() -> None:
+    runner = (ROOT / "scripts" / "run_openap_149_finra_short_interest.py").read_text(
+        encoding="utf-8"
+    )
+    calculator = (
+        ROOT / "research" / "openap_181" / "short_interest_batch.py"
+    ).read_text(encoding="utf-8")
+    recovery = (ROOT / "scripts" / "recover_openap_93_failed_artifact.py").read_text(
+        encoding="utf-8"
+    )
+    workflow = (
+        ROOT / ".github" / "workflows" / "openap-149-finra-short-interest.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "calculate_finra_io_short_interest_current" in runner
+    assert "--institutional-root" in runner
+    assert '"identity_bridge"' in runner
+    assert '"openfigi_exchange_constraint": "exchCode_US"' in runner
+    assert "_unique_openfigi_share_class_figi" in calculator
+    assert 'left_on=["ticker", "issuer_identity_key"]' in calculator
+    assert '"entity_name"' in calculator
+    assert '"institutional_inputs"' in recovery
+    assert "inspect_zip_members" in recovery
+    assert "--profile institutional_inputs" in workflow
+    assert "--maximum-compressed-bytes 134217728" in workflow
+    assert "full_artifact_downloaded" in workflow
+
+
 def test_acquisition_matrix_counts_only_approved_causal_current_values() -> None:
     module = _module()
     formula_inventory = pd.DataFrame(
@@ -589,13 +733,18 @@ def test_consolidation_workflow_verifies_causal_firmage_evidence() -> None:
         if "name" in step
     }
     verify = steps["Verify consolidated result"]["run"]
-    assert 'summary["data_acquired"] == 56' in verify
-    assert 'summary["current_values_calculated"] == 50' in verify
-    assert 'summary["blocked"] == summary["pending"] == 99' in verify
-    assert 'summary["value_rows"] == 96814' in verify
+    assert 'summary["data_acquired"] == 57' in verify
+    assert 'summary["current_values_calculated"] == 51' in verify
+    assert 'summary["reconstructed_not_strict"] == 19' in verify
+    assert 'summary["blocked"] == summary["pending"] == 98' in verify
+    assert 'summary["value_rows"] == 97914' in verify
     assert 'matrix.set_index("signal").loc["FirmAge"]' in verify
     assert 'firm_age["current_value_count"] == 4434' in verify
     assert 'firm_age["fidelity"] == "unvalidated_proxy"' in verify
     assert 'not bool(firm_age["strict_score_eligible"])' in verify
     assert '"CBOperProf", "DelNetFin", "EarningsConsistency"' in verify
     assert '"declared_current_unusable" in quarantined["remaining_blocker"]' in verify
+    assert 'matrix.set_index("signal").loc["OScore"]' in verify
+    assert 'oscore["current_value_count"] == 1100' in verify
+    assert 'oscore["source_used"] == "fred|sec_edgar"' in verify
+    assert 'oscore_values["source_id"].eq("sec_edgar|fred_public_csv").all()' in verify

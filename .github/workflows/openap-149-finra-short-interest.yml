@@ -7,8 +7,11 @@ on:
     paths:
       - .github/workflows/openap-149-finra-short-interest.yml
       - research/openap_181/short_interest_batch.py
+      - research/openap_181/artifact_recovery.py
       - scripts/run_openap_149_finra_short_interest.py
+      - scripts/recover_openap_93_failed_artifact.py
       - tests/test_openap_181_short_interest_batch.py
+      - tests/test_openap_93_artifact_recovery.py
   workflow_dispatch:
     inputs:
       source_sha:
@@ -24,6 +27,11 @@ on:
         description: Successful run containing the pinned formula inventory
         required: true
         default: "31331835149"
+        type: string
+      institutional_artifact_run_id:
+        description: Failed verified run containing normalized SEC 13F and OpenFIGI inputs
+        required: true
+        default: "31333714423"
         type: string
 
 permissions:
@@ -56,7 +64,15 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
-          python -m pytest tests/test_openap_181_short_interest_batch.py -q --tb=short
+          python -m py_compile \
+            research/openap_181/artifact_recovery.py \
+            research/openap_181/short_interest_batch.py \
+            scripts/recover_openap_93_failed_artifact.py \
+            scripts/run_openap_149_finra_short_interest.py
+          python -m pytest \
+            tests/test_openap_181_short_interest_batch.py \
+            tests/test_openap_93_artifact_recovery.py \
+            -q --tb=short
 
   acquire:
     if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -95,13 +111,26 @@ jobs:
           run-id: ${{ inputs.formula_evidence_run_id }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
-      - name: Calculate current official FINRA ShortInterest proxy
+      - name: Selectively recover normalized SEC 13F and OpenFIGI inputs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/recover_openap_93_failed_artifact.py \
+            --repository trading-optimizer-lab-org/aurora \
+            --source-run-id "${{ inputs.institutional_artifact_run_id }}" \
+            --source-artifact-name "openap-93-max-free-failed-output-${{ inputs.institutional_artifact_run_id }}" \
+            --profile institutional_inputs \
+            --maximum-compressed-bytes 134217728 \
+            --output-dir openap_149_io_institutional_inputs
+      - name: Calculate current official FINRA and reconstructed IO short interest
         run: |
           python scripts/run_openap_149_finra_short_interest.py \
             --sec-root inputs/sec \
+            --institutional-root outputs/openap_149_io_institutional_inputs \
             --formula-root inputs/formulas \
             --formation-at 2026-08-09T23:59:59Z \
             --source-run-id "${{ inputs.sec_artifact_run_id }}" \
+            --institutional-source-run-id "${{ inputs.institutional_artifact_run_id }}" \
             --output-dir openap_149_finra_short_interest
       - name: Verify bounded causal derived output
         run: |
@@ -115,16 +144,32 @@ jobs:
               root / "openap_149_finra_short_interest_manifest.json",
               encoding="utf-8",
           ))
-          assert set(values["signal"]) == {"ShortInterest"}
+          assert set(values["signal"]) == {"ShortInterest", "IO_ShortInterest"}
           assert values["value"].notna().all() and values["value"].ge(0).all()
-          assert values["source_id"].eq(
+          assert values.loc[values["signal"].eq("ShortInterest"), "source_id"].eq(
               "finra_equity_short_interest|sec_edgar"
           ).all()
+          assert values.loc[values["signal"].eq("IO_ShortInterest"), "source_id"].eq(
+              "finra_equity_short_interest|sec_edgar|sec_13f|openfigi_public"
+          ).all()
+          assert values["signal"].value_counts()["IO_ShortInterest"] > 0
           assert pd.to_datetime(values["available_at"], utc=True).le(
               pd.to_datetime(values["formation_at"], utc=True)
           ).all()
           assert values["formula_sha256"].str.fullmatch(r"[0-9a-f]{64}").all()
           assert manifest["raw_files_in_artifact"] is False
+          recovery = manifest["institutional_recovery"]
+          assert recovery["recovery_profile"] == "institutional_inputs"
+          assert recovery["full_artifact_downloaded"] is False
+          assert recovery["declared_compressed_bytes"] <= 134217728
+          assert recovery["bytes_fetched"] < recovery["source_artifact_size_bytes"]
+          identity = manifest["identity_bridge"]
+          assert identity["ticker_only_join_allowed"] is False
+          assert identity["openfigi_security_key"] == (
+              "unique_common_stock_shareClassFIGI"
+          )
+          assert identity["openfigi_exchange_constraint"] == "exchCode_US"
+          assert identity["ambiguous_identity_behavior"] == "omit_value_fail_closed"
           assert manifest["strict_score_eligible"] is False
           assert not any("shrt2026" in path.name.lower() for path in root.rglob("*"))
           PY

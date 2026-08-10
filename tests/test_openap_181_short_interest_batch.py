@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+import json
 
 import pandas as pd
 import pytest
@@ -367,6 +368,366 @@ def test_finra_short_interest_current_is_causal_and_fails_closed_on_identity():
     assert values["formula_id"].eq(
         "openap_shortinterest_finra_sec_current_proxy"
     ).all()
+
+
+def _io_current_short_interest() -> pd.DataFrame:
+    rows = []
+    for cik, ticker, value in (
+        (1, "AAA", 0.01),
+        (2, "BBB", 0.02),
+        (3, "CCC", 0.03),
+        (4, "DDD", 0.10),
+    ):
+        rows.append(
+            {
+                "security_id": f"US-SEC-{cik:010d}-{ticker}",
+                "ticker": ticker,
+                "cik": f"{cik:010d}",
+                "signal": "ShortInterest",
+                "formation_at": "2026-08-09T23:59:59+00:00",
+                "period_end": "2026-07-15T00:00:00+00:00",
+                "filed_at": "2026-07-01T12:00:00+00:00",
+                "available_at": "2026-07-24T00:00:00+00:00",
+                "retrieved_at": "2026-08-09T20:00:00+00:00",
+                "value": value,
+                "fidelity_class": "unvalidated_proxy",
+                "current_usable": True,
+                "source_id": "finra_equity_short_interest|sec_edgar",
+                "source_url": (
+                    "https://cdn.finra.org/equity/otcmarket/"
+                    "biweekly/shrt20260715.csv|https://data.sec.gov/api/xbrl/"
+                    f"companyfacts/CIK{cik:010d}.json"
+                ),
+                "formula_id": "openap_shortinterest_finra_sec_current_proxy",
+                "formula_sha256": "25baaf9fd432a4b4805e57cddfb7cb7882eddf8ea27d3cde5b502c304d932b94",
+                "observation_count": 2,
+                "reason_if_missing": "",
+                "caveat": "reconstructed current short interest",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _io_status() -> pd.DataFrame:
+    rows = []
+    for cik, ticker in ((1, "AAA"), (2, "BBB"), (3, "CCC"), (4, "DDD")):
+        for surface in ("companyfacts", "submissions"):
+            rows.append(
+                {
+                    "cik": cik,
+                    "symbol": ticker,
+                    "surface": surface,
+                    "status": "ok",
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _io_companyfacts() -> pd.DataFrame:
+    rows = []
+    for cik, ticker in ((1, "AAA"), (2, "BBB"), (3, "CCC"), (4, "DDD")):
+        rows.append(
+            {
+                "cik": cik,
+                "entity_name": f"{ticker} INC",
+                "taxonomy": "dei",
+                "tag": "EntityCommonStockSharesOutstanding",
+                "unit": "shares",
+                "value": 1_000.0,
+                "period_start": "",
+                "period_end": "2026-03-31",
+                "form": "10-Q",
+                "filed": "2026-04-20",
+                "accession_number": f"{cik}-shares",
+                "available_at": "2026-04-20T12:00:00Z",
+                "symbol": ticker,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def test_io_short_interest_uses_full_p99_universe_and_latest_complete_13f_period():
+    module = _module()
+    filings = pd.DataFrame(
+        [
+            {
+                "accession_number": "q1-manager",
+                "manager_cik": "9001",
+                "filing_date": "2026-05-15",
+                "report_period": "2026-03-31",
+            },
+            {
+                "accession_number": "q2-early-manager",
+                "manager_cik": "9001",
+                "filing_date": "2026-07-10",
+                "report_period": "2026-06-30",
+            },
+        ]
+    )
+    holdings = pd.DataFrame(
+        [
+            {
+                "accession_number": "q1-manager",
+                "manager_cik": "9001",
+                "filing_date": "2026-05-15",
+                "report_period": "2026-03-31",
+                "cusip": "123456789",
+                "shares_held": 250.0,
+                "issuer_name": "DDD INC",
+                "title_of_class": "COM",
+            },
+            {
+                "accession_number": "q2-early-manager",
+                "manager_cik": "9001",
+                "filing_date": "2026-07-10",
+                "report_period": "2026-06-30",
+                "cusip": "123456789",
+                "shares_held": 900.0,
+                "issuer_name": "DDD INC",
+                "title_of_class": "COM",
+            },
+        ]
+    )
+    mapping = pd.DataFrame(
+        [
+            {
+                "cusip": "123456789",
+                "ticker": "DDD",
+                "mapping_status": "mapped_unique",
+                "candidates_json": json.dumps(
+                    [
+                        {
+                            "ticker": "DDD",
+                            "marketSector": "Equity",
+                            "securityType2": "Common Stock",
+                            "exchCode": "US",
+                            "shareClassFIGI": "BBG001DDD001",
+                        }
+                    ]
+                ),
+            }
+        ]
+    )
+
+    values = module.calculate_finra_io_short_interest_current(
+        _io_current_short_interest(),
+        _io_companyfacts(),
+        _io_status(),
+        filings,
+        holdings,
+        mapping,
+        formation_at="2026-08-09T23:59:59Z",
+        retrieved_at="2026-08-09T20:00:00Z",
+    )
+
+    assert values["ticker"].tolist() == ["DDD"]
+    assert values["value"].tolist() == pytest.approx([25.0])
+    assert values["signal"].eq("IO_ShortInterest").all()
+    assert values["fidelity_class"].eq("reconstructed").all()
+    assert values["current_usable"].all()
+    assert values["source_id"].eq(
+        "finra_equity_short_interest|sec_edgar|sec_13f|openfigi_public"
+    ).all()
+    assert values["formula_id"].eq(
+        "openap_io_shortinterest_finra_sec13f_current_reconstruction"
+    ).all()
+    assert values["formula_sha256"].eq(
+        "716310d258802f2a9bc5cf3f02ae012b3e59908a932c75dd5a0701833e222b26"
+    ).all()
+    assert pd.to_datetime(values["available_at"], utc=True).le(
+        pd.Timestamp("2026-08-09T23:59:59Z")
+    ).all()
+
+
+def test_io_short_interest_does_not_recompute_p99_on_only_mapped_holdings():
+    module = _module()
+    filings = pd.DataFrame(
+        [
+            {
+                "accession_number": "q1-manager",
+                "manager_cik": "9001",
+                "filing_date": "2026-05-15",
+                "report_period": "2026-03-31",
+            }
+        ]
+    )
+    holdings = pd.DataFrame(
+        [
+            {
+                "accession_number": "q1-manager",
+                "manager_cik": "9001",
+                "filing_date": "2026-05-15",
+                "report_period": "2026-03-31",
+                "cusip": "987654321",
+                "shares_held": 300.0,
+                "issuer_name": "CCC INC",
+                "title_of_class": "COM",
+            }
+        ]
+    )
+    mapping = pd.DataFrame(
+        [
+            {
+                "cusip": "987654321",
+                "ticker": "CCC",
+                "mapping_status": "mapped_unique",
+                "candidates_json": json.dumps(
+                    [
+                        {
+                            "ticker": "CCC",
+                            "marketSector": "Equity",
+                            "securityType2": "Common Stock",
+                            "exchCode": "US",
+                            "shareClassFIGI": "BBG001CCC001",
+                        }
+                    ]
+                ),
+            }
+        ]
+    )
+
+    values = module.calculate_finra_io_short_interest_current(
+        _io_current_short_interest(),
+        _io_companyfacts(),
+        _io_status(),
+        filings,
+        holdings,
+        mapping,
+        formation_at="2026-08-09T23:59:59Z",
+        retrieved_at="2026-08-09T20:00:00Z",
+    )
+
+    # DDD determines the full-universe 99th percentile.  It has no mapped 13F
+    # ownership, so fail closed instead of selecting CCC or inventing zero.
+    assert values.empty
+    assert list(values.columns) == list(module._CURRENT_OUTPUT_COLUMNS)
+
+
+def test_io_short_interest_rejects_ambiguous_mapping_and_future_share_denominator():
+    module = _module()
+    filings = pd.DataFrame(
+        [
+            {
+                "accession_number": "q1-manager",
+                "manager_cik": "9001",
+                "filing_date": "2026-05-15",
+                "report_period": "2026-03-31",
+            }
+        ]
+    )
+    holdings = pd.DataFrame(
+        [
+            {
+                "accession_number": "q1-manager",
+                "manager_cik": "9001",
+                "filing_date": "2026-05-15",
+                "report_period": "2026-03-31",
+                "cusip": "123456789",
+                "shares_held": 250.0,
+                "issuer_name": "DDD INC",
+                "title_of_class": "COM",
+            }
+        ]
+    )
+    mapping = pd.DataFrame(
+        [
+            {
+                "cusip": "123456789",
+                "ticker": "DDD",
+                "mapping_status": "ambiguous",
+                "candidates_json": "[]",
+            }
+        ]
+    )
+    facts = _io_companyfacts()
+    facts.loc[facts["cik"].eq(4), "available_at"] = "2026-08-10T12:00:00Z"
+
+    values = module.calculate_finra_io_short_interest_current(
+        _io_current_short_interest(),
+        facts,
+        _io_status(),
+        filings,
+        holdings,
+        mapping,
+        formation_at="2026-08-09T23:59:59Z",
+        retrieved_at="2026-08-09T20:00:00Z",
+    )
+
+    assert values.empty
+
+
+@pytest.mark.parametrize(
+    ("issuer_name", "figis", "exchange_code"),
+    [
+        ("UNRELATED ISSUER INC", ["BBG001DDD001"], "US"),
+        ("DDD INC", ["BBG001DDD001", "BBG001DDD002"], "US"),
+        ("DDD INC", ["BBG001DDD001"], "CA"),
+    ],
+)
+def test_io_short_interest_requires_matching_issuer_and_unique_share_class_figi(
+    issuer_name: str,
+    figis: list[str],
+    exchange_code: str,
+):
+    module = _module()
+    filings = pd.DataFrame(
+        [
+            {
+                "accession_number": "q1-manager",
+                "manager_cik": "9001",
+                "filing_date": "2026-05-15",
+                "report_period": "2026-03-31",
+            }
+        ]
+    )
+    holdings = pd.DataFrame(
+        [
+            {
+                "accession_number": "q1-manager",
+                "manager_cik": "9001",
+                "filing_date": "2026-05-15",
+                "report_period": "2026-03-31",
+                "cusip": "123456789",
+                "shares_held": 250.0,
+                "issuer_name": issuer_name,
+                "title_of_class": "COM",
+            }
+        ]
+    )
+    mapping = pd.DataFrame(
+        [
+            {
+                "cusip": "123456789",
+                "ticker": "DDD",
+                "mapping_status": "mapped_unique",
+                "candidates_json": json.dumps(
+                    [
+                        {
+                            "ticker": "DDD",
+                            "marketSector": "Equity",
+                            "securityType2": "Common Stock",
+                            "exchCode": exchange_code,
+                            "shareClassFIGI": figi,
+                        }
+                        for figi in figis
+                    ]
+                ),
+            }
+        ]
+    )
+
+    values = module.calculate_finra_io_short_interest_current(
+        _io_current_short_interest(),
+        _io_companyfacts(),
+        _io_status(),
+        filings,
+        holdings,
+        mapping,
+        formation_at="2026-08-09T23:59:59Z",
+        retrieved_at="2026-08-09T20:00:00Z",
+    )
+
+    assert values.empty
 
 
 def test_short_interest_evidence_records_three_concrete_blockers_without_promotion():

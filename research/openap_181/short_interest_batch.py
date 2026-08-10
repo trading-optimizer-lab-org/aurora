@@ -79,6 +79,36 @@ _CURRENT_OUTPUT_COLUMNS = (
     "reason_if_missing",
     "caveat",
 )
+_IO_SHORT_REQUIRED_COLUMNS = {
+    "security_id",
+    "ticker",
+    "cik",
+    "signal",
+    "period_end",
+    "available_at",
+    "value",
+    "current_usable",
+    "source_url",
+}
+_IO_13F_FILINGS_REQUIRED_COLUMNS = {
+    "accession_number",
+    "manager_cik",
+    "filing_date",
+    "report_period",
+}
+_IO_13F_HOLDINGS_REQUIRED_COLUMNS = {
+    *_IO_13F_FILINGS_REQUIRED_COLUMNS,
+    "cusip",
+    "issuer_name",
+    "title_of_class",
+    "shares_held",
+}
+_IO_OPENFIGI_REQUIRED_COLUMNS = {
+    "cusip",
+    "ticker",
+    "mapping_status",
+    "candidates_json",
+}
 _HEADER_ALIASES = {
     "date": "settlement_date",
     "settlementdate": "settlement_date",
@@ -114,6 +144,72 @@ class _FinraLinkParser(HTMLParser):
         href = dict(attrs).get("href")
         if href:
             self.hrefs.append(href.strip())
+
+
+_LEGAL_NAME_EQUIVALENTS = {
+    "INCORPORATED": "INC",
+    "CORPORATION": "CORP",
+    "COMPANY": "CO",
+    "LIMITED": "LTD",
+}
+_LEGAL_NAME_SUFFIXES = {
+    "CO",
+    "CORP",
+    "INC",
+    "LLC",
+    "LLP",
+    "LP",
+    "LTD",
+    "PLC",
+}
+_LEGAL_NAME_JURISDICTIONS = {"DE", "DEL", "MD", "NV", "NY", "PA", "VA"}
+
+
+def _issuer_identity_key(value: Any) -> str:
+    """Return a conservative comparison key for SEC and 13F issuer names."""
+
+    tokens = re.findall(r"[A-Z0-9]+", str(value or "").upper().replace("&", " AND "))
+    tokens = [_LEGAL_NAME_EQUIVALENTS.get(token, token) for token in tokens]
+    while tokens and tokens[-1] in _LEGAL_NAME_JURISDICTIONS:
+        tokens.pop()
+    while tokens and tokens[-1] in _LEGAL_NAME_SUFFIXES:
+        tokens.pop()
+    return "".join(tokens)
+
+
+def _unique_openfigi_share_class_figi(candidates_json: Any, ticker: str) -> str:
+    """Require one US common-stock share-class FIGI for the mapped ticker."""
+
+    try:
+        decoded = json.loads(str(candidates_json))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return ""
+    if not isinstance(decoded, list):
+        return ""
+    expected_ticker = str(ticker or "").strip().upper()
+    figis: set[str] = set()
+    for candidate in decoded:
+        if not isinstance(candidate, Mapping):
+            continue
+        candidate_ticker = str(candidate.get("ticker") or "").strip().upper()
+        market_sector = str(candidate.get("marketSector") or "").strip().lower()
+        exchange_code = str(candidate.get("exchCode") or "").strip().upper()
+        security_type = " ".join(
+            [
+                str(candidate.get("securityType") or ""),
+                str(candidate.get("securityType2") or ""),
+            ]
+        ).lower()
+        share_class_figi = str(candidate.get("shareClassFIGI") or "").strip().upper()
+        if (
+            candidate_ticker == expected_ticker
+            and market_sector == "equity"
+            and exchange_code == "US"
+            and "common stock" in security_type
+            and re.fullmatch(r"BBG[A-Z0-9]{9}", share_class_figi)
+        ):
+            figis.add(share_class_figi)
+    return next(iter(figis)) if len(figis) == 1 else ""
 
 
 class _VisibleTextParser(HTMLParser):
@@ -580,6 +676,459 @@ def calculate_finra_short_interest_current(
     ).reset_index(drop=True)
 
 
+def calculate_finra_io_short_interest_current(
+    short_interest_current: pd.DataFrame,
+    companyfacts: pd.DataFrame,
+    status: pd.DataFrame,
+    filings: pd.DataFrame,
+    holdings: pd.DataFrame,
+    cusip_map: pd.DataFrame,
+    *,
+    formation_at: str | pd.Timestamp,
+    retrieved_at: str | pd.Timestamp,
+) -> pd.DataFrame:
+    """Reconstruct current IO_ShortInterest from FINRA, SEC 13F and OpenFIGI.
+
+    The 99th-percentile gate is calculated before any 13F mapping filter.  Only
+    report periods whose statutory 45-day filing window has elapsed are used.
+    Missing or ambiguous ownership mappings remain missing instead of becoming
+    zero, because the public reconstruction cannot prove a complete TR 13F
+    panel for those securities.
+    """
+
+    missing_short = _IO_SHORT_REQUIRED_COLUMNS.difference(
+        short_interest_current.columns
+    )
+    missing_facts = {
+        "cik",
+        "entity_name",
+        "taxonomy",
+        "tag",
+        "unit",
+        "value",
+        "period_end",
+        "form",
+        "filed",
+        "accession_number",
+        "available_at",
+    }.difference(companyfacts.columns)
+    missing_filings = _IO_13F_FILINGS_REQUIRED_COLUMNS.difference(filings.columns)
+    missing_holdings = _IO_13F_HOLDINGS_REQUIRED_COLUMNS.difference(holdings.columns)
+    missing_mapping = _IO_OPENFIGI_REQUIRED_COLUMNS.difference(cusip_map.columns)
+    missing_inputs = {
+        "ShortInterest": missing_short,
+        "SEC CompanyFacts": missing_facts,
+        "SEC 13F filings": missing_filings,
+        "SEC 13F holdings": missing_holdings,
+        "OpenFIGI mapping": missing_mapping,
+    }
+    for label, missing in missing_inputs.items():
+        if missing:
+            raise ValueError(f"{label} is missing columns: {sorted(missing)}")
+
+    formation = _utc_timestamp(formation_at)
+    retrieved = _utc_timestamp(retrieved_at)
+    cutoff = min(formation, retrieved)
+    identity = build_companyfacts_identity(status).copy()
+    identity = identity.loc[~identity["symbol"].duplicated(keep=False)].copy()
+    identity = identity.rename(
+        columns={"symbol": "identity_ticker", "cik": "identity_cik"}
+    )
+    issuer_identity = companyfacts[["cik", "entity_name"]].copy()
+    issuer_identity["identity_cik"] = pd.to_numeric(
+        issuer_identity["cik"], errors="coerce"
+    )
+    issuer_identity["issuer_identity_key"] = issuer_identity["entity_name"].map(
+        _issuer_identity_key
+    )
+    issuer_identity = issuer_identity.loc[
+        issuer_identity["identity_cik"].notna()
+        & issuer_identity["issuer_identity_key"].ne("")
+    ].copy()
+    issuer_name_counts = issuer_identity.groupby("identity_cik")[
+        "issuer_identity_key"
+    ].nunique()
+    unambiguous_issuer_ciks = set(
+        issuer_name_counts.loc[issuer_name_counts.eq(1)].index
+    )
+    issuer_identity = issuer_identity.loc[
+        issuer_identity["identity_cik"].isin(unambiguous_issuer_ciks)
+    ][["identity_cik", "issuer_identity_key"]].drop_duplicates("identity_cik")
+    identity = identity.merge(
+        issuer_identity,
+        on="identity_cik",
+        how="inner",
+        validate="one_to_one",
+    )
+
+    short = short_interest_current.copy()
+    short["ticker"] = short["ticker"].fillna("").astype(str).str.strip().str.upper()
+    short["cik_number"] = pd.to_numeric(short["cik"], errors="coerce")
+    short["short_ratio"] = pd.to_numeric(short["value"], errors="coerce")
+    short["short_period_end"] = pd.to_datetime(
+        short["period_end"], errors="coerce", utc=True
+    ).dt.normalize()
+    short["short_available_at"] = pd.to_datetime(
+        short["available_at"], errors="coerce", utc=True
+    )
+    if short["security_id"].duplicated(keep=False).any():
+        raise ValueError("ShortInterest input contains duplicate security identities")
+    short = short.merge(identity, on="security_id", how="inner", validate="one_to_one")
+    short = short.loc[
+        short["signal"].eq("ShortInterest")
+        & short["current_usable"].eq(True)  # noqa: E712 - strict boolean contract
+        & short["ticker"].eq(short["identity_ticker"])
+        & short["cik_number"].eq(short["identity_cik"])
+        & short["ticker"].ne("")
+        & short["short_ratio"].notna()
+        & np.isfinite(short["short_ratio"])
+        & short["short_ratio"].ge(0)
+        & short["short_period_end"].notna()
+        & short["short_period_end"].le(formation)
+        & short["short_available_at"].notna()
+        & short["short_available_at"].le(cutoff)
+    ].copy()
+    if short.empty:
+        return pd.DataFrame(columns=_CURRENT_OUTPUT_COLUMNS)
+    short["short_month"] = short["short_period_end"].dt.tz_localize(None).dt.to_period(
+        "M"
+    )
+    short["tail_threshold"] = short.groupby("short_month")["short_ratio"].transform(
+        lambda values: values.quantile(0.99)
+    )
+    tail = short.loc[
+        short["tail_threshold"].notna()
+        & short["short_ratio"].ge(short["tail_threshold"])
+    ].copy()
+    if tail.empty:
+        return pd.DataFrame(columns=_CURRENT_OUTPUT_COLUMNS)
+
+    filing_frame = filings.copy()
+    filing_frame["accession_number"] = (
+        filing_frame["accession_number"].fillna("").astype(str).str.strip()
+    )
+    filing_frame["manager_cik"] = (
+        filing_frame["manager_cik"].fillna("").astype(str).str.strip()
+    )
+    filing_frame["filing_date"] = pd.to_datetime(
+        filing_frame["filing_date"], errors="coerce", utc=True
+    ).dt.normalize()
+    filing_frame["report_period"] = pd.to_datetime(
+        filing_frame["report_period"], errors="coerce", utc=True
+    ).dt.normalize()
+    filing_frame["complete_at"] = filing_frame["report_period"] + pd.Timedelta(
+        days=45
+    )
+    filing_frame = filing_frame.loc[
+        filing_frame["accession_number"].ne("")
+        & filing_frame["manager_cik"].ne("")
+        & filing_frame["filing_date"].notna()
+        & filing_frame["filing_date"].le(cutoff)
+        & filing_frame["report_period"].notna()
+        & filing_frame["report_period"].le(formation)
+    ].copy()
+    filing_conflicts = filing_frame.groupby("accession_number").agg(
+        manager_count=("manager_cik", "nunique"),
+        report_count=("report_period", "nunique"),
+        filing_count=("filing_date", "nunique"),
+    )
+    bad_accessions = set(
+        filing_conflicts.loc[
+            filing_conflicts[["manager_count", "report_count", "filing_count"]]
+            .gt(1)
+            .any(axis=1)
+        ].index
+    )
+    filing_frame = filing_frame.loc[
+        ~filing_frame["accession_number"].isin(bad_accessions)
+    ].drop_duplicates("accession_number", keep="last")
+
+    holding_frame = holdings.copy()
+    holding_frame["accession_number"] = (
+        holding_frame["accession_number"].fillna("").astype(str).str.strip()
+    )
+    holding_frame["manager_cik"] = (
+        holding_frame["manager_cik"].fillna("").astype(str).str.strip()
+    )
+    holding_frame["filing_date"] = pd.to_datetime(
+        holding_frame["filing_date"], errors="coerce", utc=True
+    ).dt.normalize()
+    holding_frame["report_period"] = pd.to_datetime(
+        holding_frame["report_period"], errors="coerce", utc=True
+    ).dt.normalize()
+    holding_frame["cusip"] = (
+        holding_frame["cusip"]
+        .fillna("")
+        .astype(str)
+        .str.upper()
+        .str.replace(r"[^A-Z0-9]", "", regex=True)
+    )
+    holding_frame["shares_held"] = pd.to_numeric(
+        holding_frame["shares_held"], errors="coerce"
+    )
+    holding_frame["issuer_identity_key"] = holding_frame["issuer_name"].map(
+        _issuer_identity_key
+    )
+    holding_frame["title_of_class"] = (
+        holding_frame["title_of_class"].fillna("").astype(str).str.strip()
+    )
+    holding_frame = holding_frame.loc[
+        holding_frame["accession_number"].ne("")
+        & holding_frame["manager_cik"].ne("")
+        & holding_frame["cusip"].str.fullmatch(r"[A-Z0-9]{9}")
+        & holding_frame["shares_held"].notna()
+        & np.isfinite(holding_frame["shares_held"])
+        & holding_frame["shares_held"].gt(0)
+        & holding_frame["issuer_identity_key"].ne("")
+        & holding_frame["title_of_class"].ne("")
+    ].copy()
+    holding_frame["issuer_name_count"] = holding_frame.groupby(
+        ["report_period", "cusip"]
+    )["issuer_identity_key"].transform("nunique")
+    holding_frame = holding_frame.loc[holding_frame["issuer_name_count"].eq(1)].copy()
+
+    mapping = cusip_map.copy()
+    mapping["cusip"] = (
+        mapping["cusip"]
+        .fillna("")
+        .astype(str)
+        .str.upper()
+        .str.replace(r"[^A-Z0-9]", "", regex=True)
+    )
+    mapping["mapped_ticker"] = (
+        mapping["ticker"].fillna("").astype(str).str.strip().str.upper()
+    )
+    mapping["mapped_share_class_figi"] = mapping.apply(
+        lambda row: _unique_openfigi_share_class_figi(
+            row["candidates_json"], row["mapped_ticker"]
+        ),
+        axis=1,
+    )
+    mapping_conflicts = mapping.groupby("cusip").agg(
+        ticker_count=("mapped_ticker", "nunique"),
+        status_count=("mapping_status", "nunique"),
+        figi_count=("mapped_share_class_figi", "nunique"),
+    )
+    bad_cusips = set(
+        mapping_conflicts.loc[
+            mapping_conflicts["ticker_count"].gt(1)
+            | mapping_conflicts["status_count"].gt(1)
+            | mapping_conflicts["figi_count"].gt(1)
+        ].index
+    )
+    mapping = mapping.loc[
+        ~mapping["cusip"].isin(bad_cusips)
+        & mapping["mapping_status"].eq("mapped_unique")
+        & mapping["mapped_ticker"].ne("")
+        & mapping["mapped_share_class_figi"].ne("")
+    ][
+        ["cusip", "mapped_ticker", "mapped_share_class_figi"]
+    ].drop_duplicates("cusip", keep="last")
+
+    facts = companyfacts.copy()
+    facts["cik_number"] = pd.to_numeric(facts["cik"], errors="coerce")
+    facts["shares_outstanding"] = pd.to_numeric(facts["value"], errors="coerce")
+    facts["shares_period_end"] = pd.to_datetime(
+        facts["period_end"], errors="coerce", utc=True
+    ).dt.normalize()
+    facts["shares_filed_at"] = pd.to_datetime(
+        facts["filed"], errors="coerce", utc=True
+    )
+    facts["shares_available_at"] = pd.to_datetime(
+        facts["available_at"], errors="coerce", utc=True
+    )
+    facts = facts.loc[
+        facts["cik_number"].notna()
+        & facts["taxonomy"].fillna("").astype(str).str.lower().isin({"dei", "us-gaap"})
+        & facts["tag"].isin(
+            {"EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"}
+        )
+        & facts["unit"].fillna("").astype(str).str.lower().eq("shares")
+        & facts["form"].isin({"10-K", "10-K/A", "10-Q", "10-Q/A"})
+        & facts["shares_outstanding"].notna()
+        & np.isfinite(facts["shares_outstanding"])
+        & facts["shares_outstanding"].gt(0)
+        & facts["shares_period_end"].notna()
+        & facts["shares_filed_at"].notna()
+        & facts["shares_available_at"].notna()
+    ].copy()
+    facts["tag_priority"] = facts["tag"].eq(
+        "EntityCommonStockSharesOutstanding"
+    ).astype(int)
+
+    rows: list[dict[str, Any]] = []
+    for short_month, month_short in short.groupby("short_month", sort=True):
+        month_tail = tail.loc[tail["short_month"].eq(short_month)].copy()
+        if month_tail.empty:
+            continue
+        month_as_of = min(cutoff, month_short["short_available_at"].min())
+        latest_short_period = month_short["short_period_end"].max()
+        eligible_filings = filing_frame.loc[
+            filing_frame["filing_date"].le(month_as_of)
+            & filing_frame["complete_at"].le(month_as_of)
+            & filing_frame["report_period"].le(latest_short_period)
+        ].copy()
+        if eligible_filings.empty:
+            continue
+        report_period = eligible_filings["report_period"].max()
+        selected_filings = eligible_filings.loc[
+            eligible_filings["report_period"].eq(report_period)
+        ].copy()
+        if selected_filings.empty:
+            continue
+        institutional_available = max(
+            selected_filings["complete_at"].max(),
+            selected_filings["filing_date"].max(),
+        )
+        selected_holdings = holding_frame.merge(
+            selected_filings[
+                ["accession_number", "manager_cik", "filing_date", "report_period"]
+            ],
+            on=["accession_number", "manager_cik", "filing_date", "report_period"],
+            how="inner",
+            validate="many_to_one",
+        )
+        selected_holdings = selected_holdings.merge(
+            mapping, on="cusip", how="inner", validate="many_to_one"
+        )
+        if selected_holdings.empty:
+            continue
+        institutional = selected_holdings.groupby(
+            ["mapped_ticker", "mapped_share_class_figi", "issuer_identity_key"],
+            as_index=False,
+        ).agg(
+            institutional_shares=("shares_held", "sum"),
+            manager_count=("manager_cik", "nunique"),
+            mapped_cusip_count=("cusip", "nunique"),
+        )
+        institutional_conflicts = institutional.groupby("mapped_ticker").agg(
+            figi_count=("mapped_share_class_figi", "nunique"),
+            issuer_count=("issuer_identity_key", "nunique"),
+        )
+        conflicted_tickers = set(
+            institutional_conflicts.loc[
+                institutional_conflicts[["figi_count", "issuer_count"]]
+                .gt(1)
+                .any(axis=1)
+            ].index
+        )
+        institutional = institutional.loc[
+            ~institutional["mapped_ticker"].isin(conflicted_tickers)
+        ].copy()
+
+        denominators = facts.loc[
+            facts["shares_period_end"].le(report_period)
+            & facts["shares_available_at"].le(month_as_of)
+            & facts["shares_filed_at"].le(month_as_of)
+        ].copy()
+        denominators = month_tail[
+            ["security_id", "ticker", "identity_cik"]
+        ].merge(
+            denominators,
+            left_on="identity_cik",
+            right_on="cik_number",
+            how="inner",
+            validate="one_to_many",
+        )
+        denominators = denominators.sort_values(
+            [
+                "security_id",
+                "shares_period_end",
+                "shares_available_at",
+                "tag_priority",
+                "accession_number",
+            ]
+        ).drop_duplicates("security_id", keep="last")
+        joined = month_tail.merge(
+            institutional,
+            left_on=["ticker", "issuer_identity_key"],
+            right_on=["mapped_ticker", "issuer_identity_key"],
+            how="inner",
+            validate="one_to_one",
+        ).merge(
+            denominators[
+                [
+                    "security_id",
+                    "shares_outstanding",
+                    "shares_filed_at",
+                    "shares_available_at",
+                ]
+            ],
+            on="security_id",
+            how="inner",
+            validate="one_to_one",
+        )
+        joined["institutional_percent"] = (
+            joined["institutional_shares"] / joined["shares_outstanding"] * 100.0
+        )
+        joined["signal_available_at"] = joined[
+            ["short_available_at", "shares_available_at"]
+        ].max(axis=1)
+        joined["signal_available_at"] = joined["signal_available_at"].where(
+            joined["signal_available_at"].ge(institutional_available),
+            institutional_available,
+        )
+        joined = joined.loc[
+            joined["institutional_percent"].notna()
+            & np.isfinite(joined["institutional_percent"])
+            & joined["institutional_percent"].ge(0)
+            & joined["signal_available_at"].le(cutoff)
+        ].copy()
+        for row in joined.itertuples(index=False):
+            filed_at = max(
+                pd.Timestamp(row.shares_filed_at),
+                pd.Timestamp(institutional_available),
+            )
+            rows.append(
+                {
+                    "security_id": str(row.security_id),
+                    "ticker": str(row.ticker),
+                    "cik": f"{int(row.identity_cik):010d}",
+                    "signal": "IO_ShortInterest",
+                    "formation_at": formation.isoformat(),
+                    "period_end": pd.Timestamp(row.short_period_end).isoformat(),
+                    "filed_at": filed_at.isoformat(),
+                    "available_at": pd.Timestamp(row.signal_available_at).isoformat(),
+                    "retrieved_at": retrieved.isoformat(),
+                    "value": float(row.institutional_percent),
+                    "fidelity_class": "reconstructed",
+                    "current_usable": True,
+                    "source_id": (
+                        "finra_equity_short_interest|sec_edgar|sec_13f|"
+                        "openfigi_public"
+                    ),
+                    "source_url": (
+                        f"{row.source_url}|https://www.sec.gov/data-research/"
+                        "sec-markets-data/form-13f-data-sets|"
+                        "https://www.openfigi.com/api/documentation"
+                    ),
+                    "formula_id": (
+                        "openap_io_shortinterest_finra_sec13f_current_reconstruction"
+                    ),
+                    "formula_sha256": OPENAP_FORMULA_SOURCES["IO_ShortInterest"][
+                        "sha256"
+                    ],
+                    "observation_count": int(row.manager_count) + 2,
+                    "reason_if_missing": "",
+                    "caveat": (
+                        "OpenAP formula preserved: full current ShortInterest universe "
+                        "sets the monthly 99th percentile, then SEC 13F institutional "
+                        "shares are divided by causal SEC shares. SEC 13F/OpenFIGI and "
+                        "current CIK-ticker identity are corroborated by a unique "
+                        "share-class FIGI and normalized SEC/13F issuer-name match, but "
+                        "still do not equal the "
+                        "cleaned Thomson Reuters/CRSP historical panel; unmapped "
+                        "ownership remains missing rather than being imputed as zero"
+                    ),
+                }
+            )
+    if not rows:
+        return pd.DataFrame(columns=_CURRENT_OUTPUT_COLUMNS)
+    return pd.DataFrame(rows, columns=_CURRENT_OUTPUT_COLUMNS).sort_values(
+        ["period_end", "security_id"]
+    ).reset_index(drop=True)
+
+
 def _headers() -> dict[str, str]:
     return {
         "User-Agent": "Aurora-OpenAP-181-short-interest-probe/1.0",
@@ -957,6 +1506,7 @@ __all__ = [
     "OPENAP_FORMULA_SOURCES",
     "acquire_finra_short_interest_current",
     "build_short_interest_batch_evidence",
+    "calculate_finra_io_short_interest_current",
     "calculate_finra_short_interest_current",
     "extract_finra_file_links",
     "extract_visible_text",

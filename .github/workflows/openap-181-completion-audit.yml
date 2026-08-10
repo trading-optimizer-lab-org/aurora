@@ -1063,7 +1063,7 @@ jobs:
               os.environ.get("RELATIONSHIP_EVIDENCE", "")
           )
           assert documentary.sum() == 54
-          assert len(TWELVE_DATA_MARKET_SIGNALS) == 36
+          assert len(TWELVE_DATA_MARKET_SIGNALS) == 31
           assert set(TWELVE_DATA_MARKET_SIGNALS).issubset(set(resolution["signal"]))
           sec_signals = {"Cash", "GP", "Investment"}
           accounting_change_signals = set(ACCOUNTING_CHANGE_SIGNALS)

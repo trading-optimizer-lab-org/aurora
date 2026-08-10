@@ -674,6 +674,190 @@ def test_companyfacts_rows_keep_only_needed_tags_and_causal_dates() -> None:
     )
 
 
+def test_companyfacts_rows_retain_bounded_convdebt_diagnostic_tags() -> None:
+    payload = {
+        "entityName": "Example",
+        "facts": {
+            "us-gaap": {
+                tag: {
+                    "units": {
+                        unit: [
+                            {
+                                "end": "2025-12-31",
+                                "val": value,
+                                "filed": "2026-02-01",
+                                "form": "10-K",
+                                "fp": "FY",
+                            }
+                        ]
+                    }
+                }
+                for tag, unit, value in (
+                    ("Assets", "USD", 100_000_000),
+                    ("ConvertibleDebtNoncurrent", "USD", 25_000_000),
+                    (
+                        "DebtInstrumentConvertibleNumberOfEquityInstruments",
+                        "pure",
+                        2_000_000,
+                    ),
+                    (
+                        "CommonStockCapitalSharesReservedForFutureIssuance",
+                        "shares",
+                        3_000_000,
+                    ),
+                    ("ProceedsFromConvertibleDebt", "USD", 10_000_000),
+                )
+            }
+        },
+    }
+
+    rows = _companyfacts_rows(
+        payload,
+        1,
+        source_url="https://data.sec.gov/example",
+        source_mode="sec_official_api",
+    )
+
+    assert {row["tag"] for row in rows} == {
+        "Assets",
+        "ConvertibleDebtNoncurrent",
+        "DebtInstrumentConvertibleNumberOfEquityInstruments",
+        "CommonStockCapitalSharesReservedForFutureIssuance",
+    }
+    assert "ProceedsFromConvertibleDebt" not in {row["tag"] for row in rows}
+
+
+def test_companyfacts_rows_retain_quarterly_surprise_inputs() -> None:
+    payload = {
+        "entityName": "Example",
+        "facts": {
+            "us-gaap": {
+                tag: {
+                    "units": {
+                        unit: [
+                            {
+                                "start": "2025-01-01",
+                                "end": "2025-03-31",
+                                "val": value,
+                                "filed": "2025-05-01",
+                                "form": "10-Q",
+                                "fy": 2025,
+                                "fp": "Q1",
+                            }
+                        ]
+                    }
+                }
+                for tag, unit, value in (
+                    ("IncomeLossFromContinuingOperations", "USD", 10_000_000),
+                    (
+                        "RevenueFromContractWithCustomerExcludingAssessedTax",
+                        "USD",
+                        100_000_000,
+                    ),
+                    (
+                        "WeightedAverageNumberOfSharesOutstandingBasic",
+                        "shares",
+                        5_000_000,
+                    ),
+                )
+            }
+        },
+    }
+
+    rows = _companyfacts_rows(
+        payload,
+        1,
+        source_url="https://data.sec.gov/example",
+        source_mode="sec_official_api",
+    )
+
+    assert {row["tag"] for row in rows} == {
+        "IncomeLossFromContinuingOperations",
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "WeightedAverageNumberOfSharesOutstandingBasic",
+    }
+
+
+def test_companyfacts_rows_keep_more_than_24_quarterly_surprise_contexts() -> None:
+    observations = []
+    quarter_ends = [
+        pd.Timestamp("2017-12-31") + pd.offsets.QuarterEnd(index + 1)
+        for index in range(30)
+    ]
+    for index, period_end in enumerate(quarter_ends):
+        period_start = (
+            period_end - pd.offsets.QuarterEnd(startingMonth=12)
+            + pd.Timedelta(days=1)
+        )
+        observations.append(
+            {
+                "start": period_start.date().isoformat(),
+                "end": period_end.date().isoformat(),
+                "val": 5_000_000 + index,
+                "filed": (period_end + pd.Timedelta(days=40)).date().isoformat(),
+                "form": "10-Q",
+                "fy": period_end.year,
+                "fp": f"Q{period_end.quarter}",
+            }
+        )
+    payload = {
+        "entityName": "Example",
+        "facts": {
+            "us-gaap": {
+                "WeightedAverageNumberOfSharesOutstandingBasic": {
+                    "units": {"shares": observations}
+                }
+            }
+        },
+    }
+
+    rows = _companyfacts_rows(
+        payload,
+        1,
+        source_url="https://data.sec.gov/example",
+        source_mode="sec_official_api",
+    )
+
+    assert len(rows) == 30
+
+
+def test_companyfacts_rows_retain_earnings_consistency_annual_eps() -> None:
+    observations = [
+        {
+            "start": f"{year}-01-01",
+            "end": f"{year}-12-31",
+            "val": 1.0 + (year - 2017) * 0.1,
+            "filed": f"{year + 1}-02-20",
+            "form": "10-K",
+            "fy": year,
+            "fp": "FY",
+        }
+        for year in range(2017, 2026)
+    ]
+    payload = {
+        "entityName": "Example",
+        "facts": {
+            "us-gaap": {
+                "EarningsPerShareBasic": {
+                    "units": {"USD/shares": observations}
+                }
+            }
+        },
+    }
+
+    rows = _companyfacts_rows(
+        payload,
+        1,
+        source_url="https://data.sec.gov/example",
+        source_mode="sec_official_api",
+    )
+
+    assert len(rows) == 8
+    assert {row["period_end"] for row in rows} == {
+        f"{year}-12-31" for year in range(2018, 2026)
+    }
+
+
 def test_companyfacts_retains_annual_history_beyond_recent_quarters() -> None:
     annual = [
         {

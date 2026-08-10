@@ -8,41 +8,33 @@ from aurora.core.execution_policy import (
     require_github_actions_or_explicit_local_permission,
 )
 from aurora.core.runtime_paths import base_data_dir
-from aurora.research.openap_181.sec_fsd_access import (
-    download_official_sec_notes_archives,
+from aurora.research.openap_181.field_ritter_access import (
+    download_field_ritter_ipo_workbook,
 )
 
 
 def main() -> int:
     require_github_actions_or_explicit_local_permission(
-        "OpenAP 149 SEC Notes access"
+        "OpenAP 149 Field-Ritter IPO access"
     )
     parser = argparse.ArgumentParser()
-    parser.add_argument("--period", action="append", required=True)
     parser.add_argument("--user-agent", required=True)
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
 
-    requested_output = args.output_dir or Path("openap_149_sec_notes_access")
+    requested_output = args.output_dir or Path("openap_149_field_ritter_access")
     output = (
         requested_output
         if requested_output.is_absolute()
         else base_data_dir() / requested_output
     )
     output.mkdir(parents=True, exist_ok=True)
-    periods = tuple(dict.fromkeys(str(period).strip() for period in args.period))
-    if not periods or any(not period for period in periods):
-        raise ValueError("At least one non-empty SEC Notes period is required")
-    summary = download_official_sec_notes_archives(
-        periods,
-        output / "zips",
-        output / "sec_notes_source_manifest.csv",
+    summary = download_field_ritter_ipo_workbook(
+        output / "IPO-age.xlsx",
+        output / "field_ritter_source_manifest.csv",
         user_agent=args.user_agent,
     )
-    summary = {**summary, "periods": list(periods)}
-    if len(periods) == 1:
-        summary["period"] = periods[0]
-    (output / "sec_notes_access_summary.json").write_text(
+    (output / "field_ritter_access_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )

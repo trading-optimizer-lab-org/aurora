@@ -91,6 +91,9 @@ jobs:
           assert summary["companyfacts_ciks_ok"] > 0
           assert summary["submissions_ciks_ok"] > 0
           assert summary["companyfacts_rows"] > 0
+          assert summary["companyfacts_retention_contract"] == (
+              "openap_companyfacts_v4_annual8_quarterly48_epsbasic_convdebt_delnetfin_dividends"
+          )
           assert summary["submissions_rows"] > 0
           assert summary["all_facts_have_available_at"] is True
           PY

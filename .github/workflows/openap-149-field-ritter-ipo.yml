@@ -1,0 +1,196 @@
+name: OpenAP 149 Field-Ritter IPO Current
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision to execute
+        required: true
+        type: string
+      sec_artifact_run_id:
+        description: Successful run containing the 48 official SEC lake shards
+        required: true
+        default: "31270341796"
+        type: string
+      formula_evidence_run_id:
+        description: Successful run containing the pinned formula inventory
+        required: true
+        default: "31331835149"
+        type: string
+      institutional_artifact_run_id:
+        description: Verified run containing the normalized OpenFIGI CUSIP map
+        required: true
+        default: "31333714423"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-149-field-ritter-ipo
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and focused tests
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Verify Field-Ritter contracts
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
+          python -m py_compile \
+            research/openap_181/field_ritter_access.py \
+            research/openap_181/field_ritter_ipo.py \
+            scripts/run_openap_149_field_ritter_access.py \
+            scripts/run_openap_149_field_ritter_ipo.py
+          python -m pytest \
+            tests/test_openap_181_field_ritter_ipo.py \
+            -q --tb=short
+
+  acquire:
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      GITHUB_ACTIONS: "true"
+      AU_DATA_DIR: ${{ github.workspace }}/outputs
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Freeze current formation timestamp
+        run: echo "FORMATION_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+      - name: Acquire official Field-Ritter workbook once
+        run: |
+          python scripts/run_openap_149_field_ritter_access.py \
+            --user-agent "AuroraOpenAP/1.0 (+https://github.com/trading-optimizer-lab-org/aurora)" \
+            --output-dir openap_149_field_ritter_access
+      - name: Upload Field-Ritter access evidence without raw workbook
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-149-field-ritter-access-evidence
+          path: |
+            outputs/openap_149_field_ritter_access/field_ritter_source_manifest.csv
+            outputs/openap_149_field_ritter_access/field_ritter_access_summary.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Require successful official access
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import pandas as pd
+          root = pathlib.Path("outputs/openap_149_field_ritter_access")
+          summary = json.load(open(root / "field_ritter_access_summary.json", encoding="utf-8"))
+          manifest = pd.read_csv(root / "field_ritter_source_manifest.csv", keep_default_na=False)
+          assert summary["all_downloaded"] is True
+          assert summary["raw_workbook_redistribution_allowed"] is False
+          assert len(manifest) == 1
+          assert manifest.loc[0, "status"] == "downloaded"
+          assert int(manifest.loc[0, "http_status"]) == 200
+          assert len(str(manifest.loc[0, "sha256"])) == 64
+          assert (root / "IPO-age.xlsx").stat().st_size == int(manifest.loc[0, "size_bytes"])
+          PY
+      - name: Download all verified SEC lake shards
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: openap-sec-repair-lake-*
+          path: inputs/sec
+          run-id: ${{ inputs.sec_artifact_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download pinned official formula evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-181-completion-audit-results
+          path: inputs/formulas
+          run-id: ${{ inputs.formula_evidence_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Selectively recover normalized OpenFIGI evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/recover_openap_93_failed_artifact.py \
+            --repository trading-optimizer-lab-org/aurora \
+            --source-run-id "${{ inputs.institutional_artifact_run_id }}" \
+            --source-artifact-name "openap-93-max-free-failed-output-${{ inputs.institutional_artifact_run_id }}" \
+            --profile institutional_inputs \
+            --maximum-compressed-bytes 134217728 \
+            --output-dir openap_149_field_ritter_identity_inputs
+      - name: Calculate current IPO reconstructions
+        run: |
+          python scripts/run_openap_149_field_ritter_ipo.py \
+            --field-ritter-workbook outputs/openap_149_field_ritter_access/IPO-age.xlsx \
+            --field-ritter-source-manifest outputs/openap_149_field_ritter_access/field_ritter_source_manifest.csv \
+            --sec-root inputs/sec \
+            --institutional-root outputs/openap_149_field_ritter_identity_inputs \
+            --formula-root inputs/formulas \
+            --formation-at "$FORMATION_AT" \
+            --identity-available-at "$FORMATION_AT" \
+            --implementation-sha "$SOURCE_SHA" \
+            --sec-source-run-id "${{ inputs.sec_artifact_run_id }}" \
+            --institutional-source-run-id "${{ inputs.institutional_artifact_run_id }}" \
+            --formula-source-run-id "${{ inputs.formula_evidence_run_id }}" \
+            --output-dir openap_149_field_ritter_ipo
+      - name: Verify causal non-strict IPO output
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import pandas as pd
+          root = pathlib.Path("outputs/openap_149_field_ritter_ipo")
+          values = pd.read_csv(root / "openap_149_field_ritter_ipo_current.csv")
+          manifest = json.load(open(
+              root / "openap_149_field_ritter_ipo_manifest.json",
+              encoding="utf-8",
+          ))
+          assert set(values["signal"]) == {"AgeIPO", "IndIPO", "RDIPO"}
+          assert values["formula_sha256"].str.fullmatch(r"[0-9a-f]{64}").all()
+          assert not values["strict_score_eligible"].any()
+          finite = values.loc[values["current_usable"].eq(True)]
+          assert not finite.empty
+          assert finite["signal"].eq("IndIPO").any()
+          available = pd.to_datetime(finite["available_at"], utc=True)
+          formation = pd.to_datetime(finite["formation_at"], utc=True)
+          assert available.le(formation).all()
+          unmatched = values["reason_if_missing"].eq("ipo_identity_not_corroborated")
+          assert values.loc[unmatched, "value"].isna().all()
+          assert manifest["field_ritter_raw_workbook_in_output"] is False
+          assert manifest["classification"] == "reconstructed_not_strict"
+          assert manifest["identity_bridge"]["ticker_only_join_allowed"] is False
+          assert manifest["strict_score_eligible"] is False
+          assert not any(path.name == "IPO-age.xlsx" for path in root.rglob("*"))
+          PY
+      - name: Upload derived IPO evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-149-field-ritter-ipo-current
+          path: outputs/openap_149_field_ritter_ipo/
+          if-no-files-found: error
+          retention-days: 90

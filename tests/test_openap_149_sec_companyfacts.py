@@ -737,6 +737,76 @@ def test_companyfacts_convdebt_diagnostics_profile_nonzero_tags() -> None:
             "units": ["USD"],
         },
     }
+    assert diagnostics["scope"] == (
+        "retained_companyfacts_input_only;zero_rows_do_not_prove_global_sec_absence"
+    )
+
+
+def test_companyfacts_convdebt_emits_positive_current_evidence_only() -> None:
+    facts = _facts()
+    template = facts.loc[
+        facts["accession_number"].eq("fy2025") & facts["tag"].eq("Assets")
+    ].iloc[0]
+
+    positive = template.copy()
+    positive["tag"] = "ConvertibleDebtNoncurrent"
+    positive["value"] = 50_000_000.0
+    with_positive = pd.concat(
+        [facts, pd.DataFrame([positive.to_dict()])], ignore_index=True
+    )
+    values = _module().calculate_companyfacts_convdebt_current(
+        with_positive,
+        _status(),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    assert values["signal"].tolist() == ["ConvDebt"]
+    assert values.iloc[0]["value"] == 1.0
+    assert values.iloc[0]["fidelity_class"] == "reconstructed"
+    assert values.iloc[0]["formula_id"] == (
+        "openap_convdebt_positive_only_sec_companyfacts_reconstruction"
+    )
+    assert "positive-only" in values.iloc[0]["caveat"]
+    assert pd.Timestamp(values.iloc[0]["available_at"]) <= pd.Timestamp(
+        values.iloc[0]["retrieved_at"]
+    )
+
+
+def test_companyfacts_convdebt_rejects_broad_zero_and_stale_evidence() -> None:
+    facts = _facts()
+    latest = facts.loc[
+        facts["accession_number"].eq("fy2025") & facts["tag"].eq("Assets")
+    ].iloc[0]
+    prior = facts.loc[
+        facts["accession_number"].eq("fy2024") & facts["tag"].eq("Assets")
+    ].iloc[0]
+
+    broad = latest.copy()
+    broad["tag"] = "CommonStockCapitalSharesReservedForFutureIssuance"
+    broad["unit"] = "shares"
+    broad["value"] = 5_000_000.0
+    zero = latest.copy()
+    zero["tag"] = "ConvertibleDebt"
+    zero["value"] = 0.0
+    stale = prior.copy()
+    stale["tag"] = "ConvertibleDebtNoncurrent"
+    stale["value"] = 25_000_000.0
+
+    values = _module().calculate_companyfacts_convdebt_current(
+        pd.concat(
+            [
+                facts,
+                pd.DataFrame([broad.to_dict(), zero.to_dict(), stale.to_dict()]),
+            ],
+            ignore_index=True,
+        ),
+        _status(),
+        formation_at="2026-08-09",
+        retrieved_at="2026-08-08T18:44:14Z",
+    )
+
+    assert values.empty
 
 
 def test_companyfacts_tax_uses_current_federal_and_foreign_expense() -> None:

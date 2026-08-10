@@ -49,6 +49,22 @@ from aurora.research.openap_current_score import (
     sha256_file,
     write_summary,
 )
+from aurora.research.openap_181.sec_companyfacts_149 import (
+    COMPANYFACTS_RETENTION_CONTRACT,
+    CONVDEBT_COMPANYFACT_TAGS,
+)
+from aurora.research.openap_181.sec_delnetfin import (
+    DELNETFIN_COMPANYFACT_TAGS,
+)
+from aurora.research.openap_181.sec_dividend_events import (
+    DIVIDEND_EVENT_COMPANYFACT_TAGS,
+)
+from aurora.research.openap_181.sec_earnings_consistency import (
+    EARNINGS_CONSISTENCY_COMPANYFACT_TAGS,
+)
+from aurora.research.openap_181.sec_quarterly_surprise import (
+    QUARTERLY_SURPRISE_COMPANYFACT_TAGS,
+)
 
 
 EXCLUDE_SECURITY_RE = re.compile(
@@ -775,12 +791,19 @@ def _companyfacts_rows(
     accepted_at_by_accession: Mapping[str, Any] | None = None,
     observations_per_tag: int = 24,
     annual_observations_per_tag: int = 8,
+    quarterly_surprise_observations_per_tag: int = 48,
 ) -> list[dict[str, Any]]:
     wanted_tags = {
         alias
         for aliases in SEC_CONCEPT_ALIASES.values()
         for alias in aliases
-    }
+    } | set(CONVDEBT_COMPANYFACT_TAGS) | set(
+        DELNETFIN_COMPANYFACT_TAGS
+    ) | set(
+        EARNINGS_CONSISTENCY_COMPANYFACT_TAGS
+    ) | set(QUARTERLY_SURPRISE_COMPANYFACT_TAGS) | set(
+        DIVIDEND_EVENT_COMPANYFACT_TAGS
+    )
     entity_name = str(payload.get("entityName") or "")
     facts = payload.get("facts", {})
     if not isinstance(facts, Mapping):
@@ -820,7 +843,16 @@ def _companyfacts_rows(
                 selected_observations: dict[
                     tuple[str, str, str, str], Mapping[str, Any]
                 ] = {}
-                for observation in deduplicated[-observations_per_tag:] + annual:
+                long_history_tags = (
+                    QUARTERLY_SURPRISE_COMPANYFACT_TAGS
+                    | DIVIDEND_EVENT_COMPANYFACT_TAGS
+                )
+                recent_limit = (
+                    quarterly_surprise_observations_per_tag
+                    if str(tag) in long_history_tags
+                    else observations_per_tag
+                )
+                for observation in deduplicated[-recent_limit:] + annual:
                     key = (
                         str(observation.get("end") or ""),
                         str(observation.get("start") or ""),
@@ -1018,6 +1050,7 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
             "companyfacts_ciks_ok": int(status.loc[(status["surface"] == "companyfacts") & (status["status"] == "ok"), "cik"].nunique()),
             "submissions_ciks_ok": int(status.loc[(status["surface"] == "submissions") & (status["status"] == "ok"), "cik"].nunique()),
             "companyfacts_rows": len(facts),
+            "companyfacts_retention_contract": COMPANYFACTS_RETENTION_CONTRACT,
             "submissions_rows": len(submissions),
             "source_counts": source_counts,
             "raw_zip_bytes": raw_zip_path.stat().st_size,
@@ -1155,6 +1188,7 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
         "submissions_ciks_ok": len(submission_ciks),
         "submissions_rows": len(submissions),
         "companyfacts_rows": fact_count,
+        "companyfacts_retention_contract": COMPANYFACTS_RETENTION_CONTRACT,
         "companyfacts_zip_bytes": companyfacts_zip.stat().st_size,
         "companyfacts_zip_sha256": sha256_file(companyfacts_zip),
         "companyfacts_source_url": companyfacts_source_url,
