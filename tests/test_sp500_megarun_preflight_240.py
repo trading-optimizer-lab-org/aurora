@@ -90,6 +90,22 @@ def test_repository_source_plan_is_github_only_and_stops_at_2020() -> None:
         "variance_monthly",
         "residual_variance_monthly",
     }
+    global_french_resources = {
+        str(resource["id"])
+        for resource in source_plan["D_FRENCH_GLOBAL"].resources
+    }
+    assert global_french_resources == {
+        "developed_five_factors",
+        "developed_momentum",
+        "developed_ex_us",
+        "europe",
+        "japan",
+        "asia_pacific_ex_japan",
+        "developed_ex_us_momentum",
+        "europe_momentum",
+        "japan_momentum",
+        "asia_pacific_ex_japan_momentum",
+    }
 
 
 def test_partition_gate_keeps_train_and_validation_separate_and_rejects_2021() -> None:

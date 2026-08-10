@@ -1258,6 +1258,32 @@ _KNOWN_NON_CHARACTERISTIC_FRENCH_RESOURCES = {
     "ff3_daily",
     "industry_48_daily",
 }
+_FRENCH_GLOBAL_FACTOR_RESOURCES = (
+    "developed_five_factors",
+    "developed_ex_us",
+    "europe",
+    "japan",
+    "asia_pacific_ex_japan",
+)
+_FRENCH_GLOBAL_MOMENTUM_RESOURCES = (
+    "developed_momentum",
+    "developed_ex_us_momentum",
+    "europe_momentum",
+    "japan_momentum",
+    "asia_pacific_ex_japan_momentum",
+)
+_FRENCH_GLOBAL_RESOURCE_ORDER = (
+    "developed_five_factors",
+    "developed_momentum",
+    "developed_ex_us",
+    "europe",
+    "japan",
+    "asia_pacific_ex_japan",
+    "developed_ex_us_momentum",
+    "europe_momentum",
+    "japan_momentum",
+    "asia_pacific_ex_japan_momentum",
+)
 
 
 def normalize_french_characteristic_panels(
@@ -1319,6 +1345,64 @@ def normalize_french_characteristic_panels(
         )
     if not panels:
         raise FeatureInputNormalizerError("EMPTY_FRENCH_CHARACTERISTIC_PANELS")
+    return panels
+
+
+def normalize_french_global_factor_panels(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> Mapping[str, pd.DataFrame]:
+    """Prepare frozen global and regional factor returns for the next session."""
+
+    french = _validated_dates(frame, dataset_id="D_FRENCH_GLOBAL")
+    if "resource_id" not in french:
+        raise FeatureInputNormalizerError("FRENCH_GLOBAL_RESOURCE_ID_MISSING")
+    resource_ids = set(french["resource_id"].dropna().astype(str))
+    known = set(_FRENCH_GLOBAL_RESOURCE_ORDER)
+    unknown = sorted(resource_ids - known)
+    if unknown:
+        raise FeatureInputNormalizerError(
+            f"UNKNOWN_FRENCH_GLOBAL_RESOURCE:{','.join(unknown)}"
+        )
+
+    factor_columns = {
+        "Mkt-RF": "market_excess",
+        "SMB": "size",
+        "HML": "value",
+        "RMW": "profitability",
+        "CMA": "investment",
+    }
+    panels: dict[str, pd.DataFrame] = {}
+    for resource_id in _FRENCH_GLOBAL_RESOURCE_ORDER:
+        selected = french.loc[
+            french["resource_id"].astype(str).eq(resource_id)
+        ].copy()
+        if selected.empty:
+            continue
+        if resource_id in _FRENCH_GLOBAL_MOMENTUM_RESOURCES:
+            required = {"WML": "momentum"}
+        else:
+            required = factor_columns
+        missing = sorted(set(required) - set(selected.columns))
+        if missing:
+            raise FeatureInputNormalizerError(
+                "FRENCH_GLOBAL_COLUMNS_MISSING:"
+                f"{resource_id}:{','.join(missing)}"
+            )
+        panel = selected.loc[:, ["date", *required]].rename(columns=required)
+        value_columns = list(required.values())
+        for column in value_columns:
+            values = pd.to_numeric(panel[column], errors="coerce")
+            panel[column] = values.mask(values.isin((-99.99, -999.0))) / 100.0
+        panel = panel.dropna(subset=value_columns)
+        panels[resource_id] = _project_to_decision_session(
+            panel,
+            policy="next_session",
+            sessions=sessions,
+        )
+    if not panels:
+        raise FeatureInputNormalizerError("EMPTY_FRENCH_GLOBAL_PANELS")
     return panels
 
 
@@ -1507,6 +1591,7 @@ __all__ = [
     "normalize_french_industry_panel",
     "normalize_french_factor_panel",
     "normalize_french_characteristic_panels",
+    "normalize_french_global_factor_panels",
     "normalize_french_us_panels",
     "normalize_fx_cross_asset_panel",
     "normalize_lagged_valuation_panel",

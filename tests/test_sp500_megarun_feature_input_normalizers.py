@@ -895,6 +895,43 @@ def test_french_characteristic_normalizer_rejects_unknown_resource() -> None:
         api.normalize_french_characteristic_panels(frame, sessions=_sessions())
 
 
+def test_french_global_panels_normalize_factors_and_regional_momentum() -> None:
+    api = _normalizer_api()
+    dates = pd.to_datetime(["2010-01-04", "2010-01-05"])
+    factors = pd.DataFrame(
+        {
+            "date": dates,
+            "resource_id": "europe",
+            "Mkt-RF": [0.1, 0.2],
+            "SMB": [0.3, 0.4],
+            "HML": [-0.1, -0.2],
+            "RMW": [0.2, 0.1],
+            "CMA": [-0.2, -0.1],
+            "RF": [0.01, 0.01],
+        }
+    )
+    momentum = pd.DataFrame(
+        {
+            "date": dates,
+            "resource_id": "europe_momentum",
+            "WML": [0.5, -0.2],
+        }
+    )
+
+    panels = api.normalize_french_global_factor_panels(
+        pd.concat([factors, momentum], ignore_index=True, sort=False),
+        sessions=_sessions(),
+    )
+
+    assert tuple(panels) == ("europe", "europe_momentum")
+    assert panels["europe"].loc[0, "market_excess"] == pytest.approx(0.001)
+    assert panels["europe"].loc[0, "profitability"] == pytest.approx(0.002)
+    assert panels["europe_momentum"].loc[0, "momentum"] == pytest.approx(0.005)
+    assert panels["europe_momentum"].loc[0, "date"] == pd.Timestamp(
+        "2010-01-05"
+    )
+
+
 def test_revised_z1_proxy_waits_full_year_and_margin_waits_two_months() -> None:
     api = _normalizer_api()
     z1_rows: list[dict[str, object]] = []

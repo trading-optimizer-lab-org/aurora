@@ -60,12 +60,16 @@
     "D_FINRA_MARGIN": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_finra_margin","maximum_observation_date":"2020-12-31","resources":[]},
     "D_FRENCH_US": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_french_us","maximum_observation_date":"2020-12-31","resources":[]},
     "D_FRENCH_GLOBAL": {"execution":"github_actions_only","acquisition_kind":"bundle","adapter":"french_global_zip_csv","maximum_observation_date":"2020-12-31","resources":[
-      {"id":"developed_five_factors","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Developed_5_Factors_Daily_CSV.zip","format":"zip_csv"},
-      {"id":"developed_momentum","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Developed_Mom_Factor_Daily_CSV.zip","format":"zip_csv"},
-      {"id":"developed_ex_us","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Developed_ex_US_5_Factors_Daily_CSV.zip","format":"zip_csv"},
-      {"id":"europe","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Europe_5_Factors_Daily_CSV.zip","format":"zip_csv"},
-      {"id":"japan","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Japan_5_Factors_Daily_CSV.zip","format":"zip_csv"},
-      {"id":"asia_pacific_ex_japan","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Asia_Pacific_ex_Japan_5_Factors_Daily_CSV.zip","format":"zip_csv"}
+      {"id":"developed_five_factors","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Developed_5_Factors_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"developed_momentum","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Developed_Mom_Factor_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"developed_ex_us","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Developed_ex_US_5_Factors_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"europe","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Europe_5_Factors_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"japan","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Japan_5_Factors_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"asia_pacific_ex_japan","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Asia_Pacific_ex_Japan_5_Factors_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"developed_ex_us_momentum","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Developed_ex_US_Mom_Factor_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"europe_momentum","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Europe_Mom_Factor_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"japan_momentum","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Japan_Mom_Factor_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"asia_pacific_ex_japan_momentum","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Asia_Pacific_ex_Japan_MOM_Factor_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true}
     ]},
     "D_WORLD_BANK_COMMODITIES": {"execution":"github_actions_only","acquisition_kind":"direct","adapter":"world_bank_all_commodities","maximum_observation_date":"2020-12-31","resources":[
       {"id":"world_bank_monthly_commodities","url":"https://thedocs.worldbank.org/en/doc/18675f1d1639c7a34d463f59263ba0a2-0050012025/related/CMO-Historical-Data-Monthly.xlsx","format":"xlsx","decision_lag":"second_business_day_of_following_month_plus_one_session"}
