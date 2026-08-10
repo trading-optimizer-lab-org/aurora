@@ -745,7 +745,9 @@ def test_realestate_sector_batch_cli_reads_complete_lake_and_writes_runtime_outp
     assert summary["source_run_id"] == "31270341796"
     assert summary["current_values_computed"] == 5
     assert len(current) == 5
-    assert not current["strict_score_eligible"].any()
+    assert tuple(current.columns) == VALUE_COLUMNS
+    assert current["fidelity_class"].eq("reconstructed").all()
+    assert current["source_id"].eq("sec_edgar").all()
 
 
 def test_realestate_sector_workflow_keeps_acquisition_manual_and_pinned() -> None:
@@ -779,3 +781,13 @@ def test_realestate_sector_workflow_keeps_acquisition_manual_and_pinned() -> Non
     assert "--maximum-issuers 12" in command
     assert "--target-sic2 35" in command
     assert "--anchor-cik 320193" in command
+    verify = steps["Verify bounded fail-closed output"]["run"]
+    assert (
+        "from aurora.research.openap_181.acquisition_149 import VALUE_COLUMNS"
+        in verify
+    )
+    assert "tuple(current.columns) == VALUE_COLUMNS" in verify
+    assert 'current["fidelity_class"].eq("reconstructed").all()' in verify
+    assert 'current["source_id"].eq("sec_edgar").all()' in verify
+    assert 'current["current_signal_computed"]' not in verify
+    assert 'current["strict_score_eligible"]' not in verify
