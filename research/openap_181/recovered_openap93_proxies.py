@@ -49,6 +49,16 @@ EQUITY_DURATION_CAVEAT = (
     "SEC annual equity/income/revenue and Yahoo fiscal-period price replace "
     "Compustat/CRSP"
 )
+OSCORE_SIGNAL = "OScore"
+OSCORE_FORMULA_ID = "openap_ohlson_oscore_decile_sec_gnpdefl"
+OSCORE_OPENAP_SCRIPT = "Signals/pyCode/Predictors/OScore.py"
+OSCORE_IMPLEMENTATION_FILE = "research/openap_93/accounting_pipeline.py"
+OSCORE_ORIGINAL_SOURCE = "sec_edgar|fred_public_csv"
+OSCORE_RECOVERY_SOURCE = "recovered_openap93_oscore"
+OSCORE_CAVEAT = (
+    "Operating cash flow is the documented OpenAP fallback for funds from "
+    "operations"
+)
 BETAVIX_SIGNAL = "betaVIX"
 BETAVIX_FORMULA_ID = "openap_beta_vix_20d_min15_market_control"
 BETAVIX_OPENAP_SCRIPT = "Signals/pyCode/Predictors/ZZ2_betaVIX.py"
@@ -352,6 +362,7 @@ def _validate_reconstructed_rows(
     minimum_observations: int,
     universe_count: int,
     require_quintile_value: bool = False,
+    allowed_values: frozenset[float] | None = None,
 ) -> pd.DataFrame:
     rows = values.loc[values["signal"].astype(str).eq(signal)].copy()
     if len(rows) != universe_count:
@@ -413,6 +424,12 @@ def _validate_reconstructed_rows(
             | numeric_values.mod(1).ne(0)
         )
     )
+    invalid_allowed_value = (
+        usable
+        & ~numeric_values.isin(allowed_values)
+        if allowed_values is not None
+        else pd.Series(False, index=rows.index)
+    )
     if (
         not rows["source_id"].astype(str).eq(original_source).all()
         or not rows["formula_id"].astype(str).eq(formula_id).all()
@@ -425,6 +442,7 @@ def _validate_reconstructed_rows(
         or (usable & ~np.isfinite(numeric_values)).any()
         or (~usable & numeric_values.notna()).any()
         or (require_quintile_value and invalid_quintile.any())
+        or invalid_allowed_value.any()
         or not rows.loc[usable, "fidelity_class"].astype(str).eq("reconstructed").all()
     ):
         raise ValueError(f"{signal} row-level formula or fidelity contract failed")
@@ -488,6 +506,19 @@ def load_verified_openap93_proxy_batch(
         minimum_observations=2,
         universe_count=universe_count,
     )
+    oscore = _validate_reconstructed_rows(
+        values,
+        source,
+        signal=OSCORE_SIGNAL,
+        formula_id=OSCORE_FORMULA_ID,
+        openap_script=OSCORE_OPENAP_SCRIPT,
+        caveat=OSCORE_CAVEAT,
+        original_source=OSCORE_ORIGINAL_SOURCE,
+        natural_frequency="annual",
+        minimum_observations=4,
+        universe_count=universe_count,
+        allowed_values=frozenset({0.0, 1.0}),
+    )
     beta_vix = _validate_reconstructed_rows(
         values,
         source,
@@ -540,6 +571,17 @@ def load_verified_openap93_proxy_batch(
     )
     _validate_reconstructed_coverage(
         coverage,
+        signal=OSCORE_SIGNAL,
+        openap_script=OSCORE_OPENAP_SCRIPT,
+        implementation_file=OSCORE_IMPLEMENTATION_FILE,
+        natural_frequency="annual",
+        primary_source="fred_public_csv",
+        fallback_source="sec_edgar",
+        universe_count=universe_count,
+        usable_count=len(oscore),
+    )
+    _validate_reconstructed_coverage(
+        coverage,
         signal=BETAVIX_SIGNAL,
         openap_script=BETAVIX_OPENAP_SCRIPT,
         implementation_file="research/openap_93/market_pipeline.py",
@@ -580,6 +622,15 @@ def load_verified_openap93_proxy_batch(
             "Compustat/CRSP identity not verified"
         ),
     )
+    oscore = _prepare_recovered_rows(
+        oscore,
+        evidence_run_url=evidence_run_url,
+        recovery_source=OSCORE_RECOVERY_SOURCE,
+        caveat_suffix=(
+            "; recovered from hash-bound OpenAP93 evidence; SEC/FRED "
+            "reconstruction is not validated as Compustat/CRSP equivalent"
+        ),
+    )
     beta_vix = _prepare_recovered_rows(
         beta_vix,
         evidence_run_url=evidence_run_url,
@@ -604,6 +655,7 @@ def load_verified_openap93_proxy_batch(
     current_parts = [
         comp_equ_iss,
         equity_duration,
+        oscore,
         beta_vix,
         *(rio_values[signal] for signal in RIO_SIGNALS),
     ]
@@ -622,6 +674,14 @@ def load_verified_openap93_proxy_batch(
             "current_value_rows": int(len(equity_duration)),
             "coverage": float(len(equity_duration) / universe_count),
             "historical_compustat_crsp_identity_verified": False,
+        },
+        OSCORE_SIGNAL: {
+            "signal": OSCORE_SIGNAL,
+            "formula_id": OSCORE_FORMULA_ID,
+            "current_value_rows": int(len(oscore)),
+            "coverage": float(len(oscore) / universe_count),
+            "strict_score_eligible": False,
+            "compustat_crsp_equivalence_verified": False,
         },
         BETAVIX_SIGNAL: {
             "signal": BETAVIX_SIGNAL,
@@ -642,7 +702,7 @@ def load_verified_openap93_proxy_batch(
         },
     }
     evidence = {
-        "contract_version": 1,
+        "contract_version": 2,
         "recovery_run_id": OPENAP93_RECOVERY_RUN_ID,
         "source_run_id": OPENAP93_SOURCE_RUN_ID,
         "source_head_sha": OPENAP93_SOURCE_HEAD_SHA,
@@ -689,6 +749,8 @@ __all__ = [
     "COMPEQUISS_RECOVERY_SOURCE",
     "EQUITY_DURATION_FORMULA_ID",
     "EQUITY_DURATION_RECOVERY_SOURCE",
+    "OSCORE_FORMULA_ID",
+    "OSCORE_RECOVERY_SOURCE",
     "OPENAP93_RECOVERY_RUN_URL",
     "RIO_RECOVERY_SOURCE",
     "load_verified_openap93_comp_equ_iss",

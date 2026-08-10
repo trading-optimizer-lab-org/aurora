@@ -125,6 +125,7 @@ SOURCE_ALIASES = {
     "recovered_openap93_equityduration": "recovered_openap93_equityduration",
     "recovered_openap93_betavix": "recovered_openap93_betavix",
     "recovered_openap93_rio": "recovered_openap93_rio",
+    "recovered_openap93_oscore": "recovered_openap93_oscore",
     "pastor_stambaugh": "pastor_stambaugh",
 }
 
@@ -168,6 +169,10 @@ SOURCE_TERMS = {
     "recovered_openap93_rio": (
         "Hash-bound derived RIO output from recovery run 31341580689; SEC 13F, "
         "OpenFIGI and underlying Yahoo endpoint terms apply; internal use only"
+    ),
+    "recovered_openap93_oscore": (
+        "Hash-bound derived OScore output from recovery run 31341580689; SEC "
+        "fair-access and FRED series-specific terms apply; internal use only"
     ),
     "pastor_stambaugh": (
         "Chicago Booth public academic liquidity-factor data; attribution required"

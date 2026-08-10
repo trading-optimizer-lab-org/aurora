@@ -17,6 +17,8 @@ from aurora.research.openap_181.recovered_openap93_proxies import (
     COMPEQUISS_RECOVERY_SOURCE,
     EQUITY_DURATION_FORMULA_ID,
     EQUITY_DURATION_RECOVERY_SOURCE,
+    OSCORE_FORMULA_ID,
+    OSCORE_RECOVERY_SOURCE,
     OPENAP93_RECOVERY_RUN_URL,
     RIO_RECOVERY_SOURCE,
     load_verified_openap93_comp_equ_iss,
@@ -130,6 +132,38 @@ def _beta_vix_row(
     }
 
 
+def _oscore_row(
+    security_id: str,
+    ticker: str,
+    cik: int,
+    *,
+    value: float | None,
+    current_usable: bool,
+) -> dict[str, object]:
+    return {
+        **_row(
+            security_id,
+            ticker,
+            cik,
+            value=value,
+            current_usable=current_usable,
+        ),
+        "signal": "OScore",
+        "period_end": "2025-12-31",
+        "filed_at": "2026-02-01 12:00:00",
+        "available_at": "2026-02-01 12:00:00",
+        "source_id": "sec_edgar|fred_public_csv",
+        "formula_id": OSCORE_FORMULA_ID,
+        "openap_script": "Signals/pyCode/Predictors/OScore.py",
+        "natural_frequency": "annual",
+        "observation_count": 4,
+        "caveat": (
+            "Operating cash flow is the documented OpenAP fallback for "
+            "funds from operations"
+        ),
+    }
+
+
 RIO_FORMULA_IDS = {
     "RIO_MB": "openap_residual_institutional_ownership_lag6_high_mb",
     "RIO_Turnover": (
@@ -194,9 +228,10 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         "RIO_MB",
         "RIO_Turnover",
         "RIO_Volatility",
+        "OScore",
     ]
     selected_signals = recovered_signals + [
-        f"SyntheticSignal{index:02d}" for index in range(87)
+        f"SyntheticSignal{index:02d}" for index in range(86)
     ]
     comp_rows = [
         _row("US-SEC-0000000001-AAA", "AAA", 1, value=0.25, current_usable=True),
@@ -268,6 +303,29 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             (3, "CCC", None, False),
         )
     ]
+    oscore_rows = [
+        _oscore_row(
+            "US-SEC-0000000001-AAA",
+            "AAA",
+            1,
+            value=0.0,
+            current_usable=True,
+        ),
+        _oscore_row(
+            "US-SEC-0000000002-BBB",
+            "BBB",
+            2,
+            value=1.0,
+            current_usable=True,
+        ),
+        _oscore_row(
+            "US-SEC-0000000003-CCC",
+            "CCC",
+            3,
+            value=None,
+            current_usable=False,
+        ),
+    ]
     filler_rows = [
         {
             **_row(
@@ -285,7 +343,12 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
     ]
     signals_path = root / "signals_93_current.csv"
     pd.DataFrame(
-        comp_rows + equity_duration_rows + beta_vix_rows + rio_rows + filler_rows
+        comp_rows
+        + equity_duration_rows
+        + beta_vix_rows
+        + rio_rows
+        + oscore_rows
+        + filler_rows
     ).to_csv(
         signals_path,
         index=False,
@@ -430,6 +493,39 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
                 ),
             }
         )
+    coverage_rows.append(
+        {
+            "signal": "OScore",
+            "status": "current_usable",
+            "fidelity_class": "reconstructed",
+            "current_usable": True,
+            "exact_formula": True,
+            "primary_source": "fred_public_csv",
+            "fallback_source": "sec_edgar",
+            "source_domains": "fred.stlouisfed.org|sec.gov",
+            "latest_period_end": "2025-12-31",
+            "latest_available_at": "2026-02-01 12:00:00",
+            "natural_frequency": "annual",
+            "universe_count": 3,
+            "applicable_count": 3,
+            "non_null_count": 2,
+            "current_usable_count": 2,
+            "not_applicable_count": 0,
+            "missing_count": 1,
+            "coverage_pct": 200 / 3,
+            "license": (
+                "Federal Reserve public series; per-series rights apply|"
+                "US government public data"
+            ),
+            "terms_status": (
+                "authorized_public|authorized_public_rate_limited"
+            ),
+            "scraping_required": False,
+            "reason_if_missing": "missing_point_in_time_sec_inputs",
+            "openap_script": "Signals/pyCode/Predictors/OScore.py",
+            "implementation_file": "research/openap_93/accounting_pipeline.py",
+        }
+    )
     coverage_rows.extend(
         {
             "signal": signal,
@@ -473,6 +569,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             + len(equity_duration_rows)
             + len(beta_vix_rows)
             + len(rio_rows)
+            + len(oscore_rows)
             + len(filler_rows)
         ),
         "openap_commit": OPENAP_COMMIT,
@@ -482,7 +579,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         "api_keys_required": False,
         "manual_actions_required": False,
         "selected_signals": selected_signals,
-        "current_usable_signal_count": 6,
+        "current_usable_signal_count": 7,
         "output_hashes": {
             "coverage_93.csv": sha256(coverage_path.read_bytes()).hexdigest(),
             "signals_93_current.csv": sha256(signals_path.read_bytes()).hexdigest(),
@@ -496,7 +593,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
     recovery_manifest = {
         "bytes_fetched": 13720277,
         "cost_eur": 0,
-        "current_usable_signal_count": 6,
+        "current_usable_signal_count": 7,
         "full_artifact_downloaded": False,
         "input_signals": 93,
         "locked_opened": False,
@@ -582,7 +679,7 @@ def test_verified_openap93_recovery_accepts_only_current_comp_equ_iss(
     assert evidence["strict_score_increment"] == 0
 
 
-def test_verified_openap93_proxy_batch_accepts_six_narrow_signals(
+def test_verified_openap93_proxy_batch_accepts_seven_narrow_signals(
     tmp_path: Path,
 ) -> None:
     _write_artifact(tmp_path / "artifact")
@@ -598,6 +695,7 @@ def test_verified_openap93_proxy_batch_accepts_six_narrow_signals(
         "RIO_MB": 2,
         "RIO_Turnover": 2,
         "RIO_Volatility": 2,
+        "OScore": 2,
         "betaVIX": 2,
     }
     duration = values.loc[values["signal"].eq("EquityDuration")]
@@ -621,6 +719,11 @@ def test_verified_openap93_proxy_batch_accepts_six_narrow_signals(
         assert rio["formula_id"].eq(formula_id).all()
         assert rio["value"].between(1, 5).all()
         assert evidence["signals"][signal]["current_value_rows"] == 2
+    oscore = values.loc[values["signal"].eq("OScore")]
+    assert oscore["source_id"].eq(OSCORE_RECOVERY_SOURCE).all()
+    assert oscore["formula_id"].eq(OSCORE_FORMULA_ID).all()
+    assert set(oscore["value"]) == {0.0, 1.0}
+    assert evidence["signals"]["OScore"]["current_value_rows"] == 2
     assert evidence["strict_score_increment"] == 0
 
 
@@ -676,6 +779,11 @@ def test_verified_equity_duration_recovery_fails_closed(
         ("RIO_Turnover", "frequency"),
         ("RIO_Volatility", "quintile"),
         ("RIO_Volatility", "coverage_count"),
+        ("OScore", "formula"),
+        ("OScore", "observations"),
+        ("OScore", "source"),
+        ("OScore", "binary"),
+        ("OScore", "coverage_count"),
     ],
 )
 def test_verified_market_and_rio_recoveries_fail_closed(
@@ -702,11 +810,15 @@ def test_verified_market_and_rio_recoveries_fail_closed(
         if mutation == "formula":
             values.loc[row, "formula_id"] = "wrong_formula"
         elif mutation == "observations":
-            values.loc[row, "observation_count"] = 14
+            values.loc[row, "observation_count"] = (
+                3 if signal == "OScore" else 14
+            )
         elif mutation == "source":
             values.loc[row, "source_id"] = "cboe_public"
         elif mutation == "frequency":
             values.loc[row, "natural_frequency"] = "monthly"
+        elif mutation == "binary":
+            values.loc[row, "value"] = 0.5
         else:
             values.loc[row, "value"] = 2.5
         values.to_csv(signals_path, index=False)
@@ -961,3 +1073,42 @@ def test_beta_vix_and_rio_recovery_routes_are_narrow_and_non_strict(
         assert evidence["fidelity"] == "reconstructed"
         assert not bool(evidence["strict_score_eligible"])
     assert set(approved["signal"]) == signals
+
+
+def test_oscore_recovery_route_is_narrow_causal_and_non_strict(
+    tmp_path: Path,
+) -> None:
+    _write_artifact(tmp_path / "artifact")
+    values, _, evidence = load_verified_openap93_proxy_batch(
+        tmp_path / "artifact",
+        evidence_run_url=OPENAP93_RECOVERY_RUN_URL,
+    )
+    values = values.loc[values["signal"].eq("OScore")].copy()
+    routes = load_target_routes(ROUTE_MATRIX)
+    route = routes.loc[routes["signal"].eq("OScore")].iloc[0]
+    assert OSCORE_RECOVERY_SOURCE in route["primary_free_sources"].split("|")
+    assert "yahoo_public" not in route["primary_free_sources"].split("|")
+
+    matrix, approved = build_acquisition_matrix(
+        routes,
+        values,
+        formula_inventory=pd.DataFrame(
+            [
+                {
+                    "signal": "OScore",
+                    "formula_sha256": (
+                        "ab970ee501bd7ab86a0a0d10b44f20c126195cf3201a1e2ed023ef90accd59d1"
+                    ),
+                }
+            ]
+        ),
+    )
+
+    oscore = matrix.loc[matrix["signal"].eq("OScore")].iloc[0]
+    assert oscore["status"] == "current_signal_computed"
+    assert oscore["current_value_count"] == 2
+    assert oscore["coverage"] == pytest.approx(2 / 3)
+    assert oscore["fidelity"] == "reconstructed"
+    assert not bool(oscore["strict_score_eligible"])
+    assert set(approved["signal"]) == {"OScore"}
+    assert evidence["signals"]["OScore"]["strict_score_eligible"] is False

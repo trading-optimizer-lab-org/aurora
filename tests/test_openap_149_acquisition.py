@@ -295,6 +295,7 @@ def test_authoritative_oscore_and_orgcap_routes_accept_fred() -> None:
     orgcap_sources = set(routes.loc["OrgCap", "primary_free_sources"].split("|"))
 
     assert "fred_public_csv" in oscore_sources
+    assert "recovered_openap93_oscore" in oscore_sources
     assert "fred_public_csv" in orgcap_sources
 
 
@@ -1626,8 +1627,8 @@ def test_consolidation_workflow_verifies_causal_firmage_evidence() -> None:
     assert '"declared_current_unusable" in quarantined["remaining_blocker"]' in verify
     assert 'matrix.set_index("signal").loc["OScore"]' in verify
     assert 'oscore["current_value_count"] == 1100' in verify
-    assert 'oscore["source_used"] == "fred|sec_edgar"' in verify
-    assert 'oscore_values["source_id"].eq("sec_edgar|fred_public_csv").all()' in verify
+    assert 'oscore["source_used"] == "recovered_openap93_oscore"' in verify
+    assert '"recovered_openap93_oscore"' in verify
 
 
 def test_consolidation_workflow_accepts_current_companyfacts_evidence() -> None:

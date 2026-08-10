@@ -70,7 +70,7 @@ AbnormalAccruals, Accruals, AccrualsBM, AdExp, AM, BM, BMdec, BookLeverage, BPEB
 
 `Cash` pertenece a este grupo. SEC proporciona caja, activos y fecha de filing; el trabajo es fijar alias XBRL, enmiendas, caja restringida e identidad, no encontrar una fuente de pago obligatoria.
 
-#### Recuperacion estrecha de seis senales OpenAP93
+#### Recuperacion estrecha de siete senales OpenAP93
 
 El artefacto recuperado `31341580689` conserva 2.157 filas actuales de
 `CompEquIss`, de las que 1.585 son utilizables. La reconstruccion aplica la
@@ -107,12 +107,18 @@ valida los recuentos de aplicables y no aplicables y solo admite enteros 1-5.
 `RIO_Disp` queda excluida porque su aproximacion Yahoo no equivale a IBES y el
 artefacto la declara no utilizable.
 
-`OScore` y `OrgCap` disponen ademas del deflactor `GNPDEF` gratuito de FRED.
-La evidencia existente SEC+FRED permite calcular reconstrucciones actuales,
-pero no elimina las puertas de cobertura, equivalencia Compustat/CRSP,
-validacion transversal y fidelidad estricta. En `OrgCap`, el valor existente
-usa SIC SEC a dos digitos: no equivale al SIC historico CRSP ni a la
-clasificacion FF17 de la formula oficial.
+`OScore` aporta 1.100 valores actuales mediante SEC y el deflactor `GNPDEF`
+gratuito de FRED. La ruta estrecha `recovered_openap93_oscore` liga el CSV y la
+cobertura al artefacto recuperado, exige cuatro entradas, valores binarios,
+fechas causales y la formula `openap_ohlson_oscore_decile_sec_gnpdefl`. Sigue
+siendo reconstruida no estricta porque no demuestra equivalencia
+Compustat/CRSP.
+
+`OrgCap` no esta en la misma situacion: el artefacto contiene 689 numeros, pero
+todos estan marcados `stale_reference_only` y ninguno tiene
+`current_usable=True`. Ademas usa SIC SEC a dos digitos, que no equivale al SIC
+historico CRSP ni a la clasificacion FF17 oficial. Por tanto no se admite en
+una reconsolidacion hasta obtener historia SG&A causal y contigua.
 
 `DelDRC`, `ConvDebt`, `OrderBacklog` y `OrderBacklogChg` no necesitan Twelve
 Data para sus entradas contables. La API `companyfacts` solo agrega hechos de

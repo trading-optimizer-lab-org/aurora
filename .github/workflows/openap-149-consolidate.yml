@@ -359,6 +359,12 @@ jobs:
                   "openap_residual_institutional_ownership_lag6_high_volatility",
                   "historical_thomson_crsp_compustat_identity_verified",
               ),
+              "OScore": (
+                  1100,
+                  "recovered_openap93_oscore",
+                  "openap_ohlson_oscore_decile_sec_gnpdefl",
+                  "compustat_crsp_equivalence_verified",
+              ),
           }
           openap93_batch = consolidation["verified_openap93_proxy_batch"]
           assert openap93_batch["strict_score_increment"] == 0
@@ -513,11 +519,13 @@ jobs:
           assert bool(oscore["current_value_calculated"])
           assert oscore["current_value_count"] == 1100
           assert oscore["fidelity"] == "reconstructed"
-          assert oscore["source_used"] == "fred|sec_edgar"
+          assert oscore["source_used"] == "recovered_openap93_oscore"
           assert not bool(oscore["strict_score_eligible"])
           oscore_values = values.loc[values["signal"].eq("OScore")]
           assert len(oscore_values) == 1100
-          assert oscore_values["source_id"].eq("sec_edgar|fred_public_csv").all()
+          assert oscore_values["source_id"].eq(
+              "recovered_openap93_oscore"
+          ).all()
           assert oscore_values["formula_id"].eq(
               "openap_ohlson_oscore_decile_sec_gnpdefl"
           ).all()

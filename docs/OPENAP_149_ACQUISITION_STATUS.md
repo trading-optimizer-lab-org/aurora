@@ -78,7 +78,7 @@ arrancar runs y no existe autorizacion posterior para ejecutar localmente.
 Por tanto, esta mejora no cambia todavia los recuentos publicados
 `56/50/18/99/96814`, la matriz CSV ni el score estricto confirmado de 31.
 
-## Seis senales OpenAP93: recuperacion selectiva preparada, no ejecutada
+## Siete senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 
 El artefacto gratuito y ya existente `openap-93-current-recovered-results` del
 run `31341580689` contiene 2.157 filas de `CompEquIss`; 1.585 tienen valor
@@ -137,6 +137,11 @@ cobertura, y rechaza valores que no sean quintiles enteros entre 1 y 5.
 previsiones Yahoo no equivale a la desviacion estandar IBES oficial. Ninguna de
 estas cuatro senales incrementa el score estricto ni modifica todavia los
 recuentos publicados.
+
+La septima senal es `OScore`, con 1.100 valores SEC+FRED actuales y binarios.
+La fuente estrecha `recovered_openap93_oscore` sustituye solo esas filas tras
+validar hash, formula, cuatro entradas, cobertura y fechas. Tampoco incrementa
+el score estricto.
 
 ## CompanyFacts ampliado: lote gratuito ejecutado, pendiente de consolidar
 
@@ -229,21 +234,26 @@ recuentos globales demostrados permanecen `56/50/18/99/96814`.
   `current_usable=True`, formula
   `openap_ohlson_oscore_decile_sec_gnpdefl` y fuente
   `sec_edgar|fred_public_csv`.
+- El cargador estrecho `recovered_openap93_oscore` valida el artefacto y los
+  manifiestos por hash, las 2157 identidades, las fechas, la cobertura 1100 de
+  2157, cuatro observaciones por valor y que la salida sea binaria. Solo las
+  1100 filas utilizables sustituyen el lote general.
 - Clasificacion: reconstruida, no estricta. No se incorpora al score estricto.
 - Resultado esperado al reconsolidar, todavia no declarado como ejecutado:
   57 adquiridas, 51 calculadas, 19 reconstruidas no estrictas, 98 bloqueadas
   y 97914 filas empresa-senal.
 
-## OrgCap: falso bloqueo de fuente corregido, pendiente de reconsolidar
+## OrgCap: fuente gratuita confirmada, pero valores actuales no disponibles
 
 - La formula oficial usa SG&A real, depreciacion anual del 15 %, escala por
   activos, winsorizacion transversal y ajuste por industria FF17.
-- El pipeline existente ya emitia una reconstruccion gratuita con SEC
-  CompanyFacts y `GNPDEF` de FRED, pero la matriz de rutas no autorizaba FRED
-  para `OrgCap`; por eso la consolidacion la rechazaba como fuente no aprobada.
-- La ruta autoriza ahora `fred_public_csv` y ya no exige Twelve Data. No se ha
-  ejecutado una nueva consolidacion, por lo que los recuentos demostrados no
-  cambian.
+- El artefacto existente contiene 689 numeros con SEC CompanyFacts y `GNPDEF`
+  de FRED, pero todos son `stale_reference_only`; las 2157 filas declaran
+  `current_usable=False`. No es correcto afirmar que una reconsolidacion los
+  admitira como valores actuales.
+- La ruta autoriza `fred_public_csv` y no exige Twelve Data, pero sigue faltando
+  historia SG&A causal, contigua y suficientemente larga. Los recuentos
+  demostrados no cambian.
 - La reconstruccion existente sigue siendo no estricta: usa SIC SEC actual a
   dos digitos, no SIC historico CRSP/FF17, y aun debe demostrar continuidad de
   historia, cobertura e identidad antes de una validacion de solapamiento.
