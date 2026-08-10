@@ -7,11 +7,6 @@ on:
         description: Exact Aurora revision to execute
         required: true
         type: string
-      market_source_run_id:
-        description: Run containing the verified current SEC security master
-        required: true
-        default: "31270341796"
-        type: string
       formula_evidence_run_id:
         description: Run containing the pinned OpenAP formula inventory
         required: true
@@ -20,7 +15,7 @@ on:
       formation_at:
         description: Causal current formation timestamp
         required: true
-        default: "2026-08-09T23:59:59Z"
+        default: "2026-08-10T23:59:59Z"
         type: string
       notes_periods:
         description: Comma-separated SEC Notes periods covering the 12-month lag
@@ -93,16 +88,15 @@ jobs:
           cache: pip
       - name: Install project
         run: python -m pip install --disable-pip-version-check -e .
-      - name: Selectively recover verified current SEC identity
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - name: Acquire direct official SEC current identity
         run: |
-          python scripts/recover_openap_market_security_master.py \
-            --repository trading-optimizer-lab-org/aurora \
-            --source-run-id "${{ inputs.market_source_run_id }}" \
-            --source-artifact-name openap-yfinance-sec-current-score-results \
-            --maximum-compressed-bytes 67108864 \
-            --output-dir openap_market_identity
+          mkdir -p inputs/sec_current
+          curl --fail --location --retry 4 --retry-all-errors \
+            --max-filesize 16777216 \
+            --header "User-Agent: $SEC_USER_AGENT" \
+            https://www.sec.gov/files/company_tickers_exchange.json \
+            --output inputs/sec_current/company_tickers_exchange.json
+          echo "IDENTITY_RETRIEVED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
       - name: Download pinned official formula evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -152,9 +146,9 @@ jobs:
           python scripts/run_openap_149_sec_listing_identity.py \
             --notes-archive-dir outputs/openap_149_sec_notes_exchange_switch/zips \
             --notes-source-manifest outputs/openap_149_sec_notes_exchange_switch/sec_notes_source_manifest.csv \
-            --security-master outputs/openap_market_identity/security_master.parquet \
-            --source-manifest outputs/openap_market_identity/source_manifest.csv \
-            --source-recovery-manifest outputs/openap_market_identity/openap_market_security_master_recovery_manifest.json \
+            --current-sec-identity-json inputs/sec_current/company_tickers_exchange.json \
+            --current-sec-identity-source-url https://www.sec.gov/files/company_tickers_exchange.json \
+            --identity-retrieved-at "$IDENTITY_RETRIEVED_AT" \
             --formula-root inputs/formulas \
             --formula-source-run-id "${{ inputs.formula_evidence_run_id }}" \
             --implementation-sha "$SOURCE_SHA" \
@@ -184,6 +178,11 @@ jobs:
               pd.to_datetime(finite["formation_at"], utc=True)
           ).all()
           assert manifest["signal"] == "ExchSwitch"
+          assert manifest["identity_source_url"] == (
+              "https://www.sec.gov/files/company_tickers_exchange.json"
+          )
+          assert manifest["identity_source_mode"] == "sec_official_live_direct"
+          assert manifest["current_universe_rows"] > 1000
           assert manifest["strict_score_eligible"] is False
           assert manifest["locked_opened"] is False
           assert manifest["forward_opened"] is False

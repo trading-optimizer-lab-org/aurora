@@ -14,21 +14,16 @@ from aurora.core.execution_policy import (
     require_github_actions_or_explicit_local_permission,
 )
 from aurora.core.runtime_paths import base_data_dir
-from aurora.research.openap_181.artifact_recovery import (
-    validate_materialized_market_security_master_recovery,
-)
 from aurora.research.openap_181.sec_listing_identity import (
     EXCH_SWITCH_FORMULA_SHA256,
     MAX_CORROBORATED_GAP_DAYS,
+    build_current_sec_universe,
     build_sec_listing_intervals,
     calculate_sec_exch_switch_current,
     extract_sec_listing_observations,
 )
 from aurora.research.openap_181.sec_notes_listing_inputs import (
     load_sec_notes_listing_history,
-)
-from aurora.research.openap_181.twelve_data_market_batch import (
-    prepare_twelve_data_universe,
 )
 
 
@@ -89,9 +84,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--notes-archive-dir", type=Path, required=True)
     parser.add_argument("--notes-source-manifest", type=Path, required=True)
-    parser.add_argument("--security-master", type=Path, required=True)
-    parser.add_argument("--source-manifest", type=Path, required=True)
-    parser.add_argument("--source-recovery-manifest", type=Path, required=True)
+    parser.add_argument("--current-sec-identity-json", type=Path, required=True)
+    parser.add_argument("--current-sec-identity-source-url", required=True)
+    parser.add_argument("--identity-retrieved-at", required=True)
     parser.add_argument("--formula-root", type=Path, required=True)
     parser.add_argument("--formula-source-run-id", required=True)
     parser.add_argument("--implementation-sha", required=True)
@@ -120,14 +115,16 @@ def main() -> int:
     if re.fullmatch(r"[1-9][0-9]*", str(args.formula_source_run_id)) is None:
         raise ValueError("formula source run id must be a positive integer")
 
-    recovery = validate_materialized_market_security_master_recovery(
-        args.source_recovery_manifest,
-        args.security_master,
-        args.source_manifest,
-    )
-    security_master = pd.read_parquet(args.security_master)
-    current_universe, current_rejections = prepare_twelve_data_universe(
-        security_master
+    try:
+        identity_payload = json.loads(
+            args.current_sec_identity_json.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("official SEC current identity JSON is invalid") from exc
+    current_universe, current_rejections = build_current_sec_universe(
+        identity_payload,
+        retrieved_at=args.identity_retrieved_at,
+        source_url=args.current_sec_identity_source_url,
     )
     if current_universe.empty:
         raise RuntimeError("no unambiguous official SEC current securities remain")
@@ -195,18 +192,12 @@ def main() -> int:
         "implementation_sha": implementation_sha,
         "formation_at": pd.Timestamp(formation).isoformat(),
         "maximum_gap_days": args.maximum_gap_days,
-        "source_run_id": int(recovery["source_run_id"]),
-        "source_head_sha": str(recovery["source_head_sha"]),
-        "source_artifact_id": int(recovery["source_artifact_id"]),
-        "source_artifact_name": str(recovery["source_artifact_name"]),
-        "identity_source_url": str(recovery["identity_source_url"]),
-        "identity_source_mode": str(recovery["identity_source_mode"]),
-        "identity_source_sha256": str(recovery["identity_source_sha256"]),
-        "security_master_sha256": _sha256(args.security_master),
-        "source_manifest_sha256": _sha256(args.source_manifest),
-        "source_recovery_manifest_sha256": _sha256(
-            args.source_recovery_manifest
-        ),
+        "identity_source_url": str(args.current_sec_identity_source_url),
+        "identity_source_mode": "sec_official_live_direct",
+        "identity_source_sha256": _sha256(args.current_sec_identity_json),
+        "identity_retrieved_at": pd.Timestamp(
+            pd.to_datetime(args.identity_retrieved_at, utc=True)
+        ).isoformat(),
         "formula_source_run_id": str(args.formula_source_run_id),
         "formula_inventory_sha256": _sha256(formula_inventory),
         "notes_source_manifest_sha256": _sha256(args.notes_source_manifest),
