@@ -265,6 +265,25 @@ def test_acquisition_matrix_quarantines_explicitly_unusable_current_rows() -> No
     assert values.empty
 
 
+def test_acquisition_matrix_allows_missing_optional_current_usable_flag() -> None:
+    module = _module()
+    undeclared = _current_rows().iloc[[0]].copy()
+    undeclared.loc[:, "current_usable"] = pd.NA
+    formulas = pd.DataFrame([{"signal": "Cash", "formula_sha256": "a" * 64}])
+
+    matrix, values = module.build_acquisition_matrix(
+        _routes().iloc[[0]],
+        undeclared,
+        formula_inventory=formulas,
+    )
+
+    row = matrix.iloc[0]
+    assert row["status"] == "current_signal_computed"
+    assert bool(row["data_acquired"])
+    assert bool(row["current_value_calculated"])
+    assert len(values) == 1
+
+
 def test_acquisition_status_discloses_latest_formation_date_without_trailing_spaces(
     tmp_path: Path,
 ) -> None:
