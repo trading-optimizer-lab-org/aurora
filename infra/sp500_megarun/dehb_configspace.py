@@ -243,6 +243,60 @@ def _forbidden_parameter_pairs(
             ("statistic", "realized_asymmetry", "change_lag", lag)
             for lag in space["change_lag"][1:]
         )
+    if lane.lane_id == "F091":
+        pairs.extend(
+            ("statistic", statistic, "tail_quantile", quantile)
+            for statistic in ("vol_of_vol", "methodology_disagreement")
+            for quantile in space["tail_quantile"][1:]
+        )
+        pairs.extend(
+            ("statistic", "methodology_disagreement", "window", window)
+            for window in space["window"][1:]
+        )
+    if lane.lane_id == "F093":
+        pairs.extend(
+            ("statistic", statistic, "positioning_window", window)
+            for statistic in ("implied_downside_gap", "tail_realization")
+            for window in space["positioning_window"][1:]
+        )
+        pairs.extend(
+            ("statistic", "positioning_pressure", parameter, choice)
+            for parameter in ("window", "tail_quantile")
+            for choice in space[parameter][1:]
+        )
+    if lane.lane_id == "F095":
+        pairs.extend(
+            ("statistic", statistic, "change_lag", lag)
+            for statistic in ("rate_volatility", "volatility_ratio", "divergence")
+            for lag in space["change_lag"][1:]
+        )
+    if lane.lane_id == "F097":
+        pairs.extend(
+            ("statistic", "growth_breadth", "window", window)
+            for window in space["window"][1:]
+        )
+    if lane.lane_id == "F098":
+        pairs.extend(
+            ("statistic", "surprise_breadth", "scale_window", window)
+            for window in space["scale_window"][1:]
+        )
+    if lane.lane_id == "F099":
+        pairs.extend(
+            ("statistic", "inflation_level", parameter, choice)
+            for parameter in ("forecast_window", "scale_window")
+            for choice in space[parameter][1:]
+        )
+        pairs.extend(
+            ("statistic", statistic, "scale_window", window)
+            for statistic in ("inflation_trend", "inflation_acceleration")
+            for window in space["scale_window"][1:]
+        )
+    if lane.lane_id == "F100":
+        pairs.extend(
+            ("statistic", statistic, "normalization_window", window)
+            for statistic in ("policy_change", "real_rate", "rule_gap")
+            for window in space["normalization_window"][1:]
+        )
     return tuple(pairs)
 
 

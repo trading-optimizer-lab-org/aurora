@@ -242,8 +242,17 @@ def test_tail_macro_smoke_builds_f091_f100_train_only_artifacts(
     assert report["empty_lanes"] == []
     assert report["exact_duplicate_groups"] == []
     assert report["near_duplicate_pairs"] == []
+    parameter_audit = report["parameter_choice_audit"]
+    assert parameter_audit["ready"] is True
+    assert parameter_audit["expected_choice_probe_count"] == 125
+    assert parameter_audit["choice_probe_count"] == 125
+    assert parameter_audit["failed_probes"] == []
+    assert parameter_audit["inactive_choice_groups"] == []
     assert (tmp_path / "out" / "features" / "F091.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F100.parquet").is_file()
+    assert (
+        tmp_path / "out" / "parameter_choice_audit_F091_F100.json"
+    ).is_file()
 
 
 def test_tail_macro_smoke_requires_physical_train_partition(tmp_path: Path) -> None:

@@ -226,6 +226,13 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F087", 21),
         ("F088", 16),
         ("F089", 3),
+        ("F091", 7),
+        ("F093", 14),
+        ("F095", 9),
+        ("F097", 4),
+        ("F098", 3),
+        ("F099", 11),
+        ("F100", 9),
     ],
 )
 def test_conditionally_inactive_model_parameters_are_forbidden(
