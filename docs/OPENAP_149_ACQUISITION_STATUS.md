@@ -43,6 +43,76 @@ solo `CBOperProf` conserva la cuarentena en el contrato de consolidacion
 preparado. El CSV se conserva sin reescribir manualmente porque el usuario ha
 prohibido iniciar un nuevo run y aun no existe un artefacto consolidado nuevo.
 
+### Auditoria de los tres consolidados antiguos
+
+Se revisaron completos los artefactos locales de los runs `31341667121`,
+`31351139546` y `31353944479`. Contienen respectivamente 95.383, 95.390 y
+99.824 filas, y 51, 52 y 53 senales con valor. El segundo solo anadio las siete
+filas de `realestate`; el tercero anadio `FirmAge` y no descubre otra senal
+oculta que pueda recuperarse.
+
+La diferencia exacta entre las 99.824 filas del ultimo consolidado antiguo y
+las 96.814 filas fail-closed demostradas despues es de 3.010 filas. Se
+reconcilia por completo contra la declaracion `current_usable` del artefacto de
+origen:
+
+- 2.585 filas pertenecian a tres senales cuya evidencia completa era no
+  utilizable: `CBOperProf` (415), `DelNetFin` (2.157) y
+  `EarningsConsistency` (13).
+- 425 filas eran observaciones no actuales dentro de seis senales que si
+  conservan otras filas utilizables: `BrandInvest` (9), `GrLTNOA` (75),
+  `HerfBE` (63), `hire` (24), `NumEarnIncrease` (4) y `Tax` (250).
+
+Los dos subtotales suman 3.010 y explican exactamente
+`99.824 - 3.010 = 96.814`. Por tanto, los consolidados antiguos no aportan una
+senal adicional valida. `DelNetFin` y `EarningsConsistency` tienen ya
+sustituciones ejecutadas de 36 y 1.441 valores en CompanyFacts `31392473937`,
+pendientes de una consolidacion autorizada; `CBOperProf` sigue en cuarentena.
+Esta comprobacion fue solo de lectura sobre artefactos existentes: no ejecuto
+tests, calculos de senales, descargas ni workflows y no cambia los recuentos
+publicados ni el score estricto de 31.
+
+### Auditoria de cinco salidas finitas rechazadas de OpenAP93
+
+Tambien se compararon con el codigo oficial cinco senales del artefacto
+`31341580689` que conservaban numeros finitos pero
+`current_usable=False`. Ninguna puede recuperarse sin corregir primero su
+entrada o su formula:
+
+- `DivSeason` contiene 1.191 valores, 586 ceros y 605 unos. El calculador
+  aplica siempre los retardos trimestrales 2/5/8/11 y no usa `cd3`; la formula
+  oficial distingue frecuencia trimestral o desconocida, semestral y anual,
+  ademas de filtrar dividendos ordinarios por `cd1=1` y `cd2=2`. Puede marcar
+  meses incorrectos para pagadores semestrales o anuales. Los 1.191 valores se
+  rechazan; solo permanecen los tres positivos SEC ejecutados, no estrictos y
+  sin clase cero.
+- `AnnouncementReturn` contiene 561 valores calculados alrededor de la fecha
+  del 10-Q/10-K. La formula oficial usa `rdq`, la fecha de anuncio de
+  resultados, y suma retornos anormales entre las sesiones -2 y +1. Un filing
+  periodico puede publicarse dias o semanas despues del anuncio; esos 561
+  numeros miden otro evento. La ruta gratuita pendiente debe identificar el
+  anuncio, por ejemplo mediante un 8-K Item 2.02 causal, antes de calcular la
+  ventana.
+- `FirmAgeMom` contiene 373 valores. La formula oficial ordena la edad desde la
+  primera aparicion de cada accion; el run solo adquirio 84 meses desde
+  2019-08-09 y usa `first_clean_price_date`. Ese borde de descarga no permite
+  ordenar la edad real de las empresas antiguas. Se necesita una primera fecha
+  de cotizacion verificada, no el inicio del shard recuperado.
+- `IndRetBig` contiene 1.432 valores agrupados por la etiqueta industrial
+  actual de Yahoo. La formula oficial exige SIC CRSP transformado a FF48,
+  ranking de capitalizacion dentro de industria y la rentabilidad media del
+  30 % mayor, excluyendo despues las propias empresas grandes. La etiqueta
+  Yahoo no es ese grupo y los valores se rechazan.
+- `MS` contiene cuatro valores de una aproximacion SEC anual. La formula
+  oficial de Mohanram combina entradas trimestrales, ventanas de 12 y 48
+  meses, filtro previo del quintil bajo de book-to-market y medianas SIC2. La
+  estabilidad anual usada por el proxy no reproduce esas ventanas.
+
+Esta auditoria descarta `1.191 + 561 + 373 + 1.432 + 4 = 3.561` numeros que no
+representan la formula declarada. No elimina las rutas gratuitas: fija el dato
+o calculador que falta para poder reintentarlas. No cambia los recuentos
+publicados porque ninguna de esas filas estaba marcada como utilizable.
+
 ## Seis lotes de origen: verificacion hash-bound preparada, no ejecutada
 
 El consolidador anterior leia directamente los CSV de CompanyFacts, FINRA,
@@ -77,6 +147,90 @@ han ejecutado localmente ni en GitHub porque la instruccion vigente prohibe
 arrancar runs y no existe autorizacion posterior para ejecutar localmente.
 Por tanto, esta mejora no cambia todavia los recuentos publicados
 `56/50/18/99/96814`, la matriz CSV ni el score estricto confirmado de 31.
+
+### Union prospectiva de artefactos ya ejecutados
+
+Sin ejecutar calculadores ni volver a descargar datos, se hizo la union por
+nombre de senal de los seis CSV de origen fijados por los contratos anteriores.
+Los artefactos contienen al menos una fila finita declarada
+`current_usable=True` para 55 senales. Su union con las 50 senales canonicas
+fail-closed aporta 15 senales nuevas y deja un total prospectivo de 65:
+
+`ChInvIA`, `ConvDebt`, `DelDRC`, `DelNetFin`, `DivOmit`, `DivSeason`,
+`EarningsConsistency`, `EarningsSurprise`, `ExchSwitch`, `IndIPO`,
+`IO_ShortInterest`, `RDIPO`, `RevenueSurprise`, `sinAlgo` y `Spinoff`.
+
+Las 17 rutas estrechas OpenAP93 descritas a continuacion anaden 16 nombres
+unicos sobre esas 65; `DivOmit` ya estaba presente. Los 16 adicionales son:
+
+`BetaTailRisk`, `betaVIX`, `CompEquIss`, `CoskewACX`, `Coskewness`, `DivInit`,
+`DivYieldST`, `EquityDuration`, `MomRev`, `MomVol`, `OScore`, `PriceDelayRsq`,
+`ResidualMomentum`, `RIO_MB`, `RIO_Turnover` y `RIO_Volatility`.
+
+Por tanto, hay evidencia fuente ya adquirida para un total prospectivo de 81
+senales con algun valor actual. No es todavia el recuento publicado: la union
+solo prueba disponibilidad en artefactos, no que el consolidador y sus pruebas
+hayan aceptado cada fila. Algunas rutas son positivas y parciales, y todas las
+nuevas siguen siendo no estrictas. Los recuentos canonicos permanecen en
+`56/50/18/99/96814` y el score estricto confirmado permanece en 31 hasta una
+consolidacion autorizada y verificada.
+
+### Resto exacto despues de las rutas preparadas
+
+La union anterior distingue evidencia adquirida de implementacion preparada.
+Si se incorporan, sin darlas por ejecutadas, las 17 salidas del recuperador de
+ratios contables, el conjunto cubierto por una ruta concreta sube de 81 a 98.
+Al anadir los 25 calculadores de mercado cuya formula permanece preparada y
+descontar siete solapes con OpenAP93, sube a 116.
+
+Quedan exactamente 33 senales fuera de esas rutas adquiridas o preparadas:
+
+`Activism1`, `Activism2`, `AgeIPO`, `AnnouncementReturn`, `BetaLiquidityPS`,
+`BPEBM`, `CBOperProf`, `CitationsRD`, `CustomerMomentum`, `EarnSupBig`, `EBM`,
+`FirmAgeMom`, `FR`, `Frontier`, `IndRetBig`, `IntanBM`, `IntanCFP`, `IntanEP`,
+`IntanSP`, `iomom_cust`, `iomom_supp`, `Mom6mJunk`, `MS`, `OrderBacklog`,
+`OrderBacklogChg`, `OrgCap`, `PatentsRD`, `RDS`, `retConglomerate`, `VarCF`,
+`zerotrade12M`, `zerotrade1M` y `zerotrade6M`.
+
+Los numeros 98 y 116 son cobertura de implementacion prospectiva, no valores
+calculados ni senales aceptadas. El siguiente trabajo de adquisicion debe
+centrarse en esas 33 y, en paralelo, verificar la consolidacion de las rutas ya
+preparadas cuando vuelva a estar autorizada una ejecucion.
+
+Dos auditorias del resto fijan el siguiente trabajo concreto:
+
+- `Frontier` tiene ocho valores reconstruidos con la regresion oficial de 60
+  meses y precio del mes corriente, pero el codigo del SHA fuente publica como
+  `available_at` solo la fecha del filing anual e ignora `price_date`, aunque ya
+  calcula el maximo de ambas dependencias en `current_available`. Por eso las
+  ocho filas aparecen artificialmente con 160 a 261 dias de antiguedad. La
+  correccion debe probar que disponibilidad y `period_end` reflejan la
+  dependencia de mercado actual antes de intentar recuperar la senal.
+- `OrgCap` no se arregla cambiando una fecha. Sus 689 numeros usan todos los
+  cierres fiscales y ajustan por SIC2; la formula oficial conserva diciembre y
+  estandariza por FF17 despues de winsorizar. Esas filas siguen rechazadas
+  hasta corregir ambas diferencias y obtener historia SG&A contigua.
+- `AnnouncementReturn` tiene una ruta gratuita primaria mas concreta que el
+  bloqueo generico anterior. SEC Submissions ya aporta accesion, formulario,
+  fecha de filing, aceptacion y documento, pero `_submission_rows` descarta el
+  vector `items` y el parquet no conserva Item 2.02. El Form 8-K oficial exige
+  que Item 2.02 declare la fecha del anuncio o release de resultados. La
+  correccion debe retener `items`, seleccionar 8-K/8-K/A con Item 2.02, extraer
+  fail-closed la fecha real del anuncio y fijar `available_at` como el maximo
+  entre la publicacion causal, la aceptacion SEC y la sesion +1 que cierra la
+  ventana oficial -2/-1/0/+1. Los 561 numeros construidos con la fecha del
+  10-Q/10-K siguen rechazados.
+- `VarCF` tampoco carece de entradas gratuitas. La formula oficial es la
+  varianza movil de 60 meses de `(ib+dp)/mve_permco`, con un minimo de 24
+  observaciones. El recolector ya retiene `NetIncomeLoss`/`ProfitLoss`,
+  `DepreciationDepletionAndAmortization`/`Depreciation` y ocho observaciones
+  anuales; los artefactos de precio recuperados cubren la ventana. El hueco es
+  el denominador historico: el panel de mercado preparado repite las acciones
+  actuales hacia atras y deriva con ellas la capitalizacion mensual. Antes de
+  calcular `VarCF` hay que resolver acciones SEC disponibles en cada mes,
+  agregar causalmente todas las clases del mismo CIK y fallar cerrado ante
+  intervalos de identidad ambiguos. La ruta resultante sera reconstruida y no
+  estricta, no CRSP/Compustat exacta.
 
 ## Diecisiete senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 
@@ -341,18 +495,25 @@ con `security_master.parquet`. La ruta nueva recupera por rangos solo cada
 cuarentena las filas OHLCV invalidas y nunca llama de nuevo a Yahoo.
 
 El workflow manual
-`.github/workflows/openap-149-recovered-yfinance-market.yml` calcula 31
-salidas no estrictas: 12 directas, 11 con factores Kenneth French y 8
-adicionales (`BetaLiquidityPS`, `FirmAgeMom`, `IndMom`, `IndRetBig`, `Size`,
-`TrendFactor`, `VolMkt` y `std_turn`). La innovacion de liquidez procede de la
+`.github/workflows/openap-149-recovered-yfinance-market.yml` estaba preparado
+para calcular 31 salidas no estrictas: 12 directas, 11 con factores Kenneth
+French y 8 adicionales (`BetaLiquidityPS`, `FirmAgeMom`, `IndMom`, `IndRetBig`,
+`Size`, `TrendFactor`, `VolMkt` y `std_turn`). Una auditoria posterior de la
+formula redujo el bloque realmente preparado a 25. Las tres variantes
+`zerotrade` no implementan todavia la formula mensual fijada; `FirmAgeMom`
+usa el inicio truncado del historico descargado como edad; `IndRetBig` usa
+SIC2 en vez de FF48; y `BetaLiquidityPS` no dispone de factor mensual actual.
+La innovacion de liquidez procede de la
 pagina oficial de Lubos Pastor en Chicago Booth. Esa serie llega hasta
 diciembre de 2025: permite calcular historicamente `BetaLiquidityPS`, pero no
 declararla actual para la formacion de julio de 2026. El resto conserva
 explicitamente las limitaciones de identidad, industria, acciones y
 capitalizacion actuales frente a CRSP historico.
 
-Estado exacto: `prepared_unexecuted`. No se ha lanzado ningun run nuevo y, por
-tanto, ninguna de las 31 se marca aun como adquirida o calculada en el
+Estado exacto: 25 rutas `prepared_unexecuted`, cinco
+`blocked_formula_fidelity` y una `blocked_source_staleness`. No se ha lanzado
+ningun run nuevo y, por tanto,
+ninguna de las 31 se marca aun como adquirida o calculada en el
 consolidado. Todas siguen con `strict_score_eligible=false`; el incremento del
 score estricto es cero. Los recuentos ejecutados permanecen
 `56/50/18/99/96814` y el score estricto confirmado permanece en 31.
@@ -405,13 +566,19 @@ La ruta de adquisicion Twelve Data queda preparada en codigo, pero no ejecutada:
 - El workflow es exclusivamente manual (`workflow_dispatch`) y se niega a
   adquirir en un repositorio publico. No existe disparador por `push`.
 - Cuando las 4.314 peticiones terminan correctamente, el mismo runner calcula
-  ya once senales directas: `BetaTailRisk`, `High52`,
-  `MomOffSeason11YrPlus`, `MomRev`, `MomVol`, `RealizedVol`, `VolSD`,
-  `VolumeTrend`, `zerotrade1M`,
-  `zerotrade6M` y `zerotrade12M`. Exige
+  ocho senales directas verificables: `BetaTailRisk`, `High52`,
+  `MomOffSeason11YrPlus`, `MomRev`, `MomVol`, `RealizedVol`, `VolSD` y
+  `VolumeTrend`. Exige
   por empresa los dos historicos ligados por hash, excluye sesiones
   incompletas y no convierte faltantes en cero. Si queda una sola peticion
   pendiente o fallida, no genera el artefacto derivado.
+- `zerotrade1M`, `zerotrade6M` y `zerotrade12M` no estan preparados. La formula
+  oficial agrega `vol/shrout` por meses completos, usa ventanas de 1, 6 y 12
+  meses con deflactores 480.000/11.000 y desplaza el resultado un mes. El
+  calculador compartido actual solo mide la fraccion de sesiones de volumen
+  cero sobre 21/126/252 sesiones hasta la fecha de formacion; no aplica el
+  ajuste de turnover, los bloques mensuales ni el desplazamiento. No se puede
+  ligar ese resultado al hash oficial ni marcarlo `current_usable`.
 - Las tres formulas transversales (`BetaTailRisk`, `MomRev` y `MomVol`) se
   calculan sobre el universo completo, no empresa por empresa. Se corrigio el
   ensamblado preparado del runner para que no redujera accidentalmente cada
@@ -433,12 +600,17 @@ La ruta de adquisicion Twelve Data queda preparada en codigo, pero no ejecutada:
   el RMSE CAPM de 252 observaciones con minimo 100.
 
 Estado exacto del respaldo: `prepared_unexecuted`. Ya no se necesita que el
-usuario facilite una clave para la ruta principal. Hay 23 calculadores
-compartidos: 12 directos y 11 con factores franceses gratuitos.
+usuario facilite una clave para la ruta principal. Hay 20 calculadores
+compartidos cuya formula queda preparada: 9 directos, incluido
+`BidAskSpread`, y 11 con factores franceses gratuitos. Las tres variantes
+`zerotrade` conservan una ruta de datos gratuita, pero no un calculador fiel.
 `BidAskSpread` usa el estimador estandar Corwin-Schultz sobre maximos y minimos
 nominales, pero permanece como proxy no estricto porque OpenAP carga un fichero
 preprocesado por SAS cuyo tratamiento exacto no esta publicado. La ruta de
-artefactos añade los 8 calculadores restantes. En todas habra que completar
+artefactos añade cinco calculadores restantes con formula preparada (`IndMom`,
+`Size`, `TrendFactor`, `VolMkt` y `std_turn`): 25 en total. `BetaLiquidityPS`,
+`FirmAgeMom` e `IndRetBig` conservan fuentes gratuitas documentadas, pero no
+una salida actual fiel. En todas habra que completar
 los intervalos historicos de ticker y medir cobertura y fidelidad. Por ello
 las 31 siguen sin valor nuevo consolidado y con
 `strict_score_eligible=false`. Esta cifra corrige el grupo provisional de 36:

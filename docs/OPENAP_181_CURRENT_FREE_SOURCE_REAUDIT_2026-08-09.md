@@ -31,6 +31,11 @@ La primera pregunta sigue siendo muy exigente. La segunda es la que corresponde 
 ## Fuentes verificadas
 
 - [SEC EDGAR APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces): APIs JSON sin clave, `companyfacts`, historial de submissions, actualizacion en tiempo real y archivos bulk nocturnos.
+- [Form 8-K oficial](https://www.sec.gov/files/form8-k.pdf): Item 2.02 cubre
+  anuncios o releases de resultados de periodos trimestrales o anuales
+  completados y exige declarar la fecha del anuncio, identificarlo e incluir
+  su texto como exhibit. Esto permite reconstruir `AnnouncementReturn` sin
+  confundir el evento con la fecha posterior de un 10-Q/10-K.
 - [SEC EDGAR XBRL Guide 2026](https://www.sec.gov/file/xbrl-guide-2026-01-16): los filings Inline XBRL pueden declarar `dei:TradingSymbol`, `dei:SecurityExchangeName` y `dei:Security12bTitle` por contexto. Sirven para corroborar observaciones historicas CIK-clase-ticker-bolsa, pero no autorizan a convertir la asociacion actual de `company_tickers_exchange.json` en un intervalo historico ni en identidad PERMNO.
 - [SEC Financial Statement Data Sets](https://www.sec.gov/data-research/sec-markets-data/financial-statement-data-sets): estados numericos XBRL `as filed` desde 2009, con accesion y enmiendas.
 - [SEC Financial Statement and Notes Data Sets](https://www.sec.gov/data-research/sec-markets-data/financial-statement-notes-data-sets): notas y tablas XBRL, incluidas etiquetas estandar y propias necesarias para segmentos, clientes y desgloses menos comunes.
@@ -145,6 +150,16 @@ todos estan marcados `stale_reference_only` y ninguno tiene
 `current_usable=True`. Ademas usa SIC SEC a dos digitos, que no equivale al SIC
 historico CRSP ni a la clasificacion FF17 oficial. Por tanto no se admite en
 una reconsolidacion hasta obtener historia SG&A causal y contigua.
+
+`Frontier` conserva ocho numeros distintos. El calculador del SHA fuente usa el
+mes de mercado mas reciente en la regresion de 60 meses, pero al construir la
+fila copia `available_at` y `period_end` del filing anual y omite
+`price_date`. El propio bucle calcula correctamente `current_available` como
+el maximo de contabilidad y precio, pero no lo usa para `Frontier`. De ahi los
+160 a 261 dias de antiguedad registrados. No se recuperan aun: hace falta una
+prueba que demuestre la dependencia causal de mercado y una nueva salida con
+fechas corregidas. La formula seguira siendo una reconstruccion SEC/Yahoo, no
+Compustat/CRSP exacta.
 
 `DelDRC`, `ConvDebt`, `OrderBacklog` y `OrderBacklogChg` no necesitan Twelve
 Data para sus entradas contables. La API `companyfacts` solo agrega hechos de
@@ -476,7 +491,15 @@ a 45 dias. Exige cuatro eventos regulares para frecuencia trimestral o tres
 para semestral/anual, comprueba sus separaciones y aplica los lags oficiales
 2/5/8/11, 5/11 u 11. Solo emite el 1 previsto; no emite 0. El cierre del periodo
 SEC sigue siendo un proxy de `exdt` y la frecuencia inferida no es el codigo
-CRSP `cd3`, por lo que tampoco sera estricta. No se ha ejecutado ni medido.
+CRSP `cd3`, por lo que tampoco sera estricta. El run CompanyFacts
+`31392473937` ejecuto esta ruta y emitio tres positivos, sin clase cero.
+
+Los 1.191 valores finitos de `DivSeason` del artefacto OpenAP93 no son una
+alternativa recuperable: 586 son cero y 605 son uno, pero el calculador aplica
+siempre los retardos trimestrales 2/5/8/11. No distingue las reglas oficiales
+semestral 5/11 y anual 11, no usa `cd3` y tampoco puede filtrar `cd1=1` y
+`cd2=2`. Esos valores se rechazan por fidelidad de formula y no cambian la
+cobertura ejecutada de tres positivos SEC.
 
 ### Precio: 27
 
@@ -487,6 +510,50 @@ corresponda + SEC para eventos o clasificacion. Twelve Data queda como respaldo.
 AnnouncementReturn, Beta, BetaFP, BetaLiquidityPS, BetaTailRisk, betaVIX, CoskewACX, Coskewness, FirmAgeMom, High52, IdioVol3F, IdioVolAHT, IndMom, IndRetBig, Mom6mJunk, MomOffSeason11YrPlus, MomRev, MomVol, PriceDelayRsq, PriceDelaySlope, PriceDelayTstat, RealizedVol, ResidualMomentum, retConglomerate, ReturnSkew3F, Size, TrendFactor.
 
 `betaVIX` solo puede ser proxy desde que VXO dejo de publicarse en 2021. `retConglomerate` exige reconstruir segmentos SEC y no debe llamarse equivalente exacto a Compustat sin validacion.
+
+La reauditoria de los numeros finitos no utilizables del artefacto OpenAP93
+rechaza otras tres recuperaciones aparentes:
+
+- Los 561 valores de `AnnouncementReturn` usan la fecha de presentacion del
+  10-Q/10-K. La formula fijada usa `rdq`, la fecha de anuncio de resultados, y
+  suma las cuatro sesiones -2/-1/0/+1. Un filing periodico posterior mide otro
+  evento. La ruta gratuita debe adquirir primero una fecha de anuncio causal
+  desde un 8-K Item 2.02 y no reutilizar esos 561 numeros. El recolector SEC ya
+  conserva accesion, filing, aceptacion y documento, pero `_submission_rows`
+  omite actualmente el vector `items` de Submissions y el parquet tampoco lo
+  declara. La implementacion debe retener ese campo, aceptar solo 8-K/8-K/A
+  con Item 2.02, extraer la fecha declarada del anuncio de forma fail-closed y
+  usar como `available_at` el maximo entre la publicacion causal, la aceptacion
+  SEC y la sesion +1 que cierra la ventana de retornos.
+- Los 373 valores de `FirmAgeMom` ordenan la edad desde
+  `first_clean_price_date`, pero el run solo adquirio 84 meses desde
+  2019-08-09. La primera fecha del shard no es la primera aparicion de la
+  accion exigida por OpenAP. El calculador recuperado de 16 anos conserva el
+  mismo defecto mientras priorice `first_price_date` sobre una fecha de
+  cotizacion verificada.
+- Los 1.432 valores de `IndRetBig` usan la industria actual de Yahoo. El
+  calculador recuperado posterior cambia esa etiqueta por SIC2, pero la formula
+  oficial exige transformar SIC a FF48 antes de ordenar capitalizacion y
+  promediar el 30 % mayor. Ambas salidas quedan bloqueadas por formula hasta
+  usar el mapa FF48 ya fijado en el repositorio.
+
+`MS` presenta el mismo problema fuera del grupo de precio. Sus cuatro numeros
+OpenAP93 usan una aproximacion SEC anual; la formula oficial de Mohanram exige
+entradas trimestrales, ventanas de 12 y 48 meses, filtro previo por el quintil
+bajo de book-to-market y comparaciones SIC2. Los cuatro se rechazan y la ruta
+gratuita queda pendiente de implementar sobre historia trimestral SEC.
+
+`VarCF` tiene una ruta gratuita reconstruida tambien mas concreta. La formula
+fijada calcula la varianza de `(ib+dp)/mve_permco` en 60 meses con al menos 24
+observaciones. CompanyFacts ya retiene ocho contextos anuales y los alias SEC
+de ingreso neto y depreciacion; los 48 shards de precio recuperados cubren mas
+de cinco anos. No puede ejecutarse todavia con el panel mensual preparado,
+porque este repite las acciones actuales a lo largo de todo el historico y usa
+ese valor para derivar la capitalizacion mensual. Hace falta resolver acciones
+SEC disponibles en cada mes y agregar todas las clases causales del mismo CIK,
+con identidad fail-closed. Aun corregido, SEC/Yahoo no demostrara equivalencia
+con `ib`, `dp`, `mve_permco` ni PERMNO historico, por lo que la salida sera
+`reconstructed_not_strict`.
 
 ### Trading: 9
 
@@ -544,31 +611,45 @@ La implementacion principal preparada aplica estas puertas:
   `adjust=all` y `adjust=none`, a partir del parquet recuperado. Se limita la
   memoria a 16 anos, suficiente para la ventana oficial maxima de 15 anos, y
   usa `available_at` causal conservador.
-- Calculo directo, solo tras validar los 48 hashes, de 12 objetivos:
+- Calculo directo, solo tras validar los 48 hashes, de 9 objetivos cuya formula
+  queda preparada:
   `BidAskSpread`, `BetaTailRisk`, `High52`, `MomOffSeason11YrPlus`, `MomRev`,
-  `MomVol`, `RealizedVol`, `VolSD`, `VolumeTrend`, `zerotrade1M`,
-  `zerotrade6M` y `zerotrade12M`. El runner construye las vistas nominal y
+  `MomVol`, `RealizedVol`, `VolSD` y `VolumeTrend`. El runner construye las
+  vistas nominal y
   ajustada, excluye sesiones incompletas y publica solo observaciones derivadas.
 - Workflow solo manual y obligado a repositorio privado. Los OHLCV se separan
-  en un artefacto interno; el artefacto derivado mantiene 31 observaciones por
-  titulo, el origen y las formulas, siempre con score estricto cero.
+  en un artefacto interno. Un artefacto derivado de 31 salidas no se considera
+  valido mientras las tres `zerotrade` conserven la formula incorrecta; la
+  salida aceptable debe excluirlas o corregirlas, conservar el origen y las
+  formulas y mantener siempre score estricto cero.
 
-No se ha iniciado ningun run nuevo de mercado. Las 31 permanecen
-`prepared_unexecuted`. Ya hay 31 calculadores preparados: 12 directos, 11 que
+No se ha iniciado ningun run nuevo de mercado. De las 31 rutas, 25 permanecen
+`prepared_unexecuted`, cinco quedan `blocked_formula_fidelity` y una
+`blocked_source_staleness`. Hay 25 calculadores preparados: 9 directos, 11 que
 combinan el panel recuperado con los ZIP publicos diario y mensual de Kenneth
 French (`Beta`, `BetaFP`, dos variantes
 de coskewness, dos momentos residuales FF3, `IdioVolAHT`,
 `ResidualMomentum` y las tres
 variantes `PriceDelay`). Los factores se congelan por SHA-256 durante todas las
 reanudaciones. El ensamblado calcula ademas `BetaTailRisk`, `MomRev` y `MomVol`
-sobre el universo completo, como exigen sus cortes transversales. Los 8
-calculadores adicionales usan el `security_master` auditado y, para
-`BetaLiquidityPS`, la serie oficial gratuita de Chicago Booth. Esta ultima
-solo llega a diciembre de 2025, por lo que se etiqueta historica y no actual
-para julio de 2026. Faltan ejecucion, intervalos historicos de ticker, cobertura
-y fidelidad. No cambian los recuentos ejecutados ni el score estricto de 31.
+sobre el universo completo, como exigen sus cortes transversales. Los cinco
+calculadores adicionales preparados son `IndMom`, `Size`, `TrendFactor`,
+`VolMkt` y `std_turn`. `FirmAgeMom` e `IndRetBig` quedan fuera por los fallos
+de edad truncada y SIC2 frente a FF48 descritos arriba. `BetaLiquidityPS`
+tambien queda fuera: la serie oficial gratuita de Chicago Booth solo llega a
+diciembre de 2025 y no es actual para julio de 2026. Faltan ejecucion,
+intervalos historicos de ticker, cobertura y fidelidad. No cambian los
+recuentos ejecutados ni el score estricto de 31.
 
-La duodecima ruta directa es `BidAskSpread`. Calcula el estimador estandar
+Las tres variantes `zerotrade` no forman parte de esos 25 calculadores. El
+artefacto OpenAP93 contiene 2.150 numeros por variante, pero usa las ultimas
+21/126/252 sesiones hasta el 7 de agosto de 2026 y acciones actuales. El
+calculador compartido preparado usa solo la fraccion de sesiones con volumen
+cero. Ninguno replica la formula fijada: agregacion por meses completos de
+`vol/shrout`, ajustes 480.000/11.000 y desplazamiento de un mes. Esos 6.450
+numeros no son valores actuales de la formula oficial y siguen bloqueados.
+
+La novena ruta directa es `BidAskSpread`. Calcula el estimador estandar
 Corwin-Schultz de dos dias con los maximos y minimos nominales del ultimo mes
 completo. OpenAP, sin embargo, importa `hlspread` desde un fichero preparado por
 un programa SAS no publicado. Por ello esta implementacion se etiqueta como
