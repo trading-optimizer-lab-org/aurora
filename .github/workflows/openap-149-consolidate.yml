@@ -177,11 +177,11 @@ jobs:
           summary = json.load(open(f"{root}/openap_149_acquisition_summary.json"))
           assert len(matrix) == matrix["signal"].nunique() == 149
           assert summary["latest_formation_at"] == "2026-08-09T23:59:59+00:00"
-          assert summary["data_acquired"] == 57
-          assert summary["current_values_calculated"] == 53
+          assert summary["data_acquired"] == 56
+          assert summary["current_values_calculated"] == 50
           assert summary["reconstructed_not_strict"] == 18
-          assert summary["blocked"] == summary["pending"] == 96
-          assert summary["value_rows"] == 99824
+          assert summary["blocked"] == summary["pending"] == 99
+          assert summary["value_rows"] == 96814
           assert summary["strict_score_eligible"] == 0
           assert not matrix["strict_score_eligible"].astype(str).str.lower().eq("true").any()
           firm_age = matrix.set_index("signal").loc["FirmAge"]
@@ -200,6 +200,12 @@ jobs:
           assert pd.to_datetime(firm_age_values["period_end"]).eq(
               pd.to_datetime(firm_age_values["available_at"])
           ).all()
+          for signal in ("CBOperProf", "DelNetFin", "EarningsConsistency"):
+              quarantined = matrix.set_index("signal").loc[signal]
+              assert not bool(quarantined["data_acquired"])
+              assert not bool(quarantined["current_value_calculated"])
+              assert quarantined["status"] == "blocked_fidelity"
+              assert "declared_current_unusable" in quarantined["remaining_blocker"]
           realestate = matrix.set_index("signal").loc["realestate"]
           assert bool(realestate["data_acquired"])
           assert bool(realestate["current_value_calculated"])

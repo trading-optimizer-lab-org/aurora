@@ -589,11 +589,13 @@ def test_consolidation_workflow_verifies_causal_firmage_evidence() -> None:
         if "name" in step
     }
     verify = steps["Verify consolidated result"]["run"]
-    assert 'summary["data_acquired"] == 57' in verify
-    assert 'summary["current_values_calculated"] == 53' in verify
-    assert 'summary["blocked"] == summary["pending"] == 96' in verify
-    assert 'summary["value_rows"] == 99824' in verify
+    assert 'summary["data_acquired"] == 56' in verify
+    assert 'summary["current_values_calculated"] == 50' in verify
+    assert 'summary["blocked"] == summary["pending"] == 99' in verify
+    assert 'summary["value_rows"] == 96814' in verify
     assert 'matrix.set_index("signal").loc["FirmAge"]' in verify
     assert 'firm_age["current_value_count"] == 4434' in verify
     assert 'firm_age["fidelity"] == "unvalidated_proxy"' in verify
     assert 'not bool(firm_age["strict_score_eligible"])' in verify
+    assert '"CBOperProf", "DelNetFin", "EarningsConsistency"' in verify
+    assert '"declared_current_unusable" in quarantined["remaining_blocker"]' in verify
