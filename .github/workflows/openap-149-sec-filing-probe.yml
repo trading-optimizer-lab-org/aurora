@@ -1,0 +1,205 @@
+name: OpenAP 149 SEC filing probe
+
+on:
+  push:
+    branches:
+      - codex/openap-proxy44-validation
+    paths:
+      - .github/workflows/openap-149-sec-filing-probe.yml
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision to execute
+        required: true
+        type: string
+      sec_artifact_run_id:
+        description: Successful run containing the 48 official SEC lake shards
+        required: true
+        default: "31270341796"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-149-sec-filing-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+      SEC_ARTIFACT_RUN_ID: ${{ inputs.sec_artifact_run_id || '31270341796' }}
+      SEC_USER_AGENT: "Aurora Research gomez5757@users.noreply.github.com"
+      TARGET_CIK: "320193"
+      TARGET_FORM: "10-K"
+      FORMATION_AT: "2026-08-09T23:59:59Z"
+      AU_DATA_DIR: ${{ github.workspace }}/outputs
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and focused test runtime
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Verify immutable and bounded probe contract
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$TARGET_CIK" = "320193"
+          test "$TARGET_FORM" = "10-K"
+          test "$FORMATION_AT" = "2026-08-09T23:59:59Z"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
+          [[ "$SEC_USER_AGENT" == *"@"* ]]
+          python -m pytest tests/test_openap_181_sec_fsd_access.py -q --tb=short
+      - name: Download verified SEC filing metadata shards
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: openap-sec-repair-lake-*
+          path: inputs/sec
+          run-id: ${{ env.SEC_ARTIFACT_RUN_ID }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Select latest causal XBRL annual filing
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          import pandas as pd
+
+          from aurora.core.runtime_paths import base_data_dir
+
+          paths = sorted(Path("inputs/sec").rglob("sec_submissions_*.parquet"))
+          assert len(paths) == 48, f"Expected 48 SEC submission shards, found {len(paths)}"
+          submissions = pd.concat(
+              [pd.read_parquet(path) for path in paths], ignore_index=True
+          )
+          accepted = pd.to_datetime(
+              submissions["accepted_at"], errors="coerce", utc=True
+          )
+          candidates = submissions.loc[
+              pd.to_numeric(submissions["cik"], errors="coerce").eq(
+                  int(os.environ["TARGET_CIK"])
+              )
+              & submissions["form"].astype(str).eq(os.environ["TARGET_FORM"])
+              & submissions["is_xbrl"].fillna(False).astype(bool)
+              & accepted.le(pd.Timestamp(os.environ["FORMATION_AT"])),
+          ].copy()
+          candidates["accepted_at"] = accepted.loc[candidates.index]
+          assert not candidates.empty, "No causal XBRL 10-K found for target CIK"
+          selected = candidates.sort_values("accepted_at").iloc[-1]
+          evidence = {
+              "cik": str(int(selected["cik"])),
+              "accession_number": str(selected["accession_number"]),
+              "primary_document": str(selected["primary_document"]),
+              "form": str(selected["form"]),
+              "report_date": str(selected["report_date"]),
+              "filing_date": str(selected["filing_date"]),
+              "accepted_at": pd.Timestamp(selected["accepted_at"]).isoformat(),
+              "source": str(selected["source"]),
+              "source_mode": str(selected["source_mode"]),
+              "source_sha": os.environ["SOURCE_SHA"],
+              "source_run_id": os.environ["SEC_ARTIFACT_RUN_ID"],
+              "formation_at": os.environ["FORMATION_AT"],
+              "locked_opened": False,
+              "forward_opened": False,
+              "validation_used_for_selection": False,
+              "strict_score_eligible": False,
+              "cost_eur": 0,
+          }
+          output = base_data_dir() / "openap_149_sec_filing_probe"
+          output.mkdir(parents=True, exist_ok=True)
+          (output / "selected_filing.json").write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(evidence, sort_keys=True))
+          PY
+      - name: Probe exact official filing document
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from aurora.core.runtime_paths import base_data_dir
+          from aurora.research.openap_181.sec_filing_access import (
+              download_official_sec_filing,
+          )
+
+          output = base_data_dir() / "openap_149_sec_filing_probe"
+          selected = json.loads(
+              (output / "selected_filing.json").read_text(encoding="utf-8")
+          )
+          summary = download_official_sec_filing(
+              cik=selected["cik"],
+              accession_number=selected["accession_number"],
+              primary_document=selected["primary_document"],
+              output_dir=output / "filing",
+              manifest_path=output / "sec_filing_source_manifest.csv",
+              user_agent="Aurora Research gomez5757@users.noreply.github.com",
+          )
+          summary.update(
+              {
+                  "selected_filing": selected,
+                  "locked_opened": False,
+                  "forward_opened": False,
+                  "validation_used_for_selection": False,
+                  "strict_score_eligible": False,
+                  "cost_eur": 0,
+              }
+          )
+          (output / "sec_filing_probe_summary.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(summary, sort_keys=True))
+          PY
+      - name: Verify bounded evidence without score claims
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          import pandas as pd
+
+          root = Path("outputs/openap_149_sec_filing_probe")
+          summary = json.loads(
+              (root / "sec_filing_probe_summary.json").read_text(encoding="utf-8")
+          )
+          manifest = pd.read_csv(
+              root / "sec_filing_source_manifest.csv", keep_default_na=False
+          )
+          assert len(manifest) == 1
+          assert manifest.loc[0, "access_method"] == "sec_official_filing_fair_access"
+          assert summary["downloaded"] + summary["failed"] == 1
+          assert summary["strict_score_eligible"] is False
+          assert summary["locked_opened"] is False
+          assert summary["forward_opened"] is False
+          assert summary["validation_used_for_selection"] is False
+          if summary["downloaded"] == 1:
+              document = root / "filing" / manifest.loc[0, "primary_document"]
+              assert document.stat().st_size == int(manifest.loc[0, "size_bytes"])
+              assert len(str(manifest.loc[0, "sha256"])) == 64
+          else:
+              assert manifest.loc[0, "failure_reason"]
+          PY
+      - name: Upload filing transport evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-149-sec-filing-probe
+          path: outputs/openap_149_sec_filing_probe/
+          if-no-files-found: error
+          retention-days: 30
