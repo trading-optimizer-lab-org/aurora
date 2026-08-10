@@ -277,9 +277,10 @@ def test_io_short_interest_route_uses_acquired_regulatory_inputs_not_market_data
         "openfigi",
     }
     assert "twelve_data_basic" not in sources
-    assert "acquired_separately" in blocker
-    assert "selective_13f_recovery_and_join_prepared_unexecuted" in blocker
-    assert "coverage_measurement_pending" in blocker
+    assert "current_reconstruction_executed_run_31384007094" in blocker
+    assert "current_value_count_1" in blocker
+    assert "coverage_too_low_for_strict" in blocker
+    assert "prepared_unexecuted" not in blocker
     assert str(routes.loc["IO_ShortInterest", "strict_score_eligible"]).lower() == "false"
 
 
@@ -854,6 +855,53 @@ def test_consolidation_workflow_downloads_and_verifies_realestate_evidence() -> 
     assert 'realestate["current_value_count"] == 7' in verify
     assert 'realestate["fidelity"] == "reconstructed"' in verify
     assert 'not bool(realestate["strict_score_eligible"])' in verify
+
+
+def test_consolidation_workflow_verifies_audited_finra_evidence() -> None:
+    workflow_path = ROOT / ".github" / "workflows" / "openap-149-consolidate.yml"
+    workflow = yaml.load(
+        workflow_path.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+    dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert dispatch_inputs["finra_current_run_id"]["default"] == "31384007094"
+    steps = {
+        step["name"]: step
+        for step in workflow["jobs"]["consolidate"]["steps"]
+        if "name" in step
+    }
+    download = steps["Download official FINRA ShortInterest values"]
+    assert download["with"]["name"] == "openap-149-finra-short-interest-current"
+    assert download["with"]["path"] == "inputs/finra_current"
+    assert download["with"]["run-id"] == "${{ inputs.finra_current_run_id }}"
+    command = steps["Consolidate latest current evidence"]["run"]
+    assert "--finra-current-root inputs/finra_current" in command
+    assert "--finra-current-run-url" in command
+    verify = steps["Verify consolidated result"]["run"]
+    assert 'short_interest["current_value_count"] == 2988' in verify
+    assert 'short_interest["fidelity"] == "unvalidated_proxy"' in verify
+    assert 'io_short_interest["current_value_count"] == 1' in verify
+    assert 'io_short_interest["fidelity"] == "reconstructed"' in verify
+    assert (
+        'io_short_interest["source_used"] '
+        '== "finra_equity_short_interest|openfigi|sec_13f|sec_edgar"'
+        in verify
+    )
+    assert 'not bool(io_short_interest["strict_score_eligible"])' in verify
+    assert 'len(io_short_interest_values) == 1' in verify
+    assert (
+        'io_short_interest_values["source_id"].eq('
+        '"finra_equity_short_interest|sec_edgar|sec_13f|openfigi_public"'
+        ").all()"
+        in verify
+    )
+    assert (
+        'io_short_interest_values["formula_id"].eq('
+        '"openap_io_shortinterest_finra_sec13f_current_reconstruction"'
+        ").all()"
+        in verify
+    )
 
 
 def test_consolidation_workflow_downloads_audited_event_batches() -> None:
