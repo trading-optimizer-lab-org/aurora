@@ -249,11 +249,25 @@ def test_all_31_frozen_market_routes_record_the_recovered_artifact_route() -> No
     assert len(direct) == 12
     assert len(factor) == 11
     assert len(additional) == 8
-    assert direct.drop(index="BidAskSpread")["current_remaining_blocker"].eq(
+    recovered_openap93_direct = {
+        "BetaTailRisk": "recovered_openap93_betatailrisk",
+        "MomRev": "recovered_openap93_momrev",
+        "MomVol": "recovered_openap93_momvol",
+    }
+    pending_direct = direct.drop(
+        index=["BidAskSpread", *recovered_openap93_direct]
+    )
+    assert pending_direct["current_remaining_blocker"].eq(
         "recovered_yfinance_48_shards_hash_bound_route_and_11_direct_formula_"
         "calculators_prepared_unexecuted_historical_"
         "ticker_intervals_coverage_and_fidelity_pending"
     ).all()
+    for signal, recovery_source in recovered_openap93_direct.items():
+        sources = set(direct.loc[signal, "primary_free_sources"].split("|"))
+        assert recovery_source in sources
+        assert direct.loc[signal, "current_remaining_blocker"].startswith(
+            "openap93_run_31341580689_hash_bound_current_usable_count_"
+        )
     assert direct.loc["BidAskSpread", "current_remaining_blocker"] == (
         "recovered_yfinance_48_shards_hash_bound_route_and_1_corwin_schultz_"
         "proxy_calculator_prepared_unexecuted_openap_"
@@ -1647,6 +1661,10 @@ def test_consolidation_workflow_verifies_causal_firmage_evidence() -> None:
         "recovered_openap93_coskewacx",
         "recovered_openap93_coskewness",
         "recovered_openap93_residualmomentum",
+        "recovered_openap93_betatailrisk",
+        "recovered_openap93_divyieldst",
+        "recovered_openap93_momvol",
+        "recovered_openap93_momrev",
     ):
         assert f'"{recovery_source}"' in verify
 

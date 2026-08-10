@@ -104,6 +104,48 @@ MARKET_CONTRACTS = {
 }
 MARKET_ORIGINAL_SOURCE = "yahoo_public|kenneth_french"
 MARKET_IMPLEMENTATION_FILE = "research/openap_93/market_pipeline.py"
+YAHOO_MARKET_FORMULA_IDS = {
+    "BetaTailRisk": "openap_cross_section_p5_tail_beta_120m_min72",
+    "DivYieldST": (
+        "openap_divyieldst_public_exdate_inferred_frequency_2_5_11m"
+    ),
+    "MomVol": "openap_mom6_decile_within_high_volume_tercile",
+    "MomRev": "openap_mom6_q5_and_mom36_q1_binary",
+}
+YAHOO_MARKET_RECOVERY_SOURCES = {
+    signal: f"recovered_openap93_{signal.lower()}"
+    for signal in YAHOO_MARKET_FORMULA_IDS
+}
+YAHOO_MARKET_CONTRACTS = {
+    "BetaTailRisk": {
+        "openap_script": "Signals/pyCode/Predictors/BetaTailRisk.py",
+        "minimum_observations": 72,
+        "allowed_values": None,
+        "caveat": "",
+    },
+    "DivYieldST": {
+        "openap_script": "Signals/pyCode/Predictors/DivYieldST.py",
+        "minimum_observations": 12,
+        "allowed_values": frozenset({0.0, 1.0, 2.0, 3.0}),
+        "caveat": (
+            "Yahoo cash distributions replace CRSP distributions; payment "
+            "frequency is inferred from observed ex-date spacing"
+        ),
+    },
+    "MomVol": {
+        "openap_script": "Signals/pyCode/Predictors/MomVol.py",
+        "minimum_observations": 6,
+        "allowed_values": frozenset(float(value) for value in range(1, 11)),
+        "caveat": "",
+    },
+    "MomRev": {
+        "openap_script": "Signals/pyCode/Predictors/MomRev.py",
+        "minimum_observations": 37,
+        "allowed_values": frozenset({0.0, 1.0}),
+        "caveat": "",
+    },
+}
+YAHOO_MARKET_ORIGINAL_SOURCE = "yahoo_public"
 RIO_SIGNALS = ("RIO_MB", "RIO_Turnover", "RIO_Volatility")
 RIO_FORMULA_IDS = {
     "RIO_MB": "openap_residual_institutional_ownership_lag6_high_mb",
@@ -590,6 +632,26 @@ def load_verified_openap93_proxy_batch(
         )
         for signal in MARKET_FORMULA_IDS
     }
+    yahoo_market_values = {
+        signal: _validate_reconstructed_rows(
+            values,
+            source,
+            signal=signal,
+            formula_id=YAHOO_MARKET_FORMULA_IDS[signal],
+            openap_script=str(
+                YAHOO_MARKET_CONTRACTS[signal]["openap_script"]
+            ),
+            caveat=str(YAHOO_MARKET_CONTRACTS[signal]["caveat"]),
+            original_source=YAHOO_MARKET_ORIGINAL_SOURCE,
+            natural_frequency="monthly",
+            minimum_observations=int(
+                YAHOO_MARKET_CONTRACTS[signal]["minimum_observations"]
+            ),
+            universe_count=universe_count,
+            allowed_values=YAHOO_MARKET_CONTRACTS[signal]["allowed_values"],
+        )
+        for signal in YAHOO_MARKET_FORMULA_IDS
+    }
     rio_values = {
         signal: _validate_reconstructed_rows(
             values,
@@ -664,6 +726,20 @@ def load_verified_openap93_proxy_batch(
             universe_count=universe_count,
             usable_count=len(market_values[signal]),
         )
+    for signal in YAHOO_MARKET_FORMULA_IDS:
+        _validate_reconstructed_coverage(
+            coverage,
+            signal=signal,
+            openap_script=str(
+                YAHOO_MARKET_CONTRACTS[signal]["openap_script"]
+            ),
+            implementation_file=MARKET_IMPLEMENTATION_FILE,
+            natural_frequency="monthly",
+            primary_source="yahoo_public",
+            fallback_source="",
+            universe_count=universe_count,
+            usable_count=len(yahoo_market_values[signal]),
+        )
     for signal in RIO_SIGNALS:
         _validate_reconstructed_coverage(
             coverage,
@@ -725,6 +801,18 @@ def load_verified_openap93_proxy_batch(
         )
         for signal, rows in market_values.items()
     }
+    yahoo_market_values = {
+        signal: _prepare_recovered_rows(
+            rows,
+            evidence_run_url=evidence_run_url,
+            recovery_source=YAHOO_MARKET_RECOVERY_SOURCES[signal],
+            caveat_suffix=(
+                "; recovered from hash-bound OpenAP93 evidence; Yahoo data "
+                "replace CRSP and historical security identity is not verified"
+            ),
+        )
+        for signal, rows in yahoo_market_values.items()
+    }
     rio_values = {
         signal: _prepare_recovered_rows(
             rows,
@@ -743,6 +831,7 @@ def load_verified_openap93_proxy_batch(
         oscore,
         beta_vix,
         *(market_values[signal] for signal in MARKET_FORMULA_IDS),
+        *(yahoo_market_values[signal] for signal in YAHOO_MARKET_FORMULA_IDS),
         *(rio_values[signal] for signal in RIO_SIGNALS),
     ]
     current = pd.concat(current_parts, ignore_index=True)
@@ -790,6 +879,19 @@ def load_verified_openap93_proxy_batch(
         **{
             signal: {
                 "signal": signal,
+                "formula_id": YAHOO_MARKET_FORMULA_IDS[signal],
+                "current_value_rows": int(len(yahoo_market_values[signal])),
+                "coverage": float(
+                    len(yahoo_market_values[signal]) / universe_count
+                ),
+                "strict_score_eligible": False,
+                "historical_crsp_identity_verified": False,
+            }
+            for signal in YAHOO_MARKET_FORMULA_IDS
+        },
+        **{
+            signal: {
+                "signal": signal,
                 "formula_id": RIO_FORMULA_IDS[signal],
                 "current_value_rows": int(len(rio_values[signal])),
                 "coverage": float(len(rio_values[signal]) / universe_count),
@@ -799,7 +901,7 @@ def load_verified_openap93_proxy_batch(
         },
     }
     evidence = {
-        "contract_version": 3,
+        "contract_version": 4,
         "recovery_run_id": OPENAP93_RECOVERY_RUN_ID,
         "source_run_id": OPENAP93_SOURCE_RUN_ID,
         "source_head_sha": OPENAP93_SOURCE_HEAD_SHA,
@@ -852,6 +954,8 @@ __all__ = [
     "OSCORE_RECOVERY_SOURCE",
     "OPENAP93_RECOVERY_RUN_URL",
     "RIO_RECOVERY_SOURCE",
+    "YAHOO_MARKET_FORMULA_IDS",
+    "YAHOO_MARKET_RECOVERY_SOURCES",
     "load_verified_openap93_comp_equ_iss",
     "load_verified_openap93_proxy_batch",
 ]

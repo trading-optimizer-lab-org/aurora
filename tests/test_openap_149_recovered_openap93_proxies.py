@@ -23,6 +23,8 @@ from aurora.research.openap_181.recovered_openap93_proxies import (
     OSCORE_RECOVERY_SOURCE,
     OPENAP93_RECOVERY_RUN_URL,
     RIO_RECOVERY_SOURCE,
+    YAHOO_MARKET_FORMULA_IDS,
+    YAHOO_MARKET_RECOVERY_SOURCES,
     load_verified_openap93_comp_equ_iss,
     load_verified_openap93_proxy_batch,
 )
@@ -222,6 +224,59 @@ def _market_row(
     }
 
 
+YAHOO_MARKET_OPENAP_SCRIPTS = {
+    "BetaTailRisk": "Signals/pyCode/Predictors/BetaTailRisk.py",
+    "DivYieldST": "Signals/pyCode/Predictors/DivYieldST.py",
+    "MomVol": "Signals/pyCode/Predictors/MomVol.py",
+    "MomRev": "Signals/pyCode/Predictors/MomRev.py",
+}
+YAHOO_MARKET_CAVEATS = {
+    "BetaTailRisk": "",
+    "DivYieldST": (
+        "Yahoo cash distributions replace CRSP distributions; payment "
+        "frequency is inferred from observed ex-date spacing"
+    ),
+    "MomVol": "",
+    "MomRev": "",
+}
+YAHOO_MARKET_OBSERVATION_COUNTS = {
+    "BetaTailRisk": 83,
+    "DivYieldST": 84,
+    "MomVol": 84,
+    "MomRev": 84,
+}
+
+
+def _yahoo_market_row(
+    signal: str,
+    security_id: str,
+    ticker: str,
+    cik: int,
+    *,
+    value: float | None,
+    current_usable: bool,
+) -> dict[str, object]:
+    return {
+        **_row(
+            security_id,
+            ticker,
+            cik,
+            value=value,
+            current_usable=current_usable,
+        ),
+        "signal": signal,
+        "period_end": "2026-07-31",
+        "filed_at": "2026-08-07 00:00:00",
+        "available_at": "2026-08-07 00:00:00",
+        "source_id": "yahoo_public",
+        "formula_id": YAHOO_MARKET_FORMULA_IDS[signal],
+        "openap_script": YAHOO_MARKET_OPENAP_SCRIPTS[signal],
+        "natural_frequency": "monthly",
+        "observation_count": YAHOO_MARKET_OBSERVATION_COUNTS[signal],
+        "caveat": YAHOO_MARKET_CAVEATS[signal],
+    }
+
+
 RIO_FORMULA_IDS = {
     "RIO_MB": "openap_residual_institutional_ownership_lag6_high_mb",
     "RIO_Turnover": (
@@ -288,9 +343,10 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         "RIO_Volatility",
         "OScore",
         *MARKET_FORMULA_IDS,
+        *YAHOO_MARKET_FORMULA_IDS,
     ]
     selected_signals = recovered_signals + [
-        f"SyntheticSignal{index:02d}" for index in range(82)
+        f"SyntheticSignal{index:02d}" for index in range(78)
     ]
     comp_rows = [
         _row("US-SEC-0000000001-AAA", "AAA", 1, value=0.25, current_usable=True),
@@ -401,6 +457,22 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             (3, "CCC", None, False),
         )
     ]
+    yahoo_market_rows = [
+        _yahoo_market_row(
+            signal,
+            f"US-SEC-{cik:010d}-{ticker}",
+            ticker,
+            cik,
+            value=value,
+            current_usable=current_usable,
+        )
+        for signal in YAHOO_MARKET_FORMULA_IDS
+        for cik, ticker, value, current_usable in (
+            (1, "AAA", 1.0, True),
+            (2, "BBB", 0.0 if signal == "MomRev" else 2.0, True),
+            (3, "CCC", None, False),
+        )
+    ]
     filler_rows = [
         {
             **_row(
@@ -424,6 +496,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         + rio_rows
         + oscore_rows
         + market_rows
+        + yahoo_market_rows
         + filler_rows
     ).to_csv(
         signals_path,
@@ -523,6 +596,35 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
                 "scraping_required": False,
                 "reason_if_missing": "insufficient_history_or_inputs",
                 "openap_script": MARKET_OPENAP_SCRIPTS[signal],
+                "implementation_file": "research/openap_93/market_pipeline.py",
+            }
+        )
+    for signal in YAHOO_MARKET_FORMULA_IDS:
+        coverage_rows.append(
+            {
+                "signal": signal,
+                "status": "current_usable",
+                "fidelity_class": "reconstructed",
+                "current_usable": True,
+                "exact_formula": True,
+                "primary_source": "yahoo_public",
+                "fallback_source": "",
+                "source_domains": "query1.finance.yahoo.com",
+                "latest_period_end": "2026-07-31",
+                "latest_available_at": "2026-08-07 00:00:00",
+                "natural_frequency": "monthly",
+                "universe_count": 3,
+                "applicable_count": 3,
+                "non_null_count": 2,
+                "current_usable_count": 2,
+                "not_applicable_count": 0,
+                "missing_count": 1,
+                "coverage_pct": 200 / 3,
+                "license": "Public endpoint; terms must be reviewed",
+                "terms_status": "terms_review_required",
+                "scraping_required": False,
+                "reason_if_missing": "insufficient_history_or_inputs",
+                "openap_script": YAHOO_MARKET_OPENAP_SCRIPTS[signal],
                 "implementation_file": "research/openap_93/market_pipeline.py",
             }
         )
@@ -681,6 +783,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             + len(rio_rows)
             + len(oscore_rows)
             + len(market_rows)
+            + len(yahoo_market_rows)
             + len(filler_rows)
         ),
         "openap_commit": OPENAP_COMMIT,
@@ -690,7 +793,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         "api_keys_required": False,
         "manual_actions_required": False,
         "selected_signals": selected_signals,
-        "current_usable_signal_count": 11,
+        "current_usable_signal_count": 15,
         "output_hashes": {
             "coverage_93.csv": sha256(coverage_path.read_bytes()).hexdigest(),
             "signals_93_current.csv": sha256(signals_path.read_bytes()).hexdigest(),
@@ -704,7 +807,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
     recovery_manifest = {
         "bytes_fetched": 13720277,
         "cost_eur": 0,
-        "current_usable_signal_count": 11,
+        "current_usable_signal_count": 15,
         "full_artifact_downloaded": False,
         "input_signals": 93,
         "locked_opened": False,
@@ -790,7 +893,7 @@ def test_verified_openap93_recovery_accepts_only_current_comp_equ_iss(
     assert evidence["strict_score_increment"] == 0
 
 
-def test_verified_openap93_proxy_batch_accepts_eleven_narrow_signals(
+def test_verified_openap93_proxy_batch_accepts_fifteen_narrow_signals(
     tmp_path: Path,
 ) -> None:
     _write_artifact(tmp_path / "artifact")
@@ -811,6 +914,10 @@ def test_verified_openap93_proxy_batch_accepts_eleven_narrow_signals(
         "CoskewACX": 2,
         "Coskewness": 2,
         "ResidualMomentum": 2,
+        "BetaTailRisk": 2,
+        "DivYieldST": 2,
+        "MomVol": 2,
+        "MomRev": 2,
         "betaVIX": 2,
     }
     duration = values.loc[values["signal"].eq("EquityDuration")]
@@ -843,6 +950,11 @@ def test_verified_openap93_proxy_batch_accepts_eleven_narrow_signals(
         market = values.loc[values["signal"].eq(signal)]
         assert market["source_id"].eq(recovery_source).all()
         assert market["formula_id"].eq(MARKET_FORMULA_IDS[signal]).all()
+        assert evidence["signals"][signal]["current_value_rows"] == 2
+    for signal, recovery_source in YAHOO_MARKET_RECOVERY_SOURCES.items():
+        market = values.loc[values["signal"].eq(signal)]
+        assert market["source_id"].eq(recovery_source).all()
+        assert market["formula_id"].eq(YAHOO_MARKET_FORMULA_IDS[signal]).all()
         assert evidence["signals"][signal]["current_value_rows"] == 2
     assert evidence["strict_score_increment"] == 0
 
@@ -910,6 +1022,13 @@ def test_verified_equity_duration_recovery_fails_closed(
         ("Coskewness", "frequency"),
         ("ResidualMomentum", "source"),
         ("ResidualMomentum", "coverage_count"),
+        ("BetaTailRisk", "observations"),
+        ("BetaTailRisk", "coverage_count"),
+        ("DivYieldST", "category"),
+        ("DivYieldST", "caveat"),
+        ("MomVol", "decile10"),
+        ("MomRev", "binary"),
+        ("MomRev", "source"),
     ],
 )
 def test_verified_market_and_rio_recoveries_fail_closed(
@@ -938,6 +1057,8 @@ def test_verified_market_and_rio_recoveries_fail_closed(
         elif mutation == "observations":
             if signal in {"CoskewACX", "PriceDelayRsq"}:
                 values.loc[row, "observation_count"] = 199
+            elif signal == "BetaTailRisk":
+                values.loc[row, "observation_count"] = 71
             elif signal == "OScore":
                 values.loc[row, "observation_count"] = 3
             else:
@@ -945,9 +1066,15 @@ def test_verified_market_and_rio_recoveries_fail_closed(
         elif mutation == "source":
             values.loc[row, "source_id"] = "cboe_public"
         elif mutation == "frequency":
-            values.loc[row, "natural_frequency"] = "monthly"
+            values.loc[row, "natural_frequency"] = "daily"
         elif mutation == "binary":
             values.loc[row, "value"] = 0.5
+        elif mutation == "category":
+            values.loc[row, "value"] = 4.0
+        elif mutation == "decile10":
+            values.loc[row, "value"] = 11.0
+        elif mutation == "caveat":
+            values.loc[row, "caveat"] = "wrong caveat"
         else:
             values.loc[row, "value"] = 2.5
         values.to_csv(signals_path, index=False)
@@ -1290,4 +1417,56 @@ def test_market_recovery_routes_are_narrow_causal_and_non_strict(
     assert all(
         evidence["signals"][signal]["strict_score_eligible"] is False
         for signal in MARKET_FORMULA_IDS
+    )
+
+
+def test_yahoo_market_recovery_routes_are_narrow_and_non_strict(
+    tmp_path: Path,
+) -> None:
+    _write_artifact(tmp_path / "artifact")
+    values, _, evidence = load_verified_openap93_proxy_batch(
+        tmp_path / "artifact",
+        evidence_run_url=OPENAP93_RECOVERY_RUN_URL,
+    )
+    values = values.loc[
+        values["signal"].isin(YAHOO_MARKET_FORMULA_IDS)
+    ].copy()
+    routes = load_target_routes(ROUTE_MATRIX)
+    for signal, recovery_source in YAHOO_MARKET_RECOVERY_SOURCES.items():
+        route = routes.loc[routes["signal"].eq(signal)].iloc[0]
+        assert recovery_source in route["primary_free_sources"].split("|")
+
+    formula_hashes = {
+        "BetaTailRisk": (
+            "05a6814113c1e2d7e7513c5831fe73fa9e891c441ab549cbbbd61e418b6c959b"
+        ),
+        "DivYieldST": (
+            "d3831b7da4bfc36433dabcec9545aac8a436e0890d5523ccbf24174479fab2d0"
+        ),
+        "MomVol": (
+            "b80ab3e5495590470e7c865bc55b3dee06d009d4bf1ea2e3b23dfa3073967b27"
+        ),
+        "MomRev": (
+            "c161588a8b984f4832a43c66cb32af555743b5dc068227239123f706be43df60"
+        ),
+    }
+    matrix, approved = build_acquisition_matrix(
+        routes,
+        values,
+        formula_inventory=pd.DataFrame(
+            [
+                {"signal": signal, "formula_sha256": formula_hash}
+                for signal, formula_hash in formula_hashes.items()
+            ]
+        ),
+    )
+
+    selected = matrix.loc[matrix["signal"].isin(YAHOO_MARKET_FORMULA_IDS)]
+    assert set(selected["status"]) == {"current_signal_computed"}
+    assert set(selected["fidelity"]) == {"reconstructed"}
+    assert not selected["strict_score_eligible"].astype(bool).any()
+    assert set(approved["signal"]) == set(YAHOO_MARKET_FORMULA_IDS)
+    assert all(
+        evidence["signals"][signal]["strict_score_eligible"] is False
+        for signal in YAHOO_MARKET_FORMULA_IDS
     )

@@ -132,6 +132,10 @@ SOURCE_ALIASES = {
     "recovered_openap93_residualmomentum": (
         "recovered_openap93_residualmomentum"
     ),
+    "recovered_openap93_betatailrisk": "recovered_openap93_betatailrisk",
+    "recovered_openap93_divyieldst": "recovered_openap93_divyieldst",
+    "recovered_openap93_momvol": "recovered_openap93_momvol",
+    "recovered_openap93_momrev": "recovered_openap93_momrev",
     "pastor_stambaugh": "pastor_stambaugh",
 }
 
@@ -195,6 +199,22 @@ SOURCE_TERMS = {
     "recovered_openap93_residualmomentum": (
         "Hash-bound ResidualMomentum output from recovery run 31341580689; "
         "Kenneth French download and Yahoo endpoint terms apply; internal use only"
+    ),
+    "recovered_openap93_betatailrisk": (
+        "Hash-bound BetaTailRisk output from recovery run 31341580689; Yahoo "
+        "endpoint terms apply; internal use only"
+    ),
+    "recovered_openap93_divyieldst": (
+        "Hash-bound DivYieldST output from recovery run 31341580689; Yahoo "
+        "endpoint terms apply; internal use only"
+    ),
+    "recovered_openap93_momvol": (
+        "Hash-bound MomVol output from recovery run 31341580689; Yahoo endpoint "
+        "terms apply; internal use only"
+    ),
+    "recovered_openap93_momrev": (
+        "Hash-bound MomRev output from recovery run 31341580689; Yahoo endpoint "
+        "terms apply; internal use only"
     ),
     "pastor_stambaugh": (
         "Chicago Booth public academic liquidity-factor data; attribution required"

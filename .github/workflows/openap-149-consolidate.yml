@@ -365,6 +365,30 @@ jobs:
                   "openap_residual_momentum_ff3_36m_prior11",
                   "historical_crsp_identity_verified",
               ),
+              "BetaTailRisk": (
+                  1989,
+                  "recovered_openap93_betatailrisk",
+                  "openap_cross_section_p5_tail_beta_120m_min72",
+                  "historical_crsp_identity_verified",
+              ),
+              "DivYieldST": (
+                  1191,
+                  "recovered_openap93_divyieldst",
+                  "openap_divyieldst_public_exdate_inferred_frequency_2_5_11m",
+                  "historical_crsp_identity_verified",
+              ),
+              "MomVol": (
+                  719,
+                  "recovered_openap93_momvol",
+                  "openap_mom6_decile_within_high_volume_tercile",
+                  "historical_crsp_identity_verified",
+              ),
+              "MomRev": (
+                  232,
+                  "recovered_openap93_momrev",
+                  "openap_mom6_q5_and_mom36_q1_binary",
+                  "historical_crsp_identity_verified",
+              ),
               "RIO_MB": (
                   305,
                   "recovered_openap93_rio",

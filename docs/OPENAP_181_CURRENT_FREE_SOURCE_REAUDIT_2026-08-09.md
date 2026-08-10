@@ -70,7 +70,7 @@ AbnormalAccruals, Accruals, AccrualsBM, AdExp, AM, BM, BMdec, BookLeverage, BPEB
 
 `Cash` pertenece a este grupo. SEC proporciona caja, activos y fecha de filing; el trabajo es fijar alias XBRL, enmiendas, caja restringida e identidad, no encontrar una fuente de pago obligatoria.
 
-#### Recuperacion estrecha de once senales OpenAP93
+#### Recuperacion estrecha de quince senales OpenAP93
 
 El artefacto recuperado `31341580689` conserva 2.157 filas actuales de
 `CompEquIss`, de las que 1.585 son utilizables. La reconstruccion aplica la
@@ -122,6 +122,15 @@ formula OpenAP exactos, frecuencia, observaciones minimas, cobertura y fechas
 sin lookahead. Son valores actuales reconstruidos, no equivalentes a CRSP ni
 aptos para score estricto; tambien queda pendiente cerrar la revision de los
 terminos del endpoint Yahoo.
+
+La misma ruta hash-bound admite cuatro salidas Yahoo adicionales:
+`BetaTailRisk` (1.989), `DivYieldST` (1.191), `MomVol` (719) y `MomRev` (232).
+Ademas de fuente, formula, script, identidad, fechas y cobertura, el contrato
+exige los minimos de historia y los dominios discretos de las tres senales por
+categorias. `DivYieldST` queda documentada como reconstruccion porque infiere
+la frecuencia de distribuciones desde ex-dates Yahoo en vez del codigo CRSP.
+Ninguna de las cuatro es estricta y la revision de terminos Yahoo sigue
+pendiente.
 
 `OrgCap` no esta en la misma situacion: el artefacto contiene 689 numeros, pero
 todos estan marcados `stale_reference_only` y ninguno tiene

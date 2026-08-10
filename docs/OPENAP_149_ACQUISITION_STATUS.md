@@ -78,7 +78,7 @@ arrancar runs y no existe autorizacion posterior para ejecutar localmente.
 Por tanto, esta mejora no cambia todavia los recuentos publicados
 `56/50/18/99/96814`, la matriz CSV ni el score estricto confirmado de 31.
 
-## Once senales OpenAP93: recuperacion selectiva preparada, no ejecutada
+## Quince senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 
 El artefacto gratuito y ya existente `openap-93-current-recovered-results` del
 run `31341580689` contiene 2.157 filas de `CompEquIss`; 1.585 tienen valor
@@ -151,6 +151,14 @@ minimas, cobertura reconciliada, fechas causales e identidad CIK+ticker. Son
 8.615 valores actuales adicionales, pero siguen fuera del score estricto por
 la sustitucion de CRSP, la identidad historica y la revision de terminos de
 Yahoo pendientes.
+
+Otras cuatro salidas Yahoo del artefacto pasan por contratos separados:
+`BetaTailRisk` (1989), `DivYieldST` (1191), `MomVol` (719) y `MomRev` (232).
+El cargador exige respectivamente 72, 12, 6 y 37 observaciones minimas;
+tambien restringe `DivYieldST` a categorias 0-3, `MomVol` a deciles 1-10 y
+`MomRev` a valores binarios. `DivYieldST` conserva expresamente que infiere la
+frecuencia de pagos a partir de ex-dates Yahoo, en lugar de usar el codigo de
+frecuencia CRSP. Las cuatro siguen reconstruidas y no estrictas.
 
 ## CompanyFacts ampliado: lote gratuito ejecutado, pendiente de consolidar
 
@@ -248,7 +256,7 @@ recuentos globales demostrados permanecen `56/50/18/99/96814`.
   2157, cuatro observaciones por valor y que la salida sea binaria. Solo las
   1100 filas utilizables sustituyen el lote general.
 - Clasificacion: reconstruida, no estricta. No se incorpora al score estricto.
-- El cargador de las once senales prepara 14.188 filas actuales, pero no se
+- El cargador de las quince senales prepara 18.319 filas actuales, pero no se
   suman manualmente a los recuentos globales: la siguiente consolidacion debe
   resolver tambien los demas lotes pendientes, sustituciones y cuarentenas.
   Hasta entonces prevalecen `56/50/18/99/96814` y el score estricto 31.
