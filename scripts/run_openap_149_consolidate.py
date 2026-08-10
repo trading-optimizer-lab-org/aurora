@@ -55,6 +55,7 @@ def main() -> int:
     parser.add_argument("--current-93-root", type=Path, required=True)
     parser.add_argument("--sec-current-root", type=Path, required=True)
     parser.add_argument("--finra-current-root", type=Path, required=True)
+    parser.add_argument("--realestate-current-root", type=Path, required=True)
     parser.add_argument("--formula-root", type=Path, required=True)
     parser.add_argument(
         "--signals-93", type=Path, default=Path("config/openap_93/signals_93.yaml")
@@ -62,6 +63,7 @@ def main() -> int:
     parser.add_argument("--current-93-run-url", required=True)
     parser.add_argument("--sec-current-run-url", required=True)
     parser.add_argument("--finra-current-run-url", required=True)
+    parser.add_argument("--realestate-current-run-url", required=True)
     parser.add_argument("--evidence-run-url", required=True)
     parser.add_argument("--evidence-artifact", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -77,6 +79,9 @@ def main() -> int:
     finra_path = _find_one(
         args.finra_current_root, "openap_149_finra_short_interest_current.csv"
     )
+    realestate_path = _find_one(
+        args.realestate_current_root, "openap_149_realestate_current.csv"
+    )
     formula_path = _find_one(args.formula_root, "openap_181_formula_inventory.csv")
     current_93 = pd.read_csv(current_93_path, low_memory=False)
     current_93["evidence_run"] = args.current_93_run_url
@@ -84,8 +89,11 @@ def main() -> int:
     sec_current["evidence_run"] = args.sec_current_run_url
     finra_current = pd.read_csv(finra_path, low_memory=False)
     finra_current["evidence_run"] = args.finra_current_run_url
+    realestate_current = pd.read_csv(realestate_path, low_memory=False)
+    realestate_current["evidence_run"] = args.realestate_current_run_url
     current = overlay_preferred_current_evidence(current_93, sec_current)
     current = replace_current_signal_batches(current, finra_current)
+    current = replace_current_signal_batches(current, realestate_current)
 
     routes = load_target_routes(args.route_matrix)
     formulas = pd.read_csv(formula_path, keep_default_na=False)
@@ -99,7 +107,8 @@ def main() -> int:
         tests_executed=(
             "tests/test_openap_149_acquisition.py|"
             "tests/test_openap_149_sec_companyfacts.py|"
-            "tests/test_openap_181_short_interest_batch.py"
+            "tests/test_openap_181_short_interest_batch.py|"
+            "tests/test_openap_149_realestate_rendered_batch.py"
         ),
     )
     source_runs = (
@@ -114,16 +123,24 @@ def main() -> int:
         matrix,
         values,
         output,
-        source_values_sha256=_sha256_many([current_93_path, sec_path, finra_path]),
+        source_values_sha256=_sha256_many(
+            [current_93_path, sec_path, finra_path, realestate_path]
+        ),
         formula_inventory_sha256=_sha256_many([formula_path]),
     )
     manifest = {
         "current_93_run_url": args.current_93_run_url,
         "sec_current_run_url": args.sec_current_run_url,
         "finra_current_run_url": args.finra_current_run_url,
+        "realestate_current_run_url": args.realestate_current_run_url,
         "evidence_run_url": args.evidence_run_url,
         "evidence_artifact": args.evidence_artifact,
-        "source_files": [current_93_path.name, sec_path.name, finra_path.name],
+        "source_files": [
+            current_93_path.name,
+            sec_path.name,
+            finra_path.name,
+            realestate_path.name,
+        ],
         "merged_rows": int(len(current)),
         "approved_rows": int(len(values)),
         **summary,
