@@ -71,7 +71,7 @@ def test_twelve_data_direct_market_signals_calculate_time_series_targets() -> No
     ).set_index("signal")
 
     assert set(result.index) == set(TWELVE_DATA_DIRECT_SIGNAL_TARGETS)
-    assert len(result) == 11
+    assert len(result) == 12
     time_series = result.loc[list(TWELVE_DATA_TIME_SERIES_SIGNAL_TARGETS)]
     assert time_series["current_usable"].all()
     assert time_series["value"].notna().all()
@@ -91,7 +91,7 @@ def test_twelve_data_direct_market_signals_fail_closed_without_both_adjustments(
         retrieved_at=RETRIEVED_AT,
     )
 
-    assert len(result) == 11
+    assert len(result) == 12
     assert result["value"].isna().all()
     assert not result["current_usable"].any()
 

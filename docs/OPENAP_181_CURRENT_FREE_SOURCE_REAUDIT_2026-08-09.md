@@ -407,17 +407,23 @@ La implementacion preparada aplica estas puertas:
   temporal, de modo que no se puedan mezclar revisiones distintas.
 
 No se ha creado una cuenta, no existe `TWELVE_DATA_API_KEY` en el entorno y no
-se ha iniciado ningun run. Las 31 permanecen `prepared_unexecuted`. Ya hay 22
-calculadores preparados: 11 directos y 11 que combinan Twelve Data con los ZIP
+se ha iniciado ningun run de mercado. Las 31 permanecen `prepared_unexecuted`.
+Ya hay 23 calculadores preparados: 12 directos y 11 que combinan Twelve Data con los ZIP
 publicos diario y mensual de Kenneth French (`Beta`, `BetaFP`, dos variantes
 de coskewness, dos momentos residuales FF3, `IdioVolAHT`,
 `ResidualMomentum` y las tres
 variantes `PriceDelay`). Los factores se congelan por SHA-256 durante todas las
 reanudaciones. El ensamblado calcula ademas `BetaTailRisk`, `MomRev` y `MomVol`
 sobre el universo completo, como exigen sus cortes transversales. Faltan
-intervalos historicos de ticker, las transformaciones adicionales de 9 rutas,
+intervalos historicos de ticker, las transformaciones adicionales de 8 rutas,
 cobertura y fidelidad. No cambian los recuentos ejecutados ni el score estricto
 de 31.
+
+La duodecima ruta directa es `BidAskSpread`. Calcula el estimador estandar
+Corwin-Schultz de dos dias con los maximos y minimos nominales del ultimo mes
+completo. OpenAP, sin embargo, importa `hlspread` desde un fichero preparado por
+un programa SAS no publicado. Por ello esta implementacion se etiqueta como
+proxy reconstruido y nunca como equivalencia estricta.
 
 La capa de corroboracion SEC tambien queda preparada de extremo a extremo en
 codigo y sin ejecutar. El workflow SEC Notes es exclusivamente manual y acepta

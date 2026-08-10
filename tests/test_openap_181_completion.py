@@ -871,8 +871,8 @@ def test_missing_twelve_data_credential_blocks_only_dependent_market_routes():
     assert not missing["formula_implemented"].any()
     assert not missing["data_pipeline_implemented"].any()
     assert available.empty
-    assert status["strict_gate_result"].eq("blocked").sum() == 94
-    assert status["strict_gate_result"].eq("not_attempted").sum() == 87
+    assert status["strict_gate_result"].eq("blocked").sum() == 89
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 92
     assert not status["score_eligible"].any()
 
 
@@ -915,8 +915,8 @@ def test_implementation_cli_attaches_missing_twelve_data_credential_blockers(
 
     assert result.value.code == 0
     status = pd.read_csv(output / "signal_implementation_status_181.csv")
-    assert status["strict_gate_result"].eq("blocked").sum() == 94
-    assert status["strict_gate_result"].eq("not_attempted").sum() == 87
+    assert status["strict_gate_result"].eq("blocked").sum() == 89
+    assert status["strict_gate_result"].eq("not_attempted").sum() == 92
     assert not status["score_eligible"].any()
 
 

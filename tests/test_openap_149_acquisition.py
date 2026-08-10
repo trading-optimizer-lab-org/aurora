@@ -174,14 +174,20 @@ def test_all_31_frozen_market_routes_record_the_prepared_free_key_blocker() -> N
         *TWELVE_DATA_FACTOR_SIGNAL_TARGETS,
     ]
     additional = selected.drop(index=prepared)
-    assert len(direct) == 11
+    assert len(direct) == 12
     assert len(factor) == 11
-    assert len(additional) == 9
-    assert direct["current_remaining_blocker"].eq(
+    assert len(additional) == 8
+    assert direct.drop(index="BidAskSpread")["current_remaining_blocker"].eq(
         "twelve_data_basic_free_api_key_missing_4314_credit_resumable_private_"
         "route_and_11_direct_formula_calculators_prepared_unexecuted_historical_"
         "ticker_intervals_coverage_and_fidelity_pending"
     ).all()
+    assert direct.loc["BidAskSpread", "current_remaining_blocker"] == (
+        "twelve_data_basic_free_api_key_missing_4314_credit_resumable_private_"
+        "route_and_1_corwin_schultz_proxy_calculator_prepared_unexecuted_openap_"
+        "sas_preprocessing_historical_ticker_intervals_coverage_and_fidelity_"
+        "pending"
+    )
     assert factor.drop(index="IdioVolAHT")["current_remaining_blocker"].eq(
         "twelve_data_basic_free_api_key_missing_4314_credit_resumable_private_"
         "route_and_10_free_french_factor_calculators_prepared_unexecuted_"

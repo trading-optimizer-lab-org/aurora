@@ -86,6 +86,9 @@ jobs:
             tests/test_openap_149_sec_companyfacts.py \
             tests/test_openap_149_realestate_rendered_batch.py \
             tests/test_openap_181_short_interest_batch.py \
+            tests/test_openap_181_twelve_data_market_batch.py \
+            tests/test_openap_181_twelve_data_market_signals.py \
+            tests/test_openap_181_twelve_data_factor_signals.py \
             -q --tb=short
 
   consolidate:

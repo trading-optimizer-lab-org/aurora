@@ -183,9 +183,12 @@ La ruta de adquisicion queda preparada en codigo, pero no ejecutada:
   el RMSE CAPM de 252 observaciones con minimo 100.
 
 Estado exacto: `prepared_unexecuted`. Falta que el usuario facilite una clave
-gratuita de Twelve Data y autorice un run futuro. Hay 22 calculadores
-preparados: 11 directos y 11 con factores franceses gratuitos. Las otras 9
-rutas necesitan sus entradas o transformaciones adicionales. En todas habra
+gratuita de Twelve Data y una ejecucion privada compatible con sus terminos.
+Hay 23 calculadores preparados: 12 directos y 11 con factores franceses
+gratuitos. `BidAskSpread` usa el estimador estandar Corwin-Schultz sobre maximos
+y minimos nominales, pero permanece como proxy no estricto porque OpenAP carga
+un fichero preprocesado por SAS cuyo tratamiento exacto no esta publicado. Las
+otras 8 rutas necesitan sus entradas o transformaciones adicionales. En todas habra
 que completar los intervalos
 historicos de ticker y medir cobertura y fidelidad. Por ello las 31 siguen sin
 valor nuevo y con
