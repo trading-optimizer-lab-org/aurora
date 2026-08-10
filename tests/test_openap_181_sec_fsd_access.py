@@ -512,3 +512,49 @@ def test_select_current_realestate_pilot_uses_latest_causal_same_sic2_filings():
     assert selected[0]["accession_number"] == "anchor-current"
     assert all(row["sic2"] == "35" for row in selected)
     assert all(row["formation_at"] == "2026-08-09T23:59:59Z" for row in selected)
+
+
+def test_compute_current_realestate_cross_section_demeans_only_groups_of_five():
+    module = _rendered_module()
+    records = [
+        {
+            "cik": str(index),
+            "symbol": f"S{index}",
+            "sic2": "35",
+            "formation_at": f"2026-08-0{index}T23:59:59Z",
+            "available_at": "2026-07-31T12:00:00Z",
+            "assets": 1000.0 + index,
+            "realestate_raw": raw,
+        }
+        for index, raw in enumerate((0.1, 0.2, 0.3, 0.4, 0.5), start=1)
+    ]
+    records.append(
+        {
+            "cik": "99",
+            "symbol": "OTHER",
+            "sic2": "36",
+            "formation_at": "2026-08-09T23:59:59Z",
+            "available_at": "2026-07-31T12:00:00Z",
+            "assets": 500.0,
+            "realestate_raw": 0.9,
+        }
+    )
+
+    adjusted = module.compute_current_realestate_cross_section(
+        records,
+        minimum_observations=5,
+    )
+    by_symbol = {row["symbol"]: row for row in adjusted}
+
+    assert by_symbol["S1"]["industry_observations"] == 5
+    assert by_symbol["S1"]["industry_mean_realestate_raw"] == pytest.approx(0.3)
+    assert by_symbol["S1"]["realestate_value"] == pytest.approx(-0.2)
+    assert by_symbol["S5"]["realestate_value"] == pytest.approx(0.2)
+    assert by_symbol["S3"]["status"] == "current_signal_computed"
+    assert by_symbol["S3"]["current_signal_computed"] is True
+    assert by_symbol["S3"]["strict_score_eligible"] is False
+    assert by_symbol["S3"]["fidelity"] == "reconstructed_not_strict"
+    assert by_symbol["OTHER"]["industry_observations"] == 1
+    assert by_symbol["OTHER"]["realestate_value"] is None
+    assert by_symbol["OTHER"]["status"] == "blocked_coverage"
+    assert by_symbol["OTHER"]["current_signal_computed"] is False
