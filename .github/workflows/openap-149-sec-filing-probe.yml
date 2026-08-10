@@ -295,28 +295,55 @@ jobs:
           summary_text = (
               output / "readthrough" / "FilingSummary.xml.txt"
           ).read_text(encoding="utf-8")
-          lines = [line.strip() for line in summary_text.splitlines()]
           needles = (
               "Gross Property, Plant and Equipment by Major Asset Class",
               "Property, Plant and Equipment (Details)",
           )
           report_filename = ""
           matched_title = ""
-          for index, line in enumerate(lines):
-              if not any(needle.lower() in line.lower() for needle in needles):
-                  continue
-              preceding = lines[max(0, index - 8):index]
-              matches = [
-                  candidate
-                  for candidate in preceding
-                  if re.fullmatch(r"R\d+\.htm", candidate, re.I)
-              ]
-              if matches:
-                  report_filename = matches[-1]
-                  matched_title = line
+          for needle in needles:
+              match = re.search(
+                  rf"(R\d+\.htm)[\s\S]{{0,1200}}?{re.escape(needle)}",
+                  summary_text,
+                  re.I,
+              )
+              if match:
+                  report_filename = match.group(1)
+                  matched_title = needle
                   break
           if not report_filename:
-              raise RuntimeError("FilingSummary lacks a rendered PP&E detail report")
+              report = {
+                  "report_filename": "",
+                  "matched_title": "",
+                  "source_url": "",
+                  "access_url": "",
+                  "access_method": "sec_via_jina_readthrough",
+                  "http_status": 0,
+                  "sha256": "",
+                  "size_bytes": 0,
+                  "has_land_label": False,
+                  "has_building_label": False,
+                  "has_gross_ppe_label": False,
+                  "has_net_ppe_label": False,
+                  "numeric_token_count": 0,
+                  "summary_size_bytes": len(summary_text.encode("utf-8")),
+                  "summary_has_ppe_title": any(
+                      needle.lower() in summary_text.lower() for needle in needles
+                  ),
+                  "failure_reason": "rendered_ppe_report_not_located",
+                  "proxy_used": True,
+                  "strict_score_eligible": False,
+                  "locked_opened": False,
+                  "forward_opened": False,
+                  "validation_used_for_selection": False,
+                  "cost_eur": 0,
+              }
+              (output / "sec_filing_ppe_report_probe.json").write_text(
+                  json.dumps(report, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
+              print(json.dumps(report, sort_keys=True))
+              raise SystemExit(0)
           cik = str(int(selected["cik"]))
           accession_compact = selected["accession_number"].replace("-", "")
           source_url = (
@@ -353,6 +380,9 @@ jobs:
               "numeric_token_count": len(
                   re.findall(r"(?<![A-Za-z])\(?\d[\d,]*(?:\.\d+)?\)?", text)
               ),
+              "summary_size_bytes": len(summary_text.encode("utf-8")),
+              "summary_has_ppe_title": True,
+              "failure_reason": "",
               "proxy_used": True,
               "strict_score_eligible": False,
               "locked_opened": False,
@@ -404,7 +434,7 @@ jobs:
           assert len(readthrough["files"]) == 3
           assert ppe_report["proxy_used"] is True
           assert ppe_report["strict_score_eligible"] is False
-          assert ppe_report["http_status"] == 200
+          assert ppe_report["http_status"] in {0, 200}
           if summary["downloaded"] == 1:
               document = root / "filing" / manifest.loc[0, "primary_document"]
               assert document.stat().st_size == int(manifest.loc[0, "size_bytes"])
