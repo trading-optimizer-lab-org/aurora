@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
+from importlib import util
 import json
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -674,6 +675,62 @@ def test_ipo_signals_do_not_turn_incomplete_ipo_coverage_into_zero() -> None:
     assert by_key.loc[(unmatched, "IndIPO"), "reason_if_missing"] == (
         "ipo_identity_not_corroborated"
     )
+
+
+def test_field_ritter_runner_accepts_audited_partial_sec_shards(
+    tmp_path: Path,
+) -> None:
+    runner_path = ROOT / "scripts" / "run_openap_149_field_ritter_ipo.py"
+    spec = util.spec_from_file_location(
+        "run_openap_149_field_ritter_ipo", runner_path
+    )
+    assert spec is not None and spec.loader is not None
+    runner = util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+
+    for chunk in range(48):
+        (tmp_path / f"sec_companyfacts_{chunk:03d}.parquet").write_bytes(b"parquet")
+        pd.DataFrame(
+            [
+                {
+                    "cik": cik,
+                    "symbol": symbol,
+                    "surface": surface,
+                    "status": status,
+                    "source_mode": "sec_official_direct",
+                    "source_url": f"https://data.sec.gov/{surface}/{cik}.json",
+                }
+                for cik, symbol, status in (
+                    (chunk * 2 + 1, f"A{chunk:03d}", "ok"),
+                    (chunk * 2 + 2, f"B{chunk:03d}", "error"),
+                )
+                for surface in ("companyfacts", "submissions")
+            ]
+        ).to_csv(tmp_path / f"sec_status_{chunk:03d}.csv", index=False)
+        (tmp_path / f"sec_summary_{chunk:03d}.json").write_text(
+            json.dumps(
+                {
+                    "chunk_index": chunk,
+                    "total_chunks": 48,
+                    "source_layout": "official_api_shards_with_audited_readthrough",
+                    "ciks_expected": 2,
+                    "companyfacts_ciks_ok": 1,
+                    "submissions_ciks_ok": 1,
+                    "companyfacts_rows": 1,
+                    "submissions_rows": 1,
+                    "all_facts_have_available_at": True,
+                    "locked_opened": False,
+                    "retrieved_at": "2026-08-10T12:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    _, _, evidence = runner._sec_source_contract(tmp_path)
+
+    assert evidence["companyfacts_rows"] == 48
+    assert evidence["submissions_rows"] == 48
+    assert evidence["status_rows"] == 192
 
 
 def test_field_ritter_runner_is_guarded_hash_bound_and_non_strict() -> None:
