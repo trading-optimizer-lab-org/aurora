@@ -180,6 +180,69 @@ def _forbidden_parameter_pairs(
             for statistic in ("volume_drought", "volume_shock")
             for tolerance in space["zero_tolerance_bps"][1:]
         )
+    if lane.lane_id == "F082":
+        pairs.extend(
+            ("statistic", statistic, "lag", lag)
+            for statistic in ("level", "percentile")
+            for lag in space["lag"][1:]
+        )
+    if lane.lane_id == "F083":
+        pairs.extend(
+            ("statistic", statistic, "lag", lag)
+            for statistic in ("noncommercial_short", "reportable_short")
+            for lag in space["lag"][1:]
+        )
+    if lane.lane_id == "F084":
+        pairs.extend(
+            ("statistic", "financing_pressure", "balance_window", window)
+            for window in space["balance_window"][1:]
+        )
+        pairs.extend(
+            ("statistic", "allocation_pressure", "margin_window", window)
+            for window in space["margin_window"][1:]
+        )
+    if lane.lane_id == "F085":
+        pairs.extend(
+            ("statistic", "close_location", "window", window)
+            for window in space["window"][1:]
+        )
+    if lane.lane_id == "F086":
+        pairs.extend(
+            ("statistic", "participation_gap", parameter, choice)
+            for parameter in ("window", "lag")
+            for choice in space[parameter][1:]
+        )
+    if lane.lane_id == "F087":
+        pairs.extend(
+            ("statistic", statistic, parameter, choice)
+            for statistic in (
+                "noncommercial_gap",
+                "commercial_gap",
+                "open_interest_share",
+            )
+            for parameter in ("window", "lag")
+            for choice in space[parameter][1:]
+        )
+    if lane.lane_id == "F088":
+        pairs.extend(
+            ("statistic", statistic, "lag", lag)
+            for statistic in (
+                "top4_level",
+                "top8_level",
+                "top4_top8_share",
+                "combined_gap",
+            )
+            for lag in space["lag"][1:]
+        )
+        pairs.extend(
+            ("statistic", "top4_top8_share", "window", window)
+            for window in space["window"][1:]
+        )
+    if lane.lane_id == "F089":
+        pairs.extend(
+            ("statistic", "realized_asymmetry", "change_lag", lag)
+            for lag in space["change_lag"][1:]
+        )
     return tuple(pairs)
 
 

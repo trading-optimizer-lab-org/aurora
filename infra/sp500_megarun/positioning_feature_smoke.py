@@ -10,7 +10,11 @@ from typing import Any
 
 import pandas as pd
 
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.feature_audit import audit_feature_outputs
+from aurora.infra.sp500_megarun.feature_contract import (
+    load_and_validate_feature_contract,
+)
 from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_cboe_vol_panel,
     normalize_cftc_sp500_panel,
@@ -20,8 +24,12 @@ from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_spy_decision_panel,
 )
 from aurora.infra.sp500_megarun.materializer import parquet_safe_frame
+from aurora.infra.sp500_megarun.parameter_choice_audit import (
+    audit_frozen_parameter_choices,
+)
 from aurora.infra.sp500_megarun.positioning_feature_engine import (
     evaluate_positioning_family_batch,
+    evaluate_positioning_lane,
 )
 
 
@@ -33,6 +41,7 @@ _TRAIN_PARTITION = "train_snapshot_1993_2010"
 _SEARCH_START = pd.Timestamp("1998-01-01")
 _TRAIN_END = pd.Timestamp("2010-12-31")
 _EXECUTABLE_LANES = tuple(f"F{index:03d}" for index in range(81, 91))
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _REQUIRED_DATASETS = (
     "D_SPY",
     "D_Z1",
@@ -53,6 +62,26 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _repair_positioning_configuration(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    if lane_id == "F082" and parameter == "lag":
+        configuration["statistic"] = "change"
+    if lane_id == "F083" and parameter == "lag":
+        configuration["statistic"] = "short_pressure"
+    if lane_id == "F085" and parameter == "window":
+        configuration["statistic"] = "persistence"
+    if lane_id == "F086" and parameter in {"window", "lag"}:
+        configuration["statistic"] = "change"
+    if lane_id == "F087" and parameter in {"window", "lag"}:
+        configuration["statistic"] = "gap_change"
+    if lane_id == "F088" and parameter == "lag":
+        configuration["statistic"] = "change"
+    return configuration
 
 
 def build_positioning_feature_smoke(
@@ -110,6 +139,31 @@ def build_positioning_feature_smoke(
         search_start=_SEARCH_START,
         search_end=_TRAIN_END,
     )
+    data_contract = load_and_validate_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_free_data_240.json"
+    )
+    feature_contract = load_and_validate_feature_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_feature_contract_240.json",
+        data_contract,
+    )
+    expected_years = sorted(
+        set(
+            pd.to_datetime(panels["spy"]["date"], errors="raise")
+            .loc[lambda values: values.ge(_SEARCH_START)]
+            .dt.year
+        )
+    )
+    parameter_audit = audit_frozen_parameter_choices(
+        feature_contract,
+        lane_ids=_EXECUTABLE_LANES,
+        evaluator=lambda lane_id, configuration: evaluate_positioning_lane(
+            lane_id,
+            panels,
+            configuration,
+        ),
+        expected_years=expected_years,
+        repair=_repair_positioning_configuration,
+    )
 
     root = Path(output_dir)
     artifacts: dict[str, dict[str, object]] = {}
@@ -131,7 +185,11 @@ def build_positioning_feature_smoke(
 
     report: dict[str, Any] = {
         "schema_version": 1,
-        "ready": bool(audit.ready and len(outputs) == len(_EXECUTABLE_LANES)),
+        "ready": bool(
+            audit.ready
+            and parameter_audit["ready"]
+            and len(outputs) == len(_EXECUTABLE_LANES)
+        ),
         "scope": "technical_positioning_feature_smoke_train_only",
         "executable_lanes": list(_EXECUTABLE_LANES),
         "executable_lane_count": len(_EXECUTABLE_LANES),
@@ -146,10 +204,15 @@ def build_positioning_feature_smoke(
         "near_duplicate_pairs": [list(pair) for pair in audit.near_duplicate_pairs],
         "coverage": [asdict(item) for item in audit.coverage],
         "artifacts": artifacts,
+        "parameter_choice_audit": parameter_audit,
     }
     root.mkdir(parents=True, exist_ok=True)
     (root / "positioning_feature_smoke_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (root / "parameter_choice_audit_F081_F090.json").write_text(
+        json.dumps(parameter_audit, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return report
