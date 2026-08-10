@@ -71,6 +71,20 @@ contrato preparado valida recuento, fidelidad y formula fila por fila. Este lote
 de origen aun no se ha consolidado con los demas artefactos, por lo que no
 cambia los recuentos globales demostrados al principio del documento.
 
+## hire: evidencia SEC actual separada de referencias obsoletas
+
+El artefacto `openap-93-current-recovered-results` del run `31341580689`
+contiene 2.157 filas de `hire`. Solo 40 tienen valor reconstruido y
+`current_usable=True`; otras 24 tienen numero pero estan declaradas
+`stale_reference_only`, y las 2.093 restantes no tienen valor. Todas usan
+`sec_edgar` y la formula `openap_employee_growth_sec`.
+
+El CSV consolidado antiguo conto las 64 filas numericas. El contrato preparado
+ahora exige exactamente 40 valores actuales y rechaza las 24 referencias
+obsoletas. `hire` queda reconstruida, no estricta, porque el tag SEC de empleados
+y la identidad CIK/ticker no prueban equivalencia con el historial Compustat y
+CRSP. Hasta ejecutar otra consolidacion, el recuento global publicado no cambia.
+
 ## Tres senales IPO: lote gratuito ejecutado, pendiente de consolidar
 
 `AgeIPO`, `IndIPO` y `RDIPO` no necesitan Twelve Data. El Excel oficial
