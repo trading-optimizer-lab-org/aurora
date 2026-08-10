@@ -344,6 +344,34 @@ def test_divinit_route_records_executed_zero_value_batch() -> None:
     assert str(routes.loc["DivInit", "strict_score_eligible"]).lower() == "false"
 
 
+def test_hire_route_and_consolidation_quarantine_stale_rows() -> None:
+    routes = _module().load_target_routes(ROUTE_MATRIX).set_index("signal")
+    blocker = routes.loc["hire", "current_remaining_blocker"]
+
+    assert "openap93_run_31341580689_current_usable_value_count_40" in blocker
+    assert "24_stale_reference_rows_quarantined" in blocker
+    assert str(routes.loc["hire", "strict_score_eligible"]).lower() == "false"
+
+    workflow_path = ROOT / ".github" / "workflows" / "openap-149-consolidate.yml"
+    workflow = yaml.load(
+        workflow_path.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    steps = {
+        step["name"]: step
+        for step in workflow["jobs"]["consolidate"]["steps"]
+        if "name" in step
+    }
+    verify = steps["Verify consolidated result"]["run"]
+    assert 'hire["current_value_count"] == 40' in verify
+    assert 'hire["fidelity"] == "reconstructed"' in verify
+    assert 'hire["source_used"] == "sec_edgar"' in verify
+    assert 'not bool(hire["strict_score_eligible"])' in verify
+    assert 'len(hire_values) == 40' in verify
+    assert 'hire_values["fidelity_class"].eq("reconstructed").all()' in verify
+    assert 'hire_values["formula_id"].eq("openap_employee_growth_sec").all()' in verify
+
+
 def test_io_short_interest_runner_uses_bounded_selective_institutional_recovery() -> None:
     runner = (ROOT / "scripts" / "run_openap_149_finra_short_interest.py").read_text(
         encoding="utf-8"
