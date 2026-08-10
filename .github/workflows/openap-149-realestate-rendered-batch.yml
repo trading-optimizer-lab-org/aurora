@@ -103,6 +103,7 @@ jobs:
           from pathlib import Path
 
           import pandas as pd
+          from aurora.research.openap_181.acquisition_149 import VALUE_COLUMNS
 
           root = Path("outputs/openap_149_realestate_rendered_batch")
           summary = json.loads(
@@ -127,14 +128,24 @@ jobs:
           assert summary["forward_opened"] is False
           assert summary["validation_used_for_selection"] is False
           assert summary["cost_eur"] == 0
+          current = pd.read_csv(
+              root / "openap_149_realestate_current.csv"
+          )
+          assert tuple(current.columns) == VALUE_COLUMNS
+          assert len(current) == summary["current_values_computed"]
           if summary["current_values_computed"]:
-              current = pd.read_csv(
-                  root / "openap_149_realestate_current.csv"
-              )
-              assert len(current) == summary["current_values_computed"]
-              assert current["current_signal_computed"].all()
-              assert not current["strict_score_eligible"].any()
+              assert current["fidelity_class"].eq("reconstructed").all()
+              assert current["source_id"].eq("sec_edgar").all()
+              assert current["formula_id"].eq("realestate").all()
+              assert current["observation_count"].ge(5).all()
+              assert current["source_url"].str.startswith(
+                  "https://www.sec.gov/"
+              ).all()
+              assert current["caveat"].str.contains(
+                  "sec_via_jina_readthrough"
+              ).all()
           else:
+              assert current.empty
               assert summary["status"] in {
                   "blocked_coverage",
                   "blocked_source_failure",
