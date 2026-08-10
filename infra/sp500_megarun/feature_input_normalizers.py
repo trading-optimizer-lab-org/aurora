@@ -1240,6 +1240,88 @@ def normalize_french_factor_panel(
     )
 
 
+_FRENCH_CHARACTERISTIC_FREQUENCIES: Mapping[str, str] = {
+    "size_daily": "daily",
+    "book_to_market_daily": "daily",
+    "profitability_daily": "daily",
+    "investment_daily": "daily",
+    "momentum_10_daily": "daily",
+    "short_reversal_10_daily": "daily",
+    "long_reversal_10_daily": "daily",
+    "accruals_monthly": "monthly",
+    "beta_monthly": "monthly",
+    "net_share_issues_monthly": "monthly",
+    "variance_monthly": "monthly",
+    "residual_variance_monthly": "monthly",
+}
+_KNOWN_NON_CHARACTERISTIC_FRENCH_RESOURCES = {
+    "ff3_daily",
+    "industry_48_daily",
+}
+
+
+def normalize_french_characteristic_panels(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> Mapping[str, pd.DataFrame]:
+    """Prepare every frozen U.S. characteristic portfolio at a causal session."""
+
+    french = _validated_dates(frame, dataset_id="D_FRENCH_US")
+    if "resource_id" not in french:
+        raise FeatureInputNormalizerError("FRENCH_RESOURCE_ID_MISSING")
+    resource_ids = set(french["resource_id"].dropna().astype(str))
+    known = set(_FRENCH_CHARACTERISTIC_FREQUENCIES) | (
+        _KNOWN_NON_CHARACTERISTIC_FRENCH_RESOURCES
+    )
+    unknown = sorted(resource_ids - known)
+    if unknown:
+        raise FeatureInputNormalizerError(
+            f"UNKNOWN_FRENCH_CHARACTERISTIC_RESOURCE:{','.join(unknown)}"
+        )
+
+    metadata = {
+        "date",
+        "resource_id",
+        "source_dataset",
+        "source_file",
+    }
+    panels: dict[str, pd.DataFrame] = {}
+    for resource_id, frequency in _FRENCH_CHARACTERISTIC_FREQUENCIES.items():
+        selected = french.loc[
+            french["resource_id"].astype(str).eq(resource_id)
+        ].copy()
+        if selected.empty:
+            continue
+        numeric: dict[str, pd.Series] = {}
+        for column in selected.columns:
+            if str(column) in metadata:
+                continue
+            values = pd.to_numeric(selected[column], errors="coerce")
+            values = values.mask(values.isin((-99.99, -999.0)))
+            if values.notna().any():
+                numeric[str(column)] = values / 100.0
+        if len(numeric) < 2:
+            raise FeatureInputNormalizerError(
+                f"FRENCH_CHARACTERISTIC_COLUMNS_MISSING:{resource_id}"
+            )
+        panel = pd.DataFrame({"date": selected["date"], **numeric})
+        panel = panel.dropna(how="all", subset=list(numeric))
+        if frequency == "daily":
+            policy = "next_session"
+        else:
+            panel["date"] = panel["date"] + pd.offsets.MonthEnd(0)
+            policy = "second_month_tenth_session"
+        panels[resource_id] = _project_to_decision_session(
+            panel,
+            policy=policy,
+            sessions=sessions,
+        )
+    if not panels:
+        raise FeatureInputNormalizerError("EMPTY_FRENCH_CHARACTERISTIC_PANELS")
+    return panels
+
+
 def normalize_revised_z1_equity_panel(
     frame: pd.DataFrame,
     *,
@@ -1424,6 +1506,7 @@ __all__ = [
     "normalize_fomc_event_panel",
     "normalize_french_industry_panel",
     "normalize_french_factor_panel",
+    "normalize_french_characteristic_panels",
     "normalize_french_us_panels",
     "normalize_fx_cross_asset_panel",
     "normalize_lagged_valuation_panel",

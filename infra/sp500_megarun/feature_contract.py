@@ -133,7 +133,7 @@ _DATASET_AVAILABLE_AT_POLICIES: Mapping[str, str] = {
     "D_SLOOS": "quarter_end_next_session",
     "D_Z1": "thirteen_month_revision_guard",
     "D_FINRA_MARGIN": "second_month_tenth_session",
-    "D_FRENCH_US": "next_session",
+    "D_FRENCH_US": "frequency_aware",
     "D_FRENCH_GLOBAL": "next_session",
     "D_WORLD_BANK_COMMODITIES": "next_month_third_session",
     "D_TREASURY_AUCTIONS": "next_session",

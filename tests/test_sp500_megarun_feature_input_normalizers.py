@@ -832,6 +832,69 @@ def test_french_panels_use_ff3_and_48_industries_at_next_session() -> None:
     pd.testing.assert_frame_equal(standalone_factors, factor_panel)
 
 
+def test_french_characteristic_panels_use_frequency_aware_release_lags() -> None:
+    api = _normalizer_api()
+    daily = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-01-04", "2010-01-05"]),
+            "resource_id": "profitability_daily",
+            "Lo 20": [-1.0, -0.5],
+            "Qnt 2": [-0.5, -0.2],
+            "Qnt 3": [0.0, 0.1],
+            "Qnt 4": [0.5, 0.3],
+            "Hi 20": [1.0, 0.7],
+        }
+    )
+    monthly = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-01-01"]),
+            "resource_id": "beta_monthly",
+            "Lo 20": [-2.0],
+            "Qnt 2": [-1.0],
+            "Qnt 3": [0.0],
+            "Qnt 4": [1.0],
+            "Hi 20": [2.0],
+        }
+    )
+    frame = pd.concat([daily, monthly], ignore_index=True, sort=False)
+    sessions = pd.bdate_range("2010-01-04", "2010-03-31")
+
+    panels = api.normalize_french_characteristic_panels(
+        frame, sessions=sessions
+    )
+
+    assert tuple(panels) == ("profitability_daily", "beta_monthly")
+    assert panels["profitability_daily"].loc[0, "date"] == pd.Timestamp(
+        "2010-01-05"
+    )
+    assert panels["profitability_daily"].loc[0, "Lo 20"] == pytest.approx(-0.01)
+    assert panels["beta_monthly"].loc[0, "observed_at"] == pd.Timestamp(
+        "2010-01-31"
+    )
+    assert panels["beta_monthly"].loc[0, "available_at"] == pd.Timestamp(
+        "2010-03-12"
+    )
+    assert panels["beta_monthly"].loc[0, "Hi 20"] == pytest.approx(0.02)
+
+
+def test_french_characteristic_normalizer_rejects_unknown_resource() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-01-04"]),
+            "resource_id": ["invented_characteristic"],
+            "Lo 20": [-1.0],
+            "Hi 20": [1.0],
+        }
+    )
+
+    with pytest.raises(
+        api.FeatureInputNormalizerError,
+        match="UNKNOWN_FRENCH_CHARACTERISTIC_RESOURCE",
+    ):
+        api.normalize_french_characteristic_panels(frame, sessions=_sessions())
+
+
 def test_revised_z1_proxy_waits_full_year_and_margin_waits_two_months() -> None:
     api = _normalizer_api()
     z1_rows: list[dict[str, object]] = []

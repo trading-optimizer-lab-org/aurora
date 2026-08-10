@@ -271,6 +271,7 @@ def _federal_reserve_zip_xml(
 
 
 def _french_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
+    observation_row = re.compile(r"^\s*(?:\d{8}|\d{6})\s*,")
     frames: list[pd.DataFrame] = []
     try:
         with zipfile.ZipFile(BytesIO(payload)) as archive:
@@ -282,7 +283,7 @@ def _french_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
                     (
                         index
                         for index, line in enumerate(lines[:-1])
-                        if "," in line and re.match(r"^\s*\d{8}\s*,", lines[index + 1])
+                        if "," in line and observation_row.match(lines[index + 1])
                     ),
                     None,
                 )
@@ -290,7 +291,7 @@ def _french_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
                     continue
                 data_lines = [lines[header_index]]
                 for line in lines[header_index + 1 :]:
-                    if not re.match(r"^\s*\d{8}\s*,", line):
+                    if not observation_row.match(line):
                         break
                     data_lines.append(line)
                 frame = pd.read_csv(StringIO("\n".join(data_lines)))
@@ -300,7 +301,9 @@ def _french_zip(payload: bytes, *, adapter: str, **_: object) -> pd.DataFrame:
     except Exception as exc:
         raise SourceAdapterError(f"FRENCH_ZIP_PARSE_FAILED:{adapter}") from exc
     if not frames:
-        raise SourceAdapterError(f"FRENCH_ZIP_HAS_NO_DAILY_TABLE:{adapter}")
+        raise SourceAdapterError(
+            f"FRENCH_ZIP_HAS_NO_DAILY_OR_MONTHLY_TABLE:{adapter}"
+        )
     return _nonempty(pd.concat(frames, ignore_index=True, sort=False), adapter=adapter)
 
 

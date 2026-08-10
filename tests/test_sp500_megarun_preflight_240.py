@@ -71,6 +71,25 @@ def test_repository_source_plan_is_github_only_and_stops_at_2020() -> None:
     }
     assert min(cftc_resources["legacy_futures_only"]) == 1986
     assert min(cftc_resources["legacy_futures_options_early"]) == 1995
+    french_resources = {
+        str(resource["id"])
+        for resource in source_plan["D_FRENCH_FACTORS"].resources
+    }
+    assert french_resources == {
+        "ff3_daily",
+        "size_daily",
+        "book_to_market_daily",
+        "profitability_daily",
+        "investment_daily",
+        "momentum_10_daily",
+        "short_reversal_10_daily",
+        "long_reversal_10_daily",
+        "accruals_monthly",
+        "beta_monthly",
+        "net_share_issues_monthly",
+        "variance_monthly",
+        "residual_variance_monthly",
+    }
 
 
 def test_partition_gate_keeps_train_and_validation_separate_and_rejects_2021() -> None:

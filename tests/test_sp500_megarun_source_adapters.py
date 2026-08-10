@@ -54,6 +54,24 @@ def test_french_zip_skips_description_and_finds_daily_table() -> None:
     assert frame["Mkt-RF"].tolist() == [1.2, -0.3]
 
 
+def test_french_zip_finds_monthly_table_without_mistaking_annual_rows() -> None:
+    raw = b"""This file was created from the current CRSP vintage.\n\n,Lo 20,Qnt 2,Qnt 3,Qnt 4,Hi 20\n199801,1.20,0.10,-0.20,0.30,0.80\n201012,-0.30,0.04,0.11,0.20,0.50\n201101,9.99,9.99,9.99,9.99,9.99\n\n Annual Returns:\n1998,10.0,11.0,12.0,13.0,14.0\n"""
+
+    frame = normalize_resource_payload(
+        "french_zip_csv",
+        _zip_bytes("beta.csv", raw),
+        format_name="zip_csv",
+        resource_id="beta_monthly",
+        maximum_observation_date="2010-12-31",
+    )
+
+    assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "1998-01-01",
+        "2010-12-01",
+    ]
+    assert frame["Hi 20"].tolist() == [0.8, 0.5]
+
+
 def test_csv_normalizer_rejects_rows_after_the_evaluation_boundary() -> None:
     payload = b"date,value\n2010-12-31,1\n2011-01-03,2\n"
 
