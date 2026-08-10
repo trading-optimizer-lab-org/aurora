@@ -1,0 +1,10 @@
+# Isolated official DEHB runtime. Do not merge into Aurora's main environment:
+# DEHB 0.1.2 requires NumPy < 2 while Aurora's performance lock uses NumPy 2.x.
+DEHB==0.1.2
+ConfigSpace==1.2.2
+numpy==1.26.4
+pandas==2.2.3
+pyarrow==16.1.0
+dask==2024.7.1
+distributed==2024.7.1
+scipy==1.13.1

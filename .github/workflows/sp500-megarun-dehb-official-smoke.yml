@@ -1,0 +1,64 @@
+name: SP500 Megarun Official DEHB Infrastructure Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sp500-megarun-official-dehb-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  official_dehb_smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    steps:
+      - name: Check out the exact infrastructure revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up isolated Python 3.11
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install only the hash-locked official DEHB runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install "pytest==9.0.3"
+          python -m pip install --no-deps -e .
+          python -m pip check
+      - name: Verify adapter and GitHub-only fail-closed gates
+        run: |
+          python -m pytest \
+            tests/test_sp500_megarun_dehb_configspace.py \
+            tests/test_sp500_megarun_dehb_official_smoke.py \
+            tests/test_sp500_megarun_feature_contract.py \
+            tests/test_sp500_megarun_data_contract.py \
+            -q
+      - name: Exercise official DEHB with one four-worker island
+        run: |
+          python scripts/run_sp500_megarun_dehb_official_smoke.py \
+            --data-contract config/sp500_megarun_free_data_240.json \
+            --feature-contract config/sp500_megarun_feature_contract_240.json \
+            --dependency-lock requirements/dehb-official.lock \
+            --output-dir outputs/sp500_megarun_dehb_official_smoke
+      - name: Upload immutable official DEHB evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-official-dehb-smoke-${{ github.run_id }}
+          path: outputs/sp500_megarun_dehb_official_smoke
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
