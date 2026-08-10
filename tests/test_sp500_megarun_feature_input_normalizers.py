@@ -1385,6 +1385,95 @@ def test_z1_corporate_issuance_waits_full_year_before_use() -> None:
     assert result.loc[0, "corporate_equity_net_issuance"] == pytest.approx(125.0)
 
 
+def test_revised_z1_financial_accounts_panel_exposes_official_sectors_after_guard() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2008-01-01", "2010-12-31")
+    values = {
+        "LM153064105.Q": 400.0,
+        "FL154090005.Q": 1_000.0,
+        "FL154190005.Q": 300.0,
+        "FL153020005.Q": 100.0,
+        "FL153030005.Q": 200.0,
+        "FL153034005.Q": 50.0,
+        "FL104090005.Q": 800.0,
+        "FL104190005.Q": 1_200.0,
+        "FL103020000.Q": 80.0,
+        "FL103030003.Q": 120.0,
+        "FL103034000.Q": 40.0,
+        "FL104122005.Q": 600.0,
+        "FA103164105.Q": -25.0,
+        "LM654090000.Q": 900.0,
+        "LM653064100.Q": 450.0,
+        "FA654090000.Q": 36.0,
+        "LM564090005.Q": 200.0,
+        "LM563064100.Q": 150.0,
+        "FA564090005.Q": 16.0,
+        "FL634090005.Q": 500.0,
+        "FA634090005.Q": 20.0,
+        "FL633061105.Q": 250.0,
+        "FL633069175.Q": 100.0,
+        "FL664090005.Q": 700.0,
+        "FL664190005.Q": 650.0,
+        "FL662051003.Q": 220.0,
+        "FL662151003.Q": 260.0,
+        "FA263061105.Q": 40.0,
+        "FA263063005.Q": 30.0,
+        "FA263064105.Q": 50.0,
+        "FA263064203.Q": 10.0,
+    }
+    frame = pd.DataFrame(
+        [
+            {"date": pd.Timestamp("2008-03-31"), "series_id": series, "value": value}
+            for series, value in values.items()
+        ]
+    )
+
+    result = api.normalize_revised_z1_financial_accounts_panel(
+        frame, sessions=sessions
+    )
+
+    assert result.loc[0, "date"] == pd.Timestamp("2009-04-15")
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2008-03-31")
+    assert result.loc[0, "available_at"] == pd.Timestamp("2009-04-15")
+    assert result.loc[0, "household_equity"] == pytest.approx(400.0)
+    assert result.loc[0, "corporate_net_issuance"] == pytest.approx(-25.0)
+    assert result.loc[0, "etf_total_assets"] == pytest.approx(200.0)
+    assert result.loc[0, "foreign_equity_purchases"] == pytest.approx(50.0)
+
+
+def test_tic_panel_waits_until_tenth_session_of_second_following_month() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2008-01-01", "2008-06-30")
+    frame = pd.DataFrame(
+        [
+            {
+                "date": "2008-01-01",
+                "resource_id": "tic_treasury_sector",
+                "total_net_purchases": 12.0,
+                "foreign_official": 5.0,
+                "other_foreigners": 7.0,
+                "international_regional": 0.0,
+            },
+            {
+                "date": "2008-01-01",
+                "resource_id": "tic_equity_sector",
+                "total_net_purchases": -3.0,
+                "foreign_official": -1.0,
+                "other_foreigners": -2.0,
+                "international_regional": 0.0,
+            },
+        ]
+    )
+
+    result = api.normalize_tic_foreign_flow_panel(frame, sessions=sessions)
+
+    assert result.loc[0, "date"] == pd.Timestamp("2008-03-14")
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2008-01-01")
+    assert result.loc[0, "available_at"] == pd.Timestamp("2008-03-14")
+    assert result.loc[0, "tic_treasury_net_purchases"] == pytest.approx(12.0)
+    assert result.loc[0, "tic_equity_net_purchases"] == pytest.approx(-3.0)
+
+
 def test_uncertainty_panel_waits_until_next_session() -> None:
     api = _normalizer_api()
     frame = pd.DataFrame(

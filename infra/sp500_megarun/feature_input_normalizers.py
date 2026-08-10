@@ -201,6 +201,39 @@ _Z1_EQUITY_SERIES: Mapping[str, str] = {
     "FL653064100.Q": "mutual_fund_corporate_equity",
     "FL654090000.Q": "mutual_fund_financial_assets",
 }
+_Z1_FINANCIAL_ACCOUNT_SERIES: Mapping[str, tuple[str, ...]] = {
+    "household_equity": ("LM153064105.Q", "FL153064105.Q"),
+    "household_financial_assets": ("FL154090005.Q",),
+    "household_liabilities": ("FL154190005.Q",),
+    "household_checkable": ("FL153020005.Q",),
+    "household_time_deposits": ("FL153030005.Q",),
+    "household_mmf": ("FL153034005.Q",),
+    "corporate_financial_assets": ("FL104090005.Q",),
+    "corporate_liabilities": ("FL104190005.Q",),
+    "corporate_checkable": ("FL103020000.Q",),
+    "corporate_time_deposits": ("FL103030003.Q",),
+    "corporate_mmf": ("FL103034000.Q",),
+    "corporate_debt": ("FL104122005.Q",),
+    "corporate_net_issuance": ("FA103164105.Q",),
+    "mutual_fund_total_assets": ("LM654090000.Q", "FL654090000.Q"),
+    "mutual_fund_equity": ("LM653064100.Q", "FL653064100.Q"),
+    "mutual_fund_flow": ("FA654090000.Q", "FU654090000.Q"),
+    "etf_total_assets": ("LM564090005.Q", "FL564090005.Q"),
+    "etf_equity": ("LM563064100.Q", "FL563064100.Q"),
+    "etf_flow": ("FA564090005.Q", "FU564090005.Q"),
+    "mmf_total_assets": ("FL634090005.Q",),
+    "mmf_flow": ("FA634090005.Q", "FU634090005.Q"),
+    "mmf_treasury": ("FL633061105.Q",),
+    "mmf_commercial_paper": ("FL633069175.Q",),
+    "broker_total_assets": ("FL664090005.Q",),
+    "broker_liabilities": ("FL664190005.Q",),
+    "broker_repo_assets": ("FL662051003.Q",),
+    "broker_repo_liabilities": ("FL662151003.Q",),
+    "foreign_treasury_purchases": ("FA263061105.Q",),
+    "foreign_bond_purchases": ("FA263063005.Q",),
+    "foreign_equity_purchases": ("FA263064105.Q",),
+    "foreign_mutual_fund_purchases": ("FA263064203.Q",),
+}
 
 
 def _validated_dates(frame: pd.DataFrame, *, dataset_id: str) -> pd.DataFrame:
@@ -2255,6 +2288,97 @@ def normalize_z1_corporate_issuance_panel(
     return result.reset_index(drop=True)
 
 
+def normalize_revised_z1_financial_accounts_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Expose frozen Z.1 sector balances only after the 13-month revision guard."""
+
+    z1 = _validated_dates(frame, dataset_id="D_Z1")
+    required = {"series_id", "value"}
+    missing = sorted(required - set(z1.columns))
+    if missing:
+        raise FeatureInputNormalizerError(f"Z1_COLUMNS_MISSING:{','.join(missing)}")
+    z1["series_id"] = z1["series_id"].astype(str)
+    present = set(z1["series_id"])
+    pieces: list[pd.DataFrame] = []
+    missing_items: list[str] = []
+    for item, candidates in _Z1_FINANCIAL_ACCOUNT_SERIES.items():
+        selected_id = next((candidate for candidate in candidates if candidate in present), None)
+        if selected_id is None:
+            missing_items.append(item)
+            continue
+        selected = z1.loc[
+            z1["series_id"].eq(selected_id), ["date", "value"]
+        ].copy()
+        selected["item"] = item
+        selected["value"] = _fed_ddp_numeric(selected["value"])
+        pieces.append(selected)
+    if missing_items:
+        raise FeatureInputNormalizerError(
+            f"Z1_FINANCIAL_ACCOUNT_SERIES_MISSING:{','.join(sorted(missing_items))}"
+        )
+    combined = pd.concat(pieces, ignore_index=True)
+    panel = combined.pivot_table(
+        index="date", columns="item", values="value", aggfunc="last"
+    ).reset_index()
+    panel.columns.name = None
+    value_columns = list(_Z1_FINANCIAL_ACCOUNT_SERIES)
+    panel = panel.dropna(subset=value_columns, how="all")
+    panel = panel.sort_values("date", kind="mergesort").rename(
+        columns={"date": "observed_at"}
+    )
+    targets = panel["observed_at"] + pd.offsets.MonthBegin(13) + pd.Timedelta(days=14)
+    panel["date"] = _release_session(targets, sessions=sessions)
+    panel = panel.dropna(subset=["date"]).sort_values("date", kind="mergesort")
+    if panel.empty:
+        raise FeatureInputNormalizerError("EMPTY_REVISED_Z1_FINANCIAL_ACCOUNTS_PANEL")
+    panel["available_at"] = panel["date"]
+    return panel.loc[
+        :, ["date", "observed_at", "available_at", *value_columns]
+    ].reset_index(drop=True)
+
+
+def normalize_tic_foreign_flow_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Expose Treasury and equity TIC purchases after a conservative release lag."""
+
+    tic = _validated_dates(frame, dataset_id="D_TIC")
+    required = {"resource_id", "total_net_purchases", "foreign_official"}
+    missing = sorted(required - set(tic.columns))
+    if missing:
+        raise FeatureInputNormalizerError(f"TIC_COLUMNS_MISSING:{','.join(missing)}")
+    resources = {
+        "tic_treasury_sector": ("tic_treasury_net_purchases", "tic_treasury_official"),
+        "tic_equity_sector": ("tic_equity_net_purchases", "tic_equity_official"),
+    }
+    pieces: list[pd.DataFrame] = []
+    for resource_id, (total_name, official_name) in resources.items():
+        selected = tic.loc[tic["resource_id"].astype(str).eq(resource_id)].copy()
+        if selected.empty:
+            raise FeatureInputNormalizerError(f"TIC_RESOURCE_MISSING:{resource_id}")
+        selected[total_name] = pd.to_numeric(
+            selected["total_net_purchases"], errors="coerce"
+        )
+        selected[official_name] = pd.to_numeric(
+            selected["foreign_official"], errors="coerce"
+        )
+        pieces.append(selected.loc[:, ["date", total_name, official_name]])
+    panel = pieces[0].merge(pieces[1], on="date", how="inner", validate="one_to_one")
+    panel = panel.dropna().sort_values("date", kind="mergesort")
+    if panel.empty:
+        raise FeatureInputNormalizerError("EMPTY_TIC_FOREIGN_FLOW_PANEL")
+    return _project_to_decision_session(
+        panel,
+        policy="second_month_tenth_session",
+        sessions=sessions,
+    )
+
+
 def normalize_finra_margin_panel(
     frame: pd.DataFrame,
     *,
@@ -2369,6 +2493,8 @@ __all__ = [
     "normalize_policy_rate_panel",
     "normalize_spf_real_rate_panel",
     "normalize_revised_z1_equity_panel",
+    "normalize_revised_z1_financial_accounts_panel",
+    "normalize_tic_foreign_flow_panel",
     "normalize_z1_corporate_issuance_panel",
     "normalize_spy_decision_panel",
     "normalize_treasury_curve_panel",
