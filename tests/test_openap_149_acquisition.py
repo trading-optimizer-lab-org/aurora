@@ -931,9 +931,100 @@ def test_consolidation_workflow_verifies_causal_firmage_evidence() -> None:
     assert 'firm_age["current_value_count"] == 4434' in verify
     assert 'firm_age["fidelity"] == "unvalidated_proxy"' in verify
     assert 'not bool(firm_age["strict_score_eligible"])' in verify
-    assert '"CBOperProf", "DelNetFin", "EarningsConsistency"' in verify
+    assert 'matrix_by_signal.loc["CBOperProf"]' in verify
+    assert '"CBOperProf", "DelNetFin", "EarningsConsistency"' not in verify
     assert '"declared_current_unusable" in quarantined["remaining_blocker"]' in verify
     assert 'matrix.set_index("signal").loc["OScore"]' in verify
     assert 'oscore["current_value_count"] == 1100' in verify
     assert 'oscore["source_used"] == "fred|sec_edgar"' in verify
     assert 'oscore_values["source_id"].eq("sec_edgar|fred_public_csv").all()' in verify
+
+
+def test_consolidation_workflow_accepts_current_companyfacts_evidence() -> None:
+    workflow_path = ROOT / ".github" / "workflows" / "openap-149-consolidate.yml"
+    workflow = yaml.load(
+        workflow_path.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+    steps = {
+        step["name"]: step
+        for step in workflow["jobs"]["consolidate"]["steps"]
+        if "name" in step
+    }
+    verify = steps["Verify consolidated result"]["run"]
+    expected = {
+        "ChInvIA": (
+            3124,
+            "reconstructed",
+            "openap_chinvia_capex_growth_sic2d_mean_sec",
+        ),
+        "ConvDebt": (
+            265,
+            "reconstructed",
+            "openap_convdebt_positive_only_sec_companyfacts_reconstruction",
+        ),
+        "DelDRC": (
+            1949,
+            "unvalidated_proxy",
+            "change_deferred_revenue_over_average_assets",
+        ),
+        "DelNetFin": (
+            36,
+            "reconstructed",
+            "openap_delnetfin_sec_aggregate_components_6m_lag",
+        ),
+        "DivOmit": (
+            14,
+            "reconstructed",
+            "openap_divomit_positive_sec_6q_regular_then_zero_2m",
+        ),
+        "DivSeason": (
+            3,
+            "reconstructed",
+            "openap_divseason_positive_sec_direct_month_frequency",
+        ),
+        "EarningsConsistency": (
+            1441,
+            "reconstructed",
+            "openap_earnings_consistency_sec_basic_eps_6m_lag",
+        ),
+        "EarningsSurprise": (
+            2132,
+            "reconstructed",
+            "openap_eps_yoy_drift_standardized_8q_sec_21q",
+        ),
+        "RevenueSurprise": (
+            1828,
+            "reconstructed",
+            "openap_revenue_per_share_yoy_standardized_8q_sec_21q",
+        ),
+        "sinAlgo": (
+            22,
+            "reconstructed",
+            "openap_sinalgo_positive_current_sec_sic",
+        ),
+    }
+    for signal, (count, fidelity, formula_id) in expected.items():
+        assert (
+            f'"{signal}": ({count}, "{fidelity}", "{formula_id}")'
+            in verify
+        )
+
+    assert "companyfacts_expected = {" in verify
+    assert (
+        "for signal, (expected_count, expected_fidelity, expected_formula) "
+        "in companyfacts_expected.items():"
+    ) in verify
+    assert 'bool(companyfacts["data_acquired"])' in verify
+    assert 'bool(companyfacts["current_value_calculated"])' in verify
+    assert 'companyfacts["current_value_count"] == expected_count' in verify
+    assert 'companyfacts["fidelity"] == expected_fidelity' in verify
+    assert 'companyfacts["source_used"] == "sec_edgar"' in verify
+    assert 'not bool(companyfacts["strict_score_eligible"])' in verify
+    assert "len(companyfacts_values) == expected_count" in verify
+    assert 'companyfacts_values["source_id"].eq("sec_edgar").all()' in verify
+    assert (
+        'companyfacts_values["formula_id"].eq(expected_formula).all()'
+        in verify
+    )
