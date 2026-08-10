@@ -70,7 +70,7 @@ AbnormalAccruals, Accruals, AccrualsBM, AdExp, AM, BM, BMdec, BookLeverage, BPEB
 
 `Cash` pertenece a este grupo. SEC proporciona caja, activos y fecha de filing; el trabajo es fijar alias XBRL, enmiendas, caja restringida e identidad, no encontrar una fuente de pago obligatoria.
 
-#### Recuperacion estrecha de CompEquIss
+#### Recuperacion estrecha de CompEquIss y EquityDuration
 
 El artefacto recuperado `31341580689` conserva 2.157 filas actuales de
 `CompEquIss`, de las que 1.585 son utilizables. La reconstruccion aplica la
@@ -85,6 +85,14 @@ hashes hasta el run fuente `31333714423`, la formula exacta, fechas causales,
 identidad CIK-ticker, cobertura reconciliada y ausencia de duplicados. No
 autoriza `yahoo_public` para ninguna otra senal. La ejecucion de consolidacion
 sigue pendiente y el resultado no puede entrar en el score estricto.
+
+`EquityDuration` usa el mismo artefacto inmutable con un alias independiente,
+`recovered_openap93_equityduration`. Hay 37 valores actuales (1,7153 % del
+universo). El calculo conserva las constantes oficiales 0,57/0,12/0,24/0,06 y
+la proyeccion a diez anos, pero reemplaza `ceq`, `ib`, `sale`, `csho` y
+`prcc_f` de Compustat/CRSP por contabilidad SEC y precio Yahoo del cierre
+fiscal. La cobertura, la identidad historica y la fidelidad estricta siguen
+pendientes; por ello solo puede clasificarse como reconstruida no estricta.
 
 `OScore` y `OrgCap` disponen ademas del deflactor `GNPDEF` gratuito de FRED.
 La evidencia existente SEC+FRED permite calcular reconstrucciones actuales,

@@ -14,8 +14,11 @@ from aurora.research.openap_181.acquisition_149 import (
 from aurora.research.openap_181.recovered_openap93_proxies import (
     COMPEQUISS_FORMULA_ID,
     COMPEQUISS_RECOVERY_SOURCE,
+    EQUITY_DURATION_FORMULA_ID,
+    EQUITY_DURATION_RECOVERY_SOURCE,
     OPENAP93_RECOVERY_RUN_URL,
     load_verified_openap93_comp_equ_iss,
+    load_verified_openap93_proxy_batch,
 )
 
 
@@ -69,13 +72,68 @@ def _row(
     }
 
 
+def _equity_duration_row(
+    security_id: str,
+    ticker: str,
+    cik: int,
+    *,
+    value: float | None,
+    current_usable: bool,
+) -> dict[str, object]:
+    return {
+        **_row(
+            security_id,
+            ticker,
+            cik,
+            value=value,
+            current_usable=current_usable,
+        ),
+        "signal": "EquityDuration",
+        "formula_id": EQUITY_DURATION_FORMULA_ID,
+        "openap_script": "Signals/pyCode/Predictors/EquityDuration.py",
+        "observation_count": 5,
+        "caveat": (
+            "SEC annual equity/income/revenue and Yahoo fiscal-period price "
+            "replace Compustat/CRSP"
+        ),
+    }
+
+
 def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
     root.mkdir()
-    selected_signals = ["CompEquIss"] + [f"SyntheticSignal{index:02d}" for index in range(92)]
+    selected_signals = ["CompEquIss", "EquityDuration"] + [
+        f"SyntheticSignal{index:02d}" for index in range(91)
+    ]
     comp_rows = [
         _row("US-SEC-0000000001-AAA", "AAA", 1, value=0.25, current_usable=True),
         _row("US-SEC-0000000002-BBB", "BBB", 2, value=-0.10, current_usable=True),
         _row("US-SEC-0000000003-CCC", "CCC", 3, value=None, current_usable=False),
+    ]
+    equity_duration_rows = [
+        _equity_duration_row(
+            "US-SEC-0000000001-AAA",
+            "AAA",
+            1,
+            value=16.0,
+            current_usable=True,
+        ),
+        _equity_duration_row(
+            "US-SEC-0000000002-BBB",
+            "BBB",
+            2,
+            value=18.0,
+            current_usable=True,
+        ),
+        {
+            **_equity_duration_row(
+                "US-SEC-0000000003-CCC",
+                "CCC",
+                3,
+                value=None,
+                current_usable=False,
+            ),
+            "period_end": "2026-08-08",
+        },
     ]
     filler_rows = [
         {
@@ -90,10 +148,13 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             "formula_id": f"synthetic_{index}",
             "openap_script": f"Signals/pyCode/Predictors/{signal}.py",
         }
-        for index, signal in enumerate(selected_signals[1:])
+        for index, signal in enumerate(selected_signals[2:])
     ]
     signals_path = root / "signals_93_current.csv"
-    pd.DataFrame(comp_rows + filler_rows).to_csv(signals_path, index=False)
+    pd.DataFrame(comp_rows + equity_duration_rows + filler_rows).to_csv(
+        signals_path,
+        index=False,
+    )
 
     coverage_rows = [
         {
@@ -123,6 +184,40 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             "implementation_file": "research/openap_93/advanced_accounting_pipeline.py",
         }
     ]
+    coverage_rows.append(
+        {
+            "signal": "EquityDuration",
+            "status": "current_usable",
+            "fidelity_class": "reconstructed",
+            "current_usable": True,
+            "exact_formula": True,
+            "primary_source": "sec_edgar",
+            "fallback_source": "yahoo_public",
+            "source_domains": "query1.finance.yahoo.com|sec.gov",
+            "latest_period_end": "2026-02-28",
+            "latest_available_at": "2026-08-07 00:00:00",
+            "natural_frequency": "annual",
+            "universe_count": 3,
+            "applicable_count": 3,
+            "non_null_count": 2,
+            "current_usable_count": 2,
+            "not_applicable_count": 0,
+            "missing_count": 1,
+            "coverage_pct": 200 / 3,
+            "license": (
+                "Public endpoint; terms must be reviewed|US government public data"
+            ),
+            "terms_status": (
+                "authorized_public_rate_limited|terms_review_required"
+            ),
+            "scraping_required": False,
+            "reason_if_missing": "missing_causal_multiyear_inputs",
+            "openap_script": "Signals/pyCode/Predictors/EquityDuration.py",
+            "implementation_file": (
+                "research/openap_93/advanced_accounting_pipeline.py"
+            ),
+        }
+    )
     coverage_rows.extend(
         {
             "signal": signal,
@@ -150,7 +245,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             "openap_script": f"Signals/pyCode/Predictors/{signal}.py",
             "implementation_file": "synthetic.py",
         }
-        for signal in selected_signals[1:]
+        for signal in selected_signals[2:]
     )
     coverage_path = root / "coverage_93.csv"
     pd.DataFrame(coverage_rows).to_csv(coverage_path, index=False)
@@ -161,7 +256,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         "retrieved_at": "2026-08-09T22:37:41.271512+00:00",
         "input_signals": 93,
         "universe_count": 3,
-        "rows": len(comp_rows) + len(filler_rows),
+        "rows": len(comp_rows) + len(equity_duration_rows) + len(filler_rows),
         "openap_commit": OPENAP_COMMIT,
         "locked_opened": False,
         "validation_used_for_selection": False,
@@ -169,7 +264,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         "api_keys_required": False,
         "manual_actions_required": False,
         "selected_signals": selected_signals,
-        "current_usable_signal_count": 1,
+        "current_usable_signal_count": 2,
         "output_hashes": {
             "coverage_93.csv": sha256(coverage_path.read_bytes()).hexdigest(),
             "signals_93_current.csv": sha256(signals_path.read_bytes()).hexdigest(),
@@ -183,7 +278,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
     recovery_manifest = {
         "bytes_fetched": 13720277,
         "cost_eur": 0,
-        "current_usable_signal_count": 1,
+        "current_usable_signal_count": 2,
         "full_artifact_downloaded": False,
         "input_signals": 93,
         "locked_opened": False,
@@ -217,6 +312,34 @@ def _rewrite_json(path: Path, mutate) -> None:
     path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
 
 
+def _rehash_artifact(
+    signals_path: Path,
+    coverage_path: Path,
+    source_path: Path,
+    recovery_path: Path,
+) -> None:
+    source = json.loads(source_path.read_text(encoding="utf-8"))
+    source["output_hashes"].update(
+        {
+            "signals_93_current.csv": sha256(signals_path.read_bytes()).hexdigest(),
+            "coverage_93.csv": sha256(coverage_path.read_bytes()).hexdigest(),
+        }
+    )
+    source_path.write_text(json.dumps(source, sort_keys=True), encoding="utf-8")
+    recovery = json.loads(recovery_path.read_text(encoding="utf-8"))
+    recovery["recovered_hashes"].update(
+        {
+            "signals_93_current.csv": sha256(signals_path.read_bytes()).hexdigest(),
+            "coverage_93.csv": sha256(coverage_path.read_bytes()).hexdigest(),
+            "run_manifest.json": sha256(source_path.read_bytes()).hexdigest(),
+        }
+    )
+    recovery_path.write_text(
+        json.dumps(recovery, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
 def test_verified_openap93_recovery_accepts_only_current_comp_equ_iss(
     tmp_path: Path,
 ) -> None:
@@ -239,6 +362,74 @@ def test_verified_openap93_recovery_accepts_only_current_comp_equ_iss(
     assert evidence["source_run_id"] == SOURCE_RUN_ID
     assert evidence["current_value_rows"] == 2
     assert evidence["strict_score_increment"] == 0
+
+
+def test_verified_openap93_proxy_batch_adds_low_coverage_equity_duration(
+    tmp_path: Path,
+) -> None:
+    _write_artifact(tmp_path / "artifact")
+
+    values, _, evidence = load_verified_openap93_proxy_batch(
+        tmp_path / "artifact",
+        evidence_run_url=OPENAP93_RECOVERY_RUN_URL,
+    )
+
+    assert values.groupby("signal").size().to_dict() == {
+        "CompEquIss": 2,
+        "EquityDuration": 2,
+    }
+    duration = values.loc[values["signal"].eq("EquityDuration")]
+    assert duration["source_id"].eq(EQUITY_DURATION_RECOVERY_SOURCE).all()
+    assert duration["formula_id"].eq(EQUITY_DURATION_FORMULA_ID).all()
+    assert duration["fidelity_class"].eq("reconstructed").all()
+    assert duration["caveat"].str.contains(
+        "historical Compustat/CRSP identity not verified"
+    ).all()
+    assert not duration["strict_score_eligible"].any()
+    assert evidence["signals"]["EquityDuration"]["current_value_rows"] == 2
+    assert evidence["strict_score_increment"] == 0
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["formula", "source", "caveat", "observations", "coverage_count"],
+)
+def test_verified_equity_duration_recovery_fails_closed(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    signals_path, coverage_path, source_path, recovery_path = _write_artifact(
+        tmp_path / "artifact"
+    )
+    if mutation == "coverage_count":
+        coverage = pd.read_csv(coverage_path)
+        coverage.loc[
+            coverage["signal"].eq("EquityDuration"),
+            "current_usable_count",
+        ] = 3
+        coverage.to_csv(coverage_path, index=False)
+    else:
+        values = pd.read_csv(signals_path)
+        row = values.index[
+            values["signal"].eq("EquityDuration")
+            & values["current_usable"].astype(str).str.lower().eq("true")
+        ][0]
+        if mutation == "formula":
+            values.loc[row, "formula_id"] = "wrong_formula"
+        elif mutation == "source":
+            values.loc[row, "source_id"] = "sec_edgar"
+        elif mutation == "caveat":
+            values.loc[row, "caveat"] = "weaker undocumented proxy"
+        else:
+            values.loc[row, "observation_count"] = 1
+        values.to_csv(signals_path, index=False)
+    _rehash_artifact(signals_path, coverage_path, source_path, recovery_path)
+
+    with pytest.raises(ValueError):
+        load_verified_openap93_proxy_batch(
+            tmp_path / "artifact",
+            evidence_run_url=OPENAP93_RECOVERY_RUN_URL,
+        )
 
 
 @pytest.mark.parametrize(
@@ -393,3 +584,47 @@ def test_comp_equ_iss_recovery_route_is_narrow_and_non_strict(tmp_path: Path) ->
     assert comp["fidelity"] == "reconstructed"
     assert not bool(comp["strict_score_eligible"])
     assert set(approved["signal"]) == {"CompEquIss"}
+
+
+def test_equity_duration_recovery_route_is_narrow_and_non_strict(
+    tmp_path: Path,
+) -> None:
+    _write_artifact(tmp_path / "artifact")
+    values, _, _ = load_verified_openap93_proxy_batch(
+        tmp_path / "artifact",
+        evidence_run_url=OPENAP93_RECOVERY_RUN_URL,
+    )
+    routes = load_target_routes(ROUTE_MATRIX)
+    route = routes.loc[routes["signal"].eq("EquityDuration")].iloc[0]
+    assert EQUITY_DURATION_RECOVERY_SOURCE in route["primary_free_sources"].split(
+        "|"
+    )
+    assert "yahoo_public" not in route["primary_free_sources"].split("|")
+
+    matrix, approved = build_acquisition_matrix(
+        routes,
+        values,
+        formula_inventory=pd.DataFrame(
+            [
+                {
+                    "signal": "CompEquIss",
+                    "formula_sha256": (
+                        "d87a14114fbd43039f32c71bec6c42d017fedaf0130f8f1d58cc227f899b808b"
+                    ),
+                },
+                {
+                    "signal": "EquityDuration",
+                    "formula_sha256": (
+                        "3e4adc868044a3de5b420a8555f816557a8d02dfa3112a09f114bff4593a9997"
+                    ),
+                },
+            ]
+        ),
+    )
+    duration = matrix.loc[matrix["signal"].eq("EquityDuration")].iloc[0]
+    assert duration["status"] == "current_signal_computed"
+    assert duration["current_value_count"] == 2
+    assert duration["coverage"] == pytest.approx(2 / 3)
+    assert duration["fidelity"] == "reconstructed"
+    assert not bool(duration["strict_score_eligible"])
+    assert set(approved["signal"]) == {"CompEquIss", "EquityDuration"}

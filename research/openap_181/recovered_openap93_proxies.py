@@ -41,6 +41,14 @@ COMPEQUISS_CAVEAT = (
     "Primary-share price times SEC issuer shares replaces CRSP company market "
     "equity"
 )
+EQUITY_DURATION_SIGNAL = "EquityDuration"
+EQUITY_DURATION_FORMULA_ID = "openap_equity_duration_dss2004_sec_yahoo"
+EQUITY_DURATION_OPENAP_SCRIPT = "Signals/pyCode/Predictors/EquityDuration.py"
+EQUITY_DURATION_RECOVERY_SOURCE = "recovered_openap93_equityduration"
+EQUITY_DURATION_CAVEAT = (
+    "SEC annual equity/income/revenue and Yahoo fiscal-period price replace "
+    "Compustat/CRSP"
+)
 
 _REQUIRED_FILENAMES = (
     "signals_93_current.csv",
@@ -242,15 +250,17 @@ def _validate_global_tables(
     return selected, universe_count
 
 
-def _validate_comp_equ_iss_coverage(
+def _validate_reconstructed_coverage(
     coverage: pd.DataFrame,
     *,
+    signal: str,
+    openap_script: str,
     universe_count: int,
     usable_count: int,
 ) -> None:
-    rows = coverage.loc[coverage["signal"].astype(str).eq(COMPEQUISS_SIGNAL)]
+    rows = coverage.loc[coverage["signal"].astype(str).eq(signal)]
     if len(rows) != 1:
-        raise ValueError("expected exactly one CompEquIss coverage row")
+        raise ValueError(f"expected exactly one {signal} coverage row")
     row = rows.iloc[0]
     count_fields = {
         "universe_count": universe_count,
@@ -261,11 +271,11 @@ def _validate_comp_equ_iss_coverage(
         "missing_count": universe_count - usable_count,
     }
     if any(_strict_int(row[name], name) != expected for name, expected in count_fields.items()):
-        raise ValueError("CompEquIss coverage counts do not reconcile")
+        raise ValueError(f"{signal} coverage counts do not reconcile")
     coverage_pct = pd.to_numeric(row["coverage_pct"], errors="coerce")
     expected_pct = usable_count * 100.0 / universe_count
     if pd.isna(coverage_pct) or not np.isclose(float(coverage_pct), expected_pct):
-        raise ValueError("CompEquIss coverage percentage does not reconcile")
+        raise ValueError(f"{signal} coverage percentage does not reconcile")
     if (
         str(row["status"]) != "current_usable"
         or str(row["fidelity_class"]) != "reconstructed"
@@ -275,24 +285,29 @@ def _validate_comp_equ_iss_coverage(
         or str(row["fallback_source"]) != "yahoo_public"
         or str(row["natural_frequency"]) != "annual"
         or _as_bool(row["scraping_required"])
-        or str(row["openap_script"]) != COMPEQUISS_OPENAP_SCRIPT
+        or str(row["openap_script"]) != openap_script
         or str(row["implementation_file"]) != COMPEQUISS_IMPLEMENTATION_FILE
     ):
-        raise ValueError("CompEquIss coverage metadata violates its contract")
+        raise ValueError(f"{signal} coverage metadata violates its contract")
 
 
-def _validate_comp_equ_iss_rows(
+def _validate_reconstructed_rows(
     values: pd.DataFrame,
     source: dict[str, Any],
     *,
+    signal: str,
+    formula_id: str,
+    openap_script: str,
+    caveat: str,
+    minimum_observations: int,
     universe_count: int,
 ) -> pd.DataFrame:
-    rows = values.loc[values["signal"].astype(str).eq(COMPEQUISS_SIGNAL)].copy()
+    rows = values.loc[values["signal"].astype(str).eq(signal)].copy()
     if len(rows) != universe_count:
-        raise ValueError("CompEquIss does not cover the declared source universe")
+        raise ValueError(f"{signal} does not cover the declared source universe")
     key = ["security_id", "signal", "formation_at"]
     if rows[key].isna().any().any() or rows.duplicated(key, keep=False).any():
-        raise ValueError("CompEquIss contains blank or duplicate identity keys")
+        raise ValueError(f"{signal} contains blank or duplicate identity keys")
 
     ciks = pd.to_numeric(rows["cik"], errors="coerce")
     tickers = rows["ticker"].fillna("").astype(str).str.strip()
@@ -302,7 +317,7 @@ def _validate_comp_equ_iss_rows(
         or ciks.mod(1).ne(0).any()
         or tickers.eq("").any()
     ):
-        raise ValueError("CompEquIss contains invalid SEC identity fields")
+        raise ValueError(f"{signal} contains invalid SEC identity fields")
     expected_ids = pd.Series(
         [
             f"US-SEC-{int(cik):010d}-{ticker}"
@@ -311,13 +326,14 @@ def _validate_comp_equ_iss_rows(
         index=rows.index,
     )
     if not rows["security_id"].astype(str).eq(expected_ids).all():
-        raise ValueError("CompEquIss security_id does not bind CIK and ticker")
+        raise ValueError(f"{signal} security_id does not bind CIK and ticker")
 
     formation = pd.to_datetime(rows["formation_at"], errors="coerce", utc=True)
     period_end = pd.to_datetime(rows["period_end"], errors="coerce", utc=True)
     filed_at = pd.to_datetime(rows["filed_at"], errors="coerce", utc=True)
     available_at = pd.to_datetime(rows["available_at"], errors="coerce", utc=True)
     retrieved_at = pd.to_datetime(rows["retrieved_at"], errors="coerce", utc=True)
+    usable = rows["current_usable"].map(_as_bool)
     expected_formation = pd.to_datetime(source.get("formation_at"), errors="coerce", utc=True)
     expected_retrieved = pd.to_datetime(source.get("retrieved_at"), errors="coerce", utc=True)
     if (
@@ -330,82 +346,146 @@ def _validate_comp_equ_iss_rows(
         or not formation.eq(expected_formation).all()
         or not retrieved_at.eq(expected_retrieved).all()
         or available_at.gt(formation).any()
-        or available_at.lt(period_end).any()
-        or (filed_at.notna() & available_at.lt(filed_at)).any()
+        or (usable & available_at.lt(period_end)).any()
+        or (usable & filed_at.notna() & available_at.lt(filed_at)).any()
     ):
-        raise ValueError("CompEquIss temporal contract or lookahead check failed")
+        raise ValueError(f"{signal} temporal contract or lookahead check failed")
 
     numeric_values = pd.to_numeric(rows["value"], errors="coerce")
-    usable = rows["current_usable"].map(_as_bool)
     natural_current = rows["is_current_for_natural_frequency"].map(_as_bool)
     observations = pd.to_numeric(rows["observation_count"], errors="coerce")
     if (
         not rows["source_id"].astype(str).eq(COMPEQUISS_ORIGINAL_SOURCE).all()
-        or not rows["formula_id"].astype(str).eq(COMPEQUISS_FORMULA_ID).all()
-        or not rows["openap_script"].astype(str).eq(COMPEQUISS_OPENAP_SCRIPT).all()
+        or not rows["formula_id"].astype(str).eq(formula_id).all()
+        or not rows["openap_script"].astype(str).eq(openap_script).all()
         or not rows["natural_frequency"].astype(str).eq("annual").all()
-        or not rows["caveat"].astype(str).eq(COMPEQUISS_CAVEAT).all()
+        or not rows["caveat"].astype(str).eq(caveat).all()
         or not natural_current.eq(usable).all()
         or observations.isna().any()
-        or (usable & observations.lt(60)).any()
+        or (usable & observations.lt(minimum_observations)).any()
         or (usable & ~np.isfinite(numeric_values)).any()
         or (~usable & numeric_values.notna()).any()
         or not rows.loc[usable, "fidelity_class"].astype(str).eq("reconstructed").all()
     ):
-        raise ValueError("CompEquIss row-level formula or fidelity contract failed")
+        raise ValueError(f"{signal} row-level formula or fidelity contract failed")
     return rows.loc[usable].copy()
 
 
-def load_verified_openap93_comp_equ_iss(
+def _prepare_recovered_rows(
+    rows: pd.DataFrame,
+    *,
+    evidence_run_url: str,
+    recovery_source: str,
+    caveat_suffix: str,
+) -> pd.DataFrame:
+    current = rows.copy()
+    current["source_id"] = recovery_source
+    current["source_url"] = (
+        evidence_run_url.rstrip("/") + "|" + current["source_url"].astype(str)
+    )
+    current["caveat"] = current["caveat"].astype(str) + caveat_suffix
+    current["strict_score_eligible"] = False
+    current["current_usable"] = True
+    return current
+
+
+def load_verified_openap93_proxy_batch(
     root: Path | str,
     *,
     evidence_run_url: str,
 ) -> tuple[pd.DataFrame, list[Path], dict[str, Any]]:
-    """Return only verified current CompEquIss rows from the pinned recovery."""
+    """Return the narrow verified non-strict proxy batch from the pinned recovery."""
 
     if evidence_run_url.rstrip("/") != OPENAP93_RECOVERY_RUN_URL:
-        raise ValueError("CompEquIss recovery must come from the pinned recovery run")
+        raise ValueError("OpenAP93 proxies must come from the pinned recovery run")
     artifact_root = Path(root)
     paths = {name: _find_one(artifact_root, name) for name in _REQUIRED_FILENAMES}
     recovery, source = _validate_manifest_chain(paths)
     values = pd.read_csv(paths["signals_93_current.csv"], low_memory=False)
     coverage = pd.read_csv(paths["coverage_93.csv"], low_memory=False)
     _, universe_count = _validate_global_tables(values, coverage, recovery, source)
-    current = _validate_comp_equ_iss_rows(
+    comp_equ_iss = _validate_reconstructed_rows(
         values,
         source,
+        signal=COMPEQUISS_SIGNAL,
+        formula_id=COMPEQUISS_FORMULA_ID,
+        openap_script=COMPEQUISS_OPENAP_SCRIPT,
+        caveat=COMPEQUISS_CAVEAT,
+        minimum_observations=60,
         universe_count=universe_count,
     )
-    _validate_comp_equ_iss_coverage(
-        coverage,
+    equity_duration = _validate_reconstructed_rows(
+        values,
+        source,
+        signal=EQUITY_DURATION_SIGNAL,
+        formula_id=EQUITY_DURATION_FORMULA_ID,
+        openap_script=EQUITY_DURATION_OPENAP_SCRIPT,
+        caveat=EQUITY_DURATION_CAVEAT,
+        minimum_observations=2,
         universe_count=universe_count,
-        usable_count=len(current),
+    )
+    _validate_reconstructed_coverage(
+        coverage,
+        signal=COMPEQUISS_SIGNAL,
+        openap_script=COMPEQUISS_OPENAP_SCRIPT,
+        universe_count=universe_count,
+        usable_count=len(comp_equ_iss),
+    )
+    _validate_reconstructed_coverage(
+        coverage,
+        signal=EQUITY_DURATION_SIGNAL,
+        openap_script=EQUITY_DURATION_OPENAP_SCRIPT,
+        universe_count=universe_count,
+        usable_count=len(equity_duration),
     )
 
-    current["source_id"] = COMPEQUISS_RECOVERY_SOURCE
-    current["source_url"] = (
-        evidence_run_url.rstrip("/") + "|" + current["source_url"].astype(str)
+    comp_equ_iss = _prepare_recovered_rows(
+        comp_equ_iss,
+        evidence_run_url=evidence_run_url,
+        recovery_source=COMPEQUISS_RECOVERY_SOURCE,
+        caveat_suffix=(
+            "; recovered from hash-bound OpenAP93 evidence; historical CRSP "
+            "identity not verified"
+        ),
     )
-    current["caveat"] = (
-        current["caveat"].astype(str)
-        + "; recovered from hash-bound OpenAP93 evidence; historical CRSP identity not verified"
+    equity_duration = _prepare_recovered_rows(
+        equity_duration,
+        evidence_run_url=evidence_run_url,
+        recovery_source=EQUITY_DURATION_RECOVERY_SOURCE,
+        caveat_suffix=(
+            "; recovered from hash-bound OpenAP93 evidence; historical "
+            "Compustat/CRSP identity not verified"
+        ),
     )
-    current["strict_score_eligible"] = False
-    current["current_usable"] = True
+    current = pd.concat([comp_equ_iss, equity_duration], ignore_index=True)
+    signal_evidence = {
+        COMPEQUISS_SIGNAL: {
+            "signal": COMPEQUISS_SIGNAL,
+            "formula_id": COMPEQUISS_FORMULA_ID,
+            "current_value_rows": int(len(comp_equ_iss)),
+            "coverage": float(len(comp_equ_iss) / universe_count),
+            "historical_crsp_identity_verified": False,
+        },
+        EQUITY_DURATION_SIGNAL: {
+            "signal": EQUITY_DURATION_SIGNAL,
+            "formula_id": EQUITY_DURATION_FORMULA_ID,
+            "current_value_rows": int(len(equity_duration)),
+            "coverage": float(len(equity_duration) / universe_count),
+            "historical_compustat_crsp_identity_verified": False,
+        },
+    }
     evidence = {
         "contract_version": 1,
         "recovery_run_id": OPENAP93_RECOVERY_RUN_ID,
         "source_run_id": OPENAP93_SOURCE_RUN_ID,
         "source_head_sha": OPENAP93_SOURCE_HEAD_SHA,
         "openap_commit": OPENAP_COMMIT,
-        "signal": COMPEQUISS_SIGNAL,
-        "formula_id": COMPEQUISS_FORMULA_ID,
+        "signals": signal_evidence,
         "universe_count": universe_count,
-        "current_value_rows": int(len(current)),
+        "current_value_rows": int(len(comp_equ_iss) + len(equity_duration)),
         "source_values_sha256": _sha256_file(paths["signals_93_current.csv"]),
         "strict_score_eligible": False,
         "strict_score_increment": 0,
-        "historical_crsp_identity_verified": False,
         "locked_opened": False,
         "forward_opened": False,
         "validation_used_for_selection": False,
@@ -414,9 +494,34 @@ def load_verified_openap93_comp_equ_iss(
     return current.reset_index(drop=True), list(paths.values()), evidence
 
 
+def load_verified_openap93_comp_equ_iss(
+    root: Path | str,
+    *,
+    evidence_run_url: str,
+) -> tuple[pd.DataFrame, list[Path], dict[str, Any]]:
+    """Compatibility wrapper returning only the verified CompEquIss rows."""
+
+    current, paths, batch_evidence = load_verified_openap93_proxy_batch(
+        root,
+        evidence_run_url=evidence_run_url,
+    )
+    comp_equ_iss = current.loc[current["signal"].eq(COMPEQUISS_SIGNAL)].copy()
+    evidence = {
+        key: value
+        for key, value in batch_evidence.items()
+        if key != "signals"
+    }
+    evidence.update(batch_evidence["signals"][COMPEQUISS_SIGNAL])
+    evidence["current_value_rows"] = int(len(comp_equ_iss))
+    return comp_equ_iss.reset_index(drop=True), paths, evidence
+
+
 __all__ = [
     "COMPEQUISS_FORMULA_ID",
     "COMPEQUISS_RECOVERY_SOURCE",
+    "EQUITY_DURATION_FORMULA_ID",
+    "EQUITY_DURATION_RECOVERY_SOURCE",
     "OPENAP93_RECOVERY_RUN_URL",
     "load_verified_openap93_comp_equ_iss",
+    "load_verified_openap93_proxy_batch",
 ]

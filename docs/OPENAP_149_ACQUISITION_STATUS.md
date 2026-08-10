@@ -43,7 +43,7 @@ solo `CBOperProf` conserva la cuarentena en el contrato de consolidacion
 preparado. El CSV se conserva sin reescribir manualmente porque el usuario ha
 prohibido iniciar un nuevo run y aun no existe un artefacto consolidado nuevo.
 
-## CompEquIss: recuperacion selectiva preparada, no ejecutada
+## CompEquIss y EquityDuration: recuperacion selectiva preparada, no ejecutada
 
 El artefacto gratuito y ya existente `openap-93-current-recovered-results` del
 run `31341580689` contiene 2.157 filas de `CompEquIss`; 1.585 tienen valor
@@ -59,14 +59,27 @@ SHA-256, el run de origen `31333714423`, su HEAD `34464d5327598282aa2af152342210
 el commit OpenAP fijado, las 93 senales, la cobertura, la formula, las fechas,
 los duplicados y la identidad actual CIK-ticker. Despues reemplaza solo
 `CompEquIss` por la fuente estrecha `recovered_openap93_compequiss`; no autoriza
-`yahoo_public` de forma general ni recupera `DivYieldST`, `EquityDuration`,
-`Frontier` o `MS`.
+`yahoo_public` de forma general ni recupera `DivYieldST`, `Frontier` o `MS`.
 
 La salida permanece `reconstructed`, con identidad CRSP historica no verificada,
 `strict_score_eligible=false` e incremento estricto cero. Se han escrito las
 pruebas fail-closed antes del codigo, pero no se han ejecutado porque el usuario
 ha prohibido iniciar runs. Por ello los recuentos publicados `56/50/18/99/96814`
 y el score estricto confirmado de 31 no cambian todavia.
+
+El mismo artefacto contiene 37 valores actuales de `EquityDuration` sobre 2.157
+empresas (1,7153 %). La implementacion conserva las constantes oficiales de
+Dechow-Sloan-Soliman/OpenAP: persistencia de ROE 0,57, coste de capital 0,12,
+persistencia de crecimiento 0,24, crecimiento de largo plazo 0,06 y proyeccion
+de distribuciones a diez anos. SEC sustituye `ceq`, `ib`, `sale` y `csho`, y el
+precio Yahoo del cierre fiscal sustituye `prcc_f` de CRSP/Compustat.
+
+El contrato acepta exclusivamente `openap_equity_duration_dss2004_sec_yahoo`,
+la fuente estrecha `recovered_openap93_equityduration`, las fechas causales y
+los 37 valores declarados por la cobertura hash-bound. Queda reconstruida, con
+cobertura muy baja, identidad historica Compustat/CRSP no verificada y aptitud
+estricta falsa. Tampoco cambia los recuentos publicados hasta una consolidacion
+ejecutada.
 
 ## CompanyFacts ampliado: lote gratuito ejecutado, pendiente de consolidar
 
