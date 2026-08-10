@@ -96,6 +96,31 @@ def test_model_smoke_builds_f051_f060_train_only_artifacts(tmp_path: Path) -> No
     assert (tmp_path / "out" / "parameter_choice_audit_F051_F060.json").is_file()
 
 
+@pytest.mark.parametrize(
+    ("parameter", "expected_witness"),
+    [
+        ("base", {"logic": "switch"}),
+        ("confirmation", {"gate": "vix", "logic": "override"}),
+        ("logic", {"base": "reversal", "gate": "vix"}),
+    ],
+)
+def test_f052_parameter_audit_uses_an_active_witness(
+    parameter: str,
+    expected_witness: dict[str, object],
+) -> None:
+    api = _smoke_api()
+    configuration: dict[str, object] = {
+        "base": "trend",
+        "gate": "volatility",
+        "logic": "and",
+        "confirmation": 1,
+    }
+
+    repaired = api._repair_model_configuration("F052", parameter, configuration)
+
+    assert all(repaired[name] == value for name, value in expected_witness.items())
+
+
 def test_model_smoke_requires_the_physical_train_partition(tmp_path: Path) -> None:
     api = _smoke_api()
     wrong = tmp_path / "validation_snapshot_2011_2020"

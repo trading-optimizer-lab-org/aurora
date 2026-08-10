@@ -71,6 +71,15 @@ def _repair_model_configuration(
 ) -> dict[str, Any]:
     if lane_id == "F051" and parameter == "normalization_window":
         configuration["aggregation"] = "weighted_vote"
+    if lane_id == "F052":
+        if parameter == "base":
+            configuration["logic"] = "switch"
+        if parameter == "confirmation":
+            configuration["gate"] = "vix"
+            configuration["logic"] = "override"
+        if parameter == "logic":
+            configuration["base"] = "reversal"
+            configuration["gate"] = "vix"
     if lane_id == "F055" and parameter == "reset":
         configuration["kind"] = "cusum"
     if lane_id == "F057":
