@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "campaign_id": "sp500-megarun-official-dehb-240x3-v1",
+  "scientific_inputs": {
+    "data_contract_path": "config/sp500_megarun_free_data_240.json",
+    "data_contract_file_sha256": "9b2a971c1d1ad0374ad63e03e03c91127bf634e0ed822195c06180140acfa2c8",
+    "data_contract_canonical_sha256": "c923005def76f5ac8f908bc3e29b31a84dd1848fa70879ae506378123292f057",
+    "feature_contract_path": "config/sp500_megarun_feature_contract_240.json",
+    "feature_contract_sha256": "fb64fee0b479d445926ac0c28becb732463e093dbb20c8c5bc7a5b555991baf0",
+    "dehb_lock_path": "requirements/dehb-official.lock",
+    "dehb_lock_domain": "aurora-dehb-official-lock-v1",
+    "dehb_lock_domain_sha256": "89617c4ca6fe54739804e039177c61b8a62933b921cd65617d93fce634a06734",
+    "dehb_lock_expected_bytes": 40742,
+    "runtime_versions": {
+      "DEHB": "0.1.2",
+      "ConfigSpace": "1.2.2",
+      "numpy": "1.26.4",
+      "pandas": "2.2.3",
+      "pyarrow": "16.1.0",
+      "dask": "2024.7.1",
+      "distributed": "2024.7.1",
+      "scipy": "1.13.1"
+    },
+    "train_source_run_id": "31354839628",
+    "train_artifact_name": "sp500-megarun-train-1993-2010-F001-F240-31354839628",
+    "train_partition": "train_snapshot_1993_2010"
+  },
+  "boundaries": {
+    "warmup_start": "1993-01-22",
+    "search_start": "1998-01-01",
+    "search_end": "2010-12-31",
+    "validation_start": "2011-01-01",
+    "validation_end": "2020-12-31",
+    "locked_start": "2021-01-01",
+    "validation_opened": false,
+    "locked_opened": false,
+    "validation_partition_mounted": false,
+    "locked_partition_mounted": false
+  },
+  "topology": {
+    "lane_count": 240,
+    "replicates_per_lane": 3,
+    "island_count": 720,
+    "job_count": 360,
+    "shards": ["A", "B", "C"],
+    "jobs_per_shard": 120,
+    "islands_per_job": 2,
+    "n_workers_per_island": 4,
+    "island_order": "replicate_major_then_lane",
+    "job_pairing": "job_j_receives_island_j_and_j_plus_360",
+    "master_seed": 240720360,
+    "lane_seed_multiplier": 1000003,
+    "replicate_seed_offsets": [104729, 130363, 155921],
+    "thread_limits": {
+      "OMP_NUM_THREADS": 1,
+      "OPENBLAS_NUM_THREADS": 1,
+      "MKL_NUM_THREADS": 1,
+      "NUMEXPR_NUM_THREADS": 1
+    }
+  },
+  "search": {
+    "engine": "official_dehb",
+    "eta": 3,
+    "fidelities": [
+      {
+        "budget": 1,
+        "years": [2001, 2008],
+        "bootstrap_paths": 64,
+        "parameter_neighbors": 0,
+        "temporal_perturbations": 1,
+        "finalist_eligible": false
+      },
+      {
+        "budget": 3,
+        "years": [1998, 2001, 2005, 2008],
+        "bootstrap_paths": 128,
+        "parameter_neighbors": 4,
+        "temporal_perturbations": 1,
+        "finalist_eligible": false
+      },
+      {
+        "budget": 9,
+        "years": [1998, 1999, 2001, 2003, 2005, 2007, 2008, 2010],
+        "bootstrap_paths": 512,
+        "parameter_neighbors": 8,
+        "temporal_perturbations": 3,
+        "finalist_eligible": false
+      },
+      {
+        "budget": 27,
+        "years": [1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010],
+        "bootstrap_paths": 2048,
+        "parameter_neighbors": 24,
+        "temporal_perturbations": 5,
+        "finalist_eligible": true
+      }
+    ]
+  },
+  "objective": {
+    "position_values": [-1, 1],
+    "execution": "close_t_decision_applies_from_next_open",
+    "return_interval": "open_t_to_open_t_plus_1_total_return",
+    "annual_gates": [
+      "strategy_total_return_gt_zero",
+      "strategy_total_return_gt_spy"
+    ],
+    "objective_order": [
+      "annual_gate_feasibility",
+      "annualized_strategy_return",
+      "weekly_spy_beat_rate",
+      "annualized_alpha"
+    ],
+    "weekly_rule": "compound_by_realization_week_and_count_strict_strategy_gt_spy",
+    "weekly_ties_count_as_win": false,
+    "dehb_scalar": "feasible_negative_annualized_return_else_failed_year_penalty",
+    "archive_order": "exact_lexicographic",
+    "annualized_alpha_role": "diagnostic_tiebreak_only"
+  },
+  "robustness": {
+    "full_fidelity_required": true,
+    "seed_consensus_required": 2,
+    "seed_consensus_total": 3,
+    "all_lanes_budget_floor_required": true,
+    "metrics": [
+      "annual_return_by_year",
+      "annual_active_return_by_year",
+      "weekly_spy_beat_rate",
+      "monthly_spy_beat_rate",
+      "quarterly_spy_beat_rate",
+      "rolling_13_week_spy_beat_rate",
+      "rolling_52_week_spy_beat_rate",
+      "bootstrap_gate_survival_rate",
+      "parameter_neighbor_gate_survival_rate",
+      "temporal_perturbation_gate_survival_rate",
+      "leave_one_year_out_stability",
+      "feature_ablation_stability",
+      "position_sign_stability",
+      "seed_consensus",
+      "regime_consistency",
+      "subperiod_consistency",
+      "turnover_diagnostic",
+      "exposure_balance_diagnostic",
+      "selection_frequency",
+      "false_discovery_diagnostic"
+    ]
+  },
+  "plateau": {
+    "no_global_time_limit": true,
+    "minimum_completed_evaluations": 128,
+    "completed_evaluations_without_improvement": 512,
+    "minutes_without_improvement": 360,
+    "trigger": "completed_threshold_or_elapsed_threshold_after_minimum_completed",
+    "significant_improvement": "better_exact_lexicographic_archive_key",
+    "action": "checkpoint_and_restart_diverse_population",
+    "terminal_no_strategy_allowed": false,
+    "restart_seed_rule": "sha256_of_campaign_lane_replicate_and_restart_ordinal"
+  },
+  "success": {
+    "requires_full_fidelity": true,
+    "requires_all_train_years": true,
+    "requires_robustness_review": true,
+    "requires_seed_consensus": true,
+    "requires_frozen_candidate_before_validation": true,
+    "validation_is_not_available_to_search": true,
+    "locked_2021_plus_remains_closed": true
+  }
+}
