@@ -275,6 +275,97 @@ jobs:
           )
           print(json.dumps(report, sort_keys=True))
           PY
+      - name: Probe rendered property plant and equipment detail report
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import re
+          from pathlib import Path
+
+          import requests
+
+          from aurora.core.runtime_paths import base_data_dir
+
+          output = base_data_dir() / "openap_149_sec_filing_probe"
+          selected = json.loads(
+              (output / "selected_filing.json").read_text(encoding="utf-8")
+          )
+          summary_text = (
+              output / "readthrough" / "FilingSummary.xml.txt"
+          ).read_text(encoding="utf-8")
+          lines = [line.strip() for line in summary_text.splitlines()]
+          needles = (
+              "Gross Property, Plant and Equipment by Major Asset Class",
+              "Property, Plant and Equipment (Details)",
+          )
+          report_filename = ""
+          matched_title = ""
+          for index, line in enumerate(lines):
+              if not any(needle.lower() in line.lower() for needle in needles):
+                  continue
+              preceding = lines[max(0, index - 8):index]
+              matches = [
+                  candidate
+                  for candidate in preceding
+                  if re.fullmatch(r"R\d+\.htm", candidate, re.I)
+              ]
+              if matches:
+                  report_filename = matches[-1]
+                  matched_title = line
+                  break
+          if not report_filename:
+              raise RuntimeError("FilingSummary lacks a rendered PP&E detail report")
+          cik = str(int(selected["cik"]))
+          accession_compact = selected["accession_number"].replace("-", "")
+          source_url = (
+              f"https://www.sec.gov/Archives/edgar/data/{cik}/"
+              f"{accession_compact}/{report_filename}"
+          )
+          access_url = f"https://r.jina.ai/http://{source_url.removeprefix('https://')}"
+          response = requests.get(
+              access_url,
+              headers={"User-Agent": "Aurora Research readthrough probe"},
+              timeout=(30, 300),
+          )
+          response.raise_for_status()
+          content = bytes(response.content)
+          text = content.decode("utf-8", errors="replace")
+          (output / "readthrough" / f"{report_filename}.txt").write_bytes(content)
+          report = {
+              "report_filename": report_filename,
+              "matched_title": matched_title,
+              "source_url": source_url,
+              "access_url": access_url,
+              "access_method": "sec_via_jina_readthrough",
+              "http_status": int(response.status_code),
+              "sha256": hashlib.sha256(content).hexdigest(),
+              "size_bytes": len(content),
+              "has_land_label": bool(re.search(r"\bland\b", text, re.I)),
+              "has_building_label": bool(re.search(r"\bbuildings?\b", text, re.I)),
+              "has_gross_ppe_label": bool(
+                  re.search(r"gross property,? plant and equipment", text, re.I)
+              ),
+              "has_net_ppe_label": bool(
+                  re.search(r"(?:total )?property,? plant and equipment,? net", text, re.I)
+              ),
+              "numeric_token_count": len(
+                  re.findall(r"(?<![A-Za-z])\(?\d[\d,]*(?:\.\d+)?\)?", text)
+              ),
+              "proxy_used": True,
+              "strict_score_eligible": False,
+              "locked_opened": False,
+              "forward_opened": False,
+              "validation_used_for_selection": False,
+              "cost_eur": 0,
+          }
+          (output / "sec_filing_ppe_report_probe.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(report, sort_keys=True))
+          PY
       - name: Verify bounded evidence without score claims
         shell: bash
         run: |
@@ -296,6 +387,11 @@ jobs:
                   encoding="utf-8"
               )
           )
+          ppe_report = json.loads(
+              (root / "sec_filing_ppe_report_probe.json").read_text(
+                  encoding="utf-8"
+              )
+          )
           assert len(manifest) == 1
           assert manifest.loc[0, "access_method"] == "sec_official_filing_fair_access"
           assert summary["downloaded"] + summary["failed"] == 1
@@ -306,6 +402,9 @@ jobs:
           assert readthrough["proxy_used"] is True
           assert readthrough["strict_score_eligible"] is False
           assert len(readthrough["files"]) == 3
+          assert ppe_report["proxy_used"] is True
+          assert ppe_report["strict_score_eligible"] is False
+          assert ppe_report["http_status"] == 200
           if summary["downloaded"] == 1:
               document = root / "filing" / manifest.loc[0, "primary_document"]
               assert document.stat().st_size == int(manifest.loc[0, "size_bytes"])
