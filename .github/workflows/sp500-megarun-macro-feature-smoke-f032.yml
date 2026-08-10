@@ -256,30 +256,95 @@ jobs:
         if: always() && steps.model_feature_smoke.outcome != 'success'
         run: exit 1
       - name: Execute and audit F061-F070 on train only
+        id: advanced_feature_smoke
+        continue-on-error: true
         run: |
           python scripts/run_sp500_megarun_advanced_feature_smoke_f061.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_advanced_feature_smoke_f061_f070
+      - name: Upload F061-F070 train-only evidence
+        if: always() && steps.advanced_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-advanced-feature-smoke-F061-F070-${{ github.run_id }}
+          path: outputs/sp500_megarun_advanced_feature_smoke_f061_f070
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F061-F070 audit is not ready
+        if: always() && steps.advanced_feature_smoke.outcome != 'success'
+        run: exit 1
       - name: Execute and audit F071-F080 on train only
+        id: microstructure_feature_smoke
+        continue-on-error: true
         run: |
           python scripts/run_sp500_megarun_microstructure_feature_smoke_f071.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_microstructure_feature_smoke_f071_f080
+      - name: Upload F071-F080 train-only evidence
+        if: always() && steps.microstructure_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-microstructure-feature-smoke-F071-F080-${{ github.run_id }}
+          path: outputs/sp500_megarun_microstructure_feature_smoke_f071_f080
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F071-F080 audit is not ready
+        if: always() && steps.microstructure_feature_smoke.outcome != 'success'
+        run: exit 1
       - name: Execute and audit F081-F090 on train only
+        id: positioning_feature_smoke
+        continue-on-error: true
         run: |
           python scripts/run_sp500_megarun_positioning_feature_smoke_f081.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_positioning_feature_smoke_f081_f090
+      - name: Upload F081-F090 train-only evidence
+        if: always() && steps.positioning_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-positioning-feature-smoke-F081-F090-${{ github.run_id }}
+          path: outputs/sp500_megarun_positioning_feature_smoke_f081_f090
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F081-F090 audit is not ready
+        if: always() && steps.positioning_feature_smoke.outcome != 'success'
+        run: exit 1
       - name: Execute and audit F091-F100 on train only
+        id: tail_macro_feature_smoke
+        continue-on-error: true
         run: |
           python scripts/run_sp500_megarun_tail_macro_feature_smoke_f091.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_tail_macro_feature_smoke_f091_f100
+      - name: Upload F091-F100 train-only evidence
+        if: always() && steps.tail_macro_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-tail-macro-feature-smoke-F091-F100-${{ github.run_id }}
+          path: outputs/sp500_megarun_tail_macro_feature_smoke_f091_f100
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F091-F100 audit is not ready
+        if: always() && steps.tail_macro_feature_smoke.outcome != 'success'
+        run: exit 1
       - name: Execute and audit F101-F110 on train only
+        id: fundamental_feature_smoke
+        continue-on-error: true
         run: |
           python scripts/run_sp500_megarun_fundamental_feature_smoke_f101.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_fundamental_feature_smoke_f101_f110
+      - name: Upload F101-F110 train-only evidence
+        if: always() && steps.fundamental_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-fundamental-feature-smoke-F101-F110-${{ github.run_id }}
+          path: outputs/sp500_megarun_fundamental_feature_smoke_f101_f110
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F101-F110 audit is not ready
+        if: always() && steps.fundamental_feature_smoke.outcome != 'success'
+        run: exit 1
       - name: Execute and audit F111-F120 on train only
         run: |
           python scripts/run_sp500_megarun_cross_section_feature_smoke_f111.py \
@@ -367,41 +432,6 @@ jobs:
         with:
           name: sp500-megarun-macro-feature-smoke-F032-F050-${{ github.run_id }}
           path: outputs/sp500_megarun_macro_feature_smoke_f032
-          if-no-files-found: error
-          retention-days: 90
-      - name: Upload F061-F070 train-only evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-megarun-advanced-feature-smoke-F061-F070-${{ github.run_id }}
-          path: outputs/sp500_megarun_advanced_feature_smoke_f061_f070
-          if-no-files-found: error
-          retention-days: 90
-      - name: Upload F071-F080 train-only evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-megarun-microstructure-feature-smoke-F071-F080-${{ github.run_id }}
-          path: outputs/sp500_megarun_microstructure_feature_smoke_f071_f080
-          if-no-files-found: error
-          retention-days: 90
-      - name: Upload F081-F090 train-only evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-megarun-positioning-feature-smoke-F081-F090-${{ github.run_id }}
-          path: outputs/sp500_megarun_positioning_feature_smoke_f081_f090
-          if-no-files-found: error
-          retention-days: 90
-      - name: Upload F091-F100 train-only evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-megarun-tail-macro-feature-smoke-F091-F100-${{ github.run_id }}
-          path: outputs/sp500_megarun_tail_macro_feature_smoke_f091_f100
-          if-no-files-found: error
-          retention-days: 90
-      - name: Upload F101-F110 train-only evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-megarun-fundamental-feature-smoke-F101-F110-${{ github.run_id }}
-          path: outputs/sp500_megarun_fundamental_feature_smoke_f101_f110
           if-no-files-found: error
           retention-days: 90
       - name: Upload F111-F120 train-only evidence
