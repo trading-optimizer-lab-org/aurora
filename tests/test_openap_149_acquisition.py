@@ -309,6 +309,28 @@ def test_current_companyfacts_routes_record_executed_batch() -> None:
         assert str(routes.loc[signal, "strict_score_eligible"]).lower() == "false"
 
 
+def test_current_event_routes_record_executed_batches() -> None:
+    routes = _module().load_target_routes(ROUTE_MATRIX).set_index("signal")
+    expected = {
+        "AgeIPO": ("field_ritter_run_31395454942", 0),
+        "IndIPO": ("field_ritter_run_31395454942", 701),
+        "RDIPO": ("field_ritter_run_31395454942", 700),
+        "ExchSwitch": ("sec_exchange_run_31389285731", 2869),
+        "Spinoff": ("sec_spinoff_run_31393646423", 8),
+    }
+
+    for signal, (run_marker, count) in expected.items():
+        blocker = routes.loc[signal, "current_remaining_blocker"]
+        assert run_marker in blocker
+        assert f"current_value_count_{count}" in blocker
+        assert "prepared_unexecuted" not in blocker
+        assert str(routes.loc[signal, "strict_score_eligible"]).lower() == "false"
+
+    assert "data_acquired_but_blocked_coverage" in routes.loc[
+        "AgeIPO", "current_remaining_blocker"
+    ]
+
+
 def test_io_short_interest_runner_uses_bounded_selective_institutional_recovery() -> None:
     runner = (ROOT / "scripts" / "run_openap_149_finra_short_interest.py").read_text(
         encoding="utf-8"
