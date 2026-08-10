@@ -660,6 +660,38 @@ def test_ipo_signals_apply_official_windows_age_cohort_and_explicit_rd_zero() ->
     assert not values["strict_score_eligible"].any()
 
 
+def test_ipo_signals_preserve_legitimate_nan_ticker() -> None:
+    current = _current_identity(100)
+    linked = _linked_recent_ipos(100)
+    nan_security_id = "US-SEC-0000000001-NAN"
+    current.loc[0, ["security_id", "ticker"]] = [nan_security_id, "NAN"]
+    linked.loc[0, ["security_id", "ticker"]] = [nan_security_id, "NAN"]
+    empty_rd = pd.DataFrame(
+        columns=[
+            "security_id",
+            "rd_expense",
+            "period_end",
+            "filed_at",
+            "available_at",
+            "accession_number",
+            "source_url",
+            "explicit_zero",
+        ]
+    )
+
+    values = calculate_field_ritter_ipo_signals(
+        current,
+        linked,
+        empty_rd,
+        formation_at=FORMATION_AT,
+        retrieved_at="2026-08-10T10:00:00Z",
+    )
+
+    assert values.loc[values["security_id"].eq(nan_security_id), "ticker"].eq(
+        "NAN"
+    ).all()
+
+
 def test_ipo_signals_do_not_turn_incomplete_ipo_coverage_into_zero() -> None:
     current = _current_identity(100)
     linked = _linked_recent_ipos(99)
