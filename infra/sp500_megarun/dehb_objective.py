@@ -53,6 +53,70 @@ class LedgerObjectiveResult:
     realized_at: pd.DatetimeIndex
 
 
+def build_adjusted_open_total_return_ledger(
+    prices: pd.DataFrame,
+    *,
+    allowed_end: str,
+) -> pd.DataFrame:
+    """Build SPY open-to-open total returns from the provider adjustment factor.
+
+    ``adj_close / close`` carries the dividend and split adjustment. Applying
+    the same factor to the raw open produces an adjusted-open series whose
+    consecutive ratios include corporate actions without applying split events
+    a second time. Event files remain a separate audit input and never enter a
+    feature calculation.
+    """
+
+    required = {"date", "open", "high", "low", "close", "adj_close", "volume"}
+    missing = sorted(required - set(prices.columns))
+    if missing:
+        if "adj_close" in missing:
+            raise ObjectiveContractError("MISSING_SPY_ADJ_CLOSE")
+        raise ObjectiveContractError(f"MISSING_SPY_LEDGER_COLUMNS:{','.join(missing)}")
+    frame = prices.loc[:, sorted(required)].copy()
+    try:
+        frame["date"] = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
+    except (TypeError, ValueError) as exc:
+        raise ObjectiveContractError("INVALID_SPY_LEDGER_DATE") from exc
+    frame = frame.sort_values("date", kind="mergesort").set_index("date")
+    if frame.empty or frame.index.has_duplicates:
+        raise ObjectiveContractError("INVALID_SPY_LEDGER_DATES")
+    if frame.index.max() > pd.Timestamp(allowed_end).normalize():
+        raise ObjectiveContractError("SPY_LEDGER_DATE_AFTER_ALLOWED_END")
+    numeric_columns = ("open", "high", "low", "close", "adj_close", "volume")
+    try:
+        for column in numeric_columns:
+            frame[column] = pd.to_numeric(frame[column], errors="raise").astype(float)
+    except (TypeError, ValueError) as exc:
+        raise ObjectiveContractError("NONNUMERIC_SPY_LEDGER_VALUE") from exc
+    if not np.isfinite(frame.loc[:, numeric_columns].to_numpy()).all():
+        raise ObjectiveContractError("NONFINITE_SPY_LEDGER_VALUE")
+    if (frame.loc[:, ("open", "high", "low", "close", "adj_close")] <= 0).any().any():
+        raise ObjectiveContractError("NONPOSITIVE_SPY_LEDGER_PRICE")
+    if (frame["volume"] < 0).any():
+        raise ObjectiveContractError("NEGATIVE_SPY_LEDGER_VOLUME")
+    if (frame["high"] < frame[["open", "close", "low"]].max(axis=1)).any():
+        raise ObjectiveContractError("INVALID_SPY_LEDGER_HIGH")
+    if (frame["low"] > frame[["open", "close", "high"]].min(axis=1)).any():
+        raise ObjectiveContractError("INVALID_SPY_LEDGER_LOW")
+
+    adjustment_factor = frame["adj_close"] / frame["close"]
+    adjusted_open = frame["open"] * adjustment_factor
+    long_return = adjusted_open.shift(-1) / adjusted_open - 1.0
+    finite_returns = long_return.dropna()
+    if not np.isfinite(finite_returns.to_numpy()).all() or (finite_returns <= -1.0).any():
+        raise ObjectiveContractError("INVALID_SPY_TOTAL_RETURN")
+    frame["adjustment_factor"] = adjustment_factor
+    frame["adjusted_open"] = adjusted_open
+    frame["long_return"] = long_return
+    frame["short_return"] = -long_return
+    frame["tr_open"] = (
+        (1.0 + long_return.fillna(0.0)).cumprod().shift(1).fillna(1.0)
+    )
+    frame["tr_close"] = frame["tr_open"] * frame["close"] / frame["open"]
+    return frame
+
+
 def _normalize_return_series(series: pd.Series, label: str) -> pd.Series:
     values = series.copy()
     try:
@@ -257,6 +321,7 @@ __all__ = [
     "CandidateScore",
     "LedgerObjectiveResult",
     "ObjectiveContractError",
+    "build_adjusted_open_total_return_ledger",
     "candidate_rank_key",
     "score_ledger_decisions",
     "score_realized_returns",

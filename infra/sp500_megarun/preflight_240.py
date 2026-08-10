@@ -20,6 +20,11 @@ from aurora.infra.sp500_megarun.data_contract import (
 )
 from aurora.infra.sp500_megarun.materializer import parquet_safe_frame
 from aurora.infra.sp500_megarun.source_adapters import normalize_resource_payload
+from aurora.infra.sp500_long_short_daily.data import (
+    load_sec_distribution_totals,
+    load_state_street_distributions,
+    reconcile_official_distribution_audit,
+)
 
 
 class Preflight240Error(RuntimeError):
@@ -35,6 +40,71 @@ _DERIVED_INPUTS: Mapping[str, tuple[str, ...]] = {
     "D_FINRA_MARGIN": ("D_MARGIN",),
     "D_FRENCH_US": ("D_FRENCH_FACTORS", "D_FRENCH_INDUSTRIES"),
 }
+
+
+def attach_spy_corporate_action_audit_fields(
+    spy: pd.DataFrame,
+    *,
+    distributions: pd.DataFrame,
+    splits: pd.DataFrame,
+    maximum_date: str,
+) -> pd.DataFrame:
+    """Keep adjusted-close execution data and event evidence in one bounded row set."""
+
+    required = {"date", "open", "high", "low", "close", "adj_close", "volume"}
+    missing = sorted(required - set(spy.columns))
+    if missing:
+        raise Preflight240Error(f"SPY_TOTAL_RETURN_COLUMN_MISSING:{','.join(missing)}")
+    result = spy.copy()
+    result["date"] = pd.to_datetime(result["date"], errors="coerce").dt.normalize()
+    if result.empty or result["date"].isna().any() or result["date"].duplicated().any():
+        raise Preflight240Error("INVALID_SPY_TOTAL_RETURN_ROWS")
+    ceiling = pd.Timestamp(maximum_date).normalize()
+    if result["date"].max() > ceiling:
+        raise Preflight240Error("SPY_PRICE_AFTER_ALLOWED_END")
+    session_dates = set(result["date"])
+
+    def event_series(
+        frame: pd.DataFrame,
+        *,
+        value_column: str,
+        neutral: float,
+    ) -> pd.Series:
+        if frame.empty:
+            return pd.Series(neutral, index=result.index, dtype=float)
+        if set(frame.columns) != {"date", value_column}:
+            raise Preflight240Error(f"SPY_EVENT_SCHEMA_MISMATCH:{value_column}")
+        events = frame.copy()
+        events["date"] = pd.to_datetime(events["date"], errors="coerce").dt.normalize()
+        events[value_column] = pd.to_numeric(events[value_column], errors="coerce")
+        if events["date"].isna().any() or events[value_column].isna().any():
+            raise Preflight240Error(f"INVALID_SPY_EVENT:{value_column}")
+        if events["date"].max() > ceiling:
+            raise Preflight240Error("SPY_EVENT_AFTER_ALLOWED_END")
+        if not set(events["date"]) <= session_dates:
+            raise Preflight240Error("SPY_EVENT_ON_NON_SESSION")
+        if value_column == "split_ratio":
+            if (events[value_column] <= 0).any():
+                raise Preflight240Error("INVALID_SPY_SPLIT_RATIO")
+            grouped = events.groupby("date", sort=True)[value_column].prod()
+        else:
+            if (events[value_column] < 0).any():
+                raise Preflight240Error("INVALID_SPY_DISTRIBUTION")
+            grouped = events.groupby("date", sort=True)[value_column].sum()
+        return result["date"].map(grouped).fillna(neutral).astype(float)
+
+    result["distribution"] = event_series(
+        distributions,
+        value_column="distribution",
+        neutral=0.0,
+    )
+    result["split_ratio"] = event_series(
+        splits,
+        value_column="split_ratio",
+        neutral=1.0,
+    )
+    result["corporate_action_audit_only"] = True
+    return result.sort_values("date", kind="mergesort").reset_index(drop=True)
 
 
 def build_derived_dataset(
@@ -120,6 +190,8 @@ def build_preflight_240_snapshot(
     *,
     normalized_dir: Path,
     spy_csv: Path,
+    spy_distributions_csv: Path,
+    spy_splits_csv: Path,
     output_dir: Path,
 ) -> Mapping[str, object]:
     """Produce physically separate train and validation artifacts for all 240 lanes."""
@@ -137,7 +209,48 @@ def build_preflight_240_snapshot(
         resource_id="bounded_spy",
         maximum_observation_date=contract.boundaries.evaluation_end.isoformat(),
     )
-    frames["D_SPY"] = spy
+    distributions = pd.read_csv(spy_distributions_csv)
+    splits = pd.read_csv(spy_splits_csv)
+    frames["D_SPY"] = attach_spy_corporate_action_audit_fields(
+        spy,
+        distributions=distributions,
+        splits=splits,
+        maximum_date=contract.boundaries.evaluation_end.isoformat(),
+    )
+    repo_root = Path(__file__).resolve().parents[2]
+    official_root = (
+        repo_root / "campaigns" / "sp500_long_short_daily" / "official_inputs"
+    )
+    exact_events, exact_receipt = load_state_street_distributions(
+        official_root / "state_street_spy_distribution_events_2006_2010.csv",
+        contract.boundaries.warmup_start.isoformat(),
+        contract.boundaries.search_end.isoformat(),
+        split="train",
+    )
+    fiscal_totals, totals_receipt = load_sec_distribution_totals(
+        official_root / "sec_spy_distribution_fiscal_totals_1993_2009.csv",
+        contract.boundaries.warmup_start.isoformat(),
+        contract.boundaries.search_end.isoformat(),
+        split="train",
+    )
+    operational_distributions = distributions.loc[
+        pd.to_datetime(distributions["date"], errors="raise").le(
+            pd.Timestamp(contract.boundaries.search_end)
+        )
+    ].copy()
+    distribution_audit = reconcile_official_distribution_audit(
+        exact_events,
+        fiscal_totals,
+        operational_distributions,
+    )
+    distribution_audit = {
+        **distribution_audit,
+        "operational_source": "bounded_yahoo_chart_events",
+        "exact_events_receipt_sha256": exact_receipt.sha256,
+        "fiscal_totals_receipt_sha256": totals_receipt.sha256,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
     frames["D_CALENDAR"] = pd.DataFrame(
         {"date": pd.to_datetime(spy["date"], errors="raise")}
     ).drop_duplicates()
@@ -171,6 +284,11 @@ def build_preflight_240_snapshot(
         "validation_opened": False,
         "locked_opened": False,
         "datasets": {},
+        "spy_total_return_execution": {
+            "method": "adjusted_open_from_adj_close_divided_by_close",
+            "corporate_action_events_are_audit_only": True,
+            "official_distribution_audit": distribution_audit,
+        },
     }
     validation_manifest: dict[str, object] = {
         "contract_sha256": contract.sha256,
@@ -220,6 +338,10 @@ def build_preflight_240_snapshot(
     (output_dir / "lane_readiness_F001_F240.json").write_text(
         json.dumps(lane_rows, indent=2, sort_keys=True), encoding="utf-8"
     )
+    (output_dir / "spy_distribution_audit.json").write_text(
+        json.dumps(distribution_audit, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     mount_policy = {
         "first_cycle_allowed_partition": "train_snapshot_1993_2010",
         "first_cycle_forbidden_partition": "validation_snapshot_2011_2020",
@@ -240,6 +362,8 @@ def build_preflight_240_snapshot(
         "train_maximum_date": partition_result["train_maximum_date"],
         "validation_maximum_date": partition_result["validation_maximum_date"],
         "locked_rows": 0,
+        "spy_total_return_ready": True,
+        "spy_distribution_audit": distribution_audit,
         "validation_opened": False,
         "locked_opened": False,
     }

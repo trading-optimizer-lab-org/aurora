@@ -106,6 +106,66 @@ def test_ledger_decisions_take_effect_only_at_the_next_open() -> None:
     assert result.realized_at.tolist() == index[1:].tolist()
 
 
+def test_adjusted_open_ledger_includes_dividends_and_splits_without_double_adjusting() -> None:
+    from aurora.infra.sp500_megarun.dehb_objective import (
+        build_adjusted_open_total_return_ledger,
+    )
+
+    prices = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["2000-01-03", "2000-01-04", "2000-01-05", "2000-01-06"]
+            ),
+            "open": [100.0, 99.0, 100.0, 50.0],
+            "high": [101.0, 100.0, 101.0, 51.0],
+            "low": [99.0, 98.0, 99.0, 49.0],
+            "close": [100.0, 99.0, 100.0, 50.0],
+            # Day two contains a 1-dollar distribution. Day four is a 2:1 split.
+            "adj_close": [49.5, 49.5, 50.0, 50.0],
+            "volume": [1_000_000, 1_000_000, 1_000_000, 2_000_000],
+        }
+    )
+
+    ledger = build_adjusted_open_total_return_ledger(
+        prices,
+        allowed_end="2010-12-31",
+    )
+
+    assert ledger.index.max() == pd.Timestamp("2000-01-06")
+    assert ledger["long_return"].iloc[:3].tolist() == pytest.approx(
+        [0.0, 0.010101010101010166, 0.0]
+    )
+    assert ledger["short_return"].iloc[:3].tolist() == pytest.approx(
+        -ledger["long_return"].iloc[:3]
+    )
+
+
+def test_adjusted_open_ledger_fails_closed_without_adjusted_close_or_on_later_rows() -> None:
+    from aurora.infra.sp500_megarun.dehb_objective import (
+        ObjectiveContractError,
+        build_adjusted_open_total_return_ledger,
+    )
+
+    prices = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-12-31", "2011-01-03"]),
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.0, 101.0],
+            "volume": [1_000_000, 1_000_000],
+        }
+    )
+    with pytest.raises(ObjectiveContractError, match="MISSING_SPY_ADJ_CLOSE"):
+        build_adjusted_open_total_return_ledger(
+            prices.iloc[:1], allowed_end="2010-12-31"
+        )
+
+    prices["adj_close"] = prices["close"]
+    with pytest.raises(ObjectiveContractError, match="SPY_LEDGER_DATE_AFTER_ALLOWED_END"):
+        build_adjusted_open_total_return_ledger(prices, allowed_end="2010-12-31")
+
+
 def test_train_objective_rejects_validation_or_locked_dates() -> None:
     from aurora.infra.sp500_megarun.dehb_objective import ObjectiveContractError, score_ledger_decisions
 

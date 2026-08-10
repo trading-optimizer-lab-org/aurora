@@ -19,6 +19,8 @@ def main() -> int:
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--sources", type=Path, required=True)
     parser.add_argument("--spy-csv", type=Path, required=True)
+    parser.add_argument("--spy-distributions-csv", type=Path, required=True)
+    parser.add_argument("--spy-splits-csv", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -42,6 +44,8 @@ def main() -> int:
         contract,
         normalized_dir=materialized_dir / "normalized",
         spy_csv=args.spy_csv,
+        spy_distributions_csv=args.spy_distributions_csv,
+        spy_splits_csv=args.spy_splits_csv,
         output_dir=args.output_dir,
     )
     return 0 if report["ready"] and report["ready_lane_count"] == 240 else 1

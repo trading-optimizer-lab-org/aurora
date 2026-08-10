@@ -16,6 +16,7 @@ from aurora.infra.sp500_megarun.data_contract import (
 from aurora.infra.sp500_megarun.source_adapters import registered_adapter_names
 from aurora.infra.sp500_megarun.preflight_240 import (
     Preflight240Error,
+    attach_spy_corporate_action_audit_fields,
     build_derived_dataset,
     partition_dataset_frame,
 )
@@ -217,3 +218,68 @@ def test_derived_grouped_datasets_preserve_source_lineage() -> None:
 
     assert set(derived["source_dataset"]) == {"D_RATES", "D_FX"}
     assert derived["date"].dt.strftime("%Y-%m-%d").tolist() == ["2020-01-02", "2020-01-02"]
+
+
+def test_spy_snapshot_keeps_adjusted_close_and_audited_events_separate() -> None:
+    spy = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2009-03-19", "2009-03-20", "2009-03-23"]),
+            "open": [80.0, 79.5, 80.5],
+            "high": [81.0, 80.5, 81.5],
+            "low": [79.0, 78.5, 79.5],
+            "close": [80.0, 79.5, 80.5],
+            "adj_close": [79.43828, 79.5, 80.5],
+            "volume": [1, 1, 1],
+        }
+    )
+    distributions = pd.DataFrame(
+        {"date": pd.to_datetime(["2009-03-20"]), "distribution": [0.56172]}
+    )
+    splits = pd.DataFrame(columns=["date", "split_ratio"])
+
+    result = attach_spy_corporate_action_audit_fields(
+        spy,
+        distributions=distributions,
+        splits=splits,
+        maximum_date="2010-12-31",
+    )
+
+    assert result["adj_close"].tolist() == spy["adj_close"].tolist()
+    assert result["distribution"].tolist() == [0.0, 0.56172, 0.0]
+    assert result["split_ratio"].tolist() == [1.0, 1.0, 1.0]
+    assert result["corporate_action_audit_only"].all()
+
+
+def test_spy_event_attachment_rejects_unknown_dates_and_locked_rows() -> None:
+    spy = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-12-30", "2010-12-31"]),
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.0, 101.0],
+            "adj_close": [100.0, 101.0],
+            "volume": [1, 1],
+        }
+    )
+    unknown = pd.DataFrame(
+        {"date": pd.to_datetime(["2010-12-29"]), "distribution": [0.5]}
+    )
+    with pytest.raises(Preflight240Error, match="SPY_EVENT_ON_NON_SESSION"):
+        attach_spy_corporate_action_audit_fields(
+            spy,
+            distributions=unknown,
+            splits=pd.DataFrame(columns=["date", "split_ratio"]),
+            maximum_date="2010-12-31",
+        )
+
+    locked = pd.DataFrame(
+        {"date": pd.to_datetime(["2021-01-04"]), "distribution": [0.5]}
+    )
+    with pytest.raises(Preflight240Error, match="SPY_EVENT_AFTER_ALLOWED_END"):
+        attach_spy_corporate_action_audit_fields(
+            spy,
+            distributions=locked,
+            splits=pd.DataFrame(columns=["date", "split_ratio"]),
+            maximum_date="2010-12-31",
+        )

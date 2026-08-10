@@ -13,7 +13,10 @@ on:
       - config/sp500_megarun_free_sources_240.json
       - config/sp500_megarun_feature_contract_240.json
       - infra/sp500_megarun/**
+      - infra/sp500_long_short_daily/data.py
       - scripts/build_sp500_megarun_preflight_240.py
+      - scripts/download_sp500_stooq_window.py
+      - scripts/merge_sp500_stooq_windows.py
       - scripts/inventory_sp500_megarun_train_snapshot.py
       - scripts/run_sp500_megarun_feature_smoke_f001_f020.py
       - scripts/run_sp500_megarun_market_feature_smoke_f021_f031.py
@@ -166,6 +169,8 @@ jobs:
             --contract config/sp500_megarun_free_data_240.json \
             --sources config/sp500_megarun_free_sources_240.json \
             --spy-csv "$RUNNER_TEMP/spy-merged/stooq_spy_us_history.csv" \
+            --spy-distributions-csv "$RUNNER_TEMP/spy-merged/spy_distributions.csv" \
+            --spy-splits-csv "$RUNNER_TEMP/spy-merged/spy_splits.csv" \
             --work-dir "$RUNNER_TEMP/preflight-240" \
             --output-dir outputs/sp500_megarun_preflight_240
       - name: Inventory train schemas without mounting validation
