@@ -445,7 +445,21 @@ def _beta_tail_rows(
         for _, security in normalised.groupby("security_id", sort=True)
     ]
     panels = [panel for panel in panels if not panel.empty]
-    monthly = pd.concat(panels, ignore_index=True) if panels else pd.DataFrame()
+    monthly = (
+        pd.concat(panels, ignore_index=True)
+        if panels
+        else pd.DataFrame(
+            columns=[
+                "month",
+                "return",
+                "period_end",
+                "available_at",
+                "security_id",
+                "ticker",
+                "cik",
+            ]
+        )
+    )
     daily_panels = [
         _daily_return_panel(security, formation=formation)
         for _, security in normalised.groupby("security_id", sort=True)

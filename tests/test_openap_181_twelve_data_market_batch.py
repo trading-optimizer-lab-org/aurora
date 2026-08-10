@@ -620,7 +620,7 @@ def test_market_runner_and_workflow_preserve_manual_private_boundaries() -> None
     assert "calculate_twelve_data_factor_signals" in runner
     assert 'parser.add_argument("--ff3-daily-zip"' in runner
     assert 'parser.add_argument("--ff3-monthly-zip"' in runner
-    assert '"current_signal_computed": bool(not direct_values.empty)' in runner
+    assert "not direct_values.empty and not factor_values.empty" in runner
     assert '"strict_score_eligible": False' in runner
     assert "MARKET_SECURITY_MASTER_RECOVERY_MEMBERS" in recovery
     assert "full_artifact_downloaded" in recovery

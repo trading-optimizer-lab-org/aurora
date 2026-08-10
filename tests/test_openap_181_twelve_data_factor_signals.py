@@ -90,7 +90,11 @@ def test_twelve_data_and_free_french_factors_prepare_eleven_signals() -> None:
 
     assert len(result) == 6 * len(TWELVE_DATA_FACTOR_SIGNAL_TARGETS)
     assert set(result["signal"]) == set(TWELVE_DATA_FACTOR_SIGNAL_TARGETS)
-    assert result["current_usable"].all()
+    unusable = result.loc[
+        ~result["current_usable"],
+        ["ticker", "signal", "value", "observation_count", "reason_if_missing"],
+    ]
+    assert result["current_usable"].all(), unusable.to_dict("records")
     assert result["value"].notna().all()
     assert result["fidelity_class"].eq("reconstructed").all()
     assert result["source_id"].eq(
