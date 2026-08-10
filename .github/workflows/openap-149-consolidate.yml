@@ -76,7 +76,7 @@ on:
       formula_evidence_run_id:
         description: Successful run containing the pinned formula inventory
         required: true
-        default: "31331835149"
+        default: "31396163422"
         type: string
 
 permissions:
