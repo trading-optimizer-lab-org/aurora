@@ -44,6 +44,105 @@ def _module():
     return import_module("aurora.research.openap_181.realestate_rendered_batch")
 
 
+def _rendered_module():
+    return import_module("aurora.research.openap_181.sec_rendered_reports")
+
+
+def test_locate_rendered_ppe_report_accepts_sec_ampersand_title() -> None:
+    summary = """
+      R47.htm
+      Property, Plant & Equipment (Tables)
+      R112.htm
+      Property, Plant & Equipment (Details)
+    """
+
+    assert _rendered_module().locate_rendered_ppe_report(summary) == "R112.htm"
+
+
+def test_parse_rendered_realestate_accepts_generic_ppe_group() -> None:
+    report = """
+| PROPERTY, PLANT AND EQUIPMENT (Details) | Dec. 31, 2025 | Dec. 31, 2024 |
+| --- | --- | --- |
+| Property, Plant and Equipment |  |  |
+| Property, plant and equipment, gross | 12,919 | 11,796 |
+| Land and buildings |  |  |
+| Property, Plant and Equipment |  |  |
+| Property, plant and equipment, gross | 3,206 | 3,012 |
+    """
+
+    rows = _rendered_module().extract_rendered_realestate_inputs(report)
+
+    assert rows[0]["period_end"] == "2025-12-31"
+    assert rows[0]["ppe_gross"] == 12919.0
+    assert rows[0]["land_and_buildings_gross"] == 3206.0
+    assert rows[0]["realestate_raw"] == pytest.approx(3206.0 / 12919.0)
+
+
+def test_parse_rendered_realestate_accepts_split_header_and_total_cost() -> None:
+    report = """
+| PROPERTY, PLANT AND EQUIPMENT (Details) | 12 Months Ended |
+| --- | --- |
+| Dec. 31, 2025 | Dec. 31, 2024 | Dec. 31, 2023 |
+| Property, Plant and Equipment [Line Items] |  |  |  |
+| Total cost | 12,012 | 11,183 |  |
+| Land and improvements |  |  |  |
+| Property, Plant and Equipment [Line Items] |  |  |  |
+| Total cost | 297 | 297 |  |
+| Buildings, structures and related equipment |  |  |  |
+| Property, Plant and Equipment [Line Items] |  |  |  |
+| Total cost | 2,531 | 2,347 |  |
+    """
+
+    rows = _rendered_module().extract_rendered_realestate_inputs(report)
+
+    assert rows[0]["period_end"] == "2025-12-31"
+    assert rows[0]["ppe_gross"] == 12012.0
+    assert rows[0]["land_gross"] == 297.0
+    assert rows[0]["buildings_gross"] == 2531.0
+    assert rows[0]["realestate_raw"] == pytest.approx((297.0 + 2531.0) / 12012.0)
+
+
+def test_parse_rendered_realestate_accepts_direct_component_rows() -> None:
+    report = """
+| Property, Plant and Equipment (Details) | Sep. 30, 2025 | Sep. 30, 2024 |
+| --- | --- | --- |
+| Buildings and improvements | 1,095 | 1,033 |
+| Land | 47 | 48 |
+| Total property, plant and equipment | 6,110 | 5,846 |
+    """
+
+    rows = _rendered_module().extract_rendered_realestate_inputs(report)
+
+    assert rows[0]["period_end"] == "2025-09-30"
+    assert rows[0]["ppe_gross"] == 6110.0
+    assert rows[0]["land_gross"] == 47.0
+    assert rows[0]["buildings_gross"] == 1095.0
+    assert rows[0]["realestate_raw"] == pytest.approx((47.0 + 1095.0) / 6110.0)
+
+
+def test_parse_rendered_realestate_accepts_at_cost_member_rows() -> None:
+    report = """
+| Property, plant and equipment (Details) | Dec. 31, 2025 | Dec. 31, 2024 |
+| --- | --- | --- |
+| Property, plant and equipment |  |  |
+| Total property, plant and equipment, at cost | 31,906 | 29,477 |
+| Land |  |  |
+| Property, plant and equipment |  |  |
+| Property, plant, and equipment, excluding equipment leased to others, at cost | 616 | 612 |
+| Buildings and land improvements |  |  |
+| Property, plant and equipment |  |  |
+| Property, plant, and equipment, excluding equipment leased to others, at cost | 7,761 | 7,281 |
+    """
+
+    rows = _rendered_module().extract_rendered_realestate_inputs(report)
+
+    assert rows[0]["period_end"] == "2025-12-31"
+    assert rows[0]["ppe_gross"] == 31906.0
+    assert rows[0]["land_gross"] == 616.0
+    assert rows[0]["buildings_gross"] == 7761.0
+    assert rows[0]["realestate_raw"] == pytest.approx((616.0 + 7761.0) / 31906.0)
+
+
 def test_select_sector_pilot_uses_causal_assets_and_complete_sec_identity() -> None:
     module = _module()
     formation_at = "2026-08-09T23:59:59Z"
