@@ -17,6 +17,8 @@ from aurora.research.openap_181.recovered_openap93_proxies import (
     COMPEQUISS_RECOVERY_SOURCE,
     EQUITY_DURATION_FORMULA_ID,
     EQUITY_DURATION_RECOVERY_SOURCE,
+    EVENT_FORMULA_IDS,
+    EVENT_RECOVERY_SOURCES,
     MARKET_FORMULA_IDS,
     MARKET_RECOVERY_SOURCES,
     OSCORE_FORMULA_ID,
@@ -277,6 +279,46 @@ def _yahoo_market_row(
     }
 
 
+EVENT_OPENAP_SCRIPTS = {
+    "DivInit": "Signals/pyCode/Predictors/DivInit.py",
+    "DivOmit": "Signals/pyCode/Predictors/DivOmit.py",
+}
+EVENT_CAVEATS = {
+    "DivInit": "Yahoo cash distributions do not expose CRSP distribution codes",
+    "DivOmit": "Regular cash distributions inferred from Yahoo dividend history",
+}
+
+
+def _event_row(
+    signal: str,
+    security_id: str,
+    ticker: str,
+    cik: int,
+    *,
+    value: float | None,
+    current_usable: bool,
+) -> dict[str, object]:
+    return {
+        **_row(
+            security_id,
+            ticker,
+            cik,
+            value=value,
+            current_usable=current_usable,
+        ),
+        "signal": signal,
+        "period_end": "2026-07-31",
+        "filed_at": "2026-07-31 00:00:00",
+        "available_at": "2026-07-31 00:00:00",
+        "source_id": "yahoo_public",
+        "formula_id": EVENT_FORMULA_IDS[signal],
+        "openap_script": EVENT_OPENAP_SCRIPTS[signal],
+        "natural_frequency": "monthly",
+        "observation_count": 37,
+        "caveat": EVENT_CAVEATS[signal],
+    }
+
+
 RIO_FORMULA_IDS = {
     "RIO_MB": "openap_residual_institutional_ownership_lag6_high_mb",
     "RIO_Turnover": (
@@ -344,9 +386,10 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         "OScore",
         *MARKET_FORMULA_IDS,
         *YAHOO_MARKET_FORMULA_IDS,
+        *EVENT_FORMULA_IDS,
     ]
     selected_signals = recovered_signals + [
-        f"SyntheticSignal{index:02d}" for index in range(78)
+        f"SyntheticSignal{index:02d}" for index in range(76)
     ]
     comp_rows = [
         _row("US-SEC-0000000001-AAA", "AAA", 1, value=0.25, current_usable=True),
@@ -473,6 +516,22 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             (3, "CCC", None, False),
         )
     ]
+    event_rows = [
+        _event_row(
+            signal,
+            f"US-SEC-{cik:010d}-{ticker}",
+            ticker,
+            cik,
+            value=value,
+            current_usable=current_usable,
+        )
+        for signal in EVENT_FORMULA_IDS
+        for cik, ticker, value, current_usable in (
+            (1, "AAA", 1.0, True),
+            (2, "BBB", 0.0, True),
+            (3, "CCC", None, False),
+        )
+    ]
     filler_rows = [
         {
             **_row(
@@ -497,6 +556,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         + oscore_rows
         + market_rows
         + yahoo_market_rows
+        + event_rows
         + filler_rows
     ).to_csv(
         signals_path,
@@ -626,6 +686,35 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
                 "reason_if_missing": "insufficient_history_or_inputs",
                 "openap_script": YAHOO_MARKET_OPENAP_SCRIPTS[signal],
                 "implementation_file": "research/openap_93/market_pipeline.py",
+            }
+        )
+    for signal in EVENT_FORMULA_IDS:
+        coverage_rows.append(
+            {
+                "signal": signal,
+                "status": "current_usable",
+                "fidelity_class": "reconstructed",
+                "current_usable": True,
+                "exact_formula": True,
+                "primary_source": "yahoo_public",
+                "fallback_source": "",
+                "source_domains": "query1.finance.yahoo.com",
+                "latest_period_end": "2026-07-31",
+                "latest_available_at": "2026-07-31 00:00:00",
+                "natural_frequency": "monthly",
+                "universe_count": 3,
+                "applicable_count": 3,
+                "non_null_count": 2,
+                "current_usable_count": 2,
+                "not_applicable_count": 0,
+                "missing_count": 1,
+                "coverage_pct": 200 / 3,
+                "license": "Public endpoint; terms must be reviewed",
+                "terms_status": "terms_review_required",
+                "scraping_required": False,
+                "reason_if_missing": "insufficient_event_history",
+                "openap_script": EVENT_OPENAP_SCRIPTS[signal],
+                "implementation_file": "research/openap_93/event_pipeline.py",
             }
         )
     coverage_rows.append(
@@ -784,6 +873,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             + len(oscore_rows)
             + len(market_rows)
             + len(yahoo_market_rows)
+            + len(event_rows)
             + len(filler_rows)
         ),
         "openap_commit": OPENAP_COMMIT,
@@ -793,7 +883,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         "api_keys_required": False,
         "manual_actions_required": False,
         "selected_signals": selected_signals,
-        "current_usable_signal_count": 15,
+        "current_usable_signal_count": 17,
         "output_hashes": {
             "coverage_93.csv": sha256(coverage_path.read_bytes()).hexdigest(),
             "signals_93_current.csv": sha256(signals_path.read_bytes()).hexdigest(),
@@ -807,7 +897,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
     recovery_manifest = {
         "bytes_fetched": 13720277,
         "cost_eur": 0,
-        "current_usable_signal_count": 15,
+        "current_usable_signal_count": 17,
         "full_artifact_downloaded": False,
         "input_signals": 93,
         "locked_opened": False,
@@ -893,7 +983,7 @@ def test_verified_openap93_recovery_accepts_only_current_comp_equ_iss(
     assert evidence["strict_score_increment"] == 0
 
 
-def test_verified_openap93_proxy_batch_accepts_fifteen_narrow_signals(
+def test_verified_openap93_proxy_batch_accepts_seventeen_narrow_signals(
     tmp_path: Path,
 ) -> None:
     _write_artifact(tmp_path / "artifact")
@@ -918,6 +1008,8 @@ def test_verified_openap93_proxy_batch_accepts_fifteen_narrow_signals(
         "DivYieldST": 2,
         "MomVol": 2,
         "MomRev": 2,
+        "DivInit": 2,
+        "DivOmit": 2,
         "betaVIX": 2,
     }
     duration = values.loc[values["signal"].eq("EquityDuration")]
@@ -955,6 +1047,12 @@ def test_verified_openap93_proxy_batch_accepts_fifteen_narrow_signals(
         market = values.loc[values["signal"].eq(signal)]
         assert market["source_id"].eq(recovery_source).all()
         assert market["formula_id"].eq(YAHOO_MARKET_FORMULA_IDS[signal]).all()
+        assert evidence["signals"][signal]["current_value_rows"] == 2
+    for signal, recovery_source in EVENT_RECOVERY_SOURCES.items():
+        event = values.loc[values["signal"].eq(signal)]
+        assert event["source_id"].eq(recovery_source).all()
+        assert event["formula_id"].eq(EVENT_FORMULA_IDS[signal]).all()
+        assert set(event["value"]) == {0.0, 1.0}
         assert evidence["signals"][signal]["current_value_rows"] == 2
     assert evidence["strict_score_increment"] == 0
 
@@ -1029,6 +1127,12 @@ def test_verified_equity_duration_recovery_fails_closed(
         ("MomVol", "decile10"),
         ("MomRev", "binary"),
         ("MomRev", "source"),
+        ("DivInit", "observations"),
+        ("DivInit", "formula"),
+        ("DivInit", "source"),
+        ("DivOmit", "binary"),
+        ("DivOmit", "caveat"),
+        ("DivOmit", "coverage_count"),
     ],
 )
 def test_verified_market_and_rio_recoveries_fail_closed(
@@ -1059,6 +1163,8 @@ def test_verified_market_and_rio_recoveries_fail_closed(
                 values.loc[row, "observation_count"] = 199
             elif signal == "BetaTailRisk":
                 values.loc[row, "observation_count"] = 71
+            elif signal in EVENT_FORMULA_IDS:
+                values.loc[row, "observation_count"] = 23
             elif signal == "OScore":
                 values.loc[row, "observation_count"] = 3
             else:
@@ -1469,4 +1575,48 @@ def test_yahoo_market_recovery_routes_are_narrow_and_non_strict(
     assert all(
         evidence["signals"][signal]["strict_score_eligible"] is False
         for signal in YAHOO_MARKET_FORMULA_IDS
+    )
+
+
+def test_dividend_event_recovery_routes_are_narrow_and_non_strict(
+    tmp_path: Path,
+) -> None:
+    _write_artifact(tmp_path / "artifact")
+    values, _, evidence = load_verified_openap93_proxy_batch(
+        tmp_path / "artifact",
+        evidence_run_url=OPENAP93_RECOVERY_RUN_URL,
+    )
+    values = values.loc[values["signal"].isin(EVENT_FORMULA_IDS)].copy()
+    routes = load_target_routes(ROUTE_MATRIX)
+    for signal, recovery_source in EVENT_RECOVERY_SOURCES.items():
+        route = routes.loc[routes["signal"].eq(signal)].iloc[0]
+        assert recovery_source in route["primary_free_sources"].split("|")
+
+    formula_hashes = {
+        "DivInit": (
+            "e0c4f285ef43006b43d86a25c16ef06d6ae9546ad1355bcdfad8f57dbdc02540"
+        ),
+        "DivOmit": (
+            "58c9383e66f2ba59f46921486ee3874d8a61c809a32b6228bc13db89e5a0395f"
+        ),
+    }
+    matrix, approved = build_acquisition_matrix(
+        routes,
+        values,
+        formula_inventory=pd.DataFrame(
+            [
+                {"signal": signal, "formula_sha256": formula_hash}
+                for signal, formula_hash in formula_hashes.items()
+            ]
+        ),
+    )
+
+    selected = matrix.loc[matrix["signal"].isin(EVENT_FORMULA_IDS)]
+    assert set(selected["status"]) == {"current_signal_computed"}
+    assert set(selected["fidelity"]) == {"reconstructed"}
+    assert not selected["strict_score_eligible"].astype(bool).any()
+    assert set(approved["signal"]) == set(EVENT_FORMULA_IDS)
+    assert all(
+        evidence["signals"][signal]["strict_score_eligible"] is False
+        for signal in EVENT_FORMULA_IDS
     )

@@ -136,6 +136,8 @@ SOURCE_ALIASES = {
     "recovered_openap93_divyieldst": "recovered_openap93_divyieldst",
     "recovered_openap93_momvol": "recovered_openap93_momvol",
     "recovered_openap93_momrev": "recovered_openap93_momrev",
+    "recovered_openap93_divinit": "recovered_openap93_divinit",
+    "recovered_openap93_divomit": "recovered_openap93_divomit",
     "pastor_stambaugh": "pastor_stambaugh",
 }
 
@@ -214,6 +216,14 @@ SOURCE_TERMS = {
     ),
     "recovered_openap93_momrev": (
         "Hash-bound MomRev output from recovery run 31341580689; Yahoo endpoint "
+        "terms apply; internal use only"
+    ),
+    "recovered_openap93_divinit": (
+        "Hash-bound DivInit output from recovery run 31341580689; Yahoo endpoint "
+        "terms apply; internal use only"
+    ),
+    "recovered_openap93_divomit": (
+        "Hash-bound DivOmit output from recovery run 31341580689; Yahoo endpoint "
         "terms apply; internal use only"
     ),
     "pastor_stambaugh": (

@@ -389,6 +389,18 @@ jobs:
                   "openap_mom6_q5_and_mom36_q1_binary",
                   "historical_crsp_identity_verified",
               ),
+              "DivInit": (
+                  2157,
+                  "recovered_openap93_divinit",
+                  "openap_dividend_initiation_after_24m_none_hold6_current_month",
+                  "historical_crsp_identity_verified",
+              ),
+              "DivOmit": (
+                  2157,
+                  "recovered_openap93_divomit",
+                  "openap_dividend_omission_3m_6m_12m_windows",
+                  "historical_crsp_identity_verified",
+              ),
               "RIO_MB": (
                   305,
                   "recovered_openap93_rio",
@@ -454,7 +466,6 @@ jobs:
               "ConvDebt": (265, "reconstructed", "openap_convdebt_positive_only_sec_companyfacts_reconstruction"),
               "DelDRC": (1949, "unvalidated_proxy", "change_deferred_revenue_over_average_assets"),
               "DelNetFin": (36, "reconstructed", "openap_delnetfin_sec_aggregate_components_6m_lag"),
-              "DivOmit": (14, "reconstructed", "openap_divomit_positive_sec_6q_regular_then_zero_2m"),
               "DivSeason": (3, "reconstructed", "openap_divseason_positive_sec_direct_month_frequency"),
               "EarningsConsistency": (1441, "reconstructed", "openap_earnings_consistency_sec_basic_eps_6m_lag"),
               "EarningsSurprise": (2132, "reconstructed", "openap_eps_yoy_drift_standardized_8q_sec_21q"),

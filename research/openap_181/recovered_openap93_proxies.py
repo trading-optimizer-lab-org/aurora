@@ -146,6 +146,30 @@ YAHOO_MARKET_CONTRACTS = {
     },
 }
 YAHOO_MARKET_ORIGINAL_SOURCE = "yahoo_public"
+EVENT_FORMULA_IDS = {
+    "DivInit": "openap_dividend_initiation_after_24m_none_hold6_current_month",
+    "DivOmit": "openap_dividend_omission_3m_6m_12m_windows",
+}
+EVENT_RECOVERY_SOURCES = {
+    signal: f"recovered_openap93_{signal.lower()}"
+    for signal in EVENT_FORMULA_IDS
+}
+EVENT_CONTRACTS = {
+    "DivInit": {
+        "openap_script": "Signals/pyCode/Predictors/DivInit.py",
+        "caveat": (
+            "Yahoo cash distributions do not expose CRSP distribution codes"
+        ),
+    },
+    "DivOmit": {
+        "openap_script": "Signals/pyCode/Predictors/DivOmit.py",
+        "caveat": (
+            "Regular cash distributions inferred from Yahoo dividend history"
+        ),
+    },
+}
+EVENT_ORIGINAL_SOURCE = "yahoo_public"
+EVENT_IMPLEMENTATION_FILE = "research/openap_93/event_pipeline.py"
 RIO_SIGNALS = ("RIO_MB", "RIO_Turnover", "RIO_Volatility")
 RIO_FORMULA_IDS = {
     "RIO_MB": "openap_residual_institutional_ownership_lag6_high_mb",
@@ -652,6 +676,22 @@ def load_verified_openap93_proxy_batch(
         )
         for signal in YAHOO_MARKET_FORMULA_IDS
     }
+    event_values = {
+        signal: _validate_reconstructed_rows(
+            values,
+            source,
+            signal=signal,
+            formula_id=EVENT_FORMULA_IDS[signal],
+            openap_script=str(EVENT_CONTRACTS[signal]["openap_script"]),
+            caveat=str(EVENT_CONTRACTS[signal]["caveat"]),
+            original_source=EVENT_ORIGINAL_SOURCE,
+            natural_frequency="monthly",
+            minimum_observations=24,
+            universe_count=universe_count,
+            allowed_values=frozenset({0.0, 1.0}),
+        )
+        for signal in EVENT_FORMULA_IDS
+    }
     rio_values = {
         signal: _validate_reconstructed_rows(
             values,
@@ -740,6 +780,18 @@ def load_verified_openap93_proxy_batch(
             universe_count=universe_count,
             usable_count=len(yahoo_market_values[signal]),
         )
+    for signal in EVENT_FORMULA_IDS:
+        _validate_reconstructed_coverage(
+            coverage,
+            signal=signal,
+            openap_script=str(EVENT_CONTRACTS[signal]["openap_script"]),
+            implementation_file=EVENT_IMPLEMENTATION_FILE,
+            natural_frequency="monthly",
+            primary_source="yahoo_public",
+            fallback_source="",
+            universe_count=universe_count,
+            usable_count=len(event_values[signal]),
+        )
     for signal in RIO_SIGNALS:
         _validate_reconstructed_coverage(
             coverage,
@@ -813,6 +865,18 @@ def load_verified_openap93_proxy_batch(
         )
         for signal, rows in yahoo_market_values.items()
     }
+    event_values = {
+        signal: _prepare_recovered_rows(
+            rows,
+            evidence_run_url=evidence_run_url,
+            recovery_source=EVENT_RECOVERY_SOURCES[signal],
+            caveat_suffix=(
+                "; recovered from hash-bound OpenAP93 evidence; Yahoo "
+                "distributions replace CRSP and do not prove distribution codes"
+            ),
+        )
+        for signal, rows in event_values.items()
+    }
     rio_values = {
         signal: _prepare_recovered_rows(
             rows,
@@ -832,6 +896,7 @@ def load_verified_openap93_proxy_batch(
         beta_vix,
         *(market_values[signal] for signal in MARKET_FORMULA_IDS),
         *(yahoo_market_values[signal] for signal in YAHOO_MARKET_FORMULA_IDS),
+        *(event_values[signal] for signal in EVENT_FORMULA_IDS),
         *(rio_values[signal] for signal in RIO_SIGNALS),
     ]
     current = pd.concat(current_parts, ignore_index=True)
@@ -892,6 +957,17 @@ def load_verified_openap93_proxy_batch(
         **{
             signal: {
                 "signal": signal,
+                "formula_id": EVENT_FORMULA_IDS[signal],
+                "current_value_rows": int(len(event_values[signal])),
+                "coverage": float(len(event_values[signal]) / universe_count),
+                "strict_score_eligible": False,
+                "historical_crsp_identity_verified": False,
+            }
+            for signal in EVENT_FORMULA_IDS
+        },
+        **{
+            signal: {
+                "signal": signal,
                 "formula_id": RIO_FORMULA_IDS[signal],
                 "current_value_rows": int(len(rio_values[signal])),
                 "coverage": float(len(rio_values[signal]) / universe_count),
@@ -901,7 +977,7 @@ def load_verified_openap93_proxy_batch(
         },
     }
     evidence = {
-        "contract_version": 4,
+        "contract_version": 5,
         "recovery_run_id": OPENAP93_RECOVERY_RUN_ID,
         "source_run_id": OPENAP93_SOURCE_RUN_ID,
         "source_head_sha": OPENAP93_SOURCE_HEAD_SHA,
@@ -948,6 +1024,8 @@ __all__ = [
     "COMPEQUISS_RECOVERY_SOURCE",
     "EQUITY_DURATION_FORMULA_ID",
     "EQUITY_DURATION_RECOVERY_SOURCE",
+    "EVENT_FORMULA_IDS",
+    "EVENT_RECOVERY_SOURCES",
     "MARKET_FORMULA_IDS",
     "MARKET_RECOVERY_SOURCES",
     "OSCORE_FORMULA_ID",

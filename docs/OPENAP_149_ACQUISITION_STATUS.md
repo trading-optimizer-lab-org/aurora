@@ -78,7 +78,7 @@ arrancar runs y no existe autorizacion posterior para ejecutar localmente.
 Por tanto, esta mejora no cambia todavia los recuentos publicados
 `56/50/18/99/96814`, la matriz CSV ni el score estricto confirmado de 31.
 
-## Quince senales OpenAP93: recuperacion selectiva preparada, no ejecutada
+## Diecisiete senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 
 El artefacto gratuito y ya existente `openap-93-current-recovered-results` del
 run `31341580689` contiene 2.157 filas de `CompEquIss`; 1.585 tienen valor
@@ -160,6 +160,14 @@ tambien restringe `DivYieldST` a categorias 0-3, `MomVol` a deciles 1-10 y
 frecuencia de pagos a partir de ex-dates Yahoo, en lugar de usar el codigo de
 frecuencia CRSP. Las cuatro siguen reconstruidas y no estrictas.
 
+`DivInit` y `DivOmit` aportan 2.157 clasificaciones binarias cada una. El
+contrato exige al menos 24 meses, las ventanas oficiales de iniciacion u
+omision, formula, script, fechas, cobertura y caveat exactos. La consolidacion
+debe priorizar estas filas Yahoo sobre el lote SEC positivo: CompanyFacts no
+emitio iniciaciones y solo emitio 14 omisiones positivas, sin clases negativas.
+Yahoo permite la clasificacion completa, pero no expone los codigos de
+distribucion CRSP; ambas siguen reconstruidas y no estrictas.
+
 ## CompanyFacts ampliado: lote gratuito ejecutado, pendiente de consolidar
 
 El run `31392473937` termino correctamente y publico
@@ -187,6 +195,9 @@ Todas usan `sec_edgar` como fuente declarada y siguen siendo no estrictas. El
 contrato preparado valida recuento, fidelidad y formula fila por fila. Este lote
 de origen aun no se ha consolidado con los demas artefactos, por lo que no
 cambia los recuentos globales demostrados al principio del documento.
+Las 14 filas positivas de `DivOmit` conservan su evidencia de origen, pero la
+salida final debe ser sustituida por las 2.157 clasificaciones Yahoo del lote
+OpenAP93, que tambien conserva explicitamente las clases negativas.
 
 ## hire: evidencia SEC actual separada de referencias obsoletas
 
@@ -256,7 +267,7 @@ recuentos globales demostrados permanecen `56/50/18/99/96814`.
   2157, cuatro observaciones por valor y que la salida sea binaria. Solo las
   1100 filas utilizables sustituyen el lote general.
 - Clasificacion: reconstruida, no estricta. No se incorpora al score estricto.
-- El cargador de las quince senales prepara 18.319 filas actuales, pero no se
+- El cargador de las diecisiete senales prepara 22.633 filas actuales, pero no se
   suman manualmente a los recuentos globales: la siguiente consolidacion debe
   resolver tambien los demas lotes pendientes, sustituciones y cuarentenas.
   Hasta entonces prevalecen `56/50/18/99/96814` y el score estricto 31.
@@ -554,14 +565,20 @@ cero y el actual un importe positivo. Prioriza el tag de efectivo pagado y usa
 el declarado solo como respaldo. Nunca convierte un fact ausente en cero. Como
 falta `exdt`, solo emite 1 si la formacion cae dentro de la ventana oficial de
 seis meses incluso suponiendo que el evento ocurrio el primer dia del trimestre;
-no emite ceros. La evidencia positiva y la cobertura siguen siendo insuficientes;
-no se marca como dato adquirido ni como senal calculada.
+no emite ceros. Esa evidencia SEC positiva es insuficiente y queda sustituida
+en la consolidacion preparada por 2.157 clasificaciones binarias del artefacto
+OpenAP93. Estas usan ex-dates Yahoo, exigen 24 meses previos sin pago y la
+ventana oficial de seis meses, pero siguen sin codigos de distribucion CRSP.
 
 El run CompanyFacts `31392473937` genero 14 valores de `DivOmit`: exige seis
 trimestres consecutivos con dividendo explicito y un septimo con cero explicito,
 y mantiene 1 durante el mes de disponibilidad SEC y el siguiente. No inventa
 ausencias ni emite ceros. La ventana empieza en el filing y no en `exdt`, por
-lo que la salida queda como reconstruccion no estricta.
+lo que la salida queda como reconstruccion no estricta. La consolidacion
+preparada conserva esta procedencia, pero sustituye el resultado por las 2.157
+clases 0/1 Yahoo que aplican las ventanas de omision de 3, 6 y 12 meses. La
+sustitucion tambien es reconstruida no estricta y mantiene pendiente la
+revision de terminos Yahoo.
 
 El mismo run genero 3 valores de `DivSeason` a partir de facts SEC directos de
 uno a 45 dias. Exige varios eventos con separaciones regulares, infiere una

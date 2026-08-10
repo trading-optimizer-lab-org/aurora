@@ -426,17 +426,24 @@ def test_current_event_routes_record_executed_batches() -> None:
     ]
 
 
-def test_divinit_route_records_executed_zero_value_batch() -> None:
+def test_dividend_event_routes_record_recovered_current_batches() -> None:
     routes = _module().load_target_routes(ROUTE_MATRIX).set_index("signal")
-    blocker = routes.loc["DivInit", "current_remaining_blocker"]
+    expected = {
+        "DivInit": "recovered_openap93_divinit",
+        "DivOmit": "recovered_openap93_divomit",
+    }
 
-    assert (
-        "companyfacts_run_31392473937_calculator_executed_current_value_count_0"
-        in blocker
-    )
-    assert "positive_event_evidence_coverage_insufficient" in blocker
-    assert "prepared_unexecuted" not in blocker
-    assert str(routes.loc["DivInit", "strict_score_eligible"]).lower() == "false"
+    for signal, recovery_source in expected.items():
+        sources = set(routes.loc[signal, "primary_free_sources"].split("|"))
+        blocker = routes.loc[signal, "current_remaining_blocker"]
+        assert recovery_source in sources
+        assert (
+            "openap93_run_31341580689_hash_bound_current_usable_count_2157"
+            in blocker
+        )
+        assert "superseded_at_consolidation" in blocker
+        assert "prepared_unexecuted" not in blocker
+        assert str(routes.loc[signal, "strict_score_eligible"]).lower() == "false"
 
 
 def test_hire_route_and_consolidation_quarantine_stale_rows() -> None:
@@ -1665,6 +1672,8 @@ def test_consolidation_workflow_verifies_causal_firmage_evidence() -> None:
         "recovered_openap93_divyieldst",
         "recovered_openap93_momvol",
         "recovered_openap93_momrev",
+        "recovered_openap93_divinit",
+        "recovered_openap93_divomit",
     ):
         assert f'"{recovery_source}"' in verify
 
@@ -1702,11 +1711,6 @@ def test_consolidation_workflow_accepts_current_companyfacts_evidence() -> None:
             36,
             "reconstructed",
             "openap_delnetfin_sec_aggregate_components_6m_lag",
-        ),
-        "DivOmit": (
-            14,
-            "reconstructed",
-            "openap_divomit_positive_sec_6q_regular_then_zero_2m",
         ),
         "DivSeason": (
             3,

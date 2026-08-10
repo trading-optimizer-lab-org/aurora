@@ -70,7 +70,7 @@ AbnormalAccruals, Accruals, AccrualsBM, AdExp, AM, BM, BMdec, BookLeverage, BPEB
 
 `Cash` pertenece a este grupo. SEC proporciona caja, activos y fecha de filing; el trabajo es fijar alias XBRL, enmiendas, caja restringida e identidad, no encontrar una fuente de pago obligatoria.
 
-#### Recuperacion estrecha de quince senales OpenAP93
+#### Recuperacion estrecha de diecisiete senales OpenAP93
 
 El artefacto recuperado `31341580689` conserva 2.157 filas actuales de
 `CompEquIss`, de las que 1.585 son utilizables. La reconstruccion aplica la
@@ -131,6 +131,14 @@ categorias. `DivYieldST` queda documentada como reconstruccion porque infiere
 la frecuencia de distribuciones desde ex-dates Yahoo en vez del codigo CRSP.
 Ninguna de las cuatro es estricta y la revision de terminos Yahoo sigue
 pendiente.
+
+`DivInit` y `DivOmit` anaden 2.157 clasificaciones binarias actuales cada una.
+El artefacto conserva al menos 37 meses por empresa y el contrato exige un
+minimo de 24, las ventanas oficiales, valores 0/1 y caveats exactos. Estas filas
+reemplazan en la salida final la evidencia SEC positiva incompleta: cero
+iniciaciones y 14 omisiones sin clases negativas. La sustitucion Yahoo sigue
+siendo reconstruida porque no demuestra codigos de distribucion ni PERMNO
+historico CRSP, y sus terminos permanecen pendientes de cierre.
 
 `OrgCap` no esta en la misma situacion: el artefacto contiene 689 numeros, pero
 todos estan marcados `stale_reference_only` y ninguno tiene
@@ -448,16 +456,20 @@ nunca transforma un fact ausente en cero.
 Como el trimestre SEC no revela el dia `exdt`, solo emite 1 cuando la fecha de
 formacion sigue dentro de los seis meses incluso suponiendo que el dividendo
 ocurrio el primer dia del trimestre. No emite ceros ni alarga el evento desde la
-fecha del filing. La salida futura sera `reconstructed_not_strict`; queda por
-medir cobertura y no se ha ejecutado.
+fecha del filing. El run CompanyFacts emitio cero valores, por lo que esta ruta
+queda como evidencia de origen pero no como salida final.
 
-`DivOmit` tambien queda preparado como evidencia positiva retrasada. Exige seis
+`DivOmit` tambien aporta evidencia positiva retrasada SEC. Exige seis
 trimestres contiguos con importe explicito positivo y un septimo trimestre con
 cero explicito; despues mantiene el 1 durante el mes de disponibilidad del
 filing y el siguiente. Esto reproduce la duracion de dos meses, pero no la fecha
 exacta: empieza al conocerse el filing y no desde el `exdt` ausente. No emite
-ceros. Por ello es un proxy reconstruido no estricto, pendiente de ejecucion y
-cobertura.
+ceros. El run CompanyFacts emitio 14 positivos. La consolidacion preparada
+conserva ambos resultados SEC como procedencia, pero prioriza las 2.157 clases
+0/1 por senal del artefacto OpenAP93: Yahoo aporta ex-dates y permite aplicar
+las ventanas mensuales de iniciacion y omision. La salida sigue reconstruida no
+estricta porque Yahoo no prueba codigos CRSP ni identidad PERMNO historica y sus
+terminos aun requieren cierre.
 
 `DivSeason` queda preparada solo para la fraccion con facts SEC directos de uno
 a 45 dias. Exige cuatro eventos regulares para frecuencia trimestral o tres
