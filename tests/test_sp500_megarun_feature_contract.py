@@ -52,10 +52,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 141)]
+    ] == [f"F{index:03d}" for index in range(1, 151)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[140:]
+        for lane in feature_contract.lanes[150:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -273,6 +273,33 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "observable_threshold",
     )
     assert all(lane.minimum_history >= 63 for lane in nonlinear_lanes)
+    predictive_lanes = feature_contract.lanes[140:150]
+    assert predictive_lanes[0].parameter_space["kind"] == (
+        "ar",
+        "arma",
+        "distributed_regression",
+    )
+    assert "known at decision t" in predictive_lanes[0].formula
+    assert predictive_lanes[1].parameter_space["kind"] == ("var", "vecm")
+    assert predictive_lanes[2].parameter_space["approved_feature_set"] == (
+        "core_causal_5",
+    )
+    assert "F003,F015,F021,F032,F039" in predictive_lanes[2].formula
+    assert predictive_lanes[4].parameter_space["kind"] == (
+        "linear",
+        "rbf",
+        "polynomial",
+    )
+    assert predictive_lanes[5].parameter_space["kind"] == (
+        "random_forest",
+        "extra_trees",
+    )
+    assert predictive_lanes[8].parameter_space["kind"] == (
+        "reservoir",
+        "small_rnn",
+    )
+    assert predictive_lanes[9].parameter_space["kind"] == ("attention", "moe")
+    assert all(lane.minimum_history >= 126 for lane in predictive_lanes)
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:
