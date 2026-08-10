@@ -216,6 +216,24 @@ def test_loader_validates_transport_and_normalizes_real_workbook_schema(
     }
 
 
+def test_loader_ignores_trailing_columns_after_frozen_twelve_column_schema(
+    tmp_path: Path,
+) -> None:
+    workbook = tmp_path / "IPO-age.xlsx"
+    row = (*_sample_rows()[0], "official trailing note")
+    _write_workbook(workbook, [row], headers=(*HEADERS, "Notes"))
+
+    rows, rejected, summary = load_field_ritter_ipo_workbook(
+        workbook,
+        _manifest(workbook),
+    )
+
+    assert rejected.empty
+    assert len(rows) == 1
+    assert rows.loc[0, "ticker"] == "AAPL"
+    assert summary["normalized_rows"] == 1
+
+
 def test_loader_rejects_tampered_nonofficial_or_schema_drifted_input(
     tmp_path: Path,
 ) -> None:
