@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -122,7 +123,7 @@ def _worker_result(
     wave: int = 0,
     fingerprint: str | None = None,
     replicate_override: int | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     from aurora.infra.sp500_megarun.dehb_campaign_runtime import build_job_payload
 
     payload = build_job_payload(

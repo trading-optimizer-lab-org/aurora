@@ -124,16 +124,16 @@ def _write_snapshot(root: Path) -> Path:
         }
         for sheet, base in base_levels.items():
             if sheet in {"RGDP", "HOUSING"}:
-                values = (base, base * 1.006, base * 1.012)
+                forecast_values = (base, base * 1.006, base * 1.012)
             else:
-                values = (base, base + 0.05, base + 0.1)
+                forecast_values = (base, base + 0.05, base + 0.1)
             spf_rows.append(
                 {
                     "0": str(year),
                     "1": quarter,
-                    "2": values[0],
-                    "3": values[1],
-                    "4": values[2],
+                    "2": forecast_values[0],
+                    "3": forecast_values[1],
+                    "4": forecast_values[2],
                     "source_sheet": sheet,
                     "resource_id": "spf_median_level",
                     "date": survey.start_time,

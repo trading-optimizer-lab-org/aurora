@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -31,7 +32,7 @@ def _baseline_parameters(lane_id: str) -> dict[str, object]:
     space = _frozen_space(lane_id)
     baseline = {name: values[0] for name, values in space.items()}
     if "window" in baseline:
-        windows = [int(value) for value in space["window"]]
+        windows = [int(cast(int, value)) for value in space["window"]]
         baseline["window"] = min(
             (value for value in windows if value >= 20), default=max(windows)
         )

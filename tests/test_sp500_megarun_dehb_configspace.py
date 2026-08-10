@@ -49,8 +49,10 @@ class _FakeConfigurationSpace:
         for item in items:
             if isinstance(item, _FakeCategoricalHyperparameter):
                 self.hyperparameters.append(item)
-            else:
+            elif isinstance(item, _FakeForbiddenAndConjunction):
                 self.forbidden_clauses.append(item)
+            else:
+                raise TypeError(f"unsupported fake ConfigSpace item: {item!r}")
 
     def __getitem__(self, name: str) -> _FakeCategoricalHyperparameter:
         return next(item for item in self.hyperparameters if item.name == name)

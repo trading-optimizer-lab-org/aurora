@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import cast
 
 import pandas as pd
 
@@ -63,7 +64,7 @@ def test_warmup_only_differences_do_not_make_a_choice_active() -> None:
                 "date": pd.to_datetime(["1997-12-31", "1998-01-02", "1999-01-04"]),
                 "observed_at": pd.to_datetime(["1997-12-30", "1998-01-01", "1999-01-03"]),
                 "available_at": pd.to_datetime(["1997-12-31", "1998-01-02", "1999-01-04"]),
-                "value": [float(configuration["window"]), 1.0, 2.0],
+                "value": [float(cast(int, configuration["window"])), 1.0, 2.0],
             }
         )
 
