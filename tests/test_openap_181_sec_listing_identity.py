@@ -12,6 +12,7 @@ from aurora.research.openap_181.sec_listing_identity import (
     extract_sec_listing_observations,
     filter_market_bars_by_sec_identity,
     normalize_sec_notes_listing_facts,
+    parse_current_sec_identity_response,
 )
 
 
@@ -122,6 +123,36 @@ def test_current_sec_universe_rejects_unofficial_or_future_provenance() -> None:
         )
 
 
+def test_current_sec_identity_parser_accepts_direct_and_audited_readthrough() -> None:
+    direct = (
+        b'{"fields":["cik","name","tickers","exchanges"],'
+        b'"data":[[320193,"Apple Inc.",["AAPL"],["Nasdaq"]]]}'
+    )
+    readthrough = b"\n".join(
+        [
+            b"Title: SEC current company tickers",
+            b"Markdown Content:",
+            b"```json",
+            direct,
+            b"```",
+        ]
+    )
+
+    assert parse_current_sec_identity_response(
+        direct,
+        access_method="sec_official_direct",
+    ) == parse_current_sec_identity_response(
+        readthrough,
+        access_method="sec_via_jina_readthrough",
+    )
+
+    with pytest.raises(ValueError, match="marker"):
+        parse_current_sec_identity_response(
+            direct,
+            access_method="sec_via_jina_readthrough",
+        )
+
+
 def test_exchange_switch_workflow_acquires_direct_official_sec_identity() -> None:
     workflow = (
         ROOT / ".github" / "workflows" / "openap-149-sec-exchange-switch.yml"
@@ -131,6 +162,11 @@ def test_exchange_switch_workflow_acquires_direct_official_sec_identity() -> Non
     assert "recover_openap_market_security_master.py" not in workflow
     assert "--current-sec-identity-json" in workflow
     assert "--identity-retrieved-at" in workflow
+    assert "--identity-transport-manifest" in workflow
+    assert (
+        "https://r.jina.ai/http://www.sec.gov/files/"
+        "company_tickers_exchange.json"
+    ) in workflow
     assert 'default: "2026-08-10T23:59:59Z"' in workflow
 
 
