@@ -312,8 +312,13 @@ def build_current_sec_universe(
     if not isinstance(fields, list) or not isinstance(data, list):
         raise SecListingIdentityError("SEC current identity payload has no table")
     field_names = [str(field).strip().lower() for field in fields]
-    required = {"cik", "name", "tickers", "exchanges"}
-    if not required.issubset(field_names) or len(field_names) != len(fields):
+    singular_schema = {"cik", "name", "ticker", "exchange"}
+    array_schema = {"cik", "name", "tickers", "exchanges"}
+    if singular_schema.issubset(field_names):
+        schema_mode = "one_security_per_row"
+    elif array_schema.issubset(field_names):
+        schema_mode = "issuer_arrays"
+    else:
         raise SecListingIdentityError(
             "SEC current identity payload has an invalid schema"
         )
@@ -324,11 +329,15 @@ def build_current_sec_universe(
         if not isinstance(raw, list) or len(raw) != len(field_names):
             raise SecListingIdentityError(
                 "SEC current identity payload contains a malformed row"
-            )
+        )
         record = dict(zip(field_names, raw, strict=True))
         cik = _normalize_cik(record.get("cik"))
-        tickers = record.get("tickers")
-        exchanges = record.get("exchanges")
+        if schema_mode == "one_security_per_row":
+            tickers = [record.get("ticker")]
+            exchanges = [record.get("exchange")]
+        else:
+            tickers = record.get("tickers")
+            exchanges = record.get("exchanges")
         if isinstance(tickers, str):
             tickers = [tickers]
         if isinstance(exchanges, str):
