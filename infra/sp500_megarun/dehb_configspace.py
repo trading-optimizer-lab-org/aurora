@@ -163,6 +163,11 @@ def _forbidden_parameter_pairs(
             for rule in ("always_long", "always_short")
             for hold in space["hold"][1:]
         )
+    if lane.lane_id == "F069":
+        pairs.extend(
+            ("distribution", "normal", "student_df", student_df)
+            for student_df in space["student_df"][1:]
+        )
     return tuple(pairs)
 
 

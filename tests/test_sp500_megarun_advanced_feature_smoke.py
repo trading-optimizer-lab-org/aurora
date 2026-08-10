@@ -65,8 +65,16 @@ def test_advanced_smoke_builds_f061_f070_train_only_artifacts(tmp_path: Path) ->
     assert report["empty_lanes"] == []
     assert report["exact_duplicate_groups"] == []
     assert report["near_duplicate_pairs"] == []
+    assert report["parameter_choice_audit"]["ready"] is True
+    assert report["parameter_choice_audit"]["expected_choice_probe_count"] == 136
+    assert report["parameter_choice_audit"]["choice_probe_count"] == 136
+    assert report["parameter_choice_audit"]["failed_probes"] == []
+    assert report["parameter_choice_audit"]["inactive_choice_groups"] == []
+    assert report["parameter_choice_audit"]["validation_opened"] is False
+    assert report["parameter_choice_audit"]["locked_opened"] is False
     assert (tmp_path / "out" / "features" / "F061.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F070.parquet").is_file()
+    assert (tmp_path / "out" / "parameter_choice_audit_F061_F070.json").is_file()
 
 
 def test_advanced_smoke_requires_the_physical_train_partition(tmp_path: Path) -> None:

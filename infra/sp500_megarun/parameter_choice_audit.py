@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 import hashlib
+import json
 from typing import Any
 
 import numpy as np
@@ -48,6 +49,7 @@ def audit_frozen_parameter_choices(
     failures: list[dict[str, str]] = []
     coverage_limited: list[dict[str, Any]] = []
     signatures: dict[tuple[str, str], dict[str, list[Any]]] = {}
+    evaluation_cache: dict[tuple[str, str], pd.DataFrame] = {}
     maximum_output_date = pd.Timestamp.min
 
     for lane_id in lane_ids:
@@ -60,7 +62,20 @@ def audit_frozen_parameter_choices(
                     configuration = repair(lane_id, parameter, configuration)
                 probe_id = f"{lane_id}:{parameter}:{choice!r}"
                 try:
-                    output = evaluator(lane_id, configuration)
+                    configuration_key = (
+                        lane_id,
+                        json.dumps(
+                            configuration,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                            allow_nan=False,
+                        ),
+                    )
+                    if configuration_key not in evaluation_cache:
+                        evaluation_cache[configuration_key] = evaluator(
+                            lane_id, configuration
+                        )
+                    output = evaluation_cache[configuration_key]
                     output_dates = pd.to_datetime(output["date"], errors="raise")
                     available_at = pd.to_datetime(output["available_at"], errors="raise")
                     observed_at = pd.to_datetime(output["observed_at"], errors="raise")
@@ -135,6 +150,8 @@ def audit_frozen_parameter_choices(
         "expected_years": list(years),
         "expected_choice_probe_count": expected,
         "choice_probe_count": len(records),
+        "unique_configuration_evaluation_count": len(evaluation_cache),
+        "cache_hit_count": len(records) - len(evaluation_cache),
         "failed_probes": failures,
         "coverage_limited_probes": coverage_limited,
         "inactive_choice_groups": inactive_groups,
