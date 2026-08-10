@@ -168,7 +168,58 @@ def extract_rendered_realestate_inputs(report_text: object) -> list[dict[str, An
     return extracted
 
 
+def build_rendered_realestate_evidence(
+    *,
+    selected_filing: dict[str, Any],
+    report_metadata: dict[str, Any],
+    report_text: object,
+) -> dict[str, Any]:
+    """Bind parsed PP&E inputs to causal filing and transport provenance."""
+
+    parsed = extract_rendered_realestate_inputs(report_text)
+    records: list[dict[str, Any]] = []
+    for row in parsed:
+        records.append(
+            {
+                "cik": str(selected_filing["cik"]),
+                "accession_number": str(selected_filing["accession_number"]),
+                "form": str(selected_filing["form"]),
+                "report_date": str(selected_filing["report_date"]),
+                "filing_date": str(selected_filing["filing_date"]),
+                "available_at": str(selected_filing["accepted_at"]),
+                "formation_at": str(selected_filing["formation_at"]),
+                **row,
+                "report_filename": str(report_metadata["report_filename"]),
+                "source_url": str(report_metadata["source_url"]),
+                "access_url": str(report_metadata["access_url"]),
+                "access_method": str(report_metadata["access_method"]),
+                "source_sha256": str(report_metadata["sha256"]),
+                "source_size_bytes": int(report_metadata["size_bytes"]),
+            }
+        )
+
+    acquired = bool(records)
+    return {
+        "signal": "realestate",
+        "status": "raw_data_acquired" if acquired else "blocked_source_failure",
+        "raw_data_acquired": acquired,
+        "realestate_raw_computed": acquired,
+        "current_signal_computed": False,
+        "strict_score_eligible": False,
+        "fidelity": "reconstructed_not_strict",
+        "proxy_used": True,
+        "minimum_industry_observations": 5,
+        "remaining_blocker": (
+            "sic2_month_mean_requires_at_least_5_issuers"
+            if acquired
+            else "rendered_ppe_inputs_missing"
+        ),
+        "records": records,
+    }
+
+
 __all__ = [
+    "build_rendered_realestate_evidence",
     "extract_rendered_realestate_inputs",
     "locate_rendered_ppe_report",
 ]
