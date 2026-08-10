@@ -331,6 +331,19 @@ def test_current_event_routes_record_executed_batches() -> None:
     ]
 
 
+def test_divinit_route_records_executed_zero_value_batch() -> None:
+    routes = _module().load_target_routes(ROUTE_MATRIX).set_index("signal")
+    blocker = routes.loc["DivInit", "current_remaining_blocker"]
+
+    assert (
+        "companyfacts_run_31392473937_calculator_executed_current_value_count_0"
+        in blocker
+    )
+    assert "positive_event_evidence_coverage_insufficient" in blocker
+    assert "prepared_unexecuted" not in blocker
+    assert str(routes.loc["DivInit", "strict_score_eligible"]).lower() == "false"
+
+
 def test_io_short_interest_runner_uses_bounded_selective_institutional_recovery() -> None:
     runner = (ROOT / "scripts" / "run_openap_149_finra_short_interest.py").read_text(
         encoding="utf-8"
