@@ -206,6 +206,35 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
     assert (("window", 40), ("tail", 0.025)) in forbidden
 
 
+@pytest.mark.parametrize(
+    ("lane_id", "expected_count"),
+    [
+        ("F051", 4),
+        ("F055", 1),
+        ("F057", 5),
+        ("F058", 6),
+        ("F059", 2),
+        ("F060", 20),
+    ],
+)
+def test_conditionally_inactive_model_parameters_are_forbidden(
+    feature_contract,
+    lane_id: str,
+    expected_count: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    assert row.forbidden_configuration_count == expected_count
+    assert len(row.configspace.forbidden_clauses) == expected_count
+
+
 def test_manifest_freezes_fidelities_versions_boundaries_and_exact_choices(
     feature_contract,
 ) -> None:

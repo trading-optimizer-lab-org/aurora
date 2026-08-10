@@ -265,6 +265,25 @@ def test_f060_supports_every_frozen_control(rule: str) -> None:
     assert result["value"].notna().any()
 
 
+def test_f060_block_placebo_seeds_create_distinct_sequences() -> None:
+    api = _engine_api()
+    market, panels = _model_inputs(300)
+
+    sequences = {
+        tuple(
+            api.evaluate_model_lane(
+                "F060",
+                market,
+                panels,
+                {"rule": "block_placebo", "hold": 5, "seed": seed},
+            )["value"]
+        )
+        for seed in (17, 29, 43)
+    }
+
+    assert len(sequences) == 3
+
+
 def test_model_engine_rejects_validation_rows() -> None:
     api = _engine_api()
     market, panels = _model_inputs(20)

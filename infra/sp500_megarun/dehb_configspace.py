@@ -116,6 +116,53 @@ def _forbidden_parameter_pairs(
                     pairs.append(("window", window, "tail", tail))
                 else:
                     seen_effective_tails.add(effective_tail_count)
+    if lane.lane_id == "F051":
+        pairs.extend(
+            ("aggregation", aggregation, "normalization_window", window)
+            for aggregation in ("majority", "unanimity")
+            for window in space["normalization_window"][1:]
+        )
+    if lane.lane_id == "F055":
+        pairs.append(("kind", "causal_pelt", "reset", True))
+    if lane.lane_id == "F057":
+        pairs.extend(
+            ("model", "gam", "components", components)
+            for components in space["components"][1:]
+        )
+        pairs.extend(
+            ("model", "pls", parameter, choice)
+            for parameter in ("knots", "ridge")
+            for choice in space[parameter][1:]
+        )
+    if lane.lane_id == "F058":
+        pairs.extend(
+            ("model", "tree", parameter, choice)
+            for parameter in ("estimators", "learning_rate")
+            for choice in space[parameter][1:]
+        )
+        pairs.extend(
+            ("model", "boosted_stumps", "depth", depth)
+            for depth in space["depth"][1:]
+        )
+    if lane.lane_id == "F059":
+        pairs.extend(
+            (
+                ("logic", "identity", "depth", 3),
+                ("logic", "majority", "depth", 2),
+            )
+        )
+    if lane.lane_id == "F060":
+        pairs.extend(
+            ("rule", rule, "seed", seed)
+            for rule in space["rule"]
+            if rule != "block_placebo"
+            for seed in space["seed"][1:]
+        )
+        pairs.extend(
+            ("rule", rule, "hold", hold)
+            for rule in ("always_long", "always_short")
+            for hold in space["hold"][1:]
+        )
     return tuple(pairs)
 
 

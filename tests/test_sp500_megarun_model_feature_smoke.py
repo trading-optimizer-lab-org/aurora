@@ -84,8 +84,16 @@ def test_model_smoke_builds_f051_f060_train_only_artifacts(tmp_path: Path) -> No
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
     assert report["empty_lanes"] == []
+    assert report["parameter_choice_audit"]["ready"] is True
+    assert report["parameter_choice_audit"]["expected_choice_probe_count"] == 175
+    assert report["parameter_choice_audit"]["choice_probe_count"] == 175
+    assert report["parameter_choice_audit"]["failed_probes"] == []
+    assert report["parameter_choice_audit"]["inactive_choice_groups"] == []
+    assert report["parameter_choice_audit"]["validation_opened"] is False
+    assert report["parameter_choice_audit"]["locked_opened"] is False
     assert (tmp_path / "out" / "features" / "F051.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F060.parquet").is_file()
+    assert (tmp_path / "out" / "parameter_choice_audit_F051_F060.json").is_file()
 
 
 def test_model_smoke_requires_the_physical_train_partition(tmp_path: Path) -> None:

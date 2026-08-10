@@ -1091,7 +1091,8 @@ def _f060(market: pd.DataFrame, parameters: Mapping[str, Any]) -> tuple[pd.Serie
     elif rule == "block_placebo":
         seed = int(parameters.get("seed", 17))
         blocks = np.arange(len(market), dtype=np.int64) // hold
-        state = (blocks * 1103515245 + seed * 12345 + 12345) & 0x7FFFFFFF
+        state = (blocks * 1103515245 + seed * 2654435761 + 12345) & 0x7FFFFFFF
+        state ^= state >> 16
         desired = pd.Series(np.where(state % 2 == 0, 1.0, -1.0), index=market.index)
     else:
         raise ModelFeatureEngineError(f"UNKNOWN_CONTROL_RULE:{rule}")

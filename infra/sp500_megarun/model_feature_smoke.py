@@ -10,12 +10,19 @@ from typing import Any
 
 import pandas as pd
 
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.feature_audit import audit_feature_outputs
+from aurora.infra.sp500_megarun.feature_contract import (
+    load_and_validate_feature_contract,
+)
 from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_spy_decision_panel,
 )
 from aurora.infra.sp500_megarun.materializer import parquet_safe_frame
 from aurora.infra.sp500_megarun.model_feature_engine import evaluate_model_lane
+from aurora.infra.sp500_megarun.parameter_choice_audit import (
+    audit_frozen_parameter_choices,
+)
 
 
 class ModelFeatureSmokeError(ValueError):
@@ -26,6 +33,7 @@ _TRAIN_PARTITION = "train_snapshot_1993_2010"
 _SEARCH_START = pd.Timestamp("1998-01-01")
 _TRAIN_END = pd.Timestamp("2010-12-31")
 _EXECUTABLE_LANES = tuple(f"F{index:03d}" for index in range(51, 61))
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _sha256(path: Path) -> str:
@@ -54,6 +62,38 @@ def _load_simple_features(
             raise ModelFeatureSmokeError(f"SIMPLE_FEATURE_MISSING:{lane_id}")
         panels[lane_id] = pd.read_parquet(target)
     return panels
+
+
+def _repair_model_configuration(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    if lane_id == "F051" and parameter == "normalization_window":
+        configuration["aggregation"] = "weighted_vote"
+    if lane_id == "F055" and parameter == "reset":
+        configuration["kind"] = "cusum"
+    if lane_id == "F057":
+        if parameter == "components":
+            configuration["model"] = "pls"
+        if parameter in {"knots", "ridge"}:
+            configuration["model"] = "gam"
+    if lane_id == "F058":
+        if parameter == "depth":
+            configuration["model"] = "tree"
+        if parameter in {"estimators", "learning_rate"}:
+            configuration["model"] = "boosted_stumps"
+    if lane_id == "F059":
+        if parameter == "depth":
+            configuration["logic"] = "or"
+        if parameter == "logic" and configuration["logic"] == "majority":
+            configuration["depth"] = 3
+    if lane_id == "F060":
+        if parameter == "hold":
+            configuration["rule"] = "rev2"
+        if parameter == "seed":
+            configuration["rule"] = "block_placebo"
+    return configuration
 
 
 def build_model_feature_smoke(
@@ -176,6 +216,33 @@ def build_model_feature_smoke(
         search_start=_SEARCH_START,
         search_end=_TRAIN_END,
     )
+    data_contract = load_and_validate_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_free_data_240.json"
+    )
+    feature_contract = load_and_validate_feature_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_feature_contract_240.json",
+        data_contract,
+    )
+    expected_years = sorted(
+        set(
+            pd.to_datetime(market["date"], errors="raise")
+            .loc[lambda values: values.ge(_SEARCH_START)]
+            .dt.year
+        )
+    )
+    evaluation_panels = {**feature_panels, **outputs}
+    parameter_audit = audit_frozen_parameter_choices(
+        feature_contract,
+        lane_ids=_EXECUTABLE_LANES,
+        evaluator=lambda lane_id, configuration: evaluate_model_lane(
+            lane_id,
+            market,
+            evaluation_panels,
+            configuration,
+        ),
+        expected_years=expected_years,
+        repair=_repair_model_configuration,
+    )
 
     root = Path(output_dir)
     artifacts: dict[str, dict[str, object]] = {}
@@ -193,7 +260,7 @@ def build_model_feature_smoke(
         }
     report: dict[str, Any] = {
         "schema_version": 1,
-        "ready": bool(audit.ready),
+        "ready": bool(audit.ready and parameter_audit["ready"]),
         "scope": "technical_model_feature_smoke_train_only",
         "executable_lanes": list(_EXECUTABLE_LANES),
         "executable_lane_count": len(_EXECUTABLE_LANES),
@@ -208,10 +275,15 @@ def build_model_feature_smoke(
         "near_duplicate_pairs": [list(pair) for pair in audit.near_duplicate_pairs],
         "coverage": [asdict(item) for item in audit.coverage],
         "artifacts": artifacts,
+        "parameter_choice_audit": parameter_audit,
     }
     root.mkdir(parents=True, exist_ok=True)
     (root / "model_feature_smoke_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (root / "parameter_choice_audit_F051_F060.json").write_text(
+        json.dumps(parameter_audit, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return report
