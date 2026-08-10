@@ -226,7 +226,6 @@ def _f231(
     values = _numeric(
         source,
         (
-            "vintage_count",
             "resource_breadth",
             "monthly_breadth",
             "quarterly_breadth",
@@ -236,7 +235,6 @@ def _f231(
     )
     gap = source["date"].diff().dt.days.astype(float)
     choices = {
-        "vintage_count": values["vintage_count"],
         "resource_breadth": values["resource_breadth"],
         "release_gap": gap,
         "release_frequency": 365.25 / gap.replace(0.0, np.nan),

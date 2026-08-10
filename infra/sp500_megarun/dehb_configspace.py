@@ -1461,7 +1461,6 @@ def _forbidden_parameter_triplets(
     if lane.lane_id in {"F231", "F233", "F234"}:
         statistics_without_internal_change = {
             "F231": (
-                "vintage_count",
                 "resource_breadth",
                 "release_gap",
                 "release_frequency",

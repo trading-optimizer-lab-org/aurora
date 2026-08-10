@@ -201,8 +201,8 @@ def test_policy_treasury_smoke_builds_f221_f230_train_only_artifacts(
     assert len(report["coverage"]) == 10
     parameter_audit = report["parameter_choice_audit"]
     assert parameter_audit["ready"] is True
-    assert parameter_audit["expected_choice_probe_count"] == 199
-    assert parameter_audit["choice_probe_count"] == 199
+    assert parameter_audit["expected_choice_probe_count"] == 198
+    assert parameter_audit["choice_probe_count"] == 198
     assert parameter_audit["failed_probes"] == []
     assert parameter_audit["inactive_choice_groups"] == []
     assert all(

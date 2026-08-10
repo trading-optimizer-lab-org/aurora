@@ -189,8 +189,8 @@ def test_public_context_smoke_builds_f231_f240_train_only_artifacts(
     assert len(report["coverage"]) == 10
     parameter_audit = report["parameter_choice_audit"]
     assert parameter_audit["ready"] is True
-    assert parameter_audit["expected_choice_probe_count"] == 215
-    assert parameter_audit["choice_probe_count"] == 215
+    assert parameter_audit["expected_choice_probe_count"] == 212
+    assert parameter_audit["choice_probe_count"] == 212
     assert parameter_audit["failed_probes"] == []
     assert parameter_audit["inactive_choice_groups"] == []
     assert set(report["artifacts"]) == {f"F{i:03d}" for i in range(231, 241)}

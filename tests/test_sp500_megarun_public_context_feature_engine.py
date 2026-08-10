@@ -150,7 +150,7 @@ def _inputs() -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
 
 
 _VARIANTS = {
-    "F231": ("vintage_count", "resource_breadth", "release_gap", "release_frequency", "breadth_change", "freshness", "clustering_breadth"),
+    "F231": ("resource_breadth", "release_gap", "release_frequency", "breadth_change", "freshness", "clustering_breadth"),
     "F232": ("announcement_count", "announced_offering", "announcement_gap", "announcement_density", "weighted_maturity", "maturity_hhi", "lead_days", "cluster_pressure"),
     "F233": ("document_count", "publication_gap", "publication_density", "meeting_share", "statement_share", "minutes_share", "mix_entropy", "mix_change"),
     "F234": ("treasury_equity_divergence", "official_divergence", "divergence_change", "divergence_zscore", "direction_disagreement", "flow_ratio", "rolling_correlation"),

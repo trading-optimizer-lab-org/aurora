@@ -323,7 +323,7 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F220", 62),
         ("F221", 18),
         ("F222", 52),
-        ("F223", 64),
+        ("F223", 52),
         ("F224", 36),
         ("F225", 38),
         ("F226", 64),
@@ -331,7 +331,7 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F228", 78),
         ("F229", 14),
         ("F230", 0),
-        ("F231", 44),
+        ("F231", 18),
         ("F232", 54),
         ("F233", 84),
         ("F234", 76),
@@ -780,7 +780,7 @@ def test_f214_tail_is_active_only_for_shock_indicator_and_duration(
             12,
         ),
         ("F222", ("statement_gap_change",), 20),
-        ("F223", ("publication_lag_change",), 24),
+        ("F223", ("publication_lag_change",), 12),
         ("F225", ("offer_growth",), 30),
         ("F226", ("yield_change", "demand_change"), 24),
         (
@@ -876,7 +876,7 @@ def test_f221_f240_generic_normalization_parameters_are_not_duplicated(
 @pytest.mark.parametrize(
     ("lane_id", "active_statistics", "expected_triplets"),
     [
-        ("F231", ("breadth_change",), 36),
+        ("F231", ("breadth_change",), 10),
         ("F233", ("mix_change",), 28),
         ("F234", ("divergence_change",), 36),
     ],
@@ -926,6 +926,16 @@ def test_f230_keeps_window_and_change_lag_active_for_every_statistic(
     )
 
     assert row.forbidden_configuration_count == 0
+
+
+def test_physical_train_duplicates_are_removed_from_f223_and_f231(
+    feature_contract,
+) -> None:
+    lanes = {lane.lane_id: lane for lane in feature_contract.lanes}
+
+    assert lanes["F223"].parameter_space["change_lag"] == (1, 2)
+    assert lanes["F231"].parameter_space["change_lag"] == (1, 2)
+    assert "vintage_count" not in lanes["F231"].parameter_space["statistic"]
 
 
 def test_manifest_freezes_fidelities_versions_boundaries_and_exact_choices(
