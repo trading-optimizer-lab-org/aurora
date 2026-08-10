@@ -12,13 +12,21 @@ import pandas as pd
 
 from aurora.infra.sp500_megarun.characteristic_feature_engine import (
     evaluate_characteristic_family_batch,
+    evaluate_characteristic_lane,
 )
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.feature_audit import audit_feature_outputs
+from aurora.infra.sp500_megarun.feature_contract import (
+    load_and_validate_feature_contract,
+)
 from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_french_characteristic_panels,
     normalize_spy_decision_panel,
 )
 from aurora.infra.sp500_megarun.materializer import parquet_safe_frame
+from aurora.infra.sp500_megarun.parameter_choice_audit import (
+    audit_frozen_parameter_choices,
+)
 
 
 class CharacteristicFeatureSmokeError(ValueError):
@@ -30,6 +38,8 @@ _SEARCH_START = pd.Timestamp("1998-01-01")
 _TRAIN_END = pd.Timestamp("2010-12-31")
 _LANES = tuple(f"F{index:03d}" for index in range(151, 161))
 _DATASETS = ("D_SPY", "D_CALENDAR", "D_FRENCH_US")
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PARAMETER_AUDIT_START = pd.Timestamp("2004-01-01")
 _APPROVED_RESOURCES = (
     "size_daily",
     "book_to_market_daily",
@@ -52,6 +62,30 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _parameter_audit_inputs(
+    market: pd.DataFrame,
+    panels: dict[str, pd.DataFrame],
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    market_dates = pd.to_datetime(market["date"], errors="raise")
+    audit_market = market.loc[
+        market_dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+    ].reset_index(drop=True)
+    if not pd.DatetimeIndex(audit_market["date"]).year.astype(int).tolist().count(2010):
+        raise CharacteristicFeatureSmokeError("PARAMETER_AUDIT_2010_MISSING")
+    audit_panels: dict[str, pd.DataFrame] = {}
+    for resource, panel in panels.items():
+        dates = pd.to_datetime(panel["date"], errors="raise")
+        bounded = panel.loc[
+            dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+        ].reset_index(drop=True)
+        if bounded.empty:
+            raise CharacteristicFeatureSmokeError(
+                f"PARAMETER_AUDIT_PANEL_EMPTY:{resource}"
+            )
+        audit_panels[resource] = bounded
+    return audit_market, audit_panels
 
 
 def build_characteristic_feature_smoke(
@@ -112,6 +146,25 @@ def build_characteristic_feature_smoke(
         search_start=_SEARCH_START,
         search_end=_TRAIN_END,
     )
+    data_contract = load_and_validate_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_free_data_240.json"
+    )
+    feature_contract = load_and_validate_feature_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_feature_contract_240.json",
+        data_contract,
+    )
+    audit_market, audit_panels = _parameter_audit_inputs(market, panels)
+    parameter_audit = audit_frozen_parameter_choices(
+        feature_contract,
+        lane_ids=_LANES,
+        evaluator=lambda lane_id, configuration: evaluate_characteristic_lane(
+            lane_id,
+            audit_market,
+            audit_panels,
+            configuration,
+        ),
+        expected_years=(2010,),
+    )
 
     root = Path(output_dir)
     artifacts: dict[str, dict[str, object]] = {}
@@ -129,7 +182,9 @@ def build_characteristic_feature_smoke(
         }
     report = {
         "schema_version": 1,
-        "ready": bool(audit.ready and len(outputs) == 10),
+        "ready": bool(
+            audit.ready and parameter_audit["ready"] and len(outputs) == 10
+        ),
         "scope": "characteristic_portfolio_feature_smoke_train_only",
         "executable_lanes": list(_LANES),
         "executable_lane_count": 10,
@@ -158,10 +213,18 @@ def build_characteristic_feature_smoke(
         "near_duplicate_pairs": [list(pair) for pair in audit.near_duplicate_pairs],
         "coverage": [asdict(item) for item in audit.coverage],
         "artifacts": artifacts,
+        "parameter_choice_audit_scope": (
+            "physical_causal_tail_2004_2010"
+        ),
+        "parameter_choice_audit": parameter_audit,
     }
     root.mkdir(parents=True, exist_ok=True)
     (root / "characteristic_feature_smoke_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (root / "parameter_choice_audit_F151_F160.json").write_text(
+        json.dumps(parameter_audit, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
     return report
 

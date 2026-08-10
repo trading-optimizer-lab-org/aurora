@@ -153,6 +153,12 @@ def test_characteristic_smoke_builds_f151_f160_train_only_artifacts(
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
     assert report["empty_lanes"] == []
+    parameter_audit = report["parameter_choice_audit"]
+    assert parameter_audit["ready"] is True
+    assert parameter_audit["expected_choice_probe_count"] == 130
+    assert parameter_audit["choice_probe_count"] == 130
+    assert parameter_audit["failed_probes"] == []
+    assert parameter_audit["inactive_choice_groups"] == []
     assert (tmp_path / "out" / "features" / "F151.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F160.parquet").is_file()
 
@@ -215,3 +221,17 @@ def test_characteristic_smoke_cli_accepts_contract(
     )
 
     assert cli.main() == 0
+
+
+def test_characteristic_physical_smoke_has_an_isolated_dispatch_scope() -> None:
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "sp500-megarun-macro-feature-smoke-f032.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "- f151_f160" in workflow
+    assert "smoke_f151_f160:" in workflow
+    assert "inputs.scope == 'f151_f160'" in workflow
+    assert "timeout-minutes: 15" in workflow
