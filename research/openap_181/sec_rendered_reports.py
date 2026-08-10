@@ -37,7 +37,12 @@ def locate_rendered_ppe_report(filing_summary_text: object) -> str:
 
 def _plain_label(value: object) -> str:
     text = str(value).strip()
-    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    text = re.sub(
+        r"\[((?:[^\[\]]|\[[^\[\]]*\])*)\]"
+        r"\((?:[^()]|\([^()]*\))*\)",
+        r"\1",
+        text,
+    )
     return text.replace("**", "").strip()
 
 
