@@ -16,7 +16,7 @@ _PPE_REPORT_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"Property,?\s*Plant\s+and\s+Equipment\s*\(Details\)",
+        r"Property,?\s*Plant\s+(?:and|&)\s+Equipment\s*\(Details\)",
         re.IGNORECASE,
     ),
 )
@@ -98,6 +98,24 @@ def _markdown_rows(text: str) -> list[list[str]]:
     return rows
 
 
+def _words(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", _plain_label(value).lower()).strip()
+
+
+def _ppe_member_kind(label: str) -> str:
+    if label.startswith("buildings and land improvements"):
+        return "buildings_gross"
+    has_land = "land" in label
+    has_building = "building" in label
+    if has_land and has_building:
+        return "land_and_buildings_gross"
+    if has_land:
+        return "land_gross"
+    if has_building:
+        return "buildings_gross"
+    return ""
+
+
 def extract_rendered_realestate_inputs(report_text: object) -> list[dict[str, Any]]:
     """Extract exact OpenAP ``realestate`` inputs from one rendered PP&E table."""
 
@@ -105,10 +123,17 @@ def extract_rendered_realestate_inputs(report_text: object) -> list[dict[str, An
     header_index = -1
     periods: list[str] = []
     for index, cells in enumerate(rows):
-        parsed = [_period_end(cell) for cell in cells[1:]]
-        if parsed and all(value is not None for value in parsed):
+        first = _period_end(cells[0])
+        trailing = [_period_end(cell) for cell in cells[1:]]
+        if first is not None and trailing and all(
+            value is not None for value in trailing
+        ):
             header_index = index
-            periods = [str(value) for value in parsed]
+            periods = [first, *[str(value) for value in trailing]]
+            break
+        if trailing and all(value is not None for value in trailing):
+            header_index = index
+            periods = [str(value) for value in trailing]
             break
     if header_index < 0 or not periods:
         return []
@@ -123,36 +148,49 @@ def extract_rendered_realestate_inputs(report_text: object) -> list[dict[str, An
         }
         for _ in periods
     ]
-    current_member = ""
+    current_member_kind = ""
     for cells in rows[header_index + 1 :]:
         if len(cells) < len(periods) + 1:
             cells = cells + [""] * (len(periods) + 1 - len(cells))
         label = _plain_label(cells[0])
         normalized = re.sub(r"\s+", " ", label).strip().lower()
+        words = _words(label)
         if not normalized or set(normalized) <= {"-", " "}:
             continue
         row_values = [_number(cell) for cell in cells[1 : len(periods) + 1]]
         if all(value is None for value in row_values):
-            if "line items" not in normalized:
-                current_member = normalized
+            generic_ppe = words in {
+                "property plant and equipment",
+                "property plant and equipment abstract",
+                "property plant and equipment line items",
+            }
+            if not generic_ppe:
+                current_member_kind = _ppe_member_kind(words)
             continue
 
-        if re.fullmatch(
-            r"gross property,? plant and equipment", normalized
+        direct_component = _ppe_member_kind(words)
+        if words in {
+            "total property plant and equipment",
+            "total property plant and equipment at cost",
+        }:
+            key = "ppe_gross"
+        elif words in {
+            "gross property plant and equipment",
+            "property plant and equipment gross",
+            "total cost",
+        } or re.fullmatch(
+            r"property plant and equipment excluding equipment leased to "
+            r"others at cost",
+            words,
         ):
-            if not current_member:
-                key = "ppe_gross"
-            elif "land" in current_member and "building" in current_member:
-                key = "land_and_buildings_gross"
-            elif "land" in current_member:
-                key = "land_gross"
-            elif "building" in current_member:
-                key = "buildings_gross"
-            else:
-                continue
-        elif re.fullmatch(
-            r"(?:total )?property,? plant and equipment,? net", normalized
-        ):
+            key = current_member_kind or "ppe_gross"
+        elif direct_component and not words.startswith("property plant"):
+            key = direct_component
+        elif words in {
+            "property plant and equipment net",
+            "total property plant and equipment net",
+            "property plant and equipment less accumulated depreciation",
+        }:
             key = "ppe_net"
         else:
             continue
