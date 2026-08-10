@@ -268,6 +268,7 @@ def test_acquisition_matrix_quarantines_explicitly_unusable_current_rows() -> No
 def test_acquisition_matrix_allows_missing_optional_current_usable_flag() -> None:
     module = _module()
     undeclared = _current_rows().iloc[[0]].copy()
+    undeclared["current_usable"] = undeclared["current_usable"].astype("object")
     undeclared.loc[:, "current_usable"] = pd.NA
     formulas = pd.DataFrame([{"signal": "Cash", "formula_sha256": "a" * 64}])
 
