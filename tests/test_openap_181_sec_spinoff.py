@@ -122,6 +122,49 @@ def test_spinoff_candidates_require_causal_initial_form_10() -> None:
     assert candidates["security_id"].eq("US-SEC-0000000001-SPIN").all()
 
 
+def test_spinoff_candidates_accept_current_audited_sec_submission_sources() -> None:
+    submissions = pd.DataFrame(
+        [
+            {
+                **_submission(
+                    cik=1,
+                    accession="0000000001-25-000001",
+                    accepted_at="2025-04-01T12:00:00Z",
+                    form="10-12B",
+                    primary_document="spin-direct.htm",
+                ),
+                "source": "https://data.sec.gov/submissions/CIK0000000001.json",
+                "source_mode": "sec_official_api",
+            },
+            {
+                **_submission(
+                    cik=2,
+                    accession="0000000002-25-000001",
+                    accepted_at="2025-04-01T12:00:00Z",
+                    form="10-12G",
+                    primary_document="spin-readthrough.htm",
+                ),
+                "source": (
+                    "https://r.jina.ai/http://data.sec.gov/submissions/"
+                    "CIK0000000002.json"
+                ),
+                "source_mode": "sec_via_jina_readthrough",
+            },
+        ]
+    )
+
+    candidates = select_sec_spinoff_filing_candidates(
+        submissions,
+        _current_universe(),
+        formation_at=FORMATION_AT,
+    )
+
+    assert candidates["accession_number"].tolist() == [
+        "0000000001-25-000001",
+        "0000000002-25-000001",
+    ]
+
+
 def test_completion_detector_rejects_plans_and_requires_completed_event_date() -> None:
     assert detect_sec_spinoff_completion_date(
         "The proposed spin-off may not be completed on the expected terms."
