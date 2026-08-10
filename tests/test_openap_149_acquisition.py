@@ -554,7 +554,7 @@ def test_current_evidence_replacement_swaps_complete_signal_batches() -> None:
     assert unchanged.reset_index(drop=True).equals(primary.reset_index(drop=True))
 
 
-def test_consolidation_cli_includes_realestate_as_a_complete_signal_batch(
+def test_consolidation_cli_includes_realestate_and_audited_event_batches(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -621,11 +621,78 @@ def test_consolidation_cli_includes_realestate_as_a_complete_signal_batch(
         "observation_count": 7,
         "caveat": "reconstructed_not_strict",
     }
+    exchange_switch = {
+        **realestate,
+        "security_id": "US-SEC-0000000002-EXCH",
+        "ticker": "EXCH",
+        "cik": "2",
+        "signal": "ExchSwitch",
+        "formation_at": "2026-08-10T23:59:59Z",
+        "value": 1.0,
+        "source_id": "sec_edgar_notes|sec_company_tickers_exchange",
+        "source_url": "https://www.sec.gov/files/company_tickers_exchange.json",
+        "formula_id": "openap_exchswitch_current_exchange_lag_1_12",
+        "observation_count": 2,
+    }
+    indipo = {
+        **realestate,
+        "security_id": "US-SEC-0000000003-IPO",
+        "ticker": "IPO",
+        "cik": "3",
+        "signal": "IndIPO",
+        "formation_at": "2026-08-10T13:58:05Z",
+        "value": 1.0,
+        "source_id": "field_ritter_ipo|openfigi|sec_edgar",
+        "source_url": "https://site.warrington.ufl.edu/ritter/files/IPO-age.xlsx",
+        "formula_id": "openap_indipo_field_ritter_calendar_month_3_36",
+        "observation_count": 701,
+    }
+    ageipo = {
+        **indipo,
+        "security_id": "US-SEC-0000000005-AGEIPO",
+        "ticker": "AGEIPO",
+        "cik": "5",
+        "signal": "AgeIPO",
+        "value": float("nan"),
+        "fidelity_class": "unavailable",
+        "current_usable": False,
+        "formula_id": "openap_ageipo_field_ritter_year_age_3_36m_min100",
+        "reason_if_missing": "confirmed_recent_ipo_cohort_below_100",
+    }
+    rdipo = {
+        **indipo,
+        "security_id": "US-SEC-0000000006-RDIPO",
+        "ticker": "RDIPO",
+        "cik": "6",
+        "signal": "RDIPO",
+        "value": 0.0,
+        "formula_id": "openap_rdipo_field_ritter_sec_explicit_rd_zero_7_36m",
+        "observation_count": 700,
+    }
+    spinoff = {
+        **realestate,
+        "security_id": "US-SEC-0000000004-SPIN",
+        "ticker": "SPIN",
+        "cik": "4",
+        "signal": "Spinoff",
+        "formation_at": "2026-08-10T23:59:59Z",
+        "value": 1.0,
+        "source_id": "sec_edgar_submissions_and_filings",
+        "source_url": (
+            "https://www.sec.gov/Archives/edgar/data/4/"
+            "000000000425000001/spinoff.htm"
+        ),
+        "formula_id": "openap_spinoff_completed_event_age_le_24",
+        "observation_count": 1,
+    }
 
     current_93_root = tmp_path / "current_93"
     sec_root = tmp_path / "sec"
     finra_root = tmp_path / "finra"
     realestate_root = tmp_path / "realestate"
+    exchange_switch_root = tmp_path / "exchange_switch"
+    field_ritter_root = tmp_path / "field_ritter"
+    spinoff_root = tmp_path / "spinoff"
     formula_root = tmp_path / "formulas"
     output_root = tmp_path / "output"
     for root in (
@@ -633,6 +700,9 @@ def test_consolidation_cli_includes_realestate_as_a_complete_signal_batch(
         sec_root,
         finra_root,
         realestate_root,
+        exchange_switch_root,
+        field_ritter_root,
+        spinoff_root,
         formula_root,
     ):
         root.mkdir()
@@ -647,6 +717,18 @@ def test_consolidation_cli_includes_realestate_as_a_complete_signal_batch(
     )
     pd.DataFrame([realestate], columns=columns).to_csv(
         realestate_root / "openap_149_realestate_current.csv", index=False
+    )
+    pd.DataFrame([exchange_switch], columns=columns).to_csv(
+        exchange_switch_root / "openap_149_sec_exch_switch_current.csv",
+        index=False,
+    )
+    pd.DataFrame([ageipo, indipo, rdipo], columns=columns).to_csv(
+        field_ritter_root / "openap_149_field_ritter_ipo_current.csv",
+        index=False,
+    )
+    pd.DataFrame([spinoff], columns=columns).to_csv(
+        spinoff_root / "openap_149_sec_spinoff_current.csv",
+        index=False,
     )
     routes = _module().load_target_routes(ROUTE_MATRIX)
     pd.DataFrame(
@@ -672,6 +754,12 @@ def test_consolidation_cli_includes_realestate_as_a_complete_signal_batch(
             str(finra_root),
             "--realestate-current-root",
             str(realestate_root),
+            "--exchange-switch-current-root",
+            str(exchange_switch_root),
+            "--field-ritter-current-root",
+            str(field_ritter_root),
+            "--spinoff-current-root",
+            str(spinoff_root),
             "--formula-root",
             str(formula_root),
             "--signals-93",
@@ -684,8 +772,14 @@ def test_consolidation_cli_includes_realestate_as_a_complete_signal_batch(
             "https://github.com/org/repo/actions/runs/3",
             "--realestate-current-run-url",
             "https://github.com/org/repo/actions/runs/4",
-            "--evidence-run-url",
+            "--exchange-switch-current-run-url",
             "https://github.com/org/repo/actions/runs/5",
+            "--field-ritter-current-run-url",
+            "https://github.com/org/repo/actions/runs/6",
+            "--spinoff-current-run-url",
+            "https://github.com/org/repo/actions/runs/7",
+            "--evidence-run-url",
+            "https://github.com/org/repo/actions/runs/8",
             "--evidence-artifact",
             "openap-149-current-consolidated-results",
             "--output-dir",
@@ -712,6 +806,29 @@ def test_consolidation_cli_includes_realestate_as_a_complete_signal_batch(
         "https://github.com/org/repo/actions/runs/4"
     )
     assert "openap_149_realestate_current.csv" in manifest["source_files"]
+    expected_event_runs = {
+        "ExchSwitch": "https://github.com/org/repo/actions/runs/5",
+        "IndIPO": "https://github.com/org/repo/actions/runs/6",
+        "RDIPO": "https://github.com/org/repo/actions/runs/6",
+        "Spinoff": "https://github.com/org/repo/actions/runs/7",
+    }
+    for signal, run_url in expected_event_runs.items():
+        event = matrix.set_index("signal").loc[signal]
+        assert bool(event["data_acquired"])
+        assert bool(event["current_value_calculated"])
+        assert event["current_value_count"] == 1
+        assert event["fidelity"] == "reconstructed"
+        assert event["source_evidence_run"] == run_url
+        assert not bool(event["strict_score_eligible"])
+    ageipo_event = matrix.set_index("signal").loc["AgeIPO"]
+    assert bool(ageipo_event["data_acquired"])
+    assert not bool(ageipo_event["current_value_calculated"])
+    assert ageipo_event["current_value_count"] == 0
+    assert ageipo_event["status"] == "blocked_coverage"
+    assert ageipo_event["source_evidence_run"] == (
+        "https://github.com/org/repo/actions/runs/6"
+    )
+    assert not bool(ageipo_event["strict_score_eligible"])
 
 
 def test_consolidation_workflow_downloads_and_verifies_realestate_evidence() -> None:
@@ -737,6 +854,56 @@ def test_consolidation_workflow_downloads_and_verifies_realestate_evidence() -> 
     assert 'realestate["current_value_count"] == 7' in verify
     assert 'realestate["fidelity"] == "reconstructed"' in verify
     assert 'not bool(realestate["strict_score_eligible"])' in verify
+
+
+def test_consolidation_workflow_downloads_audited_event_batches() -> None:
+    workflow_path = ROOT / ".github" / "workflows" / "openap-149-consolidate.yml"
+    workflow = yaml.load(
+        workflow_path.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+    dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    expected = {
+        "exchange_switch_current_run_id": (
+            "Download SEC exchange-switch current values",
+            "openap-149-sec-exchange-switch-current",
+            "inputs/exchange_switch_current",
+            "exchange-switch-current",
+        ),
+        "field_ritter_current_run_id": (
+            "Download Field-Ritter IPO current values",
+            "openap-149-field-ritter-ipo-current",
+            "inputs/field_ritter_current",
+            "field-ritter-current",
+        ),
+        "spinoff_current_run_id": (
+            "Download SEC Spinoff current values",
+            "openap-149-sec-spinoff-current",
+            "inputs/spinoff_current",
+            "spinoff-current",
+        ),
+    }
+    steps = {
+        step["name"]: step
+        for step in workflow["jobs"]["consolidate"]["steps"]
+        if "name" in step
+    }
+    command = steps["Consolidate latest current evidence"]["run"]
+    for input_name, (step_name, artifact_name, path, flag) in expected.items():
+        assert input_name in dispatch_inputs
+        download = steps[step_name]
+        assert download["with"]["name"] == artifact_name
+        assert download["with"]["path"] == path
+        assert download["with"]["run-id"] == f"${{{{ inputs.{input_name} }}}}"
+        assert f"--{flag}-root {path}" in command
+        assert f"--{flag}-run-url" in command
+
+    verify = steps["Verify consolidated result"]["run"]
+    assert 'exch_switch["current_value_count"] == 2869' in verify
+    assert 'indipo["current_value_count"] == 701' in verify
+    assert 'rdipo["current_value_count"] == 700' in verify
+    assert 'spinoff["current_value_count"] == 8' in verify
 
 
 def test_consolidation_workflow_verifies_causal_firmage_evidence() -> None:
