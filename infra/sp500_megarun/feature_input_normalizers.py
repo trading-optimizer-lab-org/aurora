@@ -402,9 +402,13 @@ def _aggregate_cftc_mode(frame: pd.DataFrame, *, suffix: str) -> pd.DataFrame:
             "open_interest": _numeric(frame, "Open Interest (All)"),
             "noncommercial_long": _numeric(frame, "Noncommercial Positions-Long (All)"),
             "noncommercial_short": _numeric(frame, "Noncommercial Positions-Short (All)"),
+            "noncommercial_spreading": _optional_numeric(
+                frame, "Noncommercial Positions-Spreading (All)"
+            ),
             "reportable_short": _optional_numeric(frame, "Total Reportable Positions-Short (All)"),
             "commercial_long": _numeric(frame, "Commercial Positions-Long (All)"),
             "commercial_short": _numeric(frame, "Commercial Positions-Short (All)"),
+            "trader_count": _optional_numeric(frame, "Traders-Total (All)"),
             "concentration_long": _numeric(frame, "Concentration-Net LT =4 TDR-Long (All)"),
             "concentration_short": _numeric(frame, "Concentration-Net LT =4 TDR-Short (All)"),
             "concentration8_long": _optional_numeric(
@@ -444,7 +448,11 @@ def _aggregate_cftc_mode(frame: pd.DataFrame, *, suffix: str) -> pd.DataFrame:
             )
             / denominator,
             f"noncommercial_short_pct_oi{suffix}": grouped["noncommercial_short"] / denominator,
+            f"noncommercial_spreading_pct_oi{suffix}": (
+                grouped["noncommercial_spreading"] / denominator
+            ),
             f"reportable_short_pct_oi{suffix}": grouped["reportable_short"] / denominator,
+            f"trader_count{suffix}": grouped["trader_count"],
             f"top4_net_concentration{suffix}": (
                 grouped["concentration_long_weighted"] - grouped["concentration_short_weighted"]
             )
@@ -501,6 +509,76 @@ def normalize_cftc_sp500_panel(
         panel = futures.merge(combined, on="date", how="outer", validate="one_to_one")
     return _project_to_decision_session(
         panel,
+        policy="friday_after_tuesday",
+        sessions=sessions,
+    )
+
+
+def normalize_cftc_cross_market_fallback_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Build the frozen cross-market COT fallback after Friday publication."""
+
+    cftc = _validated_dates(frame, dataset_id="D_CBOE_PCR")
+    cftc.columns = [str(column).strip() for column in cftc.columns]
+    required = {
+        "Market and Exchange Names",
+        "Open Interest (All)",
+        "Commercial Positions-Long (All)",
+        "Commercial Positions-Short (All)",
+        "Noncommercial Positions-Long (All)",
+        "Noncommercial Positions-Short (All)",
+    }
+    missing = sorted(required - set(cftc.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"CFTC_FALLBACK_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    if "resource_id" in cftc:
+        cftc = cftc.loc[
+            cftc["resource_id"].astype(str).str.contains("futures_only", case=False)
+        ].copy()
+    if cftc.empty:
+        raise FeatureInputNormalizerError("CFTC_FALLBACK_FUTURES_ONLY_MISSING")
+    open_interest = _numeric(cftc, "Open Interest (All)").replace(0.0, np.nan)
+    commercial = (
+        _numeric(cftc, "Commercial Positions-Long (All)")
+        - _numeric(cftc, "Commercial Positions-Short (All)")
+    ) / open_interest
+    noncommercial = (
+        _numeric(cftc, "Noncommercial Positions-Long (All)")
+        - _numeric(cftc, "Noncommercial Positions-Short (All)")
+    ) / open_interest
+    numeric = pd.DataFrame(
+        {
+            "date": cftc["date"],
+            "market": cftc["Market and Exchange Names"].astype(str).str.strip(),
+            "commercial": commercial,
+            "noncommercial": noncommercial,
+        }
+    ).dropna()
+    numeric = numeric.drop_duplicates(["date", "market"], keep="last")
+    numeric["commercial_positive"] = numeric["commercial"].gt(0.0).astype(float)
+    numeric["noncommercial_positive"] = numeric["noncommercial"].gt(0.0).astype(float)
+    numeric["disagreement"] = (numeric["commercial"] - numeric["noncommercial"]).abs()
+    grouped = numeric.groupby("date", as_index=False, sort=True).agg(
+        commercial_breadth=("commercial_positive", "mean"),
+        noncommercial_breadth=("noncommercial_positive", "mean"),
+        positioning_disagreement=("disagreement", "mean"),
+        commercial_dispersion=("commercial", lambda value: value.std(ddof=0)),
+        market_count=("market", "nunique"),
+    )
+    grouped["commercial_breadth"] -= 0.5
+    grouped["noncommercial_breadth"] -= 0.5
+    grouped["breadth_gap"] = (
+        grouped["commercial_breadth"] - grouped["noncommercial_breadth"]
+    )
+    if grouped.empty:
+        raise FeatureInputNormalizerError("EMPTY_CFTC_CROSS_MARKET_FALLBACK")
+    return _project_to_decision_session(
+        grouped,
         policy="friday_after_tuesday",
         sessions=sessions,
     )
@@ -2470,6 +2548,7 @@ __all__ = [
     "normalize_consumer_credit_panel",
     "normalize_credit_spread_panel",
     "normalize_credit_money_panel",
+    "normalize_cftc_cross_market_fallback_panel",
     "normalize_cftc_sp500_panel",
     "normalize_financial_conditions_panel",
     "normalize_uncertainty_panel",

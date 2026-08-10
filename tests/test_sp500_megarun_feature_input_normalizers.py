@@ -474,6 +474,77 @@ def test_cftc_panel_filters_sp500_and_waits_until_friday() -> None:
     assert result.loc[0, "top8_net_concentration"] == pytest.approx(-0.1)
 
 
+def test_cftc_panel_exposes_spreading_traders_and_combined_modes() -> None:
+    api = _normalizer_api()
+    common = {
+        "date": pd.Timestamp("2010-01-05"),
+        "Market and Exchange Names": (
+            "E-MINI S&P 500 STOCK INDEX - CHICAGO MERCANTILE EXCHANGE"
+        ),
+        "Open Interest (All)": 1_000,
+        "Noncommercial Positions-Long (All)": 400,
+        "Noncommercial Positions-Short (All)": 300,
+        "Noncommercial Positions-Spreading (All)": 120,
+        "Commercial Positions-Long (All)": 200,
+        "Commercial Positions-Short (All)": 350,
+        "Total Reportable Positions-Short (All)": 650,
+        "Traders-Total (All)": 85,
+        "Concentration-Net LT =4 TDR-Long (All)": 25,
+        "Concentration-Net LT =4 TDR-Short (All)": 30,
+        "Concentration-Net LT =8 TDR-Long (All)": 40,
+        "Concentration-Net LT =8 TDR-Short (All)": 50,
+    }
+    combined = {
+        **common,
+        "Open Interest (All)": 1_200,
+        "Noncommercial Positions-Spreading (All)": 180,
+        "Traders-Total (All)": 95,
+        "resource_id": "legacy_futures_options_late:2010",
+    }
+    futures = {**common, "resource_id": "legacy_futures_only:2010"}
+
+    result = api.normalize_cftc_sp500_panel(
+        pd.DataFrame([futures, combined]), sessions=_sessions()
+    )
+
+    assert result.loc[0, "noncommercial_spreading_pct_oi"] == pytest.approx(0.12)
+    assert result.loc[0, "trader_count"] == pytest.approx(85.0)
+    assert result.loc[0, "noncommercial_spreading_pct_oi_combined"] == pytest.approx(0.15)
+    assert result.loc[0, "trader_count_combined"] == pytest.approx(95.0)
+
+
+def test_cftc_cross_market_fallback_builds_breadth_and_disagreement() -> None:
+    api = _normalizer_api()
+    rows = []
+    for market, commercial, noncommercial in (
+        ("E-MINI S&P 500 STOCK INDEX - CHICAGO MERCANTILE EXCHANGE", (350, 200), (250, 300)),
+        ("CRUDE OIL - NEW YORK MERCANTILE EXCHANGE", (180, 260), (320, 220)),
+    ):
+        rows.append(
+            {
+                "date": pd.Timestamp("2010-01-05"),
+                "resource_id": "legacy_futures_only:2010",
+                "Market and Exchange Names": market,
+                "Open Interest (All)": 1_000,
+                "Commercial Positions-Long (All)": commercial[0],
+                "Commercial Positions-Short (All)": commercial[1],
+                "Noncommercial Positions-Long (All)": noncommercial[0],
+                "Noncommercial Positions-Short (All)": noncommercial[1],
+            }
+        )
+
+    result = api.normalize_cftc_cross_market_fallback_panel(
+        pd.DataFrame(rows), sessions=_sessions()
+    )
+
+    assert result.loc[0, "available_at"] == pd.Timestamp("2010-01-08")
+    assert result.loc[0, "commercial_breadth"] == pytest.approx(0.0)
+    assert result.loc[0, "noncommercial_breadth"] == pytest.approx(0.0)
+    assert result.loc[0, "breadth_gap"] == pytest.approx(0.0)
+    assert result.loc[0, "positioning_disagreement"] == pytest.approx(0.19)
+    assert result.loc[0, "commercial_dispersion"] == pytest.approx(0.115)
+
+
 def test_rate_curve_uses_only_official_business_frequency_maturities() -> None:
     api = _normalizer_api()
     frame = pd.DataFrame(
