@@ -9,9 +9,7 @@ import pytest
 
 def _normalizer_api():
     try:
-        return importlib.import_module(
-            "aurora.infra.sp500_megarun.feature_input_normalizers"
-        )
+        return importlib.import_module("aurora.infra.sp500_megarun.feature_input_normalizers")
     except ModuleNotFoundError as exc:  # pragma: no cover - removed by implementation
         pytest.fail(f"feature input normalizers are missing: {exc}")
 
@@ -169,12 +167,8 @@ def test_cboe_panel_rejects_recalculated_vix_before_public_methodology() -> None
 
     result = api.normalize_cboe_vol_panel(vix, vxo, sessions=sessions)
 
-    pre_methodology = result.loc[
-        result["date"].eq(pd.Timestamp("1998-01-06"))
-    ].iloc[0]
-    introduction = result.loc[
-        result["date"].eq(pd.Timestamp("2003-09-23"))
-    ].iloc[0]
+    pre_methodology = result.loc[result["date"].eq(pd.Timestamp("1998-01-06"))].iloc[0]
+    introduction = result.loc[result["date"].eq(pd.Timestamp("2003-09-23"))].iloc[0]
     assert pre_methodology["vix_close"] == pytest.approx(18.0)
     assert pre_methodology["vxo_close"] == pytest.approx(18.0)
     assert introduction["vix_close"] == pytest.approx(21.0)
@@ -233,9 +227,7 @@ def test_policy_rate_panel_uses_only_the_official_effective_funds_series() -> No
     api = _normalizer_api()
     frame = pd.DataFrame(
         {
-            "date": pd.to_datetime(
-                ["2010-01-04", "2010-01-04", "2010-01-05"]
-            ),
+            "date": pd.to_datetime(["2010-01-04", "2010-01-04", "2010-01-05"]),
             "series_id": ["RIFSPFF_N.B", "OTHER_RATE", "RIFSPFF_N.B"],
             "value": [0.12, 99.0, 0.13],
         }
@@ -259,9 +251,7 @@ def test_monetary_liquidity_panel_applies_h3_and_h6_release_delays() -> None:
     sessions = pd.bdate_range("2009-12-28", "2010-01-29")
     frame = pd.DataFrame(
         {
-            "date": pd.to_datetime(
-                ["2010-01-06", "2010-01-06", "2010-01-04"]
-            ),
+            "date": pd.to_datetime(["2010-01-06", "2010-01-06", "2010-01-04"]),
             "series_id": ["RESMO14A_N.WW", "RESTR14A_N.WW", "M2.WM"],
             "resource_id": [
                 "federal_reserve_h3_all",
@@ -274,13 +264,48 @@ def test_monetary_liquidity_panel_applies_h3_and_h6_release_delays() -> None:
 
     result = api.normalize_monetary_liquidity_panel(frame, sessions=sessions)
 
-    h3_release = result.loc[result["date"].eq(pd.Timestamp("2010-01-14"))].iloc[0]
-    h6_release = result.loc[result["date"].eq(pd.Timestamp("2010-01-14"))].iloc[0]
+    h3_release = result.loc[result["date"].eq(pd.Timestamp("2010-01-15"))].iloc[0]
+    h6_release = result.loc[result["date"].eq(pd.Timestamp("2010-01-15"))].iloc[0]
     assert h3_release["monetary_base"] == pytest.approx(2_000.0)
     assert h3_release["total_reserves"] == pytest.approx(1_000.0)
     assert h6_release["m2"] == pytest.approx(8_000.0)
     assert h3_release["observed_at"] == pd.Timestamp("2010-01-06")
-    assert h3_release["available_at"] == pd.Timestamp("2010-01-14")
+    assert h3_release["available_at"] == pd.Timestamp("2010-01-15")
+
+
+def test_monetary_liquidity_panel_rejects_fed_missing_value_sentinel() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2009-12-28", "2010-02-05")
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                [
+                    "2010-01-06",
+                    "2010-01-06",
+                    "2010-01-04",
+                    "2010-01-13",
+                    "2010-01-13",
+                    "2010-01-11",
+                ]
+            ),
+            "series_id": [
+                "RESMO14A_N.WW",
+                "RESTR14A_N.WW",
+                "M2.WM",
+                "RESMO14A_N.WW",
+                "RESTR14A_N.WW",
+                "M2.WM",
+            ],
+            "value": [2_000.0, 1_000.0, 8_000.0, -9999.0, -9999.0, -9999.0],
+        }
+    )
+
+    result = api.normalize_monetary_liquidity_panel(frame, sessions=sessions)
+
+    assert not result[["monetary_base", "total_reserves", "m2"]].eq(-9999.0).any().any()
+    assert result["monetary_base"].eq(2_000.0).all()
+    assert result["total_reserves"].eq(1_000.0).all()
+    assert result["m2"].eq(8_000.0).all()
 
 
 def test_credit_money_panel_bridges_old_monthly_and_new_weekly_cp_causally() -> None:
@@ -321,12 +346,8 @@ def test_credit_money_panel_bridges_old_monthly_and_new_weekly_cp_causally() -> 
         sessions=sessions,
     )
 
-    weekly_release = result.loc[
-        result["date"].eq(pd.Timestamp("2001-01-12"))
-    ].iloc[0]
-    old_monthly_release = old_only.loc[
-        old_only["date"].eq(pd.Timestamp("2001-02-01"))
-    ].iloc[0]
+    weekly_release = result.loc[result["date"].eq(pd.Timestamp("2001-01-15"))].iloc[0]
+    old_monthly_release = old_only.loc[old_only["date"].eq(pd.Timestamp("2001-02-02"))].iloc[0]
     assert weekly_release["bank_credit"] == pytest.approx(4_000.0)
     assert weekly_release["loans_and_leases"] == pytest.approx(3_000.0)
     assert weekly_release["m2"] == pytest.approx(8_000.0)
@@ -339,9 +360,7 @@ def test_fomc_decision_panel_uses_last_day_and_next_session() -> None:
     api = _normalizer_api()
     frame = pd.DataFrame(
         {
-            "date": pd.to_datetime(
-                ["1998-02-03", "1998-02-03", "1998-04-02"]
-            ),
+            "date": pd.to_datetime(["1998-02-03", "1998-02-03", "1998-04-02"]),
             "document_kind": ["meeting", "minutes", "minutes_release"],
             "document_reference": [
                 "February 3-4 Meeting - 1998",
@@ -363,9 +382,7 @@ def test_fomc_decision_panel_uses_last_day_and_next_session() -> None:
 
 def test_calendar_marks_holiday_adjusted_standard_expiry() -> None:
     api = _normalizer_api()
-    sessions = pd.bdate_range("2008-03-17", "2008-04-18").drop(
-        pd.Timestamp("2008-03-21")
-    )
+    sessions = pd.bdate_range("2008-03-17", "2008-04-18").drop(pd.Timestamp("2008-03-21"))
 
     result = api.normalize_calendar_state_panel(sessions=sessions)
 
@@ -548,9 +565,7 @@ def test_philadelphia_realtime_growth_uses_only_values_in_each_vintage() -> None
     api = _normalizer_api()
     frame = pd.DataFrame(
         {
-            "date": pd.to_datetime(
-                ["2009-02-15", "2009-02-15", "2009-05-15", "2009-05-15"]
-            ),
+            "date": pd.to_datetime(["2009-02-15", "2009-02-15", "2009-05-15", "2009-05-15"]),
             "observation_date": pd.to_datetime(
                 ["2008-07-01", "2008-10-01", "2008-10-01", "2009-01-01"]
             ),
@@ -560,9 +575,7 @@ def test_philadelphia_realtime_growth_uses_only_values_in_each_vintage() -> None
     )
     sessions = pd.bdate_range("2009-02-13", "2009-05-20")
 
-    result = api.normalize_philadelphia_realtime_growth_panel(
-        frame, sessions=sessions
-    )
+    result = api.normalize_philadelphia_realtime_growth_panel(frame, sessions=sessions)
 
     assert result["observed_at"].dt.strftime("%Y-%m-%d").tolist() == [
         "2008-10-01",
@@ -623,9 +636,7 @@ def test_philadelphia_cycle_panel_combines_output_and_unemployment_vintages() ->
     )
     sessions = pd.bdate_range("2009-02-13", "2009-05-20")
 
-    result = api.normalize_philadelphia_realtime_cycle_panel(
-        frame, sessions=sessions
-    )
+    result = api.normalize_philadelphia_realtime_cycle_panel(frame, sessions=sessions)
 
     assert result["date"].dt.strftime("%Y-%m-%d").tolist() == [
         "2009-02-16",
@@ -746,9 +757,7 @@ def test_goyal_issuance_panel_does_not_depend_on_shiller_rows() -> None:
     )
     sessions = pd.bdate_range("2008-01-02", "2009-03-31")
 
-    result = api.normalize_lagged_goyal_issuance_panel(
-        goyal, sessions=sessions
-    )
+    result = api.normalize_lagged_goyal_issuance_panel(goyal, sessions=sessions)
 
     assert result.loc[0, "observed_at"] == pd.Timestamp("2008-01-01")
     assert result.loc[0, "date"] == pd.Timestamp("2009-02-16")
@@ -899,9 +908,7 @@ def test_world_bank_assets_wait_until_third_session_of_next_month() -> None:
     oil = pd.DataFrame({"date": pd.to_datetime(["2009-12-01"]), "value": [75.0]})
     sessions = pd.bdate_range("2009-12-01", "2010-01-15")
 
-    result = api.normalize_world_bank_cross_asset_panel(
-        gold, oil, sessions=sessions
-    )
+    result = api.normalize_world_bank_cross_asset_panel(gold, oil, sessions=sessions)
 
     assert result.loc[0, "observed_at"] == pd.Timestamp("2009-12-01")
     assert result.loc[0, "available_at"] == pd.Timestamp("2010-01-05")
@@ -942,13 +949,9 @@ def test_french_panels_use_ff3_and_48_industries_at_next_session() -> None:
     assert industry_panel.loc[0, "Autos"] == pytest.approx(0.01)
     assert industry_panel.loc[0, "Food"] == pytest.approx(-0.005)
     assert "Lo 20" not in industry_panel
-    standalone = api.normalize_french_industry_panel(
-        industries, sessions=_sessions()
-    )
+    standalone = api.normalize_french_industry_panel(industries, sessions=_sessions())
     pd.testing.assert_frame_equal(standalone, industry_panel)
-    standalone_factors = api.normalize_french_factor_panel(
-        factors, sessions=_sessions()
-    )
+    standalone_factors = api.normalize_french_factor_panel(factors, sessions=_sessions())
     pd.testing.assert_frame_equal(standalone_factors, factor_panel)
 
 
@@ -979,21 +982,13 @@ def test_french_characteristic_panels_use_frequency_aware_release_lags() -> None
     frame = pd.concat([daily, monthly], ignore_index=True, sort=False)
     sessions = pd.bdate_range("2010-01-04", "2010-03-31")
 
-    panels = api.normalize_french_characteristic_panels(
-        frame, sessions=sessions
-    )
+    panels = api.normalize_french_characteristic_panels(frame, sessions=sessions)
 
     assert tuple(panels) == ("profitability_daily", "beta_monthly")
-    assert panels["profitability_daily"].loc[0, "date"] == pd.Timestamp(
-        "2010-01-05"
-    )
+    assert panels["profitability_daily"].loc[0, "date"] == pd.Timestamp("2010-01-05")
     assert panels["profitability_daily"].loc[0, "Lo 20"] == pytest.approx(-0.01)
-    assert panels["beta_monthly"].loc[0, "observed_at"] == pd.Timestamp(
-        "2010-01-31"
-    )
-    assert panels["beta_monthly"].loc[0, "available_at"] == pd.Timestamp(
-        "2010-03-12"
-    )
+    assert panels["beta_monthly"].loc[0, "observed_at"] == pd.Timestamp("2010-01-31")
+    assert panels["beta_monthly"].loc[0, "available_at"] == pd.Timestamp("2010-03-12")
     assert panels["beta_monthly"].loc[0, "Hi 20"] == pytest.approx(0.02)
 
 
@@ -1047,9 +1042,7 @@ def test_french_global_panels_normalize_factors_and_regional_momentum() -> None:
     assert panels["europe"].loc[0, "market_excess"] == pytest.approx(0.001)
     assert panels["europe"].loc[0, "profitability"] == pytest.approx(0.002)
     assert panels["europe_momentum"].loc[0, "momentum"] == pytest.approx(0.005)
-    assert panels["europe_momentum"].loc[0, "date"] == pd.Timestamp(
-        "2010-01-05"
-    )
+    assert panels["europe_momentum"].loc[0, "date"] == pd.Timestamp("2010-01-05")
 
 
 def test_revised_z1_proxy_waits_full_year_and_margin_waits_two_months() -> None:
@@ -1062,14 +1055,10 @@ def test_revised_z1_proxy_waits_full_year_and_margin_waits_two_months() -> None:
         "FL654090000.Q": 600.0,
     }
     for series_id, value in values.items():
-        z1_rows.append(
-            {"date": pd.Timestamp("2008-03-31"), "series_id": series_id, "value": value}
-        )
+        z1_rows.append({"date": pd.Timestamp("2008-03-31"), "series_id": series_id, "value": value})
     sessions = pd.bdate_range("2008-03-31", "2009-06-30")
 
-    z1 = api.normalize_revised_z1_equity_panel(
-        pd.DataFrame(z1_rows), sessions=sessions
-    )
+    z1 = api.normalize_revised_z1_equity_panel(pd.DataFrame(z1_rows), sessions=sessions)
     margin = api.normalize_finra_margin_panel(
         pd.DataFrame(
             {
@@ -1100,9 +1089,7 @@ def test_z1_corporate_issuance_waits_full_year_before_use() -> None:
         }
     )
 
-    result = api.normalize_z1_corporate_issuance_panel(
-        frame, sessions=sessions
-    )
+    result = api.normalize_z1_corporate_issuance_panel(frame, sessions=sessions)
 
     assert result.loc[0, "observed_at"] == pd.Timestamp("2008-03-31")
     assert result.loc[0, "date"] == pd.Timestamp("2009-04-15")

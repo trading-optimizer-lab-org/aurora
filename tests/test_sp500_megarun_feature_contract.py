@@ -39,10 +39,11 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert all(lane.operator in api.registered_operator_names() for lane in feature_contract.lanes)
     assert all(lane.minimum_history >= 1 for lane in feature_contract.lanes)
     assert all(lane.position_values == (-1, 1) for lane in feature_contract.lanes)
-    assert all(lane.available_at_mode == "max_input_available_at" for lane in feature_contract.lanes)
     assert all(
-        set(lane.required_datasets)
-        == set(data_contract.lanes[index].required_datasets)
+        lane.available_at_mode == "max_input_available_at" for lane in feature_contract.lanes
+    )
+    assert all(
+        set(lane.required_datasets) == set(data_contract.lanes[index].required_datasets)
         for index, lane in enumerate(feature_contract.lanes)
     )
     assert feature_contract.validation_opened is False
@@ -51,11 +52,12 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].lane_id == "F032"
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
-        lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 181)]
+        lane.lane_id
+        for lane in feature_contract.lanes
+        if lane.implementation_status == "executable"
+    ] == [f"F{index:03d}" for index in range(1, 191)]
     assert all(
-        lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[180:]
+        lane.implementation_status == "blueprint_only" for lane in feature_contract.lanes[190:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -212,11 +214,17 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert all(lane.minimum_history >= 20 for lane in fundamental_lanes)
     cross_section_lanes = feature_contract.lanes[110:120]
     assert cross_section_lanes[0].parameter_space["statistic"] == (
-        "cyclical_defensive_spread", "leadership_breadth", "rotation", "dispersion_gap"
+        "cyclical_defensive_spread",
+        "leadership_breadth",
+        "rotation",
+        "dispersion_gap",
     )
     assert cross_section_lanes[8].required_datasets[1] == "D_CBOE_VOL"
     assert cross_section_lanes[8].parameter_space["statistic"] == (
-        "mean_forecast", "median_forecast", "consensus", "disagreement"
+        "mean_forecast",
+        "median_forecast",
+        "consensus",
+        "disagreement",
     )
     assert cross_section_lanes[9].parameter_space["features"] == (3, 5, 7)
     technical_lanes = feature_contract.lanes[120:130]
@@ -281,9 +289,7 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     )
     assert "known at decision t" in predictive_lanes[0].formula
     assert predictive_lanes[1].parameter_space["kind"] == ("var", "vecm")
-    assert predictive_lanes[2].parameter_space["approved_feature_set"] == (
-        "core_causal_5",
-    )
+    assert predictive_lanes[2].parameter_space["approved_feature_set"] == ("core_causal_5",)
     assert "F003,F015,F021,F032,F039" in predictive_lanes[2].formula
     assert predictive_lanes[4].parameter_space["kind"] == (
         "linear",
@@ -347,6 +353,18 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "momentum",
         "total",
     )
+    rates_credit_lanes = feature_contract.lanes[180:190]
+    assert all(lane.implementation_status == "executable" for lane in rates_credit_lanes)
+    assert rates_credit_lanes[0].parameter_space["statistic"] == (
+        "level",
+        "slope_10y_3m",
+        "curvature_2_5_10",
+        "long_curvature_5_10_20",
+    )
+    assert rates_credit_lanes[2].required_datasets == ("D_SPF",)
+    assert "expected-real-rate proxy" in rates_credit_lanes[2].formula
+    assert "not income velocity" in rates_credit_lanes[6].formula
+    assert "not delinquency" in rates_credit_lanes[7].formula
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:
@@ -416,9 +434,7 @@ def test_monthly_publication_policy_waits_until_third_session_of_next_month() ->
         sessions=sessions,
     )
 
-    assert projected["available_at"].dt.strftime("%Y-%m-%d").tolist() == [
-        "2010-02-03"
-    ]
+    assert projected["available_at"].dt.strftime("%Y-%m-%d").tolist() == ["2010-02-03"]
 
 
 def test_h10_policy_waits_for_following_week_release_and_next_session() -> None:
