@@ -169,21 +169,38 @@ def select_realestate_sector_pilot_candidates(
     )
     identity = build_companyfacts_identity(status).copy()
     identity["cik"] = pd.to_numeric(identity["cik"], errors="coerce")
-    source = _companyfacts_source_evidence(status)
-    frame = pd.DataFrame(filings)
+    source = _companyfacts_source_evidence(status).rename(
+        columns={"source_url": "companyfacts_status_source_url"}
+    )
+    frame = pd.DataFrame(filings).rename(
+        columns={
+            "source": "submission_source_url",
+            "source_mode": "submission_source_mode",
+        }
+    )
     frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce")
+    asset_evidence = assets[
+        [
+            "cik",
+            "value",
+            "tag",
+            "unit",
+            "available_at",
+            "source",
+            "source_mode",
+        ]
+    ].rename(
+        columns={
+            "value": "assets",
+            "tag": "assets_tag",
+            "unit": "assets_unit",
+            "available_at": "assets_available_at",
+            "source": "assets_source_url",
+            "source_mode": "assets_source_mode",
+        }
+    )
     frame = frame.merge(
-        assets[
-            [
-                "cik",
-                "value",
-                "tag",
-                "unit",
-                "available_at",
-                "source",
-                "source_mode",
-            ]
-        ],
+        asset_evidence,
         on="cik",
         how="inner",
         validate="one_to_one",
@@ -199,20 +216,19 @@ def select_realestate_sector_pilot_candidates(
             [
                 "cik",
                 "canonical_json_sha256",
-                "source_url",
+                "companyfacts_status_source_url",
             ]
         ],
         on="cik",
         how="inner",
         validate="one_to_one",
-        suffixes=("", "_status"),
     )
     anchor = int(str(anchor_cik).strip())
     if anchor not in set(frame["cik"].astype(int)):
         raise ValueError("anchor CIK lacks causal assets or complete SEC identity")
     frame["anchor_priority"] = frame["cik"].astype(int).ne(anchor).astype(int)
     frame = frame.sort_values(
-        ["anchor_priority", "value", "cik"],
+        ["anchor_priority", "assets", "cik"],
         ascending=[True, False, True],
     ).head(maximum_issuers)
     if len(frame) < minimum_issuers:
@@ -228,23 +244,24 @@ def select_realestate_sector_pilot_candidates(
                     if key
                     not in {
                         "anchor_priority",
-                        "value",
-                        "tag",
-                        "unit",
-                        "available_at",
+                        "assets",
+                        "assets_tag",
+                        "assets_unit",
+                        "assets_available_at",
+                        "assets_source_url",
+                        "assets_source_mode",
                         "canonical_json_sha256",
-                        "source_url_status",
                     }
                 },
                 "cik": str(int(row["cik"])),
-                "assets": float(row["value"]),
-                "assets_tag": str(row["tag"]),
-                "assets_unit": str(row["unit"]),
+                "assets": float(row["assets"]),
+                "assets_tag": str(row["assets_tag"]),
+                "assets_unit": str(row["assets_unit"]),
                 "assets_available_at": pd.Timestamp(
-                    row["available_at"]
+                    row["assets_available_at"]
                 ).isoformat(),
-                "assets_source_url": str(row["source"]),
-                "assets_source_mode": str(row["source_mode"]),
+                "assets_source_url": str(row["assets_source_url"]),
+                "assets_source_mode": str(row["assets_source_mode"]),
                 "assets_source_sha256": str(row["canonical_json_sha256"]).lower(),
                 "formation_at": str(formation_at),
                 "fidelity": "reconstructed_not_strict",
