@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from importlib import util
 from importlib import import_module
 import json
@@ -709,6 +710,177 @@ def test_current_evidence_replacement_swaps_complete_signal_batches() -> None:
     assert unchanged.reset_index(drop=True).equals(primary.reset_index(drop=True))
 
 
+def test_consolidation_recovered_loaders_bind_csv_hash_and_source_revision(
+    tmp_path: Path,
+) -> None:
+    script_path = ROOT / "scripts" / "run_openap_149_consolidate.py"
+    spec = util.spec_from_file_location("run_openap_149_consolidate", script_path)
+    assert spec is not None and spec.loader is not None
+    script = util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+
+    from aurora.research.openap_181.recovered_current_features import (
+        RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION,
+        RECOVERED_CURRENT_FEATURE_TARGETS,
+    )
+    from aurora.research.openap_181.recovered_yfinance_extended_signals import (
+        RECOVERED_YFINANCE_EXTENDED_SIGNAL_TARGETS,
+    )
+    from aurora.research.openap_181.twelve_data_factor_signals import (
+        TWELVE_DATA_FACTOR_SIGNAL_TARGETS,
+    )
+    from aurora.research.openap_181.twelve_data_market_signals import (
+        TWELVE_DATA_DIRECT_SIGNAL_TARGETS,
+    )
+
+    implementation_sha = "b" * 40
+    columns = [
+        "security_id",
+        "ticker",
+        "cik",
+        "signal",
+        "formation_at",
+        "period_end",
+        "filed_at",
+        "available_at",
+        "retrieved_at",
+        "value",
+        "fidelity_class",
+        "current_usable",
+        "source_id",
+        "source_url",
+        "formula_id",
+        "observation_count",
+        "caveat",
+        "strict_score_eligible",
+    ]
+    base = {
+        "security_id": "US-SEC-0000000001-AAA",
+        "ticker": "AAA",
+        "cik": "1",
+        "formation_at": "2026-07-31T00:00:00Z",
+        "period_end": "2026-07-31T00:00:00Z",
+        "filed_at": "",
+        "available_at": "2026-07-31T00:00:00Z",
+        "retrieved_at": "2026-08-08T12:00:00Z",
+        "value": 0.5,
+        "fidelity_class": "reconstructed",
+        "current_usable": True,
+        "source_id": "recovered_yfinance_artifacts_31256096194",
+        "source_url": "https://github.com/org/repo/actions/runs/10",
+        "formula_id": "openap_high52_recovered_history",
+        "observation_count": 252,
+        "caveat": "recovered_not_strict",
+        "strict_score_eligible": False,
+    }
+    market_root = tmp_path / "market"
+    features_root = tmp_path / "features"
+    market_root.mkdir()
+    features_root.mkdir()
+    market_csv = market_root / "recovered_yfinance_market_current.csv"
+    pd.DataFrame([{**base, "signal": "High52"}], columns=columns).to_csv(
+        market_csv, index=False
+    )
+    market_manifest = {
+        "contract_version": 1,
+        "implementation_sha": implementation_sha,
+        "direct_signal_targets": list(TWELVE_DATA_DIRECT_SIGNAL_TARGETS),
+        "factor_signal_targets": list(TWELVE_DATA_FACTOR_SIGNAL_TARGETS),
+        "extended_signal_targets": list(
+            RECOVERED_YFINANCE_EXTENDED_SIGNAL_TARGETS
+        ),
+        "signal_target_count": 31,
+        "current_value_rows": 1,
+        "current_signal_count": 1,
+        "current_csv_sha256": sha256(market_csv.read_bytes()).hexdigest(),
+        "historical_ticker_interval_verified": False,
+        "raw_market_data_internal_use_only": True,
+        "raw_market_data_redistribution_allowed": False,
+        "fresh_provider_request_made": False,
+        "strict_score_eligible": False,
+        "strict_score_increment": 0,
+        "locked_opened": False,
+        "forward_opened": False,
+        "validation_used_for_selection": False,
+    }
+    market_manifest_path = market_root / "recovered_yfinance_market_manifest.json"
+    market_manifest_path.write_text(
+        json.dumps(market_manifest, sort_keys=True), encoding="utf-8"
+    )
+
+    feature_csv = features_root / "recovered_current_features_current.csv"
+    feature_row = {
+        **base,
+        "signal": "AccrualsBM",
+        "period_end": "2025-12-31T00:00:00Z",
+        "filed_at": "2026-07-31T00:00:00Z",
+        "available_at": "2026-07-31T20:00:00Z",
+        "fidelity_class": "unvalidated_proxy",
+        "source_id": (
+            "recovered_openap_features_31270341796|sec_edgar|"
+            "recovered_yfinance_artifacts"
+        ),
+        "formula_id": "openap_accrualsbm_sec_ocf_double_sort_proxy",
+    }
+    pd.DataFrame([feature_row], columns=columns).to_csv(feature_csv, index=False)
+    feature_manifest = {
+        "contract_version": RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION,
+        "implementation_sha": implementation_sha,
+        "target_signals": list(RECOVERED_CURRENT_FEATURE_TARGETS),
+        "target_signal_count": 17,
+        "current_value_rows": 1,
+        "current_signal_count": 1,
+        "current_csv_sha256": sha256(feature_csv.read_bytes()).hexdigest(),
+        "formula_recomputed_during_recovery": False,
+        "source_values_revalidated": True,
+        "source_age_laundered": False,
+        "fresh_provider_request_made": False,
+        "historical_ticker_interval_verified": False,
+        "strict_score_eligible": False,
+        "strict_score_increment": 0,
+        "locked_opened": False,
+        "forward_opened": False,
+        "validation_used_for_selection": False,
+    }
+    feature_manifest_path = (
+        features_root / "recovered_current_features_manifest.json"
+    )
+    feature_manifest_path.write_text(
+        json.dumps(feature_manifest, sort_keys=True), encoding="utf-8"
+    )
+
+    market, market_paths = script._load_recovered_market_batch(
+        market_root,
+        expected_implementation_sha=implementation_sha,
+    )
+    features, feature_paths = script._load_recovered_current_feature_batch(
+        features_root,
+        expected_implementation_sha=implementation_sha,
+    )
+    assert market["signal"].tolist() == ["High52"]
+    assert features["signal"].tolist() == ["AccrualsBM"]
+    assert {path.name for path in market_paths} == {
+        "recovered_yfinance_market_current.csv",
+        "recovered_yfinance_market_manifest.json",
+    }
+    assert {path.name for path in feature_paths} == {
+        "recovered_current_features_current.csv",
+        "recovered_current_features_manifest.json",
+    }
+
+    market_csv.write_bytes(market_csv.read_bytes() + b"\n")
+    with pytest.raises(RuntimeError, match="SHA-256"):
+        script._load_recovered_market_batch(
+            market_root,
+            expected_implementation_sha=implementation_sha,
+        )
+    with pytest.raises(RuntimeError, match="implementation SHA"):
+        script._load_recovered_current_feature_batch(
+            features_root,
+            expected_implementation_sha="c" * 40,
+        )
+
+
 def test_consolidation_cli_includes_realestate_and_audited_event_batches(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -737,6 +909,7 @@ def test_consolidation_cli_includes_realestate_and_audited_event_batches(
         "formula_id",
         "observation_count",
         "caveat",
+        "strict_score_eligible",
     ]
     cash = {
         "security_id": "US-SEC-0000000001-CASH",
@@ -775,6 +948,7 @@ def test_consolidation_cli_includes_realestate_and_audited_event_batches(
         "formula_id": "realestate",
         "observation_count": 7,
         "caveat": "reconstructed_not_strict",
+        "strict_score_eligible": False,
     }
     exchange_switch = {
         **realestate,
@@ -848,6 +1022,8 @@ def test_consolidation_cli_includes_realestate_and_audited_event_batches(
     exchange_switch_root = tmp_path / "exchange_switch"
     field_ritter_root = tmp_path / "field_ritter"
     spinoff_root = tmp_path / "spinoff"
+    recovered_market_root = tmp_path / "recovered_market"
+    recovered_features_root = tmp_path / "recovered_features"
     formula_root = tmp_path / "formulas"
     output_root = tmp_path / "output"
     for root in (
@@ -858,6 +1034,8 @@ def test_consolidation_cli_includes_realestate_and_audited_event_batches(
         exchange_switch_root,
         field_ritter_root,
         spinoff_root,
+        recovered_market_root,
+        recovered_features_root,
         formula_root,
     ):
         root.mkdir()
@@ -884,6 +1062,125 @@ def test_consolidation_cli_includes_realestate_and_audited_event_batches(
     pd.DataFrame([spinoff], columns=columns).to_csv(
         spinoff_root / "openap_149_sec_spinoff_current.csv",
         index=False,
+    )
+    recovered_market = {
+        **realestate,
+        "security_id": "US-SEC-0000000007-MARKET",
+        "ticker": "MARKET",
+        "cik": "7",
+        "signal": "High52",
+        "formation_at": "2026-07-31T00:00:00Z",
+        "period_end": "2026-07-31T00:00:00Z",
+        "filed_at": "",
+        "available_at": "2026-07-31T00:00:00Z",
+        "value": 0.8,
+        "source_id": "recovered_yfinance_artifacts_31256096194",
+        "source_url": "https://github.com/org/repo/actions/runs/10",
+        "formula_id": "openap_high52_recovered_history",
+        "observation_count": 252,
+    }
+    recovered_feature = {
+        **realestate,
+        "security_id": "US-SEC-0000000008-FEATURE",
+        "ticker": "FEATURE",
+        "cik": "8",
+        "signal": "AccrualsBM",
+        "formation_at": "2026-08-08T16:00:00Z",
+        "period_end": "2025-12-31T00:00:00Z",
+        "filed_at": "2026-07-31T00:00:00Z",
+        "available_at": "2026-07-31T20:00:00Z",
+        "value": 1.0,
+        "fidelity_class": "unvalidated_proxy",
+        "source_id": (
+            "recovered_openap_features_31270341796|sec_edgar|"
+            "recovered_yfinance_artifacts"
+        ),
+        "source_url": "https://github.com/org/repo/actions/runs/10",
+        "formula_id": "openap_accrualsbm_sec_ocf_double_sort_proxy",
+        "observation_count": 5,
+    }
+    recovered_market_csv = (
+        recovered_market_root / "recovered_yfinance_market_current.csv"
+    )
+    recovered_feature_csv = (
+        recovered_features_root / "recovered_current_features_current.csv"
+    )
+    pd.DataFrame([recovered_market], columns=columns).to_csv(
+        recovered_market_csv, index=False
+    )
+    pd.DataFrame([recovered_feature], columns=columns).to_csv(
+        recovered_feature_csv, index=False
+    )
+
+    from aurora.research.openap_181.recovered_current_features import (
+        RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION,
+        RECOVERED_CURRENT_FEATURE_TARGETS,
+    )
+    from aurora.research.openap_181.recovered_yfinance_extended_signals import (
+        RECOVERED_YFINANCE_EXTENDED_SIGNAL_TARGETS,
+    )
+    from aurora.research.openap_181.twelve_data_factor_signals import (
+        TWELVE_DATA_FACTOR_SIGNAL_TARGETS,
+    )
+    from aurora.research.openap_181.twelve_data_market_signals import (
+        TWELVE_DATA_DIRECT_SIGNAL_TARGETS,
+    )
+
+    implementation_sha = "b" * 40
+    recovered_market_manifest = {
+        "contract_version": 1,
+        "implementation_sha": implementation_sha,
+        "direct_signal_targets": list(TWELVE_DATA_DIRECT_SIGNAL_TARGETS),
+        "factor_signal_targets": list(TWELVE_DATA_FACTOR_SIGNAL_TARGETS),
+        "extended_signal_targets": list(
+            RECOVERED_YFINANCE_EXTENDED_SIGNAL_TARGETS
+        ),
+        "signal_target_count": 31,
+        "current_value_rows": 1,
+        "current_signal_count": 1,
+        "current_csv_sha256": sha256(
+            recovered_market_csv.read_bytes()
+        ).hexdigest(),
+        "historical_ticker_interval_verified": False,
+        "raw_market_data_internal_use_only": True,
+        "raw_market_data_redistribution_allowed": False,
+        "fresh_provider_request_made": False,
+        "strict_score_eligible": False,
+        "strict_score_increment": 0,
+        "locked_opened": False,
+        "forward_opened": False,
+        "validation_used_for_selection": False,
+    }
+    (
+        recovered_market_root / "recovered_yfinance_market_manifest.json"
+    ).write_text(
+        json.dumps(recovered_market_manifest, sort_keys=True), encoding="utf-8"
+    )
+    recovered_feature_manifest = {
+        "contract_version": RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION,
+        "implementation_sha": implementation_sha,
+        "target_signals": list(RECOVERED_CURRENT_FEATURE_TARGETS),
+        "target_signal_count": 17,
+        "current_value_rows": 1,
+        "current_signal_count": 1,
+        "current_csv_sha256": sha256(
+            recovered_feature_csv.read_bytes()
+        ).hexdigest(),
+        "formula_recomputed_during_recovery": False,
+        "source_values_revalidated": True,
+        "source_age_laundered": False,
+        "fresh_provider_request_made": False,
+        "historical_ticker_interval_verified": False,
+        "strict_score_eligible": False,
+        "strict_score_increment": 0,
+        "locked_opened": False,
+        "forward_opened": False,
+        "validation_used_for_selection": False,
+    }
+    (
+        recovered_features_root / "recovered_current_features_manifest.json"
+    ).write_text(
+        json.dumps(recovered_feature_manifest, sort_keys=True), encoding="utf-8"
     )
     routes = _module().load_target_routes(ROUTE_MATRIX)
     pd.DataFrame(
@@ -915,8 +1212,14 @@ def test_consolidation_cli_includes_realestate_and_audited_event_batches(
             str(field_ritter_root),
             "--spinoff-current-root",
             str(spinoff_root),
+            "--recovered-market-root",
+            str(recovered_market_root),
+            "--recovered-current-features-root",
+            str(recovered_features_root),
             "--formula-root",
             str(formula_root),
+            "--expected-source-sha",
+            implementation_sha,
             "--signals-93",
             str(ROOT / "config" / "openap_93" / "signals_93.yaml"),
             "--current-93-run-url",
@@ -933,6 +1236,8 @@ def test_consolidation_cli_includes_realestate_and_audited_event_batches(
             "https://github.com/org/repo/actions/runs/6",
             "--spinoff-current-run-url",
             "https://github.com/org/repo/actions/runs/7",
+            "--recovered-current-run-url",
+            "https://github.com/org/repo/actions/runs/10",
             "--evidence-run-url",
             "https://github.com/org/repo/actions/runs/8",
             "--evidence-artifact",
@@ -984,6 +1289,28 @@ def test_consolidation_cli_includes_realestate_and_audited_event_batches(
         "https://github.com/org/repo/actions/runs/6"
     )
     assert not bool(ageipo_event["strict_score_eligible"])
+    recovered_run = "https://github.com/org/repo/actions/runs/10"
+    matrix_by_signal = matrix.set_index("signal")
+    high52 = matrix_by_signal.loc["High52"]
+    assert bool(high52["data_acquired"])
+    assert bool(high52["current_value_calculated"])
+    assert high52["current_value_count"] == 1
+    assert high52["source_evidence_run"] == recovered_run
+    assert not bool(high52["strict_score_eligible"])
+    accruals_bm = matrix_by_signal.loc["AccrualsBM"]
+    assert bool(accruals_bm["data_acquired"])
+    assert bool(accruals_bm["current_value_calculated"])
+    assert accruals_bm["current_value_count"] == 1
+    assert accruals_bm["fidelity"] == "unvalidated_proxy"
+    assert accruals_bm["source_evidence_run"] == recovered_run
+    assert not bool(accruals_bm["strict_score_eligible"])
+    assert manifest["recovered_current_run_url"] == recovered_run
+    assert {
+        "recovered_yfinance_market_current.csv",
+        "recovered_yfinance_market_manifest.json",
+        "recovered_current_features_current.csv",
+        "recovered_current_features_manifest.json",
+    }.issubset(set(manifest["source_files"]))
 
 
 def test_consolidation_workflow_pins_verified_source_runs() -> None:
@@ -1008,6 +1335,55 @@ def test_consolidation_workflow_pins_verified_source_runs() -> None:
         input_name: dispatch_inputs[input_name].get("default")
         for input_name in expected
     } == expected
+
+
+def test_consolidation_workflow_wires_both_recovered_batches() -> None:
+    workflow_path = ROOT / ".github" / "workflows" / "openap-149-consolidate.yml"
+    workflow = yaml.load(
+        workflow_path.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+    dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    recovered_input = dispatch_inputs["recovered_current_run_id"]
+    assert recovered_input["required"] == "true"
+    assert not recovered_input.get("default")
+    steps = {
+        step["name"]: step
+        for step in workflow["jobs"]["consolidate"]["steps"]
+        if "name" in step
+    }
+    expected = {
+        "Download recovered YFinance market values": (
+            "openap-149-recovered-yfinance-market-results",
+            "inputs/recovered_market",
+        ),
+        "Download recovered accounting feature values": (
+            "openap-149-recovered-current-feature-results",
+            "inputs/recovered_current_features",
+        ),
+    }
+    for step_name, (artifact_name, path) in expected.items():
+        download = steps[step_name]
+        assert download["with"]["name"] == artifact_name
+        assert download["with"]["path"] == path
+        assert download["with"]["run-id"] == (
+            "${{ inputs.recovered_current_run_id }}"
+        )
+    command = steps["Consolidate latest current evidence"]["run"]
+    assert "--expected-source-sha \"$SOURCE_SHA\"" in command
+    assert "--recovered-market-root inputs/recovered_market" in command
+    assert (
+        "--recovered-current-features-root inputs/recovered_current_features"
+        in command
+    )
+    assert "--recovered-current-run-url" in command
+    verify = steps["Verify consolidated result"]["run"]
+    assert "recovered_yfinance_market_current.csv" in verify
+    assert "recovered_current_features_current.csv" in verify
+    assert "recovered_market_counts" in verify
+    assert "recovered_feature_counts" in verify
+    assert "not strict_eligible.any()" in verify
 
 
 def test_consolidation_workflow_downloads_and_verifies_realestate_evidence() -> None:

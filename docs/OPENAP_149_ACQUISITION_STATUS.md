@@ -188,6 +188,14 @@ valores nuevos recuperados y los recuentos ejecutados siguen siendo
 `56/50/18/99/96814`. Esta preparacion tampoco modifica las 31 senales del score
 estricto confirmado.
 
+El consolidador queda preparado para descargar este lote y el lote de mercado
+desde un mismo run manual futuro. Antes de sustituir una senal exige el SHA-256
+exacto del CSV, la version completa del contrato, el mismo SHA de implementacion
+de 40 caracteres y todas las puertas no estrictas cerradas. El CSV recuperado
+debe contener solo filas actuales utilizables, sin claves duplicadas y con
+`strict_score_eligible=false`. El manifiesto y el CSV entran tambien en el hash
+conjunto y en la lista de fuentes del artefacto consolidado.
+
 ## Mercado sin credencial: artefactos existentes recuperables
 
 Las 31 rutas de mercado ya no dependen de obtener una clave nueva. El run
@@ -214,6 +222,12 @@ tanto, ninguna de las 31 se marca aun como adquirida o calculada en el
 consolidado. Todas siguen con `strict_score_eligible=false`; el incremento del
 score estricto es cero. Los recuentos ejecutados permanecen
 `56/50/18/99/96814` y el score estricto confirmado permanece en 31.
+
+La consolidacion futura usa el mismo `recovered_current_run_id` para los dos
+artefactos derivados y comprueba dinamicamente cada senal, cada fila y su
+procedencia. No contiene recuentos de cobertura prefijados: solo aceptara los
+que publique y firme el run recuperador. Preparar esta conexion no ejecuta el
+workflow ni modifica los recuentos publicados.
 
 ### Respaldo con Twelve Data
 

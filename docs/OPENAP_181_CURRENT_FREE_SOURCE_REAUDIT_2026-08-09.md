@@ -223,6 +223,14 @@ historicos GVKEY/PERMNO. Quince salidas futuras seran `reconstructed`;
 manual y sigue sin ejecutarse; por tanto, no hay valores nuevos ni cambios en
 los recuentos.
 
+El consolidador preparado acepta este artefacto y el de las 31 senales de
+mercado solo si ambos proceden del mismo run futuro y declaran exactamente el
+SHA de la implementacion consolidada. Verifica contratos, hash del CSV,
+objetivos, filas actuales utilizables, ausencia de duplicados y puertas
+`OOS_LOCKED`, `FORWARD`, seleccion por validacion y score estricto cerradas.
+La verificacion posterior compara de forma dinamica las filas fuente con las
+filas consolidadas; no presupone cobertura ni altera los recuentos actuales.
+
 ### Institucionales y 13F: 7
 
 Ruta principal: SEC 13F + SEC y artefactos de mercado ya adquiridos para

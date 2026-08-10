@@ -15,6 +15,8 @@ on:
       - research/openap_181/sec_listing_identity.py
       - research/openap_181/field_ritter_ipo.py
       - research/openap_181/sec_spinoff.py
+      - research/openap_181/recovered_current_features.py
+      - research/openap_181/recovered_yfinance_extended_signals.py
       - research/openap_181/twelve_data_factor_signals.py
       - research/openap_181/twelve_data_market_batch.py
       - research/openap_181/twelve_data_market_signals.py
@@ -23,6 +25,8 @@ on:
       - scripts/run_openap_149_realestate_rendered_batch.py
       - scripts/run_openap_149_sec_listing_identity.py
       - scripts/run_openap_149_sec_spinoff.py
+      - scripts/run_openap_149_recovered_current_features.py
+      - scripts/run_openap_149_recovered_yfinance_market.py
       - scripts/run_openap_149_twelve_data_market.py
       - tests/test_openap_149_acquisition.py
       - tests/test_openap_149_sec_companyfacts.py
@@ -31,6 +35,8 @@ on:
       - tests/test_openap_181_field_ritter_ipo.py
       - tests/test_openap_181_sec_listing_identity.py
       - tests/test_openap_181_sec_spinoff.py
+      - tests/test_openap_149_recovered_current_features.py
+      - tests/test_openap_149_recovered_yfinance_market.py
       - tests/test_openap_181_twelve_data_factor_signals.py
       - tests/test_openap_181_twelve_data_market_batch.py
       - tests/test_openap_181_twelve_data_market_signals.py
@@ -80,6 +86,10 @@ on:
         required: true
         default: "31393646423"
         type: string
+      recovered_current_run_id:
+        description: Run containing both hash-bound recovered current batches
+        required: true
+        type: string
       formula_evidence_run_id:
         description: Successful run containing the pinned formula inventory
         required: true
@@ -127,6 +137,8 @@ jobs:
             tests/test_openap_181_twelve_data_market_batch.py \
             tests/test_openap_181_twelve_data_market_signals.py \
             tests/test_openap_181_twelve_data_factor_signals.py \
+            tests/test_openap_149_recovered_yfinance_market.py \
+            tests/test_openap_149_recovered_current_features.py \
             -q --tb=short
 
   consolidate:
@@ -206,6 +218,22 @@ jobs:
           run-id: ${{ inputs.spinoff_current_run_id }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
+      - name: Download recovered YFinance market values
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-149-recovered-yfinance-market-results
+          path: inputs/recovered_market
+          run-id: ${{ inputs.recovered_current_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download recovered accounting feature values
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-149-recovered-current-feature-results
+          path: inputs/recovered_current_features
+          run-id: ${{ inputs.recovered_current_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
       - name: Download pinned official formula evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -226,7 +254,10 @@ jobs:
             --exchange-switch-current-root inputs/exchange_switch_current \
             --field-ritter-current-root inputs/field_ritter_current \
             --spinoff-current-root inputs/spinoff_current \
+            --recovered-market-root inputs/recovered_market \
+            --recovered-current-features-root inputs/recovered_current_features \
             --formula-root inputs/formulas \
+            --expected-source-sha "$SOURCE_SHA" \
             --current-93-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.current_93_run_id }}" \
             --sec-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.sec_current_run_id }}" \
             --finra-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.finra_current_run_id }}" \
@@ -234,6 +265,7 @@ jobs:
             --exchange-switch-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.exchange_switch_current_run_id }}" \
             --field-ritter-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.field_ritter_current_run_id }}" \
             --spinoff-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.spinoff_current_run_id }}" \
+            --recovered-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.recovered_current_run_id }}" \
             --evidence-run-url "$run_url" \
             --evidence-artifact "$OUTPUT_ARTIFACT" \
             --output-dir openap_149_current_consolidated
@@ -241,11 +273,25 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          from pathlib import Path
           import pandas as pd
+
+          def read_exactly_one(root, filename):
+              paths = list(Path(root).rglob(filename))
+              assert len(paths) == 1
+              return pd.read_csv(paths[0], low_memory=False)
+
           root = "outputs/openap_149_current_consolidated"
           matrix = pd.read_csv(f"{root}/OPENAP_149_ACQUISITION_MATRIX.csv")
           values = pd.read_csv(f"{root}/openap_149_current_values.csv")
           summary = json.load(open(f"{root}/openap_149_acquisition_summary.json"))
+          recovered_market = read_exactly_one(
+              "inputs/recovered_market", "recovered_yfinance_market_current.csv"
+          )
+          recovered_features = read_exactly_one(
+              "inputs/recovered_current_features",
+              "recovered_current_features_current.csv",
+          )
           assert len(matrix) == matrix["signal"].nunique() == 149
           data_acquired = matrix["data_acquired"].astype(str).str.lower().eq("true")
           current_calculated = (
@@ -293,6 +339,45 @@ jobs:
               "sinAlgo": (22, "reconstructed", "openap_sinalgo_positive_current_sec_sic"),
           }
           matrix_by_signal = matrix.set_index("signal")
+          recovered_run_url = "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.recovered_current_run_id }}"
+          recovered_market_counts = recovered_market.groupby("signal").size()
+          recovered_feature_counts = recovered_features.groupby("signal").size()
+          comparison_columns = [
+              "security_id", "signal", "formation_at", "available_at", "value",
+              "formula_id",
+          ]
+          for recovered, counts in (
+              (recovered_market, recovered_market_counts),
+              (recovered_features, recovered_feature_counts),
+          ):
+              source_strict = (
+                  recovered["strict_score_eligible"]
+                  .astype(str).str.lower().eq("true")
+              )
+              assert not source_strict.any()
+              for signal, expected_count in counts.items():
+                  evidence = matrix_by_signal.loc[signal]
+                  assert bool(evidence["data_acquired"])
+                  assert bool(evidence["current_value_calculated"])
+                  assert int(evidence["current_value_count"]) == int(expected_count)
+                  assert evidence["source_evidence_run"] == recovered_run_url
+                  assert not bool(evidence["strict_score_eligible"])
+                  expected = recovered.loc[
+                      recovered["signal"].eq(signal), comparison_columns
+                  ].sort_values(comparison_columns[:3]).reset_index(drop=True)
+                  actual = values.loc[
+                      values["signal"].eq(signal), comparison_columns
+                  ].sort_values(comparison_columns[:3]).reset_index(drop=True)
+                  for compared in (actual, expected):
+                      compared["formation_at"] = pd.to_datetime(
+                          compared["formation_at"], utc=True
+                      )
+                      compared["available_at"] = pd.to_datetime(
+                          compared["available_at"], utc=True
+                      )
+                  pd.testing.assert_frame_equal(
+                      actual, expected, check_dtype=False, check_like=False
+                  )
           for signal, (expected_count, expected_fidelity, expected_formula) in companyfacts_expected.items():
               companyfacts = matrix_by_signal.loc[signal]
               assert bool(companyfacts["data_acquired"])
