@@ -269,6 +269,10 @@ def _project_to_decision_session(
     eligible = frame.copy()
     if policy == "next_session":
         eligible = eligible.loc[eligible["date"].lt(normalized_sessions.max())]
+    elif policy == "two_calendar_days":
+        eligible = eligible.loc[
+            eligible["date"].add(pd.Timedelta(days=2)).le(normalized_sessions.max())
+        ]
     elif policy == "friday_after_tuesday":
         eligible = eligible.loc[
             eligible["date"].add(pd.Timedelta(days=3)).le(normalized_sessions.max())
@@ -1032,6 +1036,58 @@ def _spf_survey_periods(frame: pd.DataFrame) -> pd.Series:
             freq="Q",
         ).to_timestamp()
     return result
+
+
+def normalize_philadelphia_publication_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Count official real-time vintages and their breadth on each publication date."""
+
+    realtime = _validated_dates(frame, dataset_id="D_PHILLY_RT")
+    required = {"observation_date", "vintage_label", "resource_id"}
+    missing = sorted(required - set(realtime.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"PHILADELPHIA_PUBLICATION_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    realtime["observation_date"] = pd.to_datetime(
+        realtime["observation_date"], errors="coerce"
+    ).dt.normalize()
+    realtime = realtime.dropna(
+        subset=["observation_date", "vintage_label", "resource_id"]
+    )
+    rows: list[dict[str, object]] = []
+    for publication_at, publication in realtime.groupby("date", sort=True):
+        resources = publication["resource_id"].astype(str)
+        latest_by_resource = publication.groupby("resource_id")[
+            "observation_date"
+        ].max()
+        ages = (pd.Timestamp(publication_at) - latest_by_resource).dt.days
+        rows.append(
+            {
+                "date": publication_at,
+                "vintage_count": int(publication["vintage_label"].nunique()),
+                "resource_breadth": int(resources.nunique()),
+                "monthly_breadth": int(
+                    resources.loc[resources.str.contains("monthly", case=False)].nunique()
+                ),
+                "quarterly_breadth": int(
+                    resources.loc[resources.str.contains("quarterly", case=False)].nunique()
+                ),
+                "publication_point_count": int(len(publication)),
+                "latest_observation_age_days": float(ages.mean()),
+                "oldest_latest_observation_age_days": float(ages.max()),
+            }
+        )
+    if not rows:
+        raise FeatureInputNormalizerError("EMPTY_PHILADELPHIA_PUBLICATION_PANEL")
+    return _project_to_decision_session(
+        pd.DataFrame(rows),
+        policy="next_session",
+        sessions=sessions,
+    )
 
 
 def _annualized_quarter_growth(current: Any, previous: Any) -> float:
@@ -1913,6 +1969,71 @@ def normalize_fomc_publication_panels(
     return panels
 
 
+def normalize_fomc_document_mix_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Build the public FOMC event mix while excluding noncausal minutes dates."""
+
+    fomc = _validated_dates(frame, dataset_id="D_FOMC_PUBLIC")
+    required = {"document_kind", "document_reference"}
+    missing = sorted(required - set(fomc.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"FOMC_DOCUMENT_MIX_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    selected = fomc.loc[
+        fomc["document_kind"].astype(str).isin(
+            ["meeting", "statement", "minutes_release"]
+        )
+    ].copy()
+    if selected.empty:
+        raise FeatureInputNormalizerError("FOMC_DOCUMENT_MIX_MISSING")
+    selected["date"] = [
+        _fomc_decision_date(date, reference)
+        if kind == "meeting"
+        else pd.Timestamp(date).normalize()
+        for date, reference, kind in zip(
+            selected["date"],
+            selected["document_reference"],
+            selected["document_kind"].astype(str),
+            strict=True,
+        )
+    ]
+    for kind, column in (
+        ("meeting", "meeting_count"),
+        ("statement", "statement_count"),
+        ("minutes_release", "minutes_release_count"),
+    ):
+        selected[column] = selected["document_kind"].eq(kind).astype(int)
+    events = selected.groupby("date", as_index=False, sort=True).agg(
+        meeting_count=("meeting_count", "sum"),
+        statement_count=("statement_count", "sum"),
+        minutes_release_count=("minutes_release_count", "sum"),
+    )
+    events["document_count"] = events[
+        ["meeting_count", "statement_count", "minutes_release_count"]
+    ].sum(axis=1)
+    denominator = events["document_count"].replace(0, np.nan)
+    shares: list[pd.Series] = []
+    for column, share_name in (
+        ("meeting_count", "meeting_share"),
+        ("statement_count", "statement_share"),
+        ("minutes_release_count", "minutes_release_share"),
+    ):
+        events[share_name] = events[column] / denominator
+        shares.append(events[share_name])
+    entropy_parts = [-(share.where(share.gt(0.0)) * np.log(share.where(share.gt(0.0)))) for share in shares]
+    events["document_mix_entropy"] = pd.concat(entropy_parts, axis=1).sum(axis=1)
+    events["publication_gap_days"] = events["date"].diff().dt.days.astype(float)
+    return _project_to_decision_session(
+        events,
+        policy="next_session",
+        sessions=sessions,
+    )
+
+
 def normalize_treasury_auction_results_panel(
     frame: pd.DataFrame,
     *,
@@ -2043,6 +2164,98 @@ def normalize_treasury_auction_results_panel(
             "note_bond_offering",
             "long_term_offering",
             "reopening_offering",
+            "note_offering",
+            "bond_offering",
+        ]
+    )
+    return _project_to_decision_session(
+        grouped,
+        policy="next_session",
+        sessions=sessions,
+    )
+
+
+def normalize_treasury_auction_announcement_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Aggregate only fields known by each official Treasury announcement date."""
+
+    auctions = _validated_dates(frame, dataset_id="D_TREASURY_AUCTIONS")
+    required = {
+        "announcemt_date",
+        "auction_date",
+        "issue_date",
+        "maturity_date",
+        "security_type",
+        "offering_amt",
+    }
+    missing = sorted(required - set(auctions.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"TREASURY_ANNOUNCEMENT_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    for column in ("announcemt_date", "auction_date", "issue_date", "maturity_date"):
+        auctions[column] = pd.to_datetime(auctions[column], errors="coerce").dt.normalize()
+    auctions["offering_amount"] = pd.to_numeric(
+        auctions["offering_amt"].replace({"null": np.nan, "": np.nan}),
+        errors="coerce",
+    )
+    auctions["maturity_years"] = (
+        (auctions["maturity_date"] - auctions["issue_date"]).dt.days / 365.25
+    )
+    auctions["announcement_to_auction_days"] = (
+        auctions["auction_date"] - auctions["announcemt_date"]
+    ).dt.days.astype(float)
+    auctions = auctions.dropna(
+        subset=[
+            "announcemt_date",
+            "auction_date",
+            "offering_amount",
+            "maturity_years",
+            "announcement_to_auction_days",
+        ]
+    )
+    auctions = auctions.loc[
+        auctions["offering_amount"].gt(0.0)
+        & auctions["maturity_years"].gt(0.0)
+        & auctions["announcement_to_auction_days"].ge(0.0)
+    ].copy()
+    if auctions.empty:
+        raise FeatureInputNormalizerError("EMPTY_TREASURY_ANNOUNCEMENT_PANEL")
+    auctions["date"] = auctions["announcemt_date"]
+    offering = auctions["offering_amount"]
+    security = auctions["security_type"].astype(str).str.lower()
+    auctions["maturity_weighted"] = auctions["maturity_years"] * offering
+    auctions["lead_weighted"] = auctions["announcement_to_auction_days"] * offering
+    for kind in ("bill", "note", "bond"):
+        auctions[f"{kind}_offering"] = offering.where(security.eq(kind), 0.0)
+    grouped = auctions.groupby("date", as_index=False, sort=True).agg(
+        announcement_count=("offering_amount", "size"),
+        announced_offering=("offering_amount", "sum"),
+        maturity_weighted=("maturity_weighted", "sum"),
+        lead_weighted=("lead_weighted", "sum"),
+        bill_offering=("bill_offering", "sum"),
+        note_offering=("note_offering", "sum"),
+        bond_offering=("bond_offering", "sum"),
+    )
+    denominator = grouped["announced_offering"].replace(0.0, np.nan)
+    grouped["weighted_maturity_years"] = grouped["maturity_weighted"] / denominator
+    grouped["announcement_to_auction_days"] = grouped["lead_weighted"] / denominator
+    grouped["maturity_hhi"] = sum(
+        (grouped[f"{kind}_offering"] / denominator).pow(2)
+        for kind in ("bill", "note", "bond")
+    )
+    grouped["bill_share"] = grouped["bill_offering"] / denominator
+    grouped["note_bond_share"] = (
+        grouped["note_offering"] + grouped["bond_offering"]
+    ) / denominator
+    grouped = grouped.drop(
+        columns=[
+            "maturity_weighted",
+            "lead_weighted",
+            "bill_offering",
             "note_offering",
             "bond_offering",
         ]
@@ -2751,6 +2964,70 @@ def normalize_finra_margin_panel(
     )
 
 
+def normalize_noaa_ny_weather_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Clean LaGuardia GSOD fields and enforce the frozen two-day delay."""
+
+    weather = _validated_dates(frame, dataset_id="D_NOAA_NY")
+    required = {
+        "TEMP",
+        "DEWP",
+        "SLP",
+        "VISIB",
+        "WDSP",
+        "MXSPD",
+        "GUST",
+        "MAX",
+        "MIN",
+        "PRCP",
+        "SNDP",
+        "FRSHTT",
+    }
+    missing = sorted(required - set(weather.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"NOAA_WEATHER_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    numeric_specs = {
+        "TEMP": ("temperature", 999.0),
+        "DEWP": ("dewpoint", 999.0),
+        "SLP": ("sea_level_pressure", 9999.0),
+        "VISIB": ("visibility", 999.0),
+        "WDSP": ("wind_speed", 999.0),
+        "MXSPD": ("maximum_wind_speed", 999.0),
+        "GUST": ("gust", 999.0),
+        "MAX": ("maximum_temperature", 999.0),
+        "MIN": ("minimum_temperature", 999.0),
+        "PRCP": ("precipitation", 99.0),
+        "SNDP": ("snow_depth", 999.0),
+    }
+    panel = pd.DataFrame({"date": weather["date"]})
+    for source, (target, sentinel_floor) in numeric_specs.items():
+        values = pd.to_numeric(weather[source], errors="coerce")
+        panel[target] = values.mask(values.ge(sentinel_floor))
+    flags = (
+        weather["FRSHTT"]
+        .fillna(0)
+        .astype(str)
+        .str.replace(r"\.0$", "", regex=True)
+        .str.zfill(6)
+        .str[-6:]
+    )
+    for position, name in enumerate(("fog", "rain", "snow_ice", "hail", "thunder", "tornado")):
+        panel[name] = pd.to_numeric(flags.str[position], errors="coerce").fillna(0).astype(int)
+    panel = panel.sort_values("date", kind="mergesort").drop_duplicates(
+        "date", keep="last"
+    )
+    return _project_to_decision_session(
+        panel,
+        policy="two_calendar_days",
+        sessions=sessions,
+    )
+
+
 def normalize_calendar_state_panel(
     *,
     sessions: pd.DatetimeIndex,
@@ -2816,6 +3093,7 @@ __all__ = [
     "normalize_federal_debt_panel",
     "normalize_fomc_decision_panel",
     "normalize_fomc_event_panel",
+    "normalize_fomc_document_mix_panel",
     "normalize_fomc_publication_panels",
     "normalize_french_industry_panel",
     "normalize_french_factor_panel",
@@ -2828,9 +3106,11 @@ __all__ = [
     "normalize_lagged_goyal_issuance_panel",
     "normalize_macro_release_panel",
     "normalize_monetary_liquidity_panel",
+    "normalize_noaa_ny_weather_panel",
     "normalize_money_reserves_panel",
     "normalize_philadelphia_realtime_growth_panel",
     "normalize_philadelphia_realtime_cycle_panel",
+    "normalize_philadelphia_publication_panel",
     "normalize_policy_rate_panel",
     "normalize_spf_real_rate_panel",
     "normalize_revised_z1_equity_panel",
@@ -2839,6 +3119,7 @@ __all__ = [
     "normalize_z1_corporate_issuance_panel",
     "normalize_spy_decision_panel",
     "normalize_treasury_auction_results_panel",
+    "normalize_treasury_auction_announcement_panel",
     "normalize_treasury_curve_panel",
     "normalize_world_bank_cross_asset_panel",
     "normalize_world_bank_commodity_panel",

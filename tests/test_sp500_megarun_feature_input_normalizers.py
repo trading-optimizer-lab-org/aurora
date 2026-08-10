@@ -1699,3 +1699,100 @@ def test_federal_debt_panel_keeps_total_history_and_optional_composition() -> No
     ]
     assert result.loc[0, "total_debt"] == pytest.approx(9_000.0)
     assert result.loc[0, "public_debt"] == pytest.approx(5_000.0)
+
+
+def test_philadelphia_publication_panel_counts_distinct_vintages_and_resources() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2008-02-14", "2008-03-31")
+    frame = pd.DataFrame(
+        [
+            {"date": "2008-02-15", "observation_date": "2007-10-01", "value": 100.0, "vintage_label": "ROUTPUT08M2", "source_sheet": "routput", "resource_id": "real_output_monthly_vintages"},
+            {"date": "2008-02-15", "observation_date": "2008-01-01", "value": 101.0, "vintage_label": "ROUTPUT08M2", "source_sheet": "routput", "resource_id": "real_output_monthly_vintages"},
+            {"date": "2008-02-15", "observation_date": "2007-10-01", "value": 4.8, "vintage_label": "RUC08Q1", "source_sheet": "ruc", "resource_id": "unemployment_quarterly_vintages"},
+            {"date": "2008-03-15", "observation_date": "2008-02-01", "value": 102.0, "vintage_label": "ROUTPUT08M3", "source_sheet": "routput", "resource_id": "real_output_monthly_vintages"},
+        ]
+    )
+
+    result = api.normalize_philadelphia_publication_panel(frame, sessions=sessions)
+
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2008-02-15")
+    assert result.loc[0, "available_at"] == pd.Timestamp("2008-02-18")
+    assert result.loc[0, "vintage_count"] == 2
+    assert result.loc[0, "resource_breadth"] == 2
+    assert result.loc[0, "monthly_breadth"] == 1
+    assert result.loc[0, "quarterly_breadth"] == 1
+    assert result.loc[0, "latest_observation_age_days"] > 0
+
+
+def test_treasury_announcement_panel_never_uses_result_date_as_availability() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2008-01-02", "2008-02-15")
+    frame = pd.DataFrame(
+        [
+            {"date": "2008-01-10", "announcemt_date": "2008-01-03", "auction_date": "2008-01-08", "issue_date": "2008-01-10", "maturity_date": "2008-07-10", "security_type": "Bill", "offering_amt": 10_000.0},
+            {"date": "2008-01-10", "announcemt_date": "2008-01-03", "auction_date": "2008-01-08", "issue_date": "2008-01-10", "maturity_date": "2013-01-10", "security_type": "Note", "offering_amt": 20_000.0},
+        ]
+    )
+
+    result = api.normalize_treasury_auction_announcement_panel(frame, sessions=sessions)
+
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2008-01-03")
+    assert result.loc[0, "available_at"] == pd.Timestamp("2008-01-04")
+    assert result.loc[0, "announcement_count"] == 2
+    assert result.loc[0, "announced_offering"] == pytest.approx(30_000.0)
+    assert result.loc[0, "announcement_to_auction_days"] == pytest.approx(5.0)
+    assert result.loc[0, "maturity_hhi"] == pytest.approx((1 / 3) ** 2 + (2 / 3) ** 2)
+
+
+def test_fomc_document_mix_excludes_noncausal_minutes_document_date() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2008-01-02", "2008-03-31")
+    frame = pd.DataFrame(
+        [
+            {"date": "2008-01-29", "document_kind": "meeting", "document_reference": "January 29-30 Meeting - 2008"},
+            {"date": "2008-01-30", "document_kind": "minutes", "document_reference": "minutes-document-link"},
+            {"date": "2008-01-30", "document_kind": "statement", "document_reference": "statement-link"},
+            {"date": "2008-02-20", "document_kind": "minutes_release", "document_reference": "minutes-release-link"},
+        ]
+    )
+
+    result = api.normalize_fomc_document_mix_panel(frame, sessions=sessions)
+
+    january = result.loc[result["observed_at"].eq(pd.Timestamp("2008-01-30"))].iloc[0]
+    assert january["document_count"] == 2
+    assert january["meeting_count"] == 1
+    assert january["statement_count"] == 1
+    assert january["minutes_release_count"] == 0
+    assert result["available_at"].gt(result["observed_at"]).all()
+
+
+def test_noaa_weather_panel_waits_two_calendar_days_and_removes_sentinels() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("2008-01-02", "2008-01-15")
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2008-01-02", "2008-01-04"]),
+            "TEMP": [40.0, 42.0],
+            "DEWP": [30.0, 9999.9],
+            "SLP": [1010.0, 1012.0],
+            "VISIB": [8.0, 10.0],
+            "WDSP": [5.0, 7.0],
+            "MXSPD": [12.0, 15.0],
+            "GUST": [20.0, 999.9],
+            "MAX": [45.0, 47.0],
+            "MIN": [35.0, 36.0],
+            "PRCP": [0.25, 99.99],
+            "SNDP": [0.0, 999.9],
+            "FRSHTT": [110000, 10000],
+        }
+    )
+
+    result = api.normalize_noaa_ny_weather_panel(frame, sessions=sessions)
+
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2008-01-02")
+    assert result.loc[0, "available_at"] == pd.Timestamp("2008-01-04")
+    assert result.loc[0, "precipitation"] == pytest.approx(0.25)
+    assert result.loc[0, "fog"] == 1
+    assert result.loc[0, "rain"] == 1
+    assert pd.isna(result.loc[1, "dewpoint"])
+    assert pd.isna(result.loc[1, "precipitation"])

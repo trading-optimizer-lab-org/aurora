@@ -55,10 +55,7 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         lane.lane_id
         for lane in feature_contract.lanes
         if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 231)]
-    assert all(
-        lane.implementation_status == "blueprint_only" for lane in feature_contract.lanes[230:]
-    )
+    ] == [f"F{index:03d}" for index in range(1, 241)]
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
     assert all(lane.minimum_history >= 5 for lane in model_lanes)
