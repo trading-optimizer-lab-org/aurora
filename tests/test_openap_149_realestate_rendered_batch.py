@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from aurora.core.execution_policy import LocalRunBlocked
 
@@ -632,3 +633,36 @@ def test_realestate_sector_batch_cli_reads_complete_lake_and_writes_runtime_outp
     assert summary["current_values_computed"] == 5
     assert len(current) == 5
     assert not current["strict_score_eligible"].any()
+
+
+def test_realestate_sector_workflow_keeps_acquisition_manual_and_pinned() -> None:
+    workflow_path = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "openap-149-realestate-rendered-batch.yml"
+    )
+    workflow = yaml.load(
+        workflow_path.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+    assert set(workflow["on"]) == {"push", "workflow_dispatch"}
+    assert (
+        "scripts/run_openap_149_realestate_rendered_batch.py"
+        in workflow["on"]["push"]["paths"]
+    )
+    assert set(workflow["jobs"]) == {"contract", "acquire"}
+    acquire = workflow["jobs"]["acquire"]
+    assert acquire["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
+    assert acquire["needs"] == "contract"
+    assert acquire["env"]["GITHUB_ACTIONS"] == "true"
+    steps = {step["name"]: step for step in acquire["steps"] if "name" in step}
+    download = steps["Download all verified SEC lake shards"]
+    assert download["with"]["pattern"] == "openap-sec-repair-lake-*"
+    assert download["with"]["run-id"] == "${{ inputs.sec_artifact_run_id }}"
+    command = steps["Acquire rendered realestate sector batch"]["run"]
+    assert "--minimum-issuers 5" in command
+    assert "--maximum-issuers 12" in command
+    assert "--target-sic2 35" in command
+    assert "--anchor-cik 320193" in command
