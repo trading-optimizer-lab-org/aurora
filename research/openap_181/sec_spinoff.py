@@ -266,6 +266,21 @@ def _filing_url(cik: str, accession: str, primary_document: str) -> str:
     )
 
 
+def _audited_submission_source(row: pd.Series) -> bool:
+    source = _clean_text(row.get("source"))
+    source_mode = _clean_text(row.get("source_mode"))
+    cik = _cik(row.get("cik"))
+    if source in {"sec_submissions_bulk", "sec_submissions_api"}:
+        return True
+    if not cik:
+        return False
+    official = f"https://data.sec.gov/submissions/CIK{cik}.json"
+    readthrough = f"https://r.jina.ai/http://data.sec.gov/submissions/CIK{cik}.json"
+    return (source_mode == "sec_official_api" and source == official) or (
+        source_mode == "sec_via_jina_readthrough" and source == readthrough
+    )
+
+
 def select_sec_spinoff_filing_candidates(
     submissions: pd.DataFrame,
     current_universe: pd.DataFrame,
@@ -300,6 +315,9 @@ def select_sec_spinoff_filing_candidates(
     frame["form"] = frame["form"].map(lambda value: _clean_text(value).upper())
     frame["primary_document"] = frame["primary_document"].map(_clean_text)
     frame["source"] = frame["source"].map(_clean_text)
+    if "source_mode" not in frame:
+        frame["source_mode"] = ""
+    frame["source_mode"] = frame["source_mode"].map(_clean_text)
     lookback = _month_start(formation) - pd.DateOffset(months=lookback_months)
     frame = frame.loc[
         frame["cik"].ne("")
@@ -314,7 +332,7 @@ def select_sec_spinoff_filing_candidates(
         & frame["primary_document"].map(
             lambda value: _DOCUMENT_RE.fullmatch(value) is not None
         )
-        & frame["source"].isin({"sec_submissions_bulk", "sec_submissions_api"})
+        & frame.apply(_audited_submission_source, axis=1)
     ].copy()
     initial = frame.loc[frame["form"].isin(_INITIAL_FORM_10)]
     if initial.empty:
