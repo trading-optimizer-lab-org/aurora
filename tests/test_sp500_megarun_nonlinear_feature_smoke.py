@@ -110,7 +110,12 @@ def test_nonlinear_parameter_audit_uses_lane_specific_causal_train_tails() -> No
             "value": phase,
         }
     )
-    panels = {"spy": base.copy(), "calendar": base.copy()}
+    earlier = base.iloc[[0]].copy()
+    earlier_date = earlier["date"].iloc[0] - pd.offsets.BDay(1)
+    for column in ("date", "observed_at", "available_at"):
+        earlier[column] = earlier_date
+    calendar = pd.concat((earlier, base), ignore_index=True)
+    panels = {"spy": base.copy(), "calendar": calendar}
 
     short = _api()._parameter_audit_panels(panels, "F132")
     long = _api()._parameter_audit_panels(panels, "F134")
@@ -118,7 +123,7 @@ def test_nonlinear_parameter_audit_uses_lane_specific_causal_train_tails() -> No
     assert len(short["spy"]) < len(long["spy"]) < len(base)
     assert short["spy"]["date"].max() == pd.Timestamp("2010-12-31")
     assert long["spy"]["date"].max() == pd.Timestamp("2010-12-31")
-    assert short["spy"]["date"].equals(short["calendar"]["date"])
-    assert long["spy"]["date"].equals(long["calendar"]["date"])
+    assert short["spy"]["date"].isin(short["calendar"]["date"]).all()
+    assert long["spy"]["date"].isin(long["calendar"]["date"]).all()
     assert short["spy"]["date"].ge(pd.Timestamp("2003-01-02")).all()
     assert long["spy"]["date"].ge(pd.Timestamp("2003-01-02")).all()

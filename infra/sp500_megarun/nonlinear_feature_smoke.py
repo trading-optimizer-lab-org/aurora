@@ -121,14 +121,20 @@ def _parameter_audit_panels(
     if first_witness >= len(spy_dates):
         raise NonlinearFeatureSmokeError("PARAMETER_AUDIT_2010_MISSING")
     start = max(0, first_witness - _PARAMETER_AUDIT_HISTORY[lane_id])
-    result = {
-        name: panel.iloc[start:].reset_index(drop=True)
-        for name, panel in panels.items()
-    }
+    start_date = spy_dates[start]
+    result: dict[str, pd.DataFrame] = {}
+    for name, panel in panels.items():
+        panel_dates = pd.DatetimeIndex(
+            pd.to_datetime(panel["date"], errors="raise")
+        )
+        bounded = panel_dates.to_series(index=panel.index).between(
+            start_date,
+            _TRAIN_END,
+        )
+        result[name] = panel.loc[bounded].reset_index(drop=True)
     result_dates = pd.DatetimeIndex(result["spy"]["date"])
     if any(
-        len(panel) != len(result_dates)
-        or not pd.DatetimeIndex(panel["date"]).equals(result_dates)
+        not result_dates.isin(pd.DatetimeIndex(panel["date"])).all()
         for panel in result.values()
     ):
         raise NonlinearFeatureSmokeError("PARAMETER_AUDIT_PANELS_NOT_ALIGNED")
