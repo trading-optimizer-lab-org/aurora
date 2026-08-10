@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -14,6 +16,7 @@ from aurora.research.openap_181.sec_listing_identity import (
 
 
 FORMATION_AT = "2026-08-09T23:59:59Z"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_current_sec_universe_uses_only_direct_official_identity() -> None:
@@ -117,6 +120,18 @@ def test_current_sec_universe_rejects_unofficial_or_future_provenance() -> None:
             retrieved_at="not-a-timestamp",
             source_url="https://www.sec.gov/files/company_tickers_exchange.json",
         )
+
+
+def test_exchange_switch_workflow_acquires_direct_official_sec_identity() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "openap-149-sec-exchange-switch.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "https://www.sec.gov/files/company_tickers_exchange.json" in workflow
+    assert "recover_openap_market_security_master.py" not in workflow
+    assert "--current-sec-identity-json" in workflow
+    assert "--identity-retrieved-at" in workflow
+    assert 'default: "2026-08-10T23:59:59Z"' in workflow
 
 
 def _listing_facts(

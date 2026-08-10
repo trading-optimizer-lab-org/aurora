@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 import re
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlparse
 
 import pandas as pd
@@ -89,6 +89,21 @@ _UNIVERSE_REQUIRED_COLUMNS = frozenset(
         "identity_available_at",
         "identity_source_url",
     }
+)
+_CURRENT_UNIVERSE_COLUMNS = (
+    "security_id",
+    "ticker",
+    "cik",
+    "exchange_family",
+    "issuer_share_class_count",
+    "identity_available_at",
+    "identity_source_url",
+)
+_CURRENT_UNIVERSE_REJECTION_COLUMNS = (
+    "cik",
+    "ticker",
+    "exchange",
+    "reason_if_rejected",
 )
 _INTERVAL_COLUMNS = (
     "security_id",
@@ -213,6 +228,130 @@ def normalize_exchange_family(value: Any) -> str:
     if key in {"BATS", "BZX", "CBOEBZX", "CBOEBZXEXCHANGE"}:
         return "CBOE_BZX"
     return ""
+
+
+def build_current_sec_universe(
+    payload: Mapping[str, Any],
+    *,
+    retrieved_at: str | pd.Timestamp,
+    source_url: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build current listed-security identity directly from the SEC endpoint."""
+
+    if not _official_current_identity_url(source_url):
+        raise SecListingIdentityError(
+            "current identity source is not the official SEC endpoint"
+        )
+    retrieved = _utc_timestamp(retrieved_at)
+    if pd.isna(retrieved):
+        raise SecListingIdentityError("retrieved_at is not a valid timestamp")
+    if not isinstance(payload, Mapping):
+        raise SecListingIdentityError("SEC current identity payload is not an object")
+    fields = payload.get("fields")
+    data = payload.get("data")
+    if not isinstance(fields, list) or not isinstance(data, list):
+        raise SecListingIdentityError("SEC current identity payload has no table")
+    field_names = [str(field).strip().lower() for field in fields]
+    required = {"cik", "name", "tickers", "exchanges"}
+    if not required.issubset(field_names) or len(field_names) != len(fields):
+        raise SecListingIdentityError(
+            "SEC current identity payload has an invalid schema"
+        )
+
+    rows: list[dict[str, Any]] = []
+    rejections: list[dict[str, Any]] = []
+    for raw in data:
+        if not isinstance(raw, list) or len(raw) != len(field_names):
+            raise SecListingIdentityError(
+                "SEC current identity payload contains a malformed row"
+            )
+        record = dict(zip(field_names, raw, strict=True))
+        cik = _normalize_cik(record.get("cik"))
+        tickers = record.get("tickers")
+        exchanges = record.get("exchanges")
+        if isinstance(tickers, str):
+            tickers = [tickers]
+        if isinstance(exchanges, str):
+            exchanges = [exchanges]
+        if (
+            not cik
+            or not isinstance(tickers, list)
+            or not isinstance(exchanges, list)
+        ):
+            raise SecListingIdentityError(
+                "SEC current identity payload contains an invalid issuer identity"
+            )
+        for index, ticker_value in enumerate(tickers):
+            ticker = _clean_text(ticker_value).upper()
+            exchange = (
+                _clean_text(exchanges[index]) if index < len(exchanges) else ""
+            )
+            exchange_family = normalize_exchange_family(exchange)
+            ticker_key = _identity_key(ticker)
+            if not ticker_key:
+                rejections.append(
+                    {
+                        "cik": cik,
+                        "ticker": ticker,
+                        "exchange": exchange,
+                        "reason_if_rejected": "invalid_current_ticker",
+                    }
+                )
+                continue
+            if exchange_family not in {
+                "NASDAQ",
+                "NYSE",
+                "NYSE_AMERICAN",
+                "NYSE_ARCA",
+                "CBOE_BZX",
+            }:
+                rejections.append(
+                    {
+                        "cik": cik,
+                        "ticker": ticker,
+                        "exchange": exchange,
+                        "reason_if_rejected": "unsupported_current_exchange",
+                    }
+                )
+                continue
+            rows.append(
+                {
+                    "security_id": f"US-SEC-{cik}-{ticker_key}",
+                    "ticker": ticker,
+                    "cik": cik,
+                    "exchange_family": exchange_family,
+                    "identity_available_at": retrieved.isoformat(),
+                    "identity_source_url": source_url,
+                }
+            )
+
+    universe = pd.DataFrame(rows)
+    if universe.empty:
+        raise SecListingIdentityError(
+            "SEC current identity payload produced no supported securities"
+        )
+    conflicts = universe.groupby("security_id")["exchange_family"].nunique()
+    if conflicts.gt(1).any():
+        raise SecListingIdentityError(
+            "SEC current identity payload contains conflicting exchanges"
+        )
+    universe = universe.drop_duplicates(
+        ["security_id", "ticker", "cik", "exchange_family"]
+    ).copy()
+    class_counts = universe.groupby("cik")["security_id"].transform("nunique")
+    universe["issuer_share_class_count"] = class_counts.astype(int)
+    universe = universe.loc[:, _CURRENT_UNIVERSE_COLUMNS].sort_values(
+        ["security_id", "ticker"]
+    ).reset_index(drop=True)
+    rejected = pd.DataFrame(
+        rejections,
+        columns=_CURRENT_UNIVERSE_REJECTION_COLUMNS,
+    )
+    if not rejected.empty:
+        rejected = rejected.drop_duplicates().sort_values(
+            ["cik", "ticker", "exchange", "reason_if_rejected"]
+        ).reset_index(drop=True)
+    return universe, rejected
 
 
 def _sec_archive_source_reason(
@@ -1156,6 +1295,7 @@ __all__ = [
     "MAX_CORROBORATED_GAP_DAYS",
     "PERIODIC_FORMS",
     "SecListingIdentityError",
+    "build_current_sec_universe",
     "build_sec_listing_intervals",
     "calculate_sec_exch_switch_current",
     "extract_sec_listing_observations",
