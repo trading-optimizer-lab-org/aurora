@@ -316,6 +316,14 @@ def test_market_security_master_recovery_requires_success_and_safe_summary() -> 
         parquet.getvalue()
     ).hexdigest()
 
+    jobs[0]["steps"][0]["name"] = (
+        "Merge repaired lake and calculate current scores"
+    )
+    repaired_verified = module.validate_recovered_market_security_master(
+        run, jobs, artifact, members
+    )
+    assert repaired_verified["source_run_id"] == 31270341796
+
     jobs[0]["steps"][1]["conclusion"] = "failure"
     with pytest.raises(ValueError, match="acceptance steps"):
         module.validate_recovered_market_security_master(
