@@ -62,3 +62,27 @@ def test_price_smoke_rejects_a_2011_row(tmp_path: Path) -> None:
             pd.concat([spy, extra], ignore_index=True),
             output_dir=tmp_path,
         )
+
+
+def test_price_parameter_audit_executes_every_frozen_choice_on_train_rows(
+    tmp_path: Path,
+) -> None:
+    api = _smoke_api()
+    root = Path(__file__).resolve().parents[1]
+
+    report = api.build_price_parameter_choice_audit(
+        _full_train_spy(),
+        data_contract_path=root / "config" / "sp500_megarun_free_data_240.json",
+        feature_contract_path=root / "config" / "sp500_megarun_feature_contract_240.json",
+        output_path=tmp_path / "parameter_choice_audit.json",
+    )
+
+    assert report["ready"] is True
+    assert report["lane_count"] == 20
+    assert report["choice_probe_count"] == report["expected_choice_probe_count"]
+    assert report["failed_probes"] == []
+    assert isinstance(report["inactive_choice_groups"], list)
+    assert report["validation_opened"] is False
+    assert report["locked_opened"] is False
+    assert report["maximum_output_date"] == "2010-12-31"
+    assert (tmp_path / "parameter_choice_audit.json").is_file()

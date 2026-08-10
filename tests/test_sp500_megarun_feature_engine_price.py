@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
+
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
+from aurora.infra.sp500_megarun.feature_contract import (
+    load_and_validate_feature_contract,
+)
 
 
 def _engine_api():
@@ -108,3 +114,59 @@ def test_price_engine_rejects_validation_rows_instead_of_trimming_them() -> None
 
     with pytest.raises(api.FeatureEngineError, match="NON_TRAIN_PRICE_ROW"):
         api.evaluate_price_family_batch(spy)
+
+
+def test_every_frozen_f001_f020_parameter_choice_is_executable() -> None:
+    root = Path(__file__).resolve().parents[1]
+    data = load_and_validate_contract(root / "config" / "sp500_megarun_free_data_240.json")
+    contract = load_and_validate_feature_contract(
+        root / "config" / "sp500_megarun_feature_contract_240.json",
+        data,
+    )
+    api = _engine_api()
+    spy = _spy_frame(1_000)
+
+    for lane in contract.lanes[:20]:
+        baseline = {name: choices[0] for name, choices in lane.parameter_space.items()}
+        for name, choices in lane.parameter_space.items():
+            for choice in choices:
+                parameters = {**baseline, name: choice}
+                if lane.lane_id == "F002" and int(parameters["fast"]) >= int(parameters["slow"]):
+                    parameters["slow"] = next(
+                        value
+                        for value in lane.parameter_space["slow"]
+                        if int(value) > int(parameters["fast"])
+                    )
+                result = api.evaluate_price_lane(lane.lane_id, spy, parameters)
+                assert result["value"].notna().any(), (lane.lane_id, name, choice)
+
+
+@pytest.mark.parametrize(
+    ("lane", "left", "right"),
+    [
+        ("F001", {"kind": "sma", "window": 63, "normalization": "price_ratio", "threshold": 0.0}, {"kind": "sma", "window": 63, "normalization": "price_ratio", "threshold": 1.0}),
+        ("F002", {"kind": "sma", "fast": 10, "slow": 126, "confirmation": 1}, {"kind": "macd", "fast": 10, "slow": 126, "confirmation": 5}),
+        ("F004", {"components": 2, "short_window": 5, "long_window": 126, "aggregation": "majority"}, {"components": 5, "short_window": 20, "long_window": 504, "aggregation": "acceleration"}),
+        ("F005", {"estimator": "ols", "window": 63, "minimum_r2": 0.0}, {"estimator": "kaufman_efficiency", "window": 252, "minimum_r2": 0.75}),
+        ("F006", {"window": 20, "kind": "donchian", "buffer": 0.0, "confirmation": 1}, {"window": 63, "kind": "atr_channel", "buffer": 1.0, "confirmation": 3}),
+        ("F007", {"kind": "bollinger", "window": 20, "width": 1.0, "mode": "breakout"}, {"kind": "ichimoku", "window": 63, "width": 2.5, "mode": "reversal"}),
+        ("F008", {"window": 63, "statistic": "autocorrelation", "lag": 1}, {"window": 126, "statistic": "entropy", "lag": 5}),
+        ("F009", {"window": 2, "threshold": 0.0, "confirmation": 1, "hold": 1}, {"window": 10, "threshold": 0.01, "confirmation": 3, "hold": 5}),
+        ("F010", {"kind": "rsi", "window": 14, "lower": 20, "upper": 80}, {"kind": "aroon", "window": 40, "lower": 30, "upper": 70}),
+        ("F015", {"kind": "close", "window": 20, "statistic": "level"}, {"kind": "rogers_satchell", "window": 63, "statistic": "percentile"}),
+    ],
+)
+def test_previously_ignored_price_parameters_change_the_feature(
+    lane: str,
+    left: dict[str, object],
+    right: dict[str, object],
+) -> None:
+    api = _engine_api()
+    spy = _spy_frame(1_000)
+
+    first = api.evaluate_price_lane(lane, spy, left)["value"]
+    second = api.evaluate_price_lane(lane, spy, right)["value"]
+
+    overlap = first.notna() & second.notna()
+    assert overlap.any()
+    assert not np.allclose(first.loc[overlap], second.loc[overlap])
