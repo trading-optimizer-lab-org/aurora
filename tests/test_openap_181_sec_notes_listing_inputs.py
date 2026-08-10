@@ -197,7 +197,8 @@ def test_notes_identity_runner_and_access_workflow_remain_manual_non_strict() ->
     ).read_text(encoding="utf-8")
 
     assert "require_github_actions_or_explicit_local_permission" in runner
-    assert "validate_materialized_market_security_master_recovery" in runner
+    assert "build_current_sec_universe" in runner
+    assert "validate_materialized_market_security_master_recovery" not in runner
     assert "load_sec_notes_listing_history" in runner
     assert "calculate_sec_exch_switch_current" in runner
     assert "_formula_contract" in runner
@@ -215,5 +216,8 @@ def test_notes_identity_runner_and_access_workflow_remain_manual_non_strict() ->
     assert "push:" not in exchange_workflow
     assert "2025q3,2025q4,2026q1,2026q2,2026_07" in exchange_workflow
     assert "run_openap_149_sec_listing_identity.py" in exchange_workflow
+    assert "https://www.sec.gov/files/company_tickers_exchange.json" in (
+        exchange_workflow
+    )
     assert "openap-149-sec-exchange-switch-current" in exchange_workflow
     assert "--formula-source-run-id" in exchange_workflow
