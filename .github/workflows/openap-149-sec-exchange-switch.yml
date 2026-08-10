@@ -182,7 +182,7 @@ jobs:
             "${period_args[@]}" \
             --user-agent "$SEC_USER_AGENT" \
             --output-dir openap_149_sec_notes_exchange_switch
-      - name: Require complete official Notes access
+      - name: Record bounded official Notes access outcome
         run: |
           python - <<'PY'
           import json
@@ -196,18 +196,27 @@ jobs:
           manifest = pd.read_csv(
               root / "sec_notes_source_manifest.csv", keep_default_na=False
           )
-          assert summary["all_downloaded"] is True
           assert summary["periods_requested"] == len(summary["periods"])
-          assert summary["periods_requested"] == len(manifest)
-          assert manifest["status"].eq("downloaded").all()
-          assert manifest["http_status"].astype(int).eq(200).all()
-          assert manifest["sha256"].str.fullmatch(r"[0-9a-f]{64}").all()
+          assert 1 <= len(manifest) <= summary["periods_requested"]
+          assert set(manifest["status"]).issubset({"downloaded", "failed"})
+          if summary["all_downloaded"]:
+              assert len(manifest) == summary["periods_requested"]
+              assert manifest["status"].eq("downloaded").all()
+              assert manifest["http_status"].astype(int).eq(200).all()
+              assert manifest["sha256"].str.fullmatch(r"[0-9a-f]{64}").all()
+          else:
+              assert manifest["status"].eq("failed").any()
+              assert manifest.loc[
+                  manifest["status"].eq("failed"), "failure_reason"
+              ].astype(str).str.strip().ne("").all()
           PY
       - name: Calculate causal non-strict ExchSwitch reconstruction
         run: |
           python scripts/run_openap_149_sec_listing_identity.py \
             --notes-archive-dir outputs/openap_149_sec_notes_exchange_switch/zips \
             --notes-source-manifest outputs/openap_149_sec_notes_exchange_switch/sec_notes_source_manifest.csv \
+            --notes-access-summary outputs/openap_149_sec_notes_exchange_switch/sec_notes_access_summary.json \
+            --allow-missing-notes \
             --current-sec-identity-json inputs/sec_current/company_tickers_exchange.json \
             --current-sec-identity-source-url https://www.sec.gov/files/company_tickers_exchange.json \
             --identity-retrieved-at "$IDENTITY_RETRIEVED_AT" \

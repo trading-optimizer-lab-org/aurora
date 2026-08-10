@@ -284,6 +284,12 @@ def parse_current_sec_identity_response(
     return payload
 
 
+def empty_sec_listing_facts() -> pd.DataFrame:
+    """Return a schema-valid empty frame for a fail-closed current subset."""
+
+    return pd.DataFrame(columns=_NORMALIZED_FACT_COLUMNS)
+
+
 def build_current_sec_universe(
     payload: Mapping[str, Any],
     *,
@@ -1352,6 +1358,7 @@ __all__ = [
     "build_current_sec_universe",
     "build_sec_listing_intervals",
     "calculate_sec_exch_switch_current",
+    "empty_sec_listing_facts",
     "extract_sec_listing_observations",
     "filter_market_bars_by_sec_identity",
     "normalize_sec_notes_listing_facts",

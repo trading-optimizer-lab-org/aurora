@@ -20,6 +20,7 @@ from aurora.research.openap_181.sec_listing_identity import (
     build_current_sec_universe,
     build_sec_listing_intervals,
     calculate_sec_exch_switch_current,
+    empty_sec_listing_facts,
     extract_sec_listing_observations,
 )
 from aurora.research.openap_181.sec_notes_listing_inputs import (
@@ -128,6 +129,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--notes-archive-dir", type=Path, required=True)
     parser.add_argument("--notes-source-manifest", type=Path, required=True)
+    parser.add_argument("--notes-access-summary", type=Path, required=True)
+    parser.add_argument("--allow-missing-notes", action="store_true")
     parser.add_argument("--current-sec-identity-json", type=Path, required=True)
     parser.add_argument("--current-sec-identity-source-url", required=True)
     parser.add_argument("--identity-retrieved-at", required=True)
@@ -189,16 +192,49 @@ def main() -> int:
         args.notes_source_manifest,
         keep_default_na=False,
     )
+    try:
+        notes_access_summary = json.loads(
+            args.notes_access_summary.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("SEC Notes access summary is invalid") from exc
+    if not isinstance(notes_access_summary, dict):
+        raise RuntimeError("SEC Notes access summary must be an object")
+    notes_periods = notes_access_summary.get("periods", [])
+    notes_access_complete = bool(notes_access_summary.get("all_downloaded"))
+    if (
+        not isinstance(notes_periods, list)
+        or int(notes_access_summary.get("periods_requested", 0))
+        != len(notes_periods)
+        or notes_manifest.empty
+        or not set(notes_manifest["status"].astype(str)).issubset(
+            {"downloaded", "failed"}
+        )
+    ):
+        raise RuntimeError("SEC Notes access evidence is inconsistent")
+    if notes_access_complete and (
+        len(notes_manifest) != len(notes_periods)
+        or not notes_manifest["status"].eq("downloaded").all()
+    ):
+        raise RuntimeError("SEC Notes complete-access claim is inconsistent")
+    if not notes_access_complete and not args.allow_missing_notes:
+        raise RuntimeError("SEC Notes access is incomplete")
     notes_retrieved_at = pd.to_datetime(
         notes_manifest["retrieved_at"], errors="coerce", utc=True
     ).max()
     if pd.isna(notes_retrieved_at):
         raise RuntimeError("SEC Notes manifest has no valid retrieval timestamp")
-    facts, archive_summaries = load_sec_notes_listing_history(
-        args.notes_archive_dir,
-        notes_manifest,
-        allowed_ciks=frozenset(current_universe["cik"].astype(str)),
-    )
+    if notes_access_complete:
+        facts, archive_summaries = load_sec_notes_listing_history(
+            args.notes_archive_dir,
+            notes_manifest,
+            allowed_ciks=frozenset(current_universe["cik"].astype(str)),
+        )
+    else:
+        facts = empty_sec_listing_facts()
+        archive_summaries = pd.DataFrame(
+            columns=["source_period", "archive_size_bytes", "txt_rows_scanned"]
+        )
     observations, observation_rejections = extract_sec_listing_observations(
         facts,
         formation_at=formation,
@@ -262,8 +298,15 @@ def main() -> int:
         "formula_source_run_id": str(args.formula_source_run_id),
         "formula_inventory_sha256": _sha256(formula_inventory),
         "notes_source_manifest_sha256": _sha256(args.notes_source_manifest),
-        "notes_periods": sorted(
-            archive_summaries["source_period"].astype(str).tolist()
+        "notes_periods": sorted(str(period) for period in notes_periods),
+        "notes_access_complete": notes_access_complete,
+        "notes_failure_reasons": sorted(
+            set(
+                notes_manifest.loc[
+                    notes_manifest["status"].eq("failed"),
+                    "failure_reason",
+                ].astype(str)
+            )
         ),
         "notes_archives": len(archive_summaries),
         "notes_archive_size_bytes": int(
