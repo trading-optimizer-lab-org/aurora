@@ -381,12 +381,65 @@ def _forbidden_parameter_pairs(
             )
             for choice in space["short_window"][1:]
         )
-    if lane.lane_id in {"F172", "F180"}:
+    if lane.lane_id == "F171":
         pairs.extend(
-            ("window", window, "long_window", long_window)
-            for window in space["window"]
-            for long_window in space["long_window"]
-            if int(long_window) <= int(window)
+            ("statistic", statistic, "threshold", threshold)
+            for statistic in (
+                "official_broad",
+                "cross_mean",
+                "divergence",
+                "dispersion",
+            )
+            for threshold in space["threshold"][1:]
+        )
+    if lane.lane_id == "F172":
+        pairs.extend(
+            ("statistic", statistic, "window", window)
+            for statistic in ("cash_level", "offshore_basis", "carry_pressure")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id == "F173":
+        pairs.extend(
+            ("aggregation", aggregation, "selection_fraction", fraction)
+            for aggregation in ("breadth", "rank")
+            for fraction in space["selection_fraction"][1:]
+        )
+    if lane.lane_id in {"F174", "F176"}:
+        pairs.extend(
+            ("statistic", "level", "window", window)
+            for window in space["window"][1:]
+        )
+        pairs.extend(
+            ("statistic", statistic, "normalization_window", window)
+            for statistic in ("momentum", "breadth")
+            for window in space["normalization_window"][1:]
+        )
+        pairs.extend(
+            ("statistic", statistic, "threshold", threshold)
+            for statistic in ("level", "momentum")
+            for threshold in space["threshold"][1:]
+        )
+    if lane.lane_id == "F177":
+        pairs.extend(
+            ("statistic", statistic, "threshold", threshold)
+            for statistic in ("dispersion", "inflation_pressure", "concentration")
+            for threshold in space["threshold"][1:]
+        )
+    if lane.lane_id == "F178":
+        pairs.extend(
+            ("statistic", "sign_breadth", "normalization_window", window)
+            for window in space["normalization_window"][1:]
+        )
+    if lane.lane_id == "F179":
+        pairs.extend(
+            ("normalization", "raw", "z_window", window)
+            for window in space["z_window"][1:]
+        )
+    if lane.lane_id == "F180":
+        pairs.extend(
+            ("statistic", statistic, "long_window", window)
+            for statistic in ("correlation", "beta")
+            for window in space["long_window"][1:]
         )
     if lane.lane_id in {"F023", "F026", "F030", "F031"}:
         pairs.extend(
@@ -718,6 +771,21 @@ def _forbidden_parameter_triplets(
                         )
                     else:
                         effective_counts.add(effective)
+    if lane.lane_id == "F180":
+        triplets.extend(
+            (
+                "statistic",
+                statistic,
+                "window",
+                window,
+                "long_window",
+                long_window,
+            )
+            for statistic in ("decoupling", "sign_change")
+            for window in space["window"]
+            for long_window in space["long_window"]
+            if int(long_window) <= int(window)
+        )
     return tuple(triplets)
 
 

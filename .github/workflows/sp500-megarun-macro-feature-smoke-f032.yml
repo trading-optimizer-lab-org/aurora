@@ -140,6 +140,7 @@ on:
           - f141_f150
           - f151_f160
           - f161_f170
+          - f171_f180
 
 permissions:
   actions: read
@@ -468,10 +469,23 @@ jobs:
         if: always() && steps.global_factor_feature_smoke.outcome != 'success'
         run: exit 1
       - name: Execute and audit F171-F180 on train only
+        id: cross_asset_feature_smoke
+        continue-on-error: true
         run: |
           python scripts/run_sp500_megarun_cross_asset_feature_smoke_f171.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_cross_asset_feature_smoke_f171_f180
+      - name: Upload F171-F180 train-only evidence
+        if: always() && steps.cross_asset_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-cross-asset-feature-smoke-F171-F180-${{ github.run_id }}
+          path: outputs/sp500_megarun_cross_asset_feature_smoke_f171_f180
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F171-F180 audit is not ready
+        if: always() && steps.cross_asset_feature_smoke.outcome != 'success'
+        run: exit 1
       - name: Execute and audit F181-F190 on train only
         run: |
           python scripts/run_sp500_megarun_rates_credit_feature_smoke_f181.py \
@@ -521,13 +535,6 @@ jobs:
         with:
           name: sp500-megarun-macro-feature-smoke-F032-F050-${{ github.run_id }}
           path: outputs/sp500_megarun_macro_feature_smoke_f032
-          if-no-files-found: error
-          retention-days: 90
-      - name: Upload F171-F180 train-only evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-megarun-cross-asset-feature-smoke-F171-F180-${{ github.run_id }}
-          path: outputs/sp500_megarun_cross_asset_feature_smoke_f171_f180
           if-no-files-found: error
           retention-days: 90
       - name: Upload F181-F190 train-only evidence
@@ -789,4 +796,55 @@ jobs:
           retention-days: 90
       - name: Fail closed when F161-F170 audit is not ready
         if: always() && steps.global_factor_feature_smoke.outcome != 'success'
+        run: exit 1
+
+  smoke_f171_f180:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f171_f180'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+    steps:
+      - name: Check out the exact smoke revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Restore bounded smoke runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Download only the verified train snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-train-1993-2010-F001-F240-${{ env.SOURCE_RUN_ID }}
+          path: ${{ runner.temp }}/train_snapshot_1993_2010
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Execute and audit F171-F180 on train only
+        id: cross_asset_feature_smoke
+        continue-on-error: true
+        run: |
+          python scripts/run_sp500_megarun_cross_asset_feature_smoke_f171.py \
+            --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
+            --output-dir outputs/sp500_megarun_cross_asset_feature_smoke_f171_f180
+      - name: Upload F171-F180 train-only evidence
+        if: always() && steps.cross_asset_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-cross-asset-feature-smoke-F171-F180-${{ github.run_id }}
+          path: outputs/sp500_megarun_cross_asset_feature_smoke_f171_f180
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F171-F180 audit is not ready
+        if: always() && steps.cross_asset_feature_smoke.outcome != 'success'
         run: exit 1

@@ -139,8 +139,6 @@ def test_single_lane_space_rejects_unknown_or_non_executable_lane(feature_contra
     [
         ("F002", "fast", "slow", 3),
         ("F120", "embargo", "horizon", 3),
-        ("F172", "window", "long_window", 3),
-        ("F180", "window", "long_window", 3),
     ],
 )
 def test_relationally_invalid_pairs_are_physically_forbidden(
@@ -274,6 +272,15 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F165", 9),
         ("F169", 16),
         ("F170", 14),
+        ("F171", 8),
+        ("F172", 9),
+        ("F173", 4),
+        ("F174", 13),
+        ("F176", 13),
+        ("F177", 6),
+        ("F178", 3),
+        ("F179", 3),
+        ("F180", 12),
     ],
 )
 def test_conditionally_inactive_model_parameters_are_forbidden(
@@ -350,6 +357,56 @@ def test_f169_effective_selection_count_clones_are_forbidden_as_triplets(
     }
 
 
+def test_f173_tail_fractions_have_three_distinct_nine_currency_counts(
+    feature_contract,
+) -> None:
+    lane = next(item for item in feature_contract.lanes if item.lane_id == "F173")
+
+    assert lane.parameter_space["selection_fraction"] == (0.2, 0.25, 0.5)
+
+
+def test_f172_does_not_forbid_independent_window_pairs(feature_contract) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F172",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    forbidden_names = {
+        tuple(clause.hyperparameter.name for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+    }
+
+    assert ("window", "long_window") not in forbidden_names
+
+
+def test_f180_long_window_rules_are_scoped_to_the_statistics_that_use_it(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F180",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    forbidden = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+    }
+
+    assert forbidden == {
+        (("statistic", statistic), ("long_window", long_window))
+        for statistic in ("correlation", "beta")
+        for long_window in (252, 504, 756)
+    } | {
+        (("statistic", statistic), ("window", window), ("long_window", long_window))
+        for statistic in ("decoupling", "sign_change")
+        for window, long_window in ((126, 126), (252, 126), (252, 252))
+    }
 def test_manifest_freezes_fidelities_versions_boundaries_and_exact_choices(
     feature_contract,
 ) -> None:

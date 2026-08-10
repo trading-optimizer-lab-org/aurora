@@ -76,7 +76,10 @@ def _write_snapshot(root: Path) -> Path:
                 {
                     "date": dates,
                     "series_id": series_id,
-                    "value": 1.0 + offset + 0.001 * phase + 0.05 * np.sin((phase + offset) / 41.0),
+                    "value": 2.0
+                    + offset
+                    + 0.0002 * phase
+                    + 0.35 * np.sin((phase + 11.0 * offset) / 41.0),
                     "source_dataset": "D_FX",
                 }
             )
@@ -125,6 +128,12 @@ def test_cross_asset_smoke_builds_f171_f180_train_only_artifacts(
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
     assert report["empty_lanes"] == []
+    parameter_audit = report["parameter_choice_audit"]
+    assert parameter_audit["ready"] is True
+    assert parameter_audit["expected_choice_probe_count"] == 164
+    assert parameter_audit["choice_probe_count"] == 164
+    assert parameter_audit["failed_probes"] == []
+    assert parameter_audit["inactive_choice_groups"] == []
     assert (tmp_path / "out" / "features" / "F171.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F180.parquet").is_file()
 
@@ -194,3 +203,49 @@ def test_cross_asset_smoke_cli_accepts_contract(
     )
 
     assert cli.main() == 0
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "parameter", "configuration", "expected"),
+    [
+        ("F171", "threshold", {"statistic": "official_broad"}, {"statistic": "breadth"}),
+        ("F172", "window", {"statistic": "cash_level"}, {"statistic": "fx_adjusted_pressure"}),
+        ("F173", "aggregation", {"aggregation": "median", "selection_fraction": 0.2}, {"selection_fraction": 0.25}),
+        ("F174", "window", {"statistic": "level"}, {"statistic": "momentum"}),
+        ("F174", "threshold", {"statistic": "level"}, {"statistic": "breadth"}),
+        ("F176", "window", {"statistic": "level"}, {"statistic": "momentum"}),
+        ("F176", "threshold", {"statistic": "level"}, {"statistic": "breadth"}),
+        ("F177", "threshold", {"statistic": "dispersion"}, {"statistic": "breadth"}),
+        ("F178", "normalization_window", {"statistic": "sign_breadth"}, {"statistic": "volatility_scaled_mean"}),
+        ("F179", "z_window", {"normalization": "raw"}, {"normalization": "rolling_zscore"}),
+        ("F180", "long_window", {"statistic": "correlation", "window": 20}, {"statistic": "decoupling"}),
+    ],
+)
+def test_cross_asset_parameter_witnesses_activate_conditional_choices(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    repaired = _api()._repair_cross_asset_configuration(
+        lane_id,
+        parameter,
+        configuration.copy(),
+    )
+
+    for name, value in expected.items():
+        assert repaired[name] == value
+
+
+def test_cross_asset_physical_smoke_has_an_isolated_dispatch_scope() -> None:
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "sp500-megarun-macro-feature-smoke-f032.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "- f171_f180" in workflow
+    assert "smoke_f171_f180:" in workflow
+    assert "inputs.scope == 'f171_f180'" in workflow
+    assert "timeout-minutes: 15" in workflow

@@ -10,10 +10,15 @@ from typing import Any
 
 import pandas as pd
 
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.cross_asset_feature_engine import (
     evaluate_cross_asset_family_batch,
+    evaluate_cross_asset_lane,
 )
 from aurora.infra.sp500_megarun.feature_audit import audit_feature_outputs
+from aurora.infra.sp500_megarun.feature_contract import (
+    load_and_validate_feature_contract,
+)
 from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_fx_cross_asset_panel,
     normalize_spy_decision_panel,
@@ -22,6 +27,9 @@ from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_world_bank_commodity_panel,
 )
 from aurora.infra.sp500_megarun.materializer import parquet_safe_frame
+from aurora.infra.sp500_megarun.parameter_choice_audit import (
+    audit_frozen_parameter_choices,
+)
 
 
 class CrossAssetFeatureSmokeError(ValueError):
@@ -32,6 +40,8 @@ _TRAIN_PARTITION = "train_snapshot_1993_2010"
 _SEARCH_START = pd.Timestamp("1998-01-01")
 _TRAIN_END = pd.Timestamp("2010-12-31")
 _LANES = tuple(f"F{index:03d}" for index in range(171, 181))
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PARAMETER_AUDIT_START = pd.Timestamp("2003-01-01")
 _DATASETS = (
     "D_SPY",
     "D_CALENDAR",
@@ -70,6 +80,56 @@ def _merge_rate_panels(
                 f"NORMALIZED_RATE_OUT_OF_RANGE:{column}"
             )
     return merged.sort_values("date", kind="mergesort").reset_index(drop=True)
+
+
+def _repair_cross_asset_configuration(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    if lane_id == "F171" and parameter == "threshold":
+        configuration["statistic"] = "breadth"
+    if lane_id == "F172" and parameter == "window":
+        configuration["statistic"] = "fx_adjusted_pressure"
+    if lane_id == "F173" and parameter == "aggregation":
+        configuration["selection_fraction"] = 0.25
+    if lane_id in {"F174", "F176"} and parameter == "window":
+        configuration["statistic"] = "momentum"
+    if lane_id in {"F174", "F176"} and parameter == "threshold":
+        configuration["statistic"] = "breadth"
+    if lane_id == "F177" and parameter == "threshold":
+        configuration["statistic"] = "breadth"
+    if lane_id == "F178" and parameter == "normalization_window":
+        configuration["statistic"] = "volatility_scaled_mean"
+    if lane_id == "F179" and parameter == "z_window":
+        configuration["normalization"] = "rolling_zscore"
+    if lane_id == "F180" and parameter == "long_window":
+        configuration["statistic"] = "decoupling"
+    return configuration
+
+
+def _parameter_audit_inputs(
+    market: pd.DataFrame,
+    panels: dict[str, pd.DataFrame],
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    market_dates = pd.to_datetime(market["date"], errors="raise")
+    audit_market = market.loc[
+        market_dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+    ].reset_index(drop=True)
+    if not (pd.DatetimeIndex(audit_market["date"]).year == 2010).any():
+        raise CrossAssetFeatureSmokeError("PARAMETER_AUDIT_2010_MISSING")
+    audit_panels: dict[str, pd.DataFrame] = {}
+    for resource, panel in panels.items():
+        dates = pd.to_datetime(panel["date"], errors="raise")
+        bounded = panel.loc[
+            dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+        ].reset_index(drop=True)
+        if bounded.empty:
+            raise CrossAssetFeatureSmokeError(
+                f"PARAMETER_AUDIT_PANEL_EMPTY:{resource}"
+            )
+        audit_panels[resource] = bounded
+    return audit_market, audit_panels
 
 
 def build_cross_asset_feature_smoke(
@@ -129,6 +189,26 @@ def build_cross_asset_feature_smoke(
         search_start=_SEARCH_START,
         search_end=_TRAIN_END,
     )
+    data_contract = load_and_validate_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_free_data_240.json"
+    )
+    feature_contract = load_and_validate_feature_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_feature_contract_240.json",
+        data_contract,
+    )
+    audit_market, audit_panels = _parameter_audit_inputs(market, panels)
+    parameter_audit = audit_frozen_parameter_choices(
+        feature_contract,
+        lane_ids=_LANES,
+        evaluator=lambda lane_id, configuration: evaluate_cross_asset_lane(
+            lane_id,
+            audit_market,
+            audit_panels,
+            configuration,
+        ),
+        expected_years=(2010,),
+        repair=_repair_cross_asset_configuration,
+    )
     root = Path(output_dir)
     artifacts: dict[str, dict[str, object]] = {}
     maximum = pd.Timestamp.min
@@ -149,7 +229,9 @@ def build_cross_asset_feature_smoke(
     }
     report = {
         "schema_version": 1,
-        "ready": bool(audit.ready and len(outputs) == 10),
+        "ready": bool(
+            audit.ready and parameter_audit["ready"] and len(outputs) == 10
+        ),
         "scope": "fx_commodity_rates_cross_asset_feature_smoke_train_only",
         "executable_lanes": list(_LANES),
         "executable_lane_count": 10,
@@ -183,10 +265,16 @@ def build_cross_asset_feature_smoke(
         "near_duplicate_pairs": [list(pair) for pair in audit.near_duplicate_pairs],
         "coverage": [asdict(item) for item in audit.coverage],
         "artifacts": artifacts,
+        "parameter_choice_audit_scope": "physical_causal_tail_2003_2010",
+        "parameter_choice_audit": parameter_audit,
     }
     root.mkdir(parents=True, exist_ok=True)
     (root / "cross_asset_feature_smoke_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (root / "parameter_choice_audit_F171_F180.json").write_text(
+        json.dumps(parameter_audit, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return report
