@@ -166,6 +166,115 @@ jobs:
           )
           print(json.dumps(summary, sort_keys=True))
           PY
+      - name: Probe bounded non-strict read-through preservation
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import re
+          from pathlib import Path
+
+          import requests
+
+          from aurora.core.runtime_paths import base_data_dir
+
+          output = base_data_dir() / "openap_149_sec_filing_probe"
+          selected = json.loads(
+              (output / "selected_filing.json").read_text(encoding="utf-8")
+          )
+          cik = str(int(selected["cik"]))
+          accession_compact = selected["accession_number"].replace("-", "")
+          primary = selected["primary_document"]
+          stem = primary.rsplit(".", 1)[0]
+          filenames = [primary, f"{stem}_htm.xml", "FilingSummary.xml"]
+          rows = []
+          readthrough = output / "readthrough"
+          readthrough.mkdir(parents=True, exist_ok=True)
+          for filename in filenames:
+              origin_url = (
+                  f"https://www.sec.gov/Archives/edgar/data/{cik}/"
+                  f"{accession_compact}/{filename}"
+              )
+              access_url = f"https://r.jina.ai/http://{origin_url.removeprefix('https://')}"
+              try:
+                  response = requests.get(
+                      access_url,
+                      headers={"User-Agent": "Aurora Research readthrough probe"},
+                      timeout=(30, 300),
+                  )
+                  status = int(response.status_code)
+                  response.raise_for_status()
+                  content = bytes(response.content)
+                  text = content.decode("utf-8", errors="replace")
+                  destination = readthrough / f"{filename}.txt"
+                  destination.write_bytes(content)
+                  rows.append(
+                      {
+                          "filename": filename,
+                          "source_url": origin_url,
+                          "access_url": access_url,
+                          "access_method": "sec_via_jina_readthrough",
+                          "status": "downloaded",
+                          "http_status": status,
+                          "failure_reason": "",
+                          "sha256": hashlib.sha256(content).hexdigest(),
+                          "size_bytes": len(content),
+                          "markdown_marker": "Markdown Content:" in text,
+                          "raw_xml_xbrl_markup": bool(
+                              re.search(r"<(?:us-gaap|dei|aapl|ix):", text, re.I)
+                          ),
+                          "xbrl_name_token_count": len(
+                              re.findall(
+                                  r"\b(?:us-gaap|dei|aapl|ix):[A-Za-z][A-Za-z0-9_-]*",
+                                  text,
+                                  re.I,
+                              )
+                          ),
+                      }
+                  )
+              except Exception as exc:
+                  status = int(
+                      getattr(getattr(exc, "response", None), "status_code", 0) or 0
+                  )
+                  rows.append(
+                      {
+                          "filename": filename,
+                          "source_url": origin_url,
+                          "access_url": access_url,
+                          "access_method": "sec_via_jina_readthrough",
+                          "status": "failed",
+                          "http_status": status,
+                          "failure_reason": type(exc).__name__,
+                          "sha256": "",
+                          "size_bytes": 0,
+                          "markdown_marker": False,
+                          "raw_xml_xbrl_markup": False,
+                          "xbrl_name_token_count": 0,
+                      }
+                  )
+          report = {
+              "files": rows,
+              "downloaded": sum(row["status"] == "downloaded" for row in rows),
+              "raw_xml_xbrl_files": sum(
+                  row["raw_xml_xbrl_markup"] for row in rows
+              ),
+              "xbrl_name_tokens": sum(
+                  row["xbrl_name_token_count"] for row in rows
+              ),
+              "proxy_used": True,
+              "strict_score_eligible": False,
+              "locked_opened": False,
+              "forward_opened": False,
+              "validation_used_for_selection": False,
+              "cost_eur": 0,
+          }
+          (output / "sec_filing_readthrough_probe.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(report, sort_keys=True))
+          PY
       - name: Verify bounded evidence without score claims
         shell: bash
         run: |
@@ -182,6 +291,11 @@ jobs:
           manifest = pd.read_csv(
               root / "sec_filing_source_manifest.csv", keep_default_na=False
           )
+          readthrough = json.loads(
+              (root / "sec_filing_readthrough_probe.json").read_text(
+                  encoding="utf-8"
+              )
+          )
           assert len(manifest) == 1
           assert manifest.loc[0, "access_method"] == "sec_official_filing_fair_access"
           assert summary["downloaded"] + summary["failed"] == 1
@@ -189,6 +303,9 @@ jobs:
           assert summary["locked_opened"] is False
           assert summary["forward_opened"] is False
           assert summary["validation_used_for_selection"] is False
+          assert readthrough["proxy_used"] is True
+          assert readthrough["strict_score_eligible"] is False
+          assert len(readthrough["files"]) == 3
           if summary["downloaded"] == 1:
               document = root / "filing" / manifest.loc[0, "primary_document"]
               assert document.stat().st_size == int(manifest.loc[0, "size_bytes"])
