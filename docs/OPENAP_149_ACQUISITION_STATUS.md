@@ -204,6 +204,31 @@ clase de accion e identidad, no por la clave de mercado. Los recuentos
 ejecutados permanecen `56/50/18/99/96814` y el score estricto confirmado
 permanece en 31.
 
+### Alternativas gratuitas de OHLCV reauditadas
+
+La comprobacion oficial del 2026-08-10 confirma que el bloqueo es de cuenta y
+capacidad gratuita, no de inexistencia de datos:
+
+- [Tiingo](https://www.tiingo.com/about/pricing) ofrece en el plan gratuito
+  historico EOD de mas de 30 anos, precios brutos y ajustados, 1.000 peticiones
+  diarias y uso interno. Sin embargo, limita la API a 500 simbolos unicos al
+  mes. Cubrir las 2.157 empresas exigiria al menos cinco meses y tambien un
+  token gratuito; queda como respaldo lento, no como sustituto operativo de
+  Twelve Data.
+- [Finnhub](https://finnhub.io/pricing) permite 60 llamadas por minuto en el
+  plan gratuito, pero su tabla oficial no incluye OHLC historico; el historico
+  diario aparece en planes de mercado de pago.
+- [EODHD](https://eodhd.com/financial-apis/api-for-historical-data-and-volumes)
+  limita el plan gratuito a 20 llamadas diarias y al ultimo ano, insuficiente
+  para la ventana oficial maxima de 180 meses.
+- [Marketstack](https://marketstack.com/pricing/) limita el plan gratuito a
+  100 llamadas mensuales y un ano de historia, tambien insuficiente.
+
+La mejor ruta gratuita operativa sigue siendo Twelve Data Basic: cubre el
+historico requerido en unos seis cupos diarios y no obliga a esperar varios
+meses. Requiere que el usuario cree la cuenta gratuita y anada el secreto
+`TWELVE_DATA_API_KEY`; no se usara ninguna clave publica o ajena.
+
 La SEC ofrece una base gratuita para corroborar identidad historica, pero no
 un intervalo listo para usar. Los filings Inline XBRL pueden etiquetar
 `dei:TradingSymbol`, `dei:SecurityExchangeName` y `dei:Security12bTitle` en el

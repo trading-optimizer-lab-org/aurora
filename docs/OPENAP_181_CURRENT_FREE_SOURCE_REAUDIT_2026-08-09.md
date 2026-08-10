@@ -380,6 +380,16 @@ sin cuenta que demostrase a la vez 15 anos de historia diaria estadounidense,
 ajustes explicitamente controlables, cobertura suficiente y permiso de
 automatizacion.
 
+La reauditoria oficial del 2026-08-10 encontro una segunda ruta gratuita con
+cuenta: [Tiingo](https://www.tiingo.com/about/pricing). Su plan Free ofrece
+decadas de EOD bruto y ajustado para uso interno, pero solo 500 simbolos unicos
+al mes; cubrir 2.157 empresas exigiria al menos cinco meses. Finnhub Free no
+incluye OHLC historico en su tabla de producto; EODHD Free limita el historico
+al ultimo ano y 20 llamadas diarias; Marketstack Free, a un ano y 100 llamadas
+mensuales. Ninguna mejora el plan operativo de seis cupos diarios de Twelve
+Data. Tiingo queda documentado como respaldo lento, no como fuente primaria ni
+como excusa para mezclar proveedores durante una reanudacion.
+
 La implementacion preparada aplica estas puertas:
 
 - Recuperacion selectiva por rangos de `security_master.parquet`,
