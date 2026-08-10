@@ -254,7 +254,8 @@ def _event_is_causal(row: pd.Series) -> bool:
     accepted_at = row.get("accepted_at")
     if pd.isna(event_date) or pd.isna(accepted_at):
         return False
-    return bool(event_date <= accepted_at.date())
+    accepted_date = pd.Timestamp(accepted_at).tz_localize(None).normalize()
+    return bool(pd.Timestamp(event_date).normalize() <= accepted_date)
 
 
 def _filing_url(cik: str, accession: str, primary_document: str) -> str:
@@ -511,13 +512,14 @@ def calculate_sec_spinoff_current(
     )
     normalized["event_date"] = pd.to_datetime(
         normalized["event_date"], errors="coerce"
-    ).dt.date
+    ).dt.normalize()
+    formation_date = formation.tz_localize(None).normalize()
     normalized = normalized.loc[
         normalized["accepted_at"].notna()
         & normalized["accepted_at"].le(formation)
         & normalized["retrieved_at"].notna()
         & normalized["event_date"].notna()
-        & normalized["event_date"].le(formation.date())
+        & normalized["event_date"].le(formation_date)
         & normalized.apply(_event_is_causal, axis=1)
         & normalized["evidence_quality"].eq(
             "sec_filing_explicit_completed_spinoff_with_event_date"
@@ -567,7 +569,7 @@ def calculate_sec_spinoff_current(
             reason = "conflicting_completed_spinoff_event_dates"
         else:
             proven = issuer.iloc[0]
-            event_date = proven["event_date"]
+            event_date = proven["event_date"].date()
             event_month = pd.Timestamp(event_date).to_period("M").to_timestamp()
             event_age = int(
                 formation_month.to_period("M").ordinal

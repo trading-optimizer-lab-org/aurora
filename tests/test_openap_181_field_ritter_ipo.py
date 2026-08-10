@@ -233,7 +233,8 @@ def test_loader_rejects_tampered_nonofficial_or_schema_drifted_input(
             manifest.assign(source_url="https://example.test/IPO-age.xlsx"),
         )
 
-    changed = tmp_path / "changed.xlsx"
+    changed = tmp_path / "schema-drift" / "IPO-age.xlsx"
+    changed.parent.mkdir()
     _write_workbook(
         changed,
         _sample_rows(),
