@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -175,3 +176,46 @@ def test_cross_section_batch_contains_exactly_f111_f120() -> None:
     outputs = api.evaluate_cross_section_family_batch(_panels())
     assert tuple(outputs) == tuple(f"F{i:03d}" for i in range(111, 121))
     assert all(output["value"].notna().any() for output in outputs.values())
+
+
+def test_f111_f120_execute_every_frozen_parameter_choice() -> None:
+    from aurora.infra.sp500_megarun.cross_section_feature_smoke import (
+        _repair_cross_section_configuration,
+    )
+    from aurora.infra.sp500_megarun.parameter_choice_audit import (
+        audit_frozen_parameter_choices,
+    )
+    from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
+    from aurora.infra.sp500_megarun.feature_contract import (
+        load_and_validate_feature_contract,
+    )
+
+    api = _api()
+    panels = _panels()
+    expected_years = sorted(set(pd.to_datetime(panels["spy"]["date"]).dt.year))
+    root = Path(__file__).resolve().parents[1]
+    data_contract = load_and_validate_contract(
+        root / "config" / "sp500_megarun_free_data_240.json"
+    )
+    feature_contract = load_and_validate_feature_contract(
+        root / "config" / "sp500_megarun_feature_contract_240.json",
+        data_contract,
+    )
+
+    report = audit_frozen_parameter_choices(
+        feature_contract,
+        lane_ids=[f"F{i:03d}" for i in range(111, 121)],
+        evaluator=lambda lane_id, configuration: api.evaluate_cross_section_lane(
+            lane_id,
+            panels,
+            configuration,
+        ),
+        expected_years=expected_years,
+        repair=_repair_cross_section_configuration,
+    )
+
+    assert report["ready"] is True
+    assert report["expected_choice_probe_count"] == 124
+    assert report["choice_probe_count"] == 124
+    assert report["failed_probes"] == []
+    assert report["inactive_choice_groups"] == []

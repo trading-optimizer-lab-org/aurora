@@ -354,6 +354,38 @@ def _forbidden_parameter_pairs(
             ("statistic", "relative_momentum", "window", window)
             for window in space["window"][1:]
         )
+    if lane.lane_id == "F113":
+        pairs.extend(
+            ("statistic", statistic, "momentum_lag", lag)
+            for statistic in ("stock_bond_correlation", "joint_shock")
+            for lag in space["momentum_lag"][1:]
+        )
+        pairs.extend(
+            ("statistic", statistic, "window", window)
+            for statistic in ("curve_momentum", "duration_momentum")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id == "F115":
+        pairs.extend(
+            ("statistic", "dispersion", "window", window)
+            for window in space["window"][1:]
+        )
+    if lane.lane_id == "F116":
+        pairs.extend(
+            ("statistic", "common_mode", "window", window)
+            for window in space["window"][1:]
+        )
+    if lane.lane_id == "F117":
+        pairs.extend(
+            ("statistic", statistic, "change_lag", lag)
+            for statistic in ("breadth", "divergence")
+            for lag in space["change_lag"][1:]
+        )
+    if lane.lane_id == "F118":
+        pairs.extend(
+            ("statistic", "industry_state", "growth_lag", lag)
+            for lag in space["growth_lag"][1:]
+        )
     return tuple(pairs)
 
 
