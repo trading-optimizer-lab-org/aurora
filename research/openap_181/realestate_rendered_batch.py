@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from .sec_companyfacts_149 import build_companyfacts_identity
-from .sec_rendered_reports import select_current_realestate_pilot_filings
+from .sec_rendered_reports import (
+    compute_current_realestate_cross_section,
+    select_current_realestate_pilot_filings,
+)
 
 
 _ASSET_COLUMNS = {
@@ -238,4 +242,125 @@ def select_realestate_sector_pilot_candidates(
     return selected
 
 
-__all__ = ["select_realestate_sector_pilot_candidates"]
+def _date(value: object) -> str:
+    try:
+        return pd.Timestamp(value).date().isoformat()
+    except (TypeError, ValueError):
+        return ""
+
+
+def assemble_realestate_sector_pilot(
+    selected_candidates: Iterable[Mapping[str, Any]],
+    issuer_evidence: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Assemble one current SIC2 cross-section from exact annual report periods."""
+
+    candidates = [dict(row) for row in selected_candidates]
+    evidence_rows = [dict(row) for row in issuer_evidence]
+    evidence_by_cik: dict[str, dict[str, Any]] = {}
+    for evidence in evidence_rows:
+        records = [dict(row) for row in evidence.get("records") or []]
+        ciks = {
+            str(int(str(row.get("cik")))) for row in records if row.get("cik")
+        }
+        if len(ciks) != 1:
+            continue
+        cik = next(iter(ciks))
+        if cik in evidence_by_cik:
+            raise ValueError(f"duplicate rendered evidence for CIK {cik}")
+        evidence_by_cik[cik] = {**evidence, "records": records}
+
+    current_inputs: list[dict[str, Any]] = []
+    failed_issuers: list[dict[str, str]] = []
+    seen_candidates: set[str] = set()
+    for candidate in candidates:
+        try:
+            cik = str(int(str(candidate.get("cik"))))
+        except (TypeError, ValueError):
+            failed_issuers.append(
+                {"cik": str(candidate.get("cik") or ""), "reason": "invalid_cik"}
+            )
+            continue
+        if cik in seen_candidates:
+            raise ValueError(f"duplicate selected candidate CIK {cik}")
+        seen_candidates.add(cik)
+        evidence = evidence_by_cik.get(cik)
+        report_date = _date(candidate.get("report_date"))
+        matches = (
+            [
+                row
+                for row in evidence.get("records", [])
+                if _date(row.get("period_end")) == report_date
+            ]
+            if evidence is not None and evidence.get("raw_data_acquired") is True
+            else []
+        )
+        if len(matches) != 1:
+            failed_issuers.append(
+                {
+                    "cik": cik,
+                    "reason": (
+                        "matching_annual_period_missing"
+                        if not matches
+                        else "ambiguous_matching_annual_period"
+                    ),
+                }
+            )
+            continue
+        rendered = dict(matches[0])
+        try:
+            rendered_available = _utc(rendered.get("available_at"))
+            assets_available = _utc(candidate.get("assets_available_at"))
+        except (TypeError, ValueError):
+            failed_issuers.append(
+                {"cik": cik, "reason": "invalid_available_at"}
+            )
+            continue
+        current_inputs.append(
+            {
+                **rendered,
+                **candidate,
+                "cik": cik,
+                "period_end": report_date,
+                "rendered_available_at": rendered_available.isoformat(),
+                "available_at": max(rendered_available, assets_available).isoformat(),
+                "fidelity": "reconstructed_not_strict",
+                "strict_score_eligible": False,
+            }
+        )
+
+    adjusted = compute_current_realestate_cross_section(
+        current_inputs,
+        minimum_observations=5,
+    )
+    computed = sum(row["current_signal_computed"] is True for row in adjusted)
+    acquired = len(current_inputs)
+    if computed:
+        status = "current_signal_computed"
+        blocker = "strict_crsp_sic_and_compustat_equivalence_unvalidated"
+    elif acquired:
+        status = "blocked_coverage"
+        blocker = "fewer_than_5_same_sic2_observations"
+    else:
+        status = "blocked_source_failure"
+        blocker = "rendered_ppe_inputs_missing"
+    return {
+        "signal": "realestate",
+        "status": status,
+        "candidates_selected": len(candidates),
+        "raw_issuers_acquired": acquired,
+        "current_values_computed": computed,
+        "strict_score_eligible": False,
+        "fidelity": "reconstructed_not_strict",
+        "proxy_used": True,
+        "minimum_industry_observations": 5,
+        "remaining_blocker": blocker,
+        "failed_issuers": failed_issuers,
+        "records": adjusted,
+    }
+
+
+__all__ = [
+    "assemble_realestate_sector_pilot",
+    "select_realestate_sector_pilot_candidates",
+]
