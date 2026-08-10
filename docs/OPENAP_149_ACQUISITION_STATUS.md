@@ -37,16 +37,39 @@ despues 60 pruebas en el run `31355047369`.
 
 Las filas de `CBOperProf`, `DelNetFin` y `EarningsConsistency` del CSV
 publicado por el run anterior a la correccion no son utilizables: su evidencia
-declara `current_usable=False` y el contrato actual las pone en cuarentena.
-El CSV se conserva sin reescribir manualmente porque el usuario ha prohibido
-iniciar un nuevo run y no existe un artefacto publicado del run fallido.
+declara `current_usable=False`. El nuevo lote CompanyFacts `31392473937`
+sustituye esa evidencia de origen para `DelNetFin` y `EarningsConsistency`;
+solo `CBOperProf` conserva la cuarentena en el contrato de consolidacion
+preparado. El CSV se conserva sin reescribir manualmente porque el usuario ha
+prohibido iniciar un nuevo run y aun no existe un artefacto consolidado nuevo.
 
-`ChInvIA` queda tambien preparada sin ejecutar a partir de CompanyFacts y
-submissions SEC: CAPEX anual, respaldo por cambio de PP&E y ajuste por la media
-del SIC SEC a dos digitos. Falla cerrado ante periodos, hechos o SIC ambiguos.
-La salida futura sera reconstruida y no estricta porque SIC SEC actual y
-CIK/ticker no equivalen al historial CRSP/PERMNO. No altera los recuentos
-ejecutados anteriores.
+## CompanyFacts ampliado: lote gratuito ejecutado, pendiente de consolidar
+
+El run `31392473937` termino correctamente y publico
+`openap-149-sec-companyfacts-current`. Su manifiesto declara 3.734.050 hechos
+CompanyFacts procesados, 134.417 observaciones causales, 95.936 valores actuales
+y 48 senales calculadas con formacion `2026-08-09T00:00:00Z`. No abrio
+`OOS_LOCKED` ni `FORWARD`, no uso validacion para seleccionar y no promociono
+ninguna senal al score estricto.
+
+Frente al lote anterior de 38 senales, el artefacto incorpora diez senales con
+valor actual:
+
+- `ChInvIA`: 3.124 valores, reconstruida.
+- `ConvDebt`: 265 valores, reconstruida.
+- `DelDRC`: 1.949 valores, proxy no validado.
+- `DelNetFin`: 36 valores, reconstruida.
+- `DivOmit`: 14 valores, reconstruida.
+- `DivSeason`: 3 valores, reconstruida.
+- `EarningsConsistency`: 1.441 valores, reconstruida.
+- `EarningsSurprise`: 2.132 valores, reconstruida.
+- `RevenueSurprise`: 1.828 valores, reconstruida.
+- `sinAlgo`: 22 valores, reconstruida.
+
+Todas usan `sec_edgar` como fuente declarada y siguen siendo no estrictas. El
+contrato preparado valida recuento, fidelidad y formula fila por fila. Este lote
+de origen aun no se ha consolidado con los demas artefactos, por lo que no
+cambia los recuentos globales demostrados al principio del documento.
 
 ## Tres senales IPO: lote gratuito ejecutado, pendiente de consolidar
 
@@ -318,25 +341,25 @@ emite 1 si la formacion cae dentro de la ventana oficial de seis meses incluso
 suponiendo que el evento ocurrio el primer dia del trimestre; no emite ceros.
 Seguira siendo reconstruccion no estricta y su cobertura no esta medida.
 
-`DivOmit` tambien queda preparado como evidencia positiva retrasada: exige seis
+El run CompanyFacts `31392473937` genero 14 valores de `DivOmit`: exige seis
 trimestres consecutivos con dividendo explicito y un septimo con cero explicito,
 y mantiene 1 durante el mes de disponibilidad SEC y el siguiente. No inventa
-ausencias ni emite ceros, pero esa ventana empieza en el filing y no en el
-`exdt`; por tanto, sigue siendo proxy no estricto.
+ausencias ni emite ceros. La ventana empieza en el filing y no en `exdt`, por
+lo que la salida queda como reconstruccion no estricta.
 
-`DivSeason` queda preparada solo para facts SEC directos de uno a 45 dias.
-Exige varios eventos con separaciones regulares, infiere una frecuencia
-trimestral, semestral o anual y aplica los lags oficiales. Solo emite el 1
-previsto; nunca un 0. El cierre SEC no es `exdt` y la frecuencia inferida no es
-el codigo CRSP `cd3`, de modo que la salida seguira siendo no estricta y con
-cobertura pendiente de medir.
+El mismo run genero 3 valores de `DivSeason` a partir de facts SEC directos de
+uno a 45 dias. Exige varios eventos con separaciones regulares, infiere una
+frecuencia trimestral, semestral o anual y aplica los lags oficiales. Solo emite
+el 1 previsto; nunca un 0. El cierre SEC no es `exdt` y la frecuencia inferida
+no es el codigo CRSP `cd3`, de modo que sigue siendo reconstruccion no estricta.
 
 ## Cuatro senales contables sin dependencia de precio
 
 `DelDRC`, `ConvDebt`, `OrderBacklog` y `OrderBacklogChg` se han separado de
-Twelve Data: sus formulas solo necesitan datos contables SEC e identidad. No
-se aumenta por ello el recuento ejecutado, porque todavia no hay observaciones
-utilizables en el artefacto consolidado.
+Twelve Data: sus formulas solo necesitan datos contables SEC e identidad. El
+lote CompanyFacts produjo 1.949 valores de `DelDRC` como proxy no validado y
+265 valores reconstruidos de `ConvDebt`. `OrderBacklog` y `OrderBacklogChg`
+siguen dependiendo del ingreso causal de etiquetas personalizadas de Notes.
 
 - La API CompanyFacts agrega taxonomias no personalizadas y hechos de entidad
   completa; no garantiza los desgloses personalizados necesarios.
@@ -351,19 +374,19 @@ utilizables en el artefacto consolidado.
   revenue total para 2025 y 2024. Prueba disponibilidad en el filing, pero la
   URL SEC directa dio 403 y el contenido se obtuvo por readthrough, cuya
   autorizacion como transporte de produccion sigue pendiente.
-- `DelDRC` y las dos formulas de backlog ya tienen calculador y pruebas
-  sinteticas. Falta el ingreso causal de etiquetas personalizadas y medir
-  cobertura real.
+- `DelDRC` ya tiene calculador ejecutado sobre etiquetas estandar CompanyFacts.
+  Su equivalencia contable no esta validada y por eso no supera la clase
+  `unvalidated_proxy`; las formulas de backlog siguen pendientes de Notes.
 - El cero de etiquetas `ConvDebt` del run diagnostico `31342908279` no era una
   prueba de ausencia global: los shards fuente solo conservaban la lista
   cerrada de alias contables y excluian los conceptos de deuda convertible.
-  Se ha preparado, sin ejecutarla, la retencion acotada de etiquetas SEC y un
-  calculador positivo y fail-closed. Solo emite `1` ante evidencia causal del
-  ultimo periodo anual; nunca convierte ausencia, una etiqueta amplia o un
+  La retencion acotada y el calculador positivo fail-closed se ejecutaron en
+  `31392473937` y generaron 265 valores. Solo emite `1` ante evidencia causal
+  del ultimo periodo anual; nunca convierte ausencia, una etiqueta amplia o un
   hecho antiguo en `0`. Sigue siendo reconstruccion no estricta hasta validar
-  la equivalencia de `dc`/`cshrc` y medir cobertura real.
+  la equivalencia de `dc`/`cshrc` y ampliar cobertura.
 
-## DelNetFin: dos periodos anuales SEC preparados
+## DelNetFin: dos periodos anuales SEC ejecutados
 
 La formula fijada de `DelNetFin` calcula el cambio a doce meses de inversiones
 corrientes y de largo plazo menos deuda corriente, deuda de largo plazo y
@@ -371,7 +394,7 @@ acciones preferentes, dividido por activos medios. La preparacion oficial
 aplica seis meses de retraso al cierre anual y convierte la accion preferente
 faltante en cero.
 
-La ruta preparada, sin ejecutar, exige dos cortes SEC anuales alineados para
+La ruta ejecutada exige dos cortes SEC anuales alineados para
 `Assets`, `ShortTermInvestments`/`MarketableSecuritiesCurrent`,
 `LongTermInvestments`/`OtherInvestments`, `LongTermDebtNoncurrent` y
 `LongTermDebtCurrent`. No acepta `LongTermDebt` total ni
@@ -380,12 +403,13 @@ una sola etiqueta por componente, reproduce el calendario de seis meses y
 falla cerrado ante cualquier hueco, conflicto o desalineacion. La accion
 preferente sigue la regla de cero de la formula oficial.
 
-La salida futura sera `reconstructed_not_strict`: los agregados XBRL no prueban
+El run `31392473937` genero 36 valores. La salida es
+`reconstructed_not_strict`: los agregados XBRL no prueban
 equivalencia con `ivst/ivao/dltt/dlc/pstk`, la vintage SEC actual puede contener
 restatements y CIK/ticker no es GVKEY/PERMNO historico. Las antiguas filas
-inutilizables siguen en cuarentena y los contadores ejecutados no cambian.
+inutilizables quedan sustituidas en el lote de origen, pendiente de consolidar.
 
-## EarningsConsistency: formula anual SEC preparada
+## EarningsConsistency: formula anual SEC ejecutada
 
 La formula fijada de `EarningsConsistency` usa `epspx` anual, no EPS
 trimestral. La preparacion oficial de OpenAP aplica un retraso de seis meses al
@@ -393,7 +417,7 @@ cierre fiscal, replica cada observacion durante doce meses, calcula cinco
 crecimientos interanuales separados por doce meses y aplica filtros de magnitud
 y consistencia de signo.
 
-Se ha preparado, sin ejecutar, una ruta gratuita con
+Se ha ejecutado una ruta gratuita con
 `EarningsPerShareBasic` de CompanyFacts. Conserva ocho contextos anuales por
 etiqueta, acepta solo hechos anuales de `10-K/10-K/A` con unidad `USD/shares`,
 exige que todo hecho estuviera disponible antes de la formacion, reproduce el
@@ -405,49 +429,49 @@ runner SEC y las pruebas sinteticas quedan conectados.
 El batch rechaza expresamente los shards del run `31270341796`: son anteriores
 a este contrato de retencion y no prueban que contengan EPS basico, los 48
 contextos trimestrales, los componentes agregados de `DelNetFin` ni dividendos
-por accion. Un futuro calculo necesitara primero una adquisicion SEC nueva que
-declare el contrato versionado en los 48 manifiestos.
+por accion. El run nuevo `31392473937` declaro el contrato versionado en los 48
+manifiestos y genero 1.441 valores de `EarningsConsistency`.
 
-La salida futura sera `reconstructed_not_strict`: el EPS basico SEC no prueba
+La salida es `reconstructed_not_strict`: el EPS basico SEC no prueba
 equivalencia con `epspx` Compustat y la identidad CIK/ticker actual no sustituye
-GVKEY/PERMNO historico. Los 13 valores del artefacto anterior siguen en
-cuarentena, no se ha medido cobertura y los contadores ejecutados no cambian.
+GVKEY/PERMNO historico. Los 13 valores inutilizables del artefacto anterior no
+se aceptan; el nuevo lote de origen permanece pendiente de consolidar.
 
-## Dos sorpresas trimestrales SEC: historia completa preparada
+## Dos sorpresas trimestrales SEC: historia completa ejecutada
 
-`EarningsSurprise` y `RevenueSurprise` tienen los datos brutos SEC marcados
-como adquiridos, pero el artefacto ejecutado no genero ningun valor por historia
-trimestral normalizada insuficiente. La formula actual necesita 21 trimestres
-contiguos para formar la sorpresa corriente, la deriva de ocho cambios
-interanuales y la desviacion tipica de ocho sorpresas anteriores.
+El lote anterior no genero valores de `EarningsSurprise` ni `RevenueSurprise`
+por historia trimestral normalizada insuficiente. La formula actual necesita 21
+trimestres contiguos para formar la sorpresa corriente, la deriva de ocho
+cambios interanuales y la desviacion tipica de ocho sorpresas anteriores.
 
-La preparacion nueva conserva hasta 48 contextos de ingresos, ventas y acciones
+La adquisicion nueva conserva hasta 48 contextos de ingresos, ventas y acciones
 medias basicas por etiqueta en los shards CompanyFacts y reconstruye cada
 trimestre desde hechos acumulados SEC.
 Los flujos se obtienen por diferencia y las acciones medias se separan usando
 los dias de cada tramo. Se rechazan huecos, unidades incorrectas, etiquetas
 mezcladas, conflictos y hechos disponibles despues de la formacion. El runner
 SEC existente queda conectado a ambos calculos y a pruebas sinteticas de los 21
-trimestres, pero no se ha ejecutado.
+trimestres. El run `31392473937` genero 2.132 valores de `EarningsSurprise` y
+1.828 de `RevenueSurprise`.
 
-Aunque produzca valores, la salida seguira siendo `reconstructed_not_strict`:
+Aunque produjo valores, la salida sigue siendo `reconstructed_not_strict`:
 ingreso SEC por acciones medias no demuestra equivalencia con `epspxq`, ventas
 SEC por acciones no son por si solas `revtq/cshprq` Compustat y la identidad
-CIK/ticker actual no es un intervalo GVKEY/PERMNO. Los contadores ejecutados
-siguen en `56/50/18/99/96814`.
+CIK/ticker actual no es un intervalo GVKEY/PERMNO. Ambos resultados son
+reconstruidos no estrictos y siguen pendientes de consolidar.
 
-## sinAlgo: SIC positivo SEC preparado
+## sinAlgo: SIC positivo SEC ejecutado
 
 `sinAlgo` tampoco carece por completo de fuente gratuita. La formula fijada
 clasifica directamente cerveza con SIC `2080-2085` y tabaco con SIC
-`2100-2199`. Queda preparado, sin ejecutar, un calculador que toma el SIC del
-ultimo filing SEC disponible antes de la formacion y solo emite 1 para esos
-rangos. Un conflicto en el ultimo timestamp queda sin valor.
+`2100-2199`. El calculador toma el SIC del ultimo filing SEC disponible antes de
+la formacion y solo emite 1 para esos rangos. Un conflicto en el ultimo
+timestamp queda sin valor. El run `31392473937` genero 22 valores.
 
 No emite 0 ni clasifica gaming: la SEC submissions no aporta por si sola los
 NAICS y segmentos completos, el backfill historico, los codigos de accion CRSP
-ni el grupo comparable. Cualquier valor futuro sera
-`reconstructed_not_strict`; cobertura y fidelidad siguen sin medir.
+ni el grupo comparable. Los valores son `reconstructed_not_strict`; el lote de
+origen aun no se ha consolidado.
 
 ## Dos senales de patentes con datos gratuitos parciales
 
