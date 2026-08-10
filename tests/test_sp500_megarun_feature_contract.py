@@ -52,10 +52,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 171)]
+    ] == [f"F{index:03d}" for index in range(1, 181)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[170:]
+        for lane in feature_contract.lanes[180:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -325,6 +325,28 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "developed_ex_us_plus_regions",
         "all_available",
     )
+    cross_asset_lanes = feature_contract.lanes[170:180]
+    assert all(lane.implementation_status == "executable" for lane in cross_asset_lanes)
+    assert cross_asset_lanes[0].parameter_space["statistic"] == (
+        "official_broad",
+        "cross_mean",
+        "breadth",
+        "divergence",
+        "dispersion",
+    )
+    assert cross_asset_lanes[1].parameter_space["statistic"] == (
+        "cash_level",
+        "offshore_basis",
+        "carry_pressure",
+        "fx_adjusted_pressure",
+    )
+    assert "not a cross-currency rate differential" in cross_asset_lanes[1].formula
+    assert cross_asset_lanes[8].parameter_space["statistic"] == (
+        "carry",
+        "roll",
+        "momentum",
+        "total",
+    )
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:
@@ -399,6 +421,28 @@ def test_monthly_publication_policy_waits_until_third_session_of_next_month() ->
     ]
 
 
+def test_h10_policy_waits_for_following_week_release_and_next_session() -> None:
+    api = _feature_contract_api()
+    sessions = pd.bdate_range("2010-01-04", "2010-01-20")
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-01-04", "2010-01-08"]),
+            "value": [1.0, 2.0],
+        }
+    )
+
+    projected = api.apply_available_at_policy(
+        frame,
+        policy="h10_following_week_release_plus_session",
+        sessions=sessions,
+    )
+
+    assert projected["available_at"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2010-01-12",
+        "2010-01-12",
+    ]
+
+
 def test_every_dataset_has_a_machine_readable_availability_policy() -> None:
     api = _feature_contract_api()
     data_contract = load_and_validate_contract(DATA_CONTRACT_PATH)
@@ -412,6 +456,7 @@ def test_every_dataset_has_a_machine_readable_availability_policy() -> None:
     assert policies["D_VXO"] == "next_session"
     assert policies["D_CBOE_VOL"] == "next_session"
     assert policies["D_CFTC_LEGACY"] == "friday_after_tuesday"
+    assert policies["D_FX"] == "h10_following_week_release_plus_session"
     assert policies["D_NOAA_NY"] == "two_calendar_days"
 
 

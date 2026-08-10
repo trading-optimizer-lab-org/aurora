@@ -95,6 +95,7 @@ _REGISTERED_AVAILABLE_AT_POLICIES = frozenset(
         "same_session",
         "next_session",
         "friday_after_tuesday",
+        "h10_following_week_release_plus_session",
         "two_calendar_days",
         "next_month_third_session",
         "quarter_end_next_session",
@@ -122,7 +123,7 @@ _DATASET_AVAILABLE_AT_POLICIES: Mapping[str, str] = {
     "D_SHILLER": "thirteen_month_revision_guard",
     "D_WTI": "next_month_third_session",
     "D_GOLD": "next_month_third_session",
-    "D_FX": "next_session",
+    "D_FX": "h10_following_week_release_plus_session",
     "D_CALENDAR": "same_session",
     "D_CBOE_VOL": "next_session",
     "D_CBOE_PCR": "friday_after_tuesday",
@@ -483,6 +484,17 @@ def apply_available_at_policy(
     elif policy == "friday_after_tuesday":
         targets = result["observed_at"] + pd.Timedelta(days=3)
         available = _session_on_or_after(targets, sessions, strictly_after=False)
+    elif policy == "h10_following_week_release_plus_session":
+        days_to_following_monday = 7 - result["observed_at"].dt.weekday
+        release_targets = result["observed_at"] + pd.to_timedelta(
+            days_to_following_monday, unit="D"
+        )
+        release_sessions = _session_on_or_after(
+            release_targets, sessions, strictly_after=False
+        )
+        available = _session_on_or_after(
+            release_sessions, sessions, strictly_after=True
+        )
     elif policy == "next_month_third_session":
         available = _nth_session_of_offset_month(
             result["observed_at"], sessions, month_offset=1, session_number=3

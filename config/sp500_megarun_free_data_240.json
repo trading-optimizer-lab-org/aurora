@@ -31,7 +31,7 @@
     "D_SHILLER": {"coverage_end":"2020-12-31","available_at_rule":"proxy only: full-year revision safety lag, usable at mid-month 13 calendar months after the observation month"},
     "D_WTI": {"coverage_end":"2020-12-31","available_at_rule":"second business day of following month plus one session"},
     "D_GOLD": {"coverage_end":"2020-12-31","available_at_rule":"second business day of following month plus one session"},
-    "D_FX": {"coverage_end":"2020-12-31","available_at_rule":"official release timestamp and SPY decision cutoff"},
+    "D_FX": {"coverage_end":"2020-12-31","available_at_rule":"following Monday H.10 release at 4:15 ET, or following business day, plus next SPY session"},
     "D_CALENDAR": {"coverage_end":"2020-12-31","required_coverage_start":"1993-01-22","available_at_rule":"deterministic rules known ex ante"}
   },
   "datasets": {
@@ -120,7 +120,7 @@
     {"lane_id":"F169","required_datasets":["D_FRENCH_GLOBAL"],"fidelity":"exact","original_dependency":"global and regional momentum","replacement_note":""},
     {"lane_id":"F170","required_datasets":["D_FRENCH_GLOBAL"],"fidelity":"exact","original_dependency":"developed-region breadth","replacement_note":""},
     {"lane_id":"F171","required_datasets":["D_FED_H15_H10"],"fidelity":"exact","original_dependency":"broad dollar from H10 crosses","replacement_note":""},
-    {"lane_id":"F172","required_datasets":["D_FED_H15_H10"],"fidelity":"proxy","original_dependency":"FX carry","replacement_note":"Use known official rate differentials as a declared approximation; no tradable forward curve is claimed."},
+    {"lane_id":"F172","required_datasets":["D_FED_H15_H10"],"fidelity":"proxy","original_dependency":"FX carry","replacement_note":"Use the official U.S. Treasury 3m versus Eurodollar 3m offshore-dollar spread and H.10 dollar trend as a declared USD funding-pressure proxy. It is not a foreign-rate differential or a tradable FX forward curve."},
     {"lane_id":"F173","required_datasets":["D_FED_H15_H10"],"fidelity":"exact","original_dependency":"FX momentum reversal and relative value","replacement_note":""},
     {"lane_id":"F174","required_datasets":["D_WORLD_BANK_COMMODITIES"],"fidelity":"exact","original_dependency":"energy state and momentum","replacement_note":""},
     {"lane_id":"F175","required_datasets":["D_WORLD_BANK_COMMODITIES"],"fidelity":"exact","original_dependency":"industrial and precious metals","replacement_note":""},

@@ -1,4 +1,4 @@
-name: SP500 Megarun Train Feature Smoke F001-F170
+name: SP500 Megarun Train Feature Smoke F001-F180
 
 on:
   push:
@@ -35,6 +35,8 @@ on:
       - infra/sp500_megarun/characteristic_feature_smoke.py
       - infra/sp500_megarun/global_factor_feature_engine.py
       - infra/sp500_megarun/global_factor_feature_smoke.py
+      - infra/sp500_megarun/cross_asset_feature_engine.py
+      - infra/sp500_megarun/cross_asset_feature_smoke.py
       - config/sp500_megarun_feature_contract_240.json
       - config/sp500_megarun_free_data_120.json
       - config/sp500_megarun_free_data_240.json
@@ -55,6 +57,7 @@ on:
       - scripts/run_sp500_megarun_predictive_feature_smoke_f141.py
       - scripts/run_sp500_megarun_characteristic_feature_smoke_f151.py
       - scripts/run_sp500_megarun_global_factor_feature_smoke_f161.py
+      - scripts/run_sp500_megarun_cross_asset_feature_smoke_f171.py
       - tests/test_sp500_megarun_data_contract.py
       - tests/test_sp500_megarun_feature_contract.py
       - tests/test_sp500_megarun_feature_engine_price.py
@@ -88,6 +91,8 @@ on:
       - tests/test_sp500_megarun_characteristic_feature_smoke.py
       - tests/test_sp500_megarun_global_factor_feature_engine.py
       - tests/test_sp500_megarun_global_factor_feature_smoke.py
+      - tests/test_sp500_megarun_cross_asset_feature_engine.py
+      - tests/test_sp500_megarun_cross_asset_feature_smoke.py
   workflow_dispatch:
     inputs:
       source_run_id:
@@ -100,7 +105,7 @@ permissions:
   contents: read
 
 jobs:
-  smoke_f001_f170:
+  smoke_f001_f180:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -124,7 +129,7 @@ jobs:
           python -m pip install --require-hashes -r requirements/github-performance.lock
           python -m pip install "pytest==9.0.3"
           python -m pip install --no-deps -e .
-      - name: Verify F001-F170 fail-closed implementations
+      - name: Verify F001-F180 fail-closed implementations
         run: |
           python -m pytest \
             tests/test_sp500_megarun_feature_contract.py \
@@ -160,6 +165,8 @@ jobs:
             tests/test_sp500_megarun_characteristic_feature_smoke.py \
             tests/test_sp500_megarun_global_factor_feature_engine.py \
             tests/test_sp500_megarun_global_factor_feature_smoke.py \
+            tests/test_sp500_megarun_cross_asset_feature_engine.py \
+            tests/test_sp500_megarun_cross_asset_feature_smoke.py \
             -q
       - name: Download only the verified train snapshot
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -250,6 +257,11 @@ jobs:
           python scripts/run_sp500_megarun_global_factor_feature_smoke_f161.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_global_factor_feature_smoke_f161_f170
+      - name: Execute and audit F171-F180 on train only
+        run: |
+          python scripts/run_sp500_megarun_cross_asset_feature_smoke_f171.py \
+            --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
+            --output-dir outputs/sp500_megarun_cross_asset_feature_smoke_f171_f180
       - name: Upload F001-F020 train-only evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -353,5 +365,12 @@ jobs:
         with:
           name: sp500-megarun-global-factor-feature-smoke-F161-F170-${{ github.run_id }}
           path: outputs/sp500_megarun_global_factor_feature_smoke_f161_f170
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload F171-F180 train-only evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-cross-asset-feature-smoke-F171-F180-${{ github.run_id }}
+          path: outputs/sp500_megarun_cross_asset_feature_smoke_f171_f180
           if-no-files-found: error
           retention-days: 90

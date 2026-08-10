@@ -72,6 +72,51 @@ _FX_SERIES: Mapping[str, str] = {
     "RXI_N.B.JA": "fx_jpy",
     "RXI_N.B.SZ": "fx_chf",
     "RXI$US_N.B.UK": "fx_gbp",
+    "RXI$US_N.B.AL": "fx_aud",
+    "RXI$US_N.B.NZ": "fx_nzd",
+    "RXI_N.B.DN": "fx_dkk",
+    "RXI_N.B.NO": "fx_nok",
+    "RXI_N.B.SD": "fx_sek",
+}
+_FX_RECIPROCAL_SERIES = frozenset(
+    {"RXI$US_N.B.UK", "RXI$US_N.B.AL", "RXI$US_N.B.NZ"}
+)
+_FX_REQUIRED_ASSETS = frozenset(
+    {"broad_dollar", "fx_cad", "fx_jpy", "fx_chf", "fx_gbp"}
+)
+_USD_FUNDING_SERIES: Mapping[str, str] = {
+    "RIFLGFCM03_N.B": "treasury_3m",
+    "RILSPDEPM03_N.B": "eurodollar_3m",
+}
+_WORLD_BANK_COMMODITY_COLUMNS: Mapping[str, str] = {
+    "Crude oil, average": "crude_oil",
+    "Coal, Australian": "coal",
+    "Natural gas, US": "natural_gas",
+    "Aluminum": "aluminum",
+    "Iron ore, cfr spot": "iron_ore",
+    "Copper": "copper",
+    "Lead": "lead",
+    "Tin": "tin",
+    "Nickel": "nickel",
+    "Zinc": "zinc",
+    "Gold": "gold",
+    "Platinum": "platinum",
+    "Silver": "silver",
+    "Cocoa": "cocoa",
+    "Coffee, Arabica": "coffee_arabica",
+    "Coffee, Robusta": "coffee_robusta",
+    "Palm oil": "palm_oil",
+    "Soybeans": "soybeans",
+    "Maize": "maize",
+    "Rice, Thai 5%": "rice",
+    "Wheat, US SRW": "wheat",
+    "Beef **": "beef",
+    "Sugar, world": "sugar",
+    "Cotton, A Index": "cotton",
+    "Phosphate rock": "phosphate_rock",
+    "DAP": "dap",
+    "Urea": "urea",
+    "Potassium chloride **": "potash",
 }
 _Z1_EQUITY_SERIES: Mapping[str, str] = {
     "FL153064105.Q": "household_corporate_equity",
@@ -111,6 +156,11 @@ def _project_to_decision_session(
         eligible = eligible.loc[
             eligible["date"].add(pd.Timedelta(days=3)).le(normalized_sessions.max())
         ]
+    elif policy == "h10_following_week_release_plus_session":
+        following_monday = eligible["date"] + pd.to_timedelta(
+            7 - eligible["date"].dt.weekday, unit="D"
+        )
+        eligible = eligible.loc[following_monday.lt(normalized_sessions.max())]
     elif policy == "next_month_third_session":
         target_month = eligible["date"] + pd.offsets.MonthBegin(1)
         eligible = eligible.loc[
@@ -1093,7 +1143,7 @@ def normalize_fx_cross_asset_panel(
     *,
     sessions: pd.DatetimeIndex,
 ) -> pd.DataFrame:
-    """Pivot the frozen daily Federal Reserve dollar and major-currency series."""
+    """Expose H.10 rows only after the following weekly release and next session."""
 
     fx = _validated_dates(frame, dataset_id="D_FX")
     required = {"series_id", "value"}
@@ -1104,21 +1154,102 @@ def normalize_fx_cross_asset_panel(
     selected["asset"] = selected["series_id"].map(_FX_SERIES)
     selected["value"] = pd.to_numeric(selected["value"], errors="coerce")
     selected["value"] = selected["value"].where(selected["value"].gt(0.0))
+    reciprocal = selected["series_id"].isin(_FX_RECIPROCAL_SERIES)
+    selected.loc[reciprocal, "value"] = 1.0 / selected.loc[reciprocal, "value"]
     selected = selected.dropna(subset=["asset", "value"])
     panel = selected.pivot_table(
         index="date", columns="asset", values="value", aggfunc="last"
     ).sort_index().reset_index()
     panel.columns.name = None
-    missing_assets = sorted(set(_FX_SERIES.values()) - set(panel.columns))
+    missing_assets = sorted(_FX_REQUIRED_ASSETS - set(panel.columns))
     if missing_assets:
         raise FeatureInputNormalizerError(
             f"FX_FROZEN_SERIES_MISSING:{','.join(missing_assets)}"
         )
-    asset_columns = list(_FX_SERIES.values())
+    asset_columns = [
+        asset for asset in _FX_SERIES.values() if asset in panel.columns
+    ]
     panel[asset_columns] = panel[asset_columns].ffill()
-    panel = panel.dropna(subset=asset_columns)
+    panel = panel.dropna(subset=list(_FX_REQUIRED_ASSETS))
+    return _project_to_decision_session(
+        panel,
+        policy="h10_following_week_release_plus_session",
+        sessions=sessions,
+    )
+
+
+def normalize_usd_funding_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Prepare U.S. Treasury and offshore U.S.-dollar three-month rates."""
+
+    rates = _validated_dates(frame, dataset_id="D_FED_H15_H10")
+    required = {"series_id", "value"}
+    missing = sorted(required - set(rates.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"USD_FUNDING_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    selected = rates.loc[rates["series_id"].isin(_USD_FUNDING_SERIES)].copy()
+    selected["funding_series"] = selected["series_id"].map(_USD_FUNDING_SERIES)
+    selected["value"] = pd.to_numeric(selected["value"], errors="coerce")
+    selected = selected.dropna(subset=["funding_series", "value"])
+    panel = selected.pivot_table(
+        index="date",
+        columns="funding_series",
+        values="value",
+        aggfunc="last",
+    ).reset_index()
+    panel.columns.name = None
+    required_series = set(_USD_FUNDING_SERIES.values())
+    missing_series = sorted(required_series - set(panel.columns))
+    if missing_series:
+        raise FeatureInputNormalizerError(
+            f"USD_FUNDING_SERIES_MISSING:{','.join(missing_series)}"
+        )
+    panel[list(required_series)] = panel[list(required_series)].ffill()
+    panel = panel.dropna(subset=list(required_series))
+    panel["offshore_basis"] = panel["eurodollar_3m"] - panel["treasury_3m"]
     return _project_to_decision_session(
         panel, policy="next_session", sessions=sessions
+    )
+
+
+def normalize_world_bank_commodity_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Parse the frozen monthly Pink Sheet panel and apply its release lag."""
+
+    commodities = _validated_dates(
+        frame, dataset_id="D_WORLD_BANK_COMMODITIES"
+    )
+    available_raw = [
+        column for column in _WORLD_BANK_COMMODITY_COLUMNS if column in commodities
+    ]
+    if not available_raw:
+        raise FeatureInputNormalizerError("WORLD_BANK_COMMODITY_COLUMNS_MISSING")
+    numeric = commodities.loc[:, available_raw].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    numeric = numeric.where(numeric.gt(0.0))
+    available_raw = [column for column in available_raw if numeric[column].notna().any()]
+    if len(available_raw) < 2:
+        raise FeatureInputNormalizerError("INSUFFICIENT_WORLD_BANK_COMMODITIES")
+    panel = pd.concat(
+        [commodities.loc[:, ["date"]], numeric.loc[:, available_raw]], axis=1
+    ).rename(columns=_WORLD_BANK_COMMODITY_COLUMNS)
+    panel = panel.dropna(
+        how="all",
+        subset=[_WORLD_BANK_COMMODITY_COLUMNS[column] for column in available_raw],
+    )
+    return _project_to_decision_session(
+        panel,
+        policy="next_month_third_session",
+        sessions=sessions,
     )
 
 
@@ -1604,6 +1735,7 @@ __all__ = [
     "normalize_french_global_factor_panels",
     "normalize_french_us_panels",
     "normalize_fx_cross_asset_panel",
+    "normalize_usd_funding_panel",
     "normalize_lagged_valuation_panel",
     "normalize_lagged_goyal_issuance_panel",
     "normalize_macro_release_panel",
@@ -1616,5 +1748,6 @@ __all__ = [
     "normalize_spy_decision_panel",
     "normalize_treasury_curve_panel",
     "normalize_world_bank_cross_asset_panel",
+    "normalize_world_bank_commodity_panel",
     "normalize_calendar_state_panel",
 ]

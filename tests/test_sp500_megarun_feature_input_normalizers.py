@@ -718,9 +718,9 @@ def test_goyal_issuance_panel_does_not_depend_on_shiller_rows() -> None:
     assert result.loc[0, "net_equity_issuance"] == pytest.approx(0.02)
 
 
-def test_fx_panel_uses_frozen_daily_series_only_after_next_session() -> None:
+def test_fx_panel_uses_following_week_h10_release_and_unified_quotes() -> None:
     api = _normalizer_api()
-    observed = pd.to_datetime(["2010-01-04", "2010-01-05"])
+    observed = pd.to_datetime(["2010-01-04", "2010-01-08"])
     rows: list[dict[str, object]] = []
     series = {
         "V0.JRXWTFB_N.B": [100.0, 101.0],
@@ -728,6 +728,11 @@ def test_fx_panel_uses_frozen_daily_series_only_after_next_session() -> None:
         "RXI_N.B.JA": [92.0, 91.0],
         "RXI_N.B.SZ": [1.02, 1.01],
         "RXI$US_N.B.UK": [1.60, 1.61],
+        "RXI$US_N.B.AL": [0.90, 0.91],
+        "RXI$US_N.B.NZ": [0.70, 0.71],
+        "RXI_N.B.DN": [5.90, 5.91],
+        "RXI_N.B.NO": [6.10, 6.11],
+        "RXI_N.B.SD": [7.20, 7.21],
     }
     for series_id, values in series.items():
         rows.extend(
@@ -736,20 +741,22 @@ def test_fx_panel_uses_frozen_daily_series_only_after_next_session() -> None:
         )
 
     result = api.normalize_fx_cross_asset_panel(
-        pd.DataFrame(rows), sessions=_sessions()
+        pd.DataFrame(rows), sessions=pd.bdate_range("2010-01-04", "2010-01-20")
     )
 
-    assert result["date"].dt.strftime("%Y-%m-%d").tolist() == [
-        "2010-01-05",
-        "2010-01-06",
-    ]
-    assert result.loc[0, "broad_dollar"] == pytest.approx(100.0)
-    assert {"fx_cad", "fx_jpy", "fx_chf", "fx_gbp"} <= set(result.columns)
+    assert result["date"].dt.strftime("%Y-%m-%d").tolist() == ["2010-01-12"]
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2010-01-08")
+    assert result.loc[0, "broad_dollar"] == pytest.approx(101.0)
+    assert result.loc[0, "fx_cad"] == pytest.approx(1.06)
+    assert result.loc[0, "fx_gbp"] == pytest.approx(1.0 / 1.61)
+    assert result.loc[0, "fx_aud"] == pytest.approx(1.0 / 0.91)
+    assert result.loc[0, "fx_nzd"] == pytest.approx(1.0 / 0.71)
+    assert {"fx_dkk", "fx_nok", "fx_sek"} <= set(result.columns)
 
 
 def test_fx_panel_causally_carries_prior_local_holiday_quotes() -> None:
     api = _normalizer_api()
-    observed = pd.to_datetime(["2010-01-04", "2010-01-05"])
+    observed = pd.to_datetime(["2010-01-04", "2010-01-08"])
     rows: list[dict[str, object]] = []
     for series_id in [
         "V0.JRXWTFB_N.B",
@@ -757,6 +764,11 @@ def test_fx_panel_causally_carries_prior_local_holiday_quotes() -> None:
         "RXI_N.B.JA",
         "RXI_N.B.SZ",
         "RXI$US_N.B.UK",
+        "RXI$US_N.B.AL",
+        "RXI$US_N.B.NZ",
+        "RXI_N.B.DN",
+        "RXI_N.B.NO",
+        "RXI_N.B.SD",
     ]:
         rows.append({"date": observed[0], "series_id": series_id, "value": 100.0})
         rows.append(
@@ -768,11 +780,80 @@ def test_fx_panel_causally_carries_prior_local_holiday_quotes() -> None:
         )
 
     result = api.normalize_fx_cross_asset_panel(
-        pd.DataFrame(rows), sessions=_sessions()
+        pd.DataFrame(rows), sessions=pd.bdate_range("2010-01-04", "2010-01-20")
     )
 
-    assert result.loc[1, "fx_jpy"] == pytest.approx(100.0)
-    assert result.loc[1, "observed_at"] == pd.Timestamp("2010-01-05")
+    assert result.loc[0, "fx_jpy"] == pytest.approx(100.0)
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2010-01-08")
+
+
+def test_fed_funding_panel_uses_only_us_dollar_rates() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-01-05"] * 3),
+            "series_id": [
+                "RIFLGFCM03_N.B",
+                "RILSPDEPM03_N.B",
+                "RIFLDIY03_N.B",
+            ],
+            "value": [0.10, 0.35, 2.50],
+        }
+    )
+
+    result = api.normalize_usd_funding_panel(frame, sessions=_sessions())
+
+    assert result.loc[0, "available_at"] == pd.Timestamp("2010-01-06")
+    assert result.loc[0, "treasury_3m"] == pytest.approx(0.10)
+    assert result.loc[0, "eurodollar_3m"] == pytest.approx(0.35)
+    assert result.loc[0, "offshore_basis"] == pytest.approx(0.25)
+
+
+def test_world_bank_full_panel_parses_missing_tokens_and_waits_for_release() -> None:
+    api = _normalizer_api()
+    rows = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2009-11-01", "2009-12-01"]),
+            "Crude oil, average": [70.0, 75.0],
+            "Coal, Australian": [80.0, 82.0],
+            "Natural gas, US": [4.0, 4.2],
+            "Aluminum": [1800.0, 1850.0],
+            "Iron ore, cfr spot": ["�", "�"],
+            "Copper": [6000.0, 6200.0],
+            "Lead": [2000.0, 2050.0],
+            "Tin": [15000.0, 15100.0],
+            "Nickel": [17000.0, 17200.0],
+            "Zinc": [2100.0, 2150.0],
+            "Gold": [1050.0, 1100.0],
+            "Platinum": [1400.0, 1450.0],
+            "Silver": [17.0, 18.0],
+            "Cocoa": [2.0, 2.1],
+            "Coffee, Arabica": [3.0, 3.1],
+            "Coffee, Robusta": [2.5, 2.6],
+            "Palm oil": [700.0, 710.0],
+            "Soybeans": [400.0, 410.0],
+            "Maize": [180.0, 185.0],
+            "Rice, Thai 5%": [500.0, 510.0],
+            "Wheat, US SRW": [220.0, 225.0],
+            "Beef **": [4.0, 4.1],
+            "Sugar, world": [0.3, 0.31],
+            "Cotton, A Index": [1.2, 1.25],
+            "Phosphate rock": [90.0, 91.0],
+            "DAP": [300.0, 305.0],
+            "Urea": [250.0, 255.0],
+            "Potassium chloride **": [200.0, 202.0],
+        }
+    )
+
+    result = api.normalize_world_bank_commodity_panel(
+        rows, sessions=pd.bdate_range("2009-11-01", "2010-01-15")
+    )
+
+    assert result.loc[1, "observed_at"] == pd.Timestamp("2009-12-01")
+    assert result.loc[1, "available_at"] == pd.Timestamp("2010-01-05")
+    assert "iron_ore" not in result
+    assert result.loc[1, "crude_oil"] == pytest.approx(75.0)
+    assert result.loc[1, "potash"] == pytest.approx(202.0)
 
 
 def test_world_bank_assets_wait_until_third_session_of_next_month() -> None:
