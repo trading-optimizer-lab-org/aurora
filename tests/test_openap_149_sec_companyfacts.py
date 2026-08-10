@@ -272,6 +272,9 @@ def test_sec_submissions_calculate_firm_age_as_explicit_current_proxy() -> None:
         "openap_firmage_sec_first_filing_months_proxy"
     )
     assert values.iloc[0]["source_id"] == "sec_edgar"
+    assert pd.Timestamp(values.iloc[0]["period_end"]) == pd.Timestamp(
+        "2024-02-15T15:00:00Z"
+    )
     assert pd.Timestamp(values.iloc[0]["available_at"]) == pd.Timestamp(
         "2024-02-15T15:00:00Z"
     )
