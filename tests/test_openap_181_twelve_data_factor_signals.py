@@ -17,7 +17,12 @@ RETRIEVED_AT = "2026-08-10T10:00:00Z"
 def _factor_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     dates = pd.bdate_range("2020-01-02", "2026-07-31")
     index = np.arange(len(dates), dtype=float)
-    market = 0.0002 + 0.006 * np.sin(index / 13.0) + 0.002 * np.cos(index / 5.0)
+    market = (
+        0.0002
+        + 0.006 * np.sin(index / 13.0)
+        + 0.002 * np.cos(index / 5.0)
+        + 0.001 * np.sin(index / 7.0)
+    )
     daily_factors = pd.DataFrame(
         {
             "date": dates,
@@ -40,13 +45,19 @@ def _factor_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         .drop(columns="month")
     )
     rows: list[dict[str, object]] = []
-    lagged_market = np.r_[0.0, market[:-1]]
+    lagged_market_1 = np.r_[0.0, market[:-1]]
+    lagged_market_2 = np.r_[0.0, 0.0, market[:-2]]
+    lagged_market_3 = np.r_[0.0, 0.0, 0.0, market[:-3]]
+    lagged_market_4 = np.r_[0.0, 0.0, 0.0, 0.0, market[:-4]]
     for security_number in range(1, 7):
         exposure = 0.55 + security_number * 0.12
         returns = (
             0.0001
             + exposure * market
-            + 0.08 * lagged_market
+            + 0.08 * lagged_market_1
+            + 0.05 * lagged_market_2
+            + 0.03 * lagged_market_3
+            + 0.01 * lagged_market_4
             + 0.0005 * np.sin(index / (3.0 + security_number))
         )
         adjusted_close = 40.0 * np.cumprod(1.0 + returns)
