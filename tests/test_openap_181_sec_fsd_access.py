@@ -188,3 +188,17 @@ def test_sec_fsd_access_cli_fails_closed_outside_github(tmp_path, monkeypatch):
 
     with pytest.raises(LocalRunBlocked, match="OpenAP 181 SEC FSD access"):
         runpy.run_path(str(script), run_name="__main__")
+
+
+def test_sec_notes_access_cli_fails_closed_outside_github(tmp_path, monkeypatch):
+    script = (
+        Path(__file__).parents[1]
+        / "scripts"
+        / "run_openap_149_sec_notes_access.py"
+    )
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT", raising=False)
+    monkeypatch.setattr(sys, "argv", [str(script), "--output-dir", str(tmp_path)])
+
+    with pytest.raises(LocalRunBlocked, match="OpenAP 149 SEC Notes access"):
+        runpy.run_path(str(script), run_name="__main__")
