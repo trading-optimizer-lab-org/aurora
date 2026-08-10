@@ -32,6 +32,23 @@ class OfficialDehbSmokeError(RuntimeError):
     """Raised when official DEHB cannot be proven safe for the campaign."""
 
 
+_LOCK_DOMAIN = b"aurora-dehb-official-lock-v1\0"
+_EXPECTED_LOCK_BYTES = 40742
+_EXPECTED_LOCK_DOMAIN_SHA256 = (
+    "89617c4ca6fe54739804e039177c61b8a62933b921cd65617d93fce634a06734"
+)
+_REQUIRED_LOCK_PINS = (
+    b"dehb==0.1.2",
+    b"configspace==1.2.2",
+    b"numpy==1.26.4",
+    b"pandas==2.2.3",
+    b"pyarrow==16.1.0",
+    b"dask==2024.7.1",
+    b"distributed==2024.7.1",
+    b"scipy==1.13.1",
+)
+
+
 def require_github_actions() -> None:
     """Forbid execution of this infrastructure campaign on a local machine."""
 
@@ -45,6 +62,27 @@ def require_empty_output_directory(output_dir: Path) -> None:
     if output_dir.exists() and any(output_dir.iterdir()):
         raise OfficialDehbSmokeError(f"OUTPUT_DIRECTORY_NOT_EMPTY:{output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
+
+
+def verify_dependency_lock(path: Path) -> Mapping[str, Any]:
+    """Bind the isolated lock bytes and every direct scientific runtime pin."""
+
+    raw = path.read_bytes()
+    digest = hashlib.sha256(_LOCK_DOMAIN + raw).hexdigest()
+    missing_pins = [pin.decode("ascii") for pin in _REQUIRED_LOCK_PINS if pin not in raw]
+    if len(raw) != _EXPECTED_LOCK_BYTES:
+        raise OfficialDehbSmokeError(f"DEPENDENCY_LOCK_SIZE_MISMATCH:{len(raw)}")
+    if digest != _EXPECTED_LOCK_DOMAIN_SHA256:
+        raise OfficialDehbSmokeError(f"DEPENDENCY_LOCK_HASH_MISMATCH:{digest}")
+    if missing_pins:
+        raise OfficialDehbSmokeError(
+            f"DEPENDENCY_LOCK_PIN_MISSING:{','.join(missing_pins)}"
+        )
+    return {
+        "verified": True,
+        "byte_count": len(raw),
+        "domain_sha256": digest,
+    }
 
 
 def _json_value(value: Any) -> Any:
@@ -256,8 +294,8 @@ def _verify_checkpoint_resume(
         output_path=output_dir / "checkpoint_control",
     )
     try:
-        _ask_tell(control, count=12)
-        expected_tail = _ask_tell(control, count=8)
+        _ask_tell(control, count=32)
+        expected_tail = _ask_tell(control, count=16)
     finally:
         _close_dehb(control)
 
@@ -271,7 +309,7 @@ def _verify_checkpoint_resume(
         output_path=checkpoint_path,
     )
     try:
-        _ask_tell(checkpoint, count=12)
+        _ask_tell(checkpoint, count=32)
         checkpoint.save()
     finally:
         _close_dehb(checkpoint)
@@ -286,7 +324,7 @@ def _verify_checkpoint_resume(
         resume=True,
     )
     try:
-        actual_tail = _ask_tell(resumed, count=8)
+        actual_tail = _ask_tell(resumed, count=16)
     finally:
         _close_dehb(resumed)
     return actual_tail == expected_tail
@@ -307,21 +345,23 @@ def _verify_actual_four_worker_run(
         output_path=output_dir / "actual_four_worker_run",
     )
     try:
-        trajectory, runtime, history = instance.run(fevals=16)
+        trajectory, runtime, history = instance.run(brackets=1)
         records = list(history)
+        fidelities_seen = sorted({int(float(record[4])) for record in records})
         valid = (
-            len(records) >= 16
+            len(records) >= 40
             and len(trajectory) == len(records)
             and len(runtime) == len(records)
             and all(math.isfinite(float(record[2])) for record in records)
             and all(int(float(record[4])) in FIDELITIES for record in records)
             and all(bool(record[5].get("synthetic_only")) for record in records)
+            and fidelities_seen == list(FIDELITIES)
         )
         return {
             "valid": valid,
             "n_workers": 4,
             "function_evaluations": len(records),
-            "fidelities_seen": sorted({int(float(record[4])) for record in records}),
+            "fidelities_seen": fidelities_seen,
             "incumbent_fitness": float(instance.inc_score),
         }
     finally:
@@ -346,6 +386,7 @@ def validate_official_smoke_report(report: Mapping[str, Any]) -> None:
         "validation_opened": False,
         "locked_opened": False,
         "snapshot_mounted": False,
+        "dependency_lock_verified": True,
     }
     failures = [key for key, value in expected.items() if report.get(key) != value]
     if failures:
@@ -371,6 +412,7 @@ def run_official_dehb_smoke(
             f"UNEXPECTED_OFFICIAL_RUNTIME:{versions['DEHB']}:{versions['ConfigSpace']}"
         )
     dehb_module = _load_official_dehb()
+    lock_receipt = verify_dependency_lock(dependency_lock_path)
     spaces = build_all_lane_configspaces(contract, base_seed=730000)
     _verify_exact_spaces(contract, spaces)
 
@@ -387,13 +429,14 @@ def run_official_dehb_smoke(
     )
     manifest = build_dehb_space_manifest(contract, runtime_versions=versions)
     cross_manifest = build_cross_manifest(contract)
-    lock_sha256 = hashlib.sha256(dependency_lock_path.read_bytes()).hexdigest()
     report: dict[str, Any] = {
         "ready": bool(worker_equivalence and checkpoint_resume and four_worker["valid"]),
         "official_dehb_version": versions["DEHB"],
         "configspace_version": versions["ConfigSpace"],
         "python_version": versions["python"],
-        "dependency_lock_sha256": lock_sha256,
+        "dependency_lock_verified": lock_receipt["verified"],
+        "dependency_lock_bytes": lock_receipt["byte_count"],
+        "dependency_lock_domain_sha256": lock_receipt["domain_sha256"],
         "feature_contract_sha256": contract.sha256,
         "space_manifest_sha256": manifest["manifest_sha256"],
         "cross_manifest_sha256": cross_manifest["cross_manifest_sha256"],
@@ -431,4 +474,5 @@ __all__ = [
     "run_official_dehb_smoke",
     "synthetic_objective",
     "validate_official_smoke_report",
+    "verify_dependency_lock",
 ]

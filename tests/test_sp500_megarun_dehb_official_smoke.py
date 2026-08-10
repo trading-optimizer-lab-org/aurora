@@ -6,6 +6,10 @@ from pathlib import Path
 import pytest
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEPENDENCY_LOCK = REPO_ROOT / "requirements" / "dehb-official.lock"
+
+
 def test_synthetic_objective_is_deterministic_and_pandas_serializable() -> None:
     from aurora.infra.sp500_megarun.dehb_official_smoke import synthetic_objective
 
@@ -65,12 +69,25 @@ def test_report_gate_requires_every_official_dehb_guarantee() -> None:
         "validation_opened": False,
         "locked_opened": False,
         "snapshot_mounted": False,
+        "dependency_lock_verified": True,
     }
     validate_official_smoke_report(report)
 
     broken = {**report, "checkpoint_resume_exact": False}
     with pytest.raises(OfficialDehbSmokeError, match="SMOKE_GATE_FAILED"):
         validate_official_smoke_report(broken)
+
+
+def test_dependency_lock_is_domain_hash_bound_and_contains_exact_official_pins() -> None:
+    from aurora.infra.sp500_megarun.dehb_official_smoke import verify_dependency_lock
+
+    receipt = verify_dependency_lock(DEPENDENCY_LOCK)
+
+    assert receipt == {
+        "verified": True,
+        "byte_count": 40742,
+        "domain_sha256": "89617c4ca6fe54739804e039177c61b8a62933b921cd65617d93fce634a06734",
+    }
 
 
 def test_cli_refuses_to_overwrite_a_nonempty_output_directory(tmp_path: Path) -> None:
