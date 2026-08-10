@@ -17,6 +17,8 @@ from aurora.research.openap_181.recovered_openap93_proxies import (
     COMPEQUISS_RECOVERY_SOURCE,
     EQUITY_DURATION_FORMULA_ID,
     EQUITY_DURATION_RECOVERY_SOURCE,
+    MARKET_FORMULA_IDS,
+    MARKET_RECOVERY_SOURCES,
     OSCORE_FORMULA_ID,
     OSCORE_RECOVERY_SOURCE,
     OPENAP93_RECOVERY_RUN_URL,
@@ -164,6 +166,62 @@ def _oscore_row(
     }
 
 
+MARKET_OPENAP_SCRIPTS = {
+    "PriceDelayRsq": (
+        "Signals/pyCode/Predictors/"
+        "ZZ2_PriceDelaySlope_PriceDelayRsq_PriceDelayTstat.py"
+    ),
+    "CoskewACX": "Signals/pyCode/Predictors/CoskewACX.py",
+    "Coskewness": "Signals/pyCode/Predictors/Coskewness.py",
+    "ResidualMomentum": (
+        "Signals/pyCode/Predictors/"
+        "ZZ1_ResidualMomentum6m_ResidualMomentum.py"
+    ),
+}
+MARKET_FREQUENCIES = {
+    "PriceDelayRsq": "annual",
+    "CoskewACX": "monthly",
+    "Coskewness": "monthly",
+    "ResidualMomentum": "monthly",
+}
+MARKET_OBSERVATION_COUNTS = {
+    "PriceDelayRsq": 251,
+    "CoskewACX": 252,
+    "Coskewness": 60,
+    "ResidualMomentum": 83,
+}
+
+
+def _market_row(
+    signal: str,
+    security_id: str,
+    ticker: str,
+    cik: int,
+    *,
+    value: float | None,
+    current_usable: bool,
+) -> dict[str, object]:
+    return {
+        **_row(
+            security_id,
+            ticker,
+            cik,
+            value=value,
+            current_usable=current_usable,
+        ),
+        "signal": signal,
+        "period_end": "2026-06-30",
+        "filed_at": "2026-06-30 00:00:00",
+        "available_at": "2026-06-30 00:00:00",
+        "source_id": "yahoo_public|kenneth_french",
+        "formula_id": MARKET_FORMULA_IDS[signal],
+        "openap_script": MARKET_OPENAP_SCRIPTS[signal],
+        "natural_frequency": MARKET_FREQUENCIES[signal],
+        "observation_count": MARKET_OBSERVATION_COUNTS[signal],
+        "caveat": "",
+    }
+
+
 RIO_FORMULA_IDS = {
     "RIO_MB": "openap_residual_institutional_ownership_lag6_high_mb",
     "RIO_Turnover": (
@@ -229,9 +287,10 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         "RIO_Turnover",
         "RIO_Volatility",
         "OScore",
+        *MARKET_FORMULA_IDS,
     ]
     selected_signals = recovered_signals + [
-        f"SyntheticSignal{index:02d}" for index in range(86)
+        f"SyntheticSignal{index:02d}" for index in range(82)
     ]
     comp_rows = [
         _row("US-SEC-0000000001-AAA", "AAA", 1, value=0.25, current_usable=True),
@@ -326,6 +385,22 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             current_usable=False,
         ),
     ]
+    market_rows = [
+        _market_row(
+            signal,
+            f"US-SEC-{cik:010d}-{ticker}",
+            ticker,
+            cik,
+            value=value,
+            current_usable=current_usable,
+        )
+        for signal in MARKET_FORMULA_IDS
+        for cik, ticker, value, current_usable in (
+            (1, "AAA", -0.05, True),
+            (2, "BBB", 0.25, True),
+            (3, "CCC", None, False),
+        )
+    ]
     filler_rows = [
         {
             **_row(
@@ -348,6 +423,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         + beta_vix_rows
         + rio_rows
         + oscore_rows
+        + market_rows
         + filler_rows
     ).to_csv(
         signals_path,
@@ -416,6 +492,40 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             ),
         }
     )
+    for signal in MARKET_FORMULA_IDS:
+        coverage_rows.append(
+            {
+                "signal": signal,
+                "status": "current_usable",
+                "fidelity_class": "reconstructed",
+                "current_usable": True,
+                "exact_formula": True,
+                "primary_source": "kenneth_french",
+                "fallback_source": "yahoo_public",
+                "source_domains": (
+                    "mba.tuck.dartmouth.edu|query1.finance.yahoo.com"
+                ),
+                "latest_period_end": "2026-06-30",
+                "latest_available_at": "2026-06-30 00:00:00",
+                "natural_frequency": MARKET_FREQUENCIES[signal],
+                "universe_count": 3,
+                "applicable_count": 3,
+                "non_null_count": 2,
+                "current_usable_count": 2,
+                "not_applicable_count": 0,
+                "missing_count": 1,
+                "coverage_pct": 200 / 3,
+                "license": (
+                    "Academic public download|Public endpoint; terms must be "
+                    "reviewed"
+                ),
+                "terms_status": "authorized_public|terms_review_required",
+                "scraping_required": False,
+                "reason_if_missing": "insufficient_history_or_inputs",
+                "openap_script": MARKET_OPENAP_SCRIPTS[signal],
+                "implementation_file": "research/openap_93/market_pipeline.py",
+            }
+        )
     coverage_rows.append(
         {
             "signal": "betaVIX",
@@ -570,6 +680,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             + len(beta_vix_rows)
             + len(rio_rows)
             + len(oscore_rows)
+            + len(market_rows)
             + len(filler_rows)
         ),
         "openap_commit": OPENAP_COMMIT,
@@ -579,7 +690,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         "api_keys_required": False,
         "manual_actions_required": False,
         "selected_signals": selected_signals,
-        "current_usable_signal_count": 7,
+        "current_usable_signal_count": 11,
         "output_hashes": {
             "coverage_93.csv": sha256(coverage_path.read_bytes()).hexdigest(),
             "signals_93_current.csv": sha256(signals_path.read_bytes()).hexdigest(),
@@ -593,7 +704,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
     recovery_manifest = {
         "bytes_fetched": 13720277,
         "cost_eur": 0,
-        "current_usable_signal_count": 7,
+        "current_usable_signal_count": 11,
         "full_artifact_downloaded": False,
         "input_signals": 93,
         "locked_opened": False,
@@ -679,7 +790,7 @@ def test_verified_openap93_recovery_accepts_only_current_comp_equ_iss(
     assert evidence["strict_score_increment"] == 0
 
 
-def test_verified_openap93_proxy_batch_accepts_seven_narrow_signals(
+def test_verified_openap93_proxy_batch_accepts_eleven_narrow_signals(
     tmp_path: Path,
 ) -> None:
     _write_artifact(tmp_path / "artifact")
@@ -696,6 +807,10 @@ def test_verified_openap93_proxy_batch_accepts_seven_narrow_signals(
         "RIO_Turnover": 2,
         "RIO_Volatility": 2,
         "OScore": 2,
+        "PriceDelayRsq": 2,
+        "CoskewACX": 2,
+        "Coskewness": 2,
+        "ResidualMomentum": 2,
         "betaVIX": 2,
     }
     duration = values.loc[values["signal"].eq("EquityDuration")]
@@ -724,6 +839,11 @@ def test_verified_openap93_proxy_batch_accepts_seven_narrow_signals(
     assert oscore["formula_id"].eq(OSCORE_FORMULA_ID).all()
     assert set(oscore["value"]) == {0.0, 1.0}
     assert evidence["signals"]["OScore"]["current_value_rows"] == 2
+    for signal, recovery_source in MARKET_RECOVERY_SOURCES.items():
+        market = values.loc[values["signal"].eq(signal)]
+        assert market["source_id"].eq(recovery_source).all()
+        assert market["formula_id"].eq(MARKET_FORMULA_IDS[signal]).all()
+        assert evidence["signals"][signal]["current_value_rows"] == 2
     assert evidence["strict_score_increment"] == 0
 
 
@@ -784,6 +904,12 @@ def test_verified_equity_duration_recovery_fails_closed(
         ("OScore", "source"),
         ("OScore", "binary"),
         ("OScore", "coverage_count"),
+        ("PriceDelayRsq", "formula"),
+        ("PriceDelayRsq", "observations"),
+        ("CoskewACX", "observations"),
+        ("Coskewness", "frequency"),
+        ("ResidualMomentum", "source"),
+        ("ResidualMomentum", "coverage_count"),
     ],
 )
 def test_verified_market_and_rio_recoveries_fail_closed(
@@ -810,9 +936,12 @@ def test_verified_market_and_rio_recoveries_fail_closed(
         if mutation == "formula":
             values.loc[row, "formula_id"] = "wrong_formula"
         elif mutation == "observations":
-            values.loc[row, "observation_count"] = (
-                3 if signal == "OScore" else 14
-            )
+            if signal in {"CoskewACX", "PriceDelayRsq"}:
+                values.loc[row, "observation_count"] = 199
+            elif signal == "OScore":
+                values.loc[row, "observation_count"] = 3
+            else:
+                values.loc[row, "observation_count"] = 14
         elif mutation == "source":
             values.loc[row, "source_id"] = "cboe_public"
         elif mutation == "frequency":
@@ -1112,3 +1241,53 @@ def test_oscore_recovery_route_is_narrow_causal_and_non_strict(
     assert not bool(oscore["strict_score_eligible"])
     assert set(approved["signal"]) == {"OScore"}
     assert evidence["signals"]["OScore"]["strict_score_eligible"] is False
+
+
+def test_market_recovery_routes_are_narrow_causal_and_non_strict(
+    tmp_path: Path,
+) -> None:
+    _write_artifact(tmp_path / "artifact")
+    values, _, evidence = load_verified_openap93_proxy_batch(
+        tmp_path / "artifact",
+        evidence_run_url=OPENAP93_RECOVERY_RUN_URL,
+    )
+    values = values.loc[values["signal"].isin(MARKET_FORMULA_IDS)].copy()
+    routes = load_target_routes(ROUTE_MATRIX)
+    for signal, recovery_source in MARKET_RECOVERY_SOURCES.items():
+        route = routes.loc[routes["signal"].eq(signal)].iloc[0]
+        assert recovery_source in route["primary_free_sources"].split("|")
+
+    formula_hashes = {
+        "CoskewACX": (
+            "81cff4979e62361a896a5b61b61a9778b7abf67c14a51bb2ef3bfebc7b273998"
+        ),
+        "Coskewness": (
+            "1deefcb70f9a3fbb9fec2816de5035f159e57790c0f23354e1047465f1082979"
+        ),
+        "PriceDelayRsq": (
+            "a003da84b08f46f78598f076c50959128016cb402a9235b4dabeb0341ac08fef"
+        ),
+        "ResidualMomentum": (
+            "1f1c9a114c36ee325bc2f679933ad5b1760ccac0816ec437246eb986c31f3143"
+        ),
+    }
+    matrix, approved = build_acquisition_matrix(
+        routes,
+        values,
+        formula_inventory=pd.DataFrame(
+            [
+                {"signal": signal, "formula_sha256": formula_hash}
+                for signal, formula_hash in formula_hashes.items()
+            ]
+        ),
+    )
+
+    selected = matrix.loc[matrix["signal"].isin(MARKET_FORMULA_IDS)]
+    assert set(selected["status"]) == {"current_signal_computed"}
+    assert set(selected["fidelity"]) == {"reconstructed"}
+    assert not selected["strict_score_eligible"].astype(bool).any()
+    assert set(approved["signal"]) == set(MARKET_FORMULA_IDS)
+    assert all(
+        evidence["signals"][signal]["strict_score_eligible"] is False
+        for signal in MARKET_FORMULA_IDS
+    )

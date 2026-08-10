@@ -78,7 +78,7 @@ arrancar runs y no existe autorizacion posterior para ejecutar localmente.
 Por tanto, esta mejora no cambia todavia los recuentos publicados
 `56/50/18/99/96814`, la matriz CSV ni el score estricto confirmado de 31.
 
-## Siete senales OpenAP93: recuperacion selectiva preparada, no ejecutada
+## Once senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 
 El artefacto gratuito y ya existente `openap-93-current-recovered-results` del
 run `31341580689` contiene 2.157 filas de `CompEquIss`; 1.585 tienen valor
@@ -142,6 +142,15 @@ La septima senal es `OScore`, con 1.100 valores SEC+FRED actuales y binarios.
 La fuente estrecha `recovered_openap93_oscore` sustituye solo esas filas tras
 validar hash, formula, cuatro entradas, cobertura y fechas. Tampoco incrementa
 el score estricto.
+
+El mismo artefacto aporta cuatro senales de mercado reconstruidas con retornos
+Yahoo y factores publicos de Kenneth French: `PriceDelayRsq` (2157),
+`CoskewACX` (2157), `Coskewness` (2157) y `ResidualMomentum` (2144). Cada una
+tiene una fuente estrecha propia, formula y script OpenAP fijados, observaciones
+minimas, cobertura reconciliada, fechas causales e identidad CIK+ticker. Son
+8.615 valores actuales adicionales, pero siguen fuera del score estricto por
+la sustitucion de CRSP, la identidad historica y la revision de terminos de
+Yahoo pendientes.
 
 ## CompanyFacts ampliado: lote gratuito ejecutado, pendiente de consolidar
 
@@ -239,9 +248,10 @@ recuentos globales demostrados permanecen `56/50/18/99/96814`.
   2157, cuatro observaciones por valor y que la salida sea binaria. Solo las
   1100 filas utilizables sustituyen el lote general.
 - Clasificacion: reconstruida, no estricta. No se incorpora al score estricto.
-- Resultado esperado al reconsolidar, todavia no declarado como ejecutado:
-  57 adquiridas, 51 calculadas, 19 reconstruidas no estrictas, 98 bloqueadas
-  y 97914 filas empresa-senal.
+- El cargador de las once senales prepara 14.188 filas actuales, pero no se
+  suman manualmente a los recuentos globales: la siguiente consolidacion debe
+  resolver tambien los demas lotes pendientes, sustituciones y cuarentenas.
+  Hasta entonces prevalecen `56/50/18/99/96814` y el score estricto 31.
 
 ## OrgCap: fuente gratuita confirmada, pero valores actuales no disponibles
 

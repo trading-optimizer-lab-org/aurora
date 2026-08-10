@@ -341,6 +341,30 @@ jobs:
                   "openap_beta_vix_20d_min15_market_control",
                   "historical_crsp_identity_verified",
               ),
+              "PriceDelayRsq": (
+                  2157,
+                  "recovered_openap93_pricedelayrsq",
+                  "openap_hou_moskowitz_d1_july_refresh_four_lags",
+                  "historical_crsp_identity_verified",
+              ),
+              "CoskewACX": (
+                  2157,
+                  "recovered_openap93_coskewacx",
+                  "openap_acx_daily_coskew_trailing_year",
+                  "historical_crsp_identity_verified",
+              ),
+              "Coskewness": (
+                  2157,
+                  "recovered_openap93_coskewness",
+                  "openap_systematic_coskewness_60m_min12",
+                  "historical_crsp_identity_verified",
+              ),
+              "ResidualMomentum": (
+                  2144,
+                  "recovered_openap93_residualmomentum",
+                  "openap_residual_momentum_ff3_36m_prior11",
+                  "historical_crsp_identity_verified",
+              ),
               "RIO_MB": (
                   305,
                   "recovered_openap93_rio",

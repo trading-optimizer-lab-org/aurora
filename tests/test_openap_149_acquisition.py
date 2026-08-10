@@ -260,11 +260,24 @@ def test_all_31_frozen_market_routes_record_the_recovered_artifact_route() -> No
         "sas_preprocessing_historical_ticker_intervals_coverage_and_fidelity_"
         "pending"
     )
-    assert factor.drop(index="IdioVolAHT")["current_remaining_blocker"].eq(
+    recovered_openap93 = {
+        "CoskewACX": "recovered_openap93_coskewacx",
+        "Coskewness": "recovered_openap93_coskewness",
+        "PriceDelayRsq": "recovered_openap93_pricedelayrsq",
+        "ResidualMomentum": "recovered_openap93_residualmomentum",
+    }
+    pending_factor = factor.drop(index=["IdioVolAHT", *recovered_openap93])
+    assert pending_factor["current_remaining_blocker"].eq(
         "recovered_yfinance_48_shards_hash_bound_route_and_10_french_factor_"
         "calculators_prepared_unexecuted_"
         "historical_ticker_intervals_coverage_and_fidelity_pending"
     ).all()
+    for signal, recovery_source in recovered_openap93.items():
+        sources = set(factor.loc[signal, "primary_free_sources"].split("|"))
+        assert recovery_source in sources
+        assert factor.loc[signal, "current_remaining_blocker"].startswith(
+            "openap93_run_31341580689_hash_bound_current_usable_count_"
+        )
     assert factor.loc["IdioVolAHT", "current_remaining_blocker"] == (
         "recovered_yfinance_48_shards_hash_bound_route_and_1_capm_rmse_"
         "calculator_prepared_unexecuted_historical_"
@@ -1629,6 +1642,13 @@ def test_consolidation_workflow_verifies_causal_firmage_evidence() -> None:
     assert 'oscore["current_value_count"] == 1100' in verify
     assert 'oscore["source_used"] == "recovered_openap93_oscore"' in verify
     assert '"recovered_openap93_oscore"' in verify
+    for recovery_source in (
+        "recovered_openap93_pricedelayrsq",
+        "recovered_openap93_coskewacx",
+        "recovered_openap93_coskewness",
+        "recovered_openap93_residualmomentum",
+    ):
+        assert f'"{recovery_source}"' in verify
 
 
 def test_consolidation_workflow_accepts_current_companyfacts_evidence() -> None:

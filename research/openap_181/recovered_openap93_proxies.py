@@ -64,6 +64,46 @@ BETAVIX_FORMULA_ID = "openap_beta_vix_20d_min15_market_control"
 BETAVIX_OPENAP_SCRIPT = "Signals/pyCode/Predictors/ZZ2_betaVIX.py"
 BETAVIX_ORIGINAL_SOURCE = "yahoo_public|kenneth_french|cboe_public"
 BETAVIX_RECOVERY_SOURCE = "recovered_openap93_betavix"
+MARKET_FORMULA_IDS = {
+    "PriceDelayRsq": "openap_hou_moskowitz_d1_july_refresh_four_lags",
+    "CoskewACX": "openap_acx_daily_coskew_trailing_year",
+    "Coskewness": "openap_systematic_coskewness_60m_min12",
+    "ResidualMomentum": "openap_residual_momentum_ff3_36m_prior11",
+}
+MARKET_RECOVERY_SOURCES = {
+    signal: f"recovered_openap93_{signal.lower()}"
+    for signal in MARKET_FORMULA_IDS
+}
+MARKET_CONTRACTS = {
+    "PriceDelayRsq": {
+        "openap_script": (
+            "Signals/pyCode/Predictors/"
+            "ZZ2_PriceDelaySlope_PriceDelayRsq_PriceDelayTstat.py"
+        ),
+        "natural_frequency": "annual",
+        "minimum_observations": 200,
+    },
+    "CoskewACX": {
+        "openap_script": "Signals/pyCode/Predictors/CoskewACX.py",
+        "natural_frequency": "monthly",
+        "minimum_observations": 200,
+    },
+    "Coskewness": {
+        "openap_script": "Signals/pyCode/Predictors/Coskewness.py",
+        "natural_frequency": "monthly",
+        "minimum_observations": 12,
+    },
+    "ResidualMomentum": {
+        "openap_script": (
+            "Signals/pyCode/Predictors/"
+            "ZZ1_ResidualMomentum6m_ResidualMomentum.py"
+        ),
+        "natural_frequency": "monthly",
+        "minimum_observations": 47,
+    },
+}
+MARKET_ORIGINAL_SOURCE = "yahoo_public|kenneth_french"
+MARKET_IMPLEMENTATION_FILE = "research/openap_93/market_pipeline.py"
 RIO_SIGNALS = ("RIO_MB", "RIO_Turnover", "RIO_Volatility")
 RIO_FORMULA_IDS = {
     "RIO_MB": "openap_residual_institutional_ownership_lag6_high_mb",
@@ -531,6 +571,25 @@ def load_verified_openap93_proxy_batch(
         minimum_observations=15,
         universe_count=universe_count,
     )
+    market_values = {
+        signal: _validate_reconstructed_rows(
+            values,
+            source,
+            signal=signal,
+            formula_id=MARKET_FORMULA_IDS[signal],
+            openap_script=str(MARKET_CONTRACTS[signal]["openap_script"]),
+            caveat="",
+            original_source=MARKET_ORIGINAL_SOURCE,
+            natural_frequency=str(
+                MARKET_CONTRACTS[signal]["natural_frequency"]
+            ),
+            minimum_observations=int(
+                MARKET_CONTRACTS[signal]["minimum_observations"]
+            ),
+            universe_count=universe_count,
+        )
+        for signal in MARKET_FORMULA_IDS
+    }
     rio_values = {
         signal: _validate_reconstructed_rows(
             values,
@@ -591,6 +650,20 @@ def load_verified_openap93_proxy_batch(
         universe_count=universe_count,
         usable_count=len(beta_vix),
     )
+    for signal in MARKET_FORMULA_IDS:
+        _validate_reconstructed_coverage(
+            coverage,
+            signal=signal,
+            openap_script=str(MARKET_CONTRACTS[signal]["openap_script"]),
+            implementation_file=MARKET_IMPLEMENTATION_FILE,
+            natural_frequency=str(
+                MARKET_CONTRACTS[signal]["natural_frequency"]
+            ),
+            primary_source="kenneth_french",
+            fallback_source="yahoo_public",
+            universe_count=universe_count,
+            usable_count=len(market_values[signal]),
+        )
     for signal in RIO_SIGNALS:
         _validate_reconstructed_coverage(
             coverage,
@@ -640,6 +713,18 @@ def load_verified_openap93_proxy_batch(
             "CRSP and historical security identity is not verified"
         ),
     )
+    market_values = {
+        signal: _prepare_recovered_rows(
+            rows,
+            evidence_run_url=evidence_run_url,
+            recovery_source=MARKET_RECOVERY_SOURCES[signal],
+            caveat_suffix=(
+                "recovered from hash-bound OpenAP93 evidence; Yahoo returns "
+                "replace CRSP and historical security identity is not verified"
+            ),
+        )
+        for signal, rows in market_values.items()
+    }
     rio_values = {
         signal: _prepare_recovered_rows(
             rows,
@@ -657,6 +742,7 @@ def load_verified_openap93_proxy_batch(
         equity_duration,
         oscore,
         beta_vix,
+        *(market_values[signal] for signal in MARKET_FORMULA_IDS),
         *(rio_values[signal] for signal in RIO_SIGNALS),
     ]
     current = pd.concat(current_parts, ignore_index=True)
@@ -693,6 +779,17 @@ def load_verified_openap93_proxy_batch(
         **{
             signal: {
                 "signal": signal,
+                "formula_id": MARKET_FORMULA_IDS[signal],
+                "current_value_rows": int(len(market_values[signal])),
+                "coverage": float(len(market_values[signal]) / universe_count),
+                "strict_score_eligible": False,
+                "historical_crsp_identity_verified": False,
+            }
+            for signal in MARKET_FORMULA_IDS
+        },
+        **{
+            signal: {
+                "signal": signal,
                 "formula_id": RIO_FORMULA_IDS[signal],
                 "current_value_rows": int(len(rio_values[signal])),
                 "coverage": float(len(rio_values[signal]) / universe_count),
@@ -702,7 +799,7 @@ def load_verified_openap93_proxy_batch(
         },
     }
     evidence = {
-        "contract_version": 2,
+        "contract_version": 3,
         "recovery_run_id": OPENAP93_RECOVERY_RUN_ID,
         "source_run_id": OPENAP93_SOURCE_RUN_ID,
         "source_head_sha": OPENAP93_SOURCE_HEAD_SHA,
@@ -749,6 +846,8 @@ __all__ = [
     "COMPEQUISS_RECOVERY_SOURCE",
     "EQUITY_DURATION_FORMULA_ID",
     "EQUITY_DURATION_RECOVERY_SOURCE",
+    "MARKET_FORMULA_IDS",
+    "MARKET_RECOVERY_SOURCES",
     "OSCORE_FORMULA_ID",
     "OSCORE_RECOVERY_SOURCE",
     "OPENAP93_RECOVERY_RUN_URL",
