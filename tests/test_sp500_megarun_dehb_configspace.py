@@ -331,6 +331,16 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F228", 78),
         ("F229", 14),
         ("F230", 0),
+        ("F231", 44),
+        ("F232", 54),
+        ("F233", 84),
+        ("F234", 76),
+        ("F235", 56),
+        ("F236", 46),
+        ("F237", 14),
+        ("F238", 14),
+        ("F239", 14),
+        ("F240", 12),
     ],
 )
 def test_conditionally_inactive_model_parameters_are_forbidden(
@@ -562,6 +572,49 @@ def test_f183_removes_the_physical_train_duplicate_median_basis(
         ("F226", "bid_to_cover", ("demand_yield_balance",), 40),
         ("F227", "weighted_maturity", ("refinancing_pressure",), 48),
         ("F228", "total_debt", ("debt_growth_zscore",), 60),
+        (
+            "F232",
+            "announcement_count",
+            ("announcement_density", "cluster_pressure"),
+            48,
+        ),
+        ("F233", "document_count", ("publication_density",), 56),
+        (
+            "F234",
+            "treasury_equity_divergence",
+            ("divergence_zscore", "rolling_correlation"),
+            40,
+        ),
+        (
+            "F235",
+            "precipitation",
+            ("precipitation_anomaly", "wet_low_visibility"),
+            50,
+        ),
+        (
+            "F236",
+            "temperature",
+            (
+                "temperature_anomaly",
+                "pressure_anomaly",
+                "temperature_extreme",
+                "storm_composite",
+            ),
+            40,
+        ),
+        (
+            "F240",
+            "total_event_count",
+            (
+                "rolling_event_density",
+                "type_weighted_density",
+                "event_breadth",
+                "event_concentration",
+                "macro_policy_overlap",
+                "public_arrival_pressure",
+            ),
+            8,
+        ),
     ],
 )
 def test_internal_composites_keep_their_window_while_raw_simple_statistics_do_not(
@@ -783,9 +836,20 @@ def test_f221_f230_internal_changes_keep_change_lag_active(
         ("F224", "change_lag", 4),
         ("F227", "change_lag", 6),
         ("F229", "change_lag", 6),
+        ("F231", "window", 8),
+        ("F237", "window", 8),
+        ("F238", "window", 8),
+        ("F239", "window", 8),
+        ("F232", "change_lag", 6),
+        ("F235", "change_lag", 6),
+        ("F236", "change_lag", 6),
+        ("F237", "change_lag", 6),
+        ("F238", "change_lag", 6),
+        ("F239", "change_lag", 6),
+        ("F240", "change_lag", 4),
     ],
 )
-def test_f221_f230_generic_normalization_parameters_are_not_duplicated(
+def test_f221_f240_generic_normalization_parameters_are_not_duplicated(
     feature_contract,
     lane_id: str,
     parameter: str,
@@ -807,6 +871,46 @@ def test_f221_f230_generic_normalization_parameters_are_not_duplicated(
     }
 
     assert len(pairs) == expected_pairs
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "active_statistics", "expected_triplets"),
+    [
+        ("F231", ("breadth_change",), 36),
+        ("F233", ("mix_change",), 28),
+        ("F234", ("divergence_change",), 36),
+    ],
+)
+def test_f231_f240_internal_changes_keep_change_lag_active(
+    feature_contract,
+    lane_id: str,
+    active_statistics: tuple[str, ...],
+    expected_triplets: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    triplets = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 3
+        and any(
+            clause.hyperparameter.name == "change_lag"
+            for clause in conjunction.clauses
+        )
+    }
+
+    assert len(triplets) == expected_triplets
+    assert all(
+        ("statistic", active_statistic) not in item
+        for item in triplets
+        for active_statistic in active_statistics
+    )
 
 
 def test_f230_keeps_window_and_change_lag_active_for_every_statistic(

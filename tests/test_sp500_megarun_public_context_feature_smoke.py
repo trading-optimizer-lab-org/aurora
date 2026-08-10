@@ -22,6 +22,13 @@ def _write_snapshot(root: Path) -> Path:
     snapshot = root / "train_snapshot_1993_2010"
     snapshot.mkdir()
     sessions = pd.bdate_range("1993-01-22", "2010-12-31")
+    sessions = sessions[
+        ~(
+            (sessions.month == 3)
+            & (sessions.weekday == 0)
+            & (sessions.day <= 7)
+        )
+    ]
     phase = np.arange(len(sessions), dtype=float)
     close = 100.0 * np.exp(
         np.cumsum(0.0002 + 0.005 * np.sin(phase / 31.0) + 0.002 * np.cos(phase / 11.0))
@@ -49,17 +56,25 @@ def _write_snapshot(root: Path) -> Path:
         ("saving_rate_quarterly_vintages", "ratesav"),
     )
     for index, date in enumerate(vintage_dates):
-        for resource_number, (resource_id, sheet) in enumerate(resources[: 2 + index % 3]):
-            philly_rows.append(
-                {
-                    "date": date,
-                    "observation_date": date - pd.DateOffset(months=1 + resource_number),
-                    "value": 100.0 + index + resource_number,
-                    "vintage_label": f"V{index:03d}-{resource_number}",
-                    "source_sheet": sheet,
-                    "resource_id": resource_id,
-                }
-            )
+        resource_count = 1 + ((index * 7) % 17) // 5
+        for resource_number, (resource_id, sheet) in enumerate(
+            resources[:resource_count]
+        ):
+            point_count = 1 + (index + resource_number) % 3
+            for point_number in range(point_count):
+                philly_rows.append(
+                    {
+                        "date": date,
+                        "observation_date": date
+                        - pd.DateOffset(months=1 + resource_number + point_number),
+                        "value": 100.0 + index + resource_number + point_number / 10.0,
+                        "vintage_label": (
+                            f"V{index:03d}-{resource_number}-{point_number}"
+                        ),
+                        "source_sheet": sheet,
+                        "resource_id": resource_id,
+                    }
+                )
     pd.DataFrame(philly_rows).to_parquet(snapshot / "D_PHILLY_RT.parquet", index=False)
 
     announcement_dates = sessions[10::10]
@@ -92,7 +107,7 @@ def _write_snapshot(root: Path) -> Path:
     event_number = 0
     while cursor + 20 < len(sessions):
         meeting = sessions[cursor]
-        statement = sessions[cursor + 1]
+        statement = sessions[cursor + (event_number % 3 != 0)]
         minutes = sessions[cursor + 16]
         fomc_rows.extend(
             [
@@ -172,6 +187,12 @@ def test_public_context_smoke_builds_f231_f240_train_only_artifacts(
         for row in report["coverage"]
     )
     assert len(report["coverage"]) == 10
+    parameter_audit = report["parameter_choice_audit"]
+    assert parameter_audit["ready"] is True
+    assert parameter_audit["expected_choice_probe_count"] == 215
+    assert parameter_audit["choice_probe_count"] == 215
+    assert parameter_audit["failed_probes"] == []
+    assert parameter_audit["inactive_choice_groups"] == []
     assert set(report["artifacts"]) == {f"F{i:03d}" for i in range(231, 241)}
     assert (tmp_path / "out" / "features" / "F231.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F240.parquet").is_file()
@@ -228,3 +249,59 @@ def test_public_context_smoke_cli_accepts_contract(
     )
 
     assert cli.main() == 0
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "parameter", "default_overrides", "active_overrides"),
+    [
+        ("F231", "window", {"statistic": "vintage_count"}, {"normalization": "rolling_zscore"}),
+        ("F231", "change_lag", {"statistic": "vintage_count"}, {"statistic": "breadth_change"}),
+        ("F232", "window", {"statistic": "announcement_count"}, {"statistic": "announcement_density"}),
+        ("F233", "window", {"statistic": "document_count"}, {"statistic": "publication_density"}),
+        ("F233", "change_lag", {"statistic": "document_count"}, {"statistic": "mix_change"}),
+        ("F234", "window", {"statistic": "treasury_equity_divergence"}, {"statistic": "divergence_zscore"}),
+        ("F234", "change_lag", {"statistic": "treasury_equity_divergence"}, {"statistic": "divergence_change"}),
+        ("F235", "window", {"statistic": "precipitation"}, {"statistic": "precipitation_anomaly"}),
+        ("F236", "window", {"statistic": "temperature"}, {"statistic": "temperature_anomaly"}),
+        ("F237", "window", {"statistic": "daylight_minutes"}, {"normalization": "rolling_zscore"}),
+        ("F240", "window", {"statistic": "total_event_count"}, {"statistic": "rolling_event_density"}),
+    ],
+)
+def test_public_context_parameter_repair_activates_conditional_choice(
+    lane_id: str,
+    parameter: str,
+    default_overrides: dict[str, object],
+    active_overrides: dict[str, object],
+) -> None:
+    api = _api()
+    base = {
+        "statistic": "vintage_count",
+        "window": 5,
+        "change_lag": 1,
+        "normalization": "raw",
+        "direction": "continuation",
+        **default_overrides,
+    }
+
+    repaired = api._repair_public_context_configuration(
+        lane_id,
+        parameter,
+        dict(base),
+    )
+
+    for key, value in active_overrides.items():
+        assert repaired[key] == value
+
+
+def test_public_context_workflow_has_an_isolated_fail_closed_scope() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github"
+        / "workflows"
+        / "sp500-megarun-macro-feature-smoke-f032.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "- f231_f240" in workflow
+    assert "smoke_f231_f240:" in workflow
+    assert "inputs.scope == 'f231_f240'" in workflow
+    assert "parameter_choice_audit_F231_F240.json" in workflow

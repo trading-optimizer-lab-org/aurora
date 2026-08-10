@@ -10,7 +10,11 @@ from typing import Any
 
 import pandas as pd
 
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.feature_audit import audit_feature_outputs
+from aurora.infra.sp500_megarun.feature_contract import (
+    load_and_validate_feature_contract,
+)
 from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_calendar_state_panel,
     normalize_fomc_document_mix_panel,
@@ -21,8 +25,12 @@ from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_treasury_auction_announcement_panel,
 )
 from aurora.infra.sp500_megarun.materializer import parquet_safe_frame
+from aurora.infra.sp500_megarun.parameter_choice_audit import (
+    audit_frozen_parameter_choices,
+)
 from aurora.infra.sp500_megarun.public_context_feature_engine import (
     evaluate_public_context_family_batch,
+    evaluate_public_context_lane,
 )
 
 
@@ -34,6 +42,8 @@ _TRAIN_PARTITION = "train_snapshot_1993_2010"
 _SEARCH_START = pd.Timestamp("1998-01-01")
 _TRAIN_END = pd.Timestamp("2010-12-31")
 _LANES = tuple(f"F{index:03d}" for index in range(231, 241))
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PARAMETER_AUDIT_START = pd.Timestamp("1998-01-01")
 _DATASETS = (
     "D_SPY",
     "D_CALENDAR",
@@ -100,6 +110,73 @@ def _first_available(panel: pd.DataFrame) -> str | None:
     if panel.empty:
         return None
     return pd.to_datetime(panel["available_at"]).min().date().isoformat()
+
+
+def _repair_public_context_configuration(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    window_statistics = {
+        "F232": "announcement_density",
+        "F233": "publication_density",
+        "F234": "divergence_zscore",
+        "F235": "precipitation_anomaly",
+        "F236": "temperature_anomaly",
+        "F240": "rolling_event_density",
+    }
+    if lane_id in window_statistics and parameter == "window":
+        configuration["statistic"] = window_statistics[lane_id]
+        configuration["normalization"] = "raw"
+    elif parameter == "window":
+        configuration["normalization"] = "rolling_zscore"
+    lag_statistics = {
+        "F231": "breadth_change",
+        "F233": "mix_change",
+        "F234": "divergence_change",
+    }
+    if lane_id in lag_statistics and parameter == "change_lag":
+        configuration["statistic"] = lag_statistics[lane_id]
+        configuration["normalization"] = "raw"
+    elif parameter == "change_lag":
+        generic_change_statistics = {
+            "F232": "announced_offering",
+            "F235": "precipitation",
+            "F236": "temperature",
+            "F237": "daylight_minutes",
+            "F238": "sessions_until_expiry",
+            "F239": "days_to_general_election",
+            "F240": "total_event_count",
+        }
+        configuration["statistic"] = generic_change_statistics[lane_id]
+        configuration["normalization"] = "change"
+    if lane_id == "F232" and parameter == "normalization":
+        configuration["statistic"] = "announced_offering"
+    return configuration
+
+
+def _parameter_audit_inputs(
+    market: pd.DataFrame,
+    panels: dict[str, pd.DataFrame],
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    market_dates = pd.to_datetime(market["date"], errors="raise")
+    audit_market = market.loc[
+        market_dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+    ].reset_index(drop=True)
+    if not (pd.DatetimeIndex(audit_market["date"]).year == 2010).any():
+        raise PublicContextFeatureSmokeError("PARAMETER_AUDIT_2010_MISSING")
+    audit_panels: dict[str, pd.DataFrame] = {}
+    for resource, panel in panels.items():
+        dates = pd.to_datetime(panel["date"], errors="raise")
+        bounded = panel.loc[
+            dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+        ].reset_index(drop=True)
+        if bounded.empty:
+            raise PublicContextFeatureSmokeError(
+                f"PARAMETER_AUDIT_PANEL_EMPTY:{resource}"
+            )
+        audit_panels[resource] = bounded
+    return audit_market, audit_panels
 
 
 def build_public_context_feature_smoke(
@@ -208,6 +285,26 @@ def build_public_context_feature_smoke(
         search_start=_SEARCH_START,
         search_end=_TRAIN_END,
     )
+    data_contract = load_and_validate_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_free_data_240.json"
+    )
+    feature_contract = load_and_validate_feature_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_feature_contract_240.json",
+        data_contract,
+    )
+    audit_market, audit_panels = _parameter_audit_inputs(market, panels)
+    parameter_audit = audit_frozen_parameter_choices(
+        feature_contract,
+        lane_ids=_LANES,
+        evaluator=lambda lane_id, configuration: evaluate_public_context_lane(
+            lane_id,
+            audit_market,
+            audit_panels,
+            configuration,
+        ),
+        expected_years=(2010,),
+        repair=_repair_public_context_configuration,
+    )
 
     root = Path(output_dir)
     artifacts: dict[str, dict[str, object]] = {}
@@ -237,6 +334,7 @@ def build_public_context_feature_smoke(
     )
     ready = bool(
         audit.ready
+        and parameter_audit["ready"]
         and len(outputs) == len(_LANES)
         and not exact_duplicates
         and not near_duplicates
@@ -281,10 +379,16 @@ def build_public_context_feature_smoke(
         "full_yearly_coverage": full_yearly_coverage,
         "coverage": [asdict(item) for item in audit.coverage],
         "artifacts": artifacts,
+        "parameter_choice_audit_scope": "physical_causal_tail_1998_2010",
+        "parameter_choice_audit": parameter_audit,
     }
     root.mkdir(parents=True, exist_ok=True)
     (root / "public_context_feature_smoke_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (root / "parameter_choice_audit_F231_F240.json").write_text(
+        json.dumps(parameter_audit, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return report

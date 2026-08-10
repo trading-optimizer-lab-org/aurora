@@ -710,6 +710,18 @@ def _forbidden_parameter_pairs(
             for normalization in ("raw", "rolling_zscore")
             for lag in space["change_lag"][1:]
         )
+    if lane.lane_id in {"F231", "F237", "F238", "F239"}:
+        pairs.extend(
+            ("normalization", normalization, "window", window)
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id in {"F232", "F235", "F236", "F237", "F238", "F239", "F240"}:
+        pairs.extend(
+            ("normalization", normalization, "change_lag", lag)
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
     if lane.lane_id in {"F023", "F026", "F030", "F031"}:
         pairs.extend(
             ("window", 1, "normalization", normalization)
@@ -1376,6 +1388,102 @@ def _forbidden_parameter_triplets(
                 "total_debt",
                 "public_debt_share",
                 "intragov_share",
+            ),
+        }
+        triplets.extend(
+            (
+                "statistic",
+                statistic,
+                "normalization",
+                normalization,
+                "change_lag",
+                lag,
+            )
+            for statistic in statistics_without_internal_change[lane.lane_id]
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
+    if lane.lane_id in {"F232", "F233", "F234", "F235", "F236", "F240"}:
+        simple_statistics = {
+            "F232": (
+                "announcement_count",
+                "announced_offering",
+                "announcement_gap",
+                "weighted_maturity",
+                "maturity_hhi",
+                "lead_days",
+            ),
+            "F233": (
+                "document_count",
+                "publication_gap",
+                "meeting_share",
+                "statement_share",
+                "minutes_share",
+                "mix_entropy",
+                "mix_change",
+            ),
+            "F234": (
+                "treasury_equity_divergence",
+                "official_divergence",
+                "divergence_change",
+                "direction_disagreement",
+                "flow_ratio",
+            ),
+            "F235": (
+                "precipitation",
+                "precipitation_event",
+                "visibility",
+                "fog",
+                "snow_depth",
+            ),
+            "F236": (
+                "temperature",
+                "temperature_range",
+                "dewpoint_spread",
+                "wind_speed",
+                "gust",
+            ),
+            "F240": ("total_event_count",),
+        }
+        triplets.extend(
+            (
+                "statistic",
+                statistic,
+                "normalization",
+                normalization,
+                "window",
+                window,
+            )
+            for statistic in simple_statistics[lane.lane_id]
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id in {"F231", "F233", "F234"}:
+        statistics_without_internal_change = {
+            "F231": (
+                "vintage_count",
+                "resource_breadth",
+                "release_gap",
+                "release_frequency",
+                "freshness",
+                "clustering_breadth",
+            ),
+            "F233": (
+                "document_count",
+                "publication_gap",
+                "publication_density",
+                "meeting_share",
+                "statement_share",
+                "minutes_share",
+                "mix_entropy",
+            ),
+            "F234": (
+                "treasury_equity_divergence",
+                "official_divergence",
+                "divergence_zscore",
+                "direction_disagreement",
+                "flow_ratio",
+                "rolling_correlation",
             ),
         }
         triplets.extend(
