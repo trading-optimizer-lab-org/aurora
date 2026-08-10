@@ -48,7 +48,7 @@ La salida futura sera reconstruida y no estricta porque SIC SEC actual y
 CIK/ticker no equivalen al historial CRSP/PERMNO. No altera los recuentos
 ejecutados anteriores.
 
-## Tres senales IPO: fuente gratuita y ruta completa preparadas
+## Tres senales IPO: lote gratuito ejecutado, pendiente de consolidar
 
 `AgeIPO`, `IndIPO` y `RDIPO` no necesitan Twelve Data. El Excel oficial
 Field-Ritter `IPO-age.xlsx` respondio HTTP 200 el 2026-08-10, pesa 1.346.041
@@ -57,7 +57,7 @@ oferta, nombre, ticker, CUSIP, PERMNO y ano de fundacion. El documento oficial
 indica que cubre 1975-2025, incluye direct listings, excluye cotizaciones por
 fusion con SPAC y solicita citar el dataset.
 
-La implementacion preparada, todavia sin ejecutar:
+La implementacion ejecutada:
 
 - descarga una sola vez el fichero oficial mediante un workflow exclusivamente
   manual, conserva HTTP, `Last-Modified`, tamano y SHA-256 y no publica el Excel
@@ -75,11 +75,15 @@ La implementacion preparada, todavia sin ejecutar:
   `ResearchAndDevelopmentExpense` anual SEC explicitamente igual a cero. Una
   etiqueta ausente queda sin valor.
 
-La cobertura 2026 y las nuevas cotizaciones por SPAC siguen necesitando una
-ruta SEC primaria. El puente actual tampoco prueba un intervalo historico
-CRSP-CIK. Por ello la salida futura sera `reconstructed_not_strict`; mientras
-no se ejecute el workflow, estas tres senales siguen sin valor nuevo y los
-recuentos ejecutados permanecen `56/50/18/99/96814`.
+El run `31395454942` termino correctamente y publico el artefacto
+`openap-149-field-ritter-ipo-current`. El lote conserva 13.149 filas actuales:
+701 valores finitos de `IndIPO`, 700 de `RDIPO` y ninguno de `AgeIPO`.
+`AgeIPO` queda con datos de la ruta adquiridos pero bloqueado por cobertura;
+no se convierte en senal calculada. La cobertura 2026 y las nuevas
+cotizaciones por SPAC siguen necesitando una ruta SEC primaria. El puente
+actual tampoco prueba un intervalo historico CRSP-CIK. Por ello los valores
+son `reconstructed_not_strict`. Como el lote aun no se ha consolidado, los
+recuentos globales demostrados permanecen `56/50/18/99/96814`.
 
 ## OScore: ruta gratuita preparada, pendiente de reconsolidar
 
@@ -237,18 +241,20 @@ SEC actual y manifiesto de recuperacion mediante hashes. Sus salidas declaran
 explicitamente `historical_ticker_interval_verified=false`,
 `market_bars_acquired=false` y `strict_score_eligible=false`.
 
-Sobre esa evidencia queda preparado el calculo causal de `ExchSwitch`. Replica
+Sobre esa evidencia se ejecuto el calculo causal de `ExchSwitch`. Replica
 la condicion OpenAP de bolsa actual NYSE/AMEX frente a los 12 meses anteriores,
 pero falla cerrado: un 1 exige una transicion entre dos filings de la misma
 clase con un hueco maximo de 160 dias; un 0 para NYSE o NYSE American exige
 cobertura SEC de los 13 inicios de mes. El workflow manual
 `openap-149-sec-exchange-switch.yml` descarga solo los cinco periodos Notes
 necesarios, comprueba la formula oficial por SHA-256 y publica solo derivados y
-manifiestos. No se ha ejecutado. La aceptacion SEC no es la fecha efectiva CRSP
-y el puente CIK no es PERMNO; la salida seguira siendo reconstruida no estricta.
-Hasta ejecutar y medir cobertura, esta mejora no cambia valores ni recuentos.
+manifiestos. El run `31389285731` termino correctamente y publico el artefacto
+`openap-149-sec-exchange-switch-current`: 7.659 filas totales y 2.869 valores
+finitos. La aceptacion SEC no es la fecha efectiva CRSP y el puente CIK no es
+PERMNO; la salida sigue siendo reconstruida no estricta. El lote aun no se ha
+consolidado y no cambia los recuentos globales demostrados.
 
-## Spinoff: prueba SEC positiva preparada
+## Spinoff: prueba SEC positiva ejecutada, pendiente de consolidar
 
 La formula OpenAP usa la clasificacion `SpinoffCo` de CRSP y la mantiene durante
 los primeros 24 meses de `FirmAgeNoScreen`. La ruta gratuita preparada no
@@ -257,13 +263,16 @@ causal, descarga de SEC como maximo 24 documentos por titulo y exige una frase
 de finalizacion junto a una fecha efectiva. Operaciones propuestas, previstas o
 sujetas a condiciones se rechazan.
 
-El calculo futuro emitira 1 durante los 24 meses siguientes a la fecha probada
+El calculo emite 1 durante los 24 meses siguientes a la fecha probada
 y 0 despues; los demas titulos quedaran sin valor. La fecha de escision SEC es
 un proxy de edad y no equivale a la primera observacion CRSP/PERMNO, por lo que
-todo resultado sera `reconstructed_not_strict`. El workflow manual
+todo resultado es `reconstructed_not_strict`. El workflow manual
 `openap-149-sec-spinoff.yml` fija el hash de la formula, usa identidad SEC
 actual, respeta fair access, no conserva documentos brutos y no tiene `push`.
-No se ha ejecutado y no cambia los recuentos actuales.
+El run `31393646423` termino correctamente: proceso 264 filings por el
+readthrough auditado, encontro 23 filas de evidencia de finalizacion y genero
+8 valores finitos. Publico el artefacto `openap-149-sec-spinoff-current`.
+El lote aun no se ha consolidado y no cambia los recuentos actuales.
 
 ## Dividendos: la antigua ruta Basic no es valida
 
