@@ -172,6 +172,14 @@ def test_rates_credit_smoke_builds_f181_f190_train_only_artifacts(tmp_path: Path
     assert report["executable_lane_count"] == 10
     assert report["fed_missing_sentinel"] == -9999.0
     assert report["f183_fidelity"] == "official_spf_expected_real_rate_proxy"
+    assert report["f185_default"] == "outstanding_contraction_full_history"
+    assert set(report["f185_component_first_available_at"]) == {
+        "cp_outstanding",
+        "aa_nonfinancial_90d",
+        "a2p2_nonfinancial_90d",
+        "aa_financial_90d",
+        "issuance_amount",
+    }
     assert report["historical_revision_pit_exact"] is False
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False

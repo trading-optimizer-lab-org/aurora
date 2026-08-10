@@ -686,10 +686,10 @@ _DEFAULT_PARAMETERS: Mapping[str, Mapping[str, Any]] = {
         "direction": "continuation",
     },
     "F185": {
-        "statistic": "quality_spread",
+        "statistic": "outstanding_contraction",
         "window": 126,
         "lag": 20,
-        "normalization": "rolling_zscore",
+        "normalization": "raw",
         "direction": "continuation",
     },
     "F186": {

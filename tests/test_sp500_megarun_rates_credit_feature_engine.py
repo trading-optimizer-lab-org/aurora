@@ -320,3 +320,24 @@ def test_rates_credit_batch_contains_exactly_f181_f190() -> None:
 
     assert tuple(outputs) == tuple(f"F{i:03d}" for i in range(181, 191))
     assert all(output["value"].notna().any() for output in outputs.values())
+
+
+def test_f185_batch_default_uses_full_history_outstanding_contraction() -> None:
+    api = _api()
+    market, panels = _inputs()
+
+    batch = api.evaluate_rates_credit_family_batch(market, panels)["F185"]
+    explicit = api.evaluate_rates_credit_lane(
+        "F185",
+        market,
+        panels,
+        {
+            "statistic": "outstanding_contraction",
+            "window": 126,
+            "lag": 20,
+            "normalization": "raw",
+            "direction": "continuation",
+        },
+    )
+
+    pd.testing.assert_frame_equal(batch, explicit)

@@ -356,6 +356,41 @@ def test_credit_money_panel_bridges_old_monthly_and_new_weekly_cp_causally() -> 
     assert old_monthly_release["observed_at"] == pd.Timestamp("2001-01-03")
 
 
+def test_commercial_paper_panel_preserves_outstanding_before_rate_history() -> None:
+    api = _normalizer_api()
+    sessions = pd.bdate_range("1993-01-25", "1993-04-05")
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                [
+                    "1993-01-31",
+                    "1993-02-28",
+                    "1993-01-22",
+                    "1993-01-22",
+                    "1993-01-22",
+                ]
+            ),
+            "series_id": [
+                "H1.DTBSPCK.M",
+                "H1.DTBSPCK.M",
+                "RIFSPPNAAD90_N.B",
+                "RIFSPPNA2P2D90_N.B",
+                "RIFSPPFAAD90_N.B",
+            ],
+            "value": [1_500.0, 1_480.0, -9999.0, -9999.0, -9999.0],
+        }
+    )
+
+    result = api.normalize_commercial_paper_panel(frame, sessions=sessions)
+
+    assert result["date"].min() == pd.Timestamp("1993-03-02")
+    assert result["cp_outstanding"].notna().all()
+    assert result["aa_nonfinancial_90d"].isna().all()
+    assert result["a2p2_nonfinancial_90d"].isna().all()
+    assert result["aa_financial_90d"].isna().all()
+    assert result["issuance_amount"].isna().all()
+
+
 def test_fomc_decision_panel_uses_last_day_and_next_session() -> None:
     api = _normalizer_api()
     frame = pd.DataFrame(

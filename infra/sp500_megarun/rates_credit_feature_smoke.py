@@ -71,6 +71,14 @@ def _assert_no_fed_sentinel(panels: Mapping[str, pd.DataFrame]) -> None:
             raise RatesCreditFeatureSmokeError(f"FED_SENTINEL_SURVIVED:{name}")
 
 
+def _first_available(panel: pd.DataFrame, column: str) -> str | None:
+    values = pd.to_numeric(panel[column], errors="coerce")
+    valid = values.notna()
+    if not valid.any():
+        return None
+    return pd.to_datetime(panel.loc[valid, "available_at"]).min().date().isoformat()
+
+
 def build_rates_credit_feature_smoke(
     train_snapshot: str | Path,
     *,
@@ -174,6 +182,17 @@ def build_rates_credit_feature_smoke(
         ),
         "f182_fidelity": "constant_maturity_algebra_proxy_not_tradable_forward",
         "f183_fidelity": "official_spf_expected_real_rate_proxy",
+        "f185_component_first_available_at": {
+            column: _first_available(panels["cp"], column)
+            for column in (
+                "cp_outstanding",
+                "aa_nonfinancial_90d",
+                "a2p2_nonfinancial_90d",
+                "aa_financial_90d",
+                "issuance_amount",
+            )
+        },
+        "f185_default": "outstanding_contraction_full_history",
         "f187_fidelity": "money_and_credit_ratio_proxy_not_income_velocity",
         "f188_fidelity": "consumer_credit_composition_proxy_not_delinquency",
         "search_start": _SEARCH_START.date().isoformat(),

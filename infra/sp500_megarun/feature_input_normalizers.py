@@ -826,6 +826,44 @@ def _merge_release_states(
     return result.drop(columns=observed_columns)
 
 
+def _merge_release_states_allow_missing(
+    states: Mapping[str, pd.DataFrame],
+    *,
+    required: tuple[str, ...],
+) -> pd.DataFrame:
+    """Merge released histories while requiring only the structural base series."""
+
+    missing = [name for name in required if name not in states or states[name].empty]
+    if missing:
+        raise FeatureInputNormalizerError(f"RELEASE_SERIES_MISSING:{','.join(sorted(missing))}")
+    dates = pd.DatetimeIndex(
+        sorted({date for state in states.values() if not state.empty for date in state["date"]})
+    )
+    result = pd.DataFrame({"date": dates})
+    observed_columns: list[str] = []
+    for value_name, state in states.items():
+        observed_name = f"_{value_name}_observed_at"
+        observed_columns.append(observed_name)
+        if state.empty:
+            result[value_name] = np.nan
+            result[observed_name] = pd.NaT
+            continue
+        aligned = pd.merge_asof(
+            result.loc[:, ["date"]],
+            state.loc[:, ["date", "observed_at", value_name]].rename(
+                columns={"observed_at": observed_name}
+            ),
+            on="date",
+            direction="backward",
+        )
+        result[value_name] = aligned[value_name]
+        result[observed_name] = aligned[observed_name]
+    result = result.dropna(subset=list(required)).reset_index(drop=True)
+    result["observed_at"] = result[observed_columns].max(axis=1)
+    result["available_at"] = result["date"]
+    return result.drop(columns=observed_columns)
+
+
 def normalize_policy_rate_panel(
     frame: pd.DataFrame,
     *,
@@ -987,7 +1025,6 @@ def normalize_commercial_paper_panel(
         .drop_duplicates("date", keep="last")
         .reset_index(drop=True)
     )
-    base = _merge_release_states({**projected_rates, "cp_outstanding": outstanding})
     issuance_parts = {
         value_name: _project_release_series(
             macro,
@@ -998,15 +1035,17 @@ def normalize_commercial_paper_panel(
         )
         for series_id, value_name in _COMMERCIAL_PAPER_ISSUANCE_SERIES.items()
     }
-    if all(not state.empty for state in issuance_parts.values()):
-        issuance = _merge_release_states(issuance_parts)
-        issuance["issuance_amount"] = issuance[
-            list(_COMMERCIAL_PAPER_ISSUANCE_SERIES.values())
-        ].sum(axis=1, min_count=2)
-        issuance = issuance.loc[:, ["date", "observed_at", "available_at", "issuance_amount"]]
-    else:
-        issuance = pd.DataFrame()
-    return _append_optional_release_state(base, issuance, value_name="issuance_amount")
+    panel = _merge_release_states_allow_missing(
+        {
+            **projected_rates,
+            "cp_outstanding": outstanding,
+            **issuance_parts,
+        },
+        required=("cp_outstanding",),
+    )
+    issuance_columns = list(_COMMERCIAL_PAPER_ISSUANCE_SERIES.values())
+    panel["issuance_amount"] = panel[issuance_columns].sum(axis=1, min_count=2)
+    return panel.drop(columns=issuance_columns)
 
 
 def normalize_bank_credit_panel(
