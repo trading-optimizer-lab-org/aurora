@@ -26,7 +26,19 @@ def test_campaign_contract_freezes_exact_inputs_and_closed_boundaries() -> None:
     assert contract.dehb_lock_domain_sha256 == (
         "89617c4ca6fe54739804e039177c61b8a62933b921cd65617d93fce634a06734"
     )
-    assert contract.train_source_run_id == "31354839628"
+    assert contract.train_source_run_id == "31411795360"
+    assert contract.train_artifact_name == (
+        "sp500-megarun-train-1993-2010-F001-F240-31411795360"
+    )
+    assert contract.train_artifact_digest_sha256 == (
+        "1c15d9e0ae23821a23464a2775f16fe98441e3b11ccbce31267e3cb63a49af7e"
+    )
+    assert contract.train_snapshot_manifest_sha256 == (
+        "f1d6267c8be55e3d84d887ef0af5a5e3db4c21a409494ecbf6083249dd4fdbef"
+    )
+    assert contract.train_spy_sha256 == (
+        "ee3797c1473a7ade2dca383f2c37ac4b8627037c65c1e85d56ebd33a6717b150"
+    )
     assert contract.train_partition == "train_snapshot_1993_2010"
     assert contract.search_start == "1998-01-01"
     assert contract.search_end == "2010-12-31"

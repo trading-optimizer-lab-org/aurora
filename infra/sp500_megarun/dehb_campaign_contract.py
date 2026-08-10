@@ -94,6 +94,9 @@ class FrozenCampaignContract:
     dehb_lock_domain_sha256: str
     train_source_run_id: str
     train_artifact_name: str
+    train_artifact_digest_sha256: str
+    train_snapshot_manifest_sha256: str
+    train_spy_sha256: str
     train_partition: str
     warmup_start: str
     search_start: str
@@ -184,9 +187,18 @@ def load_and_validate_campaign_contract(path: Path) -> FrozenCampaignContract:
         "feature_contract_sha256": EXPECTED_FEATURE_SHA256,
         "dehb_lock_domain_sha256": EXPECTED_DEHB_LOCK_DOMAIN_SHA256,
         "dehb_lock_expected_bytes": 40742,
-        "train_source_run_id": "31354839628",
+        "train_source_run_id": "31411795360",
         "train_artifact_name": (
-            "sp500-megarun-train-1993-2010-F001-F240-31354839628"
+            "sp500-megarun-train-1993-2010-F001-F240-31411795360"
+        ),
+        "train_artifact_digest_sha256": (
+            "1c15d9e0ae23821a23464a2775f16fe98441e3b11ccbce31267e3cb63a49af7e"
+        ),
+        "train_snapshot_manifest_sha256": (
+            "f1d6267c8be55e3d84d887ef0af5a5e3db4c21a409494ecbf6083249dd4fdbef"
+        ),
+        "train_spy_sha256": (
+            "ee3797c1473a7ade2dca383f2c37ac4b8627037c65c1e85d56ebd33a6717b150"
         ),
         "train_partition": "train_snapshot_1993_2010",
     }
@@ -293,6 +305,11 @@ def load_and_validate_campaign_contract(path: Path) -> FrozenCampaignContract:
         dehb_lock_domain_sha256=str(inputs["dehb_lock_domain_sha256"]),
         train_source_run_id=str(inputs["train_source_run_id"]),
         train_artifact_name=str(inputs["train_artifact_name"]),
+        train_artifact_digest_sha256=str(inputs["train_artifact_digest_sha256"]),
+        train_snapshot_manifest_sha256=str(
+            inputs["train_snapshot_manifest_sha256"]
+        ),
+        train_spy_sha256=str(inputs["train_spy_sha256"]),
         train_partition=str(inputs["train_partition"]),
         warmup_start=str(boundaries["warmup_start"]),
         search_start=str(boundaries["search_start"]),
