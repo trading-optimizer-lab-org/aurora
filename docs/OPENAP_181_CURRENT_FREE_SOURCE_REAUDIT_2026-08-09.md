@@ -40,6 +40,13 @@ La primera pregunta sigue siendo muy exigente. La segunda es la que corresponde 
 - [SEC Financial Statement Data Sets](https://www.sec.gov/data-research/sec-markets-data/financial-statement-data-sets): estados numericos XBRL `as filed` desde 2009, con accesion y enmiendas.
 - [SEC Financial Statement and Notes Data Sets](https://www.sec.gov/data-research/sec-markets-data/financial-statement-notes-data-sets): notas y tablas XBRL, incluidas etiquetas estandar y propias necesarias para segmentos, clientes y desgloses menos comunes.
 - [Taxonomia US-GAAP 2026 de FASB](https://xbrl.fasb.org/us-gaap/2026/elts/): esquema y definiciones oficiales de las etiquetas XBRL. Confirma que `CommonStockCapitalSharesReservedForFutureIssuance` es un agregado para cualquier emision futura, mientras que `ConvertibleDebt` y sus porciones describen saldos de deuda convertible; no son por si solos equivalencias de los campos Compustat `dc/cshrc`.
+- [FAQ de taxonomia GAAP de FASB](https://www.fasb.org/taxonomyfaq): documenta
+  la separacion dimensional de tesoreria comun y preferente y el concepto
+  `TreasuryStockPreferredValue`. Los filings EDGAR tambien exponen el concepto
+  estandar
+  [`PreferredStockAmountOfPreferredDividendsInArrears`](https://www.sec.gov/Archives/edgar/data/1232582/000123258226000118/R61.htm).
+- [Ejemplos primarios de pensiones y AOCI en EDGAR](https://www.sec.gov/Archives/edgar/data/1311370/000162828025007441/R103.htm): los filings muestran `DefinedBenefitPlanFairValueOfPlanAssets`, `DefinedBenefitPlanBenefitObligation` y ejes para separar pensiones. Un [10-K con planes en superavit y deficit](https://www.sec.gov/Archives/edgar/data/16875/000001687525000008/cp-20241231.htm) demuestra el desglose necesario para `FR`; un [roll-forward AOCI por componente](https://www.sec.gov/Archives/edgar/data/81362/000162828026028949/R23.htm) demuestra los saldos de traduccion y valores disponibles para la venta requeridos por `RDS`.
+- [Dividendos comunes y preferentes en EDGAR](https://www.sec.gov/Archives/edgar/data/93751/000009375126000124/R110.htm): la taxonomia publica `DividendsPreferredStockCash`; tambien publica [`DividendsCommonStockCash`](https://www.sec.gov/Archives/edgar/data/1012100/000101210026000016/R145.htm). Son entradas gratuitas para la reconstruccion de `RDS`, sujetas al mismo periodo anual y fecha de aceptacion.
 - [SEC Form 13F Data Sets](https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets): posiciones institucionales trimestrales estructuradas desde 2013.
 - [Twelve Data Basic](https://twelvedata.com/pricing): plan gratuito de 800 creditos diarios; su [inicio rapido oficial](https://twelvedata.com/docs/introduction/quickstart) documenta la clave en cabecera, el [historico diario](https://support.twelvedata.com/en/articles/5656039-how-to-get-historical-prices) cubre normalmente desde la primera cotizacion y el [ajuste de precios](https://support.twelvedata.com/en/articles/5179064-are-the-prices-adjusted) puede controlarse. Sus [terminos](https://twelvedata.com/terms) permiten uso interno y datos derivados no reversibles, sin redistribuir el dato bruto.
 - [Twelve Data Dividends](https://twelvedata.com/docs/advanced): el endpoint
@@ -160,6 +167,62 @@ el maximo de contabilidad y precio, pero no lo usa para `Frontier`. De ahi los
 prueba que demuestre la dependencia causal de mercado y una nueva salida con
 fechas corregidas. La formula seguira siendo una reconstruccion SEC/Yahoo, no
 Compustat/CRSP exacta.
+
+`EBM` y `BPEBM` tampoco carecen de una fuente gratuita para sus componentes
+raros. SEC ya cubre caja, deuda corriente y no corriente, deferred charges,
+patrimonio y preferred stock en la retencion actual o preparada. La taxonomia
+publica identifica `PreferredStockAmountOfPreferredDividendsInArrears` para
+`dvpa` y `TreasuryStockPreferredValue` para `tstkp`. El artefacto OpenAP93
+contiene 2.157 filas vacias por senal porque no retuvo esas dos etiquetas; ese
+cero de valores no demuestra ausencia en EDGAR. La ruta debe incorporarlas,
+exigir los siete componentes del mismo periodo causal, usar capitalizacion de
+emisor y nunca convertir una etiqueta ausente en cero. Sera una reconstruccion
+no estricta y su cobertura puede ser pequena, pero queda pendiente de medir.
+
+Las cuatro `Intan*` tienen otro bloqueo de construccion, no de fuente. El
+artefacto OpenAP93 conserva 2.157 filas por cada una, todas sin valor por
+`missing_causal_multiyear_inputs`. El calculador dispone de 84 meses de precio
+y aplica el lag de 60 meses, pero `_prepare_annual_facts` pivota
+`EntityCommonStockSharesOutstanding` con la contabilidad por el mismo
+`period_end`. En muchos filings la fecha de contexto de acciones es la fecha
+de portada y no el cierre fiscal, de modo que `shares` desaparece y no puede
+formarse la capitalizacion. Hay que resolver acciones por disponibilidad de
+forma independiente, agregar las clases del CIK por mes y ejecutar despues las
+cuatro regresiones transversales. `IntanCFP` seguira siendo proxy no validado
+porque `NetIncomeLoss+depreciation` no demuestra `ib+dp`; las otras tres seran
+reconstrucciones SEC/mercado, nunca equivalencias Compustat/CRSP.
+
+`FR` puede obtenerse gratuitamente, pero no desde los totales pensionarios de
+Company Facts sin mas. La formula oficial para el ano actual usa
+`(pplao-pbpro)/mve_permco`: activos y obligacion proyectada de los planes de
+pensiones en superavit. EDGAR publica los conceptos estandar
+`DefinedBenefitPlanFairValueOfPlanAssets` y
+`DefinedBenefitPlanBenefitObligation`, dimensiones de tipo de plan y tablas
+que separan explicitamente planes en superavit y deficit. El desglose puede
+venir en etiquetas propias del emisor, de modo que la ruta debe leer Financial
+Statement and Notes o el filing individual, exigir la semantica explicita de
+pension y superavit, y conservar accesion, `accepted`, fecha, unidad y todas
+las dimensiones. Si solo hay totales o el texto no permite demostrar el
+subconjunto, debe fallar cerrada. El colector actual no retiene ninguna
+etiqueta `DefinedBenefitPlan*`; por tanto su valor vacio prueba una carencia de
+implementacion, no una carencia de datos gratuitos. La capitalizacion sera de
+emisor reconstruida y la salida no sera CRSP/Compustat exacta.
+
+`RDS` tambien tiene una ruta SEC/mercado concreta. OpenAP calcula el cambio de
+patrimonio menos dirty surplus, beneficio neto de dividendo preferente,
+dividendo comun y precio por cambio de acciones. Su dirty surplus suma los
+cambios de `msa`, `recta` y el 65 % del termino pensionario. EDGAR publica los
+roll-forwards de AOCI por componente, incluidos traduccion de moneda y valores
+disponibles para la venta, ademas de `DividendsCommonStockCash` y
+`DividendsPreferredStockCash`; patrimonio, beneficio y acciones ya tienen
+rutas SEC, y el precio fiscal tiene ruta de mercado preparada. La reparacion
+debe resolver los saldos finales actual/anterior por ejes y miembros, nunca
+usar AOCI total como sustituto, y dejar la fila vacia cuando no identifica ni
+traduccion ni valores disponibles para la venta en ambos cortes. El propio
+codigo oficial trata el termino de pensiones como cero cuando falta `pcupsu` o
+`paddml`, regla que debe conservarse. La salida sera reconstruida/no estricta:
+la taxonomia y la base antes/despues de impuestos no demuestran equivalencia
+exacta con `msa/recta`, pero no se necesita una fuente de pago.
 
 `DelDRC`, `ConvDebt`, `OrderBacklog` y `OrderBacklogChg` no necesitan Twelve
 Data para sus entradas contables. La API `companyfacts` solo agrega hechos de

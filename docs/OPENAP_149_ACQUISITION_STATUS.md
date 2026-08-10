@@ -231,6 +231,52 @@ Dos auditorias del resto fijan el siguiente trabajo concreto:
   agregar causalmente todas las clases del mismo CIK y fallar cerrado ante
   intervalos de identidad ambiguos. La ruta resultante sera reconstruida y no
   estricta, no CRSP/Compustat exacta.
+- `EBM` y `BPEBM` comparten una ruta SEC concreta. Caja, deuda corriente y no
+  corriente, deferred charges, patrimonio y preferred stock ya estan en los
+  alias o en la retencion preparada. La taxonomia publica incluye ademas
+  `PreferredStockAmountOfPreferredDividendsInArrears` para `dvpa` y
+  `TreasuryStockPreferredValue` para `tstkp`. El artefacto OpenAP93 emitio cero
+  valores porque esas dos etiquetas no se retienen, no porque EDGAR carezca de
+  ellas. La futura reconstruccion debe exigir los siete componentes del mismo
+  periodo causal y capitalizacion de emisor; una etiqueta ausente no equivale
+  a cero. La cobertura puede ser reducida porque ambos desgloses son poco
+  frecuentes, pero debe medirse antes de volver a bloquear las dos senales.
+- `IntanBM`, `IntanCFP`, `IntanEP` e `IntanSP` ya tienen formula implementada y
+  84 meses de precio en el artefacto OpenAP93, pero las 8.628 filas quedaron
+  sin valor por `missing_causal_multiyear_inputs`. El panel pivota las acciones
+  SEC junto al resto de la contabilidad por `period_end`; la fecha de contexto
+  de `EntityCommonStockSharesOutstanding` suele ser la fecha de portada y no el
+  cierre fiscal, por lo que desaparece de la fila anual. La reparacion debe
+  resolver las acciones independientemente por `available_at`, construir la
+  capitalizacion mensual del emisor por clases y solo despues aplicar el lag
+  exacto de 60 meses y las cuatro regresiones transversales. No hace falta una
+  fuente de pago, pero las salidas seguiran siendo reconstruidas/no estrictas.
+- `FR` tiene una ruta gratuita en las notas XBRL de pensiones. Para el ano
+  actual la formula oficial ya no usa los regimenes historicos de 1980-1997:
+  exige exclusivamente `(pplao-pbpro)/mve_permco`, es decir, activos y PBO de
+  los planes de pensiones en superavit. EDGAR publica tanto los totales
+  estandar `DefinedBenefitPlanFairValueOfPlanAssets` y
+  `DefinedBenefitPlanBenefitObligation` como tablas que separan planes en
+  superavit y deficit. Estas ultimas pueden usar dimensiones o extensiones del
+  emisor, por lo que el colector debe leer Financial Statement and Notes o el
+  filing individual, aceptar solo una tabla que declare explicitamente
+  pension y superavit, y conservar accesion, aceptacion, periodo, unidad y
+  dimensiones. Los totales genericos no se sustituyen por `pplao/pbpro`. El
+  codigo actual no retiene ninguna etiqueta `DefinedBenefitPlan*`; su bloqueo
+  demuestra una omision del colector, no que el dato sea de pago.
+- `RDS` tambien puede reconstruirse con SEC Notes y mercado. La formula
+  oficial necesita cambios anuales de los ajustes acumulados de traduccion y
+  valores disponibles para la venta, patrimonio, beneficio, dividendos
+  comunes/preferentes, precio y acciones. EDGAR publica roll-forwards AOCI por
+  componente y los conceptos `DividendsCommonStockCash` y
+  `DividendsPreferredStockCash`. Hay que extraer los saldos finales actual y
+  anterior mediante sus ejes/miembros, sin usar AOCI total como sustituto, y
+  resolver precio y acciones en la fecha fiscal con identidad de emisor. El
+  propio OpenAP convierte a cero el termino de pensiones si falta `pcupsu` o
+  `paddml`, pero deja `RDS` ausente cuando no identifica ni `msa` ni `recta` en
+  ambos cortes; la reconstruccion debe respetar esas dos reglas. Sigue sin ser
+  Compustat exacta porque las taxonomias y la base fiscal de AOCI pueden
+  diferir, pero no necesita una fuente de pago.
 
 ## Diecisiete senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 
