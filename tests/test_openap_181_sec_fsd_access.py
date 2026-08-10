@@ -55,6 +55,10 @@ def _filing_module():
     return import_module("aurora.research.openap_181.sec_filing_access")
 
 
+def _rendered_module():
+    return import_module("aurora.research.openap_181.sec_rendered_reports")
+
+
 def test_official_fsd_download_records_origin_access_headers_hash_and_size(tmp_path):
     module = _module()
     payload = b"PK\x03\x04fixture-sec-fsd"
@@ -264,3 +268,63 @@ def test_official_filing_download_records_identity_origin_hash_and_size(tmp_path
         "Accept-Encoding": "gzip, deflate",
         "Host": "www.sec.gov",
     }
+
+
+def test_locate_nearest_rendered_ppe_report_from_filing_summary():
+    module = _rendered_module()
+    summary = """
+      R43.htm
+      Financial Instruments - Cash and Marketable Securities (Details)
+      R46.htm
+      Disclosure - Property, Plant and Equipment - Gross Property, Plant and
+      Equipment by Major Asset Class and Accumulated Depreciation (Details)
+      R47.htm
+      Property, Plant and Equipment - Additional Information (Details)
+    """
+
+    assert module.locate_rendered_ppe_report(summary) == "R46.htm"
+
+
+def test_parse_rendered_ppe_report_extracts_exact_realestate_inputs():
+    module = _rendered_module()
+    report = """
+| Property, Plant and Equipment - USD ($) $ in Millions | Sep. 27, 2025 | Sep. 28, 2024 |
+| --- | --- | --- |
+| Property, Plant and Equipment [Line Items] |  |  |
+| Gross property, plant and equipment | $ 125,848 | $ 119,128 |
+| Accumulated depreciation | (76,014) | (73,448) |
+| Total property, plant and equipment, net | 49,834 | 45,680 |
+| Land and buildings |  |  |
+| Property, Plant and Equipment [Line Items] |  |  |
+| Gross property, plant and equipment | 27,337 | 24,690 |
+| Machinery, equipment and internal-use software |  |  |
+| Property, Plant and Equipment [Line Items] |  |  |
+| Gross property, plant and equipment | 83,420 | 80,205 |
+"""
+
+    rows = module.extract_rendered_realestate_inputs(report)
+
+    assert rows == [
+        {
+            "period_end": "2025-09-27",
+            "land_gross": None,
+            "buildings_gross": None,
+            "land_and_buildings_gross": 27337.0,
+            "ppe_gross": 125848.0,
+            "ppe_net": 49834.0,
+            "realestate_numerator": 27337.0,
+            "realestate_raw": pytest.approx(27337.0 / 125848.0),
+            "formula_variant": "combined_land_and_buildings_over_gross_ppe",
+        },
+        {
+            "period_end": "2024-09-28",
+            "land_gross": None,
+            "buildings_gross": None,
+            "land_and_buildings_gross": 24690.0,
+            "ppe_gross": 119128.0,
+            "ppe_net": 45680.0,
+            "realestate_numerator": 24690.0,
+            "realestate_raw": pytest.approx(24690.0 / 119128.0),
+            "formula_variant": "combined_land_and_buildings_over_gross_ppe",
+        },
+    ]
