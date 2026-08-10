@@ -21,6 +21,10 @@ from aurora.research.openap_181.recovered_current_features import (
     RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION,
     RECOVERED_CURRENT_FEATURE_TARGETS,
 )
+from aurora.research.openap_181.recovered_openap93_proxies import (
+    COMPEQUISS_SIGNAL,
+    load_verified_openap93_comp_equ_iss,
+)
 from aurora.research.openap_181.recovered_yfinance_extended_signals import (
     RECOVERED_YFINANCE_EXTENDED_SIGNAL_TARGETS,
 )
@@ -284,6 +288,19 @@ def main() -> int:
     formula_path = _find_one(args.formula_root, "openap_181_formula_inventory.csv")
     current_93 = pd.read_csv(current_93_path, low_memory=False)
     current_93["evidence_run"] = args.current_93_run_url
+    verified_comp_equ_iss = pd.DataFrame()
+    verified_comp_equ_iss_evidence: dict[str, object] = {}
+    current_93_source_paths = [current_93_path]
+    if current_93["signal"].astype(str).eq(COMPEQUISS_SIGNAL).any():
+        (
+            verified_comp_equ_iss,
+            current_93_source_paths,
+            verified_comp_equ_iss_evidence,
+        ) = load_verified_openap93_comp_equ_iss(
+            args.current_93_root,
+            evidence_run_url=args.current_93_run_url,
+        )
+        verified_comp_equ_iss["evidence_run"] = args.current_93_run_url
     sec_current = pd.read_csv(sec_path, low_memory=False)
     sec_current["evidence_run"] = args.sec_current_run_url
     finra_current = pd.read_csv(finra_path, low_memory=False)
@@ -299,6 +316,7 @@ def main() -> int:
     recovered_market_current["evidence_run"] = args.recovered_current_run_url
     recovered_feature_current["evidence_run"] = args.recovered_current_run_url
     current = overlay_preferred_current_evidence(current_93, sec_current)
+    current = replace_current_signal_batches(current, verified_comp_equ_iss)
     current = replace_current_signal_batches(current, finra_current)
     current = replace_current_signal_batches(current, realestate_current)
     current = replace_current_signal_batches(current, exchange_switch_current)
@@ -325,7 +343,8 @@ def main() -> int:
             "tests/test_openap_181_field_ritter_ipo.py|"
             "tests/test_openap_181_sec_spinoff.py|"
             "tests/test_openap_149_recovered_yfinance_market.py|"
-            "tests/test_openap_149_recovered_current_features.py"
+            "tests/test_openap_149_recovered_current_features.py|"
+            "tests/test_openap_149_recovered_openap93_proxies.py"
         ),
     )
     source_runs = (
@@ -342,7 +361,7 @@ def main() -> int:
         output,
         source_values_sha256=_sha256_many(
             [
-                current_93_path,
+                *current_93_source_paths,
                 sec_path,
                 finra_path,
                 realestate_path,
@@ -364,11 +383,12 @@ def main() -> int:
         "field_ritter_current_run_url": args.field_ritter_current_run_url,
         "spinoff_current_run_url": args.spinoff_current_run_url,
         "recovered_current_run_url": args.recovered_current_run_url,
+        "verified_openap93_comp_equ_iss": verified_comp_equ_iss_evidence,
         "expected_source_sha": expected_source_sha,
         "evidence_run_url": args.evidence_run_url,
         "evidence_artifact": args.evidence_artifact,
         "source_files": [
-            current_93_path.name,
+            *(path.name for path in current_93_source_paths),
             sec_path.name,
             finra_path.name,
             realestate_path.name,

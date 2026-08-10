@@ -16,6 +16,7 @@ on:
       - research/openap_181/field_ritter_ipo.py
       - research/openap_181/sec_spinoff.py
       - research/openap_181/recovered_current_features.py
+      - research/openap_181/recovered_openap93_proxies.py
       - research/openap_181/recovered_yfinance_extended_signals.py
       - research/openap_181/twelve_data_factor_signals.py
       - research/openap_181/twelve_data_market_batch.py
@@ -36,6 +37,7 @@ on:
       - tests/test_openap_181_sec_listing_identity.py
       - tests/test_openap_181_sec_spinoff.py
       - tests/test_openap_149_recovered_current_features.py
+      - tests/test_openap_149_recovered_openap93_proxies.py
       - tests/test_openap_149_recovered_yfinance_market.py
       - tests/test_openap_181_twelve_data_factor_signals.py
       - tests/test_openap_181_twelve_data_market_batch.py
@@ -139,6 +141,7 @@ jobs:
             tests/test_openap_181_twelve_data_factor_signals.py \
             tests/test_openap_149_recovered_yfinance_market.py \
             tests/test_openap_149_recovered_current_features.py \
+            tests/test_openap_149_recovered_openap93_proxies.py \
             -q --tb=short
 
   consolidate:
@@ -285,6 +288,12 @@ jobs:
           matrix = pd.read_csv(f"{root}/OPENAP_149_ACQUISITION_MATRIX.csv")
           values = pd.read_csv(f"{root}/openap_149_current_values.csv")
           summary = json.load(open(f"{root}/openap_149_acquisition_summary.json"))
+          consolidation = json.load(
+              open(f"{root}/openap_149_consolidation_manifest.json")
+          )
+          current_93 = read_exactly_one(
+              "inputs/current_93", "signals_93_current.csv"
+          )
           recovered_market = read_exactly_one(
               "inputs/recovered_market", "recovered_yfinance_market_current.csv"
           )
@@ -310,6 +319,31 @@ jobs:
           assert summary["value_rows"] == len(values)
           assert summary["strict_score_eligible"] == int(strict_eligible.sum()) == 0
           assert not strict_eligible.any()
+          expected_comp_equ_iss = current_93.loc[
+              current_93["signal"].eq("CompEquIss")
+              & current_93["current_usable"].astype(str).str.lower().eq("true")
+              & pd.to_numeric(current_93["value"], errors="coerce").notna()
+          ]
+          comp_equ_iss = matrix.set_index("signal").loc["CompEquIss"]
+          comp_equ_iss_values = values.loc[values["signal"].eq("CompEquIss")]
+          assert len(comp_equ_iss_values) == len(expected_comp_equ_iss) == 1585
+          assert bool(comp_equ_iss["data_acquired"])
+          assert bool(comp_equ_iss["current_value_calculated"])
+          assert int(comp_equ_iss["current_value_count"]) == 1585
+          assert comp_equ_iss["fidelity"] == "reconstructed"
+          assert not bool(comp_equ_iss["strict_score_eligible"])
+          assert comp_equ_iss_values["source_id"].eq(
+              "recovered_openap93_compequiss"
+          ).all()
+          assert comp_equ_iss_values["formula_id"].eq(
+              "openap_compequiss_60m_sec_shares_yahoo_return"
+          ).all()
+          assert consolidation["verified_openap93_comp_equ_iss"][
+              "historical_crsp_identity_verified"
+          ] is False
+          assert consolidation["verified_openap93_comp_equ_iss"][
+              "strict_score_increment"
+          ] == 0
           firm_age = matrix.set_index("signal").loc["FirmAge"]
           assert bool(firm_age["data_acquired"])
           assert bool(firm_age["current_value_calculated"])

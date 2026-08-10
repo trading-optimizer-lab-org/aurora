@@ -43,6 +43,31 @@ solo `CBOperProf` conserva la cuarentena en el contrato de consolidacion
 preparado. El CSV se conserva sin reescribir manualmente porque el usuario ha
 prohibido iniciar un nuevo run y aun no existe un artefacto consolidado nuevo.
 
+## CompEquIss: recuperacion selectiva preparada, no ejecutada
+
+El artefacto gratuito y ya existente `openap-93-current-recovered-results` del
+run `31341580689` contiene 2.157 filas de `CompEquIss`; 1.585 tienen valor
+finito y `current_usable=True` (73,4817 %). La formula declarada es
+`openap_compequiss_60m_sec_shares_yahoo_return`, con 62 a 85 observaciones para
+las filas utilizables. Calcula la expresion oficial de 60 meses, pero sustituye
+la capitalizacion CRSP de la empresa por precio de la accion primaria y
+acciones del emisor SEC.
+
+El consolidador queda preparado para aceptar exclusivamente este contrato. El
+nuevo cargador comprueba los cuatro ficheros del artefacto, la cadena de
+SHA-256, el run de origen `31333714423`, su HEAD `34464d5327598282aa2af1523422105dfd5dd184`,
+el commit OpenAP fijado, las 93 senales, la cobertura, la formula, las fechas,
+los duplicados y la identidad actual CIK-ticker. Despues reemplaza solo
+`CompEquIss` por la fuente estrecha `recovered_openap93_compequiss`; no autoriza
+`yahoo_public` de forma general ni recupera `DivYieldST`, `EquityDuration`,
+`Frontier` o `MS`.
+
+La salida permanece `reconstructed`, con identidad CRSP historica no verificada,
+`strict_score_eligible=false` e incremento estricto cero. Se han escrito las
+pruebas fail-closed antes del codigo, pero no se han ejecutado porque el usuario
+ha prohibido iniciar runs. Por ello los recuentos publicados `56/50/18/99/96814`
+y el score estricto confirmado de 31 no cambian todavia.
+
 ## CompanyFacts ampliado: lote gratuito ejecutado, pendiente de consolidar
 
 El run `31392473937` termino correctamente y publico

@@ -70,6 +70,22 @@ AbnormalAccruals, Accruals, AccrualsBM, AdExp, AM, BM, BMdec, BookLeverage, BPEB
 
 `Cash` pertenece a este grupo. SEC proporciona caja, activos y fecha de filing; el trabajo es fijar alias XBRL, enmiendas, caja restringida e identidad, no encontrar una fuente de pago obligatoria.
 
+#### Recuperacion estrecha de CompEquIss
+
+El artefacto recuperado `31341580689` conserva 2.157 filas actuales de
+`CompEquIss`, de las que 1.585 son utilizables. La reconstruccion aplica la
+formula oficial de 60 meses, pero usa precio de la accion primaria por acciones
+del emisor SEC en lugar de la capitalizacion CRSP de empresa y no demuestra la
+identidad PERMNO historica. Por tanto, es una ruta gratuita reconstruida y no
+una equivalencia CRSP exacta.
+
+La ruta aprobada se limita al alias `recovered_openap93_compequiss`. El cargador
+preparado exige el artefacto inmutable del run `31341580689`, la cadena de
+hashes hasta el run fuente `31333714423`, la formula exacta, fechas causales,
+identidad CIK-ticker, cobertura reconciliada y ausencia de duplicados. No
+autoriza `yahoo_public` para ninguna otra senal. La ejecucion de consolidacion
+sigue pendiente y el resultado no puede entrar en el score estricto.
+
 `OScore` y `OrgCap` disponen ademas del deflactor `GNPDEF` gratuito de FRED.
 La evidencia existente SEC+FRED permite calcular reconstrucciones actuales,
 pero no elimina las puertas de cobertura, equivalencia Compustat/CRSP,

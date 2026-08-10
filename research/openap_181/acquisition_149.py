@@ -121,6 +121,7 @@ SOURCE_ALIASES = {
     "recovered_yfinance_artifacts_31256096194": "recovered_yfinance_artifacts",
     "recovered_openap_features": "recovered_openap_features",
     "recovered_openap_features_31270341796": "recovered_openap_features",
+    "recovered_openap93_compequiss": "recovered_openap93_compequiss",
     "pastor_stambaugh": "pastor_stambaugh",
 }
 
@@ -148,6 +149,10 @@ SOURCE_TERMS = {
     "recovered_openap_features": (
         "Hash-bound private derived output from successful run 31270341796; "
         "source as-of retained; SEC fair-access and underlying market-data terms apply"
+    ),
+    "recovered_openap93_compequiss": (
+        "Hash-bound derived CompEquIss output from recovery run 31341580689; "
+        "SEC fair-access and underlying Yahoo endpoint terms apply; internal use only"
     ),
     "pastor_stambaugh": (
         "Chicago Booth public academic liquidity-factor data; attribution required"
