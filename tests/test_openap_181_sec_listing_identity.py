@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from aurora.research.openap_181.sec_listing_identity import (
+    build_current_sec_universe,
     build_sec_listing_intervals,
     calculate_sec_exch_switch_current,
     extract_sec_listing_observations,
@@ -13,6 +14,109 @@ from aurora.research.openap_181.sec_listing_identity import (
 
 
 FORMATION_AT = "2026-08-09T23:59:59Z"
+
+
+def test_current_sec_universe_uses_only_direct_official_identity() -> None:
+    payload = {
+        "fields": ["cik", "name", "tickers", "exchanges"],
+        "data": [
+            [320193, "Apple Inc.", ["AAPL"], ["Nasdaq"]],
+            [789019, "Microsoft Corp", ["MSFT"], ["Nasdaq"]],
+            [1000045, "Dual Class Corp", ["DUAL.A", "DUAL.B"], ["NYSE", "NYSE"]],
+            [1000046, "Unsupported Venue Corp", ["OTCX"], ["OTC"]],
+        ],
+    }
+
+    universe, rejected = build_current_sec_universe(
+        payload,
+        retrieved_at="2026-08-10T12:15:00Z",
+        source_url="https://www.sec.gov/files/company_tickers_exchange.json",
+    )
+
+    assert universe[
+        [
+            "security_id",
+            "ticker",
+            "cik",
+            "exchange_family",
+            "issuer_share_class_count",
+            "identity_available_at",
+            "identity_source_url",
+        ]
+    ].to_dict(orient="records") == [
+        {
+            "security_id": "US-SEC-0000320193-AAPL",
+            "ticker": "AAPL",
+            "cik": "0000320193",
+            "exchange_family": "NASDAQ",
+            "issuer_share_class_count": 1,
+            "identity_available_at": "2026-08-10T12:15:00+00:00",
+            "identity_source_url": (
+                "https://www.sec.gov/files/company_tickers_exchange.json"
+            ),
+        },
+        {
+            "security_id": "US-SEC-0000789019-MSFT",
+            "ticker": "MSFT",
+            "cik": "0000789019",
+            "exchange_family": "NASDAQ",
+            "issuer_share_class_count": 1,
+            "identity_available_at": "2026-08-10T12:15:00+00:00",
+            "identity_source_url": (
+                "https://www.sec.gov/files/company_tickers_exchange.json"
+            ),
+        },
+        {
+            "security_id": "US-SEC-0001000045-DUALA",
+            "ticker": "DUAL.A",
+            "cik": "0001000045",
+            "exchange_family": "NYSE",
+            "issuer_share_class_count": 2,
+            "identity_available_at": "2026-08-10T12:15:00+00:00",
+            "identity_source_url": (
+                "https://www.sec.gov/files/company_tickers_exchange.json"
+            ),
+        },
+        {
+            "security_id": "US-SEC-0001000045-DUALB",
+            "ticker": "DUAL.B",
+            "cik": "0001000045",
+            "exchange_family": "NYSE",
+            "issuer_share_class_count": 2,
+            "identity_available_at": "2026-08-10T12:15:00+00:00",
+            "identity_source_url": (
+                "https://www.sec.gov/files/company_tickers_exchange.json"
+            ),
+        },
+    ]
+    assert rejected.to_dict(orient="records") == [
+        {
+            "cik": "0001000046",
+            "ticker": "OTCX",
+            "exchange": "OTC",
+            "reason_if_rejected": "unsupported_current_exchange",
+        }
+    ]
+
+
+def test_current_sec_universe_rejects_unofficial_or_future_provenance() -> None:
+    payload = {
+        "fields": ["cik", "name", "tickers", "exchanges"],
+        "data": [[320193, "Apple Inc.", ["AAPL"], ["Nasdaq"]]],
+    }
+
+    with pytest.raises(ValueError, match="official SEC"):
+        build_current_sec_universe(
+            payload,
+            retrieved_at="2026-08-10T12:15:00Z",
+            source_url="https://example.com/company_tickers_exchange.json",
+        )
+    with pytest.raises(ValueError, match="retrieved_at"):
+        build_current_sec_universe(
+            payload,
+            retrieved_at="not-a-timestamp",
+            source_url="https://www.sec.gov/files/company_tickers_exchange.json",
+        )
 
 
 def _listing_facts(
