@@ -235,6 +235,8 @@ jobs:
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_price_feature_smoke_f001_f020
       - name: Execute and audit F051-F060 on train only
+        id: model_feature_smoke
+        continue-on-error: true
         run: |
           python scripts/run_sp500_megarun_model_feature_smoke_f051.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
@@ -242,6 +244,17 @@ jobs:
             --market-feature-dir outputs/sp500_megarun_market_feature_smoke_f021_f031 \
             --macro-feature-dir outputs/sp500_megarun_macro_feature_smoke_f032 \
             --output-dir outputs/sp500_megarun_model_feature_smoke_f051_f060
+      - name: Upload F051-F060 train-only evidence
+        if: always() && steps.model_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-model-feature-smoke-F051-F060-${{ github.run_id }}
+          path: outputs/sp500_megarun_model_feature_smoke_f051_f060
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F051-F060 audit is not ready
+        if: always() && steps.model_feature_smoke.outcome != 'success'
+        run: exit 1
       - name: Execute and audit F061-F070 on train only
         run: |
           python scripts/run_sp500_megarun_advanced_feature_smoke_f061.py \
@@ -354,13 +367,6 @@ jobs:
         with:
           name: sp500-megarun-macro-feature-smoke-F032-F050-${{ github.run_id }}
           path: outputs/sp500_megarun_macro_feature_smoke_f032
-          if-no-files-found: error
-          retention-days: 90
-      - name: Upload F051-F060 train-only evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-megarun-model-feature-smoke-F051-F060-${{ github.run_id }}
-          path: outputs/sp500_megarun_model_feature_smoke_f051_f060
           if-no-files-found: error
           retention-days: 90
       - name: Upload F061-F070 train-only evidence
