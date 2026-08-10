@@ -57,6 +57,22 @@ def test_restart_payload_is_deterministic_diverse_and_closed(campaign) -> None:
     assert all(0 <= row["restart_seed"] < 2**32 for row in restarted["islands"])
 
 
+def test_job_payload_binds_the_exact_launch_contract(campaign) -> None:
+    from aurora.infra.sp500_megarun.dehb_campaign_runtime import build_job_payload
+
+    launch_sha256 = "f" * 64
+    payload = build_job_payload(
+        campaign,
+        job_index=0,
+        wave=0,
+        restart_ordinal=0,
+        launch_contract_sha256=launch_sha256,
+    )
+
+    assert payload["launch_contract_sha256"] == launch_sha256
+    assert len(payload["payload_sha256"]) == 64
+
+
 def test_next_wave_matrix_can_resume_one_island_and_restart_another(campaign) -> None:
     from aurora.infra.sp500_megarun.dehb_campaign_runtime import build_shard_matrices
 
@@ -311,9 +327,15 @@ def test_checkpoint_envelope_is_bound_to_campaign_island_and_closed_data(campaig
         evaluations=256,
         dehb_state_sha256="b" * 64,
         ledger_tail_hash="c" * 64,
+        launch_contract_sha256="d" * 64,
     )
 
-    validate_checkpoint_envelope(campaign, envelope, expected_island_id="F001-R1")
+    validate_checkpoint_envelope(
+        campaign,
+        envelope,
+        expected_island_id="F001-R1",
+        expected_launch_contract_sha256="d" * 64,
+    )
     assert envelope["validation_opened"] is False
     assert envelope["locked_opened"] is False
     assert len(envelope["checkpoint_envelope_sha256"]) == 64
@@ -322,3 +344,11 @@ def test_checkpoint_envelope_is_bound_to_campaign_island_and_closed_data(campaig
     changed["validation_opened"] = True
     with pytest.raises(ValueError, match="CHECKPOINT_BOUNDARY_OPEN"):
         validate_checkpoint_envelope(campaign, changed, expected_island_id="F001-R1")
+
+    with pytest.raises(ValueError, match="CHECKPOINT_LAUNCH_CONTRACT_MISMATCH"):
+        validate_checkpoint_envelope(
+            campaign,
+            envelope,
+            expected_island_id="F001-R1",
+            expected_launch_contract_sha256="e" * 64,
+        )

@@ -12,6 +12,9 @@ from aurora.infra.sp500_megarun.dehb_campaign_contract import (
     validate_campaign_bindings,
 )
 from aurora.infra.sp500_megarun.dehb_campaign_runtime import build_shard_matrices
+from aurora.infra.sp500_megarun.dehb_launch_contract import (
+    load_and_validate_launch_contract,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +25,7 @@ def _load_prior_decision(
     *,
     campaign_sha256: str,
     wave: int,
+    launch_contract_sha256: str | None = None,
 ) -> tuple[str, dict[str, int], frozenset[str], list[dict[str, object]]]:
     value = json.loads(path.read_text("utf-8"))
     if not isinstance(value, dict):
@@ -29,6 +33,10 @@ def _load_prior_decision(
     action = str(value.get("action"))
     if (
         value.get("campaign_contract_sha256") != campaign_sha256
+        or (
+            launch_contract_sha256 is not None
+            and value.get("launch_contract_sha256") != launch_contract_sha256
+        )
         or action not in {"dispatch_next_wave", "retry_jobs"}
         or value.get("validation_opened") is not False
         or value.get("locked_opened") is not False
@@ -84,6 +92,8 @@ def main() -> int:
         default=REPO_ROOT / "config" / "sp500_megarun_dehb_campaign_v1.json",
     )
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--launch-contract", type=Path, required=True)
+    parser.add_argument("--expected-code-commit-sha", required=True)
     parser.add_argument("--wave", type=int, required=True)
     parser.add_argument("--restart-ordinal", type=int, required=True)
     parser.add_argument("--prior-decision", type=Path)
@@ -91,6 +101,11 @@ def main() -> int:
     args = parser.parse_args()
 
     contract = load_and_validate_campaign_contract(args.contract)
+    launch = load_and_validate_launch_contract(
+        args.launch_contract,
+        contract,
+        expected_code_commit_sha=args.expected_code_commit_sha,
+    )
     bindings = validate_campaign_bindings(contract, repo_root=REPO_ROOT)
     manifest = build_campaign_manifest(contract)
     island_restart_ordinals = None
@@ -102,6 +117,7 @@ def main() -> int:
                 args.prior_decision,
                 campaign_sha256=contract.sha256,
                 wave=args.wave,
+                launch_contract_sha256=launch.sha256,
             )
         )
     else:
@@ -110,6 +126,8 @@ def main() -> int:
     if action == "retry_jobs":
         matrices = {shard: {"include": []} for shard in "ABC"}
         for payload in retry_payloads:
+            if payload.get("launch_contract_sha256") != launch.sha256:
+                raise ValueError("PRIOR_CONTROLLER_RETRY_LAUNCH_INVALID")
             shard = str(payload.get("shard_id"))
             if shard not in matrices:
                 raise ValueError("PRIOR_CONTROLLER_RETRY_SHARD_INVALID")
@@ -124,6 +142,7 @@ def main() -> int:
             contract,
             wave=args.wave,
             restart_ordinal=args.restart_ordinal,
+            launch_contract_sha256=launch.sha256,
             island_restart_ordinals=island_restart_ordinals,
             resume_island_ids=resume_island_ids,
         )
@@ -159,6 +178,7 @@ def main() -> int:
                 "matrix_b": matrices["B"],
                 "matrix_c": matrices["C"],
                 "campaign_contract_sha256": contract.sha256,
+                "launch_contract_sha256": launch.sha256,
                 "campaign_manifest_sha256": manifest["manifest_sha256"],
             },
         )

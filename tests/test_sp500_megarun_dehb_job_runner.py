@@ -27,7 +27,16 @@ def _contract() -> SimpleNamespace:
         train_partition="train_snapshot_1993_2010",
         search_start="1998-01-01",
         search_end="2010-12-31",
+    )
+
+
+def _launch() -> SimpleNamespace:
+    return SimpleNamespace(
+        sha256="f" * 64,
+        campaign_contract_sha256="a" * 64,
         runtime_input_aggregate_sha256="e" * 64,
+        validation_opened=False,
+        locked_opened=False,
     )
 
 
@@ -35,6 +44,7 @@ def _payload(*, resume: bool) -> dict:
     value = {
         "schema_version": 1,
         "campaign_contract_sha256": "a" * 64,
+        "launch_contract_sha256": "f" * 64,
         "job_id": "J001",
         "job_index": 0,
         "shard_id": "A",
@@ -100,6 +110,7 @@ def test_two_island_job_is_sequential_closed_and_resumes_only_marked_island(
     result = run_dehb_job(
         _contract(),
         object(),
+        launch_contract=_launch(),
         payload=_payload(resume=True),
         runtime_input_pack=pack,
         output_dir=tmp_path / "out",
@@ -116,6 +127,7 @@ def test_two_island_job_is_sequential_closed_and_resumes_only_marked_island(
     assert calls[1]["prior_bundle"] is None
     assert result["validation_opened"] is False
     assert result["locked_opened"] is False
+    assert result["launch_contract_sha256"] == "f" * 64
     assert (tmp_path / "out" / "worker_result.json").is_file()
 
 

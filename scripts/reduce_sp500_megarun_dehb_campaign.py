@@ -12,6 +12,9 @@ from aurora.infra.sp500_megarun.dehb_campaign_contract import (
     validate_campaign_bindings,
 )
 from aurora.infra.sp500_megarun.dehb_campaign_runtime import controller_decision
+from aurora.infra.sp500_megarun.dehb_launch_contract import (
+    load_and_validate_launch_contract,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +60,8 @@ def main() -> int:
         default=REPO_ROOT / "config" / "sp500_megarun_dehb_campaign_v1.json",
     )
     parser.add_argument("--results-root", type=Path, required=True)
+    parser.add_argument("--launch-contract", type=Path, required=True)
+    parser.add_argument("--expected-code-commit-sha", required=True)
     parser.add_argument("--wave", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--github-output", type=Path)
@@ -64,6 +69,11 @@ def main() -> int:
     args = parser.parse_args()
 
     contract = load_and_validate_campaign_contract(args.contract)
+    launch = load_and_validate_launch_contract(
+        args.launch_contract,
+        contract,
+        expected_code_commit_sha=args.expected_code_commit_sha,
+    )
     validate_campaign_bindings(contract, repo_root=REPO_ROOT)
     results = _load_results(args.results_root)
     global_robustness = (
@@ -75,6 +85,7 @@ def main() -> int:
         contract,
         results,
         wave=args.wave,
+        launch_contract_sha256=launch.sha256,
         global_robustness=global_robustness,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)

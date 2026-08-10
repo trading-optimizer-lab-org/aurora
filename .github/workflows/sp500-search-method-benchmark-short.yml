@@ -8,7 +8,17 @@ permissions:
   contents: read
 
 jobs:
+  framework_contract:
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: sp500-search-short-framework-contract
+      retention_days: 1
+      forced_job_count: 1
+
   expanded:
+    needs: framework_contract
     uses: ./.github/workflows/sp500-search-method-benchmark-expanded.yml
     permissions:
       actions: read

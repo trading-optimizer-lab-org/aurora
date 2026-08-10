@@ -2,25 +2,6 @@ name: SP500 Megarun F001-F240 Data Preflight
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - codex/sp500-search-method-benchmark-short
-    paths:
-      - .github/workflows/sp500-megarun-preflight-240.yml
-      - config/sp500_megarun_free_data_240.json
-      - config/sp500_megarun_free_data_120.json
-      - config/sp500_megarun_free_sources.json
-      - config/sp500_megarun_free_sources_240.json
-      - config/sp500_megarun_feature_contract_240.json
-      - infra/sp500_megarun/**
-      - infra/sp500_long_short_daily/data.py
-      - scripts/build_sp500_megarun_preflight_240.py
-      - scripts/download_sp500_stooq_window.py
-      - scripts/merge_sp500_stooq_windows.py
-      - scripts/inventory_sp500_megarun_train_snapshot.py
-      - scripts/run_sp500_megarun_feature_smoke_f001_f020.py
-      - scripts/run_sp500_megarun_market_feature_smoke_f021_f031.py
-      - tests/test_sp500_megarun_*.py
 
 permissions:
   contents: read
@@ -30,7 +11,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  framework_contract:
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: sp500-data-preflight-framework-contract
+      retention_days: 1
+      forced_job_count: 1
+
   plan_spy_windows:
+    needs: framework_contract
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}

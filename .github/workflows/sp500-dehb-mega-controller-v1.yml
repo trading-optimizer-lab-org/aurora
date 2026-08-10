@@ -37,6 +37,11 @@ on:
         required: true
         default: true
         type: boolean
+      launch_only:
+        description: Verify and publish the launch contract without starting workers
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   actions: write
@@ -47,7 +52,93 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  framework_contract:
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: sp500-dehb-mega-framework-contract
+      retention_days: 1
+      execution_mode: optimized
+      forced_job_count: 1
+
+  preflight:
+    needs: framework_contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      launch_contract_sha256: ${{ steps.launch.outputs.launch_contract_sha256 }}
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+      RUNTIME_ARTIFACT: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+      TECHNICAL_ARTIFACT: sp500-megarun-official-dehb-smoke-${{ inputs.technical_evidence_run_id }}
+    steps:
+      - name: Check out frozen campaign revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Verify exact checked-out commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.commit_sha }}"
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install package without research dependencies
+        run: python -m pip install --no-deps -e .
+      - name: Download immutable train-only runtime inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.RUNTIME_ARTIFACT }}
+          path: ${{ runner.temp }}/dehb_runtime_inputs
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Download immutable technical evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.TECHNICAL_ARTIFACT }}
+          path: ${{ runner.temp }}/dehb_technical_evidence
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.technical_evidence_run_id }}
+      - name: Build hash-bound launch contract
+        id: launch
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_digest="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ inputs.runtime_input_run_id }}/artifacts" --paginate --jq ".artifacts[] | select(.name == \"$RUNTIME_ARTIFACT\" and .expired == false) | .digest" | head -n 1)"
+          technical_digest="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ inputs.technical_evidence_run_id }}/artifacts" --paginate --jq ".artifacts[] | select(.name == \"$TECHNICAL_ARTIFACT\" and .expired == false) | .digest" | head -n 1)"
+          test -n "$runtime_digest"
+          test -n "$technical_digest"
+          python scripts/build_sp500_megarun_dehb_launch_contract.py \
+            --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+            --code-commit-sha "${{ inputs.commit_sha }}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs" \
+            --runtime-input-run-id "${{ inputs.runtime_input_run_id }}" \
+            --runtime-input-artifact-name "$RUNTIME_ARTIFACT" \
+            --runtime-input-artifact-digest "$runtime_digest" \
+            --technical-evidence "$RUNNER_TEMP/dehb_technical_evidence/technical_evidence.json" \
+            --technical-evidence-run-id "${{ inputs.technical_evidence_run_id }}" \
+            --technical-evidence-artifact-name "$TECHNICAL_ARTIFACT" \
+            --technical-evidence-artifact-digest "$technical_digest" \
+            --output outputs/launch/launch_contract.json \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Upload immutable launch contract
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-launch-contract
+          path: outputs/launch
+          if-no-files-found: error
+          retention-days: 90
+
   plan:
+    needs: preflight
+    if: ${{ !inputs.launch_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
@@ -70,6 +161,11 @@ jobs:
           cache: ""
       - name: Install package without research dependencies
         run: python -m pip install --no-deps -e .
+      - name: Download exact launch contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-dehb-launch-contract
+          path: ${{ runner.temp }}/dehb_launch
       - name: Download immediate prior controller decision
         if: inputs.prior_decision_run_id != '0'
         run: |
@@ -84,6 +180,8 @@ jobs:
           set -euo pipefail
           args=(
             --output-dir outputs/wave_plan
+            --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json"
+            --expected-code-commit-sha "${{ inputs.commit_sha }}"
             --wave "${{ inputs.wave }}"
             --restart-ordinal "${{ inputs.restart_ordinal }}"
             --github-output "$GITHUB_OUTPUT"
@@ -104,31 +202,110 @@ jobs:
           retention-days: 90
 
   shard_a:
-    needs: plan
-    uses: ./.github/workflows/_sp500-dehb-mega-shard-v1.yml
-    with:
-      commit_sha: ${{ inputs.commit_sha }}
-      matrix_json: ${{ needs.plan.outputs.matrix_a }}
-      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
-      checkpoint_run_ids: ${{ inputs.checkpoint_run_ids }}
+    needs: [preflight, plan]
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    continue-on-error: true
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    steps:
+      - name: Check out exact campaign revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Run exact two-island worker
+        if: ${{ !startsWith(matrix.job_id, 'SKIP-') }}
+        uses: ./.github/actions/sp500-dehb-mega-worker
+        with:
+          commit-sha: ${{ inputs.commit_sha }}
+          job-id: ${{ matrix.job_id }}
+          job-payload: ${{ toJSON(matrix) }}
+          runtime-input-run-id: ${{ inputs.runtime_input_run_id }}
+          launch-contract-run-id: ${{ github.run_id }}
+          checkpoint-run-ids: ${{ inputs.checkpoint_run_ids }}
+          github-token: ${{ github.token }}
+
 
   shard_b:
-    needs: plan
-    uses: ./.github/workflows/_sp500-dehb-mega-shard-v1.yml
-    with:
-      commit_sha: ${{ inputs.commit_sha }}
-      matrix_json: ${{ needs.plan.outputs.matrix_b }}
-      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
-      checkpoint_run_ids: ${{ inputs.checkpoint_run_ids }}
+    needs: [preflight, plan]
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    continue-on-error: true
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    steps:
+      - name: Check out exact campaign revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Run exact two-island worker
+        if: ${{ !startsWith(matrix.job_id, 'SKIP-') }}
+        uses: ./.github/actions/sp500-dehb-mega-worker
+        with:
+          commit-sha: ${{ inputs.commit_sha }}
+          job-id: ${{ matrix.job_id }}
+          job-payload: ${{ toJSON(matrix) }}
+          runtime-input-run-id: ${{ inputs.runtime_input_run_id }}
+          launch-contract-run-id: ${{ github.run_id }}
+          checkpoint-run-ids: ${{ inputs.checkpoint_run_ids }}
+          github-token: ${{ github.token }}
+
 
   shard_c:
-    needs: plan
-    uses: ./.github/workflows/_sp500-dehb-mega-shard-v1.yml
-    with:
-      commit_sha: ${{ inputs.commit_sha }}
-      matrix_json: ${{ needs.plan.outputs.matrix_c }}
-      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
-      checkpoint_run_ids: ${{ inputs.checkpoint_run_ids }}
+    needs: [preflight, plan]
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_c) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    continue-on-error: true
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    steps:
+      - name: Check out exact campaign revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Run exact two-island worker
+        if: ${{ !startsWith(matrix.job_id, 'SKIP-') }}
+        uses: ./.github/actions/sp500-dehb-mega-worker
+        with:
+          commit-sha: ${{ inputs.commit_sha }}
+          job-id: ${{ matrix.job_id }}
+          job-payload: ${{ toJSON(matrix) }}
+          runtime-input-run-id: ${{ inputs.runtime_input_run_id }}
+          launch-contract-run-id: ${{ github.run_id }}
+          checkpoint-run-ids: ${{ inputs.checkpoint_run_ids }}
+          github-token: ${{ github.token }}
+
+
 
   reduce:
     needs: [plan, shard_a, shard_b, shard_c]
@@ -160,6 +337,11 @@ jobs:
           set -euo pipefail
           python -m pip install --require-hashes -r requirements/dehb-official.lock
           python -m pip install --no-deps -e .
+      - name: Download exact launch contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-dehb-launch-contract
+          path: ${{ runner.temp }}/dehb_launch
       - name: Download complete worker artifacts across retries
         run: |
           set -euo pipefail
@@ -208,6 +390,8 @@ jobs:
         run: |
           python scripts/reduce_sp500_megarun_dehb_global.py \
             --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+            --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json" \
+            --expected-code-commit-sha "${{ inputs.commit_sha }}" \
             --data-contract config/sp500_megarun_free_data_240.json \
             --feature-contract config/sp500_megarun_feature_contract_240.json \
             --worker-root outputs/combined_workers \
@@ -220,6 +404,8 @@ jobs:
         run: |
           python scripts/reduce_sp500_megarun_dehb_campaign.py \
             --results-root outputs/combined_workers \
+            --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json" \
+            --expected-code-commit-sha "${{ inputs.commit_sha }}" \
             --wave "${{ inputs.wave }}" \
             --global-robustness outputs/global_reduce/global_robustness.json \
             --output outputs/controller/controller_decision.json \
@@ -230,6 +416,8 @@ jobs:
         run: |
           python scripts/reduce_sp500_megarun_dehb_campaign.py \
             --results-root outputs/combined_workers \
+            --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json" \
+            --expected-code-commit-sha "${{ inputs.commit_sha }}" \
             --wave "${{ inputs.wave }}" \
             --output outputs/controller/controller_decision.json \
             --github-output "$GITHUB_OUTPUT"
@@ -299,4 +487,5 @@ jobs:
             -f prior_decision_run_id="${{ github.run_id }}" \
             -f evidence_run_ids="$evidence_ids" \
             -f checkpoint_run_ids="$checkpoint_ids" \
-            -f auto_continue=true
+            -f auto_continue=true \
+            -f launch_only=false

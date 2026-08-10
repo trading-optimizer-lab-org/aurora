@@ -1,0 +1,121 @@
+name: SP500 DEHB Mega Worker
+description: Run one exact two-island official-DEHB worker with immutable lineage
+
+inputs:
+  commit-sha:
+    required: true
+  job-id:
+    required: true
+  job-payload:
+    required: true
+  runtime-input-run-id:
+    required: true
+  launch-contract-run-id:
+    required: true
+  checkpoint-run-ids:
+    required: false
+    default: "0"
+  github-token:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Verify exact checked-out revision
+      shell: bash
+      run: test "$(git rev-parse HEAD)" = "${{ inputs.commit-sha }}"
+    - name: Set up Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: "3.11"
+        cache: ""
+    - name: Install frozen official DEHB runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install --require-hashes -r requirements/dehb-official.lock
+        python -m pip install --no-deps -e .
+    - name: Materialize and inspect immutable job payload
+      id: payload
+      shell: bash
+      env:
+        JOB_PAYLOAD_JSON: ${{ inputs.job-payload }}
+      run: |
+        set -euo pipefail
+        python -c "import json,os,pathlib; p=json.loads(os.environ['JOB_PAYLOAD_JSON']); pathlib.Path('job_payload.json').write_text(json.dumps(p,sort_keys=True),encoding='utf-8'); print(p['job_id'])"
+        python -c "import json,os,pathlib; p=json.loads(os.environ['JOB_PAYLOAD_JSON']); resume=any(bool(x.get('resume_from_previous_wave')) for x in p['islands']); pathlib.Path(os.environ['GITHUB_OUTPUT']).open('a',encoding='utf-8').write('resume_required=' + str(resume).lower() + '\n')"
+    - name: Download one self-verifying train-only runtime pack
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime-input-run-id }}
+        path: ${{ runner.temp }}/dehb_runtime_inputs
+        github-token: ${{ inputs.github-token }}
+        repository: ${{ github.repository }}
+        run-id: ${{ inputs.runtime-input-run-id }}
+    - name: Download exact launch contract
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: sp500-dehb-launch-contract
+        path: ${{ runner.temp }}/dehb_launch
+        github-token: ${{ inputs.github-token }}
+        repository: ${{ github.repository }}
+        run-id: ${{ inputs.launch-contract-run-id }}
+    - name: Find latest prior worker checkpoint only when resuming
+      if: steps.payload.outputs.resume_required == 'true'
+      shell: bash
+      env:
+        CHECKPOINT_RUN_IDS: ${{ inputs.checkpoint-run-ids }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        IFS=',' read -ra run_ids <<< "$CHECKPOINT_RUN_IDS"
+        found=false
+        for (( index=${#run_ids[@]}-1; index>=0; index-- )); do
+          run_id="${run_ids[$index]}"
+          [[ "$run_id" =~ ^[0-9]+$ ]] || continue
+          rm -rf "$RUNNER_TEMP/previous_worker"
+          if gh run download "$run_id" \
+            --name "sp500-dehb-worker-${{ inputs.job-id }}" \
+            --dir "$RUNNER_TEMP/previous_worker"; then
+            found=true
+            break
+          fi
+        done
+        test "$found" = true
+    - name: Run two official DEHB islands sequentially with four slots
+      if: steps.payload.outputs.resume_required != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        python scripts/run_sp500_megarun_dehb_job.py \
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+          --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json" \
+          --expected-code-commit-sha "${{ inputs.commit-sha }}" \
+          --data-contract config/sp500_megarun_free_data_240.json \
+          --feature-contract config/sp500_megarun_feature_contract_240.json \
+          --job-payload job_payload.json \
+          --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs" \
+          --output-dir outputs/worker
+    - name: Resume two-island job from verified prior artifact
+      if: steps.payload.outputs.resume_required == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        python scripts/run_sp500_megarun_dehb_job.py \
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+          --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json" \
+          --expected-code-commit-sha "${{ inputs.commit-sha }}" \
+          --data-contract config/sp500_megarun_free_data_240.json \
+          --feature-contract config/sp500_megarun_feature_contract_240.json \
+          --job-payload job_payload.json \
+          --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs" \
+          --previous-worker-dir "$RUNNER_TEMP/previous_worker" \
+          --output-dir outputs/worker
+    - name: Upload worker result and two island bundles
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: sp500-dehb-worker-${{ inputs.job-id }}
+        path: outputs/worker
+        if-no-files-found: warn
+        retention-days: 90

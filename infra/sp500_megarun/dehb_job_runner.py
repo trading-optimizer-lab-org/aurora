@@ -48,9 +48,20 @@ def load_verified_job_payload(path: Path) -> Mapping[str, Any]:
     return value
 
 
-def _validate_scientific_payload(contract: Any, payload: Mapping[str, Any]) -> None:
+def _validate_scientific_payload(
+    contract: Any,
+    launch_contract: Any,
+    payload: Mapping[str, Any],
+) -> None:
+    if (
+        launch_contract.campaign_contract_sha256 != contract.sha256
+        or launch_contract.validation_opened is not False
+        or launch_contract.locked_opened is not False
+    ):
+        raise DehbJobRunnerError("LAUNCH_CONTRACT_CAMPAIGN_OR_BOUNDARY_MISMATCH")
     expected = {
         "campaign_contract_sha256": contract.sha256,
+        "launch_contract_sha256": launch_contract.sha256,
         "train_source_run_id": contract.train_source_run_id,
         "train_artifact_name": contract.train_artifact_name,
         "train_artifact_digest_sha256": contract.train_artifact_digest_sha256,
@@ -71,6 +82,7 @@ def run_dehb_job(
     contract: Any,
     feature_contract: Any,
     *,
+    launch_contract: Any,
     payload: Mapping[str, Any],
     runtime_input_pack: Path,
     output_dir: Path,
@@ -81,11 +93,13 @@ def run_dehb_job(
 ) -> Mapping[str, Any]:
     """Run exactly two assigned islands sequentially and write one worker result."""
 
-    _validate_scientific_payload(contract, payload)
+    _validate_scientific_payload(contract, launch_contract, payload)
     islands = payload.get("islands")
     if not isinstance(islands, list) or len(islands) != 2:
         raise DehbJobRunnerError("JOB_ISLAND_ASSIGNMENTS_INVALID")
-    expected_aggregate = getattr(contract, "runtime_input_aggregate_sha256", None)
+    expected_aggregate = getattr(
+        launch_contract, "runtime_input_aggregate_sha256", None
+    )
     if not isinstance(expected_aggregate, str) or len(expected_aggregate) != 64:
         raise DehbJobRunnerError("RUNTIME_INPUT_AGGREGATE_NOT_FROZEN")
     pack_verifier(
@@ -134,6 +148,7 @@ def run_dehb_job(
             output_dir=root / "islands" / island_id,
             prior_bundle=prior_bundle,
             slice_seconds=slice_seconds,
+            launch_contract_sha256=launch_contract.sha256,
         )
         manifests.append(
             {
@@ -154,6 +169,7 @@ def run_dehb_job(
     result = {
         "schema_version": 1,
         "campaign_contract_sha256": contract.sha256,
+        "launch_contract_sha256": launch_contract.sha256,
         "job_id": str(payload["job_id"]),
         "job_index": int(payload["job_index"]),
         "shard_id": str(payload["shard_id"]),

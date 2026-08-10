@@ -27,6 +27,9 @@ from aurora.infra.sp500_megarun.dehb_finalist_robustness import (
     blocked_signal_placebo_test,
     load_runtime_regime_review,
 )
+from aurora.infra.sp500_megarun.dehb_launch_contract import (
+    load_and_validate_launch_contract,
+)
 from aurora.infra.sp500_megarun.feature_contract import (
     load_and_validate_feature_contract,
 )
@@ -88,6 +91,8 @@ def main() -> int:
     require_github_only_execution("SP500_MEGARUN_DEHB_GLOBAL_REDUCE")
     parser = argparse.ArgumentParser()
     parser.add_argument("--campaign-contract", type=Path, required=True)
+    parser.add_argument("--launch-contract", type=Path, required=True)
+    parser.add_argument("--expected-code-commit-sha", required=True)
     parser.add_argument("--data-contract", type=Path, required=True)
     parser.add_argument("--feature-contract", type=Path, required=True)
     parser.add_argument("--worker-root", type=Path, required=True)
@@ -97,11 +102,22 @@ def main() -> int:
     args = parser.parse_args()
 
     campaign = load_and_validate_campaign_contract(args.campaign_contract)
+    launch = load_and_validate_launch_contract(
+        args.launch_contract,
+        campaign,
+        runtime_input_pack=args.runtime_input_pack,
+        technical_evidence_path=args.technical_evidence,
+        expected_code_commit_sha=args.expected_code_commit_sha,
+    )
     data_contract = load_and_validate_contract(args.data_contract)
     feature_contract = load_and_validate_feature_contract(
         args.feature_contract, data_contract
     )
-    inventory = collect_verified_campaign_inventory(campaign, args.worker_root)
+    inventory = collect_verified_campaign_inventory(
+        campaign,
+        args.worker_root,
+        launch_contract_sha256=launch.sha256,
+    )
     finalists = inventory["seed_consensus_finalists"]
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -112,6 +128,7 @@ def main() -> int:
         returns, spy = reconstruct_candidate_returns(
             campaign,
             feature_contract,
+            launch,
             runtime_input_pack=args.runtime_input_pack,
             candidate_records=inventory["candidates"],
         )
@@ -208,6 +225,7 @@ def main() -> int:
     report = {
         "schema_version": 1,
         "campaign_contract_sha256": campaign.sha256,
+        "launch_contract_sha256": launch.sha256,
         "island_count": inventory["island_count"],
         "raw_trial_count": inventory["raw_trial_count"],
         "full_fidelity_trial_rows": inventory["full_fidelity_trial_rows"],

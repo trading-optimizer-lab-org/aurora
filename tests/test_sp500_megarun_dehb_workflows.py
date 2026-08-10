@@ -9,8 +9,7 @@ from aurora.infra.github_performance.preflight import load_github_yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLLER = ROOT / ".github/workflows/sp500-dehb-mega-controller-v1.yml"
-SHARD = ROOT / ".github/workflows/_sp500-dehb-mega-shard-v1.yml"
-WORKER = ROOT / ".github/workflows/_sp500-dehb-mega-worker-v1.yml"
+WORKER_ACTION = ROOT / ".github/actions/sp500-dehb-mega-worker/action.yml"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -19,24 +18,30 @@ def _load(path: Path) -> dict[str, Any]:
 
 def test_three_shards_request_360_jobs_and_skip_inside_called_worker() -> None:
     controller = _load(CONTROLLER)
-    shard = _load(SHARD)
-    worker = _load(WORKER)
+    worker = _load(WORKER_ACTION)
 
     jobs = controller["jobs"]
+    assert "preflight" in jobs
+    assert jobs["framework_contract"]["uses"] == (
+        "./.github/workflows/_aurora-future-run-v3.yml"
+    )
+    assert jobs["preflight"]["needs"] == "framework_contract"
+    assert jobs["plan"]["needs"] == "preflight"
     for shard_id in "abc":
         job = jobs[f"shard_{shard_id}"]
-        assert job["needs"] == "plan"
-        assert job["uses"] == "./.github/workflows/_sp500-dehb-mega-shard-v1.yml"
-    shard_job = shard["jobs"]["worker"]
-    assert shard_job["strategy"]["max-parallel"] == 120
-    assert shard_job["strategy"]["fail-fast"] is False
-    assert "if" not in shard_job
-    assert shard_job["uses"] == "./.github/workflows/_sp500-dehb-mega-worker-v1.yml"
-    worker_job = worker["jobs"]["worker"]
-    assert worker_job["if"] == "${{ !startsWith(inputs.job_id, 'SKIP-') }}"
-    assert worker_job["timeout-minutes"] == 330
-    assert worker_job["continue-on-error"] is True
-    assert all(worker_job["env"][name] == "1" for name in (
+        assert job["needs"] == ["preflight", "plan"]
+        assert job["strategy"]["max-parallel"] == 120
+        assert job["strategy"]["fail-fast"] is False
+        assert job["timeout-minutes"] == 330
+        assert job["continue-on-error"] is True
+        assert job["steps"][1]["uses"] == (
+            "./.github/actions/sp500-dehb-mega-worker"
+        )
+        assert job["steps"][1]["if"] == (
+            "${{ !startsWith(matrix.job_id, 'SKIP-') }}"
+        )
+    assert worker["runs"]["using"] == "composite"
+    assert all(jobs["shard_a"]["env"][name] == "1" for name in (
         "OMP_NUM_THREADS",
         "OPENBLAS_NUM_THREADS",
         "MKL_NUM_THREADS",
@@ -54,6 +59,10 @@ def test_controller_is_indefinite_train_only_and_retries_exact_jobs() -> None:
     assert "retry_jobs" in text
     assert "dispatch_next_wave" in text
     assert "gh workflow run sp500-dehb-mega-controller-v1.yml" in text
+    assert "build_sp500_megarun_dehb_launch_contract.py" in text
+    assert "--launch-contract" in text
+    assert "sp500-dehb-launch-contract" in text
+    assert workflow["jobs"]["plan"]["if"] == "${{ !inputs.launch_only }}"
     assert "validation_2011_2020" not in text
     assert "2021" not in text
     assert "timeout-hours" not in text

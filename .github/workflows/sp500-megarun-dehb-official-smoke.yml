@@ -2,25 +2,6 @@ name: SP500 Megarun Official DEHB Infrastructure Smoke
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - codex/sp500-search-method-benchmark-short
-    paths:
-      - .github/workflows/sp500-megarun-dehb-official-smoke.yml
-      - infra/sp500_megarun/dehb_configspace.py
-      - infra/sp500_megarun/dehb_official_smoke.py
-      - infra/sp500_megarun/dehb_technical_evidence.py
-      - infra/sp500_megarun/dehb_campaign_runtime.py
-      - infra/sp500_megarun/dehb_job_runner.py
-      - requirements/dehb-official.in
-      - requirements/dehb-official.lock
-      - scripts/run_sp500_megarun_dehb_official_smoke.py
-      - scripts/build_sp500_megarun_dehb_technical_evidence.py
-      - tests/test_sp500_megarun_dehb_configspace.py
-      - tests/test_sp500_megarun_dehb_official_smoke.py
-      - tests/test_sp500_megarun_dehb_technical_evidence.py
-      - config/sp500_megarun_feature_contract_240.json
-      - config/sp500_megarun_free_data_240.json
 
 permissions:
   contents: read
@@ -30,7 +11,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  framework_contract:
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: sp500-dehb-smoke-framework-contract
+      retention_days: 1
+      forced_job_count: 1
+
   official_dehb_smoke:
+    needs: framework_contract
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:

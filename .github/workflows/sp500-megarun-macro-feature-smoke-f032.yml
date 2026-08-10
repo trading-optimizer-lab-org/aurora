@@ -1,134 +1,6 @@
 name: SP500 Megarun Train Feature Smoke F001-F240
 
 on:
-  push:
-    branches:
-      - codex/sp500-search-method-benchmark-short
-    paths:
-      - .github/workflows/sp500-megarun-macro-feature-smoke-f032.yml
-      - infra/sp500_megarun/feature_input_normalizers.py
-      - infra/sp500_megarun/market_feature_engine.py
-      - infra/sp500_megarun/market_feature_smoke.py
-      - infra/sp500_megarun/macro_feature_engine.py
-      - infra/sp500_megarun/macro_feature_smoke.py
-      - infra/sp500_megarun/model_feature_engine.py
-      - infra/sp500_megarun/model_feature_smoke.py
-      - infra/sp500_megarun/advanced_feature_engine.py
-      - infra/sp500_megarun/advanced_feature_smoke.py
-      - infra/sp500_megarun/microstructure_feature_engine.py
-      - infra/sp500_megarun/microstructure_feature_smoke.py
-      - infra/sp500_megarun/positioning_feature_engine.py
-      - infra/sp500_megarun/positioning_feature_smoke.py
-      - infra/sp500_megarun/tail_macro_feature_engine.py
-      - infra/sp500_megarun/tail_macro_feature_smoke.py
-      - infra/sp500_megarun/fundamental_feature_engine.py
-      - infra/sp500_megarun/fundamental_feature_smoke.py
-      - infra/sp500_megarun/cross_section_feature_engine.py
-      - infra/sp500_megarun/cross_section_feature_smoke.py
-      - infra/sp500_megarun/technical_feature_engine.py
-      - infra/sp500_megarun/technical_feature_smoke.py
-      - infra/sp500_megarun/nonlinear_feature_engine.py
-      - infra/sp500_megarun/nonlinear_feature_smoke.py
-      - infra/sp500_megarun/predictive_feature_engine.py
-      - infra/sp500_megarun/predictive_feature_smoke.py
-      - infra/sp500_megarun/characteristic_feature_engine.py
-      - infra/sp500_megarun/characteristic_feature_smoke.py
-      - infra/sp500_megarun/global_factor_feature_engine.py
-      - infra/sp500_megarun/global_factor_feature_smoke.py
-      - infra/sp500_megarun/cross_asset_feature_engine.py
-      - infra/sp500_megarun/cross_asset_feature_smoke.py
-      - infra/sp500_megarun/rates_credit_feature_engine.py
-      - infra/sp500_megarun/rates_credit_feature_smoke.py
-      - infra/sp500_megarun/realtime_survey_feature_engine.py
-      - infra/sp500_megarun/realtime_survey_feature_smoke.py
-      - infra/sp500_megarun/financial_accounts_feature_engine.py
-      - infra/sp500_megarun/financial_accounts_feature_smoke.py
-      - infra/sp500_megarun/volatility_positioning_feature_engine.py
-      - infra/sp500_megarun/volatility_positioning_feature_smoke.py
-      - infra/sp500_megarun/policy_treasury_feature_engine.py
-      - infra/sp500_megarun/policy_treasury_feature_smoke.py
-      - infra/sp500_megarun/public_context_feature_engine.py
-      - infra/sp500_megarun/public_context_feature_smoke.py
-      - config/sp500_megarun_feature_contract_240.json
-      - config/sp500_megarun_free_data_120.json
-      - config/sp500_megarun_free_data_240.json
-      - config/sp500_megarun_free_sources.json
-      - config/sp500_megarun_free_sources_240.json
-      - scripts/run_sp500_megarun_feature_smoke_f001_f020.py
-      - scripts/run_sp500_megarun_market_feature_smoke_f021_f031.py
-      - scripts/run_sp500_megarun_macro_feature_smoke_f032.py
-      - scripts/run_sp500_megarun_model_feature_smoke_f051.py
-      - scripts/run_sp500_megarun_advanced_feature_smoke_f061.py
-      - scripts/run_sp500_megarun_microstructure_feature_smoke_f071.py
-      - scripts/run_sp500_megarun_positioning_feature_smoke_f081.py
-      - scripts/run_sp500_megarun_tail_macro_feature_smoke_f091.py
-      - scripts/run_sp500_megarun_fundamental_feature_smoke_f101.py
-      - scripts/run_sp500_megarun_cross_section_feature_smoke_f111.py
-      - scripts/run_sp500_megarun_technical_feature_smoke_f121.py
-      - scripts/run_sp500_megarun_nonlinear_feature_smoke_f131.py
-      - scripts/run_sp500_megarun_predictive_feature_smoke_f141.py
-      - scripts/run_sp500_megarun_characteristic_feature_smoke_f151.py
-      - scripts/run_sp500_megarun_global_factor_feature_smoke_f161.py
-      - scripts/run_sp500_megarun_cross_asset_feature_smoke_f171.py
-      - scripts/run_sp500_megarun_rates_credit_feature_smoke_f181.py
-      - scripts/run_sp500_megarun_realtime_survey_feature_smoke_f191.py
-      - scripts/run_sp500_megarun_financial_accounts_feature_smoke_f201.py
-      - scripts/run_sp500_megarun_volatility_positioning_feature_smoke_f211.py
-      - scripts/run_sp500_megarun_policy_treasury_feature_smoke_f221.py
-      - scripts/run_sp500_megarun_public_context_feature_smoke_f231.py
-      - scripts/preflight_sp500_megarun_dehb_registry.py
-      - scripts/package_sp500_megarun_dehb_runtime_inputs.py
-      - infra/sp500_megarun/dehb_lane_registry.py
-      - infra/sp500_megarun/dehb_registry_preflight.py
-      - infra/sp500_megarun/dehb_runtime_inputs.py
-      - infra/sp500_megarun/dehb_worker.py
-      - tests/test_sp500_megarun_data_contract.py
-      - tests/test_sp500_megarun_feature_contract.py
-      - tests/test_sp500_megarun_feature_engine_price.py
-      - tests/test_sp500_megarun_feature_smoke.py
-      - tests/test_sp500_megarun_feature_input_normalizers.py
-      - tests/test_sp500_megarun_market_feature_engine.py
-      - tests/test_sp500_megarun_market_feature_smoke.py
-      - tests/test_sp500_megarun_macro_feature_engine.py
-      - tests/test_sp500_megarun_macro_feature_smoke.py
-      - tests/test_sp500_megarun_model_feature_engine.py
-      - tests/test_sp500_megarun_model_feature_smoke.py
-      - tests/test_sp500_megarun_advanced_feature_engine.py
-      - tests/test_sp500_megarun_advanced_feature_smoke.py
-      - tests/test_sp500_megarun_microstructure_feature_engine.py
-      - tests/test_sp500_megarun_microstructure_feature_smoke.py
-      - tests/test_sp500_megarun_positioning_feature_engine.py
-      - tests/test_sp500_megarun_positioning_feature_smoke.py
-      - tests/test_sp500_megarun_tail_macro_feature_engine.py
-      - tests/test_sp500_megarun_tail_macro_feature_smoke.py
-      - tests/test_sp500_megarun_fundamental_feature_engine.py
-      - tests/test_sp500_megarun_fundamental_feature_smoke.py
-      - tests/test_sp500_megarun_cross_section_feature_engine.py
-      - tests/test_sp500_megarun_cross_section_feature_smoke.py
-      - tests/test_sp500_megarun_technical_feature_engine.py
-      - tests/test_sp500_megarun_technical_feature_smoke.py
-      - tests/test_sp500_megarun_nonlinear_feature_engine.py
-      - tests/test_sp500_megarun_nonlinear_feature_smoke.py
-      - tests/test_sp500_megarun_predictive_feature_engine.py
-      - tests/test_sp500_megarun_predictive_feature_smoke.py
-      - tests/test_sp500_megarun_characteristic_feature_engine.py
-      - tests/test_sp500_megarun_characteristic_feature_smoke.py
-      - tests/test_sp500_megarun_global_factor_feature_engine.py
-      - tests/test_sp500_megarun_global_factor_feature_smoke.py
-      - tests/test_sp500_megarun_cross_asset_feature_engine.py
-      - tests/test_sp500_megarun_cross_asset_feature_smoke.py
-      - tests/test_sp500_megarun_rates_credit_feature_engine.py
-      - tests/test_sp500_megarun_rates_credit_feature_smoke.py
-      - tests/test_sp500_megarun_realtime_survey_feature_engine.py
-      - tests/test_sp500_megarun_realtime_survey_feature_smoke.py
-      - tests/test_sp500_megarun_financial_accounts_feature_engine.py
-      - tests/test_sp500_megarun_financial_accounts_feature_smoke.py
-      - tests/test_sp500_megarun_volatility_positioning_feature_engine.py
-      - tests/test_sp500_megarun_volatility_positioning_feature_smoke.py
-      - tests/test_sp500_megarun_policy_treasury_feature_engine.py
-      - tests/test_sp500_megarun_policy_treasury_feature_smoke.py
-      - tests/test_sp500_megarun_public_context_feature_engine.py
-      - tests/test_sp500_megarun_public_context_feature_smoke.py
   workflow_dispatch:
     inputs:
       source_run_id:
@@ -159,7 +31,17 @@ permissions:
   contents: read
 
 jobs:
+  framework_contract:
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: sp500-feature-smoke-framework-contract
+      retention_days: 1
+      forced_job_count: 1
+
   smoke_f001_f240:
+    needs: framework_contract
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -655,6 +537,7 @@ jobs:
           retention-days: 90
 
   smoke_f131_f140:
+    needs: framework_contract
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f131_f140'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -706,6 +589,7 @@ jobs:
         run: exit 1
 
   smoke_f141_f150:
+    needs: framework_contract
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f141_f150'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -771,6 +655,7 @@ jobs:
         run: exit 1
 
   smoke_f151_f160:
+    needs: framework_contract
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f151_f160'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -822,6 +707,7 @@ jobs:
         run: exit 1
 
   smoke_f161_f170:
+    needs: framework_contract
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f161_f170'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -873,6 +759,7 @@ jobs:
         run: exit 1
 
   smoke_f171_f180:
+    needs: framework_contract
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f171_f180'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -924,6 +811,7 @@ jobs:
         run: exit 1
 
   smoke_f181_f190:
+    needs: framework_contract
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f181_f190'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -975,6 +863,7 @@ jobs:
         run: exit 1
 
   smoke_f191_f200:
+    needs: framework_contract
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f191_f200'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -1026,6 +915,7 @@ jobs:
         run: exit 1
 
   smoke_f201_f210:
+    needs: framework_contract
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f201_f210'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -1077,6 +967,7 @@ jobs:
         run: exit 1
 
   smoke_f211_f220:
+    needs: framework_contract
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f211_f220'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -1128,6 +1019,7 @@ jobs:
         run: exit 1
 
   smoke_f221_f230:
+    needs: framework_contract
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f221_f230'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -1179,6 +1071,7 @@ jobs:
         run: exit 1
 
   smoke_f231_f240:
+    needs: framework_contract
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f231_f240'
     runs-on: ubuntu-24.04
     timeout-minutes: 15

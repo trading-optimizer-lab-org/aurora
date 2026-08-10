@@ -244,6 +244,7 @@ def collect_verified_campaign_inventory(
     contract: Any,
     worker_root: Path,
     *,
+    launch_contract_sha256: str | None = None,
     bundle_verifier: BundleVerifier | None = None,
 ) -> Mapping[str, Any]:
     """Read all 720 cumulative island bundles and count every attempted trial."""
@@ -282,7 +283,16 @@ def collect_verified_campaign_inventory(
     champions: list[dict[str, Any]] = []
     for island_id in sorted(by_island):
         bundle = by_island[island_id]
-        verifier(contract, bundle, expected_island_id=island_id)
+        verifier(
+            contract,
+            bundle,
+            expected_island_id=island_id,
+            **(
+                {"expected_launch_contract_sha256": launch_contract_sha256}
+                if launch_contract_sha256 is not None
+                else {}
+            ),
+        )
         manifest = json.loads((bundle / "island_manifest.json").read_text("utf-8"))
         trial_frame = pd.read_parquet(bundle / "trial_ledger.parquet")
         candidate_frame = pd.read_parquet(bundle / "full_fidelity_candidates.parquet")
@@ -328,7 +338,7 @@ def collect_verified_campaign_inventory(
                 }
             )
     finalists = select_seed_consensus_finalists(champions)
-    return {
+    inventory = {
         "schema_version": 1,
         "island_count": len(by_island),
         "raw_trial_count": raw_trial_count,
@@ -340,11 +350,15 @@ def collect_verified_campaign_inventory(
         "validation_opened": False,
         "locked_opened": False,
     }
+    if launch_contract_sha256 is not None:
+        inventory["launch_contract_sha256"] = launch_contract_sha256
+    return inventory
 
 
 def reconstruct_candidate_returns(
     contract: Any,
     feature_contract: Any,
+    launch_contract: Any,
     *,
     runtime_input_pack: Path,
     candidate_records: Sequence[Mapping[str, Any]],
@@ -356,7 +370,11 @@ def reconstruct_candidate_returns(
         default_lane_configurations,
     )
 
-    expected_aggregate = getattr(contract, "runtime_input_aggregate_sha256", None)
+    if launch_contract.campaign_contract_sha256 != contract.sha256:
+        raise GlobalMergeError("LAUNCH_CONTRACT_CAMPAIGN_MISMATCH")
+    expected_aggregate = getattr(
+        launch_contract, "runtime_input_aggregate_sha256", None
+    )
     if not isinstance(expected_aggregate, str) or len(expected_aggregate) != 64:
         raise GlobalMergeError("RUNTIME_INPUT_AGGREGATE_NOT_FROZEN")
     pack = Path(runtime_input_pack).resolve()

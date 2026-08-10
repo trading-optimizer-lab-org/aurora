@@ -335,6 +335,7 @@ def write_island_bundle(
     data_access_audit: Mapping[str, Any],
     robustness_reviewer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
     prior_bundle: Path | None = None,
+    launch_contract_sha256: str | None = None,
     maximum_bundle_bytes: int = 12 * 1024 * 1024,
 ) -> Mapping[str, Any]:
     """Write one self-verifying island bundle around DEHB's native checkpoint."""
@@ -385,6 +386,7 @@ def write_island_bundle(
         evaluations=search.evaluations,
         dehb_state_sha256=str(native_receipt["aggregate_sha256"]),
         ledger_tail_hash=str(ledger_receipt["tail_hash"]),
+        launch_contract_sha256=launch_contract_sha256,
     )
     _write_json(root / "checkpoint_envelope.json", envelope)
 
@@ -528,6 +530,8 @@ def write_island_bundle(
         "validation_opened": False,
         "locked_opened": False,
     }
+    if launch_contract_sha256 is not None:
+        manifest["launch_contract_sha256"] = launch_contract_sha256
     _write_json(root / "island_manifest.json", manifest)
 
     files = sorted(
@@ -555,6 +559,7 @@ def verify_island_bundle(
     root: Path,
     *,
     expected_island_id: str,
+    expected_launch_contract_sha256: str | None = None,
 ) -> Mapping[str, Any]:
     """Verify checksums, campaign binding, checkpoint envelope and closed tiers."""
 
@@ -590,12 +595,20 @@ def verify_island_bundle(
         raise IslandRunnerError("BUNDLE_OPENED_VALIDATION")
     if manifest.get("locked_opened") is not False:
         raise IslandRunnerError("BUNDLE_OPENED_LOCKED")
+    if expected_launch_contract_sha256 is not None and (
+        manifest.get("launch_contract_sha256")
+        != expected_launch_contract_sha256
+    ):
+        raise IslandRunnerError("BUNDLE_LAUNCH_CONTRACT_MISMATCH")
     from aurora.infra.sp500_megarun.dehb_campaign_runtime import (
         validate_checkpoint_envelope,
     )
 
     validate_checkpoint_envelope(
-        contract, envelope, expected_island_id=expected_island_id
+        contract,
+        envelope,
+        expected_island_id=expected_island_id,
+        expected_launch_contract_sha256=expected_launch_contract_sha256,
     )
     return {
         "verified": True,
@@ -620,6 +633,7 @@ def run_official_dehb_island(
     robustness_reviewer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
     dehb_module: Any | None = None,
     executor_factory: Any = ProcessPoolExecutor,
+    launch_contract_sha256: str | None = None,
 ) -> Mapping[str, Any]:
     """Run one exact island using official DEHB 0.1.2 and its native resume state."""
 
@@ -641,7 +655,10 @@ def run_official_dehb_island(
     if prior_bundle is not None:
         prior = Path(prior_bundle).resolve()
         verify_island_bundle(
-            contract, prior, expected_island_id=str(assignment["island_id"])
+            contract,
+            prior,
+            expected_island_id=str(assignment["island_id"]),
+            expected_launch_contract_sha256=launch_contract_sha256,
         )
         prior_native = prior / "native_checkpoint"
         if not prior_native.is_dir():
@@ -783,6 +800,7 @@ def run_official_dehb_island(
         data_access_audit=data_access_audit,
         robustness_reviewer=robustness_reviewer,
         prior_bundle=prior_bundle,
+        launch_contract_sha256=launch_contract_sha256,
     )
 
 

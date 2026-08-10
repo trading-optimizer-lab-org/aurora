@@ -838,7 +838,9 @@ def test_yahoo_window_merge_preserves_adjusted_close_and_corporate_events(
     assert manifest["adjusted_close_complete"] is True
     assert manifest["distribution_event_count"] == 1
     assert manifest["split_event_count"] == 0
-    assert manifest["corporate_action_files_sha256"]["distributions"] == hashlib.sha256(
+    corporate_action_hashes = manifest["corporate_action_files_sha256"]
+    assert isinstance(corporate_action_hashes, dict)
+    assert corporate_action_hashes["distributions"] == hashlib.sha256(
         (output / "spy_distributions.csv").read_bytes()
     ).hexdigest()
 

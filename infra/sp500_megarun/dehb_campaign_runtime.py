@@ -84,6 +84,7 @@ def _job_payload(
     wave: int,
     restart_ordinal: int,
     campaign_manifest_sha256: str,
+    launch_contract_sha256: str | None,
     island_restart_ordinals: Mapping[str, int],
     resume_island_ids: AbstractSet[str],
 ) -> Mapping[str, Any]:
@@ -131,6 +132,10 @@ def _job_payload(
         "locked_opened": False,
         "islands": island_rows,
     }
+    if launch_contract_sha256 is not None:
+        if not _is_sha256(launch_contract_sha256):
+            raise CampaignRuntimeError("INVALID_LAUNCH_CONTRACT_SHA256")
+        payload["launch_contract_sha256"] = launch_contract_sha256
     payload["payload_sha256"] = _hash_payload(payload)
     return payload
 
@@ -141,6 +146,7 @@ def build_job_payload(
     job_index: int,
     wave: int,
     restart_ordinal: int,
+    launch_contract_sha256: str | None = None,
     island_restart_ordinals: Mapping[str, int] | None = None,
     resume_island_ids: AbstractSet[str] | None = None,
 ) -> Mapping[str, Any]:
@@ -158,6 +164,7 @@ def build_job_payload(
         wave=wave,
         restart_ordinal=restart_ordinal,
         campaign_manifest_sha256=manifest_hash,
+        launch_contract_sha256=launch_contract_sha256,
         island_restart_ordinals=island_restart_ordinals or {},
         resume_island_ids=resume_island_ids or frozenset(),
     )
@@ -168,6 +175,7 @@ def build_shard_matrices(
     *,
     wave: int = 0,
     restart_ordinal: int = 0,
+    launch_contract_sha256: str | None = None,
     island_restart_ordinals: Mapping[str, int] | None = None,
     resume_island_ids: AbstractSet[str] | None = None,
 ) -> Mapping[str, Mapping[str, list[Mapping[str, Any]]]]:
@@ -195,6 +203,7 @@ def build_shard_matrices(
             wave=wave,
             restart_ordinal=restart_ordinal,
             campaign_manifest_sha256=manifest_hash,
+            launch_contract_sha256=launch_contract_sha256,
             island_restart_ordinals=island_restart_ordinals or {},
             resume_island_ids=resume_island_ids or frozenset(),
         )
@@ -286,6 +295,7 @@ def build_checkpoint_envelope(
     evaluations: int,
     dehb_state_sha256: str,
     ledger_tail_hash: str,
+    launch_contract_sha256: str | None = None,
 ) -> Mapping[str, Any]:
     """Bind a DEHB state file to one exact train-only island and ledger tail."""
 
@@ -312,6 +322,10 @@ def build_checkpoint_envelope(
         "validation_opened": False,
         "locked_opened": False,
     }
+    if launch_contract_sha256 is not None:
+        if not _is_sha256(launch_contract_sha256):
+            raise CampaignRuntimeError("INVALID_LAUNCH_CONTRACT_SHA256")
+        payload["launch_contract_sha256"] = launch_contract_sha256
     payload["checkpoint_envelope_sha256"] = _hash_payload(
         payload,
         domain=_CHECKPOINT_DOMAIN,
@@ -324,6 +338,7 @@ def validate_checkpoint_envelope(
     envelope: Mapping[str, Any],
     *,
     expected_island_id: str,
+    expected_launch_contract_sha256: str | None = None,
 ) -> None:
     """Fail closed before loading a checkpoint state file."""
 
@@ -331,6 +346,11 @@ def validate_checkpoint_envelope(
         raise CampaignRuntimeError("CHECKPOINT_BOUNDARY_OPEN")
     if envelope.get("campaign_contract_sha256") != contract.sha256:
         raise CampaignRuntimeError("CHECKPOINT_CAMPAIGN_MISMATCH")
+    if expected_launch_contract_sha256 is not None and (
+        envelope.get("launch_contract_sha256")
+        != expected_launch_contract_sha256
+    ):
+        raise CampaignRuntimeError("CHECKPOINT_LAUNCH_CONTRACT_MISMATCH")
     if envelope.get("island_id") != expected_island_id:
         raise CampaignRuntimeError("CHECKPOINT_ISLAND_MISMATCH")
     if envelope.get("train_partition") != contract.train_partition:
@@ -359,11 +379,16 @@ def _validate_worker_result(
     result: Mapping[str, Any],
     *,
     expected_payloads: Mapping[int, Mapping[str, Any]],
+    launch_contract_sha256: str | None = None,
 ) -> tuple[int, str, list[Mapping[str, Any]]]:
     if result.get("validation_opened") is not False or result.get("locked_opened") is not False:
         raise CampaignRuntimeError("WORKER_BOUNDARY_OPEN")
     if result.get("campaign_contract_sha256") != contract.sha256:
         raise CampaignRuntimeError("WORKER_CAMPAIGN_MISMATCH")
+    if launch_contract_sha256 is not None and (
+        result.get("launch_contract_sha256") != launch_contract_sha256
+    ):
+        raise CampaignRuntimeError("WORKER_LAUNCH_CONTRACT_MISMATCH")
     job_index = int(result.get("job_index", -1))
     try:
         payload = expected_payloads[job_index]
@@ -408,6 +433,7 @@ def controller_decision(
     worker_results: Sequence[Mapping[str, Any]],
     *,
     wave: int,
+    launch_contract_sha256: str | None = None,
     restart_ordinal: int | None = None,
     island_restart_ordinals: Mapping[str, int] | None = None,
     resume_island_ids: AbstractSet[str] | None = None,
@@ -420,6 +446,7 @@ def controller_decision(
         contract,
         wave=wave,
         restart_ordinal=wave if restart_ordinal is None else restart_ordinal,
+        launch_contract_sha256=launch_contract_sha256,
         island_restart_ordinals=island_restart_ordinals,
         resume_island_ids=resume_island_ids,
     )
@@ -433,6 +460,7 @@ def controller_decision(
             contract,
             result,
             expected_payloads=expected_payloads,
+            launch_contract_sha256=launch_contract_sha256,
         )
         if job_index in by_job:
             raise CampaignRuntimeError(f"DUPLICATE_WORKER_RESULT:{job_index}")
@@ -450,6 +478,8 @@ def controller_decision(
         "validation_opened": False,
         "locked_opened": False,
     }
+    if launch_contract_sha256 is not None:
+        common["launch_contract_sha256"] = launch_contract_sha256
     if retry:
         return {
             **common,
