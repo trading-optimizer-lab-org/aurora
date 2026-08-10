@@ -534,3 +534,26 @@ def test_consolidation_workflow_downloads_and_verifies_realestate_evidence() -> 
     assert 'realestate["current_value_count"] == 7' in verify
     assert 'realestate["fidelity"] == "reconstructed"' in verify
     assert 'not bool(realestate["strict_score_eligible"])' in verify
+
+
+def test_consolidation_workflow_verifies_causal_firmage_evidence() -> None:
+    workflow_path = ROOT / ".github" / "workflows" / "openap-149-consolidate.yml"
+    workflow = yaml.load(
+        workflow_path.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+    steps = {
+        step["name"]: step
+        for step in workflow["jobs"]["consolidate"]["steps"]
+        if "name" in step
+    }
+    verify = steps["Verify consolidated result"]["run"]
+    assert 'summary["data_acquired"] == 57' in verify
+    assert 'summary["current_values_calculated"] == 53' in verify
+    assert 'summary["blocked"] == summary["pending"] == 96' in verify
+    assert 'summary["value_rows"] == 99824' in verify
+    assert 'matrix.set_index("signal").loc["FirmAge"]' in verify
+    assert 'firm_age["current_value_count"] == 4434' in verify
+    assert 'firm_age["fidelity"] == "unvalidated_proxy"' in verify
+    assert 'not bool(firm_age["strict_score_eligible"])' in verify
