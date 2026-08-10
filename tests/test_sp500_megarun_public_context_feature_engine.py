@@ -227,3 +227,30 @@ def test_public_context_engine_fails_closed() -> None:
     future.loc[len(future) - 1, ["date", "observed_at", "available_at"]] = pd.Timestamp("2011-01-03")
     with pytest.raises(api.PublicContextFeatureEngineError, match="NON_TRAIN_MARKET_ROW"):
         api.evaluate_public_context_lane("F231", future, panels, _parameters("F231"))
+
+
+@pytest.mark.parametrize(
+    ("lane", "statistic"),
+    [("F235", "visibility"), ("F236", "temperature_anomaly")],
+)
+def test_family_batch_uses_continuous_weather_representatives(
+    lane: str, statistic: str
+) -> None:
+    api = _api()
+    market, panels = _inputs()
+
+    batch = api.evaluate_public_context_family_batch(market, panels)[lane]
+    explicit = api.evaluate_public_context_lane(
+        lane,
+        market,
+        panels,
+        {
+            "statistic": statistic,
+            "window": 20,
+            "change_lag": 1,
+            "normalization": "raw",
+            "direction": "continuation",
+        },
+    )
+
+    pd.testing.assert_frame_equal(batch, explicit)

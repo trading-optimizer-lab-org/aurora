@@ -226,11 +226,21 @@ def build_public_context_feature_smoke(
 
     exact_duplicates = [list(group) for group in audit.exact_duplicate_groups]
     near_duplicates = [list(pair) for pair in audit.near_duplicate_pairs]
+    required_years = set(range(_SEARCH_START.year, _TRAIN_END.year + 1))
+    full_yearly_coverage = all(
+        set(item.yearly_non_null_fraction) == required_years
+        and all(
+            fraction == 1.0
+            for fraction in item.yearly_non_null_fraction.values()
+        )
+        for item in audit.coverage
+    )
     ready = bool(
         audit.ready
         and len(outputs) == len(_LANES)
         and not exact_duplicates
         and not near_duplicates
+        and full_yearly_coverage
     )
     report = {
         "schema_version": 1,
@@ -268,6 +278,7 @@ def build_public_context_feature_smoke(
         "empty_lanes": list(audit.empty_lanes),
         "exact_duplicate_groups": exact_duplicates,
         "near_duplicate_pairs": near_duplicates,
+        "full_yearly_coverage": full_yearly_coverage,
         "coverage": [asdict(item) for item in audit.coverage],
         "artifacts": artifacts,
     }
