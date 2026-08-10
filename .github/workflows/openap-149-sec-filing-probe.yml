@@ -59,7 +59,10 @@ jobs:
           test "$FORMATION_AT" = "2026-08-09T23:59:59Z"
           [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
           [[ "$SEC_USER_AGENT" == *"@"* ]]
-          python -m pytest tests/test_openap_181_sec_fsd_access.py -q --tb=short
+          python -m pytest \
+            tests/test_openap_181_sec_fsd_access.py \
+            tests/test_openap_149_realestate_rendered_batch.py \
+            -q --tb=short
       - name: Download verified SEC filing metadata shards
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
