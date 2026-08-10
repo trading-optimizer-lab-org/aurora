@@ -1041,11 +1041,18 @@ def calculate_field_ritter_ipo_signals(
         if re.fullmatch(r"[0-9]+(?:\.0+)?", _clean_text(value))
         else ""
     )
-    if (
-        current[["security_id", "ticker", "cik"]].eq("").any().any()
-        or current["security_id"].duplicated().any()
-    ):
-        raise ValueError("Current security identity is blank or duplicated")
+    identity_columns = ["security_id", "ticker", "cik"]
+    blank_counts = current[identity_columns].eq("").sum()
+    duplicate_mask = current["security_id"].duplicated(keep=False)
+    if blank_counts.any() or duplicate_mask.any():
+        duplicate_ids = sorted(
+            current.loc[duplicate_mask, "security_id"].astype(str).unique()
+        )[:10]
+        raise ValueError(
+            "Current security identity is blank or duplicated: "
+            f"blank_counts={blank_counts.astype(int).to_dict()}, "
+            f"duplicate_security_ids={duplicate_ids}"
+        )
     if linked_ipos["security_id"].duplicated().any():
         raise ValueError("Linked Field-Ritter IPOs contain duplicate securities")
     if rd_observations["security_id"].duplicated().any():
