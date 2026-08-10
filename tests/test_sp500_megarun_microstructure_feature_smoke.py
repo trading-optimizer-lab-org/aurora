@@ -73,8 +73,8 @@ def test_microstructure_smoke_builds_f071_f080_train_only_artifacts(
     assert report["near_duplicate_pairs"] == []
     parameter_audit = report["parameter_choice_audit"]
     assert parameter_audit["ready"] is True
-    assert parameter_audit["expected_choice_probe_count"] == 133
-    assert parameter_audit["choice_probe_count"] == 133
+    assert parameter_audit["expected_choice_probe_count"] == 131
+    assert parameter_audit["choice_probe_count"] == 131
     assert parameter_audit["failed_probes"] == []
     assert parameter_audit["inactive_choice_groups"] == []
     assert (tmp_path / "out" / "features" / "F071.parquet").is_file()

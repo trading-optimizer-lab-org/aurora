@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -42,6 +43,53 @@ def _spy(periods: int = 1_700) -> pd.DataFrame:
             "volume": volume,
         }
     )
+
+
+def _technical_choice_spy() -> pd.DataFrame:
+    spy = _spy()
+    for index, excess in zip(
+        (560, 640, 720, 800),
+        (0.003, 0.006, 0.012, 0.025),
+        strict=True,
+    ):
+        prior_high = float(spy.loc[index - 252 : index - 1, "high"].max())
+        close = prior_high * (1.0 + excess)
+        spy.loc[index, ["open", "close"]] = close
+        spy.loc[index, "high"] = close * 1.001
+        spy.loc[index, "low"] = close * 0.995
+
+    block_start = 900
+    pattern_specs = (
+        (0.015, 0.001, 0.03),
+        (0.025, 0.004, 0.07),
+        (0.040, 0.007, 0.12),
+        (0.065, 0.015, 0.18),
+    )
+    for block, (outer_gap, breakout, head_margin) in enumerate(pattern_specs):
+        start = block_start + block * 100
+        first = slice(start, start + 13)
+        middle = slice(start + 13, start + 26)
+        final = slice(start + 26, start + 40)
+        for rows in (first, middle, final):
+            spy.loc[rows, ["open", "close"]] = 100.0
+            spy.loc[rows, "low"] = 90.0
+        spy.loc[first, "high"] = 120.0
+        spy.loc[middle, "high"] = 105.0
+        spy.loc[final, "high"] = 120.0 * (1.0 - outer_gap)
+        spy.loc[start + 39, ["open", "close"]] = 100.0 * (1.0 - breakout)
+
+        shoulder_start = start + 45
+        first = slice(shoulder_start, shoulder_start + 13)
+        middle = slice(shoulder_start + 13, shoulder_start + 26)
+        final = slice(shoulder_start + 26, shoulder_start + 40)
+        for rows in (first, middle, final):
+            spy.loc[rows, ["open", "close"]] = 100.0
+            spy.loc[rows, "low"] = 90.0
+        spy.loc[first, "high"] = 110.0
+        spy.loc[middle, "high"] = 110.0 * (1.0 + head_margin)
+        spy.loc[final, "high"] = 110.0
+
+    return spy
 
 
 def _parameters(lane: str) -> dict[str, object]:
@@ -97,6 +145,61 @@ def _parameters(lane: str) -> dict[str, object]:
             "klinger_signal": 13,
         },
     }[lane].copy()
+
+
+def test_f121_f130_execute_every_frozen_parameter_choice() -> None:
+    from aurora.infra.sp500_megarun.data_contract import (
+        load_and_validate_contract,
+    )
+    from aurora.infra.sp500_megarun.feature_contract import (
+        load_and_validate_feature_contract,
+    )
+    from aurora.infra.sp500_megarun.parameter_choice_audit import (
+        audit_frozen_parameter_choices,
+    )
+    from aurora.infra.sp500_megarun.technical_feature_smoke import (
+        _repair_technical_configuration,
+    )
+
+    api = _api()
+    spy = _technical_choice_spy()
+    expected_years = sorted(set(pd.to_datetime(spy["date"]).dt.year))
+    root = Path(__file__).resolve().parents[1]
+    data_contract = load_and_validate_contract(
+        root / "config" / "sp500_megarun_free_data_240.json"
+    )
+    feature_contract = load_and_validate_feature_contract(
+        root / "config" / "sp500_megarun_feature_contract_240.json",
+        data_contract,
+    )
+
+    report = audit_frozen_parameter_choices(
+        feature_contract,
+        lane_ids=[f"F{i:03d}" for i in range(121, 131)],
+        evaluator=lambda lane_id, configuration: api.evaluate_technical_lane(
+            lane_id,
+            spy,
+            configuration,
+        ),
+        expected_years=expected_years,
+        repair=_repair_technical_configuration,
+    )
+
+    if not report["ready"]:
+        pytest.fail(
+            "failures="
+            + repr(report["failed_probes"])
+            + "\ninactive=\n"
+            + "\n".join(
+                f"{row['lane_id']}:{row['parameter']}:{row['choices']!r}"
+                for row in report["inactive_choice_groups"]
+            ),
+            pytrace=False,
+        )
+    assert report["expected_choice_probe_count"] == 163
+    assert report["choice_probe_count"] == 163
+    assert report["failed_probes"] == []
+    assert report["inactive_choice_groups"] == []
 
 
 @pytest.mark.parametrize("lane", [f"F{i:03d}" for i in range(121, 131)])

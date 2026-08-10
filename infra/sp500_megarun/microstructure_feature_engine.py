@@ -426,7 +426,7 @@ def _f078(spy: pd.DataFrame, parameters: Mapping[str, Any]) -> pd.Series:
 def _f079(spy: pd.DataFrame, parameters: Mapping[str, Any]) -> pd.Series:
     window = _positive_int(parameters, "window", 63)
     statistic = str(parameters.get("statistic", "zero_return_rate"))
-    tolerance = float(parameters.get("zero_tolerance_bps", 0.5))
+    tolerance = float(parameters.get("zero_tolerance_bps", 1.0))
     if tolerance < 0.0:
         raise MicrostructureFeatureEngineError("F079_NEGATIVE_ZERO_TOLERANCE")
     returns = np.log(spy["close"]).diff()
@@ -482,7 +482,7 @@ def _f080(spy: pd.DataFrame, parameters: Mapping[str, Any]) -> pd.Series:
             {
                 "statistic": "volume_drought",
                 "window": liquidity_window,
-                "zero_tolerance_bps": 0.5,
+                "zero_tolerance_bps": 0.0,
             },
         )
     else:
@@ -558,7 +558,7 @@ _MICROSTRUCTURE_BATCH_PARAMETERS: Mapping[str, Mapping[str, Any]] = {
     "F079": {
         "statistic": "volume_drought",
         "window": 126,
-        "zero_tolerance_bps": 0.5,
+        "zero_tolerance_bps": 1.0,
     },
     "F080": {
         "base": "trend",

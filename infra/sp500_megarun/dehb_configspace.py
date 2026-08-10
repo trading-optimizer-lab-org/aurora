@@ -89,6 +89,95 @@ def _forbidden_parameter_pairs(
             for horizon in space["horizon"]
             if int(embargo) < int(horizon)
         )
+    if lane.lane_id == "F121":
+        pairs.extend(
+            ("statistic", statistic, parameter, choice)
+            for statistic in ("high_distance", "low_distance", "range_position")
+            for parameter in ("buffer_fraction", "confirmation")
+            for choice in space[parameter][1:]
+        )
+    if lane.lane_id == "F123":
+        pairs.extend(
+            ("statistic", "trix", "slow", slow)
+            for slow in space["slow"][1:]
+        )
+        pairs.extend(
+            ("statistic", statistic, "signal", signal)
+            for statistic in ("trix", "tsi")
+            for signal in space["signal"][1:]
+        )
+    if lane.lane_id == "F124":
+        pairs.extend(
+            ("base_window", base, "span_b_window", span)
+            for base in space["base_window"]
+            for span in space["span_b_window"]
+            if int(base) >= int(span)
+        )
+        pairs.extend(
+            ("statistic", "cloud_breakout", "atr_window", window)
+            for window in space["atr_window"][1:]
+        )
+    if lane.lane_id == "F125":
+        pairs.extend(
+            ("statistic", "parabolic_sar", parameter, choice)
+            for parameter in ("window", "atr_multiplier")
+            for choice in space[parameter][1:]
+        )
+        pairs.extend(
+            ("statistic", "supertrend", parameter, choice)
+            for parameter in (
+                "window",
+                "acceleration_step",
+                "acceleration_max",
+            )
+            for choice in space[parameter][1:]
+        )
+        pairs.extend(
+            ("statistic", "chandelier", parameter, choice)
+            for parameter in ("acceleration_step", "acceleration_max")
+            for choice in space[parameter][1:]
+        )
+    if lane.lane_id == "F127":
+        pairs.extend(
+            ("statistic", "heikin_ashi", parameter, choice)
+            for parameter in ("window", "box_atr", "reversal_boxes")
+            for choice in space[parameter][1:]
+        )
+        pairs.extend(
+            ("statistic", "renko", "reversal_boxes", choice)
+            for choice in space["reversal_boxes"][1:]
+        )
+    if lane.lane_id == "F128":
+        pairs.extend(
+            ("statistic", statistic, parameter, choice)
+            for statistic in ("triangle", "wedge")
+            for parameter in ("tolerance", "head_margin", "breakout_buffer")
+            for choice in space[parameter][1:]
+        )
+        pairs.extend(
+            ("statistic", "double_extreme", "head_margin", choice)
+            for choice in space["head_margin"][1:]
+        )
+        pairs.extend(
+            ("statistic", "shoulders", "breakout_buffer", choice)
+            for choice in space["breakout_buffer"][1:]
+        )
+    if lane.lane_id == "F130":
+        pairs.extend(
+            ("statistic", statistic, parameter, choice)
+            for statistic in (
+                "chaikin_money_flow",
+                "money_flow_index",
+                "force_index",
+                "ease_of_movement",
+            )
+            for parameter in ("klinger_fast", "klinger_slow", "klinger_signal")
+            for choice in space[parameter][1:]
+        )
+        pairs.extend(
+            ("statistic", "klinger_oscillator", "window", window)
+            for window in space["window"][1:]
+        )
     if lane.lane_id in {"F172", "F180"}:
         pairs.extend(
             ("window", window, "long_window", long_window)

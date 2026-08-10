@@ -78,7 +78,7 @@ def _parameters(lane_id: str) -> dict[str, object]:
         return {
             "statistic": "volume_drought",
             "window": 63,
-            "zero_tolerance_bps": 0.5,
+            "zero_tolerance_bps": 1.0,
         }
     if lane_id == "F080":
         return {
@@ -385,7 +385,7 @@ def test_f079_supports_each_observable_daily_liquidity_state(statistic: str) -> 
     result = api.evaluate_microstructure_lane(
         "F079",
         _spy_inputs(180),
-        {"statistic": statistic, "window": 40, "zero_tolerance_bps": 0.5},
+        {"statistic": statistic, "window": 40, "zero_tolerance_bps": 1.0},
     )
 
     assert result["value"].notna().any()

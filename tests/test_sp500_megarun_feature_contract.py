@@ -107,6 +107,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "corwin_schultz",
         "amihud",
     )
+    assert microstructure_lanes[8].parameter_space["zero_tolerance_bps"] == (
+        0.0,
+        1.0,
+    )
     assert microstructure_lanes[9].parameter_space["logic"] == (
         "gate",
         "attenuate",

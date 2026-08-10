@@ -346,15 +346,41 @@ jobs:
         if: always() && steps.fundamental_feature_smoke.outcome != 'success'
         run: exit 1
       - name: Execute and audit F111-F120 on train only
+        id: cross_section_feature_smoke
+        continue-on-error: true
         run: |
           python scripts/run_sp500_megarun_cross_section_feature_smoke_f111.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_cross_section_feature_smoke_f111_f120
+      - name: Upload F111-F120 train-only evidence
+        if: always() && steps.cross_section_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-cross-section-feature-smoke-F111-F120-${{ github.run_id }}
+          path: outputs/sp500_megarun_cross_section_feature_smoke_f111_f120
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F111-F120 audit is not ready
+        if: always() && steps.cross_section_feature_smoke.outcome != 'success'
+        run: exit 1
       - name: Execute and audit F121-F130 on train only
+        id: technical_feature_smoke
+        continue-on-error: true
         run: |
           python scripts/run_sp500_megarun_technical_feature_smoke_f121.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_technical_feature_smoke_f121_f130
+      - name: Upload F121-F130 train-only evidence
+        if: always() && steps.technical_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-technical-feature-smoke-F121-F130-${{ github.run_id }}
+          path: outputs/sp500_megarun_technical_feature_smoke_f121_f130
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F121-F130 audit is not ready
+        if: always() && steps.technical_feature_smoke.outcome != 'success'
+        run: exit 1
       - name: Execute and audit F131-F140 on train only
         run: |
           python scripts/run_sp500_megarun_nonlinear_feature_smoke_f131.py \
@@ -432,20 +458,6 @@ jobs:
         with:
           name: sp500-megarun-macro-feature-smoke-F032-F050-${{ github.run_id }}
           path: outputs/sp500_megarun_macro_feature_smoke_f032
-          if-no-files-found: error
-          retention-days: 90
-      - name: Upload F111-F120 train-only evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-megarun-cross-section-feature-smoke-F111-F120-${{ github.run_id }}
-          path: outputs/sp500_megarun_cross_section_feature_smoke_f111_f120
-          if-no-files-found: error
-          retention-days: 90
-      - name: Upload F121-F130 train-only evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-megarun-technical-feature-smoke-F121-F130-${{ github.run_id }}
-          path: outputs/sp500_megarun_technical_feature_smoke_f121_f130
           if-no-files-found: error
           retention-days: 90
       - name: Upload F131-F140 train-only evidence
