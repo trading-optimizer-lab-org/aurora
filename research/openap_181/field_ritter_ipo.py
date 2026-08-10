@@ -226,8 +226,7 @@ def _clean_text(value: object) -> str:
             return ""
     except (TypeError, ValueError):
         return ""
-    text = str(value).strip()
-    return "" if text.lower() == "nan" else text
+    return str(value).strip()
 
 
 def _utc_timestamp(value: object, label: str) -> pd.Timestamp:
