@@ -68,6 +68,8 @@ def test_candidate_objective_uses_only_fidelity_years_and_returns_exact_archive_
     assert result["info"]["target_years"] == [2000]
     assert result["info"]["train_feasible"] is True
     assert result["info"]["archive_key"][0] == 0.0
+    assert len(result["info"]["strategy_fingerprint"]) == 64
+    assert len(result["info"]["position_fingerprint"]) == 64
     assert result["info"]["validation_opened"] is False
     assert result["info"]["locked_opened"] is False
 

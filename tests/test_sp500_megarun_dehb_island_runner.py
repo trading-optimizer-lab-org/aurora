@@ -71,6 +71,7 @@ def _objective(config, fidelity):
             "full_fidelity": True,
             "train_feasible": True,
             "strategy_fingerprint": f"fingerprint-{index}",
+            "position_fingerprint": f"positions-{index}",
         },
     }
 

@@ -233,6 +233,35 @@ def test_controller_freezes_only_full_robust_two_seed_consensus(campaign) -> Non
     assert decision["locked_opened"] is False
 
 
+def test_controller_global_gate_cannot_freeze_with_pending_60_gate_matrix(campaign) -> None:
+    from aurora.infra.sp500_megarun.dehb_campaign_runtime import controller_decision
+
+    results = [_worker_result(campaign, job_index=index) for index in range(360)]
+    decision = controller_decision(
+        campaign,
+        results,
+        wave=0,
+        global_robustness={
+            "campaign_contract_sha256": campaign.sha256,
+            "eligible_finalists": [
+                {
+                    "strategy_fingerprint": "winner",
+                    "position_fingerprint": "p" * 64,
+                    "lane_id": "F001",
+                    "archive_key": [0.0, -0.2, -0.6, -0.1],
+                    "seed_consensus": 3,
+                    "supporting_islands": ["F001-R1", "F001-R2", "F001-R3"],
+                    "all_60_gates_passed": False,
+                }
+            ],
+            "validation_opened": False,
+            "locked_opened": False,
+        },
+    )
+    assert decision["action"] == "dispatch_next_wave"
+    assert decision["terminal_no_strategy"] is False
+
+
 def test_checkpoint_envelope_is_bound_to_campaign_island_and_closed_data(campaign) -> None:
     from aurora.infra.sp500_megarun.dehb_campaign_runtime import (
         build_checkpoint_envelope,

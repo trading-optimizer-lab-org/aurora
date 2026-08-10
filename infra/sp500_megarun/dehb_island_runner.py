@@ -236,6 +236,7 @@ def _candidate_rows(search: IslandSliceResult) -> list[dict[str, Any]]:
                     trial["configuration"]
                 ).decode("utf-8"),
                 "strategy_fingerprint": str(info.get("strategy_fingerprint", "")),
+                "position_fingerprint": str(info.get("position_fingerprint", "")),
                 "train_feasible": bool(info.get("train_feasible", False)),
                 "annualized_strategy_return": info.get(
                     "annualized_strategy_return"
@@ -417,7 +418,8 @@ def write_island_bundle(
     candidates = _candidate_rows(search)
     candidate_columns = (
         "evaluation", "config_id", "fidelity", "fitness",
-        "configuration_json", "strategy_fingerprint", "train_feasible",
+        "configuration_json", "strategy_fingerprint", "position_fingerprint",
+        "train_feasible",
         "annualized_strategy_return", "weekly_spy_beat_rate",
         "annualized_alpha", "archive_key_json", "info_json",
     )

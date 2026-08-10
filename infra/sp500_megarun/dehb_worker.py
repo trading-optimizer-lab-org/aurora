@@ -73,6 +73,29 @@ def _configuration_dict(config: Any) -> Mapping[str, Any]:
     return normalized
 
 
+def candidate_fingerprints(
+    lane_id: str,
+    configuration: Mapping[str, Any],
+    decisions: pd.Series,
+) -> tuple[str, str]:
+    """Return candidate identity and behavior-only hashes for clone control."""
+
+    config_sha256 = hashlib.sha256(_canonical_bytes(configuration)).hexdigest()
+    decision_payload = np.nan_to_num(
+        decisions.to_numpy(dtype="<f8"),
+        nan=0.0,
+    ).tobytes()
+    position_fingerprint = hashlib.sha256(decision_payload).hexdigest()
+    strategy_fingerprint = hashlib.sha256(
+        lane_id.encode("ascii")
+        + b"\0"
+        + config_sha256.encode("ascii")
+        + b"\0"
+        + decision_payload
+    ).hexdigest()
+    return strategy_fingerprint, position_fingerprint
+
+
 def feature_frame_to_decisions(
     feature: pd.DataFrame,
     *,
@@ -148,17 +171,9 @@ def evaluate_lane_candidate(
     score = objective.score
     archive_key = candidate_rank_key(score)
     config_sha256 = hashlib.sha256(_canonical_bytes(normalized_config)).hexdigest()
-    decision_payload = np.nan_to_num(
-        decisions.to_numpy(dtype="<f8"),
-        nan=0.0,
-    ).tobytes()
-    strategy_fingerprint = hashlib.sha256(
-        lane_id.encode("ascii")
-        + b"\0"
-        + config_sha256.encode("ascii")
-        + b"\0"
-        + decision_payload
-    ).hexdigest()
+    strategy_fingerprint, position_fingerprint = candidate_fingerprints(
+        lane_id, normalized_config, decisions
+    )
     annual = {
         str(year): asdict(row) for year, row in score.annual_returns.items()
     }
@@ -172,6 +187,7 @@ def evaluate_lane_candidate(
             "config": dict(normalized_config),
             "config_sha256": config_sha256,
             "strategy_fingerprint": strategy_fingerprint,
+            "position_fingerprint": position_fingerprint,
             "train_feasible": score.feasible,
             "failed_years": list(score.failed_years),
             "annual_returns": annual,
@@ -293,6 +309,7 @@ def load_train_total_return_ledger(
 __all__ = [
     "DehbWorkerError",
     "FeatureEvaluator",
+    "candidate_fingerprints",
     "evaluate_lane_candidate",
     "evaluate_physical_lane_candidate",
     "feature_frame_to_decisions",

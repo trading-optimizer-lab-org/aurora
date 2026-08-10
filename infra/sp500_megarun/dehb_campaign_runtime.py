@@ -411,6 +411,7 @@ def controller_decision(
     restart_ordinal: int | None = None,
     island_restart_ordinals: Mapping[str, int] | None = None,
     resume_island_ids: AbstractSet[str] | None = None,
+    global_robustness: Mapping[str, Any] | None = None,
 ) -> Mapping[str, Any]:
     """Retry incomplete work, freeze a consensus winner, or open a diverse wave."""
 
@@ -457,6 +458,41 @@ def controller_decision(
         int(island.get("full_fidelity_evaluations", 0)) >= 1
         for island in all_islands
     )
+    if global_robustness is not None:
+        if (
+            global_robustness.get("campaign_contract_sha256") != contract.sha256
+            or global_robustness.get("validation_opened") is not False
+            or global_robustness.get("locked_opened") is not False
+        ):
+            raise CampaignRuntimeError("GLOBAL_ROBUSTNESS_BINDING_INVALID")
+        frozen = global_robustness.get("eligible_finalists")
+        if not isinstance(frozen, list):
+            raise CampaignRuntimeError("GLOBAL_ROBUSTNESS_FINALISTS_INVALID")
+        eligible_global = [
+            row
+            for row in frozen
+            if isinstance(row, Mapping)
+            and row.get("all_60_gates_passed") is True
+            and int(row.get("seed_consensus", 0)) >= 2
+        ]
+        if eligible_global and budget_floor_complete:
+            best = min(
+                eligible_global,
+                key=lambda row: tuple(float(value) for value in row["archive_key"]),
+            )
+            return {
+                **common,
+                "action": "freeze_train_candidate",
+                "strategy_fingerprint": str(best["strategy_fingerprint"]),
+                "position_fingerprint": str(best["position_fingerprint"]),
+                "lane_id": str(best["lane_id"]),
+                "archive_key": list(best["archive_key"]),
+                "seed_consensus": int(best["seed_consensus"]),
+                "supporting_islands": list(best["supporting_islands"]),
+                "candidate_frozen_before_validation": True,
+                "all_60_robustness_gates_passed": True,
+            }
+
     candidates: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
     for _, islands in by_job.values():
         for island in islands:
@@ -489,7 +525,7 @@ def controller_decision(
             continue
         best_key = min(tuple(float(value) for value in row["archive_key"]) for row in rows)
         eligible.append((best_key, lane_id, fingerprint, consensus, rows))
-    if eligible and budget_floor_complete:
+    if global_robustness is None and eligible and budget_floor_complete:
         best_key, lane_id, fingerprint, consensus, rows = min(eligible)
         return {
             **common,

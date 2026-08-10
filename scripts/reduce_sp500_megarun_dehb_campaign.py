@@ -60,12 +60,23 @@ def main() -> int:
     parser.add_argument("--wave", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--global-robustness", type=Path)
     args = parser.parse_args()
 
     contract = load_and_validate_campaign_contract(args.contract)
     validate_campaign_bindings(contract, repo_root=REPO_ROOT)
     results = _load_results(args.results_root)
-    decision = controller_decision(contract, results, wave=args.wave)
+    global_robustness = (
+        json.loads(args.global_robustness.read_text("utf-8"))
+        if args.global_robustness is not None
+        else None
+    )
+    decision = controller_decision(
+        contract,
+        results,
+        wave=args.wave,
+        global_robustness=global_robustness,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(decision, indent=2, sort_keys=True) + "\n",
