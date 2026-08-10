@@ -90,6 +90,13 @@ def test_dependency_lock_is_domain_hash_bound_and_contains_exact_official_pins()
     }
 
 
+def test_dependency_lock_checkout_is_forced_to_lf_on_every_runner() -> None:
+    attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+
+    assert "requirements/dehb-official.lock text eol=lf" in attributes.splitlines()
+    assert b"\r\n" not in DEPENDENCY_LOCK.read_bytes()
+
+
 def test_cli_refuses_to_overwrite_a_nonempty_output_directory(tmp_path: Path) -> None:
     from aurora.infra.sp500_megarun.dehb_official_smoke import (
         OfficialDehbSmokeError,
