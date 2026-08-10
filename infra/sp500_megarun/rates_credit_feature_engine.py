@@ -262,12 +262,11 @@ def _f183(
         columns=("real_rate_cpi", "real_rate_pce", "real_rate_pgdp"),
         label="spf_real_rate",
     )
-    basis = _choice(parameters, "inflation_basis", ("cpi", "pce", "pgdp", "median"), "median")
+    basis = _choice(parameters, "inflation_basis", ("cpi", "pce", "pgdp"), "pce")
     bases = {
         "cpi": values["real_rate_cpi"],
         "pce": values["real_rate_pce"],
         "pgdp": values["real_rate_pgdp"],
-        "median": values.median(axis=1, skipna=True),
     }
     base = bases[basis]
     window = _positive(parameters, "window", 8)
@@ -675,7 +674,7 @@ _DEFAULT_PARAMETERS: Mapping[str, Mapping[str, Any]] = {
     },
     "F183": {
         "statistic": "level",
-        "inflation_basis": "median",
+        "inflation_basis": "pce",
         "window": 8,
         "direction": "continuation",
     },

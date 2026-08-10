@@ -602,6 +602,27 @@ def _forbidden_parameter_pairs(
             )
             for lag in space["lag"][1:]
         )
+    if lane.lane_id in {"F205", "F206", "F207"}:
+        pairs.extend(
+            ("normalization", normalization, "window", window)
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id in {
+        "F202",
+        "F203",
+        "F205",
+        "F206",
+        "F207",
+        "F208",
+        "F209",
+        "F210",
+    }:
+        pairs.extend(
+            ("normalization", normalization, "change_lag", lag)
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
     if lane.lane_id in {"F023", "F026", "F030", "F031"}:
         pairs.extend(
             ("window", 1, "normalization", normalization)
@@ -1035,6 +1056,90 @@ def _forbidden_parameter_triplets(
             for statistic in simple_statistics[lane.lane_id]
             for normalization in ("raw", "change")
             for window in space["window"][1:]
+        )
+    if lane.lane_id in {"F201", "F202", "F203", "F204", "F208", "F209", "F210"}:
+        simple_statistics = {
+            "F201": (
+                "household_equity_share",
+                "household_liquid_share",
+                "equity_liquidity_ratio",
+                "equity_share_change",
+            ),
+            "F202": (
+                "household_leverage",
+                "liquid_assets_to_liabilities",
+                "liabilities_growth",
+                "liquidity_growth",
+            ),
+            "F203": (
+                "corporate_leverage",
+                "corporate_liquid_share",
+                "corporate_debt_share",
+                "corporate_liquidity_change",
+            ),
+            "F204": (
+                "corporate_net_issuance",
+                "issuance_to_assets",
+                "issuance_change",
+            ),
+            "F208": (
+                "broker_leverage",
+                "repo_funding_share",
+                "repo_asset_share",
+                "broker_assets_growth",
+            ),
+            "F209": (
+                "tic_treasury_flow",
+                "tic_equity_flow",
+                "tic_total_flow",
+                "z1_foreign_flow",
+                "equity_treasury_divergence",
+            ),
+            "F210": (
+                "household_to_fund",
+                "fund_to_broker",
+                "broker_to_business",
+            ),
+        }
+        triplets.extend(
+            (
+                "statistic",
+                statistic,
+                "normalization",
+                normalization,
+                "window",
+                window,
+            )
+            for statistic in simple_statistics[lane.lane_id]
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id in {"F201", "F204"}:
+        simple_statistics = {
+            "F201": (
+                "household_equity_share",
+                "household_liquid_share",
+                "equity_liquidity_ratio",
+                "risk_appetite",
+            ),
+            "F204": (
+                "corporate_net_issuance",
+                "issuance_to_assets",
+                "issuance_pressure",
+            ),
+        }
+        triplets.extend(
+            (
+                "statistic",
+                statistic,
+                "normalization",
+                normalization,
+                "change_lag",
+                lag,
+            )
+            for statistic in simple_statistics[lane.lane_id]
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
         )
     return tuple(triplets)
 

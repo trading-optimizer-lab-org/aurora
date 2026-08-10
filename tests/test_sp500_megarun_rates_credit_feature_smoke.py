@@ -198,8 +198,8 @@ def test_rates_credit_smoke_builds_f181_f190_train_only_artifacts(tmp_path: Path
     assert report["empty_lanes"] == []
     parameter_audit = report["parameter_choice_audit"]
     assert parameter_audit["ready"] is True
-    assert parameter_audit["expected_choice_probe_count"] == 201
-    assert parameter_audit["choice_probe_count"] == 201
+    assert parameter_audit["expected_choice_probe_count"] == 200
+    assert parameter_audit["choice_probe_count"] == 200
     assert parameter_audit["failed_probes"] == []
     assert parameter_audit["inactive_choice_groups"] == []
     assert (tmp_path / "out" / "features" / "F181.parquet").is_file()

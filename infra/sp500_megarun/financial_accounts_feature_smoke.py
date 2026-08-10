@@ -10,7 +10,11 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.feature_audit import audit_feature_outputs
+from aurora.infra.sp500_megarun.feature_contract import (
+    load_and_validate_feature_contract,
+)
 from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_revised_z1_financial_accounts_panel,
     normalize_spy_decision_panel,
@@ -18,8 +22,12 @@ from aurora.infra.sp500_megarun.feature_input_normalizers import (
 )
 from aurora.infra.sp500_megarun.financial_accounts_feature_engine import (
     evaluate_financial_accounts_family_batch,
+    evaluate_financial_accounts_lane,
 )
 from aurora.infra.sp500_megarun.materializer import parquet_safe_frame
+from aurora.infra.sp500_megarun.parameter_choice_audit import (
+    audit_frozen_parameter_choices,
+)
 
 
 class FinancialAccountsFeatureSmokeError(ValueError):
@@ -30,6 +38,8 @@ _TRAIN_PARTITION = "train_snapshot_1993_2010"
 _SEARCH_START = pd.Timestamp("1998-01-01")
 _TRAIN_END = pd.Timestamp("2010-12-31")
 _LANES = tuple(f"F{index:03d}" for index in range(201, 211))
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PARAMETER_AUDIT_START = pd.Timestamp("2003-01-01")
 _DATASETS = ("D_SPY", "D_CALENDAR", "D_Z1", "D_TIC")
 _REQUIRED_Z1_SERIES: Mapping[str, tuple[str, ...]] = {
     "household_equity": ("LM153064105.Q", "FL153064105.Q"),
@@ -120,6 +130,58 @@ def _first_available(panel: pd.DataFrame, column: str) -> str | None:
     return pd.to_datetime(panel.loc[valid, "available_at"]).min().date().isoformat()
 
 
+def _repair_financial_accounts_configuration(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    if parameter == "change_lag":
+        if lane_id == "F201":
+            configuration["statistic"] = "equity_share_change"
+        elif lane_id == "F204":
+            configuration["statistic"] = "issuance_change"
+        else:
+            configuration["normalization"] = "change"
+    window_statistics = {
+        "F201": "risk_appetite",
+        "F202": "household_balance_composite",
+        "F203": "corporate_balance_composite",
+        "F204": "issuance_pressure",
+        "F208": "dealer_capacity",
+        "F209": "combined_foreign_flow",
+        "F210": "interconnection_composite",
+    }
+    if lane_id in window_statistics and parameter == "window":
+        configuration["statistic"] = window_statistics[lane_id]
+    if lane_id in {"F205", "F206", "F207"} and parameter == "window":
+        configuration["normalization"] = "rolling_zscore"
+    return configuration
+
+
+def _parameter_audit_inputs(
+    market: pd.DataFrame,
+    panels: dict[str, pd.DataFrame],
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    market_dates = pd.to_datetime(market["date"], errors="raise")
+    audit_market = market.loc[
+        market_dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+    ].reset_index(drop=True)
+    if not (pd.DatetimeIndex(audit_market["date"]).year == 2010).any():
+        raise FinancialAccountsFeatureSmokeError("PARAMETER_AUDIT_2010_MISSING")
+    audit_panels: dict[str, pd.DataFrame] = {}
+    for resource, panel in panels.items():
+        dates = pd.to_datetime(panel["date"], errors="raise")
+        bounded = panel.loc[
+            dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+        ].reset_index(drop=True)
+        if bounded.empty:
+            raise FinancialAccountsFeatureSmokeError(
+                f"PARAMETER_AUDIT_PANEL_EMPTY:{resource}"
+            )
+        audit_panels[resource] = bounded
+    return audit_market, audit_panels
+
+
 def build_financial_accounts_feature_smoke(
     train_snapshot: str | Path,
     *,
@@ -165,10 +227,11 @@ def build_financial_accounts_feature_smoke(
         raw["D_Z1"], sessions=sessions
     )
     tic = normalize_tic_foreign_flow_panel(raw["D_TIC"], sessions=sessions)
+    panels = {"financial_accounts": financial, "tic": tic}
     outputs = dict(
         evaluate_financial_accounts_family_batch(
             market,
-            {"financial_accounts": financial, "tic": tic},
+            panels,
         )
     )
     audit = audit_feature_outputs(
@@ -176,6 +239,26 @@ def build_financial_accounts_feature_smoke(
         expected_lane_ids=_LANES,
         search_start=_SEARCH_START,
         search_end=_TRAIN_END,
+    )
+    data_contract = load_and_validate_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_free_data_240.json"
+    )
+    feature_contract = load_and_validate_feature_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_feature_contract_240.json",
+        data_contract,
+    )
+    audit_market, audit_panels = _parameter_audit_inputs(market, panels)
+    parameter_audit = audit_frozen_parameter_choices(
+        feature_contract,
+        lane_ids=_LANES,
+        evaluator=lambda lane_id, configuration: evaluate_financial_accounts_lane(
+            lane_id,
+            audit_market,
+            audit_panels,
+            configuration,
+        ),
+        expected_years=(2010,),
+        repair=_repair_financial_accounts_configuration,
     )
 
     root = Path(output_dir)
@@ -197,6 +280,7 @@ def build_financial_accounts_feature_smoke(
     near_duplicates = [list(pair) for pair in audit.near_duplicate_pairs]
     ready = bool(
         audit.ready
+        and parameter_audit["ready"]
         and len(outputs) == len(_LANES)
         and not exact_duplicates
         and not near_duplicates
@@ -232,10 +316,16 @@ def build_financial_accounts_feature_smoke(
         "near_duplicate_pairs": near_duplicates,
         "coverage": [asdict(item) for item in audit.coverage],
         "artifacts": artifacts,
+        "parameter_choice_audit_scope": "physical_causal_tail_2003_2010",
+        "parameter_choice_audit": parameter_audit,
     }
     root.mkdir(parents=True, exist_ok=True)
     (root / "financial_accounts_feature_smoke_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (root / "parameter_choice_audit_F201_F210.json").write_text(
+        json.dumps(parameter_audit, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return report

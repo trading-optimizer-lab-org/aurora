@@ -199,6 +199,7 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
         for conjunction in row.configspace.forbidden_clauses
     }
+
     assert (("window", 20), ("tail", 0.025)) in forbidden
     assert (("window", 20), ("tail", 0.05)) in forbidden
     assert (("window", 40), ("tail", 0.025)) in forbidden
@@ -283,7 +284,7 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F180", 12),
         ("F181", 14),
         ("F182", 26),
-        ("F183", 9),
+        ("F183", 8),
         ("F184", 30),
         ("F185", 47),
         ("F186", 18),
@@ -300,6 +301,16 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F198", 36),
         ("F199", 36),
         ("F200", 12),
+        ("F201", 48),
+        ("F202", 30),
+        ("F203", 30),
+        ("F204", 36),
+        ("F205", 12),
+        ("F206", 12),
+        ("F207", 12),
+        ("F208", 30),
+        ("F209", 36),
+        ("F210", 24),
     ],
 )
 def test_conditionally_inactive_model_parameters_are_forbidden(
@@ -428,6 +439,14 @@ def test_f180_long_window_rules_are_scoped_to_the_statistics_that_use_it(
     }
 
 
+def test_f183_removes_the_physical_train_duplicate_median_basis(
+    feature_contract,
+) -> None:
+    lane = next(item for item in feature_contract.lanes if item.lane_id == "F183")
+
+    assert lane.parameter_space["inflation_basis"] == ("cpi", "pce", "pgdp")
+
+
 @pytest.mark.parametrize(
     ("lane_id", "scoped_statistic", "excluded_statistics", "expected_triplets"),
     [
@@ -460,6 +479,22 @@ def test_f180_long_window_rules_are_scoped_to_the_statistics_that_use_it(
             ("rolling_bias", "rolling_absolute_error"),
             30,
         ),
+        ("F201", "household_equity_share", ("risk_appetite",), 24),
+        ("F202", "household_leverage", ("household_balance_composite",), 24),
+        ("F203", "corporate_leverage", ("corporate_balance_composite",), 24),
+        ("F204", "corporate_net_issuance", ("issuance_pressure",), 18),
+        ("F208", "broker_leverage", ("dealer_capacity",), 24),
+        ("F209", "tic_treasury_flow", ("combined_foreign_flow",), 30),
+        (
+            "F210",
+            "household_to_fund",
+            (
+                "interconnection_mean",
+                "interconnection_max",
+                "interconnection_composite",
+            ),
+            18,
+        ),
     ],
 )
 def test_internal_composites_keep_their_window_while_raw_simple_statistics_do_not(
@@ -481,6 +516,7 @@ def test_internal_composites_keep_their_window_while_raw_simple_statistics_do_no
         tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
         for conjunction in row.configspace.forbidden_clauses
         if len(conjunction.clauses) == 3
+        and any(clause.hyperparameter.name == "window" for clause in conjunction.clauses)
     }
 
     assert len(triplets) == expected_triplets
@@ -490,6 +526,43 @@ def test_internal_composites_keep_their_window_while_raw_simple_statistics_do_no
         for item in triplets
         for excluded_statistic in excluded_statistics
     )
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "scoped_statistic", "excluded_statistic", "expected_triplets"),
+    [
+        ("F201", "household_equity_share", "equity_share_change", 24),
+        ("F204", "corporate_net_issuance", "issuance_change", 18),
+    ],
+)
+def test_internal_changes_keep_change_lag_while_other_raw_statistics_do_not(
+    feature_contract,
+    lane_id: str,
+    scoped_statistic: str,
+    excluded_statistic: str,
+    expected_triplets: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    triplets = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 3
+        and any(
+            clause.hyperparameter.name == "change_lag"
+            for clause in conjunction.clauses
+        )
+    }
+
+    assert len(triplets) == expected_triplets
+    assert any(("statistic", scoped_statistic) in item for item in triplets)
+    assert all(("statistic", excluded_statistic) not in item for item in triplets)
 
 
 def test_manifest_freezes_fidelities_versions_boundaries_and_exact_choices(

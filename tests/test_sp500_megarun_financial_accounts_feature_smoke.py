@@ -150,6 +150,12 @@ def test_financial_accounts_smoke_builds_f201_f210_train_only_artifacts(
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
     assert report["empty_lanes"] == []
+    parameter_audit = report["parameter_choice_audit"]
+    assert parameter_audit["ready"] is True
+    assert parameter_audit["expected_choice_probe_count"] == 179
+    assert parameter_audit["choice_probe_count"] == 179
+    assert parameter_audit["failed_probes"] == []
+    assert parameter_audit["inactive_choice_groups"] == []
     assert report["exact_duplicate_groups"] == []
     assert report["near_duplicate_pairs"] == []
     assert len(report["coverage"]) == 10
@@ -211,3 +217,47 @@ def test_financial_accounts_smoke_cli_accepts_contract(
     )
 
     assert cli.main() == 0
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "parameter", "configuration", "expected"),
+    [
+        ("F201", "window", {"statistic": "household_equity_share"}, {"statistic": "risk_appetite"}),
+        ("F201", "change_lag", {"statistic": "household_equity_share"}, {"statistic": "equity_share_change"}),
+        ("F202", "window", {"statistic": "household_leverage"}, {"statistic": "household_balance_composite"}),
+        ("F204", "window", {"statistic": "corporate_net_issuance"}, {"statistic": "issuance_pressure"}),
+        ("F204", "change_lag", {"statistic": "corporate_net_issuance"}, {"statistic": "issuance_change"}),
+        ("F205", "window", {"normalization": "raw"}, {"normalization": "rolling_zscore"}),
+        ("F208", "window", {"statistic": "broker_leverage"}, {"statistic": "dealer_capacity"}),
+        ("F209", "window", {"statistic": "tic_treasury_flow"}, {"statistic": "combined_foreign_flow"}),
+        ("F210", "window", {"statistic": "household_to_fund"}, {"statistic": "interconnection_composite"}),
+    ],
+)
+def test_financial_accounts_parameter_witnesses_activate_conditional_choices(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    repaired = _api()._repair_financial_accounts_configuration(
+        lane_id,
+        parameter,
+        configuration.copy(),
+    )
+
+    for name, value in expected.items():
+        assert repaired[name] == value
+
+
+def test_financial_accounts_physical_smoke_has_an_isolated_dispatch_scope() -> None:
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "sp500-megarun-macro-feature-smoke-f032.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "- f201_f210" in workflow
+    assert "smoke_f201_f210:" in workflow
+    assert "inputs.scope == 'f201_f210'" in workflow
+    assert "timeout-minutes: 15" in workflow

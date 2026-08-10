@@ -137,7 +137,7 @@ def _parameters(lane: str) -> dict[str, object]:
         },
         "F183": {
             "statistic": "level",
-            "inflation_basis": "median",
+            "inflation_basis": "pce",
             "window": 8,
             "direction": "continuation",
         },
@@ -233,7 +233,7 @@ def test_f181_f190_do_not_change_when_future_rows_are_appended(lane: str) -> Non
             "statistic",
             ("forward_2y5y", "forward_5y10y", "forward_slope", "butterfly", "slope_shock"),
         ),
-        ("F183", "inflation_basis", ("cpi", "pce", "pgdp", "median")),
+        ("F183", "inflation_basis", ("cpi", "pce", "pgdp")),
         ("F183", "statistic", ("level", "change", "dispersion", "tightness")),
         (
             "F184",
