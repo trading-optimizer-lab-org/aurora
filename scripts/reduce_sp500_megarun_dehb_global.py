@@ -44,8 +44,13 @@ def _reconcile_finalist(
         row = by_gate.get(gate_id, {"gate_id": gate_id, "stage": "global_merge"})
         row["status"] = "PASS" if global_gates.get(str(gate_id)) is True else "FAIL"
         by_gate[gate_id] = row
+    accepted_statuses = {"PASS", "MEASURED", "NOT_APPLICABLE"}
+    train_freeze_eligible = len(by_gate) == 60 and all(
+        by_gate[gate_id].get("status") in accepted_statuses
+        for gate_id in (*range(1, 49), *range(55, 61))
+    )
     complete = len(by_gate) == 60 and all(
-        row.get("status") in {"PASS", "MEASURED", "NOT_APPLICABLE"}
+        row.get("status") in accepted_statuses
         for row in by_gate.values()
     )
     return {
@@ -59,6 +64,7 @@ def _reconcile_finalist(
             finalist.get("candidate_local_robustness_passed") is True
         ),
         "global_multiplicity_passed": global_row.get("passed") is True,
+        "train_freeze_eligible": train_freeze_eligible,
         "all_60_gates_passed": complete,
         "gate_matrix": [by_gate[gate_id] for gate_id in sorted(by_gate)],
     }

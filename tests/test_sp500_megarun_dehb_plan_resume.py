@@ -29,11 +29,13 @@ def test_plan_script_accepts_only_closed_matching_prior_decision(tmp_path: Path)
     }
     target = tmp_path / "decision.json"
     target.write_text(json.dumps(decision), encoding="utf-8")
-    ordinals, resume = _load_prior_decision(
+    action, ordinals, resume, retry = _load_prior_decision(
         target, campaign_sha256=campaign.sha256, wave=1
     )
+    assert action == "dispatch_next_wave"
     assert len(ordinals) == 720
     assert resume == frozenset()
+    assert retry == []
 
     decision["validation_opened"] = True
     target.write_text(json.dumps(decision), encoding="utf-8")

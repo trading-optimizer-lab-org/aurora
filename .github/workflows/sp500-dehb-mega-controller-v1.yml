@@ -1,0 +1,288 @@
+name: SP500 Official DEHB Mega Controller v1
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Frozen campaign revision used by every wave
+        required: true
+      wave:
+        description: Current scientific wave
+        required: true
+        default: "0"
+      restart_ordinal:
+        description: Default restart ordinal for a new wave
+        required: true
+        default: "0"
+      runtime_input_run_id:
+        description: Exact immutable train-only runtime-input artifact run
+        required: true
+      prior_decision_run_id:
+        description: Immediate prior controller run, or zero for first wave
+        required: true
+        default: "0"
+      evidence_run_ids:
+        description: Comma-separated earlier retry runs in this same wave
+        required: false
+        default: ""
+      checkpoint_run_ids:
+        description: Comma-separated runs holding prior-wave island checkpoints
+        required: false
+        default: ""
+      auto_continue:
+        description: Dispatch retry or next wave automatically
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: sp500-official-dehb-mega-controller-v1
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      matrix_a: ${{ steps.plan.outputs.matrix_a }}
+      matrix_b: ${{ steps.plan.outputs.matrix_b }}
+      matrix_c: ${{ steps.plan.outputs.matrix_c }}
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out frozen campaign revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install package without research dependencies
+        run: python -m pip install --no-deps -e .
+      - name: Download immediate prior controller decision
+        if: inputs.prior_decision_run_id != '0'
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.prior_decision_run_id }}" =~ ^[0-9]+$ ]]
+          gh run download "${{ inputs.prior_decision_run_id }}" \
+            --name sp500-dehb-controller-decision \
+            --dir "$RUNNER_TEMP/prior_decision"
+      - name: Build first, retry, or resumed-wave matrices
+        id: plan
+        run: |
+          set -euo pipefail
+          args=(
+            --output-dir outputs/wave_plan
+            --wave "${{ inputs.wave }}"
+            --restart-ordinal "${{ inputs.restart_ordinal }}"
+            --github-output "$GITHUB_OUTPUT"
+          )
+          if [[ "${{ inputs.prior_decision_run_id }}" != "0" ]]; then
+            args+=(
+              --prior-decision
+              "$RUNNER_TEMP/prior_decision/controller_decision.json"
+            )
+          fi
+          python scripts/plan_sp500_megarun_dehb_campaign.py "${args[@]}"
+      - name: Upload immutable wave plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-wave-plan
+          path: outputs/wave_plan
+          if-no-files-found: error
+          retention-days: 90
+
+  shard_a:
+    needs: plan
+    uses: ./.github/workflows/_sp500-dehb-mega-shard-v1.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      matrix_json: ${{ needs.plan.outputs.matrix_a }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      checkpoint_run_ids: ${{ inputs.checkpoint_run_ids }}
+
+  shard_b:
+    needs: plan
+    uses: ./.github/workflows/_sp500-dehb-mega-shard-v1.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      matrix_json: ${{ needs.plan.outputs.matrix_b }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      checkpoint_run_ids: ${{ inputs.checkpoint_run_ids }}
+
+  shard_c:
+    needs: plan
+    uses: ./.github/workflows/_sp500-dehb-mega-shard-v1.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      matrix_json: ${{ needs.plan.outputs.matrix_c }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      checkpoint_run_ids: ${{ inputs.checkpoint_run_ids }}
+
+  reduce:
+    needs: [plan, shard_a, shard_b, shard_c]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    outputs:
+      action: ${{ steps.controller.outputs.action }}
+      next_wave: ${{ steps.controller.outputs.next_wave }}
+      next_restart_ordinal: ${{ steps.controller.outputs.next_restart_ordinal }}
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      GH_TOKEN: ${{ github.token }}
+      PRIOR_EVIDENCE_RUN_IDS: ${{ inputs.evidence_run_ids }}
+    steps:
+      - name: Check out frozen campaign revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install frozen official DEHB reducer runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install --no-deps -e .
+      - name: Download complete worker artifacts across retries
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence_sources"
+          IFS=',' read -ra prior_ids <<< "$PRIOR_EVIDENCE_RUN_IDS"
+          source_args=()
+          order=0
+          for run_id in "${prior_ids[@]}" "${{ github.run_id }}"; do
+            [[ "$run_id" =~ ^[0-9]+$ ]] || continue
+            target="$RUNNER_TEMP/evidence_sources/$order-$run_id"
+            mkdir -p "$target"
+            gh run download "$run_id" \
+              --pattern 'sp500-dehb-worker-*' \
+              --dir "$target" || true
+            source_args+=(--source-dir "$target")
+            order=$((order + 1))
+          done
+          python scripts/assemble_sp500_megarun_dehb_evidence.py \
+            "${source_args[@]}" \
+            --output-dir outputs/combined_workers
+      - name: Count complete worker jobs
+        id: evidence
+        run: |
+          python -c "import json,os,pathlib; r=json.loads(pathlib.Path('outputs/combined_workers/assembly_receipt.json').read_text()); pathlib.Path(os.environ['GITHUB_OUTPUT']).open('a',encoding='utf-8').write('complete_workers='+str(r['complete_worker_count'])+'\n')"
+      - name: Download immutable runtime pack for complete global reduction
+        if: steps.evidence.outputs.complete_workers == '360'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          path: ${{ runner.temp }}/dehb_runtime_inputs
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Run global multiplicity and 60-gate reconciliation
+        id: global
+        if: steps.evidence.outputs.complete_workers == '360'
+        run: |
+          python scripts/reduce_sp500_megarun_dehb_global.py \
+            --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+            --data-contract config/sp500_megarun_free_data_240.json \
+            --feature-contract config/sp500_megarun_feature_contract_240.json \
+            --worker-root outputs/combined_workers \
+            --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs" \
+            --output-dir outputs/global_reduce
+      - name: Reduce complete wave with global gates
+        id: controller_complete
+        if: steps.evidence.outputs.complete_workers == '360' && steps.global.outcome == 'success'
+        run: |
+          python scripts/reduce_sp500_megarun_dehb_campaign.py \
+            --results-root outputs/combined_workers \
+            --wave "${{ inputs.wave }}" \
+            --global-robustness outputs/global_reduce/global_robustness.json \
+            --output outputs/controller/controller_decision.json \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Reduce incomplete wave to exact retry jobs
+        id: controller_retry
+        if: steps.evidence.outputs.complete_workers != '360'
+        run: |
+          python scripts/reduce_sp500_megarun_dehb_campaign.py \
+            --results-root outputs/combined_workers \
+            --wave "${{ inputs.wave }}" \
+            --output outputs/controller/controller_decision.json \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Fail closed if global reduction failed with complete evidence
+        if: steps.evidence.outputs.complete_workers == '360' && steps.global.outcome != 'success'
+        run: exit 1
+      - name: Normalize controller outputs
+        id: controller
+        env:
+          ACTION_COMPLETE: ${{ steps.controller_complete.outputs.action }}
+          ACTION_RETRY: ${{ steps.controller_retry.outputs.action }}
+          WAVE_COMPLETE: ${{ steps.controller_complete.outputs.next_wave }}
+          WAVE_RETRY: ${{ steps.controller_retry.outputs.next_wave }}
+          RESTART_COMPLETE: ${{ steps.controller_complete.outputs.next_restart_ordinal }}
+          RESTART_RETRY: ${{ steps.controller_retry.outputs.next_restart_ordinal }}
+        run: |
+          python -c "import os,pathlib; o=pathlib.Path(os.environ['GITHUB_OUTPUT']); f=o.open('a',encoding='utf-8'); [f.write(k+'='+(os.environ[a] or os.environ[b])+'\n') for k,a,b in [('action','ACTION_COMPLETE','ACTION_RETRY'),('next_wave','WAVE_COMPLETE','WAVE_RETRY'),('next_restart_ordinal','RESTART_COMPLETE','RESTART_RETRY')]; f.close()"
+      - name: Upload controller decision
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-controller-decision
+          path: outputs/controller
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload global robustness evidence
+        if: steps.global.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-global-robustness
+          path: outputs/global_reduce
+          if-no-files-found: error
+          retention-days: 90
+
+  continue:
+    needs: reduce
+    if: inputs.auto_continue && (needs.reduce.outputs.action == 'retry_jobs' || needs.reduce.outputs.action == 'dispatch_next_wave')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Dispatch exact retry or next scientific wave
+        shell: bash
+        run: |
+          set -euo pipefail
+          action="${{ needs.reduce.outputs.action }}"
+          evidence_ids="${{ inputs.evidence_run_ids }}"
+          checkpoint_ids="${{ inputs.checkpoint_run_ids }}"
+          if [[ "$action" == "retry_jobs" ]]; then
+            next_wave="${{ inputs.wave }}"
+            next_restart="${{ inputs.restart_ordinal }}"
+            evidence_ids="${evidence_ids:+$evidence_ids,}${{ github.run_id }}"
+          else
+            next_wave="${{ needs.reduce.outputs.next_wave }}"
+            next_restart="${{ needs.reduce.outputs.next_restart_ordinal }}"
+            checkpoint_ids="${evidence_ids:+$evidence_ids,}${{ github.run_id }}"
+            evidence_ids=""
+          fi
+          gh workflow run sp500-dehb-mega-controller-v1.yml \
+            --ref "${{ github.ref_name }}" \
+            -f commit_sha="${{ inputs.commit_sha }}" \
+            -f wave="$next_wave" \
+            -f restart_ordinal="$next_restart" \
+            -f runtime_input_run_id="${{ inputs.runtime_input_run_id }}" \
+            -f prior_decision_run_id="${{ github.run_id }}" \
+            -f evidence_run_ids="$evidence_ids" \
+            -f checkpoint_run_ids="$checkpoint_ids" \
+            -f auto_continue=true

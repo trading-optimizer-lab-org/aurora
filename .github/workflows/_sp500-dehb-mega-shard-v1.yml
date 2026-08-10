@@ -12,7 +12,7 @@ on:
       runtime_input_run_id:
         required: true
         type: string
-      previous_run_id:
+      checkpoint_run_ids:
         required: false
         default: "0"
         type: string
@@ -33,4 +33,4 @@ jobs:
       job_id: ${{ matrix.job_id }}
       job_payload: ${{ toJSON(matrix) }}
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
-      previous_shard_run_id: ${{ inputs.previous_run_id }}
+      checkpoint_run_ids: ${{ inputs.checkpoint_run_ids }}

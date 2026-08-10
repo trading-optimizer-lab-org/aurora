@@ -216,7 +216,9 @@ def test_controller_resumes_sliced_population_but_restarts_plateaued_ones(campai
     assert decision["terminal_no_strategy"] is False
 
 
-def test_controller_freezes_only_full_robust_two_seed_consensus(campaign) -> None:
+def test_controller_never_freezes_from_local_champions_without_global_review(
+    campaign,
+) -> None:
     from aurora.infra.sp500_megarun.dehb_campaign_runtime import controller_decision
 
     results = [_worker_result(campaign, job_index=index) for index in range(360)]
@@ -225,10 +227,7 @@ def test_controller_freezes_only_full_robust_two_seed_consensus(campaign) -> Non
     results[120] = _worker_result(campaign, job_index=120, fingerprint="winner")
     decision = controller_decision(campaign, results, wave=0)
 
-    assert decision["action"] == "freeze_train_candidate"
-    assert decision["strategy_fingerprint"] == "winner"
-    assert decision["seed_consensus"] >= 2
-    assert decision["candidate_frozen_before_validation"] is True
+    assert decision["action"] == "dispatch_next_wave"
     assert decision["validation_opened"] is False
     assert decision["locked_opened"] is False
 
@@ -252,6 +251,7 @@ def test_controller_global_gate_cannot_freeze_with_pending_60_gate_matrix(campai
                     "seed_consensus": 3,
                     "supporting_islands": ["F001-R1", "F001-R2", "F001-R3"],
                     "all_60_gates_passed": False,
+                    "train_freeze_eligible": False,
                 }
             ],
             "validation_opened": False,
@@ -260,6 +260,41 @@ def test_controller_global_gate_cannot_freeze_with_pending_60_gate_matrix(campai
     )
     assert decision["action"] == "dispatch_next_wave"
     assert decision["terminal_no_strategy"] is False
+
+
+def test_controller_freezes_only_after_all_train_gates_and_global_review(campaign) -> None:
+    from aurora.infra.sp500_megarun.dehb_campaign_runtime import controller_decision
+
+    results = [_worker_result(campaign, job_index=index) for index in range(360)]
+    decision = controller_decision(
+        campaign,
+        results,
+        wave=0,
+        global_robustness={
+            "campaign_contract_sha256": campaign.sha256,
+            "eligible_finalists": [
+                {
+                    "strategy_fingerprint": "winner",
+                    "position_fingerprint": "p" * 64,
+                    "lane_id": "F001",
+                    "archive_key": [0.0, -0.2, -0.6, -0.1],
+                    "seed_consensus": 3,
+                    "supporting_islands": ["F001-R1", "F001-R2", "F001-R3"],
+                    "all_60_gates_passed": False,
+                    "train_freeze_eligible": True,
+                }
+            ],
+            "validation_opened": False,
+            "locked_opened": False,
+        },
+    )
+
+    assert decision["action"] == "freeze_train_candidate"
+    assert decision["strategy_fingerprint"] == "winner"
+    assert decision["train_robustness_gates_passed"] is True
+    assert decision["validation_gates_49_54_pending"] is True
+    assert decision["validation_opened"] is False
+    assert decision["locked_opened"] is False
 
 
 def test_checkpoint_envelope_is_bound_to_campaign_island_and_closed_data(campaign) -> None:

@@ -451,7 +451,12 @@ def controller_decision(
         "locked_opened": False,
     }
     if retry:
-        return {**common, "action": "retry_jobs", "retry_job_indices": retry}
+        return {
+            **common,
+            "action": "retry_jobs",
+            "retry_job_indices": retry,
+            "retry_job_payloads": [expected_payloads[index] for index in retry],
+        }
 
     all_islands = [island for _, islands in by_job.values() for island in islands]
     budget_floor_complete = all(
@@ -472,7 +477,7 @@ def controller_decision(
             row
             for row in frozen
             if isinstance(row, Mapping)
-            and row.get("all_60_gates_passed") is True
+            and row.get("train_freeze_eligible") is True
             and int(row.get("seed_consensus", 0)) >= 2
         ]
         if eligible_global and budget_floor_complete:
@@ -490,53 +495,10 @@ def controller_decision(
                 "seed_consensus": int(best["seed_consensus"]),
                 "supporting_islands": list(best["supporting_islands"]),
                 "candidate_frozen_before_validation": True,
-                "all_60_robustness_gates_passed": True,
+                "train_robustness_gates_passed": True,
+                "validation_gates_49_54_pending": True,
             }
 
-    candidates: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
-    for _, islands in by_job.values():
-        for island in islands:
-            champion = island.get("champion")
-            if not isinstance(champion, Mapping):
-                continue
-            if not (
-                champion.get("full_fidelity") is True
-                and champion.get("train_feasible") is True
-                and champion.get("robustness_passed") is True
-            ):
-                continue
-            fingerprint = str(champion.get("strategy_fingerprint", ""))
-            lane_id = str(island.get("lane_id", ""))
-            archive_key = champion.get("archive_key")
-            if not fingerprint or not isinstance(archive_key, list):
-                raise CampaignRuntimeError("INVALID_CHAMPION_RECORD")
-            candidate = {
-                **dict(champion),
-                "lane_id": lane_id,
-                "replicate": int(island.get("replicate", 0)),
-                "island_id": str(island.get("island_id")),
-            }
-            candidates.setdefault((lane_id, fingerprint), []).append(candidate)
-
-    eligible: list[tuple[tuple[float, ...], str, str, int, list[Mapping[str, Any]]]] = []
-    for (lane_id, fingerprint), rows in candidates.items():
-        consensus = len({int(row["replicate"]) for row in rows})
-        if consensus < 2:
-            continue
-        best_key = min(tuple(float(value) for value in row["archive_key"]) for row in rows)
-        eligible.append((best_key, lane_id, fingerprint, consensus, rows))
-    if global_robustness is None and eligible and budget_floor_complete:
-        best_key, lane_id, fingerprint, consensus, rows = min(eligible)
-        return {
-            **common,
-            "action": "freeze_train_candidate",
-            "strategy_fingerprint": fingerprint,
-            "lane_id": lane_id,
-            "archive_key": list(best_key),
-            "seed_consensus": consensus,
-            "supporting_islands": sorted(str(row["island_id"]) for row in rows),
-            "candidate_frozen_before_validation": True,
-        }
     resume_ids_next = sorted(
         str(island["island_id"])
         for island in all_islands
