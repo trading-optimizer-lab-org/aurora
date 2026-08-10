@@ -127,3 +127,17 @@ def test_nonlinear_parameter_audit_uses_lane_specific_causal_train_tails() -> No
     assert long["spy"]["date"].isin(long["calendar"]["date"]).all()
     assert short["spy"]["date"].ge(pd.Timestamp("2003-01-02")).all()
     assert long["spy"]["date"].ge(pd.Timestamp("2003-01-02")).all()
+
+
+def test_nonlinear_physical_smoke_has_an_isolated_dispatch_scope() -> None:
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "sp500-megarun-macro-feature-smoke-f032.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "- f131_f140" in workflow
+    assert "smoke_f131_f140:" in workflow
+    assert "inputs.scope == 'f131_f140'" in workflow
+    assert "timeout-minutes: 15" in workflow

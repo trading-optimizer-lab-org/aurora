@@ -129,6 +129,14 @@ on:
         description: Verified preflight run containing the immutable train artifact
         required: true
         default: "31354839628"
+      scope:
+        description: Full smoke or one isolated audited block
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - f131_f140
 
 permissions:
   actions: read
@@ -136,7 +144,7 @@ permissions:
 
 jobs:
   smoke_f001_f240:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -543,3 +551,54 @@ jobs:
           path: outputs/sp500_megarun_public_context_feature_smoke_f231_f240
           if-no-files-found: error
           retention-days: 90
+
+  smoke_f131_f140:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f131_f140'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+    steps:
+      - name: Check out the exact smoke revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Restore bounded smoke runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Download only the verified train snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-train-1993-2010-F001-F240-${{ env.SOURCE_RUN_ID }}
+          path: ${{ runner.temp }}/train_snapshot_1993_2010
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Execute and audit F131-F140 on train only
+        id: nonlinear_feature_smoke
+        continue-on-error: true
+        run: |
+          python scripts/run_sp500_megarun_nonlinear_feature_smoke_f131.py \
+            --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
+            --output-dir outputs/sp500_megarun_nonlinear_feature_smoke_f131_f140
+      - name: Upload F131-F140 train-only evidence
+        if: always() && steps.nonlinear_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-nonlinear-feature-smoke-F131-F140-${{ github.run_id }}
+          path: outputs/sp500_megarun_nonlinear_feature_smoke_f131_f140
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F131-F140 audit is not ready
+        if: always() && steps.nonlinear_feature_smoke.outcome != 'success'
+        run: exit 1
