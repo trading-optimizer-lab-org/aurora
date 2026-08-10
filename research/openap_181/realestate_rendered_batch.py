@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from collections.abc import Iterable, Mapping
@@ -542,8 +543,156 @@ def acquire_rendered_realestate_filing(
             client.close()
 
 
+def run_rendered_realestate_sector_batch(
+    companyfacts: pd.DataFrame,
+    submissions: pd.DataFrame,
+    status: pd.DataFrame,
+    *,
+    formation_at: object,
+    target_sic2: str,
+    anchor_cik: object,
+    source_run_id: object,
+    output_dir: Path | str,
+    minimum_issuers: int = 5,
+    maximum_issuers: int = 12,
+    retrieved_at: object | None = None,
+) -> dict[str, Any]:
+    """Acquire and persist one bounded rendered real-estate sector batch."""
+
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    timestamp = _retrieved_at(retrieved_at)
+    candidates = select_realestate_sector_pilot_candidates(
+        companyfacts,
+        submissions,
+        status,
+        formation_at=formation_at,
+        target_sic2=target_sic2,
+        anchor_cik=anchor_cik,
+        minimum_issuers=minimum_issuers,
+        maximum_issuers=maximum_issuers,
+    )
+    (output / "openap_149_realestate_candidates.json").write_text(
+        json.dumps(candidates, indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
+
+    issuer_evidence: list[dict[str, Any]] = []
+    acquisition_failures: list[dict[str, str]] = []
+    manifest_rows: list[dict[str, Any]] = []
+    for candidate in candidates:
+        cik = str(int(str(candidate["cik"])))
+        try:
+            evidence = acquire_rendered_realestate_filing(
+                candidate,
+                output_dir=output / "rendered_sources",
+                retrieved_at=timestamp,
+            )
+        except Exception as exc:
+            reason = f"acquisition_error:{type(exc).__name__}"
+            acquisition_failures.append({"cik": cik, "reason": reason})
+            evidence = {
+                "signal": "realestate",
+                "status": "acquisition_error",
+                "raw_data_acquired": False,
+                "current_signal_computed": False,
+                "strict_score_eligible": False,
+                "fidelity": "reconstructed_not_strict",
+                "remaining_blocker": reason,
+                "source_files": [],
+                "records": [],
+            }
+        evidence = {**evidence, "selected_cik": cik}
+        issuer_evidence.append(evidence)
+        source_files = [dict(row) for row in evidence.get("source_files") or []]
+        acquired = evidence.get("raw_data_acquired") is True
+        manifest_rows.append(
+            {
+                "cik": cik,
+                "security_id": str(candidate.get("security_id") or ""),
+                "symbol": str(candidate.get("symbol") or ""),
+                "accession_number": str(
+                    candidate.get("accession_number") or ""
+                ),
+                "report_date": _date(candidate.get("report_date")),
+                "status": (
+                    "raw_data_acquired"
+                    if acquired
+                    else str(evidence.get("status") or "blocked_source_failure")
+                ),
+                "raw_data_acquired": acquired,
+                "source_file_count": len(source_files),
+                "downloaded_source_files": sum(
+                    row.get("status") == "downloaded" for row in source_files
+                ),
+                "remaining_blocker": str(
+                    evidence.get("remaining_blocker") or ""
+                ),
+                "formation_at": str(formation_at),
+                "retrieved_at": timestamp,
+                "fidelity": "reconstructed_not_strict",
+                "strict_score_eligible": False,
+            }
+        )
+
+    result = assemble_realestate_sector_pilot(candidates, issuer_evidence)
+    failed_ciks = {row["cik"] for row in acquisition_failures}
+    result["failed_issuers"] = acquisition_failures + [
+        row for row in result["failed_issuers"] if row["cik"] not in failed_ciks
+    ]
+    result.update(
+        {
+            "source_run_id": str(source_run_id),
+            "formation_at": str(formation_at),
+            "target_sic2": str(target_sic2),
+            "anchor_cik": str(int(str(anchor_cik))),
+            "retrieved_at": timestamp,
+            "locked_opened": False,
+            "forward_opened": False,
+            "validation_used_for_selection": False,
+            "cost_eur": 0,
+        }
+    )
+
+    raw_records = [
+        {**dict(record), "selected_cik": evidence["selected_cik"]}
+        for evidence in issuer_evidence
+        for record in evidence.get("records") or []
+    ]
+    current_records = [
+        dict(record)
+        for record in result["records"]
+        if record.get("current_signal_computed") is True
+    ]
+    pd.DataFrame(manifest_rows).to_csv(
+        output / "openap_149_realestate_acquisition_manifest.csv",
+        index=False,
+    )
+    pd.DataFrame(raw_records).to_csv(
+        output / "openap_149_realestate_raw_records.csv",
+        index=False,
+    )
+    current = pd.DataFrame(current_records)
+    current.to_csv(output / "openap_149_realestate_current.csv", index=False)
+    current.to_parquet(
+        output / "openap_149_realestate_current.parquet",
+        index=False,
+        compression="zstd",
+    )
+    (output / "openap_149_realestate_issuer_evidence.json").write_text(
+        json.dumps(issuer_evidence, indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
+    (output / "openap_149_realestate_summary.json").write_text(
+        json.dumps(result, indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
+    return result
+
+
 __all__ = [
     "acquire_rendered_realestate_filing",
     "assemble_realestate_sector_pilot",
+    "run_rendered_realestate_sector_batch",
     "select_realestate_sector_pilot_candidates",
 ]
