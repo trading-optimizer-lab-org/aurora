@@ -148,6 +148,19 @@ def test_authoritative_route_matrix_contains_exactly_149_unique_free_routes() ->
     assert routes["current_free_data_feasibility"].eq("free_route_documented").all()
 
 
+def test_current_sec_event_source_aliases_match_documented_free_routes() -> None:
+    module = _module()
+
+    assert module._source_allowed(
+        "sec_edgar_notes|sec_company_tickers_exchange",
+        "sec_edgar|sec_financial_statement_notes|sec_company_tickers_exchange",
+    )
+    assert module._source_allowed(
+        "sec_edgar_submissions_and_filings|sec_company_tickers_exchange",
+        "sec_edgar|sec_company_tickers_exchange",
+    )
+
+
 def test_all_31_frozen_market_routes_record_the_prepared_free_key_blocker() -> None:
     from aurora.research.openap_181.implementation_status import (
         TWELVE_DATA_MARKET_SIGNALS,
