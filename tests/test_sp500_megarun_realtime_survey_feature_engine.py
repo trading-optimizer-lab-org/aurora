@@ -351,6 +351,28 @@ def test_realtime_survey_engine_rejects_validation_rows() -> None:
         api.evaluate_realtime_survey_lane("F191", market, panels, _parameters("F191"))
 
 
+def test_f194_uses_core_pce_revision_when_cpi_revisions_do_not_exist() -> None:
+    api = _api()
+    market, panels = _inputs()
+    macro = panels["macro_release"].drop(
+        columns=["cpi_revision", "core_cpi_revision"]
+    )
+    panels = {**panels, "macro_release": macro}
+
+    default = api.evaluate_realtime_survey_lane(
+        "F194", market, panels, _parameters("F194")
+    )
+    revision = api.evaluate_realtime_survey_lane(
+        "F194",
+        market,
+        panels,
+        {**_parameters("F194"), "statistic": "revision_pressure"},
+    )
+
+    assert default["value"].notna().any()
+    assert revision["value"].notna().any()
+
+
 def test_realtime_survey_batch_contains_exactly_f191_f200() -> None:
     market, panels = _inputs()
 

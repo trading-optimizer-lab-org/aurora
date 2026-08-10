@@ -354,23 +354,20 @@ def _f194(
         source,
         (
             "cpi_first",
-            "cpi_revision",
             "core_cpi_first",
-            "core_cpi_revision",
             "core_pce_first",
             "core_pce_revision",
         ),
         label="macro_release",
     )
     inflation = values.loc[:, ["cpi_first", "core_cpi_first", "core_pce_first"]]
-    revisions = values.loc[:, ["cpi_revision", "core_cpi_revision", "core_pce_revision"]]
     choices = {
         "headline_cpi": values["cpi_first"],
         "core_cpi": values["core_cpi_first"],
         "core_pce": values["core_pce_first"],
         "headline_core_gap": values["cpi_first"] - values["core_cpi_first"],
         "inflation_breadth": inflation.mean(axis=1),
-        "revision_pressure": revisions.mean(axis=1),
+        "revision_pressure": values["core_pce_revision"],
     }
     return _event_lane(
         market,
