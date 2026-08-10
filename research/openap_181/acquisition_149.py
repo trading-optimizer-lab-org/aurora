@@ -95,6 +95,9 @@ SOURCE_ALIASES = {
     "sec_edgar": "sec_edgar",
     "sec_companyfacts": "sec_edgar",
     "sec_edgar_companyfacts": "sec_edgar",
+    "sec_edgar_submissions_and_filings": "sec_edgar",
+    "sec_edgar_notes": "sec_financial_statement_notes",
+    "sec_company_tickers_exchange": "sec_company_tickers_exchange",
     "sec_fsd": "sec_financial_statement_datasets",
     "sec_financial_statement_datasets": "sec_financial_statement_datasets",
     "sec_financial_statement_notes": "sec_financial_statement_notes",
@@ -120,6 +123,9 @@ SOURCE_TERMS = {
     "sec_edgar": "SEC public data; automated access subject to SEC fair-access policy",
     "sec_financial_statement_datasets": "SEC public bulk data; SEC fair-access policy",
     "sec_financial_statement_notes": "SEC public bulk data; SEC fair-access policy",
+    "sec_company_tickers_exchange": (
+        "SEC public company-ticker exchange list; SEC fair-access policy"
+    ),
     "sec_13f": "SEC public filing data; SEC fair-access policy",
     "openfigi": "OpenFIGI free API terms and rate limits",
     "kenneth_french_factors": "Kenneth French Data Library research data terms",
