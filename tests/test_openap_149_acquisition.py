@@ -284,6 +284,31 @@ def test_io_short_interest_route_uses_acquired_regulatory_inputs_not_market_data
     assert str(routes.loc["IO_ShortInterest", "strict_score_eligible"]).lower() == "false"
 
 
+def test_current_companyfacts_routes_record_executed_batch() -> None:
+    routes = _module().load_target_routes(ROUTE_MATRIX).set_index("signal")
+    expected_counts = {
+        "ChInvIA": 3124,
+        "ConvDebt": 265,
+        "DelDRC": 1949,
+        "DelNetFin": 36,
+        "DivOmit": 14,
+        "DivSeason": 3,
+        "EarningsConsistency": 1441,
+        "EarningsSurprise": 2132,
+        "RevenueSurprise": 1828,
+        "sinAlgo": 22,
+    }
+
+    for signal, count in expected_counts.items():
+        blocker = routes.loc[signal, "current_remaining_blocker"]
+        assert (
+            f"companyfacts_run_31392473937_current_value_count_{count}"
+            in blocker
+        )
+        assert "prepared_unexecuted" not in blocker
+        assert str(routes.loc[signal, "strict_score_eligible"]).lower() == "false"
+
+
 def test_io_short_interest_runner_uses_bounded_selective_institutional_recovery() -> None:
     runner = (ROOT / "scripts" / "run_openap_149_finra_short_interest.py").read_text(
         encoding="utf-8"
