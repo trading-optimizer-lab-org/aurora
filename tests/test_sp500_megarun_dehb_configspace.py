@@ -261,6 +261,14 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F137", 9),
         ("F139", 12),
         ("F140", 12),
+        ("F141", 15),
+        ("F142", 13),
+        ("F143", 3),
+        ("F144", 20),
+        ("F145", 8),
+        ("F148", 4),
+        ("F149", 8),
+        ("F150", 13),
     ],
 )
 def test_conditionally_inactive_model_parameters_are_forbidden(
@@ -279,6 +287,30 @@ def test_conditionally_inactive_model_parameters_are_forbidden(
 
     assert row.forbidden_configuration_count == expected_count
     assert len(row.configspace.forbidden_clauses) == expected_count
+
+
+def test_f148_invalid_receptive_fields_are_forbidden_as_exact_triplets(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F148",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    forbidden = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+    }
+    assert forbidden == {
+        (("sequence", 10), ("kernel", 3), ("dilation", 8)),
+        (("sequence", 10), ("kernel", 5), ("dilation", 4)),
+        (("sequence", 10), ("kernel", 5), ("dilation", 8)),
+        (("sequence", 20), ("kernel", 5), ("dilation", 8)),
+    }
 
 
 def test_manifest_freezes_fidelities_versions_boundaries_and_exact_choices(

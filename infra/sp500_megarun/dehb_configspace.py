@@ -265,6 +265,89 @@ def _forbidden_parameter_pairs(
             )
         )
         pairs.append(("regimes", 3, "threshold_quantile", 0.5))
+    if lane.lane_id == "F141":
+        pairs.extend(
+            ("kind", kind, "ma_order", choice)
+            for kind in ("ar", "distributed_regression")
+            for choice in space["ma_order"][1:]
+        )
+        pairs.extend(
+            ("kind", kind, "volume_lags", choice)
+            for kind in ("ar", "arma")
+            for choice in space["volume_lags"][1:]
+        )
+        pairs.append(("kind", "arma", "ma_order", 0))
+        pairs.extend(
+            ("statistic", "innovation", "kind", kind)
+            for kind in ("ar", "distributed_regression")
+        )
+    if lane.lane_id == "F142":
+        pairs.append(("statistic", "error_correction", "kind", "var"))
+        pairs.append(("statistic", "common_state", "kind", "vecm"))
+        pairs.extend(
+            ("statistic", "error_correction", "lags", choice)
+            for choice in space["lags"][1:]
+        )
+        pairs.extend(
+            ("statistic", statistic, "ridge", choice)
+            for statistic in ("common_state", "error_correction")
+            for choice in space["ridge"][1:]
+        )
+    if lane.lane_id == "F143":
+        pairs.extend(
+            ("statistic", statistic, "sign_rule", "trend_anchor")
+            for statistic in (
+                "explained_share",
+                "common_direction",
+                "idiosyncratic_dispersion",
+            )
+        )
+    if lane.lane_id == "F144":
+        pairs.extend(
+            ("statistic", statistic, "forecast_quantile", choice)
+            for statistic in (
+                "tail_probability",
+                "interquantile_range",
+                "median_skew",
+            )
+            for choice in space["forecast_quantile"][1:]
+        )
+        pairs.extend(
+            ("statistic", "quantile_forecast", "tail_quantile", choice)
+            for choice in space["tail_quantile"][1:]
+        )
+    if lane.lane_id == "F145":
+        pairs.extend(
+            ("kind", "linear", parameter, choice)
+            for parameter in ("gamma", "degree")
+            for choice in space[parameter][1:]
+        )
+        pairs.extend(
+            ("kind", "rbf", "degree", choice)
+            for choice in space["degree"][1:]
+        )
+    if lane.lane_id == "F149":
+        pairs.extend(
+            ("statistic", statistic, "ridge", choice)
+            for statistic in ("state_energy", "memory_alignment")
+            for choice in space["ridge"][1:]
+        )
+    if lane.lane_id == "F150":
+        pairs.extend(
+            ("kind", "attention", parameter, choice)
+            for parameter in ("experts", "gate")
+            for choice in space[parameter][1:]
+        )
+        pairs.extend(
+            ("kind", "moe", "temperature", choice)
+            for choice in space["temperature"][1:]
+        )
+        pairs.append(("statistic", "attention_entropy", "kind", "moe"))
+        pairs.append(("statistic", "expert_disagreement", "kind", "attention"))
+        pairs.extend(
+            ("statistic", "attention_entropy", "ridge", choice)
+            for choice in space["ridge"][1:]
+        )
     if lane.lane_id in {"F172", "F180"}:
         pairs.extend(
             ("window", window, "long_window", long_window)
@@ -565,6 +648,21 @@ def _forbidden_parameter_pairs(
     return tuple(pairs)
 
 
+def _forbidden_parameter_triplets(
+    lane: FeatureLaneSpec,
+) -> tuple[tuple[str, Any, str, Any, str, Any], ...]:
+    if lane.lane_id != "F148":
+        return ()
+    space = lane.parameter_space
+    return tuple(
+        ("sequence", sequence, "kernel", kernel, "dilation", dilation)
+        for sequence in space["sequence"]
+        for kernel in space["kernel"]
+        for dilation in space["dilation"]
+        if (int(kernel) - 1) * int(dilation) >= int(sequence)
+    )
+
+
 def build_lane_configspace(
     contract: FrozenFeatureContract,
     lane_id: str,
@@ -588,6 +686,7 @@ def build_lane_configspace(
         ]
         space.add(hyperparameters)
         forbidden_pairs = _forbidden_parameter_pairs(lane)
+        forbidden_triplets = _forbidden_parameter_triplets(lane)
         forbidden_clauses = [
             module.ForbiddenAndConjunction(
                 module.ForbiddenEqualsClause(space[left_name], left_value),
@@ -595,6 +694,21 @@ def build_lane_configspace(
             )
             for left_name, left_value, right_name, right_value in forbidden_pairs
         ]
+        forbidden_clauses.extend(
+            module.ForbiddenAndConjunction(
+                module.ForbiddenEqualsClause(space[first_name], first_value),
+                module.ForbiddenEqualsClause(space[second_name], second_value),
+                module.ForbiddenEqualsClause(space[third_name], third_value),
+            )
+            for (
+                first_name,
+                first_value,
+                second_name,
+                second_value,
+                third_name,
+                third_value,
+            ) in forbidden_triplets
+        )
         if forbidden_clauses:
             space.add(forbidden_clauses)
     except (AttributeError, TypeError, ValueError) as exc:
@@ -604,7 +718,7 @@ def build_lane_configspace(
         seed=int(seed),
         dimensions=tuple(lane.parameter_space),
         canonical_sha256=lane.canonical_sha256,
-        forbidden_configuration_count=len(forbidden_pairs),
+        forbidden_configuration_count=len(forbidden_pairs) + len(forbidden_triplets),
         configspace=space,
     )
 
@@ -694,6 +808,24 @@ def build_dehb_space_manifest(
                 for left_name, left_value, right_name, right_value in (
                     _forbidden_parameter_pairs(lane)
                 )
+            ],
+            "forbidden_parameter_triplets": [
+                [
+                    first_name,
+                    first_value,
+                    second_name,
+                    second_value,
+                    third_name,
+                    third_value,
+                ]
+                for (
+                    first_name,
+                    first_value,
+                    second_name,
+                    second_value,
+                    third_name,
+                    third_value,
+                ) in _forbidden_parameter_triplets(lane)
             ],
         }
         for lane in contract.lanes

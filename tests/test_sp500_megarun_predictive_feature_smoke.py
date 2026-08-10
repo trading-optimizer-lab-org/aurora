@@ -91,6 +91,12 @@ def test_predictive_smoke_builds_f141_f150_train_only_artifacts(tmp_path: Path) 
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
     assert report["empty_lanes"] == []
+    parameter_audit = report["parameter_choice_audit"]
+    assert parameter_audit["ready"] is True
+    assert parameter_audit["expected_choice_probe_count"] == 310
+    assert parameter_audit["choice_probe_count"] == 310
+    assert parameter_audit["failed_probes"] == []
+    assert parameter_audit["inactive_choice_groups"] == []
     assert (tmp_path / "out" / "features" / "F141.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F150.parquet").is_file()
 
@@ -156,3 +162,98 @@ def test_predictive_smoke_cli_accepts_contract(
     )
 
     assert cli.main() == 0
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "parameter", "configuration", "expected"),
+    [
+        ("F141", "statistic", {"statistic": "innovation", "kind": "ar"}, {"kind": "arma", "ma_order": 1}),
+        ("F141", "ma_order", {"ma_order": 2, "kind": "ar"}, {"kind": "arma"}),
+        ("F141", "ma_order", {"ma_order": 0, "kind": "arma"}, {"kind": "ar"}),
+        ("F141", "volume_lags", {"kind": "ar"}, {"kind": "distributed_regression"}),
+        ("F141", "kind", {"kind": "arma", "ma_order": 0}, {"ma_order": 1}),
+        ("F142", "statistic", {"statistic": "error_correction", "kind": "var"}, {"kind": "vecm"}),
+        ("F143", "sign_rule", {"statistic": "explained_share"}, {"statistic": "factor_score", "components": 3}),
+        ("F144", "forecast_quantile", {"statistic": "median_skew"}, {"statistic": "quantile_forecast"}),
+        ("F144", "tail_quantile", {"statistic": "quantile_forecast"}, {"statistic": "median_skew"}),
+        ("F145", "gamma", {"kind": "linear"}, {"kind": "rbf"}),
+        ("F145", "degree", {"kind": "linear"}, {"kind": "polynomial"}),
+        ("F145", "support_vectors", {"window": 126}, {"window": 252}),
+        ("F150", "temperature", {"kind": "moe", "statistic": "forecast_z"}, {"kind": "attention", "statistic": "attention_entropy"}),
+        ("F150", "experts", {"kind": "attention", "statistic": "forecast_z"}, {"kind": "moe", "statistic": "expert_disagreement"}),
+        ("F150", "gate", {"kind": "attention", "statistic": "forecast_z"}, {"kind": "moe", "statistic": "expert_disagreement", "lookback": 10}),
+        ("F150", "statistic", {"kind": "attention", "statistic": "expert_disagreement"}, {"kind": "moe"}),
+    ],
+)
+def test_predictive_parameter_witnesses_activate_conditional_choices(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    repaired = _api()._repair_predictive_configuration(
+        lane_id,
+        parameter,
+        configuration.copy(),
+    )
+
+    assert repaired["refit"] == "annual"
+    for name, value in expected.items():
+        assert repaired[name] == value
+
+
+def test_predictive_parameter_audit_uses_date_aligned_causal_train_tails() -> None:
+    dates = pd.bdate_range("2003-01-02", "2010-12-31")
+    base = pd.DataFrame(
+        {
+            "date": dates,
+            "observed_at": dates,
+            "available_at": dates,
+            "value": np.arange(len(dates), dtype=float),
+        }
+    )
+    market = base.assign(
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.0 + np.arange(len(dates), dtype=float),
+        volume=1_000_000.0,
+    )
+    earlier = base.iloc[[0]].copy()
+    earlier_date = earlier["date"].iloc[0] - pd.offsets.BDay(1)
+    for column in ("date", "observed_at", "available_at"):
+        earlier[column] = earlier_date
+    cboe = pd.concat((earlier.assign(vix_close=20.0), base.assign(vix_close=20.0)), ignore_index=True)
+    features = {
+        lane: pd.concat((earlier, base), ignore_index=True)
+        for lane in ("F003", "F015", "F021", "F032", "F039")
+    }
+
+    short_panels, short_features = _api()._parameter_audit_inputs(
+        {"spy": market, "cboe": cboe}, features, "F143"
+    )
+    long_panels, long_features = _api()._parameter_audit_inputs(
+        {"spy": market, "cboe": cboe}, features, "F149"
+    )
+
+    assert len(short_panels["spy"]) < len(long_panels["spy"]) < len(market)
+    assert short_panels["spy"]["date"].max() == pd.Timestamp("2010-12-31")
+    assert long_panels["spy"]["date"].max() == pd.Timestamp("2010-12-31")
+    assert short_panels["spy"]["date"].isin(short_panels["cboe"]["date"]).all()
+    assert long_panels["spy"]["date"].isin(long_panels["cboe"]["date"]).all()
+    assert all(panel["date"].max() == pd.Timestamp("2010-12-31") for panel in short_features.values())
+    assert all(panel["date"].max() == pd.Timestamp("2010-12-31") for panel in long_features.values())
+
+
+def test_predictive_physical_smoke_has_an_isolated_dispatch_scope() -> None:
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "sp500-megarun-macro-feature-smoke-f032.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "- f141_f150" in workflow
+    assert "smoke_f141_f150:" in workflow
+    assert "inputs.scope == 'f141_f150'" in workflow
+    assert "timeout-minutes: 20" in workflow
