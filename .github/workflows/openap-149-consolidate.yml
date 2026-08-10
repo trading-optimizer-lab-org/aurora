@@ -328,6 +328,12 @@ jobs:
           assert field_ritter_values["source_id"].eq(
               "field_ritter_ipo|openfigi|sec_edgar"
           ).all()
+          ageipo = matrix.set_index("signal").loc["AgeIPO"]
+          assert bool(ageipo["data_acquired"])
+          assert not bool(ageipo["current_value_calculated"])
+          assert ageipo["current_value_count"] == 0
+          assert ageipo["status"] == "blocked_coverage"
+          assert not bool(ageipo["strict_score_eligible"])
           spinoff = matrix.set_index("signal").loc["Spinoff"]
           assert bool(spinoff["data_acquired"])
           assert bool(spinoff["current_value_calculated"])
