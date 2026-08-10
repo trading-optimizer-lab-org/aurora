@@ -213,11 +213,17 @@ def build_policy_treasury_feature_smoke(
 
     exact_duplicates = [list(group) for group in audit.exact_duplicate_groups]
     near_duplicates = [list(pair) for pair in audit.near_duplicate_pairs]
+    full_yearly_coverage = all(
+        item.yearly_non_null_fraction
+        and min(item.yearly_non_null_fraction.values()) == 1.0
+        for item in audit.coverage
+    )
     ready = bool(
         audit.ready
         and len(outputs) == len(_LANES)
         and not exact_duplicates
         and not near_duplicates
+        and full_yearly_coverage
     )
     report = {
         "schema_version": 1,
@@ -257,6 +263,7 @@ def build_policy_treasury_feature_smoke(
         "empty_lanes": list(audit.empty_lanes),
         "exact_duplicate_groups": exact_duplicates,
         "near_duplicate_pairs": near_duplicates,
+        "full_yearly_coverage": full_yearly_coverage,
         "coverage": [asdict(item) for item in audit.coverage],
         "artifacts": artifacts,
     }

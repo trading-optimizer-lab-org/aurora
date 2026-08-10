@@ -21,7 +21,7 @@ def _api():
 def _write_snapshot(root: Path) -> Path:
     snapshot = root / "train_snapshot_1993_2010"
     snapshot.mkdir()
-    sessions = pd.bdate_range("1997-01-02", "2010-12-31")
+    sessions = pd.bdate_range("1993-01-22", "2010-12-31")
     phase = np.arange(len(sessions), dtype=float)
     close = 100.0 * np.exp(
         np.cumsum(0.0002 + 0.005 * np.sin(phase / 31.0) + 0.002 * np.cos(phase / 11.0))
@@ -124,7 +124,7 @@ def _write_snapshot(root: Path) -> Path:
         }
     ).to_parquet(snapshot / "D_TREASURY_FISCAL.parquet", index=False)
 
-    month_dates = pd.date_range("1997-01-01", "2010-10-01", freq="MS")
+    month_dates = pd.date_range("1993-01-01", "2010-10-01", freq="MS")
     tic_rows: list[dict[str, object]] = []
     for index, date in enumerate(month_dates):
         treasury = 25_000.0 + 15_000.0 * np.sin(index / 7.0)
@@ -151,7 +151,7 @@ def _write_snapshot(root: Path) -> Path:
         )
     pd.DataFrame(tic_rows).to_parquet(snapshot / "D_TIC.parquet", index=False)
 
-    weekly = pd.date_range("1997-01-08", "2010-12-15", freq="W-WED")
+    weekly = pd.date_range("1993-01-27", "2010-12-15", freq="W-WED")
     monetary_rows: list[dict[str, object]] = []
     for index, date in enumerate(weekly):
         for series_id, level, drift in (
@@ -197,7 +197,12 @@ def test_policy_treasury_smoke_builds_f221_f230_train_only_artifacts(
     assert report["empty_lanes"] == []
     assert report["exact_duplicate_groups"] == []
     assert report["near_duplicate_pairs"] == []
+    assert report["full_yearly_coverage"] is True
     assert len(report["coverage"]) == 10
+    assert all(
+        min(item["yearly_non_null_fraction"].values()) == 1.0
+        for item in report["coverage"]
+    )
     assert set(report["artifacts"]) == {f"F{i:03d}" for i in range(221, 231)}
     assert (tmp_path / "out" / "features" / "F221.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F230.parquet").is_file()

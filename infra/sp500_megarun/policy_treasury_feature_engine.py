@@ -716,8 +716,8 @@ def evaluate_policy_treasury_family_batch(
 
     defaults: Mapping[str, str] = {
         "F221": "decision_rate_change",
-        "F222": "statement_gap_zscore",
-        "F223": "publication_lag_zscore",
+        "F222": "days_since_statement",
+        "F223": "days_since_minutes",
         "F224": "cadence_disagreement",
         "F225": "offer_growth",
         "F226": "bid_to_cover",

@@ -200,6 +200,33 @@ def test_f221_f230_frozen_statistics_are_executable(lane: str, variants: tuple[s
         assert result["value"].notna().any(), f"{lane}:{statistic}"
 
 
+@pytest.mark.parametrize(
+    ("lane", "statistic"),
+    (("F222", "days_since_statement"), ("F223", "days_since_minutes")),
+)
+def test_policy_treasury_batch_uses_full_coverage_publication_recency(
+    lane: str, statistic: str
+) -> None:
+    api = _api()
+    market, panels = _inputs()
+
+    batch = api.evaluate_policy_treasury_family_batch(market, panels)
+    expected = api.evaluate_policy_treasury_lane(
+        lane,
+        market,
+        panels,
+        {
+            "statistic": statistic,
+            "window": 13,
+            "change_lag": 1,
+            "normalization": "raw",
+            "direction": "continuation",
+        },
+    )
+
+    pd.testing.assert_frame_equal(batch[lane], expected)
+
+
 def test_policy_treasury_engine_fails_closed() -> None:
     api = _api()
     market, panels = _inputs()
