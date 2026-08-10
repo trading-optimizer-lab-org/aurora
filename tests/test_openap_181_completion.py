@@ -772,6 +772,17 @@ def test_explicit_evidence_replaces_only_matching_generic_documentary_blocker():
     )
     assert resolved.loc["ShortInterest", "evidence_run_url"].endswith("/10")
 
+    conflicting = specific.copy()
+    conflicting["coverage_measured"] = True
+    conflicting["coverage_result"] = "pass"
+    failed_coverage = conflicting.copy()
+    failed_coverage["coverage_result"] = "fail"
+    with pytest.raises(ValueError, match="conflicting explicit evidence results"):
+        module.merge_generated_and_explicit_evidence(
+            [documentary],
+            [conflicting, failed_coverage],
+        )
+
     with pytest.raises(ValueError, match="duplicate signals"):
         module.merge_generated_and_explicit_evidence(
             [documentary],

@@ -173,6 +173,60 @@ def _require_evidence_schema(evidence: pd.DataFrame) -> pd.DataFrame:
     return clean[_EVIDENCE_COLUMNS]
 
 
+def _evidence_progress(row: pd.Series) -> tuple[int, ...]:
+    return (
+        *(int(bool(row[gate])) for gate in _BOOLEAN_GATES),
+        int(row["coverage_result"] != "not_measured"),
+        int(row["fidelity_result"] != "not_measured"),
+        int(row["strict_gate_result"] != "not_attempted"),
+    )
+
+
+def _resolve_explicit_evidence(parts: list[pd.DataFrame]) -> pd.DataFrame:
+    if not parts:
+        return pd.DataFrame(columns=_EVIDENCE_COLUMNS)
+    combined = pd.concat(parts, ignore_index=True)
+    if not combined["signal"].duplicated(keep=False).any():
+        return combined
+    resolved = []
+    for _, group in combined.groupby("signal", sort=False):
+        if len(group) == 1:
+            resolved.append(group.iloc[0])
+            continue
+        if len(group.drop_duplicates()) != len(group):
+            raise ValueError("evidence contains duplicate signals")
+        for result_column in (
+            "coverage_result",
+            "fidelity_result",
+            "strict_gate_result",
+        ):
+            attempted = group.loc[
+                ~group[result_column].isin({"not_measured", "not_attempted"}),
+                result_column,
+            ]
+            if attempted.nunique() > 1:
+                raise ValueError(
+                    "conflicting explicit evidence results for signal "
+                    f"{group.iloc[0]['signal']}"
+                )
+        progress = [_evidence_progress(row) for _, row in group.iterrows()]
+        dominant = [
+            index
+            for index, candidate in enumerate(progress)
+            if all(
+                all(left >= right for left, right in zip(candidate, other))
+                for other in progress
+            )
+        ]
+        if len(dominant) != 1:
+            raise ValueError(
+                "conflicting explicit evidence progress for signal "
+                f"{group.iloc[0]['signal']}"
+            )
+        resolved.append(group.iloc[dominant[0]])
+    return pd.DataFrame(resolved, columns=_EVIDENCE_COLUMNS).reset_index(drop=True)
+
+
 def merge_generated_and_explicit_evidence(
     generated_frames: Iterable[pd.DataFrame],
     explicit_frames: Iterable[pd.DataFrame],
@@ -186,10 +240,8 @@ def merge_generated_and_explicit_evidence(
         if generated_parts
         else pd.DataFrame(columns=_EVIDENCE_COLUMNS)
     )
-    explicit = (
-        _require_evidence_schema(pd.concat(explicit_parts, ignore_index=True))
-        if explicit_parts
-        else pd.DataFrame(columns=_EVIDENCE_COLUMNS)
+    explicit = _resolve_explicit_evidence(
+        [_require_evidence_schema(frame) for frame in explicit_parts]
     )
     if explicit.empty:
         return generated
