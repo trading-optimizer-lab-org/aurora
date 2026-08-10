@@ -446,6 +446,43 @@ def test_rate_curve_uses_only_official_business_frequency_maturities() -> None:
     assert result.loc[0, "yield_10y"] == pytest.approx(3.0)
 
 
+def test_rate_panels_treat_fed_minus_9999_as_missing_and_carry_prior_value() -> None:
+    api = _normalizer_api()
+    dates = pd.to_datetime(["2010-01-04", "2010-01-05"])
+    curve_rows = pd.DataFrame(
+        {
+            "date": [dates[0], dates[0], dates[1], dates[1]],
+            "series_id": [
+                "RIFLGFCY02_N.B",
+                "RIFLGFCY10_N.B",
+                "RIFLGFCY02_N.B",
+                "RIFLGFCY10_N.B",
+            ],
+            "value": [1.0, 3.0, 1.1, -9999.0],
+        }
+    )
+    funding_rows = pd.DataFrame(
+        {
+            "date": [dates[0], dates[0], dates[1], dates[1]],
+            "series_id": [
+                "RIFLGFCM03_N.B",
+                "RILSPDEPM03_N.B",
+                "RIFLGFCM03_N.B",
+                "RILSPDEPM03_N.B",
+            ],
+            "value": [0.10, 0.35, 0.11, -9999.0],
+        }
+    )
+
+    curve = api.normalize_treasury_curve_panel(curve_rows, sessions=_sessions())
+    funding = api.normalize_usd_funding_panel(funding_rows, sessions=_sessions())
+
+    assert curve.loc[1, "date"] == pd.Timestamp("2010-01-06")
+    assert curve.loc[1, "yield_10y"] == pytest.approx(3.0)
+    assert funding.loc[1, "eurodollar_3m"] == pytest.approx(0.35)
+    assert funding.loc[1, "offshore_basis"] == pytest.approx(0.24)
+
+
 def test_credit_panel_uses_daily_moodys_aaa_and_baa() -> None:
     api = _normalizer_api()
     frame = pd.DataFrame(

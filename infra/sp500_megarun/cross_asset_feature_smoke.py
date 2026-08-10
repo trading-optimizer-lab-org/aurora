@@ -61,6 +61,14 @@ def _merge_rate_panels(
     )
     if merged.empty:
         raise CrossAssetFeatureSmokeError("EMPTY_MERGED_RATE_PANEL")
+    for column in merged.columns:
+        if column in {"date", "observed_at", "available_at"}:
+            continue
+        values = pd.to_numeric(merged[column], errors="coerce")
+        if values.lt(-5.0).any() or values.gt(50.0).any():
+            raise CrossAssetFeatureSmokeError(
+                f"NORMALIZED_RATE_OUT_OF_RANGE:{column}"
+            )
     return merged.sort_values("date", kind="mergesort").reset_index(drop=True)
 
 

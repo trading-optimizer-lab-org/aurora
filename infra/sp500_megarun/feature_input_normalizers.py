@@ -138,6 +138,13 @@ def _validated_dates(frame: pd.DataFrame, *, dataset_id: str) -> pd.DataFrame:
     return result
 
 
+def _fed_ddp_numeric(values: pd.Series) -> pd.Series:
+    """Convert Federal Reserve DDP values while removing its -9999 sentinel."""
+
+    numeric = pd.to_numeric(values, errors="coerce")
+    return numeric.mask(numeric.eq(-9999.0))
+
+
 def _project_to_decision_session(
     frame: pd.DataFrame,
     *,
@@ -416,7 +423,7 @@ def normalize_treasury_curve_panel(
         raise FeatureInputNormalizerError("RATE_CURVE_COLUMNS_MISSING")
     selected = rates.loc[rates["series_id"].isin(_TREASURY_SERIES)].copy()
     selected["maturity"] = selected["series_id"].map(_TREASURY_SERIES)
-    selected["value"] = pd.to_numeric(selected["value"], errors="coerce")
+    selected["value"] = _fed_ddp_numeric(selected["value"])
     selected = selected.dropna(subset=["maturity", "value"])
     if selected.empty:
         raise FeatureInputNormalizerError("TREASURY_CURVE_SERIES_MISSING")
@@ -427,6 +434,8 @@ def normalize_treasury_curve_panel(
         aggfunc="last",
     ).reset_index()
     panel.columns.name = None
+    value_columns = [column for column in panel if column != "date"]
+    panel[value_columns] = panel[value_columns].ffill()
     return _project_to_decision_session(panel, policy="next_session", sessions=sessions)
 
 
@@ -443,7 +452,7 @@ def normalize_credit_spread_panel(
         raise FeatureInputNormalizerError("CREDIT_RATE_COLUMNS_MISSING")
     selected = rates.loc[rates["series_id"].isin(_CREDIT_SERIES)].copy()
     selected["credit_series"] = selected["series_id"].map(_CREDIT_SERIES)
-    selected["value"] = pd.to_numeric(selected["value"], errors="coerce")
+    selected["value"] = _fed_ddp_numeric(selected["value"])
     selected = selected.dropna(subset=["credit_series", "value"])
     if selected.empty:
         raise FeatureInputNormalizerError("CREDIT_RATE_SERIES_MISSING")
@@ -456,6 +465,10 @@ def normalize_credit_spread_panel(
     panel.columns.name = None
     if not {"aaa_yield", "baa_yield"} <= set(panel.columns):
         raise FeatureInputNormalizerError("CREDIT_RATE_PAIR_INCOMPLETE")
+    panel[["aaa_yield", "baa_yield"]] = panel[
+        ["aaa_yield", "baa_yield"]
+    ].ffill()
+    panel = panel.dropna(subset=["aaa_yield", "baa_yield"])
     panel["baa_aaa_spread"] = panel["baa_yield"] - panel["aaa_yield"]
     return _project_to_decision_session(panel, policy="next_session", sessions=sessions)
 
@@ -823,8 +836,8 @@ def normalize_policy_rate_panel(
         rates["series_id"].astype(str).eq(_POLICY_RATE_SERIES),
         ["date", "value"],
     ].copy()
-    selected["effective_fed_funds"] = pd.to_numeric(
-        selected.pop("value"), errors="coerce"
+    selected["effective_fed_funds"] = _fed_ddp_numeric(
+        selected.pop("value")
     )
     selected = selected.dropna(subset=["effective_fed_funds"])
     if selected.empty:
@@ -1152,7 +1165,7 @@ def normalize_fx_cross_asset_panel(
         raise FeatureInputNormalizerError(f"FX_COLUMNS_MISSING:{','.join(missing)}")
     selected = fx.loc[fx["series_id"].isin(_FX_SERIES)].copy()
     selected["asset"] = selected["series_id"].map(_FX_SERIES)
-    selected["value"] = pd.to_numeric(selected["value"], errors="coerce")
+    selected["value"] = _fed_ddp_numeric(selected["value"])
     selected["value"] = selected["value"].where(selected["value"].gt(0.0))
     reciprocal = selected["series_id"].isin(_FX_RECIPROCAL_SERIES)
     selected.loc[reciprocal, "value"] = 1.0 / selected.loc[reciprocal, "value"]
@@ -1194,7 +1207,7 @@ def normalize_usd_funding_panel(
         )
     selected = rates.loc[rates["series_id"].isin(_USD_FUNDING_SERIES)].copy()
     selected["funding_series"] = selected["series_id"].map(_USD_FUNDING_SERIES)
-    selected["value"] = pd.to_numeric(selected["value"], errors="coerce")
+    selected["value"] = _fed_ddp_numeric(selected["value"])
     selected = selected.dropna(subset=["funding_series", "value"])
     panel = selected.pivot_table(
         index="date",

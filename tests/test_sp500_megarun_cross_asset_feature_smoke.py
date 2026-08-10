@@ -148,6 +148,27 @@ def test_cross_asset_smoke_rejects_missing_h10_rows(tmp_path: Path) -> None:
         _api().build_cross_asset_feature_smoke(snapshot, output_dir=tmp_path / "out")
 
 
+def test_cross_asset_smoke_rejects_implausible_normalized_rate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    api = _api()
+    snapshot = _write_snapshot(tmp_path)
+    original = api.normalize_treasury_curve_panel
+
+    def poisoned(*args: object, **kwargs: object) -> pd.DataFrame:
+        result = original(*args, **kwargs)
+        result.loc[result.index[10], "yield_10y"] = -9999.0
+        return result
+
+    monkeypatch.setattr(api, "normalize_treasury_curve_panel", poisoned)
+
+    with pytest.raises(
+        api.CrossAssetFeatureSmokeError,
+        match="NORMALIZED_RATE_OUT_OF_RANGE:yield_10y",
+    ):
+        api.build_cross_asset_feature_smoke(snapshot, output_dir=tmp_path / "out")
+
+
 def test_cross_asset_smoke_cli_accepts_contract(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
