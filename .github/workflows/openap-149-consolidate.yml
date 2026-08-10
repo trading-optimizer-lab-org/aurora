@@ -56,6 +56,7 @@ on:
       finra_current_run_id:
         description: Successful OpenAP 149 FINRA ShortInterest run
         required: true
+        default: "31384007094"
         type: string
       realestate_current_run_id:
         description: Successful OpenAP 149 rendered realestate current run
@@ -303,6 +304,38 @@ jobs:
           assert not bool(quarantined["current_value_calculated"])
           assert quarantined["status"] == "blocked_fidelity"
           assert "declared_current_unusable" in quarantined["remaining_blocker"]
+          short_interest = matrix_by_signal.loc["ShortInterest"]
+          assert bool(short_interest["data_acquired"])
+          assert bool(short_interest["current_value_calculated"])
+          assert short_interest["current_value_count"] == 2988
+          assert short_interest["fidelity"] == "unvalidated_proxy"
+          assert short_interest["source_used"] == "finra_equity_short_interest|sec_edgar"
+          assert not bool(short_interest["strict_score_eligible"])
+          short_interest_values = values.loc[values["signal"].eq("ShortInterest")]
+          assert len(short_interest_values) == 2988
+          assert short_interest_values["source_id"].eq(
+              "finra_equity_short_interest|sec_edgar"
+          ).all()
+          assert short_interest_values["formula_id"].eq(
+              "openap_shortinterest_finra_sec_current_proxy"
+          ).all()
+          io_short_interest = matrix_by_signal.loc["IO_ShortInterest"]
+          assert bool(io_short_interest["data_acquired"])
+          assert bool(io_short_interest["current_value_calculated"])
+          assert io_short_interest["current_value_count"] == 1
+          assert io_short_interest["fidelity"] == "reconstructed"
+          assert io_short_interest["source_used"] == "finra_equity_short_interest|openfigi|sec_13f|sec_edgar"
+          assert not bool(io_short_interest["strict_score_eligible"])
+          io_short_interest_values = values.loc[
+              values["signal"].eq("IO_ShortInterest")
+          ]
+          assert len(io_short_interest_values) == 1
+          assert io_short_interest_values["source_id"].eq(
+              "finra_equity_short_interest|sec_edgar|sec_13f|openfigi_public"
+          ).all()
+          assert io_short_interest_values["formula_id"].eq(
+              "openap_io_shortinterest_finra_sec13f_current_reconstruction"
+          ).all()
           oscore = matrix.set_index("signal").loc["OScore"]
           assert bool(oscore["data_acquired"])
           assert bool(oscore["current_value_calculated"])
