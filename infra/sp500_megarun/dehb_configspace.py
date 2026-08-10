@@ -623,6 +623,81 @@ def _forbidden_parameter_pairs(
             for normalization in ("raw", "rolling_zscore")
             for lag in space["change_lag"][1:]
         )
+    if lane.lane_id == "F211":
+        pairs.extend(
+            ("statistic", statistic, "lag", lag)
+            for statistic in (
+                "vix_level",
+                "vix_log_level",
+                "vix_zscore",
+                "vix_percentile",
+                "vix_vxo_spread",
+            )
+            for lag in space["lag"][1:]
+        )
+    if lane.lane_id == "F213":
+        pairs.extend(
+            ("statistic", "implied_variance", "realized_window", window)
+            for window in space["realized_window"][1:]
+        )
+    if lane.lane_id == "F214":
+        pairs.extend(
+            ("statistic", statistic, "tail", tail)
+            for statistic in (
+                "shock_magnitude",
+                "distance_from_peak",
+                "normalization_speed",
+                "tail_percentile",
+            )
+            for tail in space["tail"][1:]
+        )
+        pairs.extend(
+            ("statistic", statistic, "lag", lag)
+            for statistic in (
+                "shock_magnitude",
+                "shock_indicator",
+                "shock_duration",
+                "distance_from_peak",
+                "tail_percentile",
+            )
+            for lag in space["lag"][1:]
+        )
+    if lane.lane_id in {"F215", "F216", "F217", "F218"}:
+        active_statistics = {
+            "F215": "breadth_trend",
+            "F216": "disagreement_change",
+            "F217": "commercial_change",
+            "F218": "noncommercial_change",
+        }
+        pairs.extend(
+            ("statistic", statistic, "lag", lag)
+            for statistic in space["statistic"]
+            if statistic != active_statistics[lane.lane_id]
+            for lag in space["lag"][1:]
+        )
+    if lane.lane_id in {"F218", "F219"}:
+        pairs.extend(
+            ("normalization", normalization, "window", window)
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id in {
+        "F211",
+        "F212",
+        "F213",
+        "F214",
+        "F215",
+        "F216",
+        "F217",
+        "F218",
+        "F219",
+        "F220",
+    }:
+        pairs.extend(
+            ("normalization", normalization, "change_lag", lag)
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
     if lane.lane_id in {"F023", "F026", "F030", "F031"}:
         pairs.extend(
             ("window", 1, "normalization", normalization)
@@ -1140,6 +1215,57 @@ def _forbidden_parameter_triplets(
             for statistic in simple_statistics[lane.lane_id]
             for normalization in ("raw", "rolling_zscore")
             for lag in space["change_lag"][1:]
+        )
+    if lane.lane_id in {"F211", "F213", "F214", "F215", "F216", "F217", "F220"}:
+        simple_statistics = {
+            "F211": (
+                "vix_level",
+                "vix_log_level",
+                "vix_trend",
+                "vix_vxo_spread",
+            ),
+            "F213": (
+                "implied_variance",
+                "realized_variance",
+                "variance_spread",
+                "variance_ratio",
+                "log_variance_ratio",
+            ),
+            "F214": ("shock_magnitude", "normalization_speed"),
+            "F215": (
+                "commercial_breadth",
+                "noncommercial_breadth",
+                "breadth_gap",
+                "breadth_trend",
+            ),
+            "F216": (
+                "positioning_disagreement",
+                "disagreement_change",
+                "commercial_dispersion",
+            ),
+            "F217": ("commercial_net", "commercial_change"),
+            "F220": (
+                "open_interest",
+                "open_interest_growth",
+                "trader_count",
+                "trader_count_growth",
+                "top4_net_concentration",
+                "top8_net_concentration",
+                "concentration_gap",
+            ),
+        }
+        triplets.extend(
+            (
+                "statistic",
+                statistic,
+                "normalization",
+                normalization,
+                "window",
+                window,
+            )
+            for statistic in simple_statistics[lane.lane_id]
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
         )
     return tuple(triplets)
 

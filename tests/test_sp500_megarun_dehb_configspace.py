@@ -311,6 +311,16 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F208", 30),
         ("F209", 36),
         ("F210", 24),
+        ("F211", 53),
+        ("F212", 4),
+        ("F213", 37),
+        ("F214", 44),
+        ("F215", 50),
+        ("F216", 45),
+        ("F217", 34),
+        ("F218", 26),
+        ("F219", 14),
+        ("F220", 62),
     ],
 )
 def test_conditionally_inactive_model_parameters_are_forbidden(
@@ -495,6 +505,37 @@ def test_f183_removes_the_physical_train_duplicate_median_basis(
             ),
             18,
         ),
+        ("F211", "vix_level", ("vix_zscore", "vix_percentile"), 32),
+        ("F213", "implied_variance", ("spread_zscore",), 30),
+        (
+            "F214",
+            "shock_magnitude",
+            (
+                "shock_indicator",
+                "shock_duration",
+                "distance_from_peak",
+                "tail_percentile",
+            ),
+            12,
+        ),
+        ("F215", "commercial_breadth", ("breadth_zscore",), 32),
+        (
+            "F216",
+            "positioning_disagreement",
+            ("disagreement_zscore", "dispersion_zscore", "reversal_pressure"),
+            24,
+        ),
+        (
+            "F217",
+            "commercial_net",
+            (
+                "commercial_zscore",
+                "commercial_percentile",
+                "commercial_open_interest_interaction",
+            ),
+            16,
+        ),
+        ("F220", "open_interest", ("crowding_composite",), 56),
     ],
 )
 def test_internal_composites_keep_their_window_while_raw_simple_statistics_do_not(
@@ -563,6 +604,92 @@ def test_internal_changes_keep_change_lag_while_other_raw_statistics_do_not(
     assert len(triplets) == expected_triplets
     assert any(("statistic", scoped_statistic) in item for item in triplets)
     assert all(("statistic", excluded_statistic) not in item for item in triplets)
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "active_statistic", "expected_pairs"),
+    [
+        ("F211", "vix_trend", 15),
+        ("F214", "normalization_speed", 20),
+        ("F215", "breadth_trend", 12),
+        ("F216", "disagreement_change", 15),
+        ("F217", "commercial_change", 12),
+        ("F218", "noncommercial_change", 12),
+    ],
+)
+def test_lag_is_forbidden_only_for_statistics_that_do_not_use_it(
+    feature_contract,
+    lane_id: str,
+    active_statistic: str,
+    expected_pairs: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    pairs = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 2
+        and any(clause.hyperparameter.name == "lag" for clause in conjunction.clauses)
+    }
+
+    assert len(pairs) == expected_pairs
+    assert all(("statistic", active_statistic) not in item for item in pairs)
+
+
+def test_f213_realized_window_is_active_except_for_implied_variance(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F213",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    pairs = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 2
+        and any(
+            clause.hyperparameter.name == "realized_window"
+            for clause in conjunction.clauses
+        )
+    }
+
+    assert pairs == {
+        (("statistic", "implied_variance"), ("realized_window", window))
+        for window in (10, 20, 63)
+    }
+
+
+def test_f214_tail_is_active_only_for_shock_indicator_and_duration(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F214",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    pairs = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 2
+        and any(clause.hyperparameter.name == "tail" for clause in conjunction.clauses)
+    }
+
+    assert len(pairs) == 8
+    assert all(("statistic", "shock_indicator") not in item for item in pairs)
+    assert all(("statistic", "shock_duration") not in item for item in pairs)
 
 
 def test_manifest_freezes_fidelities_versions_boundaries_and_exact_choices(

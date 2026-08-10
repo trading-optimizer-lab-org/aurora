@@ -10,7 +10,11 @@ from typing import Any
 
 import pandas as pd
 
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.feature_audit import audit_feature_outputs
+from aurora.infra.sp500_megarun.feature_contract import (
+    load_and_validate_feature_contract,
+)
 from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_cboe_vol_bundle_panel,
     normalize_cftc_cross_market_fallback_panel,
@@ -18,8 +22,12 @@ from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_spy_decision_panel,
 )
 from aurora.infra.sp500_megarun.materializer import parquet_safe_frame
+from aurora.infra.sp500_megarun.parameter_choice_audit import (
+    audit_frozen_parameter_choices,
+)
 from aurora.infra.sp500_megarun.volatility_positioning_feature_engine import (
     evaluate_volatility_positioning_family_batch,
+    evaluate_volatility_positioning_lane,
 )
 
 
@@ -31,6 +39,8 @@ _TRAIN_PARTITION = "train_snapshot_1993_2010"
 _SEARCH_START = pd.Timestamp("1998-01-01")
 _TRAIN_END = pd.Timestamp("2010-12-31")
 _LANES = tuple(f"F{index:03d}" for index in range(211, 221))
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PARAMETER_AUDIT_START = pd.Timestamp("2003-01-01")
 _DATASETS = (
     "D_SPY",
     "D_CALENDAR",
@@ -72,6 +82,67 @@ def _verify_pcr_fallback(frame: pd.DataFrame) -> None:
         raise VolatilityPositioningFeatureSmokeError(
             "PCR_FALLBACK_FUTURES_ONLY_MISSING"
         )
+
+
+def _repair_volatility_positioning_configuration(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    if parameter == "change_lag":
+        configuration["normalization"] = "change"
+    window_statistics = {
+        "F211": "vix_zscore",
+        "F213": "spread_zscore",
+        "F214": "shock_duration",
+        "F215": "breadth_zscore",
+        "F216": "disagreement_zscore",
+        "F217": "commercial_zscore",
+        "F220": "crowding_composite",
+    }
+    if lane_id in window_statistics and parameter == "window":
+        configuration["statistic"] = window_statistics[lane_id]
+    if lane_id in {"F218", "F219"} and parameter == "window":
+        configuration["normalization"] = "rolling_zscore"
+    lag_statistics = {
+        "F211": "vix_trend",
+        "F214": "normalization_speed",
+        "F215": "breadth_trend",
+        "F216": "disagreement_change",
+        "F217": "commercial_change",
+        "F218": "noncommercial_change",
+    }
+    if lane_id in lag_statistics and parameter == "lag":
+        configuration["statistic"] = lag_statistics[lane_id]
+    if lane_id == "F213" and parameter == "realized_window":
+        configuration["statistic"] = "variance_spread"
+    if lane_id == "F214" and parameter == "tail":
+        configuration["statistic"] = "shock_duration"
+    return configuration
+
+
+def _parameter_audit_inputs(
+    market: pd.DataFrame,
+    panels: dict[str, pd.DataFrame],
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    market_dates = pd.to_datetime(market["date"], errors="raise")
+    audit_market = market.loc[
+        market_dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+    ].reset_index(drop=True)
+    if not (pd.DatetimeIndex(audit_market["date"]).year == 2010).any():
+        raise VolatilityPositioningFeatureSmokeError("PARAMETER_AUDIT_2010_MISSING")
+    audit_panels: dict[str, pd.DataFrame] = {}
+    for resource, panel in panels.items():
+        dates = pd.to_datetime(panel["date"], errors="raise")
+        bounded = panel.loc[
+            dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+        ].reset_index(drop=True)
+        if bounded.empty:
+            raise VolatilityPositioningFeatureSmokeError(
+                f"PARAMETER_AUDIT_PANEL_EMPTY:{resource}"
+            )
+        audit_panels[resource] = bounded
+    return audit_market, audit_panels
 
 
 def build_volatility_positioning_feature_smoke(
@@ -132,6 +203,26 @@ def build_volatility_positioning_feature_smoke(
         search_start=_SEARCH_START,
         search_end=_TRAIN_END,
     )
+    data_contract = load_and_validate_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_free_data_240.json"
+    )
+    feature_contract = load_and_validate_feature_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_feature_contract_240.json",
+        data_contract,
+    )
+    audit_market, audit_panels = _parameter_audit_inputs(market, panels)
+    parameter_audit = audit_frozen_parameter_choices(
+        feature_contract,
+        lane_ids=_LANES,
+        evaluator=lambda lane_id, configuration: evaluate_volatility_positioning_lane(
+            lane_id,
+            audit_market,
+            audit_panels,
+            configuration,
+        ),
+        expected_years=(2010,),
+        repair=_repair_volatility_positioning_configuration,
+    )
 
     root = Path(output_dir)
     artifacts: dict[str, dict[str, object]] = {}
@@ -152,6 +243,7 @@ def build_volatility_positioning_feature_smoke(
     near_duplicates = [list(pair) for pair in audit.near_duplicate_pairs]
     ready = bool(
         audit.ready
+        and parameter_audit["ready"]
         and len(outputs) == len(_LANES)
         and not exact_duplicates
         and not near_duplicates
@@ -191,10 +283,16 @@ def build_volatility_positioning_feature_smoke(
         "near_duplicate_pairs": near_duplicates,
         "coverage": [asdict(item) for item in audit.coverage],
         "artifacts": artifacts,
+        "parameter_choice_audit_scope": "physical_causal_tail_2003_2010",
+        "parameter_choice_audit": parameter_audit,
     }
     root.mkdir(parents=True, exist_ok=True)
     (root / "volatility_positioning_feature_smoke_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (root / "parameter_choice_audit_F211_F220.json").write_text(
+        json.dumps(parameter_audit, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return report

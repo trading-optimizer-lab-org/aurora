@@ -144,6 +144,7 @@ on:
           - f181_f190
           - f191_f200
           - f201_f210
+          - f211_f220
 
 permissions:
   actions: read
@@ -544,10 +545,23 @@ jobs:
         if: always() && steps.financial_accounts_feature_smoke.outcome != 'success'
         run: exit 1
       - name: Execute and audit F211-F220 on train only
+        id: volatility_positioning_feature_smoke
+        continue-on-error: true
         run: |
           python scripts/run_sp500_megarun_volatility_positioning_feature_smoke_f211.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_volatility_positioning_feature_smoke_f211_f220
+      - name: Upload F211-F220 train-only evidence
+        if: always() && steps.volatility_positioning_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-volatility-positioning-feature-smoke-F211-F220-${{ github.run_id }}
+          path: outputs/sp500_megarun_volatility_positioning_feature_smoke_f211_f220
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F211-F220 audit is not ready
+        if: always() && steps.volatility_positioning_feature_smoke.outcome != 'success'
+        run: exit 1
       - name: Execute and audit F221-F230 on train only
         run: |
           python scripts/run_sp500_megarun_policy_treasury_feature_smoke_f221.py \
@@ -577,13 +591,6 @@ jobs:
         with:
           name: sp500-megarun-macro-feature-smoke-F032-F050-${{ github.run_id }}
           path: outputs/sp500_megarun_macro_feature_smoke_f032
-          if-no-files-found: error
-          retention-days: 90
-      - name: Upload F211-F220 train-only evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-megarun-volatility-positioning-feature-smoke-F211-F220-${{ github.run_id }}
-          path: outputs/sp500_megarun_volatility_positioning_feature_smoke_f211_f220
           if-no-files-found: error
           retention-days: 90
       - name: Upload F221-F230 train-only evidence
@@ -1021,4 +1028,55 @@ jobs:
           retention-days: 90
       - name: Fail closed when F201-F210 audit is not ready
         if: always() && steps.financial_accounts_feature_smoke.outcome != 'success'
+        run: exit 1
+
+  smoke_f211_f220:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'f211_f220'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+    steps:
+      - name: Check out the exact smoke revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Restore bounded smoke runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Download only the verified train snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-train-1993-2010-F001-F240-${{ env.SOURCE_RUN_ID }}
+          path: ${{ runner.temp }}/train_snapshot_1993_2010
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Execute and audit F211-F220 on train only
+        id: volatility_positioning_feature_smoke
+        continue-on-error: true
+        run: |
+          python scripts/run_sp500_megarun_volatility_positioning_feature_smoke_f211.py \
+            --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
+            --output-dir outputs/sp500_megarun_volatility_positioning_feature_smoke_f211_f220
+      - name: Upload F211-F220 train-only evidence
+        if: always() && steps.volatility_positioning_feature_smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-volatility-positioning-feature-smoke-F211-F220-${{ github.run_id }}
+          path: outputs/sp500_megarun_volatility_positioning_feature_smoke_f211_f220
+          if-no-files-found: error
+          retention-days: 90
+      - name: Fail closed when F211-F220 audit is not ready
+        if: always() && steps.volatility_positioning_feature_smoke.outcome != 'success'
         run: exit 1

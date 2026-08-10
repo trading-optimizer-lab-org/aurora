@@ -150,6 +150,12 @@ def test_volatility_positioning_smoke_builds_f211_f220_train_only_artifacts(
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
     assert report["empty_lanes"] == []
+    parameter_audit = report["parameter_choice_audit"]
+    assert parameter_audit["ready"] is True
+    assert parameter_audit["expected_choice_probe_count"] == 224
+    assert parameter_audit["choice_probe_count"] == 224
+    assert parameter_audit["failed_probes"] == []
+    assert parameter_audit["inactive_choice_groups"] == []
     assert report["exact_duplicate_groups"] == []
     assert report["near_duplicate_pairs"] == []
     assert len(report["coverage"]) == 10
@@ -213,3 +219,50 @@ def test_volatility_positioning_smoke_cli_accepts_contract(
     )
 
     assert cli.main() == 0
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "parameter", "configuration", "expected"),
+    [
+        ("F211", "window", {"statistic": "vix_level"}, {"statistic": "vix_zscore"}),
+        ("F211", "lag", {"statistic": "vix_level"}, {"statistic": "vix_trend"}),
+        ("F212", "change_lag", {"normalization": "raw"}, {"normalization": "change"}),
+        ("F213", "realized_window", {"statistic": "implied_variance"}, {"statistic": "variance_spread"}),
+        ("F213", "window", {"statistic": "implied_variance"}, {"statistic": "spread_zscore"}),
+        ("F214", "tail", {"statistic": "shock_magnitude"}, {"statistic": "shock_duration"}),
+        ("F214", "lag", {"statistic": "shock_magnitude"}, {"statistic": "normalization_speed"}),
+        ("F215", "window", {"statistic": "commercial_breadth"}, {"statistic": "breadth_zscore"}),
+        ("F216", "lag", {"statistic": "positioning_disagreement"}, {"statistic": "disagreement_change"}),
+        ("F217", "window", {"statistic": "commercial_net"}, {"statistic": "commercial_zscore"}),
+        ("F218", "window", {"normalization": "raw"}, {"normalization": "rolling_zscore"}),
+        ("F220", "window", {"statistic": "open_interest"}, {"statistic": "crowding_composite"}),
+    ],
+)
+def test_volatility_positioning_parameter_witnesses_activate_conditional_choices(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    repaired = _api()._repair_volatility_positioning_configuration(
+        lane_id,
+        parameter,
+        configuration.copy(),
+    )
+
+    for name, value in expected.items():
+        assert repaired[name] == value
+
+
+def test_volatility_positioning_physical_smoke_has_an_isolated_dispatch_scope() -> None:
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "sp500-megarun-macro-feature-smoke-f032.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "- f211_f220" in workflow
+    assert "smoke_f211_f220:" in workflow
+    assert "inputs.scope == 'f211_f220'" in workflow
+    assert "timeout-minutes: 15" in workflow
