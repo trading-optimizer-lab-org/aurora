@@ -130,6 +130,7 @@ class TrainLaneEvaluator:
             str(key): Path(value).resolve()
             for key, value in (baseline_feature_dirs or {}).items()
         }
+        self._baseline_reports: dict[str, Mapping[str, Any]] = {}
         self._frames: dict[str, pd.DataFrame] = {}
         self._contexts: dict[tuple[int, int], LaneEvaluator] = {}
         self._adapters = tuple(adapters or _default_adapters())
@@ -176,12 +177,48 @@ class TrainLaneEvaluator:
         if set(roots) != {"price", "market", "macro"}:
             raise LaneRegistryError("BASELINE_FEATURE_DIRS_REQUIRED")
         result: dict[str, pd.DataFrame] = {}
+        report_names = {
+            "price": "feature_smoke_report.json",
+            "market": "market_feature_smoke_report.json",
+            "macro": "macro_feature_smoke_report.json",
+        }
         for lane_id in lane_ids:
             number = _lane_number(lane_id)
             family = "price" if number <= 20 else "market" if number <= 31 else "macro"
+            report = self._baseline_reports.get(family)
+            if report is None:
+                report_path = roots[family] / report_names[family]
+                try:
+                    value = json.loads(report_path.read_text("utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise LaneRegistryError(
+                        f"BASELINE_FEATURE_REPORT_INVALID:{family}"
+                    ) from exc
+                if not isinstance(value, Mapping):
+                    raise LaneRegistryError(
+                        f"BASELINE_FEATURE_REPORT_INVALID:{family}"
+                    )
+                if (
+                    value.get("ready") is not True
+                    or value.get("validation_opened") is not False
+                    or value.get("locked_opened") is not False
+                    or not isinstance(value.get("artifacts"), Mapping)
+                ):
+                    raise LaneRegistryError(
+                        f"BASELINE_FEATURE_REPORT_NOT_READY:{family}"
+                    )
+                report = value
+                self._baseline_reports[family] = report
             target = roots[family] / "features" / f"{lane_id}.parquet"
             if not target.is_file():
                 raise LaneRegistryError(f"BASELINE_FEATURE_MISSING:{lane_id}")
+            artifact = report["artifacts"].get(lane_id)
+            if (
+                not isinstance(artifact, Mapping)
+                or artifact.get("path") != f"features/{lane_id}.parquet"
+                or artifact.get("sha256") != _sha256_file(target)
+            ):
+                raise LaneRegistryError(f"BASELINE_FEATURE_SHA256_MISMATCH:{lane_id}")
             result[lane_id] = pd.read_parquet(target)
         return result
 

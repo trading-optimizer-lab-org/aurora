@@ -1,0 +1,92 @@
+name: SP500 Megarun DEHB Registry Preflight F001-F240
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Exact verified train preflight run
+        required: true
+        default: "31411795360"
+      baseline_run_id:
+        description: Exact green full F001-F240 feature-smoke run
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  registry_preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+    steps:
+      - name: Check out exact registry revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Install bounded runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Download only exact train snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-train-1993-2010-F001-F240-${{ env.SOURCE_RUN_ID }}
+          path: ${{ runner.temp }}/train_snapshot_1993_2010
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Download exact price baseline
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-price-feature-smoke-F001-F020-${{ env.BASELINE_RUN_ID }}
+          path: ${{ runner.temp }}/baseline_price
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.BASELINE_RUN_ID }}
+      - name: Download exact market baseline
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-market-feature-smoke-F021-F031-${{ env.BASELINE_RUN_ID }}
+          path: ${{ runner.temp }}/baseline_market
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.BASELINE_RUN_ID }}
+      - name: Download exact macro baseline
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-macro-feature-smoke-F032-F050-${{ env.BASELINE_RUN_ID }}
+          path: ${{ runner.temp }}/baseline_macro
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.BASELINE_RUN_ID }}
+      - name: Exercise all 240 physical train-only routes
+        run: |
+          python scripts/preflight_sp500_megarun_dehb_registry.py \
+            --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+            --data-contract config/sp500_megarun_free_data_240.json \
+            --feature-contract config/sp500_megarun_feature_contract_240.json \
+            --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
+            --baseline-price "$RUNNER_TEMP/baseline_price" \
+            --baseline-market "$RUNNER_TEMP/baseline_market" \
+            --baseline-macro "$RUNNER_TEMP/baseline_macro" \
+            --output outputs/dehb_registry_preflight/report.json
+      - name: Upload registry evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-dehb-registry-preflight-${{ github.run_id }}
+          path: outputs/dehb_registry_preflight
+          if-no-files-found: error
+          retention-days: 90

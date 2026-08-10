@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import hashlib
+import json
 
 import numpy as np
 import pandas as pd
@@ -274,3 +275,76 @@ def test_train_lane_registry_rejects_unknown_lane_and_incomplete_adapter_coverag
     )
     with pytest.raises(LaneRegistryError, match="UNKNOWN_LANE:F241"):
         registry("F241", {})
+
+
+def test_train_lane_registry_verifies_baseline_feature_report_and_hash(
+    tmp_path: Path,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_lane_registry import (
+        FamilyAdapter,
+        LaneRegistryError,
+        TrainLaneEvaluator,
+        supported_lane_ids,
+    )
+
+    snapshot = tmp_path / "train_snapshot_1993_2010"
+    snapshot.mkdir()
+    manifest_path = snapshot / "snapshot_manifest.json"
+    manifest_path.write_text(
+        '{"partition":"train","validation_opened":false,"locked_opened":false,'
+        '"mountable_by_first_cycle":true,"datasets":{"D_SPY":{"sha256":"'
+        + "d" * 64
+        + '"}}}',
+        encoding="utf-8",
+    )
+    roots = {name: tmp_path / name for name in ("price", "market", "macro")}
+    for root in roots.values():
+        (root / "features").mkdir(parents=True)
+    feature_path = roots["price"] / "features" / "F001.parquet"
+    pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2000-01-03")],
+            "available_at": [pd.Timestamp("2000-01-03")],
+            "value": [1.0],
+        }
+    ).to_parquet(feature_path, index=False)
+    report = {
+        "ready": True,
+        "validation_opened": False,
+        "locked_opened": False,
+        "artifacts": {
+            "F001": {
+                "path": "features/F001.parquet",
+                "sha256": hashlib.sha256(feature_path.read_bytes()).hexdigest(),
+            }
+        },
+    }
+    (roots["price"] / "feature_smoke_report.json").write_text(
+        json.dumps(report), encoding="utf-8"
+    )
+
+    def builder(owner):
+        baseline = owner._baseline_features(("F001",))
+        return lambda lane, _config: baseline[lane]
+
+    registry = TrainLaneEvaluator(
+        snapshot,
+        expected_manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        expected_spy_sha256="d" * 64,
+        default_configurations={lane: {} for lane in supported_lane_ids()},
+        baseline_feature_dirs=roots,
+        adapters=(FamilyAdapter(1, 240, builder),),
+    )
+    assert registry("F001", {})["value"].iloc[0] == 1.0
+
+    feature_path.write_bytes(b"tampered")
+    second = TrainLaneEvaluator(
+        snapshot,
+        expected_manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        expected_spy_sha256="d" * 64,
+        default_configurations={lane: {} for lane in supported_lane_ids()},
+        baseline_feature_dirs=roots,
+        adapters=(FamilyAdapter(1, 240, builder),),
+    )
+    with pytest.raises(LaneRegistryError, match="BASELINE_FEATURE_SHA256_MISMATCH"):
+        second("F001", {})

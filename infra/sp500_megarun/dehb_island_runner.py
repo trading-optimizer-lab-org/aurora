@@ -499,6 +499,9 @@ def write_island_bundle(
         champion = {
             **dict(best["info"]),
             "configuration": dict(best["configuration"]),
+            "candidate_local_robustness_passed": (
+                review.get("candidate_local_passed") is True
+            ),
             "robustness_passed": review.get("passed") is True,
             "robustness": review,
         }
@@ -683,6 +686,23 @@ def run_official_dehb_island(
         lane_id,
         seed=int(assignment["restart_seed"]),
     )
+    if robustness_reviewer is None:
+        from aurora.infra.sp500_megarun.dehb_robustness import (
+            build_physical_candidate_robustness_reviewer,
+        )
+
+        robustness_reviewer = build_physical_candidate_robustness_reviewer(
+            contract,
+            feature_contract,
+            lane_id=lane_id,
+            train_snapshot=Path(train_snapshot).resolve(),
+            baseline_feature_dirs={
+                name: Path(path).resolve()
+                for name, path in baseline_feature_dirs.items()
+            },
+            lane_configspace=lane_space,
+            seed=int(assignment["restart_seed"]),
+        )
     module = dehb_module or importlib.import_module("dehb")
     optimizer = module.DEHB(
         cs=lane_space.configspace,
