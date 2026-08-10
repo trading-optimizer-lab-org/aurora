@@ -21,6 +21,7 @@ on:
       - research/openap_181/twelve_data_factor_signals.py
       - research/openap_181/twelve_data_market_batch.py
       - research/openap_181/twelve_data_market_signals.py
+      - research/openap_181/verified_current_batches.py
       - scripts/run_openap_149_consolidate.py
       - scripts/run_openap_149_field_ritter_ipo.py
       - scripts/run_openap_149_realestate_rendered_batch.py
@@ -39,6 +40,7 @@ on:
       - tests/test_openap_149_recovered_current_features.py
       - tests/test_openap_149_recovered_openap93_proxies.py
       - tests/test_openap_149_recovered_yfinance_market.py
+      - tests/test_openap_149_verified_current_batches.py
       - tests/test_openap_181_twelve_data_factor_signals.py
       - tests/test_openap_181_twelve_data_market_batch.py
       - tests/test_openap_181_twelve_data_market_signals.py
@@ -142,6 +144,7 @@ jobs:
             tests/test_openap_149_recovered_yfinance_market.py \
             tests/test_openap_149_recovered_current_features.py \
             tests/test_openap_149_recovered_openap93_proxies.py \
+            tests/test_openap_149_verified_current_batches.py \
             -q --tb=short
 
   consolidate:

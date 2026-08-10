@@ -34,6 +34,14 @@ from aurora.research.openap_181.twelve_data_factor_signals import (
 from aurora.research.openap_181.twelve_data_market_signals import (
     TWELVE_DATA_DIRECT_SIGNAL_TARGETS,
 )
+from aurora.research.openap_181.verified_current_batches import (
+    load_verified_exchange_switch_batch,
+    load_verified_field_ritter_ipo_batch,
+    load_verified_finra_short_interest_batch,
+    load_verified_realestate_batch,
+    load_verified_sec_companyfacts_batch,
+    load_verified_spinoff_batch,
+)
 from aurora.research.openap_93.registry import load_signal_registry
 
 
@@ -252,27 +260,8 @@ def main() -> int:
         raise RuntimeError("Expected source SHA must be a full Git revision")
 
     current_93_path = _find_one(args.current_93_root, "signals_93_current.csv")
-    sec_path = _find_one(
-        args.sec_current_root, "openap_149_sec_companyfacts_current.csv"
-    )
-    finra_path = _find_one(
-        args.finra_current_root, "openap_149_finra_short_interest_current.csv"
-    )
-    realestate_path = _find_one(
-        args.realestate_current_root, "openap_149_realestate_current.csv"
-    )
-    exchange_switch_path = _find_one(
-        args.exchange_switch_current_root,
-        "openap_149_sec_exch_switch_current.csv",
-    )
-    field_ritter_path = _find_one(
-        args.field_ritter_current_root,
-        "openap_149_field_ritter_ipo_current.csv",
-    )
-    spinoff_path = _find_one(
-        args.spinoff_current_root,
-        "openap_149_sec_spinoff_current.csv",
-    )
+    formula_path = _find_one(args.formula_root, "openap_181_formula_inventory.csv")
+    formula_inventory_sha256 = _sha256_file(formula_path)
     recovered_market_current, recovered_market_paths = (
         _load_recovered_market_batch(
             args.recovered_market_root,
@@ -285,7 +274,6 @@ def main() -> int:
             expected_implementation_sha=expected_source_sha,
         )
     )
-    formula_path = _find_one(args.formula_root, "openap_181_formula_inventory.csv")
     current_93 = pd.read_csv(current_93_path, low_memory=False)
     current_93["evidence_run"] = args.current_93_run_url
     verified_openap93_proxies = pd.DataFrame()
@@ -301,17 +289,61 @@ def main() -> int:
             evidence_run_url=args.current_93_run_url,
         )
         verified_openap93_proxies["evidence_run"] = args.current_93_run_url
-    sec_current = pd.read_csv(sec_path, low_memory=False)
+    sec_current, sec_paths, sec_evidence = load_verified_sec_companyfacts_batch(
+        args.sec_current_root,
+        evidence_run_url=args.sec_current_run_url,
+        expected_formula_inventory_sha256=formula_inventory_sha256,
+    )
     sec_current["evidence_run"] = args.sec_current_run_url
-    finra_current = pd.read_csv(finra_path, low_memory=False)
+    (
+        finra_current,
+        finra_paths,
+        finra_evidence,
+    ) = load_verified_finra_short_interest_batch(
+        args.finra_current_root,
+        evidence_run_url=args.finra_current_run_url,
+        expected_formula_inventory_sha256=formula_inventory_sha256,
+    )
     finra_current["evidence_run"] = args.finra_current_run_url
-    realestate_current = pd.read_csv(realestate_path, low_memory=False)
+    (
+        realestate_current,
+        realestate_paths,
+        realestate_evidence,
+    ) = load_verified_realestate_batch(
+        args.realestate_current_root,
+        evidence_run_url=args.realestate_current_run_url,
+        expected_formula_inventory_sha256=formula_inventory_sha256,
+    )
     realestate_current["evidence_run"] = args.realestate_current_run_url
-    exchange_switch_current = pd.read_csv(exchange_switch_path, low_memory=False)
+    (
+        exchange_switch_current,
+        exchange_switch_paths,
+        exchange_switch_evidence,
+    ) = load_verified_exchange_switch_batch(
+        args.exchange_switch_current_root,
+        evidence_run_url=args.exchange_switch_current_run_url,
+        expected_formula_inventory_sha256=formula_inventory_sha256,
+    )
     exchange_switch_current["evidence_run"] = args.exchange_switch_current_run_url
-    field_ritter_current = pd.read_csv(field_ritter_path, low_memory=False)
+    (
+        field_ritter_current,
+        field_ritter_paths,
+        field_ritter_evidence,
+    ) = load_verified_field_ritter_ipo_batch(
+        args.field_ritter_current_root,
+        evidence_run_url=args.field_ritter_current_run_url,
+        expected_formula_inventory_sha256=formula_inventory_sha256,
+    )
     field_ritter_current["evidence_run"] = args.field_ritter_current_run_url
-    spinoff_current = pd.read_csv(spinoff_path, low_memory=False)
+    (
+        spinoff_current,
+        spinoff_paths,
+        spinoff_evidence,
+    ) = load_verified_spinoff_batch(
+        args.spinoff_current_root,
+        evidence_run_url=args.spinoff_current_run_url,
+        expected_formula_inventory_sha256=formula_inventory_sha256,
+    )
     spinoff_current["evidence_run"] = args.spinoff_current_run_url
     recovered_market_current["evidence_run"] = args.recovered_current_run_url
     recovered_feature_current["evidence_run"] = args.recovered_current_run_url
@@ -344,7 +376,8 @@ def main() -> int:
             "tests/test_openap_181_sec_spinoff.py|"
             "tests/test_openap_149_recovered_yfinance_market.py|"
             "tests/test_openap_149_recovered_current_features.py|"
-            "tests/test_openap_149_recovered_openap93_proxies.py"
+            "tests/test_openap_149_recovered_openap93_proxies.py|"
+            "tests/test_openap_149_verified_current_batches.py"
         ),
     )
     source_runs = (
@@ -362,12 +395,12 @@ def main() -> int:
         source_values_sha256=_sha256_many(
             [
                 *current_93_source_paths,
-                sec_path,
-                finra_path,
-                realestate_path,
-                exchange_switch_path,
-                field_ritter_path,
-                spinoff_path,
+                *sec_paths,
+                *finra_paths,
+                *realestate_paths,
+                *exchange_switch_paths,
+                *field_ritter_paths,
+                *spinoff_paths,
                 *recovered_market_paths,
                 *recovered_feature_paths,
             ]
@@ -384,17 +417,25 @@ def main() -> int:
         "spinoff_current_run_url": args.spinoff_current_run_url,
         "recovered_current_run_url": args.recovered_current_run_url,
         "verified_openap93_proxy_batch": verified_openap93_proxy_evidence,
+        "verified_current_batches": {
+            "sec_companyfacts": sec_evidence,
+            "finra_short_interest": finra_evidence,
+            "realestate": realestate_evidence,
+            "exchange_switch": exchange_switch_evidence,
+            "field_ritter_ipo": field_ritter_evidence,
+            "spinoff": spinoff_evidence,
+        },
         "expected_source_sha": expected_source_sha,
         "evidence_run_url": args.evidence_run_url,
         "evidence_artifact": args.evidence_artifact,
         "source_files": [
             *(path.name for path in current_93_source_paths),
-            sec_path.name,
-            finra_path.name,
-            realestate_path.name,
-            exchange_switch_path.name,
-            field_ritter_path.name,
-            spinoff_path.name,
+            *(path.name for path in sec_paths),
+            *(path.name for path in finra_paths),
+            *(path.name for path in realestate_paths),
+            *(path.name for path in exchange_switch_paths),
+            *(path.name for path in field_ritter_paths),
+            *(path.name for path in spinoff_paths),
             *(path.name for path in recovered_market_paths),
             *(path.name for path in recovered_feature_paths),
         ],

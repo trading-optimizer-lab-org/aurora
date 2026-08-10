@@ -891,6 +891,75 @@ def test_consolidation_cli_includes_realestate_and_audited_event_batches(
     script = util.module_from_spec(spec)
     spec.loader.exec_module(script)
 
+    def fake_verified_loader(filename: str, batch_id: str):
+        def load(
+            root: Path,
+            *,
+            evidence_run_url: str,
+            expected_formula_inventory_sha256: str,
+        ):
+            path = script._find_one(root, filename)
+            frame = pd.read_csv(path, low_memory=False)
+            return frame, [path], {
+                "batch_id": batch_id,
+                "run_url": evidence_run_url,
+                "formula_inventory_sha256": (
+                    expected_formula_inventory_sha256
+                ),
+                "strict_score_increment": 0,
+            }
+
+        return load
+
+    monkeypatch.setattr(
+        script,
+        "load_verified_sec_companyfacts_batch",
+        fake_verified_loader(
+            "openap_149_sec_companyfacts_current.csv",
+            "sec_companyfacts",
+        ),
+    )
+    monkeypatch.setattr(
+        script,
+        "load_verified_finra_short_interest_batch",
+        fake_verified_loader(
+            "openap_149_finra_short_interest_current.csv",
+            "finra_short_interest",
+        ),
+    )
+    monkeypatch.setattr(
+        script,
+        "load_verified_realestate_batch",
+        fake_verified_loader(
+            "openap_149_realestate_current.csv",
+            "realestate",
+        ),
+    )
+    monkeypatch.setattr(
+        script,
+        "load_verified_exchange_switch_batch",
+        fake_verified_loader(
+            "openap_149_sec_exch_switch_current.csv",
+            "exchange_switch",
+        ),
+    )
+    monkeypatch.setattr(
+        script,
+        "load_verified_field_ritter_ipo_batch",
+        fake_verified_loader(
+            "openap_149_field_ritter_ipo_current.csv",
+            "field_ritter_ipo",
+        ),
+    )
+    monkeypatch.setattr(
+        script,
+        "load_verified_spinoff_batch",
+        fake_verified_loader(
+            "openap_149_sec_spinoff_current.csv",
+            "spinoff",
+        ),
+    )
+
     columns = [
         "security_id",
         "ticker",
@@ -1305,6 +1374,14 @@ def test_consolidation_cli_includes_realestate_and_audited_event_batches(
     assert accruals_bm["source_evidence_run"] == recovered_run
     assert not bool(accruals_bm["strict_score_eligible"])
     assert manifest["recovered_current_run_url"] == recovered_run
+    assert set(manifest["verified_current_batches"]) == {
+        "sec_companyfacts",
+        "finra_short_interest",
+        "realestate",
+        "exchange_switch",
+        "field_ritter_ipo",
+        "spinoff",
+    }
     assert {
         "recovered_yfinance_market_current.csv",
         "recovered_yfinance_market_manifest.json",

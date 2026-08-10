@@ -43,6 +43,41 @@ solo `CBOperProf` conserva la cuarentena en el contrato de consolidacion
 preparado. El CSV se conserva sin reescribir manualmente porque el usuario ha
 prohibido iniciar un nuevo run y aun no existe un artefacto consolidado nuevo.
 
+## Seis lotes de origen: verificacion hash-bound preparada, no ejecutada
+
+El consolidador anterior leia directamente los CSV de CompanyFacts, FINRA,
+realestate, ExchSwitch, Field-Ritter y Spinoff. Esa lectura comprobaba despues
+las filas de forma agregada, pero no ligaba cada lote a su run, hash y
+manifiesto antes de aceptarlo.
+
+Se ha preparado un cargador fail-closed para cada uno de los seis artefactos
+ya existentes. Los contratos fijan los runs `31392473937`, `31384007094`,
+`31384049772`, `31389285731`, `31395454942` y `31393646423`, junto con el
+SHA-256 exacto de cada CSV. Tambien comprueban, segun el esquema disponible:
+
+- manifiesto y hash de salida;
+- inventario de formulas fijado;
+- senales y recuentos exactos;
+- fuente, formula y hash de formula por senal;
+- identidad no vacia y ausencia de duplicados;
+- fechas causales y ausencia de lookahead;
+- coherencia entre valor finito y `current_usable`;
+- `strict_score_eligible=false`, score estricto cero y niveles protegidos
+  cerrados.
+
+Los tres artefactos antiguos que no incluian todas las columnas de puerta solo
+pueden normalizarlas porque su hash exacto y su manifiesto declaran el lote
+completo como no estricto. Los manifiestos pasan a formar parte del hash
+agregado y de `verified_current_batches` en la salida de consolidacion.
+
+Las pruebas negativas se escribieron antes del codigo y cubren alteracion del
+CSV, run incorrecto, duplicados, lookahead, valor incoherente, fuente o formula
+distinta, inventario de formulas cambiado e intento de activar strict. No se
+han ejecutado localmente ni en GitHub porque la instruccion vigente prohibe
+arrancar runs y no existe autorizacion posterior para ejecutar localmente.
+Por tanto, esta mejora no cambia todavia los recuentos publicados
+`56/50/18/99/96814`, la matriz CSV ni el score estricto confirmado de 31.
+
 ## Seis senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 
 El artefacto gratuito y ya existente `openap-93-current-recovered-results` del
