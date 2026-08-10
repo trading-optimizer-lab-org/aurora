@@ -43,6 +43,7 @@ on:
       current_93_run_id:
         description: Run containing verified bounded OpenAP 93 current values
         required: true
+        default: "31341580689"
         type: string
       current_93_artifact_name:
         description: Exact OpenAP 93 current-values artifact name
@@ -52,6 +53,7 @@ on:
       sec_current_run_id:
         description: Successful OpenAP 149 SEC CompanyFacts run
         required: true
+        default: "31392473937"
         type: string
       finra_current_run_id:
         description: Successful OpenAP 149 FINRA ShortInterest run
@@ -61,18 +63,22 @@ on:
       realestate_current_run_id:
         description: Successful OpenAP 149 rendered realestate current run
         required: true
+        default: "31384049772"
         type: string
       exchange_switch_current_run_id:
         description: Successful OpenAP 149 SEC exchange-switch current run
         required: true
+        default: "31389285731"
         type: string
       field_ritter_current_run_id:
         description: Successful OpenAP 149 Field-Ritter IPO current run
         required: true
+        default: "31395454942"
         type: string
       spinoff_current_run_id:
         description: Successful OpenAP 149 SEC Spinoff current run
         required: true
+        default: "31393646423"
         type: string
       formula_evidence_run_id:
         description: Successful run containing the pinned formula inventory
