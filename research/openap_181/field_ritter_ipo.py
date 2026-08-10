@@ -1045,12 +1045,16 @@ def calculate_field_ritter_ipo_signals(
     blank_counts = current[identity_columns].eq("").sum()
     duplicate_mask = current["security_id"].duplicated(keep=False)
     if blank_counts.any() or duplicate_mask.any():
+        blank_rows = current.loc[
+            current[identity_columns].eq("").any(axis=1), identity_columns
+        ].head(10)
         duplicate_ids = sorted(
             current.loc[duplicate_mask, "security_id"].astype(str).unique()
         )[:10]
         raise ValueError(
             "Current security identity is blank or duplicated: "
             f"blank_counts={blank_counts.astype(int).to_dict()}, "
+            f"blank_rows={blank_rows.to_dict(orient='records')}, "
             f"duplicate_security_ids={duplicate_ids}"
         )
     if linked_ipos["security_id"].duplicated().any():
