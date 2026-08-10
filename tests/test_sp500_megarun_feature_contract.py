@@ -52,10 +52,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 131)]
+    ] == [f"F{index:03d}" for index in range(1, 141)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[130:]
+        for lane in feature_contract.lanes[140:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -250,6 +250,29 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "consensus",
     )
     assert all(lane.minimum_history >= 20 for lane in technical_lanes)
+    nonlinear_lanes = feature_contract.lanes[130:140]
+    assert nonlinear_lanes[0].parameter_space["statistic"] == (
+        "high_frequency_share",
+        "low_frequency_share",
+        "energy_entropy",
+        "scale_concentration",
+    )
+    assert "trailing-only" in nonlinear_lanes[1].formula
+    assert nonlinear_lanes[3].required_datasets == ("D_SPY", "D_CALENDAR")
+    assert "exclude the current return" in nonlinear_lanes[3].formula
+    assert "candidate continuation" in nonlinear_lanes[4].formula
+    assert nonlinear_lanes[5].parameter_space["statistic"] == (
+        "recurrence_rate",
+        "recurrence_entropy",
+        "determinism",
+        "laminarity",
+    )
+    assert nonlinear_lanes[9].parameter_space["kind"] == (
+        "setar",
+        "star",
+        "observable_threshold",
+    )
+    assert all(lane.minimum_history >= 63 for lane in nonlinear_lanes)
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:
