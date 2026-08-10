@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -69,6 +70,19 @@ def _number(value: object) -> float | None:
     except ValueError:
         return None
     return -number if negative else number
+
+
+def _utc_datetime(value: object) -> datetime | None:
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _markdown_rows(text: str) -> list[list[str]]:
@@ -223,8 +237,74 @@ def build_rendered_realestate_evidence(
     }
 
 
+def select_current_realestate_pilot_filings(
+    submission_records: Iterable[Mapping[str, Any]],
+    *,
+    formation_at: object,
+    target_sic2: str,
+    anchor_cik: object,
+    minimum_issuers: int = 5,
+    maximum_issuers: int = 12,
+) -> list[dict[str, Any]]:
+    """Select one latest causal annual filing for an anchored SEC SIC2 pilot."""
+
+    if minimum_issuers < 5 or maximum_issuers < minimum_issuers:
+        raise ValueError("realestate pilot requires at least five issuers")
+    formation = _utc_datetime(formation_at)
+    if formation is None:
+        raise ValueError("formation_at must be a valid timestamp")
+    sic2 = str(target_sic2).strip()
+    if not re.fullmatch(r"\d{2}", sic2):
+        raise ValueError("target_sic2 must contain exactly two digits")
+    anchor = str(int(str(anchor_cik).strip()))
+
+    latest_by_cik: dict[str, tuple[datetime, dict[str, Any]]] = {}
+    for source_row in submission_records:
+        row = dict(source_row)
+        if str(row.get("form") or "").strip().upper() != "10-K":
+            continue
+        if row.get("is_xbrl") not in {True, 1, "1"}:
+            continue
+        accepted = _utc_datetime(row.get("accepted_at"))
+        if accepted is None or accepted > formation:
+            continue
+        digits = re.sub(r"\D", "", str(row.get("sic") or ""))
+        if len(digits) < 2 or digits[:2] != sic2:
+            continue
+        try:
+            cik = str(int(str(row.get("cik")).strip()))
+        except (TypeError, ValueError):
+            continue
+        row.update(
+            {
+                "cik": cik,
+                "sic": digits,
+                "sic2": sic2,
+                "accepted_at": accepted.isoformat(),
+                "formation_at": str(formation_at),
+            }
+        )
+        previous = latest_by_cik.get(cik)
+        if previous is None or accepted > previous[0]:
+            latest_by_cik[cik] = (accepted, row)
+
+    if anchor not in latest_by_cik:
+        raise ValueError("anchor CIK has no causal filing in target SIC2")
+    ordered = [latest_by_cik[anchor][1]]
+    ordered.extend(
+        latest_by_cik[cik][1]
+        for cik in sorted(latest_by_cik, key=int)
+        if cik != anchor
+    )
+    selected = ordered[:maximum_issuers]
+    if len(selected) < minimum_issuers:
+        raise ValueError("fewer than five causal issuers in target SIC2")
+    return selected
+
+
 __all__ = [
     "build_rendered_realestate_evidence",
     "extract_rendered_realestate_inputs",
     "locate_rendered_ppe_report",
+    "select_current_realestate_pilot_filings",
 ]
