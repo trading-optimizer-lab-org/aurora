@@ -745,7 +745,8 @@ def test_field_ritter_runner_is_guarded_hash_bound_and_non_strict() -> None:
     assert "_sec_source_contract" in runner
     assert '"sec_source_evidence": sec_source_evidence' in runner
     assert '"status_rows": status_rows' in runner
-    assert 'status["status"].eq("ok").all()' in runner
+    assert 'status["status"].isin({"ok", "error"}).all()' in runner
+    assert "success counts disagree with its summary" in runner
     assert 'values == {"companyfacts", "submissions"}' in runner
     assert '"formula_source_run_id"' in runner
     assert '"ticker_only_join_allowed": False' in runner
