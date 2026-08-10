@@ -555,6 +555,53 @@ def _forbidden_parameter_pairs(
             for statistic in ("joint_mean", "joint_max", "triple_interaction")
             for threshold in space["threshold"][1:]
         )
+    if lane.lane_id in {"F191", "F192", "F194", "F200"}:
+        pairs.extend(
+            ("normalization", normalization, "window", window)
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id in {
+        "F191",
+        "F192",
+        "F193",
+        "F194",
+        "F195",
+        "F196",
+        "F197",
+        "F198",
+        "F199",
+        "F200",
+    }:
+        pairs.extend(
+            ("normalization", normalization, "change_lag", lag)
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
+    if lane.lane_id == "F193":
+        pairs.extend(
+            ("statistic", statistic, "lag", lag)
+            for statistic in (
+                "nonresidential_investment",
+                "residential_investment",
+                "housing_starts",
+                "revision_composite",
+            )
+            for lag in space["lag"][1:]
+        )
+    if lane.lane_id == "F196":
+        pairs.extend(
+            ("statistic", statistic, "lag", lag)
+            for statistic in (
+                "industrial_production",
+                "manufacturing_production",
+                "capacity_utilization",
+                "manufacturing_capacity",
+                "utilization_spread",
+                "revision_composite",
+            )
+            for lag in space["lag"][1:]
+        )
     if lane.lane_id in {"F023", "F026", "F030", "F031"}:
         pairs.extend(
             ("window", 1, "normalization", normalization)
@@ -914,6 +961,66 @@ def _forbidden_parameter_triplets(
                 "revolving_growth",
                 "revolving_share",
                 "revolving_relative_growth",
+            ),
+        }
+        triplets.extend(
+            (
+                "statistic",
+                statistic,
+                "normalization",
+                normalization,
+                "window",
+                window,
+            )
+            for statistic in simple_statistics[lane.lane_id]
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id in {"F193", "F195", "F196", "F197", "F198", "F199"}:
+        simple_statistics = {
+            "F193": (
+                "nonresidential_investment",
+                "residential_investment",
+                "housing_starts",
+                "housing_starts_change",
+                "investment_breadth",
+            ),
+            "F195": (
+                "payroll_first",
+                "payroll_revision",
+                "unemployment_level",
+                "unemployment_change",
+                "labor_breadth",
+            ),
+            "F196": (
+                "industrial_production",
+                "manufacturing_production",
+                "capacity_utilization",
+                "manufacturing_capacity",
+                "utilization_spread",
+                "production_breadth",
+            ),
+            "F197": (
+                "output_nowcast",
+                "output_next_forecast",
+                "unemployment_nowcast",
+                "cpi_nowcast",
+                "housing_nowcast",
+                "tbill_nowcast",
+            ),
+            "F198": (
+                "ngdp_iqr",
+                "unemployment_iqr",
+                "cpi_iqr",
+                "housing_iqr",
+                "tbill_iqr",
+            ),
+            "F199": (
+                "forecast_revision",
+                "nowcast_signed_error",
+                "nowcast_absolute_error",
+                "prior_signed_error",
+                "prior_absolute_error",
             ),
         }
         triplets.extend(

@@ -91,7 +91,7 @@ def _write_snapshot(root: Path) -> Path:
         "philly_capacity_utilization_first_releases": (monthly, 77.0),
         "philly_manufacturing_capacity_first_releases": (monthly, 75.0),
         "philly_housing_starts_first_releases": (monthly, 1_400.0),
-        "philly_real_output_first_releases": (quarterly, 2.8),
+        "philly_real_output_first_releases": (quarterly, 2.4),
         "philly_real_consumption_first_releases": (quarterly, 3.0),
         "philly_nonresidential_investment_first_releases": (quarterly, 3.2),
         "philly_residential_investment_first_releases": (quarterly, 2.5),
@@ -123,8 +123,10 @@ def _write_snapshot(root: Path) -> Path:
             "TBILL": 2.0 + 0.5 * np.cos(survey_index / 8.0),
         }
         for sheet, base in base_levels.items():
-            if sheet in {"RGDP", "HOUSING"}:
+            if sheet == "RGDP":
                 forecast_values = (base, base * 1.006, base * 1.012)
+            elif sheet == "HOUSING":
+                forecast_values = (base, base * 1.004, base * 1.009)
             else:
                 forecast_values = (base, base + 0.05, base + 0.1)
             spf_rows.append(
@@ -171,7 +173,7 @@ def _write_snapshot(root: Path) -> Path:
                 {
                     "date": quarter_end,
                     "series_id": series_id,
-                    "value": 10.0 + 8.0 * np.sin((quarter_index + offset) / 5.0),
+                    "value": 2.0 + 8.0 * np.sin((quarter_index + offset) / 5.0),
                 }
             )
     pd.DataFrame(sloos_rows).to_parquet(snapshot / "D_SLOOS.parquet", index=False)
@@ -200,6 +202,12 @@ def test_realtime_survey_smoke_builds_f191_f200_train_only_artifacts(tmp_path: P
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
     assert report["empty_lanes"] == []
+    parameter_audit = report["parameter_choice_audit"]
+    assert parameter_audit["ready"] is True
+    assert parameter_audit["expected_choice_probe_count"] == 207
+    assert parameter_audit["choice_probe_count"] == 207
+    assert parameter_audit["failed_probes"] == []
+    assert parameter_audit["inactive_choice_groups"] == []
     assert (tmp_path / "out" / "features" / "F191.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F200.parquet").is_file()
 
@@ -235,3 +243,54 @@ def test_realtime_survey_smoke_cli_accepts_contract(
     )
 
     assert cli.main() == 0
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "parameter", "configuration", "expected"),
+    [
+        ("F191", "window", {"normalization": "raw"}, {"normalization": "rolling_zscore"}),
+        ("F191", "change_lag", {"normalization": "raw"}, {"normalization": "change"}),
+        ("F193", "window", {"statistic": "housing_starts"}, {"statistic": "housing_investment_composite"}),
+        ("F193", "lag", {"statistic": "housing_starts"}, {"statistic": "housing_starts_change"}),
+        ("F195", "window", {"statistic": "payroll_first"}, {"statistic": "labor_composite"}),
+        ("F196", "window", {"statistic": "industrial_production"}, {"statistic": "production_capacity_composite"}),
+        (
+            "F196",
+            "lag",
+            {"statistic": "industrial_production"},
+            {"statistic": "production_capacity_composite"},
+        ),
+        ("F197", "window", {"statistic": "output_nowcast"}, {"statistic": "macro_outlook_composite"}),
+        ("F198", "window", {"statistic": "ngdp_iqr"}, {"statistic": "macro_disagreement"}),
+        ("F199", "window", {"statistic": "forecast_revision"}, {"statistic": "rolling_absolute_error"}),
+        ("F200", "window", {"normalization": "raw"}, {"normalization": "rolling_zscore"}),
+    ],
+)
+def test_realtime_survey_parameter_witnesses_activate_conditional_choices(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    repaired = _api()._repair_realtime_survey_configuration(
+        lane_id,
+        parameter,
+        configuration.copy(),
+    )
+
+    for name, value in expected.items():
+        assert repaired[name] == value
+
+
+def test_realtime_survey_physical_smoke_has_an_isolated_dispatch_scope() -> None:
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "sp500-megarun-macro-feature-smoke-f032.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "- f191_f200" in workflow
+    assert "smoke_f191_f200:" in workflow
+    assert "inputs.scope == 'f191_f200'" in workflow
+    assert "timeout-minutes: 15" in workflow

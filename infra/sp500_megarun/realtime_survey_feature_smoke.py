@@ -10,7 +10,11 @@ from typing import Any
 
 import pandas as pd
 
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.feature_audit import audit_feature_outputs
+from aurora.infra.sp500_megarun.feature_contract import (
+    load_and_validate_feature_contract,
+)
 from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_macro_release_panel,
     normalize_philadelphia_realtime_cycle_panel,
@@ -22,8 +26,12 @@ from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_spy_decision_panel,
 )
 from aurora.infra.sp500_megarun.materializer import parquet_safe_frame
+from aurora.infra.sp500_megarun.parameter_choice_audit import (
+    audit_frozen_parameter_choices,
+)
 from aurora.infra.sp500_megarun.realtime_survey_feature_engine import (
     evaluate_realtime_survey_family_batch,
+    evaluate_realtime_survey_lane,
 )
 
 
@@ -35,6 +43,8 @@ _TRAIN_PARTITION = "train_snapshot_1993_2010"
 _SEARCH_START = pd.Timestamp("1998-01-01")
 _TRAIN_END = pd.Timestamp("2010-12-31")
 _LANES = tuple(f"F{index:03d}" for index in range(191, 201))
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PARAMETER_AUDIT_START = pd.Timestamp("2003-01-01")
 _DATASETS = (
     "D_SPY",
     "D_CALENDAR",
@@ -114,6 +124,58 @@ def _first_available(panel: pd.DataFrame, column: str) -> str | None:
     if not valid.any():
         return None
     return pd.to_datetime(panel.loc[valid, "available_at"]).min().date().isoformat()
+
+
+def _repair_realtime_survey_configuration(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    if parameter == "change_lag":
+        configuration["normalization"] = "change"
+    if lane_id == "F197" and parameter in {"normalization", "change_lag"}:
+        configuration["statistic"] = "cpi_nowcast"
+    if lane_id in {"F191", "F192", "F194", "F200"} and parameter == "window":
+        configuration["normalization"] = "rolling_zscore"
+    window_statistics = {
+        "F193": "housing_investment_composite",
+        "F195": "labor_composite",
+        "F196": "production_capacity_composite",
+        "F197": "macro_outlook_composite",
+        "F198": "macro_disagreement",
+        "F199": "rolling_absolute_error",
+    }
+    if lane_id in window_statistics and parameter == "window":
+        configuration["statistic"] = window_statistics[lane_id]
+    if lane_id == "F193" and parameter == "lag":
+        configuration["statistic"] = "housing_starts_change"
+    if lane_id == "F196" and parameter == "lag":
+        configuration["statistic"] = "production_capacity_composite"
+    return configuration
+
+
+def _parameter_audit_inputs(
+    market: pd.DataFrame,
+    panels: dict[str, pd.DataFrame],
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    market_dates = pd.to_datetime(market["date"], errors="raise")
+    audit_market = market.loc[
+        market_dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+    ].reset_index(drop=True)
+    if not (pd.DatetimeIndex(audit_market["date"]).year == 2010).any():
+        raise RealtimeSurveyFeatureSmokeError("PARAMETER_AUDIT_2010_MISSING")
+    audit_panels: dict[str, pd.DataFrame] = {}
+    for resource, panel in panels.items():
+        dates = pd.to_datetime(panel["date"], errors="raise")
+        bounded = panel.loc[
+            dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+        ].reset_index(drop=True)
+        if bounded.empty:
+            raise RealtimeSurveyFeatureSmokeError(
+                f"PARAMETER_AUDIT_PANEL_EMPTY:{resource}"
+            )
+        audit_panels[resource] = bounded
+    return audit_market, audit_panels
 
 
 def build_realtime_survey_feature_smoke(
@@ -201,6 +263,26 @@ def build_realtime_survey_feature_smoke(
         search_start=_SEARCH_START,
         search_end=_TRAIN_END,
     )
+    data_contract = load_and_validate_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_free_data_240.json"
+    )
+    feature_contract = load_and_validate_feature_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_feature_contract_240.json",
+        data_contract,
+    )
+    audit_market, audit_panels = _parameter_audit_inputs(market, panels)
+    parameter_audit = audit_frozen_parameter_choices(
+        feature_contract,
+        lane_ids=_LANES,
+        evaluator=lambda lane_id, configuration: evaluate_realtime_survey_lane(
+            lane_id,
+            audit_market,
+            audit_panels,
+            configuration,
+        ),
+        expected_years=(2010,),
+        repair=_repair_realtime_survey_configuration,
+    )
     root = Path(output_dir)
     artifacts: dict[str, dict[str, object]] = {}
     maximum = pd.Timestamp.min
@@ -218,7 +300,9 @@ def build_realtime_survey_feature_smoke(
 
     report = {
         "schema_version": 1,
-        "ready": bool(audit.ready and len(outputs) == 10),
+        "ready": bool(
+            audit.ready and parameter_audit["ready"] and len(outputs) == 10
+        ),
         "scope": "realtime_macro_survey_feature_smoke_train_only",
         "executable_lanes": list(_LANES),
         "executable_lane_count": len(outputs),
@@ -249,10 +333,16 @@ def build_realtime_survey_feature_smoke(
         "near_duplicate_pairs": [list(pair) for pair in audit.near_duplicate_pairs],
         "coverage": [asdict(item) for item in audit.coverage],
         "artifacts": artifacts,
+        "parameter_choice_audit_scope": "physical_causal_tail_2003_2010",
+        "parameter_choice_audit": parameter_audit,
     }
     root.mkdir(parents=True, exist_ok=True)
     (root / "realtime_survey_feature_smoke_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (root / "parameter_choice_audit_F191_F200.json").write_text(
+        json.dumps(parameter_audit, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return report

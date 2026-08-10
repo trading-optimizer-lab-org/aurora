@@ -290,6 +290,16 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F187", 26),
         ("F188", 41),
         ("F190", 9),
+        ("F191", 12),
+        ("F192", 12),
+        ("F193", 48),
+        ("F194", 12),
+        ("F195", 36),
+        ("F196", 60),
+        ("F197", 42),
+        ("F198", 36),
+        ("F199", 36),
+        ("F200", 12),
     ],
 )
 def test_conditionally_inactive_model_parameters_are_forbidden(
@@ -419,18 +429,44 @@ def test_f180_long_window_rules_are_scoped_to_the_statistics_that_use_it(
 
 
 @pytest.mark.parametrize(
-    ("lane_id", "scoped_statistic", "excluded_statistic", "expected_triplets"),
+    ("lane_id", "scoped_statistic", "excluded_statistics", "expected_triplets"),
     [
-        ("F184", "baa_aaa", "credit_stress_composite", 24),
-        ("F185", "quality_spread", "spread_volume_composite", 32),
-        ("F188", "total_growth", "consumer_credit_stress", 32),
+        ("F184", "baa_aaa", ("credit_stress_composite",), 24),
+        ("F185", "quality_spread", ("spread_volume_composite",), 32),
+        ("F188", "total_growth", ("consumer_credit_stress",), 32),
+        (
+            "F193",
+            "nonresidential_investment",
+            ("housing_investment_composite", "revision_composite"),
+            30,
+        ),
+        ("F195", "payroll_first", ("labor_composite",), 30),
+        (
+            "F196",
+            "industrial_production",
+            ("production_capacity_composite", "revision_composite"),
+            36,
+        ),
+        ("F197", "output_nowcast", ("macro_outlook_composite",), 36),
+        (
+            "F198",
+            "ngdp_iqr",
+            ("macro_disagreement", "disagreement_breadth"),
+            30,
+        ),
+        (
+            "F199",
+            "forecast_revision",
+            ("rolling_bias", "rolling_absolute_error"),
+            30,
+        ),
     ],
 )
 def test_internal_composites_keep_their_window_while_raw_simple_statistics_do_not(
     feature_contract,
     lane_id: str,
     scoped_statistic: str,
-    excluded_statistic: str,
+    excluded_statistics: tuple[str, ...],
     expected_triplets: int,
 ) -> None:
     from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
@@ -449,7 +485,11 @@ def test_internal_composites_keep_their_window_while_raw_simple_statistics_do_no
 
     assert len(triplets) == expected_triplets
     assert any(("statistic", scoped_statistic) in item for item in triplets)
-    assert all(("statistic", excluded_statistic) not in item for item in triplets)
+    assert all(
+        ("statistic", excluded_statistic) not in item
+        for item in triplets
+        for excluded_statistic in excluded_statistics
+    )
 
 
 def test_manifest_freezes_fidelities_versions_boundaries_and_exact_choices(
