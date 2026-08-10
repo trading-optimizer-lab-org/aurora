@@ -240,14 +240,23 @@ jobs:
           values = pd.read_csv(f"{root}/openap_149_current_values.csv")
           summary = json.load(open(f"{root}/openap_149_acquisition_summary.json"))
           assert len(matrix) == matrix["signal"].nunique() == 149
+          data_acquired = matrix["data_acquired"].astype(str).str.lower().eq("true")
+          current_calculated = (
+              matrix["current_value_calculated"].astype(str).str.lower().eq("true")
+          )
+          reconstructed = matrix["fidelity"].eq("reconstructed")
+          strict_eligible = (
+              matrix["strict_score_eligible"].astype(str).str.lower().eq("true")
+          )
+          assert summary["target_signals"] == 149
           assert summary["latest_formation_at"] == "2026-08-09T23:59:59+00:00"
-          assert summary["data_acquired"] == 57
-          assert summary["current_values_calculated"] == 51
-          assert summary["reconstructed_not_strict"] == 19
-          assert summary["blocked"] == summary["pending"] == 98
-          assert summary["value_rows"] == 97914
-          assert summary["strict_score_eligible"] == 0
-          assert not matrix["strict_score_eligible"].astype(str).str.lower().eq("true").any()
+          assert summary["data_acquired"] == int(data_acquired.sum())
+          assert summary["current_values_calculated"] == int(current_calculated.sum())
+          assert summary["reconstructed_not_strict"] == int((current_calculated & reconstructed).sum())
+          assert summary["blocked"] == summary["pending"] == int((~current_calculated).sum())
+          assert summary["value_rows"] == len(values)
+          assert summary["strict_score_eligible"] == int(strict_eligible.sum()) == 0
+          assert not strict_eligible.any()
           firm_age = matrix.set_index("signal").loc["FirmAge"]
           assert bool(firm_age["data_acquired"])
           assert bool(firm_age["current_value_calculated"])
@@ -264,12 +273,36 @@ jobs:
           assert pd.to_datetime(firm_age_values["period_end"]).eq(
               pd.to_datetime(firm_age_values["available_at"])
           ).all()
-          for signal in ("CBOperProf", "DelNetFin", "EarningsConsistency"):
-              quarantined = matrix.set_index("signal").loc[signal]
-              assert not bool(quarantined["data_acquired"])
-              assert not bool(quarantined["current_value_calculated"])
-              assert quarantined["status"] == "blocked_fidelity"
-              assert "declared_current_unusable" in quarantined["remaining_blocker"]
+          companyfacts_expected = {
+              "ChInvIA": (3124, "reconstructed", "openap_chinvia_capex_growth_sic2d_mean_sec"),
+              "ConvDebt": (265, "reconstructed", "openap_convdebt_positive_only_sec_companyfacts_reconstruction"),
+              "DelDRC": (1949, "unvalidated_proxy", "change_deferred_revenue_over_average_assets"),
+              "DelNetFin": (36, "reconstructed", "openap_delnetfin_sec_aggregate_components_6m_lag"),
+              "DivOmit": (14, "reconstructed", "openap_divomit_positive_sec_6q_regular_then_zero_2m"),
+              "DivSeason": (3, "reconstructed", "openap_divseason_positive_sec_direct_month_frequency"),
+              "EarningsConsistency": (1441, "reconstructed", "openap_earnings_consistency_sec_basic_eps_6m_lag"),
+              "EarningsSurprise": (2132, "reconstructed", "openap_eps_yoy_drift_standardized_8q_sec_21q"),
+              "RevenueSurprise": (1828, "reconstructed", "openap_revenue_per_share_yoy_standardized_8q_sec_21q"),
+              "sinAlgo": (22, "reconstructed", "openap_sinalgo_positive_current_sec_sic"),
+          }
+          matrix_by_signal = matrix.set_index("signal")
+          for signal, (expected_count, expected_fidelity, expected_formula) in companyfacts_expected.items():
+              companyfacts = matrix_by_signal.loc[signal]
+              assert bool(companyfacts["data_acquired"])
+              assert bool(companyfacts["current_value_calculated"])
+              assert companyfacts["current_value_count"] == expected_count
+              assert companyfacts["fidelity"] == expected_fidelity
+              assert companyfacts["source_used"] == "sec_edgar"
+              assert not bool(companyfacts["strict_score_eligible"])
+              companyfacts_values = values.loc[values["signal"].eq(signal)]
+              assert len(companyfacts_values) == expected_count
+              assert companyfacts_values["source_id"].eq("sec_edgar").all()
+              assert companyfacts_values["formula_id"].eq(expected_formula).all()
+          quarantined = matrix_by_signal.loc["CBOperProf"]
+          assert not bool(quarantined["data_acquired"])
+          assert not bool(quarantined["current_value_calculated"])
+          assert quarantined["status"] == "blocked_fidelity"
+          assert "declared_current_unusable" in quarantined["remaining_blocker"]
           oscore = matrix.set_index("signal").loc["OScore"]
           assert bool(oscore["data_acquired"])
           assert bool(oscore["current_value_calculated"])
