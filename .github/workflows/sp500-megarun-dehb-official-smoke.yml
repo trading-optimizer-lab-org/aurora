@@ -35,6 +35,7 @@ jobs:
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       NUMEXPR_NUM_THREADS: "1"
+      PYTHONPATH: ${{ github.workspace }}/..
     steps:
       - name: Check out the exact infrastructure revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -51,7 +52,6 @@ jobs:
           set -euo pipefail
           python -m pip install --require-hashes -r requirements/dehb-official.lock
           python -m pip install "pytest==9.0.3"
-          python -m pip install --no-deps -e .
           python -m pip check
       - name: Verify adapter and GitHub-only fail-closed gates
         run: |
