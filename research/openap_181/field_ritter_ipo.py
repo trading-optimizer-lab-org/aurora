@@ -461,10 +461,6 @@ def _raw_rows(archive: zipfile.ZipFile) -> list[tuple[int, tuple[str, ...]]]:
             seen_columns.add(column)
             value = _cell_text(cell, shared)
             if column >= len(values):
-                if _clean_text(value):
-                    raise ValueError(
-                        "Field-Ritter worksheet has unexpected non-empty columns"
-                    )
                 continue
             values[column] = value
         if any(_clean_text(value) for value in values):
