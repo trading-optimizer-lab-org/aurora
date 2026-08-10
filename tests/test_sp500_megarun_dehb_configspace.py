@@ -269,6 +269,11 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F148", 4),
         ("F149", 8),
         ("F150", 13),
+        ("F161", 14),
+        ("F162", 6),
+        ("F165", 9),
+        ("F169", 16),
+        ("F170", 14),
     ],
 )
 def test_conditionally_inactive_model_parameters_are_forbidden(
@@ -310,6 +315,38 @@ def test_f148_invalid_receptive_fields_are_forbidden_as_exact_triplets(
         (("sequence", 10), ("kernel", 5), ("dilation", 4)),
         (("sequence", 10), ("kernel", 5), ("dilation", 8)),
         (("sequence", 20), ("kernel", 5), ("dilation", 8)),
+    }
+
+
+def test_f169_effective_selection_count_clones_are_forbidden_as_triplets(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    lane = next(item for item in feature_contract.lanes if item.lane_id == "F169")
+    assert lane.parameter_space["selection_fraction"] == (0.1, 0.25, 0.33, 0.5)
+    row = build_lane_configspace(
+        feature_contract,
+        "F169",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    triplets = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 3
+    }
+    assert triplets == {
+        (("aggregation", aggregation), ("universe", universe), ("selection_fraction", fraction))
+        for aggregation in ("mean", "median")
+        for universe, fraction in (
+            ("regions_only", 0.25),
+            ("regions_only", 0.33),
+            ("developed_ex_us_plus_regions", 0.25),
+            ("developed_ex_us_plus_regions", 0.5),
+            ("all_available", 0.33),
+        )
     }
 
 

@@ -348,6 +348,39 @@ def _forbidden_parameter_pairs(
             ("statistic", "attention_entropy", "ridge", choice)
             for choice in space["ridge"][1:]
         )
+    if lane.lane_id in {"F161", "F170"}:
+        pairs.extend(
+            ("mode", mode, "threshold", choice)
+            for mode in ("change", "divergence")
+            for choice in space["threshold"][1:]
+        )
+        pairs.extend(
+            ("mode", mode, "change_lag", choice)
+            for mode in ("level", "divergence")
+            for choice in space["change_lag"][1:]
+        )
+    if lane.lane_id in {"F162", "F169"}:
+        pairs.extend(
+            ("aggregation", aggregation, "selection_fraction", choice)
+            for aggregation in ("breadth", "rank")
+            for choice in space["selection_fraction"][1:]
+        )
+    if lane.lane_id == "F165":
+        pairs.extend(
+            ("window", window, "short_window", short)
+            for window in space["window"]
+            for short in space["short_window"]
+            if int(short) >= int(window)
+        )
+        pairs.extend(
+            ("statistic", statistic, "short_window", choice)
+            for statistic in (
+                "dispersion",
+                "sign_disagreement",
+                "mean_correlation",
+            )
+            for choice in space["short_window"][1:]
+        )
     if lane.lane_id in {"F172", "F180"}:
         pairs.extend(
             ("window", window, "long_window", long_window)
@@ -651,16 +684,41 @@ def _forbidden_parameter_pairs(
 def _forbidden_parameter_triplets(
     lane: FeatureLaneSpec,
 ) -> tuple[tuple[str, Any, str, Any, str, Any], ...]:
-    if lane.lane_id != "F148":
-        return ()
+    triplets: list[tuple[str, Any, str, Any, str, Any]] = []
     space = lane.parameter_space
-    return tuple(
-        ("sequence", sequence, "kernel", kernel, "dilation", dilation)
-        for sequence in space["sequence"]
-        for kernel in space["kernel"]
-        for dilation in space["dilation"]
-        if (int(kernel) - 1) * int(dilation) >= int(sequence)
-    )
+    if lane.lane_id == "F148":
+        triplets.extend(
+            ("sequence", sequence, "kernel", kernel, "dilation", dilation)
+            for sequence in space["sequence"]
+            for kernel in space["kernel"]
+            for dilation in space["dilation"]
+            if (int(kernel) - 1) * int(dilation) >= int(sequence)
+        )
+    if lane.lane_id == "F169":
+        universe_sizes = {
+            "regions_only": 3,
+            "developed_ex_us_plus_regions": 4,
+            "all_available": 5,
+        }
+        for aggregation in ("mean", "median"):
+            for universe, count in universe_sizes.items():
+                effective_counts: set[int] = set()
+                for fraction in space["selection_fraction"]:
+                    effective = math.ceil(count * float(fraction))
+                    if effective in effective_counts:
+                        triplets.append(
+                            (
+                                "aggregation",
+                                aggregation,
+                                "universe",
+                                universe,
+                                "selection_fraction",
+                                fraction,
+                            )
+                        )
+                    else:
+                        effective_counts.add(effective)
+    return tuple(triplets)
 
 
 def build_lane_configspace(

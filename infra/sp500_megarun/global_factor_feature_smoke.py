@@ -10,7 +10,11 @@ from typing import Any
 
 import pandas as pd
 
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.feature_audit import audit_feature_outputs
+from aurora.infra.sp500_megarun.feature_contract import (
+    load_and_validate_feature_contract,
+)
 from aurora.infra.sp500_megarun.feature_input_normalizers import (
     normalize_french_factor_panel,
     normalize_french_global_factor_panels,
@@ -19,8 +23,12 @@ from aurora.infra.sp500_megarun.feature_input_normalizers import (
 )
 from aurora.infra.sp500_megarun.global_factor_feature_engine import (
     evaluate_global_factor_family_batch,
+    evaluate_global_factor_lane,
 )
 from aurora.infra.sp500_megarun.materializer import parquet_safe_frame
+from aurora.infra.sp500_megarun.parameter_choice_audit import (
+    audit_frozen_parameter_choices,
+)
 
 
 class GlobalFactorFeatureSmokeError(ValueError):
@@ -32,6 +40,8 @@ _SEARCH_START = pd.Timestamp("1998-01-01")
 _TRAIN_END = pd.Timestamp("2010-12-31")
 _LANES = tuple(f"F{index:03d}" for index in range(161, 171))
 _DATASETS = ("D_SPY", "D_CALENDAR", "D_FRENCH_US", "D_FRENCH_GLOBAL")
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PARAMETER_AUDIT_START = pd.Timestamp("2004-01-01")
 _US_RESOURCES = ("ff3_daily", "industry_48_daily")
 _GLOBAL_RESOURCES = (
     "developed_five_factors",
@@ -71,6 +81,52 @@ def _resource_counts(
         .value_counts()
         .items()
     }
+
+
+def _repair_global_factor_configuration(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    if lane_id in {"F161", "F170"} and parameter == "change_lag":
+        configuration["mode"] = "change"
+    if lane_id == "F165" and parameter == "short_window":
+        configuration["statistic"] = "regime_change"
+        configuration["window"] = 126
+    if lane_id == "F169" and parameter == "selection_fraction":
+        configuration["universe"] = (
+            "developed_ex_us_plus_regions"
+            if float(configuration["selection_fraction"]) == 0.33
+            else "all_available"
+        )
+    if lane_id == "F169" and parameter == "aggregation":
+        configuration["selection_fraction"] = 0.5
+        configuration["universe"] = "all_available"
+    return configuration
+
+
+def _parameter_audit_inputs(
+    market: pd.DataFrame,
+    panels: dict[str, pd.DataFrame],
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    market_dates = pd.to_datetime(market["date"], errors="raise")
+    audit_market = market.loc[
+        market_dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+    ].reset_index(drop=True)
+    if not (pd.DatetimeIndex(audit_market["date"]).year == 2010).any():
+        raise GlobalFactorFeatureSmokeError("PARAMETER_AUDIT_2010_MISSING")
+    audit_panels: dict[str, pd.DataFrame] = {}
+    for resource, panel in panels.items():
+        dates = pd.to_datetime(panel["date"], errors="raise")
+        bounded = panel.loc[
+            dates.between(_PARAMETER_AUDIT_START, _TRAIN_END)
+        ].reset_index(drop=True)
+        if bounded.empty:
+            raise GlobalFactorFeatureSmokeError(
+                f"PARAMETER_AUDIT_PANEL_EMPTY:{resource}"
+            )
+        audit_panels[resource] = bounded
+    return audit_market, audit_panels
 
 
 def build_global_factor_feature_smoke(
@@ -145,6 +201,26 @@ def build_global_factor_feature_smoke(
         search_start=_SEARCH_START,
         search_end=_TRAIN_END,
     )
+    data_contract = load_and_validate_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_free_data_240.json"
+    )
+    feature_contract = load_and_validate_feature_contract(
+        _REPO_ROOT / "config" / "sp500_megarun_feature_contract_240.json",
+        data_contract,
+    )
+    audit_market, audit_panels = _parameter_audit_inputs(market, panels)
+    parameter_audit = audit_frozen_parameter_choices(
+        feature_contract,
+        lane_ids=_LANES,
+        evaluator=lambda lane_id, configuration: evaluate_global_factor_lane(
+            lane_id,
+            audit_market,
+            audit_panels,
+            configuration,
+        ),
+        expected_years=(2010,),
+        repair=_repair_global_factor_configuration,
+    )
     root = Path(output_dir)
     artifacts: dict[str, dict[str, object]] = {}
     maximum = pd.Timestamp.min
@@ -162,7 +238,9 @@ def build_global_factor_feature_smoke(
 
     report = {
         "schema_version": 1,
-        "ready": bool(audit.ready and len(outputs) == 10),
+        "ready": bool(
+            audit.ready and parameter_audit["ready"] and len(outputs) == 10
+        ),
         "scope": "industry_global_factor_feature_smoke_train_only",
         "executable_lanes": list(_LANES),
         "executable_lane_count": 10,
@@ -202,10 +280,16 @@ def build_global_factor_feature_smoke(
         "near_duplicate_pairs": [list(pair) for pair in audit.near_duplicate_pairs],
         "coverage": [asdict(item) for item in audit.coverage],
         "artifacts": artifacts,
+        "parameter_choice_audit_scope": "physical_causal_tail_2004_2010",
+        "parameter_choice_audit": parameter_audit,
     }
     root.mkdir(parents=True, exist_ok=True)
     (root / "global_factor_feature_smoke_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (root / "parameter_choice_audit_F161_F170.json").write_text(
+        json.dumps(parameter_audit, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return report

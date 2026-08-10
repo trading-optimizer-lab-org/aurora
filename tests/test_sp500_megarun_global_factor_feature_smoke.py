@@ -130,6 +130,12 @@ def test_global_factor_smoke_builds_f161_f170_train_only_artifacts(
     assert report["locked_opened"] is False
     assert report["maximum_feature_date"] == "2010-12-31"
     assert report["empty_lanes"] == []
+    parameter_audit = report["parameter_choice_audit"]
+    assert parameter_audit["ready"] is True
+    assert parameter_audit["expected_choice_probe_count"] == 146
+    assert parameter_audit["choice_probe_count"] == 146
+    assert parameter_audit["failed_probes"] == []
+    assert parameter_audit["inactive_choice_groups"] == []
     assert (tmp_path / "out" / "features" / "F161.parquet").is_file()
     assert (tmp_path / "out" / "features" / "F170.parquet").is_file()
 
@@ -192,3 +198,43 @@ def test_global_factor_smoke_cli_accepts_contract(
     )
 
     assert cli.main() == 0
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "parameter", "configuration", "expected"),
+    [
+        ("F161", "change_lag", {"mode": "level"}, {"mode": "change"}),
+        ("F165", "short_window", {"statistic": "dispersion", "window": 20}, {"statistic": "regime_change", "window": 126}),
+        ("F169", "selection_fraction", {"selection_fraction": 0.33, "universe": "regions_only"}, {"universe": "developed_ex_us_plus_regions"}),
+        ("F169", "aggregation", {"aggregation": "median", "selection_fraction": 0.1, "universe": "regions_only"}, {"selection_fraction": 0.5, "universe": "all_available"}),
+        ("F170", "change_lag", {"mode": "divergence"}, {"mode": "change"}),
+    ],
+)
+def test_global_factor_parameter_witnesses_activate_conditional_choices(
+    lane_id: str,
+    parameter: str,
+    configuration: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    repaired = _api()._repair_global_factor_configuration(
+        lane_id,
+        parameter,
+        configuration.copy(),
+    )
+
+    for name, value in expected.items():
+        assert repaired[name] == value
+
+
+def test_global_factor_physical_smoke_has_an_isolated_dispatch_scope() -> None:
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "sp500-megarun-macro-feature-smoke-f032.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "- f161_f170" in workflow
+    assert "smoke_f161_f170:" in workflow
+    assert "inputs.scope == 'f161_f170'" in workflow
+    assert "timeout-minutes: 15" in workflow
