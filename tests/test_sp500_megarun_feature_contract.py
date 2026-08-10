@@ -52,10 +52,10 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert feature_contract.lanes[31].required_datasets == ("D_RATES",)
     assert [
         lane.lane_id for lane in feature_contract.lanes if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 151)]
+    ] == [f"F{index:03d}" for index in range(1, 171)]
     assert all(
         lane.implementation_status == "blueprint_only"
-        for lane in feature_contract.lanes[150:]
+        for lane in feature_contract.lanes[170:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -300,6 +300,31 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     )
     assert predictive_lanes[9].parameter_space["kind"] == ("attention", "moe")
     assert all(lane.minimum_history >= 126 for lane in predictive_lanes)
+    characteristic_lanes = feature_contract.lanes[150:160]
+    assert all(lane.implementation_status == "executable" for lane in characteristic_lanes)
+    global_factor_lanes = feature_contract.lanes[160:170]
+    assert all(lane.implementation_status == "executable" for lane in global_factor_lanes)
+    assert global_factor_lanes[0].parameter_space["mode"] == (
+        "level",
+        "change",
+        "divergence",
+    )
+    assert global_factor_lanes[4].parameter_space["statistic"] == (
+        "dispersion",
+        "sign_disagreement",
+        "regime_change",
+        "mean_correlation",
+    )
+    assert global_factor_lanes[5].required_datasets == (
+        "D_FRENCH_US",
+        "D_FRENCH_GLOBAL",
+    )
+    assert "proxy only" in global_factor_lanes[5].formula
+    assert global_factor_lanes[8].parameter_space["universe"] == (
+        "regions_only",
+        "developed_ex_us_plus_regions",
+        "all_available",
+    )
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:
