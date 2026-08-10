@@ -321,6 +321,16 @@ def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
         ("F218", 26),
         ("F219", 14),
         ("F220", 62),
+        ("F221", 18),
+        ("F222", 52),
+        ("F223", 64),
+        ("F224", 36),
+        ("F225", 38),
+        ("F226", 64),
+        ("F227", 54),
+        ("F228", 78),
+        ("F229", 14),
+        ("F230", 0),
     ],
 )
 def test_conditionally_inactive_model_parameters_are_forbidden(
@@ -536,6 +546,22 @@ def test_f183_removes_the_physical_train_duplicate_median_basis(
             16,
         ),
         ("F220", "open_interest", ("crowding_composite",), 56),
+        (
+            "F222",
+            "statement_gap",
+            ("statement_gap_zscore", "statement_irregularity"),
+            32,
+        ),
+        (
+            "F223",
+            "publication_lag",
+            ("publication_lag_zscore", "minutes_gap_zscore"),
+            40,
+        ),
+        ("F224", "cadence_gap", ("joint_irregularity",), 32),
+        ("F226", "bid_to_cover", ("demand_yield_balance",), 40),
+        ("F227", "weighted_maturity", ("refinancing_pressure",), 48),
+        ("F228", "total_debt", ("debt_growth_zscore",), 60),
     ],
 )
 def test_internal_composites_keep_their_window_while_raw_simple_statistics_do_not(
@@ -690,6 +716,112 @@ def test_f214_tail_is_active_only_for_shock_indicator_and_duration(
     assert len(pairs) == 8
     assert all(("statistic", "shock_indicator") not in item for item in pairs)
     assert all(("statistic", "shock_duration") not in item for item in pairs)
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "active_statistics", "expected_triplets"),
+    [
+        (
+            "F221",
+            ("decision_rate_change", "decision_direction", "decision_magnitude"),
+            12,
+        ),
+        ("F222", ("statement_gap_change",), 20),
+        ("F223", ("publication_lag_change",), 24),
+        ("F225", ("offer_growth",), 30),
+        ("F226", ("yield_change", "demand_change"), 24),
+        (
+            "F228",
+            (
+                "debt_growth",
+                "debt_acceleration",
+                "composition_change",
+                "debt_growth_zscore",
+            ),
+            18,
+        ),
+    ],
+)
+def test_f221_f230_internal_changes_keep_change_lag_active(
+    feature_contract,
+    lane_id: str,
+    active_statistics: tuple[str, ...],
+    expected_triplets: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    triplets = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 3
+        and any(
+            clause.hyperparameter.name == "change_lag"
+            for clause in conjunction.clauses
+        )
+    }
+
+    assert len(triplets) == expected_triplets
+    assert all(
+        ("statistic", active_statistic) not in item
+        for item in triplets
+        for active_statistic in active_statistics
+    )
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "parameter", "expected_pairs"),
+    [
+        ("F221", "window", 6),
+        ("F225", "window", 8),
+        ("F229", "window", 8),
+        ("F224", "change_lag", 4),
+        ("F227", "change_lag", 6),
+        ("F229", "change_lag", 6),
+    ],
+)
+def test_f221_f230_generic_normalization_parameters_are_not_duplicated(
+    feature_contract,
+    lane_id: str,
+    parameter: str,
+    expected_pairs: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    pairs = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 2
+        and any(clause.hyperparameter.name == parameter for clause in conjunction.clauses)
+    }
+
+    assert len(pairs) == expected_pairs
+
+
+def test_f230_keeps_window_and_change_lag_active_for_every_statistic(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F230",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    assert row.forbidden_configuration_count == 0
 
 
 def test_manifest_freezes_fidelities_versions_boundaries_and_exact_choices(

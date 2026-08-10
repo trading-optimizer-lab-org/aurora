@@ -698,6 +698,18 @@ def _forbidden_parameter_pairs(
             for normalization in ("raw", "rolling_zscore")
             for lag in space["change_lag"][1:]
         )
+    if lane.lane_id in {"F221", "F225", "F229"}:
+        pairs.extend(
+            ("normalization", normalization, "window", window)
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id in {"F224", "F227", "F229"}:
+        pairs.extend(
+            ("normalization", normalization, "change_lag", lag)
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
+        )
     if lane.lane_id in {"F023", "F026", "F030", "F031"}:
         pairs.extend(
             ("window", 1, "normalization", normalization)
@@ -1266,6 +1278,118 @@ def _forbidden_parameter_triplets(
             for statistic in simple_statistics[lane.lane_id]
             for normalization in ("raw", "change")
             for window in space["window"][1:]
+        )
+    if lane.lane_id in {"F222", "F223", "F224", "F226", "F227", "F228"}:
+        simple_statistics = {
+            "F222": (
+                "statement_gap",
+                "statement_gap_change",
+                "statement_frequency",
+                "days_since_statement",
+            ),
+            "F223": (
+                "publication_lag",
+                "publication_lag_change",
+                "minutes_gap",
+                "minutes_frequency",
+                "days_since_minutes",
+            ),
+            "F224": (
+                "cadence_gap",
+                "cadence_disagreement",
+                "publication_recency_gap",
+                "publication_order",
+            ),
+            "F226": (
+                "bid_to_cover",
+                "clearing_rate",
+                "yield_change",
+                "demand_change",
+                "auction_count",
+            ),
+            "F227": (
+                "weighted_maturity",
+                "bill_share",
+                "note_bond_share",
+                "long_term_share",
+                "reopening_share",
+                "maturity_hhi",
+            ),
+            "F228": (
+                "total_debt",
+                "debt_growth",
+                "debt_acceleration",
+                "public_debt_share",
+                "intragov_share",
+                "composition_change",
+            ),
+        }
+        triplets.extend(
+            (
+                "statistic",
+                statistic,
+                "normalization",
+                normalization,
+                "window",
+                window,
+            )
+            for statistic in simple_statistics[lane.lane_id]
+            for normalization in ("raw", "change")
+            for window in space["window"][1:]
+        )
+    if lane.lane_id in {"F221", "F222", "F223", "F225", "F226", "F228"}:
+        statistics_without_internal_change = {
+            "F221": (
+                "days_since_decision",
+                "meeting_statement_balance",
+                "conference_call",
+            ),
+            "F222": (
+                "statement_gap",
+                "statement_gap_zscore",
+                "statement_frequency",
+                "statement_irregularity",
+                "days_since_statement",
+            ),
+            "F223": (
+                "publication_lag",
+                "publication_lag_zscore",
+                "minutes_gap",
+                "minutes_gap_zscore",
+                "minutes_frequency",
+                "days_since_minutes",
+            ),
+            "F225": (
+                "offering_amount",
+                "accepted_amount",
+                "tendered_amount",
+                "acceptance_to_offer",
+                "accepted_minus_offering",
+            ),
+            "F226": (
+                "bid_to_cover",
+                "clearing_rate",
+                "demand_yield_balance",
+                "auction_count",
+            ),
+            "F228": (
+                "total_debt",
+                "public_debt_share",
+                "intragov_share",
+            ),
+        }
+        triplets.extend(
+            (
+                "statistic",
+                statistic,
+                "normalization",
+                normalization,
+                "change_lag",
+                lag,
+            )
+            for statistic in statistics_without_internal_change[lane.lane_id]
+            for normalization in ("raw", "rolling_zscore")
+            for lag in space["change_lag"][1:]
         )
     return tuple(triplets)
 

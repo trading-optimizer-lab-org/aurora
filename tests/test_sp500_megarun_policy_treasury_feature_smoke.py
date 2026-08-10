@@ -46,7 +46,7 @@ def _write_snapshot(root: Path) -> Path:
     while cursor + 20 < len(sessions):
         meeting = sessions[cursor]
         statement = sessions[cursor + 1]
-        minutes = sessions[cursor + 16]
+        minutes = sessions[cursor + 14 + event_number % 6]
         fomc_rows.extend(
             [
                 {
@@ -199,6 +199,12 @@ def test_policy_treasury_smoke_builds_f221_f230_train_only_artifacts(
     assert report["near_duplicate_pairs"] == []
     assert report["full_yearly_coverage"] is True
     assert len(report["coverage"]) == 10
+    parameter_audit = report["parameter_choice_audit"]
+    assert parameter_audit["ready"] is True
+    assert parameter_audit["expected_choice_probe_count"] == 199
+    assert parameter_audit["choice_probe_count"] == 199
+    assert parameter_audit["failed_probes"] == []
+    assert parameter_audit["inactive_choice_groups"] == []
     assert all(
         min(item["yearly_non_null_fraction"].values()) == 1.0
         for item in report["coverage"]
@@ -259,3 +265,62 @@ def test_policy_treasury_smoke_cli_accepts_contract(
     )
 
     assert cli.main() == 0
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "parameter", "default_overrides", "active_overrides"),
+    [
+        ("F221", "window", {"statistic": "decision_rate_change"}, {"normalization": "rolling_zscore"}),
+        ("F221", "change_lag", {"statistic": "days_since_decision"}, {"statistic": "decision_rate_change"}),
+        ("F222", "window", {"statistic": "statement_gap"}, {"statistic": "statement_gap_zscore"}),
+        ("F222", "change_lag", {"statistic": "statement_gap"}, {"statistic": "statement_gap_change"}),
+        ("F223", "window", {"statistic": "publication_lag"}, {"statistic": "publication_lag_zscore"}),
+        ("F223", "change_lag", {"statistic": "publication_lag"}, {"statistic": "publication_lag_change"}),
+        ("F224", "window", {"statistic": "cadence_gap"}, {"statistic": "joint_irregularity"}),
+        ("F225", "change_lag", {"statistic": "offering_amount"}, {"statistic": "offer_growth"}),
+        ("F226", "window", {"statistic": "bid_to_cover"}, {"statistic": "demand_yield_balance"}),
+        ("F226", "change_lag", {"statistic": "bid_to_cover"}, {"statistic": "yield_change"}),
+        ("F227", "window", {"statistic": "weighted_maturity"}, {"statistic": "refinancing_pressure"}),
+        ("F228", "window", {"statistic": "total_debt"}, {"statistic": "debt_growth_zscore"}),
+        ("F228", "change_lag", {"statistic": "total_debt"}, {"statistic": "debt_growth"}),
+        ("F229", "window", {"statistic": "combined_net_purchases"}, {"normalization": "rolling_zscore"}),
+    ],
+)
+def test_policy_treasury_parameter_repair_activates_conditional_choice(
+    lane_id: str,
+    parameter: str,
+    default_overrides: dict[str, object],
+    active_overrides: dict[str, object],
+) -> None:
+    api = _api()
+    base = {
+        "statistic": "decision_rate_change",
+        "window": 5,
+        "change_lag": 1,
+        "normalization": "raw",
+        "direction": "continuation",
+        **default_overrides,
+    }
+
+    repaired = api._repair_policy_treasury_configuration(
+        lane_id,
+        parameter,
+        dict(base),
+    )
+
+    for key, value in active_overrides.items():
+        assert repaired[key] == value
+
+
+def test_policy_treasury_workflow_has_an_isolated_fail_closed_scope() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github"
+        / "workflows"
+        / "sp500-megarun-macro-feature-smoke-f032.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "- f221_f230" in workflow
+    assert "smoke_f221_f230:" in workflow
+    assert "inputs.scope == 'f221_f230'" in workflow
+    assert "parameter_choice_audit_F221_F230.json" in workflow
