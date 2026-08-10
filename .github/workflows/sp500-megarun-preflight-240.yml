@@ -8,6 +8,8 @@ on:
     paths:
       - .github/workflows/sp500-megarun-preflight-240.yml
       - config/sp500_megarun_free_data_240.json
+      - config/sp500_megarun_free_data_120.json
+      - config/sp500_megarun_free_sources.json
       - config/sp500_megarun_free_sources_240.json
       - config/sp500_megarun_feature_contract_240.json
       - infra/sp500_megarun/**

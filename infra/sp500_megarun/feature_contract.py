@@ -99,6 +99,7 @@ _REGISTERED_AVAILABLE_AT_POLICIES = frozenset(
         "two_calendar_days",
         "next_month_third_session",
         "quarter_end_next_session",
+        "quarter_end_plus_60_days_next_session",
         "second_month_tenth_session",
         "thirteen_month_revision_guard",
         "frequency_aware",
@@ -131,7 +132,7 @@ _DATASET_AVAILABLE_AT_POLICIES: Mapping[str, str] = {
     "D_FED_H15_H10": "frequency_aware",
     "D_FED_H3_H6_H8_G19_CP": "frequency_aware",
     "D_SPF": "quarter_end_next_session",
-    "D_SLOOS": "quarter_end_next_session",
+    "D_SLOOS": "quarter_end_plus_60_days_next_session",
     "D_Z1": "thirteen_month_revision_guard",
     "D_FINRA_MARGIN": "second_month_tenth_session",
     "D_FRENCH_US": "frequency_aware",
@@ -509,6 +510,10 @@ def apply_available_at_policy(
     elif policy == "quarter_end_next_session":
         quarter_end = result["observed_at"] + pd.offsets.QuarterEnd(0)
         available = _session_on_or_after(quarter_end, sessions, strictly_after=True)
+    elif policy == "quarter_end_plus_60_days_next_session":
+        quarter_end = result["observed_at"] + pd.offsets.QuarterEnd(0)
+        targets = quarter_end + pd.Timedelta(days=60)
+        available = _session_on_or_after(targets, sessions, strictly_after=False)
     else:
         raise FeatureContractError(f"UNKNOWN_AVAILABLE_AT_POLICY:{policy}")
     if available.isna().any():

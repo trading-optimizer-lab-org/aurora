@@ -74,6 +74,11 @@
         {"id":"philly_core_pce_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/pconx_first_second_third.xlsx","format":"xlsx"},
         {"id":"philly_payroll_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/employ_level_first_second_third.xlsx","format":"xlsx"},
         {"id":"philly_industrial_production_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/ipt_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_manufacturing_production_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/ipm_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_capacity_utilization_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/cut_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_manufacturing_capacity_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/cum_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_nonresidential_investment_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/rinvbf_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_residential_investment_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/rinvresid_first_second_third.xlsx","format":"xlsx"},
         {"id":"philly_housing_starts_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/hstarts_first_second_third.xlsx","format":"xlsx"}
       ]
     },
@@ -84,6 +89,10 @@
       "maximum_observation_date": "2010-12-31",
       "resources": [
         {"id":"real_output_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/ROUTPUTQvQd.xlsx","format":"xlsx","vintage_axis":"quarterly"},
+        {"id":"real_gdi_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/yrgdiQvQd.xlsx","format":"xlsx","vintage_axis":"quarterly"},
+        {"id":"nominal_consumption_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/nconQvQd.xlsx","format":"xlsx","vintage_axis":"quarterly"},
+        {"id":"nominal_disposable_income_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/ndpiQvQd.xlsx","format":"xlsx","vintage_axis":"quarterly"},
+        {"id":"saving_rate_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/ratesavQvQd.xlsx","format":"xlsx","vintage_axis":"quarterly"},
         {"id":"real_output_monthly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/routputMvQd.xlsx","format":"xlsx","vintage_axis":"monthly"},
         {"id":"unemployment_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/rucQvMd.xlsx","format":"xlsx","vintage_axis":"quarterly"}
       ]

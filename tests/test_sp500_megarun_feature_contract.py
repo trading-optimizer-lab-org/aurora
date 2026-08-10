@@ -55,9 +55,9 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         lane.lane_id
         for lane in feature_contract.lanes
         if lane.implementation_status == "executable"
-    ] == [f"F{index:03d}" for index in range(1, 191)]
+    ] == [f"F{index:03d}" for index in range(1, 201)]
     assert all(
-        lane.implementation_status == "blueprint_only" for lane in feature_contract.lanes[190:]
+        lane.implementation_status == "blueprint_only" for lane in feature_contract.lanes[200:]
     )
     model_lanes = feature_contract.lanes[50:60]
     assert all("approved_features" not in lane.formula for lane in model_lanes)
@@ -365,6 +365,19 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
     assert "expected-real-rate proxy" in rates_credit_lanes[2].formula
     assert "not income velocity" in rates_credit_lanes[6].formula
     assert "not delinquency" in rates_credit_lanes[7].formula
+    realtime_survey_lanes = feature_contract.lanes[190:200]
+    assert all(lane.implementation_status == "executable" for lane in realtime_survey_lanes)
+    assert realtime_survey_lanes[0].parameter_space["statistic"] == (
+        "output_growth",
+        "gdi_growth",
+        "average_growth",
+        "growth_spread",
+        "revision_breadth",
+        "growth_breadth",
+    )
+    assert realtime_survey_lanes[2].required_datasets == ("D_MACRO_PIT",)
+    assert realtime_survey_lanes[8].required_datasets == ("D_SPF", "D_MACRO_PIT")
+    assert "not claimed as historical-vintage PIT exact" in realtime_survey_lanes[9].formula
 
 
 def test_available_at_is_projected_to_sessions_without_looking_forward() -> None:
@@ -474,6 +487,23 @@ def test_every_dataset_has_a_machine_readable_availability_policy() -> None:
     assert policies["D_CFTC_LEGACY"] == "friday_after_tuesday"
     assert policies["D_FX"] == "h10_following_week_release_plus_session"
     assert policies["D_NOAA_NY"] == "two_calendar_days"
+    assert policies["D_SLOOS"] == "quarter_end_plus_60_days_next_session"
+
+
+def test_sloos_policy_waits_sixty_days_after_quarter_end() -> None:
+    api = _feature_contract_api()
+    sessions = pd.DatetimeIndex(
+        pd.to_datetime(["2010-05-27", "2010-05-28", "2010-06-01", "2010-06-02"])
+    )
+    frame = pd.DataFrame({"date": pd.to_datetime(["2010-03-31"]), "value": [1.0]})
+
+    projected = api.apply_available_at_policy(
+        frame,
+        policy="quarter_end_plus_60_days_next_session",
+        sessions=sessions,
+    )
+
+    assert projected["available_at"].dt.strftime("%Y-%m-%d").tolist() == ["2010-06-01"]
 
 
 def test_cross_matrix_is_frozen_and_does_not_allow_a_cartesian_product() -> None:

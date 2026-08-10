@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Mapping
+from typing import Any, Mapping
 
 import numpy as np
 import pandas as pd
@@ -100,6 +100,52 @@ _MACRO_RELEASE_SERIES: Mapping[str, tuple[str, str]] = {
     "philly_housing_starts_first_releases": ("housing_starts", "monthly"),
     "philly_real_output_first_releases": ("output", "quarterly"),
     "philly_real_consumption_first_releases": ("consumption", "quarterly"),
+    "philly_nonresidential_investment_first_releases": (
+        "nonresidential_investment",
+        "quarterly",
+    ),
+    "philly_residential_investment_first_releases": (
+        "residential_investment",
+        "quarterly",
+    ),
+    "philly_manufacturing_production_first_releases": (
+        "manufacturing_production",
+        "monthly",
+    ),
+    "philly_capacity_utilization_first_releases": (
+        "capacity_utilization",
+        "monthly",
+    ),
+    "philly_manufacturing_capacity_first_releases": (
+        "manufacturing_capacity",
+        "monthly",
+    ),
+}
+_REALTIME_MACRO_RESOURCES: Mapping[str, tuple[str, str, str | None]] = {
+    "real_output_quarterly_vintages": ("output_growth", "growth", "output_revision"),
+    "real_gdi_quarterly_vintages": ("gdi_growth", "growth", "gdi_revision"),
+    "nominal_consumption_quarterly_vintages": (
+        "nominal_consumption_growth",
+        "growth",
+        None,
+    ),
+    "nominal_disposable_income_quarterly_vintages": (
+        "nominal_disposable_income_growth",
+        "growth",
+        None,
+    ),
+    "saving_rate_quarterly_vintages": ("saving_rate", "level", "saving_rate_revision"),
+}
+_SLOOS_SERIES: Mapping[str, str] = {
+    "SUBLPDCILS_N.Q": "standards_large_mid",
+    "SUBLPDCILD_N.Q": "demand_large_mid",
+    "SUBLPDCISS_N.Q": "standards_small",
+    "SUBLPDCISD_N.Q": "demand_small",
+    "SUBLPDCILTC_N.Q": "term_credit_line_cost",
+    "SUBLPDCILTL_N.Q": "term_covenants",
+    "SUBLPDCILTM_N.Q": "term_maximum_size",
+    "SUBLPDCILTQ_N.Q": "term_collateral",
+    "SUBLPDCILTS_N.Q": "term_spreads",
 }
 _FX_SERIES: Mapping[str, str] = {
     "V0.JRXWTFB_N.B": "broad_dollar",
@@ -713,6 +759,374 @@ def normalize_philadelphia_realtime_cycle_panel(
     return result.drop(columns=["output_observed_at", "unemployment_observed_at"]).reset_index(
         drop=True
     )
+
+
+def _realtime_macro_resource_state(
+    frame: pd.DataFrame,
+    *,
+    resource_id: str,
+    value_name: str,
+    transformation: str,
+    revision_name: str | None,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    selected = frame.loc[frame["resource_id"].astype(str).eq(resource_id)].copy()
+    if selected.empty:
+        raise FeatureInputNormalizerError(f"REALTIME_MACRO_RESOURCE_MISSING:{resource_id}")
+    rows: list[dict[str, object]] = []
+    previous_history: pd.Series | None = None
+    for vintage_at, vintage in selected.groupby("date", sort=True):
+        history = (
+            vintage.loc[vintage["observation_date"].le(vintage_at)]
+            .sort_values("observation_date", kind="mergesort")
+            .drop_duplicates("observation_date", keep="last")
+            .set_index("observation_date")["value"]
+        )
+        if history.empty or (transformation == "growth" and len(history) < 2):
+            previous_history = history
+            continue
+        latest_at = pd.Timestamp(history.index[-1]).normalize()
+        latest = float(history.iloc[-1])
+        if transformation == "growth":
+            previous = float(history.iloc[-2])
+            if previous <= 0.0 or latest <= 0.0:
+                previous_history = history
+                continue
+            value = ((latest / previous) ** 4 - 1.0) * 100.0
+        elif transformation == "level":
+            value = latest
+        else:  # pragma: no cover - closed mapping above
+            raise FeatureInputNormalizerError(
+                f"UNKNOWN_REALTIME_TRANSFORMATION:{resource_id}:{transformation}"
+            )
+        row: dict[str, object] = {
+            "date": vintage_at,
+            "period_observed_at": latest_at,
+            value_name: value,
+        }
+        if value_name == "saving_rate":
+            row["saving_rate_change"] = (
+                latest - float(history.iloc[-2]) if len(history) >= 2 else np.nan
+            )
+        if revision_name is not None:
+            revision = np.nan
+            if previous_history is not None:
+                common = history.index.intersection(previous_history.index)
+                if len(common):
+                    common_at = common.max()
+                    revision = float(history.loc[common_at] - previous_history.loc[common_at])
+            row[revision_name] = revision
+        rows.append(row)
+        previous_history = history
+    if not rows:
+        raise FeatureInputNormalizerError(f"EMPTY_REALTIME_MACRO_RESOURCE:{resource_id}")
+    projected = _project_to_decision_session(
+        pd.DataFrame(rows),
+        policy="next_session",
+        sessions=sessions,
+    )
+    projected["observed_at"] = pd.to_datetime(
+        projected.pop("period_observed_at"), errors="raise"
+    ).dt.normalize()
+    return projected
+
+
+def normalize_realtime_macro_vintage_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Expose output, GDI and household states only after each official vintage."""
+
+    realtime = _validated_dates(frame, dataset_id="D_PHILLY_RT")
+    required = {"observation_date", "value", "resource_id"}
+    missing = sorted(required - set(realtime.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"REALTIME_MACRO_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    realtime["observation_date"] = pd.to_datetime(
+        realtime["observation_date"], errors="coerce"
+    ).dt.normalize()
+    realtime["value"] = pd.to_numeric(realtime["value"], errors="coerce")
+    realtime = realtime.dropna(subset=["observation_date", "value"])
+    states = {
+        resource_id: _realtime_macro_resource_state(
+            realtime,
+            resource_id=resource_id,
+            value_name=value_name,
+            transformation=transformation,
+            revision_name=revision_name,
+            sessions=sessions,
+        )
+        for resource_id, (value_name, transformation, revision_name) in (
+            _REALTIME_MACRO_RESOURCES.items()
+        )
+    }
+    dates = pd.DataFrame(
+        {
+            "date": pd.DatetimeIndex(
+                sorted({date for state in states.values() for date in state["date"]})
+            )
+        }
+    )
+    result = dates
+    observed_columns: list[str] = []
+    for resource_id, state in states.items():
+        value_columns = [
+            column
+            for column in state
+            if column not in {"date", "observed_at", "available_at"}
+        ]
+        observed_name = f"_{resource_id}_observed_at"
+        observed_columns.append(observed_name)
+        result = pd.merge_asof(
+            result.sort_values("date"),
+            state.drop(columns="available_at")
+            .rename(columns={"observed_at": observed_name})
+            .sort_values("date"),
+            on="date",
+            direction="backward",
+        )
+        if not value_columns:  # pragma: no cover - construction invariant
+            raise FeatureInputNormalizerError(f"REALTIME_MACRO_VALUE_MISSING:{resource_id}")
+    # Real GDI vintages begin only in 2005.  Do not truncate the otherwise
+    # complete output and household histories merely because that optional
+    # component was disseminated later.
+    required_values = [
+        "output_growth",
+        "nominal_consumption_growth",
+        "nominal_disposable_income_growth",
+        "saving_rate",
+    ]
+    result = result.dropna(subset=required_values).reset_index(drop=True)
+    if result.empty:
+        raise FeatureInputNormalizerError("EMPTY_REALTIME_MACRO_PANEL")
+    result["observed_at"] = result[observed_columns].max(axis=1)
+    result["available_at"] = result["date"]
+    return result.drop(columns=observed_columns)
+
+
+def _spf_survey_periods(frame: pd.DataFrame) -> pd.Series:
+    year = pd.to_numeric(frame["0"], errors="coerce")
+    quarter = pd.to_numeric(frame["1"], errors="coerce")
+    result = pd.Series(pd.NaT, index=frame.index, dtype="datetime64[ns]")
+    valid = year.notna() & quarter.between(1, 4)
+    if valid.any():
+        result.loc[valid] = pd.PeriodIndex(
+            [
+                f"{int(y)}Q{int(q)}"
+                for y, q in zip(year.loc[valid], quarter.loc[valid], strict=True)
+            ],
+            freq="Q",
+        ).to_timestamp()
+    return result
+
+
+def _annualized_quarter_growth(current: Any, previous: Any) -> float:
+    current_value = float(current)
+    previous_value = float(previous)
+    if current_value <= 0.0 or previous_value <= 0.0:
+        return np.nan
+    return ((current_value / previous_value) ** 4 - 1.0) * 100.0
+
+
+def normalize_spf_central_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Expose frozen SPF median nowcasts after a conservative quarter-end guard."""
+
+    spf = _validated_dates(frame, dataset_id="D_SPF")
+    required = {"source_sheet", "resource_id", "0", "1", "2", "3", "4"}
+    missing = sorted(required - set(spf.columns))
+    if missing:
+        raise FeatureInputNormalizerError(f"SPF_CENTRAL_COLUMNS_MISSING:{','.join(missing)}")
+    selected = spf.loc[spf["resource_id"].astype(str).eq("spf_median_level")].copy()
+    selected["target_period"] = _spf_survey_periods(selected)
+    for column in ("2", "3", "4"):
+        selected[column] = pd.to_numeric(selected[column], errors="coerce")
+    rows: list[dict[str, object]] = []
+    forecasts_by_target: dict[pd.Timestamp, float] = {}
+    for target_period, survey in selected.dropna(subset=["target_period"]).groupby(
+        "target_period", sort=True
+    ):
+        by_sheet = survey.drop_duplicates("source_sheet", keep="last").set_index("source_sheet")
+        if not {"RGDP", "UNEMP", "CPI", "HOUSING", "TBILL"} <= set(by_sheet.index):
+            continue
+        rgdp = by_sheet.loc["RGDP"]
+        housing = by_sheet.loc["HOUSING"]
+        output_nowcast = _annualized_quarter_growth(rgdp["3"], rgdp["2"])
+        output_next = _annualized_quarter_growth(rgdp["4"], rgdp["3"])
+        prior_forecast = forecasts_by_target.get(pd.Timestamp(target_period))
+        forecasts_by_target[pd.Timestamp(target_period) + pd.DateOffset(months=3)] = output_next
+        rows.append(
+            {
+                "observed_at": pd.Timestamp(target_period),
+                "target_period": pd.Timestamp(target_period),
+                "output_nowcast": output_nowcast,
+                "output_next_forecast": output_next,
+                "output_prior_forecast": prior_forecast,
+                "output_forecast_revision": (
+                    output_nowcast - prior_forecast if prior_forecast is not None else np.nan
+                ),
+                "unemployment_nowcast": float(by_sheet.loc["UNEMP", "3"]),
+                "cpi_nowcast": float(by_sheet.loc["CPI", "3"]),
+                "housing_nowcast": _annualized_quarter_growth(housing["3"], housing["2"]),
+                "tbill_nowcast": float(by_sheet.loc["TBILL", "3"]),
+            }
+        )
+    if not rows:
+        raise FeatureInputNormalizerError("EMPTY_SPF_CENTRAL_PANEL")
+    result = pd.DataFrame(rows)
+    quarter_end = pd.to_datetime(result["target_period"]) + pd.offsets.QuarterEnd()
+    result["date"] = _release_session(
+        quarter_end,
+        sessions=sessions,
+        strictly_after=True,
+    )
+    result = result.dropna(subset=["date"]).sort_values("date", kind="mergesort")
+    result["available_at"] = result["date"]
+    return result.reset_index(drop=True)
+
+
+def normalize_spf_disagreement_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Expose current-quarter SPF interquartile ranges after quarter end."""
+
+    spf = _validated_dates(frame, dataset_id="D_SPF")
+    required = {"source_sheet", "resource_id", "0", "3"}
+    missing = sorted(required - set(spf.columns))
+    if missing:
+        raise FeatureInputNormalizerError(
+            f"SPF_DISAGREEMENT_COLUMNS_MISSING:{','.join(missing)}"
+        )
+    selected = spf.loc[spf["resource_id"].astype(str).eq("spf_dispersion")].copy()
+    labels = selected["0"].astype(str).str.strip().str.upper()
+    valid = labels.str.fullmatch(r"\d{4}Q[1-4]")
+    selected = selected.loc[valid].copy()
+    selected["target_period"] = pd.PeriodIndex(labels.loc[valid], freq="Q").to_timestamp()
+    selected["iqr"] = pd.to_numeric(selected["3"], errors="coerce")
+    sheet_names = {
+        "NGDP": "ngdp_iqr",
+        "UNEMP": "unemployment_iqr",
+        "CPI": "cpi_iqr",
+        "HOUSING": "housing_iqr",
+        "TBILL": "tbill_iqr",
+    }
+    selected = selected.loc[selected["source_sheet"].astype(str).isin(sheet_names)].copy()
+    selected["value_name"] = selected["source_sheet"].astype(str).map(sheet_names)
+    pivot = selected.pivot_table(
+        index="target_period",
+        columns="value_name",
+        values="iqr",
+        aggfunc="last",
+    ).reset_index()
+    required_values = list(sheet_names.values())
+    pivot = pivot.dropna(subset=required_values)
+    if pivot.empty:
+        raise FeatureInputNormalizerError("EMPTY_SPF_DISAGREEMENT_PANEL")
+    pivot["observed_at"] = pivot["target_period"]
+    quarter_end = pd.to_datetime(pivot["target_period"]) + pd.offsets.QuarterEnd()
+    pivot["date"] = _release_session(quarter_end, sessions=sessions, strictly_after=True)
+    pivot = pivot.dropna(subset=["date"])
+    pivot["available_at"] = pivot["date"]
+    return pivot.loc[
+        :, ["date", "observed_at", "available_at", "target_period", *required_values]
+    ].reset_index(drop=True)
+
+
+def normalize_spf_output_error_panel(
+    spf_frame: pd.DataFrame,
+    macro_frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Join an SPF output forecast to the later first release for the same quarter."""
+
+    central = normalize_spf_central_panel(spf_frame, sessions=sessions)
+    releases = normalize_macro_release_panel(macro_frame, sessions=sessions)
+    releases = releases.loc[releases.get("output_first", pd.Series(dtype=float)).notna()].copy()
+    if releases.empty:
+        raise FeatureInputNormalizerError("SPF_OUTPUT_FIRST_RELEASE_MISSING")
+    forecasts = central.loc[
+        :,
+        [
+            "target_period",
+            "output_nowcast",
+            "output_prior_forecast",
+            "output_forecast_revision",
+        ],
+    ]
+    result = releases.merge(
+        forecasts,
+        left_on="observed_at",
+        right_on="target_period",
+        how="inner",
+        validate="one_to_one",
+    )
+    if result.empty:
+        raise FeatureInputNormalizerError("SPF_OUTPUT_TARGET_MATCH_MISSING")
+    result["nowcast_signed_error"] = result["output_first"] - result["output_nowcast"]
+    result["nowcast_absolute_error"] = result["nowcast_signed_error"].abs()
+    result["prior_signed_error"] = result["output_first"] - result["output_prior_forecast"]
+    result["prior_absolute_error"] = result["prior_signed_error"].abs()
+    return result.loc[
+        :,
+        [
+            "date",
+            "observed_at",
+            "available_at",
+            "target_period",
+            "output_first",
+            "output_nowcast",
+            "output_prior_forecast",
+            "output_forecast_revision",
+            "nowcast_signed_error",
+            "nowcast_absolute_error",
+            "prior_signed_error",
+            "prior_absolute_error",
+        ],
+    ].reset_index(drop=True)
+
+
+def normalize_sloos_credit_panel(
+    frame: pd.DataFrame,
+    *,
+    sessions: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Expose revised SLOOS history only after a conservative sixty-day guard."""
+
+    sloos = _validated_dates(frame, dataset_id="D_SLOOS")
+    if not {"series_id", "value"} <= set(sloos.columns):
+        raise FeatureInputNormalizerError("SLOOS_COLUMNS_MISSING")
+    selected = sloos.loc[sloos["series_id"].astype(str).isin(_SLOOS_SERIES)].copy()
+    selected["value"] = _fed_ddp_numeric(selected["value"])
+    selected["value_name"] = selected["series_id"].astype(str).map(_SLOOS_SERIES)
+    pivot = selected.pivot_table(
+        index="date",
+        columns="value_name",
+        values="value",
+        aggfunc="last",
+    ).reset_index()
+    required_values = list(_SLOOS_SERIES.values())
+    pivot = pivot.dropna(subset=required_values)
+    if pivot.empty:
+        raise FeatureInputNormalizerError("EMPTY_SLOOS_CREDIT_PANEL")
+    pivot["observed_at"] = pivot["date"]
+    pivot["date"] = _release_session(
+        pivot["observed_at"] + pd.Timedelta(days=60),
+        sessions=sessions,
+    )
+    pivot = pivot.dropna(subset=["date"]).sort_values("date", kind="mergesort")
+    pivot["available_at"] = pivot["date"]
+    return pivot.loc[
+        :, ["date", "observed_at", "available_at", *required_values]
+    ].reset_index(drop=True)
 
 
 def _release_target(period: pd.Series, *, frequency: str, release_number: int) -> pd.Series:

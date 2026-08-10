@@ -106,6 +106,28 @@ def test_repository_source_plan_is_github_only_and_stops_at_2020() -> None:
         "japan_momentum",
         "asia_pacific_ex_japan_momentum",
     }
+    realtime_resources = {
+        str(resource["id"]) for resource in source_plan["D_PHILLY_RT"].resources
+    }
+    assert {
+        "real_output_quarterly_vintages",
+        "real_gdi_quarterly_vintages",
+        "nominal_consumption_quarterly_vintages",
+        "nominal_disposable_income_quarterly_vintages",
+        "saving_rate_quarterly_vintages",
+        "real_output_monthly_vintages",
+        "unemployment_quarterly_vintages",
+    } <= realtime_resources
+    macro_resources = {
+        str(resource["id"]) for resource in source_plan["D_MACRO_PIT"].resources
+    }
+    assert {
+        "philly_nonresidential_investment_first_releases",
+        "philly_residential_investment_first_releases",
+        "philly_manufacturing_production_first_releases",
+        "philly_capacity_utilization_first_releases",
+        "philly_manufacturing_capacity_first_releases",
+    } <= macro_resources
 
 
 def test_partition_gate_keeps_train_and_validation_separate_and_rejects_2021() -> None:

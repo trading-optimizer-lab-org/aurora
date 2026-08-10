@@ -712,6 +712,260 @@ def test_macro_release_panel_assigns_first_and_second_release_dates() -> None:
     assert may_output.iloc[0]["output_first"] == pytest.approx(2.0)
 
 
+def test_realtime_macro_vintages_expose_output_gdi_household_state_causally() -> None:
+    api = _normalizer_api()
+    rows: list[dict[str, object]] = []
+    resources = {
+        "real_output_quarterly_vintages": ([100.0, 104.0], [100.0, 105.0, 106.0]),
+        "real_gdi_quarterly_vintages": ([99.0, 103.0], [99.0, 104.0, 105.5]),
+        "nominal_consumption_quarterly_vintages": (
+            [200.0, 204.0],
+            [200.0, 205.0, 208.0],
+        ),
+        "nominal_disposable_income_quarterly_vintages": (
+            [220.0, 225.0],
+            [220.0, 226.0, 230.0],
+        ),
+        "saving_rate_quarterly_vintages": ([5.0, 5.2], [5.0, 5.4, 5.1]),
+    }
+    for resource_id, (first_values, second_values) in resources.items():
+        for observation_date, value in zip(
+            pd.to_datetime(["2008-07-01", "2008-10-01"]),
+            first_values,
+            strict=True,
+        ):
+            rows.append(
+                {
+                    "date": pd.Timestamp("2009-02-15"),
+                    "observation_date": observation_date,
+                    "value": value,
+                    "resource_id": resource_id,
+                }
+            )
+        for observation_date, value in zip(
+            pd.to_datetime(["2008-07-01", "2008-10-01", "2009-01-01"]),
+            second_values,
+            strict=True,
+        ):
+            rows.append(
+                {
+                    "date": pd.Timestamp("2009-05-15"),
+                    "observation_date": observation_date,
+                    "value": value,
+                    "resource_id": resource_id,
+                }
+            )
+
+    result = api.normalize_realtime_macro_vintage_panel(
+        pd.DataFrame(rows),
+        sessions=pd.bdate_range("2009-02-13", "2009-05-20"),
+    )
+
+    assert result["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2009-02-16",
+        "2009-05-18",
+    ]
+    assert result.loc[0, "output_growth"] == pytest.approx(
+        ((104.0 / 100.0) ** 4 - 1.0) * 100.0
+    )
+    assert result.loc[1, "gdi_growth"] == pytest.approx(
+        ((105.5 / 104.0) ** 4 - 1.0) * 100.0
+    )
+    assert result.loc[1, "output_revision"] == pytest.approx(1.0)
+    assert result.loc[1, "gdi_revision"] == pytest.approx(1.0)
+    assert result.loc[1, "nominal_consumption_growth"] == pytest.approx(
+        ((208.0 / 205.0) ** 4 - 1.0) * 100.0
+    )
+    assert result.loc[1, "nominal_disposable_income_growth"] == pytest.approx(
+        ((230.0 / 226.0) ** 4 - 1.0) * 100.0
+    )
+    assert result.loc[1, "saving_rate"] == pytest.approx(5.1)
+    assert result.loc[1, "saving_rate_change"] == pytest.approx(-0.3)
+    assert result.loc[1, "observed_at"] == pd.Timestamp("2009-01-01")
+
+
+def test_realtime_macro_panel_does_not_lose_early_history_to_late_gdi() -> None:
+    api = _normalizer_api()
+    rows: list[dict[str, object]] = []
+    resources = {
+        "real_output_quarterly_vintages": [100.0, 104.0],
+        "nominal_consumption_quarterly_vintages": [200.0, 204.0],
+        "nominal_disposable_income_quarterly_vintages": [220.0, 225.0],
+        "saving_rate_quarterly_vintages": [5.0, 5.2],
+    }
+    for resource_id, values in resources.items():
+        for observation_date, value in zip(
+            pd.to_datetime(["1997-07-01", "1997-10-01"]), values, strict=True
+        ):
+            rows.append(
+                {
+                    "date": pd.Timestamp("1998-02-15"),
+                    "observation_date": observation_date,
+                    "value": value,
+                    "resource_id": resource_id,
+                }
+            )
+    for observation_date, value in zip(
+        pd.to_datetime(["2004-07-01", "2004-10-01"]), [500.0, 505.0], strict=True
+    ):
+        rows.append(
+            {
+                "date": pd.Timestamp("2005-02-15"),
+                "observation_date": observation_date,
+                "value": value,
+                "resource_id": "real_gdi_quarterly_vintages",
+            }
+        )
+
+    result = api.normalize_realtime_macro_vintage_panel(
+        pd.DataFrame(rows),
+        sessions=pd.bdate_range("1998-02-13", "2005-02-18"),
+    )
+
+    early = result.loc[result["date"].eq(pd.Timestamp("1998-02-16"))].iloc[0]
+    assert pd.notna(early["output_growth"])
+    assert pd.isna(early["gdi_growth"])
+
+
+def test_macro_release_panel_includes_investment_and_capacity_components() -> None:
+    api = _normalizer_api()
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2009-01-01"] * 6),
+            "resource_id": [
+                "philly_nonresidential_investment_first_releases",
+                "philly_residential_investment_first_releases",
+                "philly_industrial_production_first_releases",
+                "philly_manufacturing_production_first_releases",
+                "philly_capacity_utilization_first_releases",
+                "philly_manufacturing_capacity_first_releases",
+            ],
+            "1": [3.0, 4.0, 2.0, 2.5, 78.0, 76.0],
+            "2": [3.5, 3.5, 2.2, 2.8, 78.2, 76.5],
+        }
+    )
+
+    result = api.normalize_macro_release_panel(
+        frame,
+        sessions=pd.bdate_range("2009-01-02", "2009-07-31"),
+    )
+
+    first = result.loc[result["date"].eq(pd.Timestamp("2009-02-16"))].iloc[0]
+    assert first["industrial_production_first"] == pytest.approx(2.0)
+    assert first["manufacturing_production_first"] == pytest.approx(2.5)
+    assert first["capacity_utilization_first"] == pytest.approx(78.0)
+    assert first["manufacturing_capacity_first"] == pytest.approx(76.0)
+    quarterly = result.loc[result["date"].eq(pd.Timestamp("2009-05-15"))].iloc[0]
+    assert quarterly["nonresidential_investment_first"] == pytest.approx(3.0)
+    assert quarterly["residential_investment_first"] == pytest.approx(4.0)
+
+
+def test_spf_central_disagreement_and_realized_error_keep_target_quarter() -> None:
+    api = _normalizer_api()
+    median_rows: list[dict[str, object]] = []
+    for year, quarter, output_levels in (
+        (2009, 1, (100.0, 101.0, 102.0)),
+        (2009, 2, (101.0, 103.0, 104.0)),
+    ):
+        values = {
+            "RGDP": output_levels,
+            "UNEMP": (5.0, 5.1, 5.2),
+            "CPI": (2.0, 2.1, 2.2),
+            "HOUSING": (1.0, 1.02, 1.04),
+            "TBILL": (1.5, 1.6, 1.7),
+        }
+        for sheet, (previous, current, following) in values.items():
+            median_rows.append(
+                {
+                    "0": year,
+                    "1": quarter,
+                    "2": previous,
+                    "3": current,
+                    "4": following,
+                    "source_sheet": sheet,
+                    "resource_id": "spf_median_level",
+                    "date": pd.Timestamp(year, (quarter - 1) * 3 + 1, 1),
+                }
+            )
+    dispersion_rows = [
+        {
+            "0": "2009Q1",
+            "3": 0.4 + offset,
+            "source_sheet": sheet,
+            "resource_id": "spf_dispersion",
+            "date": pd.Timestamp("2009-01-01"),
+        }
+        for offset, sheet in enumerate(("NGDP", "UNEMP", "CPI", "HOUSING", "TBILL"))
+    ]
+    spf = pd.DataFrame([*median_rows, *dispersion_rows])
+    sessions = pd.bdate_range("2009-03-30", "2009-09-30")
+
+    central = api.normalize_spf_central_panel(spf, sessions=sessions)
+    disagreement = api.normalize_spf_disagreement_panel(spf, sessions=sessions)
+
+    assert central["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2009-04-01",
+        "2009-07-01",
+    ]
+    assert central.loc[0, "output_nowcast"] == pytest.approx(
+        ((101.0 / 100.0) ** 4 - 1.0) * 100.0
+    )
+    assert central.loc[1, "output_forecast_revision"] == pytest.approx(
+        (((103.0 / 101.0) ** 4 - 1.0) - ((102.0 / 101.0) ** 4 - 1.0)) * 100.0
+    )
+    assert central.loc[1, "target_period"] == pd.Timestamp("2009-04-01")
+    assert disagreement.loc[0, "ngdp_iqr"] == pytest.approx(0.4)
+    assert disagreement.loc[0, "tbill_iqr"] == pytest.approx(4.4)
+
+    macro = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2009-04-01")],
+            "resource_id": ["philly_real_output_first_releases"],
+            "1": [8.2],
+            "2": [8.5],
+        }
+    )
+    error = api.normalize_spf_output_error_panel(spf, macro, sessions=sessions)
+    q2_nowcast = ((103.0 / 101.0) ** 4 - 1.0) * 100.0
+    assert error.loc[0, "date"] == pd.Timestamp("2009-08-17")
+    assert error.loc[0, "observed_at"] == pd.Timestamp("2009-04-01")
+    assert error.loc[0, "nowcast_signed_error"] == pytest.approx(8.2 - q2_nowcast)
+    assert error.loc[0, "nowcast_absolute_error"] == pytest.approx(abs(8.2 - q2_nowcast))
+
+
+def test_sloos_panel_waits_sixty_days_and_exposes_standards_terms_and_demand() -> None:
+    api = _normalizer_api()
+    series = {
+        "SUBLPDCILS_N.Q": 10.0,
+        "SUBLPDCILD_N.Q": 20.0,
+        "SUBLPDCISS_N.Q": 12.0,
+        "SUBLPDCISD_N.Q": 18.0,
+        "SUBLPDCILTC_N.Q": 3.0,
+        "SUBLPDCILTL_N.Q": 4.0,
+        "SUBLPDCILTM_N.Q": 5.0,
+        "SUBLPDCILTQ_N.Q": 6.0,
+        "SUBLPDCILTS_N.Q": 7.0,
+    }
+    frame = pd.DataFrame(
+        {
+            "date": pd.Timestamp("2009-03-31"),
+            "series_id": list(series),
+            "value": list(series.values()),
+        }
+    )
+
+    result = api.normalize_sloos_credit_panel(
+        frame,
+        sessions=pd.bdate_range("2009-05-25", "2009-06-05"),
+    )
+
+    assert result.loc[0, "date"] == pd.Timestamp("2009-06-01")
+    assert result.loc[0, "observed_at"] == pd.Timestamp("2009-03-31")
+    assert result.loc[0, "standards_large_mid"] == pytest.approx(10.0)
+    assert result.loc[0, "demand_small"] == pytest.approx(18.0)
+    assert result.loc[0, "term_spreads"] == pytest.approx(7.0)
+
+
 def test_fomc_events_are_only_usable_next_session() -> None:
     api = _normalizer_api()
     frame = pd.DataFrame(
