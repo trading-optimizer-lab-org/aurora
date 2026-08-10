@@ -332,14 +332,15 @@ fuente publica para evidencia positiva, pero no aporta directamente los codigos
 CRSP `cd1/cd2/cd3`, un calendario `exdt` completo ni la ausencia mensual
 necesaria para reproducir exactamente `DivInit`, `DivOmit` y `DivSeason`.
 
-Para `DivInit` queda preparada, sin ejecutar, una ruta SEC positiva y
-fail-closed. Retiene 48 contextos de dividendos por accion ordinaria y exige
-nueve trimestres contiguos: los ocho anteriores deben declarar cero y el actual
-un importe positivo. Prioriza el tag de efectivo pagado y usa el declarado solo
-como respaldo. Nunca convierte un fact ausente en cero. Como falta `exdt`, solo
-emite 1 si la formacion cae dentro de la ventana oficial de seis meses incluso
-suponiendo que el evento ocurrio el primer dia del trimestre; no emite ceros.
-Seguira siendo reconstruccion no estricta y su cobertura no esta medida.
+El calculador de `DivInit` se ejecuto en el run CompanyFacts `31392473937`, pero
+genero exactamente 0 valores. Retiene 48 contextos de dividendos por accion
+ordinaria y exige nueve trimestres contiguos: los ocho anteriores deben declarar
+cero y el actual un importe positivo. Prioriza el tag de efectivo pagado y usa
+el declarado solo como respaldo. Nunca convierte un fact ausente en cero. Como
+falta `exdt`, solo emite 1 si la formacion cae dentro de la ventana oficial de
+seis meses incluso suponiendo que el evento ocurrio el primer dia del trimestre;
+no emite ceros. La evidencia positiva y la cobertura siguen siendo insuficientes;
+no se marca como dato adquirido ni como senal calculada.
 
 El run CompanyFacts `31392473937` genero 14 valores de `DivOmit`: exige seis
 trimestres consecutivos con dividendo explicito y un septimo con cero explicito,
