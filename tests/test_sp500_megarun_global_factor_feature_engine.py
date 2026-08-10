@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from typing import Mapping
 
 import numpy as np
 import pandas as pd
@@ -16,7 +17,7 @@ def _api():
         pytest.fail(f"global factor feature engine is missing: {exc}")
 
 
-def _timed(dates: pd.DatetimeIndex, values: dict[str, object]) -> pd.DataFrame:
+def _timed(dates: pd.DatetimeIndex, values: Mapping[str, object]) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "date": dates,
