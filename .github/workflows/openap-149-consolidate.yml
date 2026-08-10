@@ -177,13 +177,29 @@ jobs:
           summary = json.load(open(f"{root}/openap_149_acquisition_summary.json"))
           assert len(matrix) == matrix["signal"].nunique() == 149
           assert summary["latest_formation_at"] == "2026-08-09T23:59:59+00:00"
-          assert summary["data_acquired"] == 56
-          assert summary["current_values_calculated"] == 52
+          assert summary["data_acquired"] == 57
+          assert summary["current_values_calculated"] == 53
           assert summary["reconstructed_not_strict"] == 18
-          assert summary["blocked"] == summary["pending"] == 97
-          assert summary["value_rows"] == 95390
+          assert summary["blocked"] == summary["pending"] == 96
+          assert summary["value_rows"] == 99824
           assert summary["strict_score_eligible"] == 0
           assert not matrix["strict_score_eligible"].astype(str).str.lower().eq("true").any()
+          firm_age = matrix.set_index("signal").loc["FirmAge"]
+          assert bool(firm_age["data_acquired"])
+          assert bool(firm_age["current_value_calculated"])
+          assert firm_age["current_value_count"] == 4434
+          assert firm_age["fidelity"] == "unvalidated_proxy"
+          assert firm_age["source_used"] == "sec_edgar"
+          assert not bool(firm_age["strict_score_eligible"])
+          firm_age_values = values.loc[values["signal"].eq("FirmAge")]
+          assert len(firm_age_values) == 4434
+          assert firm_age_values["source_id"].eq("sec_edgar").all()
+          assert firm_age_values["formula_id"].eq(
+              "openap_firmage_sec_first_filing_months_proxy"
+          ).all()
+          assert pd.to_datetime(firm_age_values["period_end"]).eq(
+              pd.to_datetime(firm_age_values["available_at"])
+          ).all()
           realestate = matrix.set_index("signal").loc["realestate"]
           assert bool(realestate["data_acquired"])
           assert bool(realestate["current_value_calculated"])
