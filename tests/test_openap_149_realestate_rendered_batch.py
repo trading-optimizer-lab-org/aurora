@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from importlib import import_module
 
 import pandas as pd
@@ -289,3 +290,127 @@ Gross Property, Plant and Equipment by Major Asset Class (Details)
     stored = tmp_path / "CIK0000320193"
     assert (stored / "FilingSummary.xml.txt").read_bytes() == summary
     assert (stored / "R46.htm.txt").read_bytes() == report
+
+
+def test_run_sector_batch_preserves_failures_and_publishes_current_values(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    module = _module()
+    formation_at = "2026-08-09T23:59:59Z"
+    candidates = []
+    for index in range(1, 7):
+        candidates.append(
+            {
+                "cik": str(index),
+                "security_id": f"US-SEC-{index:010d}-S{index}",
+                "symbol": f"S{index}",
+                "sic2": "35",
+                "accession_number": f"{index:010d}-25-000001",
+                "report_date": f"2025-12-{index:02d}",
+                "formation_at": formation_at,
+                "assets": 1_000.0 + index,
+                "assets_available_at": "2026-02-02T12:00:00Z",
+                "assets_source_sha256": f"{index:x}" * 64,
+                "fidelity": "reconstructed_not_strict",
+                "strict_score_eligible": False,
+            }
+        )
+
+    monkeypatch.setattr(
+        module,
+        "select_realestate_sector_pilot_candidates",
+        lambda *args, **kwargs: candidates,
+    )
+
+    def acquire(selected, **kwargs):
+        index = int(selected["cik"])
+        if index == 6:
+            raise RuntimeError("bounded transport failure")
+        return {
+            "signal": "realestate",
+            "status": "raw_data_acquired",
+            "raw_data_acquired": True,
+            "current_signal_computed": False,
+            "strict_score_eligible": False,
+            "fidelity": "reconstructed_not_strict",
+            "source_files": [
+                {
+                    "filename": "R1.htm",
+                    "source_url": f"https://www.sec.gov/{index}/R1.htm",
+                    "access_url": (
+                        f"https://r.jina.ai/http://www.sec.gov/{index}/R1.htm"
+                    ),
+                    "access_method": "sec_via_jina_readthrough",
+                    "status": "downloaded",
+                    "http_status": 200,
+                    "failure_reason": "",
+                    "sha256": f"{index + 6:x}" * 64,
+                    "size_bytes": 123,
+                    "retrieved_at": kwargs["retrieved_at"],
+                }
+            ],
+            "records": [
+                {
+                    "cik": str(index),
+                    "period_end": selected["report_date"],
+                    "available_at": "2026-02-01T12:00:00Z",
+                    "realestate_raw": index / 10.0,
+                    "source_sha256": f"{index + 6:x}" * 64,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(module, "acquire_rendered_realestate_filing", acquire)
+
+    result = module.run_rendered_realestate_sector_batch(
+        pd.DataFrame(),
+        pd.DataFrame(),
+        pd.DataFrame(),
+        formation_at=formation_at,
+        target_sic2="35",
+        anchor_cik="320193",
+        source_run_id="31270341796",
+        output_dir=tmp_path,
+        minimum_issuers=5,
+        maximum_issuers=12,
+        retrieved_at="2026-08-10T01:00:00Z",
+    )
+
+    assert result["status"] == "current_signal_computed"
+    assert result["candidates_selected"] == 6
+    assert result["raw_issuers_acquired"] == 5
+    assert result["current_values_computed"] == 5
+    assert result["source_run_id"] == "31270341796"
+    assert result["strict_score_eligible"] is False
+    assert result["locked_opened"] is False
+    assert result["forward_opened"] is False
+    assert result["validation_used_for_selection"] is False
+    assert result["cost_eur"] == 0
+    assert result["failed_issuers"] == [
+        {"cik": "6", "reason": "acquisition_error:RuntimeError"}
+    ]
+
+    current = pd.read_csv(tmp_path / "openap_149_realestate_current.csv")
+    manifest = pd.read_csv(
+        tmp_path / "openap_149_realestate_acquisition_manifest.csv"
+    )
+    stored_summary = json.loads(
+        (tmp_path / "openap_149_realestate_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert len(current) == 5
+    assert current["signal"].eq("realestate").all()
+    assert current["current_signal_computed"].all()
+    assert not current["strict_score_eligible"].any()
+    assert len(manifest) == 6
+    assert manifest["status"].value_counts().to_dict() == {
+        "raw_data_acquired": 5,
+        "acquisition_error": 1,
+    }
+    assert stored_summary == result
+    assert (tmp_path / "openap_149_realestate_candidates.json").is_file()
+    assert (tmp_path / "openap_149_realestate_issuer_evidence.json").is_file()
+    assert (tmp_path / "openap_149_realestate_raw_records.csv").is_file()
+    assert (tmp_path / "openap_149_realestate_current.parquet").is_file()
