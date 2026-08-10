@@ -51,6 +51,10 @@ def _module():
     return import_module("aurora.research.openap_181.sec_fsd_access")
 
 
+def _filing_module():
+    return import_module("aurora.research.openap_181.sec_filing_access")
+
+
 def test_official_fsd_download_records_origin_access_headers_hash_and_size(tmp_path):
     module = _module()
     payload = b"PK\x03\x04fixture-sec-fsd"
@@ -202,3 +206,61 @@ def test_sec_notes_access_cli_fails_closed_outside_github(tmp_path, monkeypatch)
 
     with pytest.raises(LocalRunBlocked, match="OpenAP 149 SEC Notes access"):
         runpy.run_path(str(script), run_name="__main__")
+
+
+def test_official_filing_download_records_identity_origin_hash_and_size(tmp_path):
+    module = _filing_module()
+    payload = b"<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'></html>"
+    session = _Session([_Response(200, payload)])
+
+    summary = module.download_official_sec_filing(
+        cik="320193",
+        accession_number="0000320193-25-000079",
+        primary_document="aapl-20250927.htm",
+        output_dir=tmp_path / "filing",
+        manifest_path=tmp_path / "manifest.csv",
+        user_agent="Aurora Research https://github.com/example/aurora",
+        session=session,
+        retry_delays=(),
+    )
+
+    expected_url = (
+        "https://www.sec.gov/Archives/edgar/data/320193/"
+        "000032019325000079/aapl-20250927.htm"
+    )
+    expected_path = tmp_path / "filing" / "aapl-20250927.htm"
+    assert summary == {
+        "all_downloaded": True,
+        "downloaded": 1,
+        "failed": 0,
+        "filings_requested": 1,
+    }
+    assert expected_path.read_bytes() == payload
+    manifest = pd.read_csv(
+        tmp_path / "manifest.csv", keep_default_na=False, dtype={"cik": str}
+    )
+    assert manifest.to_dict(orient="records") == [
+        {
+            "source_id": "sec_filing_0000320193-25-000079",
+            "source_url": expected_url,
+            "access_url": expected_url,
+            "access_method": "sec_official_filing_fair_access",
+            "cik": "0000320193",
+            "accession_number": "0000320193-25-000079",
+            "primary_document": "aapl-20250927.htm",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size_bytes": len(payload),
+            "retrieved_at": manifest.loc[0, "retrieved_at"],
+            "status": "downloaded",
+            "http_status": 200,
+            "failure_reason": "",
+        }
+    ]
+    call = session.calls[0]
+    assert call["url"] == expected_url
+    assert call["headers"] == {
+        "User-Agent": "Aurora Research https://github.com/example/aurora",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Encoding": "gzip, deflate",
+        "Host": "www.sec.gov",
+    }
