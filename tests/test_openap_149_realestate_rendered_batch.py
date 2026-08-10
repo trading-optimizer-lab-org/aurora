@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from aurora.core.execution_policy import LocalRunBlocked
+from aurora.research.openap_181.acquisition_149 import VALUE_COLUMNS
 
 
 class _ReadthroughResponse:
@@ -169,6 +170,8 @@ def test_assemble_sector_pilot_computes_only_matching_annual_periods() -> None:
                 "report_date": report_date,
                 "formation_at": formation_at,
                 "assets": 1_000.0 + index,
+                "filing_date": "2026-02-01",
+                "accepted_at": "2026-02-01T12:00:00Z",
                 "assets_available_at": "2026-02-02T12:00:00Z",
                 "assets_source_sha256": f"{index:x}" * 64,
                 "fidelity": "reconstructed_not_strict",
@@ -314,6 +317,8 @@ def test_run_sector_batch_preserves_failures_and_publishes_current_values(
                 "sic2": "35",
                 "accession_number": f"{index:010d}-25-000001",
                 "report_date": f"2025-12-{index:02d}",
+                "filing_date": "2026-02-01",
+                "accepted_at": "2026-02-01T12:00:00Z",
                 "formation_at": formation_at,
                 "assets": 1_000.0 + index,
                 "assets_available_at": "2026-02-02T12:00:00Z",
@@ -362,6 +367,11 @@ def test_run_sector_batch_preserves_failures_and_publishes_current_values(
                     "period_end": selected["report_date"],
                     "available_at": "2026-02-01T12:00:00Z",
                     "realestate_raw": index / 10.0,
+                    "source_url": f"https://www.sec.gov/{index}/R1.htm",
+                    "access_url": (
+                        f"https://r.jina.ai/http://www.sec.gov/{index}/R1.htm"
+                    ),
+                    "access_method": "sec_via_jina_readthrough",
                     "source_sha256": f"{index + 6:x}" * 64,
                 }
             ],
@@ -407,9 +417,21 @@ def test_run_sector_batch_preserves_failures_and_publishes_current_values(
         )
     )
     assert len(current) == 5
+    assert tuple(current.columns) == VALUE_COLUMNS
     assert current["signal"].eq("realestate").all()
-    assert current["current_signal_computed"].all()
-    assert not current["strict_score_eligible"].any()
+    assert current["ticker"].tolist() == [f"S{index}" for index in range(1, 6)]
+    assert current["value"].tolist() == pytest.approx([-0.2, -0.1, 0.0, 0.1, 0.2])
+    assert current["fidelity_class"].eq("reconstructed").all()
+    assert current["source_id"].eq("sec_edgar").all()
+    assert current["formula_id"].eq("realestate").all()
+    assert current["observation_count"].eq(5).all()
+    assert current["formation_at"].eq(formation_at).all()
+    assert current["filed_at"].eq("2026-02-01T12:00:00Z").all()
+    assert current["available_at"].eq("2026-02-02T12:00:00+00:00").all()
+    assert current["retrieved_at"].eq("2026-08-10T01:00:00Z").all()
+    assert current["source_url"].str.startswith("https://www.sec.gov/").all()
+    assert current["caveat"].str.contains("sec_via_jina_readthrough").all()
+    assert current["caveat"].str.contains("not_strict").all()
     assert len(manifest) == 6
     assert manifest["status"].value_counts().to_dict() == {
         "raw_data_acquired": 5,
@@ -420,6 +442,97 @@ def test_run_sector_batch_preserves_failures_and_publishes_current_values(
     assert (tmp_path / "openap_149_realestate_issuer_evidence.json").is_file()
     assert (tmp_path / "openap_149_realestate_raw_records.csv").is_file()
     assert (tmp_path / "openap_149_realestate_current.parquet").is_file()
+
+
+def test_run_sector_batch_writes_canonical_empty_values_when_coverage_blocks(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    module = _module()
+    formation_at = "2026-08-09T23:59:59Z"
+    candidates = [
+        {
+            "cik": str(index),
+            "security_id": f"US-SEC-{index:010d}-S{index}",
+            "symbol": f"S{index}",
+            "sic2": "35",
+            "accession_number": f"{index:010d}-25-000001",
+            "report_date": f"2025-12-{index:02d}",
+            "filing_date": "2026-02-01",
+            "accepted_at": "2026-02-01T12:00:00Z",
+            "formation_at": formation_at,
+            "assets": 1_000.0 + index,
+            "assets_available_at": "2026-02-02T12:00:00Z",
+            "assets_source_sha256": f"{index:x}" * 64,
+            "fidelity": "reconstructed_not_strict",
+            "strict_score_eligible": False,
+        }
+        for index in range(1, 6)
+    ]
+    monkeypatch.setattr(
+        module,
+        "select_realestate_sector_pilot_candidates",
+        lambda *args, **kwargs: candidates,
+    )
+
+    def acquire(selected, **kwargs):
+        index = int(selected["cik"])
+        acquired = index < 5
+        return {
+            "signal": "realestate",
+            "status": "raw_data_acquired" if acquired else "blocked_source_failure",
+            "raw_data_acquired": acquired,
+            "current_signal_computed": False,
+            "strict_score_eligible": False,
+            "fidelity": "reconstructed_not_strict",
+            "source_files": [],
+            "records": (
+                [
+                    {
+                        "cik": str(index),
+                        "period_end": selected["report_date"],
+                        "available_at": "2026-02-01T12:00:00Z",
+                        "realestate_raw": index / 10.0,
+                        "source_url": f"https://www.sec.gov/{index}/R1.htm",
+                        "access_url": (
+                            f"https://r.jina.ai/http://www.sec.gov/{index}/R1.htm"
+                        ),
+                        "access_method": "sec_via_jina_readthrough",
+                        "source_sha256": f"{index + 6:x}" * 64,
+                    }
+                ]
+                if acquired
+                else []
+            ),
+        }
+
+    monkeypatch.setattr(module, "acquire_rendered_realestate_filing", acquire)
+
+    result = module.run_rendered_realestate_sector_batch(
+        pd.DataFrame(),
+        pd.DataFrame(),
+        pd.DataFrame(),
+        formation_at=formation_at,
+        target_sic2="35",
+        anchor_cik="320193",
+        source_run_id="31270341796",
+        output_dir=tmp_path,
+        minimum_issuers=5,
+        maximum_issuers=12,
+        retrieved_at="2026-08-10T01:00:00Z",
+    )
+
+    assert result["status"] == "blocked_coverage"
+    assert result["raw_issuers_acquired"] == 4
+    assert result["current_values_computed"] == 0
+    csv_values = pd.read_csv(tmp_path / "openap_149_realestate_current.csv")
+    parquet_values = pd.read_parquet(
+        tmp_path / "openap_149_realestate_current.parquet"
+    )
+    assert tuple(csv_values.columns) == VALUE_COLUMNS
+    assert tuple(parquet_values.columns) == VALUE_COLUMNS
+    assert csv_values.empty
+    assert parquet_values.empty
 
 
 def test_realestate_sector_batch_cli_fails_closed_outside_github(
