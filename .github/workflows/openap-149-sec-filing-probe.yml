@@ -173,6 +173,7 @@ jobs:
           import hashlib
           import json
           import re
+          import time
           from pathlib import Path
 
           import requests
@@ -198,15 +199,33 @@ jobs:
               )
               access_url = f"https://r.jina.ai/http://{origin_url.removeprefix('https://')}"
               try:
-                  response = requests.get(
-                      access_url,
-                      headers={"User-Agent": "Aurora Research readthrough probe"},
-                      timeout=(30, 300),
-                  )
-                  status = int(response.status_code)
-                  response.raise_for_status()
-                  content = bytes(response.content)
-                  text = content.decode("utf-8", errors="replace")
+                  content = b""
+                  text = ""
+                  status = 0
+                  for attempt in range(3):
+                      response = requests.get(
+                          access_url,
+                          headers={
+                              "User-Agent": "Aurora Research readthrough probe",
+                              "X-No-Cache": "true",
+                          },
+                          timeout=(30, 300),
+                      )
+                      status = int(response.status_code)
+                      response.raise_for_status()
+                      content = bytes(response.content)
+                      text = content.decode("utf-8", errors="replace")
+                      markdown_content = (
+                          text.split("Markdown Content:", 1)[1].strip()
+                          if "Markdown Content:" in text
+                          else text.strip()
+                      )
+                      if len(markdown_content.encode("utf-8")) >= 100:
+                          break
+                      if attempt < 2:
+                          time.sleep(2 ** attempt)
+                  if len(markdown_content.encode("utf-8")) < 100:
+                      raise ValueError("Jina read-through returned empty content")
                   destination = readthrough / f"{filename}.txt"
                   destination.write_bytes(content)
                   rows.append(
@@ -221,6 +240,9 @@ jobs:
                           "sha256": hashlib.sha256(content).hexdigest(),
                           "size_bytes": len(content),
                           "markdown_marker": "Markdown Content:" in text,
+                          "markdown_content_bytes": len(
+                              markdown_content.encode("utf-8")
+                          ),
                           "raw_xml_xbrl_markup": bool(
                               re.search(r"<(?:us-gaap|dei|aapl|ix):", text, re.I)
                           ),
@@ -249,6 +271,7 @@ jobs:
                           "sha256": "",
                           "size_bytes": 0,
                           "markdown_marker": False,
+                          "markdown_content_bytes": 0,
                           "raw_xml_xbrl_markup": False,
                           "xbrl_name_token_count": 0,
                       }
@@ -353,12 +376,22 @@ jobs:
           access_url = f"https://r.jina.ai/http://{source_url.removeprefix('https://')}"
           response = requests.get(
               access_url,
-              headers={"User-Agent": "Aurora Research readthrough probe"},
+              headers={
+                  "User-Agent": "Aurora Research readthrough probe",
+                  "X-No-Cache": "true",
+              },
               timeout=(30, 300),
           )
           response.raise_for_status()
           content = bytes(response.content)
           text = content.decode("utf-8", errors="replace")
+          markdown_content = (
+              text.split("Markdown Content:", 1)[1].strip()
+              if "Markdown Content:" in text
+              else text.strip()
+          )
+          if len(markdown_content.encode("utf-8")) < 100:
+              raise RuntimeError("Rendered PP&E report read-through was empty")
           (output / "readthrough" / f"{report_filename}.txt").write_bytes(content)
           report = {
               "report_filename": report_filename,
