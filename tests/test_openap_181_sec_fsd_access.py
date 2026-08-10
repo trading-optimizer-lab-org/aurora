@@ -437,3 +437,78 @@ def test_build_rendered_realestate_evidence_preserves_pit_and_stays_uncomputed()
             }
         ],
     }
+
+
+def test_select_current_realestate_pilot_uses_latest_causal_same_sic2_filings():
+    module = _rendered_module()
+    common = {
+        "form": "10-K",
+        "is_xbrl": True,
+        "sic": "3571",
+        "report_date": "2025-12-31",
+        "filing_date": "2026-02-01",
+        "primary_document": "annual.htm",
+    }
+    submissions = [
+        {
+            **common,
+            "cik": "320193",
+            "accession_number": "anchor-old",
+            "accepted_at": "2025-02-01T12:00:00Z",
+        },
+        {
+            **common,
+            "cik": "320193",
+            "accession_number": "anchor-current",
+            "accepted_at": "2026-02-01T12:00:00Z",
+        },
+        *[
+            {
+                **common,
+                "cik": str(cik),
+                "accession_number": f"peer-{cik}",
+                "accepted_at": "2026-03-01T12:00:00Z",
+            }
+            for cik in (100, 200, 300, 400)
+        ],
+        {
+            **common,
+            "cik": "500",
+            "accession_number": "future",
+            "accepted_at": "2026-09-01T12:00:00Z",
+        },
+        {
+            **common,
+            "cik": "600",
+            "accession_number": "quarterly",
+            "accepted_at": "2026-03-01T12:00:00Z",
+            "form": "10-Q",
+        },
+        {
+            **common,
+            "cik": "700",
+            "accession_number": "other-sector",
+            "accepted_at": "2026-03-01T12:00:00Z",
+            "sic": "3674",
+        },
+    ]
+
+    selected = module.select_current_realestate_pilot_filings(
+        submissions,
+        formation_at="2026-08-09T23:59:59Z",
+        target_sic2="35",
+        anchor_cik="320193",
+        minimum_issuers=5,
+        maximum_issuers=5,
+    )
+
+    assert [row["cik"] for row in selected] == [
+        "320193",
+        "100",
+        "200",
+        "300",
+        "400",
+    ]
+    assert selected[0]["accession_number"] == "anchor-current"
+    assert all(row["sic2"] == "35" for row in selected)
+    assert all(row["formation_at"] == "2026-08-09T23:59:59Z" for row in selected)
