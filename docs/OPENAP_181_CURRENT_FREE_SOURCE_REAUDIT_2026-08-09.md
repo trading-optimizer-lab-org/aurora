@@ -196,6 +196,29 @@ ingreso SEC dividido por acciones medias no es `epspxq`, ventas SEC/acciones no
 demuestran equivalencia `revtq/cshprq` y CIK/ticker actual no es un puente
 GVKEY/PERMNO historico. No se ha ejecutado y no cambia los recuentos.
 
+El artefacto exitoso del run `31270341796` ofrece otra ruta gratuita para
+recuperar salidas ya producidas, distinta de volver a descargar SEC o Yahoo. Su
+`output_manifest.csv` liga por tamano y SHA-256 la cuadricula de 185 senales,
+la cobertura y los conceptos SEC seleccionados. La recuperacion selectiva
+preparada extrae esos tres derivados junto al `security_master` ya auditado y
+admite solo 13 ratios que el propio pipeline etiqueto como proxies contables:
+`AM`, `BM`, `CashProd`, `CF`, `cfp`, `EP`, `Leverage`, `NetDebtPrice`,
+`NetPayoutYield`, `PayoutYield`, `RD`, `SP` y `AdExp`.
+
+El contrato exige la cuadricula completa de 185 senales por titulo, cobertura
+reconciliada, identidad SEC unica, filtros oficiales y todos los conceptos de
+lag cero declarados para cada formula. Recalcula la disponibilidad como el
+maximo entre la aceptacion SEC y el timestamp del snapshot Yahoo que aporto la
+capitalizacion del emisor. Un timestamp ausente, futuro o distinto del maximo
+de dependencias queda fail-closed. Conserva como formacion el `as_of` original
+del run: la fecha de recuperacion no rejuvenece el dato.
+
+Esta ruta no convierte SEC/Yahoo en Compustat/CRSP ni crea intervalos
+historicos GVKEY/PERMNO. Todas las salidas futuras seran `reconstructed`, con
+`strict_score_eligible=false` e incremento estricto cero. El workflow es solo
+manual y sigue sin ejecutarse; por tanto, no hay valores nuevos ni cambios en
+los recuentos.
+
 ### Institucionales y 13F: 7
 
 Ruta principal: SEC 13F + SEC y artefactos de mercado ya adquiridos para

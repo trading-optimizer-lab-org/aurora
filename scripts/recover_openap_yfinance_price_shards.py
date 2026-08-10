@@ -24,6 +24,10 @@ from aurora.research.openap_181.recovered_yfinance_market import (
     validate_recovered_yfinance_source,
     validate_yfinance_source_manifest,
 )
+from aurora.research.openap_181.recovered_current_features import (
+    RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS,
+    validate_recovered_current_feature_members,
+)
 
 
 API_ROOT = "https://api.github.com"
@@ -33,6 +37,7 @@ ARTIFACT_PATTERN = "openap-yfinance-*"
 AUDITED_MEMBERS = (
     "security_master.parquet",
     "execution_summary.json",
+    "output_manifest.csv",
     "source_manifest.csv",
     "yfinance_source_manifest.csv",
 )
@@ -163,6 +168,26 @@ def main() -> int:
         type=int,
         default=768 * 1024 * 1024,
     )
+    parser.add_argument(
+        "--maximum-derived-member-compressed-bytes",
+        type=int,
+        default=64 * 1024 * 1024,
+    )
+    parser.add_argument(
+        "--maximum-derived-member-uncompressed-bytes",
+        type=int,
+        default=256 * 1024 * 1024,
+    )
+    parser.add_argument(
+        "--maximum-derived-total-compressed-bytes",
+        type=int,
+        default=128 * 1024 * 1024,
+    )
+    parser.add_argument(
+        "--maximum-derived-total-uncompressed-bytes",
+        type=int,
+        default=512 * 1024 * 1024,
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     require_github_actions_or_explicit_local_permission(
@@ -175,8 +200,12 @@ def main() -> int:
     if (
         args.maximum_shard_compressed_bytes <= 0
         or args.maximum_total_compressed_bytes <= 0
+        or args.maximum_derived_member_compressed_bytes <= 0
+        or args.maximum_derived_member_uncompressed_bytes <= 0
+        or args.maximum_derived_total_compressed_bytes <= 0
+        or args.maximum_derived_total_uncompressed_bytes <= 0
     ):
-        raise ValueError("compressed-byte limits must be positive")
+        raise ValueError("recovery byte limits must be positive")
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token:
         raise RuntimeError("GITHUB_TOKEN is required for artifact recovery")
@@ -204,6 +233,39 @@ def main() -> int:
     source_manifest = validate_yfinance_source_manifest(
         audited_members["yfinance_source_manifest.csv"]
     )
+    derived_inspection = inspect_zip_members(
+        audited_reader,
+        RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS,
+    )
+    derived_compressed_bytes = sum(
+        int(row["compress_size"]) for row in derived_inspection.values()
+    )
+    derived_uncompressed_bytes = sum(
+        int(row["file_size"]) for row in derived_inspection.values()
+    )
+    if any(
+        int(row["compress_size"])
+        > args.maximum_derived_member_compressed_bytes
+        for row in derived_inspection.values()
+    ):
+        raise RuntimeError("a derived member exceeds its compressed-byte limit")
+    if any(
+        int(row["file_size"])
+        > args.maximum_derived_member_uncompressed_bytes
+        for row in derived_inspection.values()
+    ):
+        raise RuntimeError("a derived member exceeds its uncompressed-byte limit")
+    if derived_compressed_bytes > args.maximum_derived_total_compressed_bytes:
+        raise RuntimeError("derived recovery exceeds its compressed-byte limit")
+    if derived_uncompressed_bytes > args.maximum_derived_total_uncompressed_bytes:
+        raise RuntimeError("derived recovery exceeds its uncompressed-byte limit")
+    derived_members = read_zip_members(
+        audited_reader,
+        RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS,
+    )
+    current_feature_bundle = validate_recovered_current_feature_members(
+        {**audited_members, **derived_members}
+    )
 
     source_run, source_jobs, source_artifacts = _run_payloads(
         args.repository,
@@ -222,9 +284,29 @@ def main() -> int:
         else base_data_dir() / args.output_dir
     )
     shard_root = output / "restricted_internal_raw" / "price_shards"
+    derived_root = output / "restricted_internal_derived"
     shard_root.mkdir(parents=True, exist_ok=True)
+    derived_root.mkdir(parents=True, exist_ok=True)
+    recovered_derived_rows: list[dict[str, Any]] = []
+    for member_name in RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS:
+        target = derived_root / member_name
+        target.write_bytes(derived_members[member_name])
+        recovered_derived_rows.append(
+            {
+                "member_name": member_name,
+                "restricted_relative_path": target.relative_to(output).as_posix(),
+                "materialized_bytes": target.stat().st_size,
+                "materialized_sha256": _sha256_file(target),
+                "declared_compressed_bytes": int(
+                    derived_inspection[member_name]["compress_size"]
+                ),
+                "declared_uncompressed_bytes": int(
+                    derived_inspection[member_name]["file_size"]
+                ),
+            }
+        )
     recovered_rows: list[dict[str, Any]] = []
-    total_declared_bytes = audited_declared_bytes
+    total_declared_bytes = audited_declared_bytes + derived_compressed_bytes
     total_fetched_bytes = audited_reader.bytes_fetched
     total_range_requests = audited_reader.range_requests
     for artifact in source_evidence["artifacts"]:
@@ -270,6 +352,7 @@ def main() -> int:
         "source_manifest.csv": "source_manifest.csv",
         "yfinance_source_manifest.csv": "yfinance_source_manifest.csv",
         "execution_summary.json": "source_execution_summary.json",
+        "output_manifest.csv": "source_output_manifest.csv",
     }
     for member_name, target_name in materialized_members.items():
         (output / target_name).write_bytes(audited_members[member_name])
@@ -297,6 +380,33 @@ def main() -> int:
         "source_manifest_sha256": sha256(
             audited_members["source_manifest.csv"]
         ).hexdigest(),
+        "source_output_manifest_sha256": sha256(
+            audited_members["output_manifest.csv"]
+        ).hexdigest(),
+        "recovered_current_feature_contract_version": 1,
+        "recovered_current_feature_evidence": dict(
+            current_feature_bundle.evidence
+        ),
+        "recovered_current_feature_members": recovered_derived_rows,
+        "recovered_current_feature_member_count": len(recovered_derived_rows),
+        "recovered_current_feature_target_count": len(
+            current_feature_bundle.evidence["target_signals"]
+        ),
+        "derived_member_inspection": derived_inspection,
+        "derived_declared_compressed_bytes": derived_compressed_bytes,
+        "derived_declared_uncompressed_bytes": derived_uncompressed_bytes,
+        "maximum_derived_member_compressed_bytes": (
+            args.maximum_derived_member_compressed_bytes
+        ),
+        "maximum_derived_member_uncompressed_bytes": (
+            args.maximum_derived_member_uncompressed_bytes
+        ),
+        "maximum_derived_total_compressed_bytes": (
+            args.maximum_derived_total_compressed_bytes
+        ),
+        "maximum_derived_total_uncompressed_bytes": (
+            args.maximum_derived_total_uncompressed_bytes
+        ),
         "recovered_price_shards": recovered_rows,
         "recovered_price_shard_count": len(recovered_rows),
         "price_rows": sum(int(row["price_rows"]) for row in recovered_rows),
@@ -319,6 +429,8 @@ def main() -> int:
     }
     if len(recovered_rows) != 48:
         raise RuntimeError("recovery did not materialize exactly 48 price shards")
+    if len(recovered_derived_rows) != len(RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS):
+        raise RuntimeError("recovery did not materialize every current feature member")
     manifest_path = output / "recovered_yfinance_price_manifest.json"
     manifest_path.write_text(
         json.dumps(recovery, indent=2, sort_keys=True) + "\n",

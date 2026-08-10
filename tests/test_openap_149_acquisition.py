@@ -163,10 +163,56 @@ def test_current_sec_event_source_aliases_match_documented_free_routes() -> None
         "recovered_yfinance_artifacts_31256096194|kenneth_french|pastor_stambaugh",
         "recovered_yfinance_artifacts|kenneth_french_factors|pastor_stambaugh",
     )
+    assert module._source_allowed(
+        "recovered_openap_features_31270341796|sec_edgar|"
+        "recovered_yfinance_artifacts_31256096194",
+        "recovered_openap_features|sec_edgar|recovered_yfinance_artifacts",
+    )
     assert module.SOURCE_TERMS["recovered_yfinance_artifacts"] != (
         "terms_not_yet_verified"
     )
+    assert module.SOURCE_TERMS["recovered_openap_features"] != (
+        "terms_not_yet_verified"
+    )
     assert module.SOURCE_TERMS["pastor_stambaugh"] != "terms_not_yet_verified"
+
+
+def test_thirteen_recovered_accounting_routes_remain_prepared_and_non_strict() -> None:
+    root = Path(__file__).resolve().parents[1]
+    routes = pd.read_csv(
+        root / "docs/OPENAP_181_CURRENT_FREE_SOURCE_REAUDIT_2026-08-09.csv"
+    ).set_index("signal")
+    targets = {
+        "AM",
+        "BM",
+        "CashProd",
+        "CF",
+        "cfp",
+        "EP",
+        "Leverage",
+        "NetDebtPrice",
+        "NetPayoutYield",
+        "PayoutYield",
+        "RD",
+        "SP",
+        "AdExp",
+    }
+
+    selected = routes.loc[sorted(targets)]
+    assert len(selected) == 13
+    assert selected["primary_free_sources"].str.contains(
+        "recovered_openap_features", regex=False
+    ).all()
+    assert selected["primary_free_sources"].str.contains(
+        "recovered_yfinance_artifacts", regex=False
+    ).all()
+    assert selected["current_remaining_blocker"].eq(
+        "audited_run_31270341796_hash_bound_current_feature_route_"
+        "prepared_unexecuted_source_as_of_retained_sec_and_market_available_at_"
+        "identity_coverage_and_strict_fidelity_pending"
+    ).all()
+    assert selected["strict_score_eligible"].eq(False).all()  # noqa: E712
+    assert selected["source_checked_at"].eq("2026-08-10").all()
 
 
 def test_all_31_frozen_market_routes_record_the_recovered_artifact_route() -> None:

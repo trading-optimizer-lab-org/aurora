@@ -50,7 +50,9 @@ jobs:
       - name: Validate selective recovery and provider-neutral calculations
         run: |
           python -m pytest \
+            tests/test_openap_149_acquisition.py \
             tests/test_openap_149_recovered_yfinance_market.py \
+            tests/test_openap_149_recovered_current_features.py \
             tests/test_openap_181_twelve_data_market_signals.py \
             tests/test_openap_181_twelve_data_factor_signals.py -q
 
@@ -106,11 +108,21 @@ jobs:
             --ff3-monthly-zip inputs/factors/ff3_monthly.zip \
             --pastor-stambaugh-file inputs/factors/pastor_stambaugh.txt \
             --output-dir outputs/calculated
+      - name: Recover validated non-strict current accounting observations
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          python scripts/run_openap_149_recovered_current_features.py \
+            --recovery-root outputs/recovery \
+            --implementation-sha "$SOURCE_SHA" \
+            --output-dir outputs/calculated_current_features
       - name: Enforce private non-strict output contract
         run: |
           test -s outputs/recovery/recovered_yfinance_price_manifest.json
           test -s outputs/calculated/recovered_yfinance_market_manifest.json
           test -s outputs/calculated/recovered_yfinance_market_current.csv
+          test -s outputs/calculated_current_features/recovered_current_features_manifest.json
+          test -s outputs/calculated_current_features/recovered_current_features_current.csv
           python - <<'PY'
           import json
           from pathlib import Path
@@ -121,11 +133,26 @@ jobs:
           calculated = json.loads(
               Path("outputs/calculated/recovered_yfinance_market_manifest.json").read_text()
           )
+          current_features = json.loads(
+              Path(
+                  "outputs/calculated_current_features/"
+                  "recovered_current_features_manifest.json"
+              ).read_text()
+          )
           assert recovery["recovered_price_shard_count"] == 48
+          assert recovery["recovered_current_feature_member_count"] == 3
+          assert recovery["recovered_current_feature_target_count"] == 13
           assert recovery["fresh_provider_request_made"] is False
           assert calculated["strict_score_eligible"] is False
           assert calculated["strict_score_increment"] == 0
           assert calculated["locked_opened"] is False
+          assert current_features["target_signal_count"] == 13
+          assert current_features["source_values_revalidated"] is True
+          assert current_features["source_age_laundered"] is False
+          assert current_features["fresh_provider_request_made"] is False
+          assert current_features["strict_score_eligible"] is False
+          assert current_features["strict_score_increment"] == 0
+          assert current_features["locked_opened"] is False
           PY
       - name: Upload restricted recovered inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -139,5 +166,12 @@ jobs:
         with:
           name: openap-149-recovered-yfinance-market-results
           path: outputs/calculated/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload recovered non-strict accounting observations
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-149-recovered-current-feature-results
+          path: outputs/calculated_current_features/
           if-no-files-found: error
           retention-days: 30

@@ -153,6 +153,38 @@ recuentos globales demostrados permanecen `56/50/18/99/96814`.
   dos digitos, no SIC historico CRSP/FF17, y aun debe demostrar continuidad de
   historia, cobertura e identidad antes de una validacion de solapamiento.
 
+## Trece ratios contables recuperables de un artefacto auditado
+
+El run correcto `31270341796` produjo una cuadricula
+`openap_features_current.parquet` de 185 senales, su `coverage_185.csv`, los
+conceptos SEC elegidos en `sec_concept_inputs_current.parquet` y un
+`output_manifest.csv` con tamano y SHA-256 de cada salida. Se ha preparado una
+recuperacion selectiva de esos miembros para `AM`, `BM`, `CashProd`, `CF`,
+`cfp`, `EP`, `Leverage`, `NetDebtPrice`, `NetPayoutYield`, `PayoutYield`, `RD`,
+`SP` y `AdExp`.
+
+La recuperacion no confia solo en que exista un numero. Antes de admitir una
+fila obliga a reconciliar las 185 senales por cada titulo elegible, los 185
+registros de cobertura y los conceptos SEC exactos usados por cada formula.
+Tambien exige una identidad `security_id + CIK + ticker`, el filtro oficial,
+una fecha SEC causal y la fecha real del snapshot Yahoo que aporto la
+capitalizacion de mercado. La disponibilidad final es el maximo de ambas. Una
+fecha ausente, posterior a la formacion o incoherente deja la observacion sin
+valor y registra el motivo.
+
+La fecha de formacion permanece siendo el `as_of` original del run; ni la
+recuperacion ni una ejecucion posterior pueden rejuvenecerla. Las trece salidas
+seran `reconstructed`, no estrictas: usan conceptos SEC y capitalizacion actual
+de Yahoo, no Compustat/CRSP, ni intervalos historicos GVKEY/PERMNO, ni todos los
+lags y filtros de cartera oficiales. El workflow manual existente queda
+preparado para publicar un artefacto derivado separado, sin llamadas nuevas a
+Yahoo y con incremento estricto cero.
+
+Estado exacto: `prepared_unexecuted`. No se ha iniciado ningun run, no hay
+valores nuevos recuperados y los recuentos ejecutados siguen siendo
+`56/50/18/99/96814`. Esta preparacion tampoco modifica las 31 senales del score
+estricto confirmado.
+
 ## Mercado sin credencial: artefactos existentes recuperables
 
 Las 31 rutas de mercado ya no dependen de obtener una clave nueva. El run

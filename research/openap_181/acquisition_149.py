@@ -119,6 +119,8 @@ SOURCE_ALIASES = {
     "twelve_data_basic": "twelve_data_basic",
     "recovered_yfinance_artifacts": "recovered_yfinance_artifacts",
     "recovered_yfinance_artifacts_31256096194": "recovered_yfinance_artifacts",
+    "recovered_openap_features": "recovered_openap_features",
+    "recovered_openap_features_31270341796": "recovered_openap_features",
     "pastor_stambaugh": "pastor_stambaugh",
 }
 
@@ -142,6 +144,10 @@ SOURCE_TERMS = {
     "recovered_yfinance_artifacts": (
         "Previously acquired private YFinance artifacts; internal derived use only; "
         "raw redistribution prohibited"
+    ),
+    "recovered_openap_features": (
+        "Hash-bound private derived output from successful run 31270341796; "
+        "source as-of retained; SEC fair-access and underlying market-data terms apply"
     ),
     "pastor_stambaugh": (
         "Chicago Booth public academic liquidity-factor data; attribution required"
