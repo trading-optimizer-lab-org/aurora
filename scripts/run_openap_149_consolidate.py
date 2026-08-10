@@ -56,6 +56,9 @@ def main() -> int:
     parser.add_argument("--sec-current-root", type=Path, required=True)
     parser.add_argument("--finra-current-root", type=Path, required=True)
     parser.add_argument("--realestate-current-root", type=Path, required=True)
+    parser.add_argument("--exchange-switch-current-root", type=Path, required=True)
+    parser.add_argument("--field-ritter-current-root", type=Path, required=True)
+    parser.add_argument("--spinoff-current-root", type=Path, required=True)
     parser.add_argument("--formula-root", type=Path, required=True)
     parser.add_argument(
         "--signals-93", type=Path, default=Path("config/openap_93/signals_93.yaml")
@@ -64,6 +67,9 @@ def main() -> int:
     parser.add_argument("--sec-current-run-url", required=True)
     parser.add_argument("--finra-current-run-url", required=True)
     parser.add_argument("--realestate-current-run-url", required=True)
+    parser.add_argument("--exchange-switch-current-run-url", required=True)
+    parser.add_argument("--field-ritter-current-run-url", required=True)
+    parser.add_argument("--spinoff-current-run-url", required=True)
     parser.add_argument("--evidence-run-url", required=True)
     parser.add_argument("--evidence-artifact", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -82,6 +88,18 @@ def main() -> int:
     realestate_path = _find_one(
         args.realestate_current_root, "openap_149_realestate_current.csv"
     )
+    exchange_switch_path = _find_one(
+        args.exchange_switch_current_root,
+        "openap_149_sec_exch_switch_current.csv",
+    )
+    field_ritter_path = _find_one(
+        args.field_ritter_current_root,
+        "openap_149_field_ritter_ipo_current.csv",
+    )
+    spinoff_path = _find_one(
+        args.spinoff_current_root,
+        "openap_149_sec_spinoff_current.csv",
+    )
     formula_path = _find_one(args.formula_root, "openap_181_formula_inventory.csv")
     current_93 = pd.read_csv(current_93_path, low_memory=False)
     current_93["evidence_run"] = args.current_93_run_url
@@ -91,9 +109,18 @@ def main() -> int:
     finra_current["evidence_run"] = args.finra_current_run_url
     realestate_current = pd.read_csv(realestate_path, low_memory=False)
     realestate_current["evidence_run"] = args.realestate_current_run_url
+    exchange_switch_current = pd.read_csv(exchange_switch_path, low_memory=False)
+    exchange_switch_current["evidence_run"] = args.exchange_switch_current_run_url
+    field_ritter_current = pd.read_csv(field_ritter_path, low_memory=False)
+    field_ritter_current["evidence_run"] = args.field_ritter_current_run_url
+    spinoff_current = pd.read_csv(spinoff_path, low_memory=False)
+    spinoff_current["evidence_run"] = args.spinoff_current_run_url
     current = overlay_preferred_current_evidence(current_93, sec_current)
     current = replace_current_signal_batches(current, finra_current)
     current = replace_current_signal_batches(current, realestate_current)
+    current = replace_current_signal_batches(current, exchange_switch_current)
+    current = replace_current_signal_batches(current, field_ritter_current)
+    current = replace_current_signal_batches(current, spinoff_current)
 
     routes = load_target_routes(args.route_matrix)
     formulas = pd.read_csv(formula_path, keep_default_na=False)
@@ -108,7 +135,10 @@ def main() -> int:
             "tests/test_openap_149_acquisition.py|"
             "tests/test_openap_149_sec_companyfacts.py|"
             "tests/test_openap_181_short_interest_batch.py|"
-            "tests/test_openap_149_realestate_rendered_batch.py"
+            "tests/test_openap_149_realestate_rendered_batch.py|"
+            "tests/test_openap_181_sec_listing_identity.py|"
+            "tests/test_openap_181_field_ritter_ipo.py|"
+            "tests/test_openap_181_sec_spinoff.py"
         ),
     )
     source_runs = (
@@ -124,7 +154,15 @@ def main() -> int:
         values,
         output,
         source_values_sha256=_sha256_many(
-            [current_93_path, sec_path, finra_path, realestate_path]
+            [
+                current_93_path,
+                sec_path,
+                finra_path,
+                realestate_path,
+                exchange_switch_path,
+                field_ritter_path,
+                spinoff_path,
+            ]
         ),
         formula_inventory_sha256=_sha256_many([formula_path]),
     )
@@ -133,6 +171,9 @@ def main() -> int:
         "sec_current_run_url": args.sec_current_run_url,
         "finra_current_run_url": args.finra_current_run_url,
         "realestate_current_run_url": args.realestate_current_run_url,
+        "exchange_switch_current_run_url": args.exchange_switch_current_run_url,
+        "field_ritter_current_run_url": args.field_ritter_current_run_url,
+        "spinoff_current_run_url": args.spinoff_current_run_url,
         "evidence_run_url": args.evidence_run_url,
         "evidence_artifact": args.evidence_artifact,
         "source_files": [
@@ -140,6 +181,9 @@ def main() -> int:
             sec_path.name,
             finra_path.name,
             realestate_path.name,
+            exchange_switch_path.name,
+            field_ritter_path.name,
+            spinoff_path.name,
         ],
         "merged_rows": int(len(current)),
         "approved_rows": int(len(values)),

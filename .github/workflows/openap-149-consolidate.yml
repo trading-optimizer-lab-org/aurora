@@ -13,16 +13,24 @@ on:
       - research/openap_181/realestate_rendered_batch.py
       - research/openap_181/sec_rendered_reports.py
       - research/openap_181/sec_listing_identity.py
+      - research/openap_181/field_ritter_ipo.py
+      - research/openap_181/sec_spinoff.py
       - research/openap_181/twelve_data_factor_signals.py
       - research/openap_181/twelve_data_market_batch.py
       - research/openap_181/twelve_data_market_signals.py
       - scripts/run_openap_149_consolidate.py
+      - scripts/run_openap_149_field_ritter_ipo.py
       - scripts/run_openap_149_realestate_rendered_batch.py
+      - scripts/run_openap_149_sec_listing_identity.py
+      - scripts/run_openap_149_sec_spinoff.py
       - scripts/run_openap_149_twelve_data_market.py
       - tests/test_openap_149_acquisition.py
       - tests/test_openap_149_sec_companyfacts.py
       - tests/test_openap_149_realestate_rendered_batch.py
       - tests/test_openap_181_short_interest_batch.py
+      - tests/test_openap_181_field_ritter_ipo.py
+      - tests/test_openap_181_sec_listing_identity.py
+      - tests/test_openap_181_sec_spinoff.py
       - tests/test_openap_181_twelve_data_factor_signals.py
       - tests/test_openap_181_twelve_data_market_batch.py
       - tests/test_openap_181_twelve_data_market_signals.py
@@ -51,6 +59,18 @@ on:
         type: string
       realestate_current_run_id:
         description: Successful OpenAP 149 rendered realestate current run
+        required: true
+        type: string
+      exchange_switch_current_run_id:
+        description: Successful OpenAP 149 SEC exchange-switch current run
+        required: true
+        type: string
+      field_ritter_current_run_id:
+        description: Successful OpenAP 149 Field-Ritter IPO current run
+        required: true
+        type: string
+      spinoff_current_run_id:
+        description: Successful OpenAP 149 SEC Spinoff current run
         required: true
         type: string
       formula_evidence_run_id:
@@ -94,6 +114,9 @@ jobs:
             tests/test_openap_149_sec_companyfacts.py \
             tests/test_openap_149_realestate_rendered_batch.py \
             tests/test_openap_181_short_interest_batch.py \
+            tests/test_openap_181_field_ritter_ipo.py \
+            tests/test_openap_181_sec_listing_identity.py \
+            tests/test_openap_181_sec_spinoff.py \
             tests/test_openap_181_twelve_data_market_batch.py \
             tests/test_openap_181_twelve_data_market_signals.py \
             tests/test_openap_181_twelve_data_factor_signals.py \
@@ -152,6 +175,30 @@ jobs:
           run-id: ${{ inputs.realestate_current_run_id }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
+      - name: Download SEC exchange-switch current values
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-149-sec-exchange-switch-current
+          path: inputs/exchange_switch_current
+          run-id: ${{ inputs.exchange_switch_current_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download Field-Ritter IPO current values
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-149-field-ritter-ipo-current
+          path: inputs/field_ritter_current
+          run-id: ${{ inputs.field_ritter_current_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Download SEC Spinoff current values
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-149-sec-spinoff-current
+          path: inputs/spinoff_current
+          run-id: ${{ inputs.spinoff_current_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
       - name: Download pinned official formula evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -169,11 +216,17 @@ jobs:
             --sec-current-root inputs/sec_current \
             --finra-current-root inputs/finra_current \
             --realestate-current-root inputs/realestate_current \
+            --exchange-switch-current-root inputs/exchange_switch_current \
+            --field-ritter-current-root inputs/field_ritter_current \
+            --spinoff-current-root inputs/spinoff_current \
             --formula-root inputs/formulas \
             --current-93-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.current_93_run_id }}" \
             --sec-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.sec_current_run_id }}" \
             --finra-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.finra_current_run_id }}" \
             --realestate-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.realestate_current_run_id }}" \
+            --exchange-switch-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.exchange_switch_current_run_id }}" \
+            --field-ritter-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.field_ritter_current_run_id }}" \
+            --spinoff-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.spinoff_current_run_id }}" \
             --evidence-run-url "$run_url" \
             --evidence-artifact "$OUTPUT_ARTIFACT" \
             --output-dir openap_149_current_consolidated
@@ -242,6 +295,53 @@ jobs:
           assert realestate_values["source_id"].eq("sec_edgar").all()
           assert realestate_values["formula_id"].eq("realestate").all()
           assert realestate_values["observation_count"].eq(7).all()
+          exch_switch = matrix.set_index("signal").loc["ExchSwitch"]
+          assert bool(exch_switch["data_acquired"])
+          assert bool(exch_switch["current_value_calculated"])
+          assert exch_switch["current_value_count"] == 2869
+          assert exch_switch["fidelity"] == "reconstructed"
+          assert not bool(exch_switch["strict_score_eligible"])
+          exch_switch_values = values.loc[values["signal"].eq("ExchSwitch")]
+          assert len(exch_switch_values) == 2869
+          assert exch_switch_values["source_id"].eq(
+              "sec_edgar_notes|sec_company_tickers_exchange"
+          ).all()
+          assert exch_switch_values["formula_id"].eq(
+              "openap_exchswitch_current_exchange_lag_1_12"
+          ).all()
+          indipo = matrix.set_index("signal").loc["IndIPO"]
+          assert bool(indipo["data_acquired"])
+          assert bool(indipo["current_value_calculated"])
+          assert indipo["current_value_count"] == 701
+          assert indipo["fidelity"] == "reconstructed"
+          assert not bool(indipo["strict_score_eligible"])
+          rdipo = matrix.set_index("signal").loc["RDIPO"]
+          assert bool(rdipo["data_acquired"])
+          assert bool(rdipo["current_value_calculated"])
+          assert rdipo["current_value_count"] == 700
+          assert rdipo["fidelity"] == "reconstructed"
+          assert not bool(rdipo["strict_score_eligible"])
+          field_ritter_values = values.loc[
+              values["signal"].isin(["IndIPO", "RDIPO"])
+          ]
+          assert len(field_ritter_values) == 1401
+          assert field_ritter_values["source_id"].eq(
+              "field_ritter_ipo|openfigi|sec_edgar"
+          ).all()
+          spinoff = matrix.set_index("signal").loc["Spinoff"]
+          assert bool(spinoff["data_acquired"])
+          assert bool(spinoff["current_value_calculated"])
+          assert spinoff["current_value_count"] == 8
+          assert spinoff["fidelity"] == "reconstructed"
+          assert not bool(spinoff["strict_score_eligible"])
+          spinoff_values = values.loc[values["signal"].eq("Spinoff")]
+          assert len(spinoff_values) == 8
+          assert spinoff_values["source_id"].eq(
+              "sec_edgar_submissions_and_filings"
+          ).all()
+          assert spinoff_values["formula_id"].eq(
+              "openap_spinoff_completed_event_age_le_24"
+          ).all()
           print(json.dumps(summary, sort_keys=True))
           PY
       - name: Upload consolidated current evidence
