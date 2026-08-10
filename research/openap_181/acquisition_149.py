@@ -236,7 +236,13 @@ def _validate_current_rows(frame: pd.DataFrame) -> pd.DataFrame:
     rows["_contract_invalid_reason"] = ""
     finite = rows["value"].notna() & np.isfinite(rows["value"])
     if "current_usable" in rows:
-        declared_unusable = finite & ~rows["current_usable"].map(_as_bool)
+        declaration = rows["current_usable"]
+        declaration_present = (
+            declaration.notna() & declaration.astype(str).str.strip().ne("")
+        )
+        declared_unusable = (
+            finite & declaration_present & ~declaration.map(_as_bool)
+        )
     else:
         declared_unusable = pd.Series(False, index=rows.index, dtype=bool)
     lookahead = (
