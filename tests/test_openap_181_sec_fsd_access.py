@@ -328,3 +328,89 @@ def test_parse_rendered_ppe_report_extracts_exact_realestate_inputs():
             "formula_variant": "combined_land_and_buildings_over_gross_ppe",
         },
     ]
+
+
+def test_build_rendered_realestate_evidence_preserves_pit_and_stays_uncomputed():
+    module = _rendered_module()
+    report = """
+| Property, Plant and Equipment - USD ($) $ in Millions | Sep. 27, 2025 |
+| --- | --- |
+| Property, Plant and Equipment [Line Items] |  |
+| Gross property, plant and equipment | $ 125,848 |
+| Total property, plant and equipment, net | 49,834 |
+| Land and buildings |  |
+| Property, Plant and Equipment [Line Items] |  |
+| Gross property, plant and equipment | 27,337 |
+"""
+
+    evidence = module.build_rendered_realestate_evidence(
+        selected_filing={
+            "cik": "320193",
+            "accession_number": "0000320193-25-000079",
+            "form": "10-K",
+            "report_date": "2025-09-27",
+            "filing_date": "2025-10-31",
+            "accepted_at": "2025-10-31T10:00:00+00:00",
+            "formation_at": "2026-08-09T23:59:59+00:00",
+        },
+        report_metadata={
+            "report_filename": "R46.htm",
+            "source_url": (
+                "https://www.sec.gov/Archives/edgar/data/320193/"
+                "000032019325000079/R46.htm"
+            ),
+            "access_url": (
+                "https://r.jina.ai/http://www.sec.gov/Archives/edgar/data/"
+                "320193/000032019325000079/R46.htm"
+            ),
+            "access_method": "sec_via_jina_readthrough",
+            "sha256": "e" * 64,
+            "size_bytes": 7136,
+        },
+        report_text=report,
+    )
+
+    assert evidence == {
+        "signal": "realestate",
+        "status": "raw_data_acquired",
+        "raw_data_acquired": True,
+        "realestate_raw_computed": True,
+        "current_signal_computed": False,
+        "strict_score_eligible": False,
+        "fidelity": "reconstructed_not_strict",
+        "proxy_used": True,
+        "minimum_industry_observations": 5,
+        "remaining_blocker": "sic2_month_mean_requires_at_least_5_issuers",
+        "records": [
+            {
+                "cik": "320193",
+                "accession_number": "0000320193-25-000079",
+                "form": "10-K",
+                "report_date": "2025-09-27",
+                "filing_date": "2025-10-31",
+                "available_at": "2025-10-31T10:00:00+00:00",
+                "formation_at": "2026-08-09T23:59:59+00:00",
+                "period_end": "2025-09-27",
+                "land_gross": None,
+                "buildings_gross": None,
+                "land_and_buildings_gross": 27337.0,
+                "ppe_gross": 125848.0,
+                "ppe_net": 49834.0,
+                "realestate_numerator": 27337.0,
+                "realestate_raw": pytest.approx(27337.0 / 125848.0),
+                "formula_variant": "combined_land_and_buildings_over_gross_ppe",
+                "report_filename": "R46.htm",
+                "source_url": (
+                    "https://www.sec.gov/Archives/edgar/data/320193/"
+                    "000032019325000079/R46.htm"
+                ),
+                "access_url": (
+                    "https://r.jina.ai/http://www.sec.gov/Archives/edgar/data/"
+                    "320193/000032019325000079/R46.htm"
+                ),
+                "access_method": "sec_via_jina_readthrough",
+                "source_sha256": "e" * 64,
+                "source_size_bytes": 7136,
+            }
+        ],
+    }
