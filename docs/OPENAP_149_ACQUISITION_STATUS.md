@@ -153,7 +153,7 @@ recuentos globales demostrados permanecen `56/50/18/99/96814`.
   dos digitos, no SIC historico CRSP/FF17, y aun debe demostrar continuidad de
   historia, cobertura e identidad antes de una validacion de solapamiento.
 
-## Trece ratios contables recuperables de un artefacto auditado
+## Diecisiete ratios contables recuperables de un artefacto auditado
 
 El run correcto `31270341796` produjo una cuadricula
 `openap_features_current.parquet` de 185 senales, su `coverage_185.csv`, los
@@ -161,7 +161,7 @@ conceptos SEC elegidos en `sec_concept_inputs_current.parquet` y un
 `output_manifest.csv` con tamano y SHA-256 de cada salida. Se ha preparado una
 recuperacion selectiva de esos miembros para `AM`, `BM`, `CashProd`, `CF`,
 `cfp`, `EP`, `Leverage`, `NetDebtPrice`, `NetPayoutYield`, `PayoutYield`, `RD`,
-`SP` y `AdExp`.
+`SP`, `AdExp`, `AccrualsBM`, `BMdec`, `EntMult` y `PS`.
 
 La recuperacion no confia solo en que exista un numero. Antes de admitir una
 fila obliga a reconciliar las 185 senales por cada titulo elegible, los 185
@@ -170,15 +170,18 @@ Tambien exige una identidad `security_id + CIK + ticker`, el filtro oficial,
 una fecha SEC causal y la fecha real del snapshot Yahoo que aporto la
 capitalizacion de mercado. La disponibilidad final es el maximo de ambas. Una
 fecha ausente, posterior a la formacion o incoherente deja la observacion sin
-valor y registra el motivo.
+valor y registra el motivo. Para `AccrualsBM` y `PS` se comprueban ademas todos
+los retardos anuales declarados: cada lag debe tener un unico cierre fiscal y
+los cierres consecutivos deben estar separados entre 330 y 400 dias.
 
 La fecha de formacion permanece siendo el `as_of` original del run; ni la
-recuperacion ni una ejecucion posterior pueden rejuvenecerla. Las trece salidas
-seran `reconstructed`, no estrictas: usan conceptos SEC y capitalizacion actual
-de Yahoo, no Compustat/CRSP, ni intervalos historicos GVKEY/PERMNO, ni todos los
-lags y filtros de cartera oficiales. El workflow manual existente queda
-preparado para publicar un artefacto derivado separado, sin llamadas nuevas a
-Yahoo y con incremento estricto cero.
+recuperacion ni una ejecucion posterior pueden rejuvenecerla. Quince salidas
+seran `reconstructed`; `AccrualsBM` y `BMdec` conservaran
+`unvalidated_proxy`. Ninguna sera estricta: usan conceptos SEC y capitalizacion
+actual de Yahoo, no Compustat/CRSP, ni intervalos historicos GVKEY/PERMNO, ni
+todos los lags y filtros de cartera oficiales. El workflow manual existente
+queda preparado para publicar un artefacto derivado separado, sin llamadas
+nuevas a Yahoo y con incremento estricto cero.
 
 Estado exacto: `prepared_unexecuted`. No se ha iniciado ningun run, no hay
 valores nuevos recuperados y los recuentos ejecutados siguen siendo

@@ -33,18 +33,23 @@ RECOVERED_CURRENT_FEATURE_SOURCE_ID = (
     f"recovered_openap_features_{RECOVERED_CURRENT_FEATURE_SOURCE_RUN_ID}"
     "|sec_edgar|recovered_yfinance_artifacts"
 )
+RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION = 2
 
 RECOVERED_CURRENT_FEATURE_TARGETS = (
+    "AccrualsBM",
     "AM",
     "BM",
+    "BMdec",
     "CashProd",
     "CF",
     "cfp",
+    "EntMult",
     "EP",
     "Leverage",
     "NetDebtPrice",
     "NetPayoutYield",
     "PayoutYield",
+    "PS",
     "RD",
     "SP",
     "AdExp",
@@ -53,11 +58,25 @@ RECOVERED_CURRENT_FEATURE_TARGETS = (
 RECOVERED_CURRENT_FEATURE_DEPENDENCIES: dict[
     str, tuple[tuple[str, int], ...]
 ] = {
+    "AccrualsBM": (
+        ("net_income", 0),
+        ("operating_cash_flow", 0),
+        ("assets", 1),
+        ("equity", 0),
+    ),
     "AM": (("assets", 0),),
     "BM": (("equity", 0),),
+    "BMdec": (("equity", 0),),
     "CashProd": (("assets", 0), ("cash", 0)),
     "CF": (("net_income", 0), ("depreciation", 0)),
     "cfp": (("operating_cash_flow", 0),),
+    "EntMult": (
+        ("operating_income", 0),
+        ("depreciation", 0),
+        ("cash", 0),
+        ("debt_current", 0),
+        ("debt_long", 0),
+    ),
     "EP": (("net_income", 0),),
     "Leverage": (("liabilities", 0),),
     "NetDebtPrice": (
@@ -71,25 +90,77 @@ RECOVERED_CURRENT_FEATURE_DEPENDENCIES: dict[
         ("share_issuance", 0),
     ),
     "PayoutYield": (("dividends", 0), ("repurchases", 0)),
+    "PS": (
+        ("equity", 0),
+        ("assets", 0),
+        ("assets", 1),
+        ("net_income", 0),
+        ("net_income", 1),
+        ("operating_cash_flow", 0),
+        ("debt_long", 0),
+        ("debt_long", 1),
+        ("current_assets", 0),
+        ("current_assets", 1),
+        ("current_liabilities", 0),
+        ("current_liabilities", 1),
+        ("tax", 0),
+        ("interest", 0),
+        ("revenue", 0),
+        ("revenue", 1),
+        ("shares", 0),
+        ("shares", 1),
+    ),
     "RD": (("rd", 0),),
     "SP": (("revenue", 0),),
     "AdExp": (("advertising", 0),),
 }
 
 RECOVERED_CURRENT_FEATURE_FORMULA_SHA256 = {
+    "AccrualsBM": "3d2504ee7c6da044cfb9cbe5da5abc6d2e126a917b22b65333bcd28cde08c1fa",
     "AdExp": "2e813c7e054aecddfe759d1b9c136c88ffb62755408f4ecc3697e870033aa82e",
     "AM": "5c66c0e4e0cfcf3ecb68ca6a28d707600500462a8065694d161ab0be380ad750",
     "BM": "b852ede9b0b5cb9da89e752ca4c5348ed96380a923357fa9e7dd5274a9a5d946",
+    "BMdec": "111bb8df1db87d92fb55ec4c070dc157281655afe80d9f54796ee4572f533d06",
     "CashProd": "2541484ba36d9869221987b2a5ec015f3dd9aa5ce4406f8a0ffea56173ce1983",
     "CF": "09532e1ce762f64f4b225c5f4bd00b48ae40de55003da0295b1ae617585f1296",
     "cfp": "71b6f3fc630ec686409d5cc9c49d60cda5381402886bf7ea7a3f119093fe41ed",
+    "EntMult": "3959786d1f35735633a840c626f3241384cc913f5d026435a02c85c0b44161d9",
     "EP": "7879a38168363a50056907b7819023be609e29a4514bfc7b9bc547a3bd590a96",
     "Leverage": "c63e0c634038e25511493d98fa9ee58099613f5d022df7bc74a33619d034e70b",
     "NetDebtPrice": "cb76e8dc208659a85cddaf38004c8bf4ba7e23349c2afde6b0f7904e72176442",
     "NetPayoutYield": "4a30a7eeee64e52bcc4c609ce5134ac873bc1cff7b7e25ace9282f7887a79afe",
     "PayoutYield": "d9cd4c9f27364929ac0889ed48149f6d7b509c9a6f1d0dc1cde272f2bd8229db",
+    "PS": "2c47a2cefe19e28b8cae289b2f57fa14dd3baf9cd960ba74f75321b99d30ac56",
     "RD": "c9b58cea6980a3570096ab08c9e1cd224bb89e5dc0cfbadc80777bbbb263edf3",
     "SP": "4645a61c5b36a42900442c05cf287b44cbe8434f7b4447945ee54c0dc1501e1b",
+}
+
+RECOVERED_CURRENT_FEATURE_FIDELITY_CLASS = {
+    signal: (
+        "unvalidated_proxy"
+        if signal in {"AccrualsBM", "BMdec"}
+        else "reconstructed"
+    )
+    for signal in RECOVERED_CURRENT_FEATURE_TARGETS
+}
+
+RECOVERED_CURRENT_FEATURE_SIGNAL_CAVEATS = {
+    "AccrualsBM": (
+        "The source feature uses cash-flow accruals rather than the official "
+        "balance-sheet accrual construction."
+    ),
+    "BMdec": (
+        "Current issuer market capitalisation replaces the official historical "
+        "December market equity."
+    ),
+    "EntMult": (
+        "Current issuer market capitalisation and normalized SEC debt and "
+        "operating-income tags do not prove Compustat equivalence."
+    ),
+    "PS": (
+        "Normalized SEC inputs and current issuer market capitalisation do not "
+        "reproduce the historical CRSP/Compustat high-BM portfolio identity."
+    ),
 }
 
 RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS = (
@@ -572,7 +643,7 @@ def _validate_coverage(
 def validate_recovered_current_feature_members(
     members: Mapping[str, bytes],
 ) -> RecoveredCurrentFeatureBundle:
-    """Validate the exact successful-run members needed for 13 reconstructions."""
+    """Validate the exact successful-run members needed for 17 reconstructions."""
 
     manifest = validate_recovered_output_manifest(members)
     summary, source_as_of = _validate_summary(members["execution_summary.json"])
@@ -687,10 +758,39 @@ def _issuer_market_availability(
     return output
 
 
+def _dependency_periods_match_lags(
+    dependency_rows: list[pd.Series],
+) -> bool:
+    periods_by_lag: dict[int, set[pd.Timestamp]] = {}
+    for item in dependency_rows:
+        period = pd.to_datetime(item["period_end"], errors="coerce", utc=True)
+        if pd.isna(period):
+            return False
+        lag = int(item["concept_lag"])
+        periods_by_lag.setdefault(lag, set()).add(period.normalize())
+    if not periods_by_lag or any(
+        len(periods) != 1 for periods in periods_by_lag.values()
+    ):
+        return False
+    lags = sorted(periods_by_lag)
+    if lags != list(range(lags[0], lags[-1] + 1)):
+        return False
+    period_for_lag = {
+        lag: next(iter(periods)) for lag, periods in periods_by_lag.items()
+    }
+    for current_lag, prior_lag in zip(lags, lags[1:]):
+        day_gap = (
+            period_for_lag[current_lag] - period_for_lag[prior_lag]
+        ).days
+        if not 330 <= day_gap <= 400:
+            return False
+    return True
+
+
 def build_recovered_current_feature_observations(
     bundle: RecoveredCurrentFeatureBundle,
 ) -> pd.DataFrame:
-    """Convert the validated 13-signal slice into fail-closed current rows."""
+    """Convert the validated 17-signal slice into fail-closed current rows."""
 
     source_as_of = _utc_timestamp(bundle.summary.get("as_of"))
     if pd.isna(source_as_of):
@@ -734,11 +834,9 @@ def build_recovered_current_feature_observations(
             if dependency_rows
             else pd.NaT
         )
-        dependency_periods = {
-            pd.Timestamp(item["period_end"]).normalize()
-            for item in dependency_rows
-            if pd.notna(item["period_end"])
-        }
+        dependency_periods_match = _dependency_periods_match_lags(
+            dependency_rows
+        )
         sec_available_at = _utc_timestamp(feature.source_available_at)
         market_available_at, market_reason, market_observations = market_evidence.get(
             cik,
@@ -771,7 +869,7 @@ def build_recovered_current_feature_observations(
             RECOVERED_CURRENT_FEATURE_DEPENDENCIES[signal]
         ):
             reason = "sec_dependency_missing"
-        elif len(dependency_periods) != 1:
+        elif not dependency_periods_match:
             reason = "sec_dependency_period_mismatch"
         elif pd.isna(sec_available_at):
             reason = "sec_available_at_missing"
@@ -806,7 +904,9 @@ def build_recovered_current_feature_observations(
                 "value": value,
                 "current_usable": usable,
                 "reason_if_missing": reason,
-                "fidelity_class": "reconstructed",
+                "fidelity_class": RECOVERED_CURRENT_FEATURE_FIDELITY_CLASS[
+                    signal
+                ],
                 "source_id": RECOVERED_CURRENT_FEATURE_SOURCE_ID,
                 "source_url": RECOVERED_CURRENT_FEATURE_SOURCE_URL,
                 "source_run_id": RECOVERED_CURRENT_FEATURE_SOURCE_RUN_ID,
@@ -816,7 +916,14 @@ def build_recovered_current_feature_observations(
                     RECOVERED_CURRENT_FEATURE_FORMULA_SHA256[signal]
                 ),
                 "observation_count": len(dependency_rows) + market_observations,
-                "caveat": _CAVEAT,
+                "caveat": " ".join(
+                    part
+                    for part in (
+                        _CAVEAT,
+                        RECOVERED_CURRENT_FEATURE_SIGNAL_CAVEATS.get(signal, ""),
+                    )
+                    if part
+                ),
                 "source_feature_status": str(feature.status),
                 "source_feature_note": _text(feature.note),
                 "official_filter_status": str(feature.official_filter_status),
@@ -841,13 +948,16 @@ def build_recovered_current_feature_observations(
 
 __all__ = [
     "OUTPUT_MANIFEST_BOUND_MEMBERS",
+    "RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION",
     "RECOVERED_CURRENT_FEATURE_DEPENDENCIES",
     "RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS",
+    "RECOVERED_CURRENT_FEATURE_FIDELITY_CLASS",
     "RECOVERED_CURRENT_FEATURE_FORMULA_SHA256",
     "RECOVERED_CURRENT_FEATURE_SOURCE_ARTIFACT",
     "RECOVERED_CURRENT_FEATURE_SOURCE_ID",
     "RECOVERED_CURRENT_FEATURE_SOURCE_RUN_ID",
     "RECOVERED_CURRENT_FEATURE_SOURCE_URL",
+    "RECOVERED_CURRENT_FEATURE_SIGNAL_CAVEATS",
     "RECOVERED_CURRENT_FEATURE_TARGETS",
     "RECOVERED_CURRENT_FEATURE_VALIDATION_MEMBERS",
     "RecoveredCurrentFeatureBundle",

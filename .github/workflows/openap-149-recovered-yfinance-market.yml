@@ -141,12 +141,14 @@ jobs:
           )
           assert recovery["recovered_price_shard_count"] == 48
           assert recovery["recovered_current_feature_member_count"] == 3
-          assert recovery["recovered_current_feature_target_count"] == 13
+          assert recovery["recovered_current_feature_contract_version"] == 2
+          assert recovery["recovered_current_feature_target_count"] == 17
           assert recovery["fresh_provider_request_made"] is False
           assert calculated["strict_score_eligible"] is False
           assert calculated["strict_score_increment"] == 0
           assert calculated["locked_opened"] is False
-          assert current_features["target_signal_count"] == 13
+          assert current_features["target_signal_count"] == 17
+          assert current_features["contract_version"] == 2
           assert current_features["source_values_revalidated"] is True
           assert current_features["source_age_laundered"] is False
           assert current_features["fresh_provider_request_made"] is False

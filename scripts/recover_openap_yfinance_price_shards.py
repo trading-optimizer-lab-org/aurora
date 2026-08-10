@@ -25,6 +25,7 @@ from aurora.research.openap_181.recovered_yfinance_market import (
     validate_yfinance_source_manifest,
 )
 from aurora.research.openap_181.recovered_current_features import (
+    RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION,
     RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS,
     validate_recovered_current_feature_members,
 )
@@ -383,7 +384,9 @@ def main() -> int:
         "source_output_manifest_sha256": sha256(
             audited_members["output_manifest.csv"]
         ).hexdigest(),
-        "recovered_current_feature_contract_version": 1,
+        "recovered_current_feature_contract_version": (
+            RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION
+        ),
         "recovered_current_feature_evidence": dict(
             current_feature_bundle.evidence
         ),

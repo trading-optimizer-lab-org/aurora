@@ -177,29 +177,33 @@ def test_current_sec_event_source_aliases_match_documented_free_routes() -> None
     assert module.SOURCE_TERMS["pastor_stambaugh"] != "terms_not_yet_verified"
 
 
-def test_thirteen_recovered_accounting_routes_remain_prepared_and_non_strict() -> None:
+def test_seventeen_recovered_accounting_routes_remain_prepared_and_non_strict() -> None:
     root = Path(__file__).resolve().parents[1]
     routes = pd.read_csv(
         root / "docs/OPENAP_181_CURRENT_FREE_SOURCE_REAUDIT_2026-08-09.csv"
     ).set_index("signal")
     targets = {
+        "AccrualsBM",
         "AM",
         "BM",
+        "BMdec",
         "CashProd",
         "CF",
         "cfp",
+        "EntMult",
         "EP",
         "Leverage",
         "NetDebtPrice",
         "NetPayoutYield",
         "PayoutYield",
+        "PS",
         "RD",
         "SP",
         "AdExp",
     }
 
     selected = routes.loc[sorted(targets)]
-    assert len(selected) == 13
+    assert len(selected) == 17
     assert selected["primary_free_sources"].str.contains(
         "recovered_openap_features", regex=False
     ).all()

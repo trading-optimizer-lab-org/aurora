@@ -201,20 +201,24 @@ recuperar salidas ya producidas, distinta de volver a descargar SEC o Yahoo. Su
 `output_manifest.csv` liga por tamano y SHA-256 la cuadricula de 185 senales,
 la cobertura y los conceptos SEC seleccionados. La recuperacion selectiva
 preparada extrae esos tres derivados junto al `security_master` ya auditado y
-admite solo 13 ratios que el propio pipeline etiqueto como proxies contables:
+admite solo 17 ratios que el propio pipeline etiqueto como proxies contables:
 `AM`, `BM`, `CashProd`, `CF`, `cfp`, `EP`, `Leverage`, `NetDebtPrice`,
-`NetPayoutYield`, `PayoutYield`, `RD`, `SP` y `AdExp`.
+`NetPayoutYield`, `PayoutYield`, `RD`, `SP`, `AdExp`, `AccrualsBM`, `BMdec`,
+`EntMult` y `PS`.
 
 El contrato exige la cuadricula completa de 185 senales por titulo, cobertura
-reconciliada, identidad SEC unica, filtros oficiales y todos los conceptos de
-lag cero declarados para cada formula. Recalcula la disponibilidad como el
-maximo entre la aceptacion SEC y el timestamp del snapshot Yahoo que aporto la
-capitalizacion del emisor. Un timestamp ausente, futuro o distinto del maximo
-de dependencias queda fail-closed. Conserva como formacion el `as_of` original
-del run: la fecha de recuperacion no rejuvenece el dato.
+reconciliada, identidad SEC unica, filtros oficiales y todos los conceptos
+declarados para cada formula. En `AccrualsBM` y `PS` exige tambien los retardos
+anuales, un solo cierre por lag y una separacion causal de 330 a 400 dias.
+Recalcula la disponibilidad como el maximo entre la aceptacion SEC y el
+timestamp del snapshot Yahoo que aporto la capitalizacion del emisor. Un
+timestamp ausente, futuro o distinto del maximo de dependencias queda
+fail-closed. Conserva como formacion el `as_of` original del run: la fecha de
+recuperacion no rejuvenece el dato.
 
 Esta ruta no convierte SEC/Yahoo en Compustat/CRSP ni crea intervalos
-historicos GVKEY/PERMNO. Todas las salidas futuras seran `reconstructed`, con
+historicos GVKEY/PERMNO. Quince salidas futuras seran `reconstructed`;
+`AccrualsBM` y `BMdec` conservaran `unvalidated_proxy`. Todas tendran
 `strict_score_eligible=false` e incremento estricto cero. El workflow es solo
 manual y sigue sin ejecutarse; por tanto, no hay valores nuevos ni cambios en
 los recuentos.

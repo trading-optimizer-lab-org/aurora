@@ -312,7 +312,7 @@ def test_recovered_feature_bundle_is_hash_grid_and_coverage_bound() -> None:
     assert bundle.evidence["eligible_symbols"] == 2
     assert bundle.evidence["features_rows"] == 370
     assert bundle.evidence["coverage_rows"] == 185
-    assert bundle.evidence["target_signal_count"] == 13
+    assert bundle.evidence["target_signal_count"] == 17
     assert set(RECOVERED_CURRENT_FEATURE_FORMULA_SHA256) == set(
         RECOVERED_CURRENT_FEATURE_TARGETS
     )
@@ -402,7 +402,7 @@ def test_current_feature_observations_keep_source_as_of_and_fail_closed() -> Non
     bundle = validate_recovered_current_feature_members(_members())
     observations = build_recovered_current_feature_observations(bundle)
 
-    assert len(observations) == 26
+    assert len(observations) == 34
     assert set(observations["signal"]) == set(
         RECOVERED_CURRENT_FEATURE_TARGETS
     )
@@ -414,13 +414,18 @@ def test_current_feature_observations_keep_source_as_of_and_fail_closed() -> Non
     ).all()
 
     aaa = observations.loc[observations["ticker"].eq("AAA")]
-    assert len(aaa) == 13
+    assert len(aaa) == 17
     assert aaa["current_usable"].eq(True).all()  # noqa: E712
     assert aaa["value"].notna().all()
     assert pd.to_datetime(aaa["available_at"], utc=True).eq(
         pd.Timestamp(MARKET_RETRIEVED_AT)
     ).all()
-    assert aaa["fidelity_class"].eq("reconstructed").all()
+    assert aaa.loc[
+        ~aaa["signal"].isin({"AccrualsBM", "BMdec"}), "fidelity_class"
+    ].eq("reconstructed").all()
+    assert aaa.loc[
+        aaa["signal"].isin({"AccrualsBM", "BMdec"}), "fidelity_class"
+    ].eq("unvalidated_proxy").all()
     assert aaa["official_formula_sha256"].str.fullmatch(
         r"[0-9a-f]{64}"
     ).all()
@@ -429,7 +434,7 @@ def test_current_feature_observations_keep_source_as_of_and_fail_closed() -> Non
     ).all()
 
     bbb = observations.loc[observations["ticker"].eq("BBB")]
-    assert len(bbb) == 13
+    assert len(bbb) == 17
     assert bbb["current_usable"].eq(False).all()  # noqa: E712
     assert bbb["value"].isna().all()
     assert bbb["reason_if_missing"].eq("market_cap_lookahead").all()

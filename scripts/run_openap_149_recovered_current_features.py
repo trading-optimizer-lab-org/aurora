@@ -13,6 +13,7 @@ import pandas as pd
 from aurora.core.execution_policy import require_github_actions_or_explicit_local_permission
 from aurora.core.runtime_paths import base_data_dir
 from aurora.research.openap_181.recovered_current_features import (
+    RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION,
     RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS,
     RECOVERED_CURRENT_FEATURE_FORMULA_SHA256,
     RECOVERED_CURRENT_FEATURE_SOURCE_RUN_ID,
@@ -70,7 +71,8 @@ def _load_recovered_bundle(
         recovery.get("contract_version") != 1
         or int(recovery.get("audited_market_run_id", 0))
         != RECOVERED_CURRENT_FEATURE_SOURCE_RUN_ID
-        or recovery.get("recovered_current_feature_contract_version") != 1
+        or recovery.get("recovered_current_feature_contract_version")
+        != RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION
         or int(recovery.get("recovered_current_feature_member_count", 0))
         != len(RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS)
         or int(recovery.get("recovered_current_feature_target_count", 0))
@@ -220,7 +222,7 @@ def main() -> int:
         else {}
     )
     manifest = {
-        "contract_version": 1,
+        "contract_version": RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION,
         "implementation_sha": implementation_sha,
         "source_run_id": RECOVERED_CURRENT_FEATURE_SOURCE_RUN_ID,
         "source_run_url": bundle.evidence["source_run_url"],
