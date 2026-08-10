@@ -178,6 +178,93 @@ def _forbidden_parameter_pairs(
             ("statistic", "klinger_oscillator", "window", window)
             for window in space["window"][1:]
         )
+    if lane.lane_id == "F132":
+        pairs.extend(
+            ("kind", "emd", parameter, choice)
+            for parameter in ("ensembles", "noise_scale")
+            for choice in space[parameter][1:]
+        )
+        pairs.extend(
+            ("statistic", statistic, "components", choice)
+            for statistic in ("imf1", "imf2")
+            for choice in space["components"][1:]
+        )
+    if lane.lane_id == "F133":
+        pairs.append(("window", 63, "embedding", 63))
+        pairs.extend(
+            ("statistic", statistic, "components", choice)
+            for statistic in ("trend_component", "singular_concentration")
+            for choice in space["components"][1:]
+        )
+        pairs.append(("statistic", "oscillatory_component", "components", 1))
+    if lane.lane_id == "F134":
+        pairs.extend(
+            ("statistic", "trend", "min_occurrences", choice)
+            for choice in space["min_occurrences"][1:]
+        )
+    if lane.lane_id == "F135":
+        pairs.extend(
+            ("statistic", "discord_score", parameter, choice)
+            for parameter in ("neighbors", "radius")
+            for choice in space[parameter][1:]
+        )
+        pairs.extend(
+            ("statistic", "motif_density", "neighbors", choice)
+            for choice in space["neighbors"][1:]
+        )
+        pairs.extend(
+            ("statistic", statistic, "radius", choice)
+            for statistic in ("motif_follow_through", "neighbor_dispersion")
+            for choice in space["radius"][1:]
+        )
+        pairs.append(("statistic", "neighbor_dispersion", "neighbors", 1))
+    if lane.lane_id == "F136":
+        pairs.extend(
+            ("statistic", "recurrence_rate", "minimum_line", choice)
+            for choice in space["minimum_line"][1:]
+        )
+    if lane.lane_id == "F137":
+        pairs.extend(
+            ("statistic", statistic, parameter, choice)
+            for statistic in ("hurst", "roughness", "fractal_dimension")
+            for parameter in ("q_low", "q_high")
+            for choice in space[parameter][1:]
+        )
+    if lane.lane_id == "F139":
+        pairs.extend(
+            ("kind", kind, "asymmetry", choice)
+            for kind in ("ewma", "garch_proxy")
+            for choice in space["asymmetry"][1:]
+        )
+        pairs.extend(
+            ("statistic", "asymmetry_ratio", "asymmetry", choice)
+            for choice in space["asymmetry"][1:]
+        )
+        pairs.extend(
+            ("statistic", "asymmetry_ratio", "kind", kind)
+            for kind in space["kind"][1:]
+        )
+        pairs.append(("kind", "asymmetric_ewma", "asymmetry", 0.0))
+    if lane.lane_id == "F140":
+        pairs.extend(
+            ("kind", kind, "transition_speed", choice)
+            for kind in ("setar", "observable_threshold")
+            for choice in space["transition_speed"][1:]
+        )
+        pairs.extend(
+            ("statistic", statistic, "kind", kind)
+            for statistic in ("regime_state", "regime_spread")
+            for kind in space["kind"][1:]
+        )
+        pairs.append(
+            (
+                "statistic",
+                "transition_probability",
+                "kind",
+                "observable_threshold",
+            )
+        )
+        pairs.append(("regimes", 3, "threshold_quantile", 0.5))
     if lane.lane_id in {"F172", "F180"}:
         pairs.extend(
             ("window", window, "long_window", long_window)

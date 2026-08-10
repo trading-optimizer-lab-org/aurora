@@ -146,6 +146,23 @@ def test_f132_eemd_is_deterministic_for_the_same_past() -> None:
     pd.testing.assert_frame_equal(first, second)
 
 
+def test_f131_scale_concentration_is_not_an_endpoint_share() -> None:
+    api = _api()
+    panels = _panels()
+    parameters = _parameters("F131")
+    parameters["scales"] = 4
+    parameters["statistic"] = "low_frequency_share"
+    low = api.evaluate_nonlinear_lane("F131", panels, parameters)
+    parameters["statistic"] = "scale_concentration"
+    concentration = api.evaluate_nonlinear_lane("F131", panels, parameters)
+
+    valid = low["value"].notna() & concentration["value"].notna()
+    assert valid.any()
+    assert not low.loc[valid, "value"].equals(
+        concentration.loc[valid, "value"]
+    )
+
+
 def test_f134_seasonal_estimate_excludes_the_current_return() -> None:
     api = _api()
     panels = _panels(300)

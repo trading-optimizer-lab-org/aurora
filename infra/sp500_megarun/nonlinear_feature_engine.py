@@ -236,7 +236,9 @@ def _f131(spy: pd.DataFrame, parameters: Mapping[str, Any]) -> pd.Series:
     entropy = -(shares * np.log(shares.where(shares.gt(0.0)))).sum(
         axis=1, min_count=scales
     ) / np.log(float(scales))
-    concentration = shares.max(axis=1).where(shares.notna().all(axis=1))
+    concentration = shares.pow(2).sum(axis=1, min_count=scales).where(
+        shares.notna().all(axis=1)
+    )
     return _pick(
         parameters,
         "F131",

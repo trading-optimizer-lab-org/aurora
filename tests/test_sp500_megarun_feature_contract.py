@@ -266,9 +266,11 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "energy_entropy",
         "scale_concentration",
     )
+    assert "Herfindahl energy concentration" in nonlinear_lanes[0].formula
     assert "trailing-only" in nonlinear_lanes[1].formula
     assert nonlinear_lanes[3].required_datasets == ("D_SPY", "D_CALENDAR")
     assert "exclude the current return" in nonlinear_lanes[3].formula
+    assert nonlinear_lanes[3].parameter_space["min_occurrences"] == (3,)
     assert "candidate continuation" in nonlinear_lanes[4].formula
     assert nonlinear_lanes[5].parameter_space["statistic"] == (
         "recurrence_rate",
@@ -281,6 +283,11 @@ def test_repository_feature_contract_freezes_240_blueprints_and_tracks_executabl
         "star",
         "observable_threshold",
     )
+    assert sum(
+        len(choices)
+        for lane in nonlinear_lanes
+        for choices in lane.parameter_space.values()
+    ) == 188
     assert all(lane.minimum_history >= 63 for lane in nonlinear_lanes)
     predictive_lanes = feature_contract.lanes[140:150]
     assert predictive_lanes[0].parameter_space["kind"] == (
