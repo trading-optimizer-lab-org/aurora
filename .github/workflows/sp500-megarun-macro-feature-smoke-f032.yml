@@ -76,6 +76,10 @@ on:
       - scripts/run_sp500_megarun_volatility_positioning_feature_smoke_f211.py
       - scripts/run_sp500_megarun_policy_treasury_feature_smoke_f221.py
       - scripts/run_sp500_megarun_public_context_feature_smoke_f231.py
+      - scripts/preflight_sp500_megarun_dehb_registry.py
+      - infra/sp500_megarun/dehb_lane_registry.py
+      - infra/sp500_megarun/dehb_registry_preflight.py
+      - infra/sp500_megarun/dehb_worker.py
       - tests/test_sp500_megarun_data_contract.py
       - tests/test_sp500_megarun_feature_contract.py
       - tests/test_sp500_megarun_feature_engine_price.py
@@ -156,7 +160,7 @@ jobs:
   smoke_f001_f240:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 90
     env:
       GITHUB_ACTIONS: "true"
       PYTHONUTF8: "1"
@@ -574,6 +578,24 @@ jobs:
           python scripts/run_sp500_megarun_public_context_feature_smoke_f231.py \
             --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
             --output-dir outputs/sp500_megarun_public_context_feature_smoke_f231_f240
+      - name: Exercise all 240 physical DEHB registry routes
+        run: |
+          python scripts/preflight_sp500_megarun_dehb_registry.py \
+            --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+            --data-contract config/sp500_megarun_free_data_240.json \
+            --feature-contract config/sp500_megarun_feature_contract_240.json \
+            --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
+            --baseline-price outputs/sp500_megarun_price_feature_smoke_f001_f020 \
+            --baseline-market outputs/sp500_megarun_market_feature_smoke_f021_f031 \
+            --baseline-macro outputs/sp500_megarun_macro_feature_smoke_f032 \
+            --output outputs/dehb_registry_preflight/report.json
+      - name: Upload DEHB registry preflight evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-dehb-registry-preflight-${{ github.run_id }}
+          path: outputs/dehb_registry_preflight
+          if-no-files-found: error
+          retention-days: 90
       - name: Upload F001-F020 train-only evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
