@@ -242,6 +242,47 @@ class _StaticSession:
         return _StaticResponse(self.payload)
 
 
+class _FailingResponse(_StaticResponse):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(b"blocked")
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _DirectBlockedJinaSession:
+    def __init__(self, source_url: str) -> None:
+        self.source_url = source_url
+        self.urls: list[str] = []
+
+    def get(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        timeout: tuple[int, int],
+    ) -> _StaticResponse:
+        assert "User-Agent" in headers
+        assert timeout == (30, 180)
+        self.urls.append(url)
+        if url == self.source_url:
+            return _FailingResponse(403)
+        assert url == (
+            "https://r.jina.ai/http://www.sec.gov/Archives/edgar/data/1/"
+            "000000000125000002/spin-20250630.htm"
+        )
+        response = _StaticResponse(
+            (
+                f"Title: SEC filing\n\nURL Source: {self.source_url}\n\n"
+                "Markdown Content:\nOn May 15, 2025, Parent completed the "
+                "spin-off of Child as an independent publicly traded company."
+            ).encode("utf-8")
+        )
+        response.headers = {"Content-Type": "text/plain; charset=utf-8"}
+        return response
+
+
 def test_sec_spinoff_access_is_bounded_and_retains_no_raw_document() -> None:
     candidates = pd.DataFrame(
         [
@@ -285,6 +326,46 @@ def test_sec_spinoff_access_is_bounded_and_retains_no_raw_document() -> None:
     assert summary["raw_filing_documents_retained"] is False
     assert "document_text" not in manifest.columns
     assert session.urls == candidates["source_url"].tolist()
+
+
+def test_sec_spinoff_access_audits_jina_readthrough_after_direct_403() -> None:
+    source_url = (
+        "https://www.sec.gov/Archives/edgar/data/1/"
+        "000000000125000002/spin-20250630.htm"
+    )
+    candidates = pd.DataFrame(
+        [
+            {
+                "security_id": "US-SEC-0000000001-SPIN",
+                "ticker": "SPIN",
+                "cik": "0000000001",
+                "accession_number": "0000000001-25-000002",
+                "accepted_at": "2025-07-15T12:00:00Z",
+                "form": "10-Q",
+                "primary_document": "spin-20250630.htm",
+                "source_url": source_url,
+            }
+        ]
+    )
+    session = _DirectBlockedJinaSession(source_url)
+
+    _, evidence, manifest, summary = download_sec_spinoff_candidate_documents(
+        candidates,
+        formation_at=FORMATION_AT,
+        user_agent="Aurora Research research@example.com",
+        session=session,
+        retrieved_at="2026-08-10T10:00:00Z",
+        retry_delays=(),
+        request_interval_seconds=0.1,
+    )
+
+    assert len(evidence) == 1
+    assert manifest.loc[0, "source_url"] == source_url
+    assert manifest.loc[0, "access_method"] == "sec_via_jina_readthrough"
+    assert manifest.loc[0, "access_url"] == session.urls[-1]
+    assert manifest.loc[0, "sha256"]
+    assert summary["readthrough_downloaded"] == 1
+    assert summary["direct_access_blocked"] is True
 
 
 def test_spinoff_current_uses_proven_event_age_and_never_promotes_strict() -> None:
@@ -390,9 +471,19 @@ def test_spinoff_runner_and_workflow_are_manual_guarded_and_non_strict() -> None
     assert "select_sec_spinoff_filing_candidates" in runner
     assert "download_sec_spinoff_candidate_documents" in runner
     assert "calculate_sec_spinoff_current" in runner
+    assert "build_current_sec_universe" in runner
+    assert "validate_materialized_market_security_master_recovery" not in runner
     assert '"strict_score_eligible": False' in runner
     assert "workflow_dispatch:" in workflow
     assert "push:" not in workflow
     assert "AU_DATA_DIR:" in workflow
     assert "--formula-source-run-id" in workflow
+    assert "market_source_run_id:" not in workflow
+    assert "recover_openap_market_security_master.py" not in workflow
+    assert "--current-sec-identity-json" in workflow
+    assert "--identity-transport-manifest" in workflow
+    assert (
+        "https://r.jina.ai/http://www.sec.gov/files/"
+        "company_tickers_exchange.json"
+    ) in workflow
     assert "openap-149-sec-spinoff-current" in workflow
