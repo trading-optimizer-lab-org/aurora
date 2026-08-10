@@ -904,6 +904,8 @@ def test_consolidation_workflow_downloads_audited_event_batches() -> None:
     assert 'indipo["current_value_count"] == 701' in verify
     assert 'rdipo["current_value_count"] == 700' in verify
     assert 'spinoff["current_value_count"] == 8' in verify
+    assert 'not bool(ageipo["current_value_calculated"])' in verify
+    assert 'ageipo["status"] == "blocked_coverage"' in verify
 
 
 def test_consolidation_workflow_verifies_causal_firmage_evidence() -> None:
