@@ -23,12 +23,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_current_sec_universe_uses_only_direct_official_identity() -> None:
     payload = {
-        "fields": ["cik", "name", "tickers", "exchanges"],
+        "fields": ["cik", "name", "ticker", "exchange"],
         "data": [
-            [320193, "Apple Inc.", ["AAPL"], ["Nasdaq"]],
-            [789019, "Microsoft Corp", ["MSFT"], ["Nasdaq"]],
-            [1000045, "Dual Class Corp", ["DUAL.A", "DUAL.B"], ["NYSE", "NYSE"]],
-            [1000046, "Unsupported Venue Corp", ["OTCX"], ["OTC"]],
+            [320193, "Apple Inc.", "AAPL", "Nasdaq"],
+            [789019, "Microsoft Corp", "MSFT", "Nasdaq"],
+            [1000045, "Dual Class Corp", "DUAL.A", "NYSE"],
+            [1000045, "Dual Class Corp", "DUAL.B", "NYSE"],
+            [1000046, "Unsupported Venue Corp", "OTCX", "OTC"],
         ],
     }
 
@@ -106,8 +107,8 @@ def test_current_sec_universe_uses_only_direct_official_identity() -> None:
 
 def test_current_sec_universe_rejects_unofficial_or_future_provenance() -> None:
     payload = {
-        "fields": ["cik", "name", "tickers", "exchanges"],
-        "data": [[320193, "Apple Inc.", ["AAPL"], ["Nasdaq"]]],
+        "fields": ["cik", "name", "ticker", "exchange"],
+        "data": [[320193, "Apple Inc.", "AAPL", "Nasdaq"]],
     }
 
     with pytest.raises(ValueError, match="official SEC"):
@@ -126,8 +127,8 @@ def test_current_sec_universe_rejects_unofficial_or_future_provenance() -> None:
 
 def test_current_sec_identity_parser_accepts_direct_and_audited_readthrough() -> None:
     direct = (
-        b'{"fields":["cik","name","tickers","exchanges"],'
-        b'"data":[[320193,"Apple Inc.",["AAPL"],["Nasdaq"]]]}'
+        b'{"fields":["cik","name","ticker","exchange"],'
+        b'"data":[[320193,"Apple Inc.","AAPL","Nasdaq"]]}'
     )
     readthrough = b"\n".join(
         [
