@@ -200,6 +200,8 @@ def test_notes_identity_runner_and_access_workflow_remain_manual_non_strict() ->
     assert "build_current_sec_universe" in runner
     assert "validate_materialized_market_security_master_recovery" not in runner
     assert "load_sec_notes_listing_history" in runner
+    assert "--allow-missing-notes" in runner
+    assert '"notes_access_complete"' in runner
     assert "calculate_sec_exch_switch_current" in runner
     assert "_formula_contract" in runner
     assert "EXCH_SWITCH_FORMULA_SHA256" in runner

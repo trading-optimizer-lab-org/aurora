@@ -9,6 +9,7 @@ from aurora.research.openap_181.sec_listing_identity import (
     build_current_sec_universe,
     build_sec_listing_intervals,
     calculate_sec_exch_switch_current,
+    empty_sec_listing_facts,
     extract_sec_listing_observations,
     filter_market_bars_by_sec_identity,
     normalize_sec_notes_listing_facts,
@@ -153,6 +154,19 @@ def test_current_sec_identity_parser_accepts_direct_and_audited_readthrough() ->
         )
 
 
+def test_empty_sec_listing_facts_preserve_fail_closed_schema() -> None:
+    facts = empty_sec_listing_facts()
+
+    observations, rejected = extract_sec_listing_observations(
+        facts,
+        formation_at=FORMATION_AT,
+    )
+
+    assert facts.empty
+    assert observations.empty
+    assert rejected.empty
+
+
 def test_exchange_switch_workflow_acquires_direct_official_sec_identity() -> None:
     workflow = (
         ROOT / ".github" / "workflows" / "openap-149-sec-exchange-switch.yml"
@@ -163,6 +177,8 @@ def test_exchange_switch_workflow_acquires_direct_official_sec_identity() -> Non
     assert "--current-sec-identity-json" in workflow
     assert "--identity-retrieved-at" in workflow
     assert "--identity-transport-manifest" in workflow
+    assert "--allow-missing-notes" in workflow
+    assert 'assert summary["all_downloaded"] is True' not in workflow
     assert (
         "https://r.jina.ai/http://www.sec.gov/files/"
         "company_tickers_exchange.json"
