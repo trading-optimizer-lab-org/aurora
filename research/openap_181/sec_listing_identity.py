@@ -7,6 +7,7 @@ claim continuous ticker history, PERMNO equivalence, or strict-score fitness.
 from __future__ import annotations
 
 from datetime import timedelta
+import json
 import re
 from typing import Any, Mapping
 from urllib.parse import urlparse
@@ -228,6 +229,59 @@ def normalize_exchange_family(value: Any) -> str:
     if key in {"BATS", "BZX", "CBOEBZX", "CBOEBZXEXCHANGE"}:
         return "CBOE_BZX"
     return ""
+
+
+def parse_current_sec_identity_response(
+    content: bytes,
+    *,
+    access_method: str,
+) -> Mapping[str, Any]:
+    """Parse direct SEC JSON or the bounded Jina read-through wrapper."""
+
+    try:
+        text = bytes(content).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SecListingIdentityError(
+            "SEC current identity response is not UTF-8"
+        ) from exc
+    method = _clean_text(access_method)
+    if method == "sec_official_direct":
+        candidate = text.strip()
+    elif method == "sec_via_jina_readthrough":
+        marker = "Markdown Content:"
+        if marker not in text:
+            raise SecListingIdentityError(
+                "SEC identity readthrough response lacks JSON marker"
+            )
+        candidate = text.split(marker, 1)[1].strip()
+        if candidate.startswith("```json"):
+            candidate = candidate[7:]
+        elif candidate.startswith("```"):
+            candidate = candidate[3:]
+        if candidate.endswith("```"):
+            candidate = candidate[:-3]
+        candidate = candidate.strip()
+    else:
+        raise SecListingIdentityError(
+            "SEC current identity access method is unsupported"
+        )
+    try:
+        payload = json.loads(candidate, strict=False)
+    except json.JSONDecodeError as exc:
+        raise SecListingIdentityError(
+            "SEC current identity response is not valid JSON"
+        ) from exc
+    if not isinstance(payload, Mapping):
+        raise SecListingIdentityError(
+            "SEC current identity response is not a JSON object"
+        )
+    if not isinstance(payload.get("fields"), list) or not isinstance(
+        payload.get("data"), list
+    ):
+        raise SecListingIdentityError(
+            "SEC current identity response has no tabular payload"
+        )
+    return payload
 
 
 def build_current_sec_universe(
@@ -1302,4 +1356,5 @@ __all__ = [
     "filter_market_bars_by_sec_identity",
     "normalize_sec_notes_listing_facts",
     "normalize_exchange_family",
+    "parse_current_sec_identity_response",
 ]

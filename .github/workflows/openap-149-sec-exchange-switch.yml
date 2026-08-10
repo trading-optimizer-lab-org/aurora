@@ -74,6 +74,8 @@ jobs:
       FORMATION_AT: ${{ inputs.formation_at }}
       NOTES_PERIODS: ${{ inputs.notes_periods }}
       SEC_USER_AGENT: "Aurora Research gomez5757@users.noreply.github.com"
+      SEC_IDENTITY_SOURCE_URL: https://www.sec.gov/files/company_tickers_exchange.json
+      SEC_IDENTITY_READTHROUGH_URL: https://r.jina.ai/http://www.sec.gov/files/company_tickers_exchange.json
       GITHUB_ACTIONS: "true"
       AU_DATA_DIR: ${{ github.workspace }}/outputs
     steps:
@@ -88,15 +90,75 @@ jobs:
           cache: pip
       - name: Install project
         run: python -m pip install --disable-pip-version-check -e .
-      - name: Acquire direct official SEC current identity
+      - name: Acquire audited official SEC current identity
         run: |
           mkdir -p inputs/sec_current
-          curl --fail --location --retry 4 --retry-all-errors \
+          transport=inputs/sec_current/transport_response.txt
+          set +e
+          curl --fail --location --retry 2 --retry-all-errors \
             --max-filesize 16777216 \
             --header "User-Agent: $SEC_USER_AGENT" \
-            https://www.sec.gov/files/company_tickers_exchange.json \
-            --output inputs/sec_current/company_tickers_exchange.json
-          echo "IDENTITY_RETRIEVED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+            "$SEC_IDENTITY_SOURCE_URL" \
+            --output "$transport"
+          direct_status=$?
+          set -e
+          if [ "$direct_status" -eq 0 ]; then
+            access_method=sec_official_direct
+            access_url="$SEC_IDENTITY_SOURCE_URL"
+          else
+            rm -f "$transport"
+            curl --fail --location --retry 4 --retry-all-errors \
+              --max-filesize 16777216 \
+              --header "Accept: text/plain" \
+              --header "X-No-Cache: true" \
+              "$SEC_IDENTITY_READTHROUGH_URL" \
+              --output "$transport"
+            access_method=sec_via_jina_readthrough
+            access_url="$SEC_IDENTITY_READTHROUGH_URL"
+          fi
+          identity_retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          export IDENTITY_ACCESS_METHOD="$access_method"
+          export IDENTITY_ACCESS_URL="$access_url"
+          export IDENTITY_RETRIEVED_AT="$identity_retrieved_at"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          from aurora.research.openap_181.sec_listing_identity import (
+              parse_current_sec_identity_response,
+          )
+
+          root = Path("inputs/sec_current")
+          transport = root / "transport_response.txt"
+          content = transport.read_bytes()
+          payload = parse_current_sec_identity_response(
+              content,
+              access_method=os.environ["IDENTITY_ACCESS_METHOD"],
+          )
+          canonical = json.dumps(
+              payload,
+              ensure_ascii=True,
+              separators=(",", ":"),
+              sort_keys=True,
+          ).encode("utf-8")
+          destination = root / "company_tickers_exchange.json"
+          destination.write_bytes(canonical)
+          manifest = {
+              "source_url": os.environ["SEC_IDENTITY_SOURCE_URL"],
+              "access_url": os.environ["IDENTITY_ACCESS_URL"],
+              "access_method": os.environ["IDENTITY_ACCESS_METHOD"],
+              "retrieved_at": os.environ["IDENTITY_RETRIEVED_AT"],
+              "transport_sha256": hashlib.sha256(content).hexdigest(),
+              "canonical_sha256": hashlib.sha256(canonical).hexdigest(),
+          }
+          (root / "identity_transport_manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          echo "IDENTITY_RETRIEVED_AT=$identity_retrieved_at" >> "$GITHUB_ENV"
       - name: Download pinned official formula evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -149,6 +211,7 @@ jobs:
             --current-sec-identity-json inputs/sec_current/company_tickers_exchange.json \
             --current-sec-identity-source-url https://www.sec.gov/files/company_tickers_exchange.json \
             --identity-retrieved-at "$IDENTITY_RETRIEVED_AT" \
+            --identity-transport-manifest inputs/sec_current/identity_transport_manifest.json \
             --formula-root inputs/formulas \
             --formula-source-run-id "${{ inputs.formula_evidence_run_id }}" \
             --implementation-sha "$SOURCE_SHA" \
@@ -181,7 +244,13 @@ jobs:
           assert manifest["identity_source_url"] == (
               "https://www.sec.gov/files/company_tickers_exchange.json"
           )
-          assert manifest["identity_source_mode"] == "sec_official_live_direct"
+          assert manifest["identity_source_mode"] == (
+              "sec_official_live_with_audited_transport"
+          )
+          assert manifest["identity_access_method"] in {
+              "sec_official_direct",
+              "sec_via_jina_readthrough",
+          }
           assert manifest["current_universe_rows"] > 1000
           assert manifest["strict_score_eligible"] is False
           assert manifest["locked_opened"] is False
@@ -202,5 +271,6 @@ jobs:
           path: |
             outputs/openap_149_sec_notes_exchange_switch/sec_notes_source_manifest.csv
             outputs/openap_149_sec_notes_exchange_switch/sec_notes_access_summary.json
+            inputs/sec_current/identity_transport_manifest.json
           if-no-files-found: error
           retention-days: 90

@@ -80,6 +80,50 @@ def _formula_contract(root: Path) -> Path:
     return matches[0]
 
 
+def _identity_transport_contract(
+    path: Path,
+    *,
+    canonical_json: Path,
+    source_url: str,
+    retrieved_at: str,
+) -> dict[str, Any]:
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("SEC identity transport manifest is invalid") from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError("SEC identity transport manifest must be an object")
+    method = str(manifest.get("access_method") or "")
+    expected_access_url = (
+        source_url
+        if method == "sec_official_direct"
+        else (
+            "https://r.jina.ai/http://"
+            + source_url.removeprefix("https://")
+        )
+    )
+    retrieved = pd.to_datetime(retrieved_at, errors="coerce", utc=True)
+    manifest_retrieved = pd.to_datetime(
+        manifest.get("retrieved_at"), errors="coerce", utc=True
+    )
+    if (
+        method not in {"sec_official_direct", "sec_via_jina_readthrough"}
+        or str(manifest.get("source_url") or "") != source_url
+        or str(manifest.get("access_url") or "") != expected_access_url
+        or pd.isna(retrieved)
+        or pd.isna(manifest_retrieved)
+        or retrieved != manifest_retrieved
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(manifest.get("transport_sha256") or "")
+        )
+        is None
+        or str(manifest.get("canonical_sha256") or "")
+        != _sha256(canonical_json)
+    ):
+        raise RuntimeError("SEC identity transport provenance does not match")
+    return manifest
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--notes-archive-dir", type=Path, required=True)
@@ -87,6 +131,11 @@ def main() -> int:
     parser.add_argument("--current-sec-identity-json", type=Path, required=True)
     parser.add_argument("--current-sec-identity-source-url", required=True)
     parser.add_argument("--identity-retrieved-at", required=True)
+    parser.add_argument(
+        "--identity-transport-manifest",
+        type=Path,
+        required=True,
+    )
     parser.add_argument("--formula-root", type=Path, required=True)
     parser.add_argument("--formula-source-run-id", required=True)
     parser.add_argument("--implementation-sha", required=True)
@@ -121,6 +170,12 @@ def main() -> int:
         )
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("official SEC current identity JSON is invalid") from exc
+    identity_transport = _identity_transport_contract(
+        args.identity_transport_manifest,
+        canonical_json=args.current_sec_identity_json,
+        source_url=args.current_sec_identity_source_url,
+        retrieved_at=args.identity_retrieved_at,
+    )
     current_universe, current_rejections = build_current_sec_universe(
         identity_payload,
         retrieved_at=args.identity_retrieved_at,
@@ -193,8 +248,14 @@ def main() -> int:
         "formation_at": pd.Timestamp(formation).isoformat(),
         "maximum_gap_days": args.maximum_gap_days,
         "identity_source_url": str(args.current_sec_identity_source_url),
-        "identity_source_mode": "sec_official_live_direct",
+        "identity_source_mode": "sec_official_live_with_audited_transport",
         "identity_source_sha256": _sha256(args.current_sec_identity_json),
+        "identity_access_url": str(identity_transport["access_url"]),
+        "identity_access_method": str(identity_transport["access_method"]),
+        "identity_transport_sha256": str(identity_transport["transport_sha256"]),
+        "identity_transport_manifest_sha256": _sha256(
+            args.identity_transport_manifest
+        ),
         "identity_retrieved_at": pd.Timestamp(
             pd.to_datetime(args.identity_retrieved_at, utc=True)
         ).isoformat(),
