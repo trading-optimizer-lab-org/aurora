@@ -1,6 +1,11 @@
 name: OpenAP 149 Field-Ritter IPO Current
 
 on:
+  push:
+    branches:
+      - codex/openap-proxy44-validation
+    paths:
+      - .github/workflows/openap-149-field-ritter-ipo.yml
   workflow_dispatch:
     inputs:
       source_sha:
@@ -32,7 +37,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  registration:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Register manual workflow without acquiring data
+        run: test -n "${{ github.sha }}"
+
   contract:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -63,6 +76,7 @@ jobs:
             -q --tb=short
 
   acquire:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: contract
     runs-on: ubuntu-24.04
     timeout-minutes: 90
