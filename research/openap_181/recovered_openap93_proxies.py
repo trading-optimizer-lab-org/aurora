@@ -49,6 +49,39 @@ EQUITY_DURATION_CAVEAT = (
     "SEC annual equity/income/revenue and Yahoo fiscal-period price replace "
     "Compustat/CRSP"
 )
+BETAVIX_SIGNAL = "betaVIX"
+BETAVIX_FORMULA_ID = "openap_beta_vix_20d_min15_market_control"
+BETAVIX_OPENAP_SCRIPT = "Signals/pyCode/Predictors/ZZ2_betaVIX.py"
+BETAVIX_ORIGINAL_SOURCE = "yahoo_public|kenneth_french|cboe_public"
+BETAVIX_RECOVERY_SOURCE = "recovered_openap93_betavix"
+RIO_SIGNALS = ("RIO_MB", "RIO_Turnover", "RIO_Volatility")
+RIO_FORMULA_IDS = {
+    "RIO_MB": "openap_residual_institutional_ownership_lag6_high_mb",
+    "RIO_Turnover": (
+        "openap_residual_institutional_ownership_lag6_high_turnover"
+    ),
+    "RIO_Volatility": (
+        "openap_residual_institutional_ownership_lag6_high_volatility"
+    ),
+}
+RIO_OPENAP_SCRIPT = (
+    "Signals/pyCode/Predictors/"
+    "ZZ1_RIO_MB_RIO_Disp_RIO_Turnover_RIO_Volatility.py"
+)
+RIO_ORIGINAL_SOURCE = "sec_13f|openfigi_public|sec_edgar|yahoo_public"
+RIO_RECOVERY_SOURCE = "recovered_openap93_rio"
+RIO_CAVEATS = {
+    "RIO_MB": (
+        "SEC 13F, SEC shares/book equity and Yahoo prices reconstruct the "
+        "published residual-ownership formula"
+    ),
+    "RIO_Turnover": (
+        "SEC 13F and current monthly Yahoo turnover replace Thomson/CRSP inputs"
+    ),
+    "RIO_Volatility": (
+        "SEC 13F and 12-month Yahoo return volatility replace Thomson/CRSP inputs"
+    ),
+}
 
 _REQUIRED_FILENAMES = (
     "signals_93_current.csv",
@@ -255,6 +288,10 @@ def _validate_reconstructed_coverage(
     *,
     signal: str,
     openap_script: str,
+    implementation_file: str,
+    natural_frequency: str,
+    primary_source: str,
+    fallback_source: str,
     universe_count: int,
     usable_count: int,
 ) -> None:
@@ -262,18 +299,29 @@ def _validate_reconstructed_coverage(
     if len(rows) != 1:
         raise ValueError(f"expected exactly one {signal} coverage row")
     row = rows.iloc[0]
-    count_fields = {
-        "universe_count": universe_count,
-        "applicable_count": universe_count,
-        "non_null_count": usable_count,
-        "current_usable_count": usable_count,
-        "not_applicable_count": 0,
-        "missing_count": universe_count - usable_count,
-    }
-    if any(_strict_int(row[name], name) != expected for name, expected in count_fields.items()):
+    declared_universe = _strict_int(row["universe_count"], "universe_count")
+    applicable_count = _strict_int(row["applicable_count"], "applicable_count")
+    non_null_count = _strict_int(row["non_null_count"], "non_null_count")
+    current_count = _strict_int(
+        row["current_usable_count"],
+        "current_usable_count",
+    )
+    not_applicable_count = _strict_int(
+        row["not_applicable_count"],
+        "not_applicable_count",
+    )
+    missing_count = _strict_int(row["missing_count"], "missing_count")
+    if (
+        declared_universe != universe_count
+        or applicable_count <= 0
+        or applicable_count + not_applicable_count != universe_count
+        or non_null_count != usable_count
+        or current_count != usable_count
+        or missing_count != applicable_count - usable_count
+    ):
         raise ValueError(f"{signal} coverage counts do not reconcile")
     coverage_pct = pd.to_numeric(row["coverage_pct"], errors="coerce")
-    expected_pct = usable_count * 100.0 / universe_count
+    expected_pct = usable_count * 100.0 / applicable_count
     if pd.isna(coverage_pct) or not np.isclose(float(coverage_pct), expected_pct):
         raise ValueError(f"{signal} coverage percentage does not reconcile")
     if (
@@ -281,12 +329,12 @@ def _validate_reconstructed_coverage(
         or str(row["fidelity_class"]) != "reconstructed"
         or not _as_bool(row["current_usable"])
         or not _as_bool(row["exact_formula"])
-        or str(row["primary_source"]) != "sec_edgar"
-        or str(row["fallback_source"]) != "yahoo_public"
-        or str(row["natural_frequency"]) != "annual"
+        or str(row["primary_source"]) != primary_source
+        or str(row["fallback_source"]) != fallback_source
+        or str(row["natural_frequency"]) != natural_frequency
         or _as_bool(row["scraping_required"])
         or str(row["openap_script"]) != openap_script
-        or str(row["implementation_file"]) != COMPEQUISS_IMPLEMENTATION_FILE
+        or str(row["implementation_file"]) != implementation_file
     ):
         raise ValueError(f"{signal} coverage metadata violates its contract")
 
@@ -299,8 +347,11 @@ def _validate_reconstructed_rows(
     formula_id: str,
     openap_script: str,
     caveat: str,
+    original_source: str,
+    natural_frequency: str,
     minimum_observations: int,
     universe_count: int,
+    require_quintile_value: bool = False,
 ) -> pd.DataFrame:
     rows = values.loc[values["signal"].astype(str).eq(signal)].copy()
     if len(rows) != universe_count:
@@ -354,17 +405,26 @@ def _validate_reconstructed_rows(
     numeric_values = pd.to_numeric(rows["value"], errors="coerce")
     natural_current = rows["is_current_for_natural_frequency"].map(_as_bool)
     observations = pd.to_numeric(rows["observation_count"], errors="coerce")
+    invalid_quintile = (
+        usable
+        & (
+            numeric_values.lt(1)
+            | numeric_values.gt(5)
+            | numeric_values.mod(1).ne(0)
+        )
+    )
     if (
-        not rows["source_id"].astype(str).eq(COMPEQUISS_ORIGINAL_SOURCE).all()
+        not rows["source_id"].astype(str).eq(original_source).all()
         or not rows["formula_id"].astype(str).eq(formula_id).all()
         or not rows["openap_script"].astype(str).eq(openap_script).all()
-        or not rows["natural_frequency"].astype(str).eq("annual").all()
-        or not rows["caveat"].astype(str).eq(caveat).all()
+        or not rows["natural_frequency"].astype(str).eq(natural_frequency).all()
+        or not rows["caveat"].fillna("").astype(str).eq(caveat).all()
         or not natural_current.eq(usable).all()
         or observations.isna().any()
         or (usable & observations.lt(minimum_observations)).any()
         or (usable & ~np.isfinite(numeric_values)).any()
         or (~usable & numeric_values.notna()).any()
+        or (require_quintile_value and invalid_quintile.any())
         or not rows.loc[usable, "fidelity_class"].astype(str).eq("reconstructed").all()
     ):
         raise ValueError(f"{signal} row-level formula or fidelity contract failed")
@@ -383,7 +443,7 @@ def _prepare_recovered_rows(
     current["source_url"] = (
         evidence_run_url.rstrip("/") + "|" + current["source_url"].astype(str)
     )
-    current["caveat"] = current["caveat"].astype(str) + caveat_suffix
+    current["caveat"] = current["caveat"].fillna("").astype(str) + caveat_suffix
     current["strict_score_eligible"] = False
     current["current_usable"] = True
     return current
@@ -411,6 +471,8 @@ def load_verified_openap93_proxy_batch(
         formula_id=COMPEQUISS_FORMULA_ID,
         openap_script=COMPEQUISS_OPENAP_SCRIPT,
         caveat=COMPEQUISS_CAVEAT,
+        original_source=COMPEQUISS_ORIGINAL_SOURCE,
+        natural_frequency="annual",
         minimum_observations=60,
         universe_count=universe_count,
     )
@@ -421,13 +483,47 @@ def load_verified_openap93_proxy_batch(
         formula_id=EQUITY_DURATION_FORMULA_ID,
         openap_script=EQUITY_DURATION_OPENAP_SCRIPT,
         caveat=EQUITY_DURATION_CAVEAT,
+        original_source=COMPEQUISS_ORIGINAL_SOURCE,
+        natural_frequency="annual",
         minimum_observations=2,
         universe_count=universe_count,
     )
+    beta_vix = _validate_reconstructed_rows(
+        values,
+        source,
+        signal=BETAVIX_SIGNAL,
+        formula_id=BETAVIX_FORMULA_ID,
+        openap_script=BETAVIX_OPENAP_SCRIPT,
+        caveat="",
+        original_source=BETAVIX_ORIGINAL_SOURCE,
+        natural_frequency="monthly",
+        minimum_observations=15,
+        universe_count=universe_count,
+    )
+    rio_values = {
+        signal: _validate_reconstructed_rows(
+            values,
+            source,
+            signal=signal,
+            formula_id=RIO_FORMULA_IDS[signal],
+            openap_script=RIO_OPENAP_SCRIPT,
+            caveat=RIO_CAVEATS[signal],
+            original_source=RIO_ORIGINAL_SOURCE,
+            natural_frequency="quarterly",
+            minimum_observations=0,
+            universe_count=universe_count,
+            require_quintile_value=True,
+        )
+        for signal in RIO_SIGNALS
+    }
     _validate_reconstructed_coverage(
         coverage,
         signal=COMPEQUISS_SIGNAL,
         openap_script=COMPEQUISS_OPENAP_SCRIPT,
+        implementation_file=COMPEQUISS_IMPLEMENTATION_FILE,
+        natural_frequency="annual",
+        primary_source="sec_edgar",
+        fallback_source="yahoo_public",
         universe_count=universe_count,
         usable_count=len(comp_equ_iss),
     )
@@ -435,9 +531,36 @@ def load_verified_openap93_proxy_batch(
         coverage,
         signal=EQUITY_DURATION_SIGNAL,
         openap_script=EQUITY_DURATION_OPENAP_SCRIPT,
+        implementation_file=COMPEQUISS_IMPLEMENTATION_FILE,
+        natural_frequency="annual",
+        primary_source="sec_edgar",
+        fallback_source="yahoo_public",
         universe_count=universe_count,
         usable_count=len(equity_duration),
     )
+    _validate_reconstructed_coverage(
+        coverage,
+        signal=BETAVIX_SIGNAL,
+        openap_script=BETAVIX_OPENAP_SCRIPT,
+        implementation_file="research/openap_93/market_pipeline.py",
+        natural_frequency="monthly",
+        primary_source="cboe_public",
+        fallback_source="kenneth_french|yahoo_public",
+        universe_count=universe_count,
+        usable_count=len(beta_vix),
+    )
+    for signal in RIO_SIGNALS:
+        _validate_reconstructed_coverage(
+            coverage,
+            signal=signal,
+            openap_script=RIO_OPENAP_SCRIPT,
+            implementation_file="research/openap_93/institutional_pipeline.py",
+            natural_frequency="quarterly",
+            primary_source="openfigi_public",
+            fallback_source="sec_13f|sec_edgar|yahoo_public",
+            universe_count=universe_count,
+            usable_count=len(rio_values[signal]),
+        )
 
     comp_equ_iss = _prepare_recovered_rows(
         comp_equ_iss,
@@ -457,7 +580,34 @@ def load_verified_openap93_proxy_batch(
             "Compustat/CRSP identity not verified"
         ),
     )
-    current = pd.concat([comp_equ_iss, equity_duration], ignore_index=True)
+    beta_vix = _prepare_recovered_rows(
+        beta_vix,
+        evidence_run_url=evidence_run_url,
+        recovery_source=BETAVIX_RECOVERY_SOURCE,
+        caveat_suffix=(
+            "recovered from hash-bound OpenAP93 evidence; Yahoo returns replace "
+            "CRSP and historical security identity is not verified"
+        ),
+    )
+    rio_values = {
+        signal: _prepare_recovered_rows(
+            rows,
+            evidence_run_url=evidence_run_url,
+            recovery_source=RIO_RECOVERY_SOURCE,
+            caveat_suffix=(
+                "; recovered from hash-bound OpenAP93 evidence; historical "
+                "Thomson/CRSP/Compustat identity not verified"
+            ),
+        )
+        for signal, rows in rio_values.items()
+    }
+    current_parts = [
+        comp_equ_iss,
+        equity_duration,
+        beta_vix,
+        *(rio_values[signal] for signal in RIO_SIGNALS),
+    ]
+    current = pd.concat(current_parts, ignore_index=True)
     signal_evidence = {
         COMPEQUISS_SIGNAL: {
             "signal": COMPEQUISS_SIGNAL,
@@ -473,6 +623,23 @@ def load_verified_openap93_proxy_batch(
             "coverage": float(len(equity_duration) / universe_count),
             "historical_compustat_crsp_identity_verified": False,
         },
+        BETAVIX_SIGNAL: {
+            "signal": BETAVIX_SIGNAL,
+            "formula_id": BETAVIX_FORMULA_ID,
+            "current_value_rows": int(len(beta_vix)),
+            "coverage": float(len(beta_vix) / universe_count),
+            "historical_crsp_identity_verified": False,
+        },
+        **{
+            signal: {
+                "signal": signal,
+                "formula_id": RIO_FORMULA_IDS[signal],
+                "current_value_rows": int(len(rio_values[signal])),
+                "coverage": float(len(rio_values[signal]) / universe_count),
+                "historical_thomson_crsp_compustat_identity_verified": False,
+            }
+            for signal in RIO_SIGNALS
+        },
     }
     evidence = {
         "contract_version": 1,
@@ -482,7 +649,7 @@ def load_verified_openap93_proxy_batch(
         "openap_commit": OPENAP_COMMIT,
         "signals": signal_evidence,
         "universe_count": universe_count,
-        "current_value_rows": int(len(comp_equ_iss) + len(equity_duration)),
+        "current_value_rows": int(sum(len(part) for part in current_parts)),
         "source_values_sha256": _sha256_file(paths["signals_93_current.csv"]),
         "strict_score_eligible": False,
         "strict_score_increment": 0,
@@ -517,11 +684,13 @@ def load_verified_openap93_comp_equ_iss(
 
 
 __all__ = [
+    "BETAVIX_RECOVERY_SOURCE",
     "COMPEQUISS_FORMULA_ID",
     "COMPEQUISS_RECOVERY_SOURCE",
     "EQUITY_DURATION_FORMULA_ID",
     "EQUITY_DURATION_RECOVERY_SOURCE",
     "OPENAP93_RECOVERY_RUN_URL",
+    "RIO_RECOVERY_SOURCE",
     "load_verified_openap93_comp_equ_iss",
     "load_verified_openap93_proxy_batch",
 ]

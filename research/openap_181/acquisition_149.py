@@ -123,6 +123,8 @@ SOURCE_ALIASES = {
     "recovered_openap_features_31270341796": "recovered_openap_features",
     "recovered_openap93_compequiss": "recovered_openap93_compequiss",
     "recovered_openap93_equityduration": "recovered_openap93_equityduration",
+    "recovered_openap93_betavix": "recovered_openap93_betavix",
+    "recovered_openap93_rio": "recovered_openap93_rio",
     "pastor_stambaugh": "pastor_stambaugh",
 }
 
@@ -158,6 +160,14 @@ SOURCE_TERMS = {
     "recovered_openap93_equityduration": (
         "Hash-bound derived EquityDuration output from recovery run 31341580689; "
         "SEC fair-access and underlying Yahoo endpoint terms apply; internal use only"
+    ),
+    "recovered_openap93_betavix": (
+        "Hash-bound derived betaVIX output from recovery run 31341580689; Cboe, "
+        "Kenneth French and underlying Yahoo endpoint terms apply; internal use only"
+    ),
+    "recovered_openap93_rio": (
+        "Hash-bound derived RIO output from recovery run 31341580689; SEC 13F, "
+        "OpenFIGI and underlying Yahoo endpoint terms apply; internal use only"
     ),
     "pastor_stambaugh": (
         "Chicago Booth public academic liquidity-factor data; attribution required"

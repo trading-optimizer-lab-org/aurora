@@ -43,7 +43,7 @@ solo `CBOperProf` conserva la cuarentena en el contrato de consolidacion
 preparado. El CSV se conserva sin reescribir manualmente porque el usuario ha
 prohibido iniciar un nuevo run y aun no existe un artefacto consolidado nuevo.
 
-## CompEquIss y EquityDuration: recuperacion selectiva preparada, no ejecutada
+## Seis senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 
 El artefacto gratuito y ya existente `openap-93-current-recovered-results` del
 run `31341580689` contiene 2.157 filas de `CompEquIss`; 1.585 tienen valor
@@ -80,6 +80,28 @@ los 37 valores declarados por la cobertura hash-bound. Queda reconstruida, con
 cobertura muy baja, identidad historica Compustat/CRSP no verificada y aptitud
 estricta falsa. Tampoco cambia los recuentos publicados hasta una consolidacion
 ejecutada.
+
+`betaVIX` aporta 2.157 valores (100 % del universo) con la regresion oficial de
+20 sesiones y minimo 15 observaciones: exceso de retorno sobre `mktrf` y cambio
+diario de VIX, usando Kenneth French, Cboe y retornos Yahoo. El contrato exige
+un minimo de 15 observaciones y el artefacto conserva 20 por valor, la formula
+`openap_beta_vix_20d_min15_market_control` y la fuente estrecha
+`recovered_openap93_betavix`. Yahoo sustituye CRSP y la identidad historica no
+esta verificada, por lo que sigue siendo reconstruida no estricta.
+
+El mismo lote prepara tres interacciones RIO reconstruidas: `RIO_MB` con 305
+valores, `RIO_Turnover` con 231 y `RIO_Volatility` con 158. Conservan SEC 13F,
+OpenFIGI, el residual de propiedad institucional, el retardo de seis meses, el
+filtro de tamano NYSE/AMEX y los quintiles 1-5. Sustituyen Thomson/CRSP/Compustat
+por SEC y Yahoo, y usan la fuente estrecha `recovered_openap93_rio`. El cargador
+reconcilia por separado universo, aplicables, no aplicables, faltantes y
+cobertura, y rechaza valores que no sean quintiles enteros entre 1 y 5.
+
+`RIO_Disp` no se recupera: el propio artefacto la clasifica
+`unvalidated_proxy`, `current_usable=false`, porque el rango alto-bajo de
+previsiones Yahoo no equivale a la desviacion estandar IBES oficial. Ninguna de
+estas cuatro senales incrementa el score estricto ni modifica todavia los
+recuentos publicados.
 
 ## CompanyFacts ampliado: lote gratuito ejecutado, pendiente de consolidar
 

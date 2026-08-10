@@ -70,7 +70,7 @@ AbnormalAccruals, Accruals, AccrualsBM, AdExp, AM, BM, BMdec, BookLeverage, BPEB
 
 `Cash` pertenece a este grupo. SEC proporciona caja, activos y fecha de filing; el trabajo es fijar alias XBRL, enmiendas, caja restringida e identidad, no encontrar una fuente de pago obligatoria.
 
-#### Recuperacion estrecha de CompEquIss y EquityDuration
+#### Recuperacion estrecha de seis senales OpenAP93
 
 El artefacto recuperado `31341580689` conserva 2.157 filas actuales de
 `CompEquIss`, de las que 1.585 son utilizables. La reconstruccion aplica la
@@ -93,6 +93,19 @@ la proyeccion a diez anos, pero reemplaza `ceq`, `ib`, `sale`, `csho` y
 `prcc_f` de Compustat/CRSP por contabilidad SEC y precio Yahoo del cierre
 fiscal. La cobertura, la identidad historica y la fidelidad estricta siguen
 pendientes; por ello solo puede clasificarse como reconstruida no estricta.
+
+`betaVIX` dispone de 2.157 valores y reproduce la regresion oficial de 20 dias
+con minimo 15 observaciones usando retornos Yahoo, factores Kenneth French y
+VIX Cboe. La ruta `recovered_openap93_betavix` conserva los hashes y fechas,
+pero no convierte Yahoo en CRSP ni demuestra identidad historica.
+
+Las rutas `RIO_MB`, `RIO_Turnover` y `RIO_Volatility` recuperan respectivamente
+305, 231 y 158 quintiles actuales mediante `recovered_openap93_rio`. Usan SEC
+13F y OpenFIGI, retardo de seis meses y filtros/quintiles oficiales, con SEC y
+Yahoo como sustitutos reconstruidos de Thomson/CRSP/Compustat. El contrato
+valida los recuentos de aplicables y no aplicables y solo admite enteros 1-5.
+`RIO_Disp` queda excluida porque su aproximacion Yahoo no equivale a IBES y el
+artefacto la declara no utilizable.
 
 `OScore` y `OrgCap` disponen ademas del deflactor `GNPDEF` gratuito de FRED.
 La evidencia existente SEC+FRED permite calcular reconstrucciones actuales,

@@ -12,11 +12,13 @@ from aurora.research.openap_181.acquisition_149 import (
     load_target_routes,
 )
 from aurora.research.openap_181.recovered_openap93_proxies import (
+    BETAVIX_RECOVERY_SOURCE,
     COMPEQUISS_FORMULA_ID,
     COMPEQUISS_RECOVERY_SOURCE,
     EQUITY_DURATION_FORMULA_ID,
     EQUITY_DURATION_RECOVERY_SOURCE,
     OPENAP93_RECOVERY_RUN_URL,
+    RIO_RECOVERY_SOURCE,
     load_verified_openap93_comp_equ_iss,
     load_verified_openap93_proxy_batch,
 )
@@ -99,10 +101,102 @@ def _equity_duration_row(
     }
 
 
+def _beta_vix_row(
+    security_id: str,
+    ticker: str,
+    cik: int,
+    *,
+    value: float | None,
+    current_usable: bool,
+) -> dict[str, object]:
+    return {
+        **_row(
+            security_id,
+            ticker,
+            cik,
+            value=value,
+            current_usable=current_usable,
+        ),
+        "signal": "betaVIX",
+        "period_end": "2026-07-31",
+        "filed_at": "2026-07-31 00:00:00",
+        "available_at": "2026-07-31 00:00:00",
+        "source_id": "yahoo_public|kenneth_french|cboe_public",
+        "formula_id": "openap_beta_vix_20d_min15_market_control",
+        "openap_script": "Signals/pyCode/Predictors/ZZ2_betaVIX.py",
+        "natural_frequency": "monthly",
+        "observation_count": 20,
+        "caveat": "",
+    }
+
+
+RIO_FORMULA_IDS = {
+    "RIO_MB": "openap_residual_institutional_ownership_lag6_high_mb",
+    "RIO_Turnover": (
+        "openap_residual_institutional_ownership_lag6_high_turnover"
+    ),
+    "RIO_Volatility": (
+        "openap_residual_institutional_ownership_lag6_high_volatility"
+    ),
+}
+RIO_CAVEATS = {
+    "RIO_MB": (
+        "SEC 13F, SEC shares/book equity and Yahoo prices reconstruct the "
+        "published residual-ownership formula"
+    ),
+    "RIO_Turnover": (
+        "SEC 13F and current monthly Yahoo turnover replace Thomson/CRSP inputs"
+    ),
+    "RIO_Volatility": (
+        "SEC 13F and 12-month Yahoo return volatility replace Thomson/CRSP inputs"
+    ),
+}
+
+
+def _rio_row(
+    signal: str,
+    security_id: str,
+    ticker: str,
+    cik: int,
+    *,
+    value: float | None,
+    current_usable: bool,
+) -> dict[str, object]:
+    return {
+        **_row(
+            security_id,
+            ticker,
+            cik,
+            value=value,
+            current_usable=current_usable,
+        ),
+        "signal": signal,
+        "filed_at": "2026-08-09 00:00:00",
+        "available_at": "2026-08-09 00:00:00",
+        "source_id": "sec_13f|openfigi_public|sec_edgar|yahoo_public",
+        "formula_id": RIO_FORMULA_IDS[signal],
+        "openap_script": (
+            "Signals/pyCode/Predictors/"
+            "ZZ1_RIO_MB_RIO_Disp_RIO_Turnover_RIO_Volatility.py"
+        ),
+        "natural_frequency": "quarterly",
+        "observation_count": 12,
+        "caveat": RIO_CAVEATS[signal],
+    }
+
+
 def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
     root.mkdir()
-    selected_signals = ["CompEquIss", "EquityDuration"] + [
-        f"SyntheticSignal{index:02d}" for index in range(91)
+    recovered_signals = [
+        "CompEquIss",
+        "EquityDuration",
+        "betaVIX",
+        "RIO_MB",
+        "RIO_Turnover",
+        "RIO_Volatility",
+    ]
+    selected_signals = recovered_signals + [
+        f"SyntheticSignal{index:02d}" for index in range(87)
     ]
     comp_rows = [
         _row("US-SEC-0000000001-AAA", "AAA", 1, value=0.25, current_usable=True),
@@ -135,6 +229,45 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             "period_end": "2026-08-08",
         },
     ]
+    beta_vix_rows = [
+        _beta_vix_row(
+            "US-SEC-0000000001-AAA",
+            "AAA",
+            1,
+            value=-0.01,
+            current_usable=True,
+        ),
+        _beta_vix_row(
+            "US-SEC-0000000002-BBB",
+            "BBB",
+            2,
+            value=0.02,
+            current_usable=True,
+        ),
+        _beta_vix_row(
+            "US-SEC-0000000003-CCC",
+            "CCC",
+            3,
+            value=None,
+            current_usable=False,
+        ),
+    ]
+    rio_rows = [
+        _rio_row(
+            signal,
+            f"US-SEC-{cik:010d}-{ticker}",
+            ticker,
+            cik,
+            value=value,
+            current_usable=current_usable,
+        )
+        for signal in RIO_FORMULA_IDS
+        for cik, ticker, value, current_usable in (
+            (1, "AAA", 5.0, True),
+            (2, "BBB", 3.0, True),
+            (3, "CCC", None, False),
+        )
+    ]
     filler_rows = [
         {
             **_row(
@@ -148,10 +281,12 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             "formula_id": f"synthetic_{index}",
             "openap_script": f"Signals/pyCode/Predictors/{signal}.py",
         }
-        for index, signal in enumerate(selected_signals[2:])
+        for index, signal in enumerate(selected_signals[len(recovered_signals) :])
     ]
     signals_path = root / "signals_93_current.csv"
-    pd.DataFrame(comp_rows + equity_duration_rows + filler_rows).to_csv(
+    pd.DataFrame(
+        comp_rows + equity_duration_rows + beta_vix_rows + rio_rows + filler_rows
+    ).to_csv(
         signals_path,
         index=False,
     )
@@ -218,6 +353,83 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             ),
         }
     )
+    coverage_rows.append(
+        {
+            "signal": "betaVIX",
+            "status": "current_usable",
+            "fidelity_class": "reconstructed",
+            "current_usable": True,
+            "exact_formula": True,
+            "primary_source": "cboe_public",
+            "fallback_source": "kenneth_french|yahoo_public",
+            "source_domains": (
+                "cdn.cboe.com|mba.tuck.dartmouth.edu|query1.finance.yahoo.com"
+            ),
+            "latest_period_end": "2026-07-31",
+            "latest_available_at": "2026-07-31 00:00:00",
+            "natural_frequency": "monthly",
+            "universe_count": 3,
+            "applicable_count": 3,
+            "non_null_count": 2,
+            "current_usable_count": 2,
+            "not_applicable_count": 0,
+            "missing_count": 1,
+            "coverage_pct": 200 / 3,
+            "license": (
+                "Academic public download|Cboe website terms|Public endpoint; "
+                "terms must be reviewed"
+            ),
+            "terms_status": (
+                "authorized_public|public_download_terms_review|"
+                "terms_review_required"
+            ),
+            "scraping_required": False,
+            "reason_if_missing": "missing_market_inputs",
+            "openap_script": "Signals/pyCode/Predictors/ZZ2_betaVIX.py",
+            "implementation_file": "research/openap_93/market_pipeline.py",
+        }
+    )
+    for signal in RIO_FORMULA_IDS:
+        coverage_rows.append(
+            {
+                "signal": signal,
+                "status": "current_usable",
+                "fidelity_class": "reconstructed",
+                "current_usable": True,
+                "exact_formula": True,
+                "primary_source": "openfigi_public",
+                "fallback_source": "sec_13f|sec_edgar|yahoo_public",
+                "source_domains": (
+                    "api.openfigi.com|query1.finance.yahoo.com|sec.gov"
+                ),
+                "latest_period_end": "2026-07-31",
+                "latest_available_at": "2026-08-09 00:00:00",
+                "natural_frequency": "quarterly",
+                "universe_count": 3,
+                "applicable_count": 2,
+                "non_null_count": 2,
+                "current_usable_count": 2,
+                "not_applicable_count": 1,
+                "missing_count": 0,
+                "coverage_pct": 100.0,
+                "license": (
+                    "OpenFIGI public API terms|Public endpoint; terms must be "
+                    "reviewed|US government public data"
+                ),
+                "terms_status": (
+                    "authorized_public_rate_limited|terms_review_required"
+                ),
+                "scraping_required": False,
+                "reason_if_missing": "not_applicable:official_nyse_amex_size_filter",
+                "openap_script": (
+                    "Signals/pyCode/Predictors/"
+                    "ZZ1_RIO_MB_RIO_Disp_RIO_Turnover_RIO_Volatility.py"
+                ),
+                "implementation_file": (
+                    "research/openap_93/institutional_pipeline.py"
+                ),
+            }
+        )
     coverage_rows.extend(
         {
             "signal": signal,
@@ -245,7 +457,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
             "openap_script": f"Signals/pyCode/Predictors/{signal}.py",
             "implementation_file": "synthetic.py",
         }
-        for signal in selected_signals[2:]
+        for signal in selected_signals[len(recovered_signals) :]
     )
     coverage_path = root / "coverage_93.csv"
     pd.DataFrame(coverage_rows).to_csv(coverage_path, index=False)
@@ -256,7 +468,13 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         "retrieved_at": "2026-08-09T22:37:41.271512+00:00",
         "input_signals": 93,
         "universe_count": 3,
-        "rows": len(comp_rows) + len(equity_duration_rows) + len(filler_rows),
+        "rows": (
+            len(comp_rows)
+            + len(equity_duration_rows)
+            + len(beta_vix_rows)
+            + len(rio_rows)
+            + len(filler_rows)
+        ),
         "openap_commit": OPENAP_COMMIT,
         "locked_opened": False,
         "validation_used_for_selection": False,
@@ -264,7 +482,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
         "api_keys_required": False,
         "manual_actions_required": False,
         "selected_signals": selected_signals,
-        "current_usable_signal_count": 2,
+        "current_usable_signal_count": 6,
         "output_hashes": {
             "coverage_93.csv": sha256(coverage_path.read_bytes()).hexdigest(),
             "signals_93_current.csv": sha256(signals_path.read_bytes()).hexdigest(),
@@ -278,7 +496,7 @@ def _write_artifact(root: Path) -> tuple[Path, Path, Path, Path]:
     recovery_manifest = {
         "bytes_fetched": 13720277,
         "cost_eur": 0,
-        "current_usable_signal_count": 2,
+        "current_usable_signal_count": 6,
         "full_artifact_downloaded": False,
         "input_signals": 93,
         "locked_opened": False,
@@ -364,7 +582,7 @@ def test_verified_openap93_recovery_accepts_only_current_comp_equ_iss(
     assert evidence["strict_score_increment"] == 0
 
 
-def test_verified_openap93_proxy_batch_adds_low_coverage_equity_duration(
+def test_verified_openap93_proxy_batch_accepts_six_narrow_signals(
     tmp_path: Path,
 ) -> None:
     _write_artifact(tmp_path / "artifact")
@@ -377,6 +595,10 @@ def test_verified_openap93_proxy_batch_adds_low_coverage_equity_duration(
     assert values.groupby("signal").size().to_dict() == {
         "CompEquIss": 2,
         "EquityDuration": 2,
+        "RIO_MB": 2,
+        "RIO_Turnover": 2,
+        "RIO_Volatility": 2,
+        "betaVIX": 2,
     }
     duration = values.loc[values["signal"].eq("EquityDuration")]
     assert duration["source_id"].eq(EQUITY_DURATION_RECOVERY_SOURCE).all()
@@ -387,6 +609,18 @@ def test_verified_openap93_proxy_batch_adds_low_coverage_equity_duration(
     ).all()
     assert not duration["strict_score_eligible"].any()
     assert evidence["signals"]["EquityDuration"]["current_value_rows"] == 2
+    beta_vix = values.loc[values["signal"].eq("betaVIX")]
+    assert beta_vix["source_id"].eq(BETAVIX_RECOVERY_SOURCE).all()
+    assert beta_vix["formula_id"].eq(
+        "openap_beta_vix_20d_min15_market_control"
+    ).all()
+    assert beta_vix["caveat"].str.startswith("recovered from hash-bound").all()
+    for signal, formula_id in RIO_FORMULA_IDS.items():
+        rio = values.loc[values["signal"].eq(signal)]
+        assert rio["source_id"].eq(RIO_RECOVERY_SOURCE).all()
+        assert rio["formula_id"].eq(formula_id).all()
+        assert rio["value"].between(1, 5).all()
+        assert evidence["signals"][signal]["current_value_rows"] == 2
     assert evidence["strict_score_increment"] == 0
 
 
@@ -422,6 +656,59 @@ def test_verified_equity_duration_recovery_fails_closed(
             values.loc[row, "caveat"] = "weaker undocumented proxy"
         else:
             values.loc[row, "observation_count"] = 1
+        values.to_csv(signals_path, index=False)
+    _rehash_artifact(signals_path, coverage_path, source_path, recovery_path)
+
+    with pytest.raises(ValueError):
+        load_verified_openap93_proxy_batch(
+            tmp_path / "artifact",
+            evidence_run_url=OPENAP93_RECOVERY_RUN_URL,
+        )
+
+
+@pytest.mark.parametrize(
+    ("signal", "mutation"),
+    [
+        ("betaVIX", "formula"),
+        ("betaVIX", "observations"),
+        ("betaVIX", "source"),
+        ("RIO_MB", "formula"),
+        ("RIO_Turnover", "frequency"),
+        ("RIO_Volatility", "quintile"),
+        ("RIO_Volatility", "coverage_count"),
+    ],
+)
+def test_verified_market_and_rio_recoveries_fail_closed(
+    tmp_path: Path,
+    signal: str,
+    mutation: str,
+) -> None:
+    signals_path, coverage_path, source_path, recovery_path = _write_artifact(
+        tmp_path / "artifact"
+    )
+    if mutation == "coverage_count":
+        coverage = pd.read_csv(coverage_path)
+        coverage.loc[
+            coverage["signal"].eq(signal),
+            "current_usable_count",
+        ] = 1
+        coverage.to_csv(coverage_path, index=False)
+    else:
+        values = pd.read_csv(signals_path)
+        row = values.index[
+            values["signal"].eq(signal)
+            & values["current_usable"].astype(str).str.lower().eq("true")
+        ][0]
+        if mutation == "formula":
+            values.loc[row, "formula_id"] = "wrong_formula"
+        elif mutation == "observations":
+            values.loc[row, "observation_count"] = 14
+        elif mutation == "source":
+            values.loc[row, "source_id"] = "cboe_public"
+        elif mutation == "frequency":
+            values.loc[row, "natural_frequency"] = "monthly"
+        else:
+            values.loc[row, "value"] = 2.5
         values.to_csv(signals_path, index=False)
     _rehash_artifact(signals_path, coverage_path, source_path, recovery_path)
 
@@ -628,3 +915,49 @@ def test_equity_duration_recovery_route_is_narrow_and_non_strict(
     assert duration["fidelity"] == "reconstructed"
     assert not bool(duration["strict_score_eligible"])
     assert set(approved["signal"]) == {"CompEquIss", "EquityDuration"}
+
+
+def test_beta_vix_and_rio_recovery_routes_are_narrow_and_non_strict(
+    tmp_path: Path,
+) -> None:
+    _write_artifact(tmp_path / "artifact")
+    values, _, _ = load_verified_openap93_proxy_batch(
+        tmp_path / "artifact",
+        evidence_run_url=OPENAP93_RECOVERY_RUN_URL,
+    )
+    signals = {"betaVIX", *RIO_FORMULA_IDS}
+    values = values.loc[values["signal"].isin(signals)].copy()
+    routes = load_target_routes(ROUTE_MATRIX)
+    expected_sources = {
+        "betaVIX": BETAVIX_RECOVERY_SOURCE,
+        **{signal: RIO_RECOVERY_SOURCE for signal in RIO_FORMULA_IDS},
+    }
+    for signal, source in expected_sources.items():
+        route = routes.loc[routes["signal"].eq(signal)].iloc[0]
+        assert source in route["primary_free_sources"].split("|")
+        assert "yahoo_public" not in route["primary_free_sources"].split("|")
+
+    formula_hashes = {
+        "betaVIX": "1e850d7fde9a46a064c8c281bcc4243655b533cc89d4b7675e80378819e27e41",
+        **{
+            signal: "34a01df935551f7c8f19f5521084a658f5bc401d65c54c3fcabb7746438a6afa"
+            for signal in RIO_FORMULA_IDS
+        },
+    }
+    matrix, approved = build_acquisition_matrix(
+        routes,
+        values,
+        formula_inventory=pd.DataFrame(
+            [
+                {"signal": signal, "formula_sha256": formula_hash}
+                for signal, formula_hash in formula_hashes.items()
+            ]
+        ),
+    )
+    for signal in signals:
+        evidence = matrix.loc[matrix["signal"].eq(signal)].iloc[0]
+        assert evidence["status"] == "current_signal_computed"
+        assert evidence["current_value_count"] == 2
+        assert evidence["fidelity"] == "reconstructed"
+        assert not bool(evidence["strict_score_eligible"])
+    assert set(approved["signal"]) == signals
