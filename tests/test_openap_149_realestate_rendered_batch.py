@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import runpy
+import sys
 from importlib import import_module
+from pathlib import Path
 
 import pandas as pd
 import pytest
+
+from aurora.core.execution_policy import LocalRunBlocked
 
 
 class _ReadthroughResponse:
@@ -414,3 +419,23 @@ def test_run_sector_batch_preserves_failures_and_publishes_current_values(
     assert (tmp_path / "openap_149_realestate_issuer_evidence.json").is_file()
     assert (tmp_path / "openap_149_realestate_raw_records.csv").is_file()
     assert (tmp_path / "openap_149_realestate_current.parquet").is_file()
+
+
+def test_realestate_sector_batch_cli_fails_closed_outside_github(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    script = (
+        Path(__file__).parents[1]
+        / "scripts"
+        / "run_openap_149_realestate_rendered_batch.py"
+    )
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT", raising=False)
+    monkeypatch.setattr(sys, "argv", [str(script), "--output-dir", str(tmp_path)])
+
+    with pytest.raises(
+        LocalRunBlocked,
+        match="OpenAP 149 rendered realestate sector batch",
+    ):
+        runpy.run_path(str(script), run_name="__main__")
