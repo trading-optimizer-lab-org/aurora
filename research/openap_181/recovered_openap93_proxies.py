@@ -440,13 +440,16 @@ def _validate_reconstructed_coverage(
     expected_pct = usable_count * 100.0 / applicable_count
     if pd.isna(coverage_pct) or not np.isclose(float(coverage_pct), expected_pct):
         raise ValueError(f"{signal} coverage percentage does not reconcile")
+    declared_fallback_source = (
+        "" if pd.isna(row["fallback_source"]) else str(row["fallback_source"])
+    )
     if (
         str(row["status"]) != "current_usable"
         or str(row["fidelity_class"]) != "reconstructed"
         or not _as_bool(row["current_usable"])
         or not _as_bool(row["exact_formula"])
         or str(row["primary_source"]) != primary_source
-        or str(row["fallback_source"]) != fallback_source
+        or declared_fallback_source != fallback_source
         or str(row["natural_frequency"]) != natural_frequency
         or _as_bool(row["scraping_required"])
         or str(row["openap_script"]) != openap_script
