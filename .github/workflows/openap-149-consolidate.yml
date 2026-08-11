@@ -265,7 +265,10 @@ jobs:
           YFINANCE_SOURCE_RUN_ID: ${{ inputs.yfinance_source_run_id }}
           AUDITED_MARKET_RUN_ID: ${{ inputs.audited_market_run_id }}
         run: |
+          set -Eeuo pipefail
+          trap 'status=$?; echo "recovery_step_failed status=$status line=$LINENO command=$BASH_COMMAND" >&2; exit $status' ERR
           mkdir -p outputs/recovery inputs/factors inputs/recovered_market inputs/recovered_current_features
+          echo "recovery_boundary=artifact_identity_validation_start"
           python scripts/recover_openap_yfinance_price_shards.py \
             --repository "${GITHUB_REPOSITORY}" \
             --source-run-id "$YFINANCE_SOURCE_RUN_ID" \
@@ -275,6 +278,7 @@ jobs:
             --official-identity-universe \
             inputs/exchange_switch_current/current_universe_accepted.csv \
             --output-dir outputs/recovery
+          echo "recovery_boundary=artifact_identity_validation_complete"
           curl --fail --location --silent --show-error \
             --output inputs/factors/ff3_daily.zip \
             https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip
@@ -287,6 +291,7 @@ jobs:
           test -s inputs/factors/ff3_daily.zip
           test -s inputs/factors/ff3_monthly.zip
           test -s inputs/factors/pastor_stambaugh.txt
+          echo "recovery_boundary=factor_download_complete"
           python scripts/run_openap_149_recovered_yfinance_market.py \
             --recovery-root outputs/recovery \
             --formation-at "2026-08-09T23:59:59Z" \
@@ -295,10 +300,12 @@ jobs:
             --ff3-monthly-zip inputs/factors/ff3_monthly.zip \
             --pastor-stambaugh-file inputs/factors/pastor_stambaugh.txt \
             --output-dir inputs/recovered_market
+          echo "recovery_boundary=market_calculation_complete"
           python scripts/run_openap_149_recovered_current_features.py \
             --recovery-root outputs/recovery \
             --implementation-sha "$SOURCE_SHA" \
             --output-dir inputs/recovered_current_features
+          echo "recovery_boundary=feature_calculation_complete"
           echo "RECOVERED_CURRENT_RUN_URL=https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
       - name: Download pinned official formula evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
