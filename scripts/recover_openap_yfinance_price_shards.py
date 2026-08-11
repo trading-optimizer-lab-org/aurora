@@ -202,7 +202,11 @@ def main() -> int:
         "--official-identity-universe",
         type=Path,
         default=None,
-        help="Official SEC current_universe_accepted.csv from the corroborating batch",
+        help=(
+            "Official SEC current_universe_accepted.csv from the corroborating "
+            "batch; its hash-bound rejected sibling is included in the identity "
+            "catalog"
+        ),
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -276,6 +280,85 @@ def main() -> int:
             official_identity_evidence.get("current_universe_rows", 0)
         ):
             raise RuntimeError("official SEC identity universe row count is inconsistent")
+        rejected_identity_path = (
+            args.official_identity_universe.parent / "current_universe_rejected.csv"
+        )
+        rejected_hash = (
+            official_identity_evidence.get("output_sha256", {})
+            .get("current_universe_rejected.csv", "")
+        )
+        if (
+            not rejected_identity_path.is_file()
+            or not re.fullmatch(r"[0-9a-f]{64}", str(rejected_hash))
+            or _sha256_file(rejected_identity_path) != rejected_hash
+        ):
+            raise RuntimeError(
+                "official SEC rejected identity catalog is not hash-bound"
+            )
+        try:
+            rejected_identity_raw = pd.read_csv(
+                rejected_identity_path,
+                keep_default_na=False,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "official SEC rejected identity catalog is not readable CSV"
+            ) from exc
+        rejected_ciks = (
+            rejected_identity_raw.get("cik", pd.Series(dtype=str))
+            .astype(str)
+            .str.strip()
+        )
+        rejected_tickers = (
+            rejected_identity_raw.get("ticker", pd.Series(dtype=str))
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+        valid_rejected = (
+            rejected_ciks.str.fullmatch(r"[0-9]{1,10}").fillna(False)
+            & rejected_tickers.str.replace(r"[^A-Z0-9]", "", regex=True).ne("")
+        )
+        rejected_identity_universe = pd.DataFrame(
+            {
+                "security_id": [
+                    f"US-SEC-{cik.zfill(10)}-"
+                    f"{re.sub(r'[^A-Z0-9]', '', ticker)}"
+                    for cik, ticker in zip(
+                        rejected_ciks[valid_rejected],
+                        rejected_tickers[valid_rejected],
+                        strict=True,
+                    )
+                ],
+                "ticker": rejected_tickers[valid_rejected].to_numpy(),
+                "cik": rejected_ciks[valid_rejected].str.zfill(10).to_numpy(),
+                "exchange_family": rejected_identity_raw.loc[
+                    valid_rejected, "exchange"
+                ]
+                .astype(str)
+                .to_numpy(),
+                "identity_available_at": str(
+                    official_identity_evidence.get("identity_retrieved_at", "")
+                ),
+                "identity_source_url": str(
+                    official_identity_evidence.get(
+                        "identity_source_url", SEC_TICKER_EXCHANGE_URL
+                    )
+                ),
+                "issuer_share_class_count": 0,
+            }
+        )
+        official_identity_universe = pd.concat(
+            [official_identity_universe, rejected_identity_universe],
+            ignore_index=True,
+        )
+        if official_identity_universe["security_id"].duplicated().any():
+            raise RuntimeError("official SEC identity catalog contains duplicates")
+        official_identity_universe["issuer_share_class_count"] = (
+            official_identity_universe.groupby("cik")["security_id"]
+            .transform("nunique")
+            .astype(int)
+        )
 
     audited_evidence = validate_recovered_market_security_master(
         audited_run,
@@ -413,10 +496,19 @@ def main() -> int:
     for member_name, target_name in materialized_members.items():
         (output / target_name).write_bytes(audited_members[member_name])
     official_identity_target = None
+    official_identity_accepted_sha256 = ""
+    official_identity_rejected_sha256 = ""
     if args.official_identity_universe is not None:
         official_identity_target = output / "official_identity_universe.csv"
-        official_identity_target.write_bytes(
-            args.official_identity_universe.read_bytes()
+        official_identity_target.write_text(
+            official_identity_universe.to_csv(index=False),
+            encoding="utf-8",
+        )
+        official_identity_accepted_sha256 = _sha256_file(
+            args.official_identity_universe
+        )
+        official_identity_rejected_sha256 = _sha256_file(
+            args.official_identity_universe.parent / "current_universe_rejected.csv"
         )
     recovery = {
         "contract_version": 1,
@@ -454,6 +546,13 @@ def main() -> int:
             official_identity_target.relative_to(output).as_posix()
             if official_identity_target is not None
             else ""
+        ),
+        "official_identity_accepted_sha256": official_identity_accepted_sha256,
+        "official_identity_rejected_sha256": official_identity_rejected_sha256,
+        "official_identity_catalog_rows": (
+            len(official_identity_universe)
+            if official_identity_target is not None
+            else 0
         ),
         "recovered_current_feature_contract_version": (
             RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION
