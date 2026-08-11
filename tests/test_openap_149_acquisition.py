@@ -327,9 +327,10 @@ def test_all_31_frozen_market_routes_record_the_recovered_artifact_route() -> No
         "blocked_formula_fidelity"
     )
     assert additional.loc["BetaLiquidityPS", "current_remaining_blocker"] == (
-        "recovered_yfinance_48_shards_hash_bound_route_and_official_pastor_"
-        "stambaugh_formula_prepared_unexecuted_factor_latest_2025_12_not_current_"
-        "for_2026_07_historical_ticker_intervals_and_fidelity_pending"
+        "blocked_source_staleness;official_pastor_stambaugh_innovation_latest_"
+        "2025_12_not_current_for_2026_07_or_2026_08;openap93_2134_finite_rows_"
+        "are_stale_reference_only;current_factor_release_historical_ticker_"
+        "intervals_coverage_and_fidelity_pending"
     )
     assert selected["source_checked_at"].eq("2026-08-10").all()
     assert selected["strict_score_eligible"].astype(str).str.lower().eq(
