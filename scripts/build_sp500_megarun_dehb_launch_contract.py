@@ -7,15 +7,25 @@ import json
 import os
 from pathlib import Path
 
-from aurora.core.execution_policy import require_github_only_execution
 from aurora.infra.sp500_megarun.dehb_campaign_contract import (
     load_and_validate_campaign_contract,
 )
 from aurora.infra.sp500_megarun.dehb_launch_contract import build_launch_contract
 
 
+def _require_github_only_execution(operation: str) -> None:
+    """Keep this no-dependency preflight fail-closed outside GitHub Actions."""
+
+    if os.environ.get("GITHUB_ACTIONS", "").casefold() == "true":
+        return
+    raise RuntimeError(
+        "Run local bloqueado por politica GitHub-only de GTBI V7. "
+        f"Operacion: {operation}. Debe ejecutarse en GitHub Actions."
+    )
+
+
 def main() -> int:
-    require_github_only_execution("SP500_MEGARUN_DEHB_LAUNCH_PREFLIGHT")
+    _require_github_only_execution("SP500_MEGARUN_DEHB_LAUNCH_PREFLIGHT")
     parser = argparse.ArgumentParser()
     parser.add_argument("--campaign-contract", type=Path, required=True)
     parser.add_argument("--code-commit-sha", required=True)

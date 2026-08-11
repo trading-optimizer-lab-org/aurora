@@ -3,12 +3,45 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CAMPAIGN_PATH = ROOT / "config" / "sp500_megarun_dehb_campaign_v1.json"
+
+
+def test_launch_contract_script_bootstraps_without_numpy() -> None:
+    script = ROOT / "scripts" / "build_sp500_megarun_dehb_launch_contract.py"
+    probe = f"""
+import builtins
+import os
+import runpy
+import sys
+
+original_import = builtins.__import__
+
+def import_without_numpy(name, *args, **kwargs):
+    if name == "numpy" or name.startswith("numpy."):
+        raise ModuleNotFoundError("numpy deliberately unavailable")
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = import_without_numpy
+os.environ["GITHUB_ACTIONS"] = "true"
+sys.argv = [{str(script)!r}, "--help"]
+runpy.run_path({str(script)!r}, run_name="__main__")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def _canonical_hash(value: object) -> str:
