@@ -124,13 +124,36 @@ def _load_recovered_bundle(
         != recovery.get("source_output_manifest_sha256")
     ):
         raise RuntimeError("recovered current feature metadata is corrupt")
+    official_identity_path = _safe_recovered_path(
+        recovery_root,
+        recovery.get("official_identity_universe_relative_path"),
+    )
+    expected_official_hash = str(
+        recovery.get("official_identity_universe_sha256", "")
+    )
+    if (
+        not official_identity_path.is_file()
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_official_hash)
+        or _sha256_file(official_identity_path) != expected_official_hash
+    ):
+        raise RuntimeError("recovered official SEC identity universe is corrupt")
+    try:
+        official_identity_universe = pd.read_csv(
+            official_identity_path,
+            keep_default_na=False,
+        )
+    except Exception as exc:
+        raise RuntimeError("recovered official SEC identity universe is unreadable") from exc
     members = {
         "security_master.parquet": security_master_path.read_bytes(),
         "execution_summary.json": source_summary_path.read_bytes(),
         "output_manifest.csv": source_output_manifest_path.read_bytes(),
         **{name: path.read_bytes() for name, path in by_name.items()},
     }
-    bundle = validate_recovered_current_feature_members(members)
+    bundle = validate_recovered_current_feature_members(
+        members,
+        official_identity_universe=official_identity_universe,
+    )
     expected_evidence = recovery.get("recovered_current_feature_evidence")
     if not isinstance(expected_evidence, dict):
         raise RuntimeError("current feature recovery lacks validated evidence")

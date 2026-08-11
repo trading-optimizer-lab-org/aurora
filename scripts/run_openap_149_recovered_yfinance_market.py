@@ -153,8 +153,25 @@ def _validate_recovery(
             raise RuntimeError("recovered price shard hash evidence changed")
         shards.append(frame.loc[frame["date"].ge(history_start)].copy())
     security_master = pd.read_parquet(security_master_path)
+    official_identity_path = recovery_root / str(
+        recovery_manifest.get("official_identity_universe_relative_path", "")
+    )
+    expected_official_hash = str(
+        recovery_manifest.get("official_identity_universe_sha256", "")
+    )
+    if (
+        not official_identity_path.is_file()
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_official_hash)
+        or _sha256_file(official_identity_path) != expected_official_hash
+    ):
+        raise RuntimeError("recovered official SEC identity universe is corrupt")
+    official_identity_universe = pd.read_csv(
+        official_identity_path,
+        keep_default_na=False,
+    )
     security_master, _identity_normalisation = normalise_recovered_security_master(
-        security_master
+        security_master,
+        official_identity_universe=official_identity_universe,
     )
     return shards, security_master
 

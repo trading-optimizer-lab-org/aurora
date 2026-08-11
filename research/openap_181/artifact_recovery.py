@@ -44,6 +44,7 @@ _MARKET_SECURITY_MASTER_REQUIRED_COLUMNS = {
 
 def normalise_recovered_security_master(
     frame: pd.DataFrame,
+    official_identity_universe: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, str]:
     """Expose the canonical key for the pinned legacy market schema.
 
@@ -54,8 +55,7 @@ def normalise_recovered_security_master(
     """
 
     normalised = frame.copy()
-    if "security_id" in normalised.columns:
-        return normalised, "canonical_security_id_present"
+    has_security_id = "security_id" in normalised.columns
     missing = {"symbol", "cik"}.difference(normalised.columns)
     if missing:
         raise ValueError(
@@ -74,15 +74,109 @@ def normalise_recovered_security_master(
         raise ValueError(
             "legacy recovered security master has invalid symbol/CIK identity"
         )
-    normalised["security_id"] = [
-        f"US-SEC-{int(cik):010d}-{symbol}"
+    if not has_security_id:
+        normalised["security_id"] = [
+            f"US-SEC-{int(cik):010d}-{symbol}"
+            for cik, symbol in zip(ciks, symbols, strict=True)
+        ]
+        if normalised["security_id"].duplicated(keep=False).any():
+            raise ValueError(
+                "legacy recovered security master derives duplicate security_id values"
+            )
+    mode = (
+        "canonical_security_id_present"
+        if has_security_id
+        else "legacy_symbol_cik_to_zero_padded_security_id"
+    )
+    if official_identity_universe is None:
+        return normalised, mode
+
+    required_official = {
+        "security_id",
+        "ticker",
+        "cik",
+        "issuer_share_class_count",
+        "identity_available_at",
+        "identity_source_url",
+    }
+    missing_official = required_official.difference(official_identity_universe.columns)
+    if missing_official:
+        raise ValueError(
+            "official SEC identity universe lacks columns: "
+            f"{sorted(missing_official)}"
+        )
+    official = official_identity_universe.copy()
+    official_tickers = (
+        official["ticker"].fillna("").astype(str).str.strip().str.upper()
+    )
+    official_ciks = pd.to_numeric(official["cik"], errors="coerce")
+    official_valid = (
+        official_ciks.notna()
+        & official_ciks.mod(1).eq(0)
+        & official_ciks.ge(0)
+        & official_ciks.le(9999999999)
+        & official_tickers.ne("")
+    )
+    if (~official_valid).any():
+        raise ValueError(
+            "official SEC identity universe contains invalid CIK/ticker"
+        )
+    official_keys = [
+        (f"{int(cik):010d}", re.sub(r"[^A-Z0-9]", "", ticker))
+        for cik, ticker in zip(official_ciks, official_tickers, strict=True)
+    ]
+    expected_official_ids = [
+        f"US-SEC-{cik}-{ticker_key}" for cik, ticker_key in official_keys
+    ]
+    if (
+        official["security_id"].fillna("").astype(str).str.strip().tolist()
+        != expected_official_ids
+        or len(set(official_keys)) != len(official_keys)
+    ):
+        raise ValueError("official SEC identity universe is not canonical or unique")
+    official_by_key = {
+        key: row
+        for key, row in zip(
+            official_keys, official.to_dict(orient="records"), strict=True
+        )
+    }
+    market_keys = [
+        (
+            f"{int(cik):010d}",
+            re.sub(r"[^A-Z0-9]", "", symbol),
+        )
         for cik, symbol in zip(ciks, symbols, strict=True)
     ]
-    if normalised["security_id"].duplicated(keep=False).any():
+    matched = pd.Series(
+        [key in official_by_key for key in market_keys], index=normalised.index
+    )
+    ranked = pd.Series(True, index=normalised.index)
+    for column in (
+        "eligible_common_stock",
+        "issuer_primary_security",
+        "ranking_eligible",
+    ):
+        if column in normalised.columns:
+            ranked &= normalised[column].eq(True)  # noqa: E712
+    if (ranked & ~matched).any():
         raise ValueError(
-            "legacy recovered security master derives duplicate security_id values"
+            "ranked recovered market identity is absent from official SEC universe"
         )
-    return normalised, "legacy_symbol_cik_to_zero_padded_security_id"
+    matched_keys = [
+        key for key, is_match in zip(market_keys, matched, strict=True) if is_match
+    ]
+    for index, key in zip(
+        normalised.index[matched.to_numpy()], matched_keys, strict=True
+    ):
+        official_row = official_by_key[key]
+        normalised.at[index, "source_sec"] = "sec_company_tickers_exchange"
+        normalised.at[index, "retrieved_at_sec"] = official_row[
+            "identity_available_at"
+        ]
+        normalised.at[index, "issuer_share_class_count"] = official_row[
+            "issuer_share_class_count"
+        ]
+    return normalised, mode + "+official_sec_identity_rebind"
 
 
 class HttpRangeReader(RawIOBase):
@@ -377,6 +471,7 @@ def validate_recovered_market_security_master(
     members: Mapping[str, bytes],
     *,
     official_identity_evidence: Mapping[str, Any] | None = None,
+    official_identity_universe: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Validate the narrow identity input recovered from a successful base run."""
 
@@ -527,7 +622,8 @@ def validate_recovered_market_security_master(
     except Exception as exc:
         raise ValueError("recovered security master is not readable Parquet") from exc
     security_master, identity_normalisation = normalise_recovered_security_master(
-        security_master
+        security_master,
+        official_identity_universe=official_identity_universe,
     )
     missing_columns = _MARKET_SECURITY_MASTER_REQUIRED_COLUMNS.difference(
         security_master.columns
@@ -553,9 +649,17 @@ def validate_recovered_market_security_master(
         contract_errors.append("blank_security_id")
     if security_master["security_id"].duplicated(keep=False).any():
         contract_errors.append("duplicate_security_id")
+    official_scope = pd.Series(True, index=security_master.index)
+    if official_identity_universe is not None:
+        official_scope = (
+            security_master["eligible_common_stock"].eq(True)  # noqa: E712
+            & security_master["issuer_primary_security"].eq(True)  # noqa: E712
+            & security_master["ranking_eligible"].eq(True)  # noqa: E712
+        )
     non_official_source_count = int(
         (
-            ~security_master["source_sec"].fillna("").astype(str).eq(
+            official_scope
+            & ~security_master["source_sec"].fillna("").astype(str).eq(
                 "sec_company_tickers_exchange"
             )
         ).sum()

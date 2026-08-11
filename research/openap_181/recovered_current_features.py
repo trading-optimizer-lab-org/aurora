@@ -403,12 +403,19 @@ def _validate_security_master(
     *,
     summary: Mapping[str, Any],
     source_as_of: pd.Timestamp,
+    official_identity_universe: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    security, _identity_normalisation = normalise_recovered_security_master(frame)
+    security, _identity_normalisation = normalise_recovered_security_master(
+        frame,
+        official_identity_universe=official_identity_universe,
+    )
     _require_columns(security, _SECURITY_REQUIRED_COLUMNS, "security master")
     identity_available_at = pd.to_datetime(
         security["retrieved_at_sec"], errors="coerce", utc=True
     )
+    official_scope = pd.Series(True, index=security.index)
+    if official_identity_universe is not None:
+        official_scope = security["ranking_eligible"].eq(True)  # noqa: E712
     if (
         len(security) != int(summary["security_master_rows"])
         or security.empty
@@ -418,8 +425,11 @@ def _validate_security_master(
         or security["symbol"].astype(str).str.strip().eq("").any()
         or security["security_id"].duplicated(keep=False).any()
         or security["symbol"].duplicated(keep=False).any()
-        or not security["source_sec"].fillna("").astype(str).eq(
-            "sec_company_tickers_exchange"
+        or not (
+            ~official_scope
+            | security["source_sec"].fillna("").astype(str).eq(
+                "sec_company_tickers_exchange"
+            )
         ).all()
         or identity_available_at.isna().any()
         or identity_available_at.gt(source_as_of).any()
@@ -646,6 +656,8 @@ def _validate_coverage(
 
 def validate_recovered_current_feature_members(
     members: Mapping[str, bytes],
+    *,
+    official_identity_universe: pd.DataFrame | None = None,
 ) -> RecoveredCurrentFeatureBundle:
     """Validate the exact successful-run members needed for 17 reconstructions."""
 
@@ -655,6 +667,7 @@ def validate_recovered_current_feature_members(
         _read_parquet(members["security_master.parquet"], "security master"),
         summary=summary,
         source_as_of=source_as_of,
+        official_identity_universe=official_identity_universe,
     )
     ranked_symbols = set(
         security.loc[security["ranking_eligible"].eq(True), "symbol"].astype(str)  # noqa: E712

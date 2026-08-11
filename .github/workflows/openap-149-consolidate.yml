@@ -272,6 +272,8 @@ jobs:
             --audited-market-run-id "$AUDITED_MARKET_RUN_ID" \
             --sec-identity-evidence \
             inputs/exchange_switch_current/sec_listing_identity_manifest.json \
+            --official-identity-universe \
+            inputs/exchange_switch_current/current_universe_accepted.csv \
             --output-dir outputs/recovery
           curl --fail --location --silent --show-error \
             --output inputs/factors/ff3_daily.zip \

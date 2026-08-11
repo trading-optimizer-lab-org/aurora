@@ -195,6 +195,12 @@ def main() -> int:
         default=None,
         help="Optional official SEC identity manifest from a corroborating current batch",
     )
+    parser.add_argument(
+        "--official-identity-universe",
+        type=Path,
+        default=None,
+        help="Official SEC current_universe_accepted.csv from the corroborating batch",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     require_github_actions_or_explicit_local_permission(
@@ -232,6 +238,7 @@ def main() -> int:
         raise RuntimeError("audited metadata recovery exceeds the per-artifact limit")
     audited_members = read_zip_members(audited_reader, AUDITED_MEMBERS)
     official_identity_evidence = None
+    official_identity_universe = None
     if args.sec_identity_evidence is not None:
         try:
             official_identity_evidence = json.loads(
@@ -241,6 +248,31 @@ def main() -> int:
             raise RuntimeError("official SEC identity evidence is invalid JSON") from exc
         if not isinstance(official_identity_evidence, dict):
             raise RuntimeError("official SEC identity evidence must be a JSON object")
+        if args.official_identity_universe is None:
+            raise RuntimeError(
+                "official SEC identity universe is required with identity evidence"
+            )
+        expected_hash = (
+            official_identity_evidence.get("output_sha256", {})
+            .get("current_universe_accepted.csv", "")
+        )
+        if (
+            not args.official_identity_universe.is_file()
+            or not re.fullmatch(r"[0-9a-f]{64}", str(expected_hash))
+            or _sha256_file(args.official_identity_universe) != expected_hash
+        ):
+            raise RuntimeError("official SEC identity universe is not hash-bound")
+        try:
+            official_identity_universe = pd.read_csv(
+                args.official_identity_universe,
+                keep_default_na=False,
+            )
+        except Exception as exc:
+            raise RuntimeError("official SEC identity universe is not readable CSV") from exc
+        if len(official_identity_universe) != int(
+            official_identity_evidence.get("current_universe_rows", 0)
+        ):
+            raise RuntimeError("official SEC identity universe row count is inconsistent")
 
     audited_evidence = validate_recovered_market_security_master(
         audited_run,
@@ -248,6 +280,7 @@ def main() -> int:
         audited_artifact,
         audited_members,
         official_identity_evidence=official_identity_evidence,
+        official_identity_universe=official_identity_universe,
     )
     source_manifest = validate_yfinance_source_manifest(
         audited_members["yfinance_source_manifest.csv"]
@@ -283,7 +316,8 @@ def main() -> int:
         RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS,
     )
     current_feature_bundle = validate_recovered_current_feature_members(
-        {**audited_members, **derived_members}
+        {**audited_members, **derived_members},
+        official_identity_universe=official_identity_universe,
     )
 
     source_run, source_jobs, source_artifacts = _run_payloads(
@@ -375,6 +409,12 @@ def main() -> int:
     }
     for member_name, target_name in materialized_members.items():
         (output / target_name).write_bytes(audited_members[member_name])
+    official_identity_target = None
+    if args.official_identity_universe is not None:
+        official_identity_target = output / "official_identity_universe.csv"
+        official_identity_target.write_bytes(
+            args.official_identity_universe.read_bytes()
+        )
     recovery = {
         "contract_version": 1,
         **source_evidence,
@@ -402,6 +442,16 @@ def main() -> int:
         "source_output_manifest_sha256": sha256(
             audited_members["output_manifest.csv"]
         ).hexdigest(),
+        "official_identity_universe_sha256": (
+            _sha256_file(official_identity_target)
+            if official_identity_target is not None
+            else ""
+        ),
+        "official_identity_universe_relative_path": (
+            official_identity_target.relative_to(output).as_posix()
+            if official_identity_target is not None
+            else ""
+        ),
         "recovered_current_feature_contract_version": (
             RECOVERED_CURRENT_FEATURE_CONTRACT_VERSION
         ),
