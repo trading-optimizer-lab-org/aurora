@@ -159,8 +159,20 @@ def normalise_recovered_security_master(
         if column in normalised.columns:
             ranked &= normalised[column].eq(True)  # noqa: E712
     if (ranked & ~matched).any():
+        missing_ranked_keys = [
+            f"{cik}:{symbol}"
+            for (cik, symbol), is_ranked, is_matched in zip(
+                market_keys,
+                ranked,
+                matched,
+                strict=True,
+            )
+            if is_ranked and not is_matched
+        ]
         raise ValueError(
-            "ranked recovered market identity is absent from official SEC universe"
+            "ranked recovered market identity is absent from official SEC universe: "
+            f"count={len(missing_ranked_keys)} "
+            f"examples={missing_ranked_keys[:10]}"
         )
     matched_keys = [
         key for key, is_match in zip(market_keys, matched, strict=True) if is_match
