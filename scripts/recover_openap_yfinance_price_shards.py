@@ -150,6 +150,10 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _progress(message: str) -> None:
+    print(f"recovery_progress={message}", flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repository", required=True)
@@ -231,20 +235,26 @@ def main() -> int:
     if not token:
         raise RuntimeError("GITHUB_TOKEN is required for artifact recovery")
 
+    _progress("audited_run_metadata_start")
     audited_run, audited_jobs, audited_artifacts = _run_payloads(
         args.repository,
         args.audited_market_run_id,
         token,
     )
+    _progress("audited_run_metadata_complete")
     audited_artifact = _select_artifact(audited_artifacts, AUDITED_ARTIFACT_NAME)
+    _progress(f"audited_artifact_selected_{audited_artifact['id']}")
     audited_reader = _reader(args.repository, audited_artifact, token)
+    _progress("audited_reader_ready")
     audited_inspection = inspect_zip_members(audited_reader, AUDITED_MEMBERS)
+    _progress("audited_members_inspected")
     audited_declared_bytes = sum(
         int(row["compress_size"]) for row in audited_inspection.values()
     )
     if audited_declared_bytes > args.maximum_shard_compressed_bytes:
         raise RuntimeError("audited metadata recovery exceeds the per-artifact limit")
     audited_members = read_zip_members(audited_reader, AUDITED_MEMBERS)
+    _progress("audited_members_read")
     official_identity_evidence = None
     official_identity_universe = None
     if args.sec_identity_evidence is not None:
@@ -361,6 +371,7 @@ def main() -> int:
             .astype(int)
         )
 
+    _progress("audited_security_master_validation_start")
     audited_evidence = validate_recovered_market_security_master(
         audited_run,
         audited_jobs,
@@ -369,13 +380,18 @@ def main() -> int:
         official_identity_evidence=official_identity_evidence,
         official_identity_universe=official_identity_universe,
     )
+    _progress("audited_security_master_validation_complete")
+    _progress("audited_source_manifest_validation_start")
     source_manifest = validate_yfinance_source_manifest(
         audited_members["yfinance_source_manifest.csv"]
     )
+    _progress("audited_source_manifest_validation_complete")
+    _progress("derived_members_inspection_start")
     derived_inspection = inspect_zip_members(
         audited_reader,
         RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS,
     )
+    _progress("derived_members_inspection_complete")
     derived_compressed_bytes = sum(
         int(row["compress_size"]) for row in derived_inspection.values()
     )
@@ -398,20 +414,24 @@ def main() -> int:
         raise RuntimeError("derived recovery exceeds its compressed-byte limit")
     if derived_uncompressed_bytes > args.maximum_derived_total_uncompressed_bytes:
         raise RuntimeError("derived recovery exceeds its uncompressed-byte limit")
+    _progress("derived_members_read_start")
     derived_members = read_zip_members(
         audited_reader,
         RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS,
     )
+    _progress("derived_members_read_complete")
     current_feature_bundle = validate_recovered_current_feature_members(
         {**audited_members, **derived_members},
         official_identity_universe=official_identity_universe,
     )
 
+    _progress("source_run_metadata_start")
     source_run, source_jobs, source_artifacts = _run_payloads(
         args.repository,
         args.source_run_id,
         token,
     )
+    _progress("source_run_metadata_complete")
     source_evidence = validate_recovered_yfinance_source(
         source_run,
         source_jobs,
