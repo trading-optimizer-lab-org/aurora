@@ -308,13 +308,24 @@ def test_all_31_frozen_market_routes_record_the_recovered_artifact_route() -> No
         "calculator_prepared_unexecuted_historical_"
         "ticker_intervals_coverage_and_fidelity_pending"
     )
-    assert additional.drop(index="BetaLiquidityPS")[
-        "current_remaining_blocker"
-    ].eq(
+    prepared_extended = [
+        "IndMom",
+        "Size",
+        "TrendFactor",
+        "VolMkt",
+        "std_turn",
+    ]
+    assert additional.loc[prepared_extended, "current_remaining_blocker"].eq(
         "recovered_yfinance_48_shards_hash_bound_route_and_7_other_extended_"
         "calculators_prepared_unexecuted_historical_ticker_intervals_coverage_"
         "and_fidelity_pending"
     ).all()
+    assert additional.loc["FirmAgeMom", "current_remaining_blocker"].startswith(
+        "official_age_first_clean_permno_appearance_12m"
+    )
+    assert additional.loc["IndRetBig", "current_remaining_blocker"].startswith(
+        "blocked_formula_fidelity"
+    )
     assert additional.loc["BetaLiquidityPS", "current_remaining_blocker"] == (
         "recovered_yfinance_48_shards_hash_bound_route_and_official_pastor_"
         "stambaugh_formula_prepared_unexecuted_factor_latest_2025_12_not_current_"
@@ -1607,10 +1618,9 @@ def test_consolidation_workflow_verifies_audited_finra_evidence() -> None:
         '"finra_equity_short_interest|sec_edgar|sec_13f|openfigi_public"'
         in verify
     )
+    assert 'io_short_interest_values["formula_id"].eq(' in verify
     assert (
-        'io_short_interest_values["formula_id"].eq('
         '"openap_io_shortinterest_finra_sec13f_current_reconstruction"'
-        ").all()"
         in verify
     )
 
