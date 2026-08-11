@@ -656,6 +656,7 @@ jobs:
           print(json.dumps(summary, sort_keys=True))
           PY
       - name: Upload consolidated current evidence
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openap-149-current-consolidated-results

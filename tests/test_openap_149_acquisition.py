@@ -1663,6 +1663,8 @@ def test_consolidation_workflow_verifies_causal_firmage_evidence() -> None:
     assert 'oscore["current_value_count"] == 1100' in verify
     assert 'oscore["source_used"] == "recovered_openap93_oscore"' in verify
     assert '"recovered_openap93_oscore"' in verify
+    upload = steps["Upload consolidated current evidence"]
+    assert upload["if"] == "always()"
     for recovery_source in (
         "recovered_openap93_pricedelayrsq",
         "recovered_openap93_coskewacx",
