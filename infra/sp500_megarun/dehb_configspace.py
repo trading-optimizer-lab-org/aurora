@@ -7,12 +7,13 @@ import hashlib
 import importlib
 import json
 import math
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
-from aurora.infra.sp500_megarun.feature_contract import (
-    FeatureLaneSpec,
-    FrozenFeatureContract,
-)
+if TYPE_CHECKING:
+    from aurora.infra.sp500_megarun.feature_contract import (
+        FeatureLaneSpec,
+        FrozenFeatureContract,
+    )
 
 
 FIDELITIES = (1, 3, 9, 27)

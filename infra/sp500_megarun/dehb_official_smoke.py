@@ -10,9 +10,8 @@ import math
 import os
 from pathlib import Path
 import platform
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
-from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.dehb_configspace import (
     ETA,
     FIDELITIES,
@@ -22,10 +21,9 @@ from aurora.infra.sp500_megarun.dehb_configspace import (
     build_dehb_space_manifest,
     build_lane_configspace,
 )
-from aurora.infra.sp500_megarun.feature_contract import (
-    FrozenFeatureContract,
-    load_and_validate_feature_contract,
-)
+
+if TYPE_CHECKING:
+    from aurora.infra.sp500_megarun.feature_contract import FrozenFeatureContract
 
 
 class OfficialDehbSmokeError(RuntimeError):
@@ -401,6 +399,11 @@ def run_official_dehb_smoke(
     output_dir: Path,
 ) -> Mapping[str, Any]:
     """Exercise the official packages without loading any market snapshot."""
+
+    from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
+    from aurora.infra.sp500_megarun.feature_contract import (
+        load_and_validate_feature_contract,
+    )
 
     require_github_actions()
     require_empty_output_directory(output_dir)
