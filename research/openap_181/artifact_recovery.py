@@ -161,16 +161,17 @@ def normalise_recovered_security_master(
     source_sec = normalised.get(
         "source_sec",
         pd.Series("", index=normalised.index, dtype="object"),
-    ).fillna("").astype(str)
+    ).fillna("").astype(str).str.strip()
     unmatched_ranked = ranked & ~matched
     legacy_official_fallback = unmatched_ranked & source_sec.str.startswith(
         "sec_company_tickers"
     )
     if (unmatched_ranked & ~legacy_official_fallback).any():
         missing_ranked_keys = [
-            f"{cik}:{symbol}"
-            for (cik, symbol), is_ranked, is_matched in zip(
+            f"{cik}:{symbol}:source={source}"
+            for (cik, symbol), source, is_ranked, is_matched in zip(
                 market_keys,
+                source_sec,
                 ranked,
                 matched,
                 strict=True,
