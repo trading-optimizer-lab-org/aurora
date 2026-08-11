@@ -42,6 +42,49 @@ _MARKET_SECURITY_MASTER_REQUIRED_COLUMNS = {
 }
 
 
+def normalise_recovered_security_master(
+    frame: pd.DataFrame,
+) -> tuple[pd.DataFrame, str]:
+    """Expose the canonical key for the pinned legacy market schema.
+
+    The audited YFinance/SEC merge predates the OpenAP 181 recovery schema and
+    stores the same identity as ``symbol`` plus numeric ``cik``.  This helper
+    only adds the deterministic key; it never repairs a present key or
+    invents a ticker/CIK.
+    """
+
+    normalised = frame.copy()
+    if "security_id" in normalised.columns:
+        return normalised, "canonical_security_id_present"
+    missing = {"symbol", "cik"}.difference(normalised.columns)
+    if missing:
+        raise ValueError(
+            "recovered security master lacks canonical identity inputs: "
+            f"{sorted(missing)}"
+        )
+    symbols = normalised["symbol"].fillna("").astype(str).str.strip().str.upper()
+    ciks = pd.to_numeric(normalised["cik"], errors="coerce")
+    valid_ciks = (
+        ciks.notna()
+        & ciks.mod(1).eq(0)
+        & ciks.ge(0)
+        & ciks.le(9999999999)
+    )
+    if (~valid_ciks | symbols.eq("")).any():
+        raise ValueError(
+            "legacy recovered security master has invalid symbol/CIK identity"
+        )
+    normalised["security_id"] = [
+        f"US-SEC-{int(cik):010d}-{symbol}"
+        for cik, symbol in zip(ciks, symbols, strict=True)
+    ]
+    if normalised["security_id"].duplicated(keep=False).any():
+        raise ValueError(
+            "legacy recovered security master derives duplicate security_id values"
+        )
+    return normalised, "legacy_symbol_cik_to_zero_padded_security_id"
+
+
 class HttpRangeReader(RawIOBase):
     """Expose an exact byte-range callback as a seekable binary reader."""
 
@@ -483,6 +526,9 @@ def validate_recovered_market_security_master(
         )
     except Exception as exc:
         raise ValueError("recovered security master is not readable Parquet") from exc
+    security_master, identity_normalisation = normalise_recovered_security_master(
+        security_master
+    )
     missing_columns = _MARKET_SECURITY_MASTER_REQUIRED_COLUMNS.difference(
         security_master.columns
     )
@@ -526,6 +572,7 @@ def validate_recovered_market_security_master(
         "identity_source_mode": identity_source_mode,
         "identity_source_sha256": identity_source_sha256,
         "identity_evidence_implementation_sha": identity_evidence_implementation_sha,
+        "security_master_identity_normalisation": identity_normalisation,
         "locked_opened": False,
         "backtest_enabled": False,
         "validation_used_for_selection": False,
@@ -624,6 +671,7 @@ __all__ = [
     "MARKET_SECURITY_MASTER_RECOVERY_MEMBERS",
     "inspect_zip_members",
     "read_zip_members",
+    "normalise_recovered_security_master",
     "validate_recovered_openap_93",
     "validate_recovered_openap_93_institutional_inputs",
     "validate_recovered_market_security_master",

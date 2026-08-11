@@ -12,6 +12,9 @@ import pandas as pd
 
 from aurora.core.execution_policy import require_github_actions_or_explicit_local_permission
 from aurora.core.runtime_paths import base_data_dir
+from aurora.research.openap_181.artifact_recovery import (
+    normalise_recovered_security_master,
+)
 from aurora.research.openap_181.recovered_yfinance_market import (
     RECOVERED_YFINANCE_SOURCE_RUN_ID,
     build_recovered_yfinance_bars,
@@ -149,7 +152,11 @@ def _validate_recovery(
         if revalidated["prices_sha256"] != evidence.get("prices_sha256"):
             raise RuntimeError("recovered price shard hash evidence changed")
         shards.append(frame.loc[frame["date"].ge(history_start)].copy())
-    return shards, pd.read_parquet(security_master_path)
+    security_master = pd.read_parquet(security_master_path)
+    security_master, _identity_normalisation = normalise_recovered_security_master(
+        security_master
+    )
+    return shards, security_master
 
 
 def main() -> int:

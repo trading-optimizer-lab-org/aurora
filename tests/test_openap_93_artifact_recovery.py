@@ -386,3 +386,22 @@ def test_market_security_master_recovery_requires_success_and_safe_summary() -> 
     )
     assert corroborated["identity_source_sha256"] == "d" * 64
     assert corroborated["identity_evidence_implementation_sha"] == "c" * 40
+
+
+def test_legacy_market_security_master_derives_canonical_security_id() -> None:
+    module = _module()
+    legacy = pd.DataFrame(
+        [
+            {"symbol": "BRK-B", "cik": 1067983},
+            {"symbol": "AAPL", "cik": 320193},
+        ]
+    )
+
+    normalised, mode = module.normalise_recovered_security_master(legacy)
+
+    assert mode == "legacy_symbol_cik_to_zero_padded_security_id"
+    assert normalised["security_id"].tolist() == [
+        "US-SEC-0001067983-BRK-B",
+        "US-SEC-0000320193-AAPL",
+    ]
+    assert "security_id" not in legacy.columns

@@ -20,6 +20,10 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 
+from aurora.research.openap_181.artifact_recovery import (
+    normalise_recovered_security_master,
+)
+
 
 RECOVERED_CURRENT_FEATURE_SOURCE_RUN_ID = 31_388_342_037
 RECOVERED_CURRENT_FEATURE_SOURCE_URL = (
@@ -400,8 +404,8 @@ def _validate_security_master(
     summary: Mapping[str, Any],
     source_as_of: pd.Timestamp,
 ) -> pd.DataFrame:
-    _require_columns(frame, _SECURITY_REQUIRED_COLUMNS, "security master")
-    security = frame.copy()
+    security, _identity_normalisation = normalise_recovered_security_master(frame)
+    _require_columns(security, _SECURITY_REQUIRED_COLUMNS, "security master")
     identity_available_at = pd.to_datetime(
         security["retrieved_at_sec"], errors="coerce", utc=True
     )
