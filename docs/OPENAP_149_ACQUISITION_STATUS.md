@@ -1114,3 +1114,18 @@ del lago SEC, no al calculador actual. Sin un nuevo artefacto de shards o sin
 autorizar el workflow que lo produzca, las senales SEC pendientes no pueden
 calcularse de forma reproducible. Esta aclaracion no cambia los recuentos,
 la matriz ni el score estricto.
+
+## Discrepancia pendiente de regeneracion de la matriz
+
+La comprobacion de lectura en el HEAD actual confirma que
+`docs/OPENAP_149_ACQUISITION_MATRIX.csv` conserva 149 filas y 149 senales
+unicas, pero aun declara 57 senales con datos y 53 con valor calculado. El
+estado fail-closed demostrado arriba declara 56 y 50, respectivamente, con
+18 reconstruidas, 99 bloqueadas y 96.814 filas empresa-senal.
+
+La matriz coincide con el consolidado historico `31353944479` y no con la
+reconciliacion posterior que rechazo filas `current_usable=False`. Por ello no
+se debe usar esta copia CSV como evidencia actual ni corregirla a mano: debe
+regenerarse desde el runner de adquisicion/consolidacion autorizado, junto con
+sus hashes y manifiestos. Mientras no se ejecute ese runner, el estado textual
+y el manifiesto fail-closed son la referencia de los recuentos 56/50/18/99.
