@@ -1498,6 +1498,38 @@ def test_consolidation_workflow_wires_both_recovered_batches() -> None:
     assert "not strict_eligible.any()" in verify
 
 
+def test_consolidation_workflow_recovers_missing_batches_in_authorized_run() -> None:
+    workflow_path = ROOT / ".github" / "workflows" / "openap-149-consolidate.yml"
+    workflow = yaml.load(
+        workflow_path.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+    dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert dispatch_inputs["yfinance_source_run_id"]["default"] == "31256096194"
+    assert dispatch_inputs["audited_market_run_id"]["default"] == "31270341796"
+    steps = {
+        step["name"]: step
+        for step in workflow["jobs"]["consolidate"]["steps"]
+        if "name" in step
+    }
+    for step_name, step_id in (
+        ("Download recovered YFinance market values", "recovered_market_download"),
+        ("Download recovered accounting feature values", "recovered_features_download"),
+    ):
+        download = steps[step_name]
+        assert download["id"] == step_id
+        assert download["continue-on-error"] == "true"
+    fallback = steps["Recover missing current free inputs in this run"]
+    assert "recovered_market_download.outcome" in fallback["if"]
+    assert "recovered_features_download.outcome" in fallback["if"]
+    assert "recover_openap_yfinance_price_shards.py" in fallback["run"]
+    assert "run_openap_149_recovered_yfinance_market.py" in fallback["run"]
+    assert "run_openap_149_recovered_current_features.py" in fallback["run"]
+    command = steps["Consolidate latest current evidence"]["run"]
+    assert '--recovered-current-run-url "$RECOVERED_CURRENT_RUN_URL"' in command
+
+
 def test_consolidation_workflow_downloads_and_verifies_realestate_evidence() -> None:
     workflow_path = ROOT / ".github" / "workflows" / "openap-149-consolidate.yml"
     workflow = yaml.load(

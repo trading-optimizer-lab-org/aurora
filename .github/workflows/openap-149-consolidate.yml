@@ -94,6 +94,16 @@ on:
         description: Run containing both hash-bound recovered current batches
         required: true
         type: string
+      yfinance_source_run_id:
+        description: Pinned run containing the 48 successful YFinance artifacts
+        required: true
+        default: "31256096194"
+        type: string
+      audited_market_run_id:
+        description: Pinned successful merge containing audited source hashes
+        required: true
+        default: "31270341796"
+        type: string
       formula_evidence_run_id:
         description: Successful run containing the pinned formula inventory
         required: true
@@ -156,6 +166,7 @@ jobs:
       SOURCE_SHA: ${{ inputs.source_sha }}
       AU_DATA_DIR: ${{ github.workspace }}/outputs
       OUTPUT_ARTIFACT: openap-149-current-consolidated-results
+      RECOVERED_CURRENT_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ inputs.recovered_current_run_id }}
     steps:
       - name: Checkout exact implementation revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -167,7 +178,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install project
-        run: python -m pip install --disable-pip-version-check -e .
+        run: python -m pip install --disable-pip-version-check -e . pyarrow
       - name: Download fresh OpenAP 93 current values
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -225,6 +236,8 @@ jobs:
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
       - name: Download recovered YFinance market values
+        id: recovered_market_download
+        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-149-recovered-yfinance-market-results
@@ -233,6 +246,8 @@ jobs:
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
       - name: Download recovered accounting feature values
+        id: recovered_features_download
+        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-149-recovered-current-feature-results
@@ -240,6 +255,44 @@ jobs:
           run-id: ${{ inputs.recovered_current_run_id }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
+      - name: Recover missing current free inputs in this run
+        if: ${{ steps.recovered_market_download.outcome != 'success' || steps.recovered_features_download.outcome != 'success' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          YFINANCE_SOURCE_RUN_ID: ${{ inputs.yfinance_source_run_id }}
+          AUDITED_MARKET_RUN_ID: ${{ inputs.audited_market_run_id }}
+        run: |
+          mkdir -p outputs/recovery inputs/factors inputs/recovered_market inputs/recovered_current_features
+          python scripts/recover_openap_yfinance_price_shards.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --source-run-id "$YFINANCE_SOURCE_RUN_ID" \
+            --audited-market-run-id "$AUDITED_MARKET_RUN_ID" \
+            --output-dir outputs/recovery
+          curl --fail --location --silent --show-error \
+            --output inputs/factors/ff3_daily.zip \
+            https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip
+          curl --fail --location --silent --show-error \
+            --output inputs/factors/ff3_monthly.zip \
+            https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_CSV.zip
+          curl --fail --location --silent --show-error \
+            --output inputs/factors/pastor_stambaugh.txt \
+            https://faculty.chicagobooth.edu/-/media/faculty/lubos-pastor/data/liq_data_1962_2025.txt
+          test -s inputs/factors/ff3_daily.zip
+          test -s inputs/factors/ff3_monthly.zip
+          test -s inputs/factors/pastor_stambaugh.txt
+          python scripts/run_openap_149_recovered_yfinance_market.py \
+            --recovery-root outputs/recovery \
+            --formation-at "2026-08-09T23:59:59Z" \
+            --implementation-sha "$SOURCE_SHA" \
+            --ff3-daily-zip inputs/factors/ff3_daily.zip \
+            --ff3-monthly-zip inputs/factors/ff3_monthly.zip \
+            --pastor-stambaugh-file inputs/factors/pastor_stambaugh.txt \
+            --output-dir inputs/recovered_market
+          python scripts/run_openap_149_recovered_current_features.py \
+            --recovery-root outputs/recovery \
+            --implementation-sha "$SOURCE_SHA" \
+            --output-dir inputs/recovered_current_features
+          echo "RECOVERED_CURRENT_RUN_URL=https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
       - name: Download pinned official formula evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -271,7 +324,7 @@ jobs:
             --exchange-switch-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.exchange_switch_current_run_id }}" \
             --field-ritter-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.field_ritter_current_run_id }}" \
             --spinoff-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.spinoff_current_run_id }}" \
-            --recovered-current-run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.recovered_current_run_id }}" \
+            --recovered-current-run-url "$RECOVERED_CURRENT_RUN_URL" \
             --evidence-run-url "$run_url" \
             --evidence-artifact "$OUTPUT_ARTIFACT" \
             --output-dir openap_149_current_consolidated
