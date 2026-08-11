@@ -330,7 +330,9 @@ def _validate_current_rows(frame: pd.DataFrame) -> pd.DataFrame:
     for column in ("formation_at", "period_end", "filed_at", "available_at"):
         if column not in rows:
             rows[column] = pd.NaT
-        rows[column] = pd.to_datetime(rows[column], errors="coerce", utc=True)
+        rows[column] = pd.to_datetime(
+            rows[column], format="mixed", errors="coerce", utc=True
+        )
     rows["value"] = pd.to_numeric(rows["value"], errors="coerce")
     rows["_contract_invalid_reason"] = ""
     finite = rows["value"].notna() & np.isfinite(rows["value"])
@@ -397,7 +399,9 @@ def _best_fidelity(values: pd.Series) -> str:
 
 
 def _iso_max(values: pd.Series) -> str:
-    parsed = pd.to_datetime(values, errors="coerce", utc=True).dropna()
+    parsed = pd.to_datetime(
+        values, format="mixed", errors="coerce", utc=True
+    ).dropna()
     if parsed.empty:
         return ""
     return parsed.max().isoformat()
@@ -428,7 +432,10 @@ def merge_current_evidence(frames: list[pd.DataFrame]) -> pd.DataFrame:
         validated["_batch_index"] = batch_index
         if "retrieved_at" in validated:
             validated["_retrieved_at"] = pd.to_datetime(
-                validated["retrieved_at"], errors="coerce", utc=True
+                validated["retrieved_at"],
+                format="mixed",
+                errors="coerce",
+                utc=True,
             )
         else:
             validated["_retrieved_at"] = pd.NaT
@@ -468,7 +475,7 @@ def merge_current_evidence(frames: list[pd.DataFrame]) -> pd.DataFrame:
     for column in ("formation_at", "period_end", "filed_at", "available_at"):
         if column in combined:
             combined[column] = pd.to_datetime(
-                combined[column], errors="coerce", utc=True
+                combined[column], format="mixed", errors="coerce", utc=True
             ).map(lambda value: value.isoformat() if pd.notna(value) else "")
     return combined.sort_values(["signal", "security_id"]).reset_index(drop=True)
 
@@ -728,9 +735,9 @@ def build_acquisition_matrix(
             values[column] = pd.NA
     values = values[list(VALUE_COLUMNS)].sort_values(["signal", "security_id"])
     for column in ("formation_at", "period_end", "filed_at", "available_at"):
-        values[column] = pd.to_datetime(values[column], errors="coerce", utc=True).map(
-            lambda value: value.isoformat() if pd.notna(value) else ""
-        )
+        values[column] = pd.to_datetime(
+            values[column], format="mixed", errors="coerce", utc=True
+        ).map(lambda value: value.isoformat() if pd.notna(value) else "")
     return matrix.reset_index(drop=True), values.reset_index(drop=True)
 
 
@@ -763,6 +770,7 @@ def write_acquisition_outputs(
     blocked_count = int((~matrix["current_value_calculated"].map(_as_bool)).sum())
     formation_times = pd.to_datetime(
         values.get("formation_at", pd.Series(index=values.index, dtype="string")),
+        format="mixed",
         errors="coerce",
         utc=True,
     ).dropna()

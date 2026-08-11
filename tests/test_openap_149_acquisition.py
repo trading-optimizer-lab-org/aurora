@@ -693,6 +693,24 @@ def test_acquisition_status_discloses_latest_formation_date_without_trailing_spa
     assert not any(line.endswith(" ") for line in status.splitlines())
 
 
+def test_acquisition_accepts_mixed_current_timestamp_formats() -> None:
+    module = _module()
+    current = _current_rows().iloc[[0, 1]].copy()
+    current.loc[current["security_id"].eq("cik:2"), "formation_at"] = (
+        "2026-08-09T00:00:00+00:00"
+    )
+    formulas = pd.DataFrame([{"signal": "Cash", "formula_sha256": "a" * 64}])
+
+    matrix, values = module.build_acquisition_matrix(
+        _routes().iloc[[0]],
+        current,
+        formula_inventory=formulas,
+    )
+
+    assert matrix.iloc[0]["status"] == "current_signal_computed"
+    assert len(values) == 2
+
+
 def test_current_evidence_merge_uses_only_latest_complete_signal_formation() -> None:
     old = _current_rows().iloc[[0]].copy()
     old.loc[:, "formation_at"] = "2026-08-05"
