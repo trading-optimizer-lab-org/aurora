@@ -702,6 +702,46 @@ ultimo mes cubierto, no llamarse valor actual para la fecha maxima del lote.
 El bloqueo es de actualidad y despues quedan por verificar identidad,
 cobertura y equivalencia de retornos.
 
+`PatentsRD` requiere en el codigo fijado `PatentDataProcessed.npat`,
+`xrd`/`ceq`/SIC de la tabla contable y la historia de seis anos de R&D para
+formar `npat / (xrd[t-2] + .8*xrd[t-3] + .6*xrd[t-4] + .4*xrd[t-5] +
+.2*xrd[t-6])`. PatentsView ofrece datos publicos mas recientes, pero el
+puente causal patente--emisor--GVKEY/PERMNO y la cobertura de R&D no son una
+tabla oficial equivalente; el resultado solo podria ser reconstruido y no
+estricto hasta demostrar esa identidad.
+
+`IndRetBig` no puede sustituirse por un retorno de cartera industrial ya
+publicado. El codigo oficial convierte SIC a FF48, ordena la capitalizacion
+dentro de industria y mes, promedia el retorno de las empresas por encima del
+percentil 70 y deja la salida ausente para esas empresas grandes. Los valores
+OpenAP93 rechazados usaban una industria Yahoo y el calculador recuperado usa
+SIC2, por lo que la ruta gratuita sigue bloqueada por fidelidad de formula
+hasta fijar el mapa FF48 y la identidad historica.
+
+`Frontier` combina `log(mve_permco)` con siete variables contables, dummies
+FF48 y una regresion rolling de 60 meses; despues emite el residual con signo
+invertido solo con patrimonio positivo. SEC y mercado pueden suministrar los
+inputs, pero los ocho valores finitos del artefacto previo usaban
+`available_at` del filing y del periodo en lugar del maximo causal de todos
+los inputs, incluida la fecha del precio. Se mantienen como referencia
+rechazada hasta rehacer el contrato temporal.
+
+`OrgCap` tiene inputs gratuitos plausibles: `xsga` desde SEC y deflactor GNP
+desde FRED. La formula oficial inicializa `4*xsga`, recurre con depreciacion
+del 15 %, conserva solo cierres de diciembre, excluye financieros y
+estandariza contra FF17. El calculador actual no aplica simultaneamente el
+filtro de diciembre y usa SIC2; la historia contable continua y la identidad
+point-in-time siguen pendientes, por lo que no hay valor actual estricto.
+
+Las tres senales `zerotrade1M`, `zerotrade6M` y `zerotrade12M` requieren por
+mes los dias sin negociacion, el turnover `vol/shrout`, la constante
+`48*10^5` y el ajuste `21 / dias_de_negociacion`, seguido de la media de 1,
+6 o 12 meses. Un volumen cero en un proveedor OHLCV no demuestra por si solo
+un dia sin negociacion y el calculador recuperado usa ventanas de sesiones
+21/126/252 sin el ajuste de turnover ni el desplazamiento de un mes. La
+fuente gratuita de precios puede ayudar, pero la formula e identidad PIT
+siguen sin estar validadas.
+
 La reauditoria de los numeros finitos no utilizables del artefacto OpenAP93
 rechaza otras tres recuperaciones aparentes:
 

@@ -358,6 +358,21 @@ Dos auditorias del resto fijan el siguiente trabajo concreto:
   oficial gratuita de Pastor llega a diciembre de 2025: sirve para historia,
   pero no para el valor actual de julio/agosto de 2026. Sigue bloqueada por
   actualidad, identidad y cobertura pendiente.
+- `PatentsRD` requiere patentes causales, `xrd` y seis anos de historia de R&D;
+  PatentsView es gratuito, pero el puente patente-emisor-GVKEY/PERMNO y la
+  cobertura completa no estan demostrados.
+- `IndRetBig` exige FF48, ranking de capitalizacion por industria-mes y media
+  de retornos del 30 % superior. Las salidas anteriores usaban Yahoo o SIC2,
+  asi que permanecen bloqueadas por fidelidad de formula.
+- `Frontier` exige regresion rolling de 60 meses con siete inputs contables,
+  dummies FF48 y `available_at` causal maximo de contabilidad y precio. Los
+  ocho valores finitos anteriores no cumplen ese contrato temporal.
+- `OrgCap` tiene SEC y FRED gratuitos, pero falta historia continua de
+  `xsga`, el filtro oficial de diciembre y la estandarizacion FF17; el
+  calculador actual usa SIC2 y no es aceptable.
+- `zerotrade1M`, `zerotrade6M` y `zerotrade12M` requieren dias sin negociacion,
+  turnover y el ajuste `21 / dias_de_negociacion`; las ventanas basadas solo
+  en volumen cero no reproducen la formula.
 
 ## Diecisiete senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 
