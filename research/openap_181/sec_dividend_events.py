@@ -141,6 +141,11 @@ def _normalise_dividend_facts(
         & frame["unit"].isin({"usd/share", "usd/shares"})
         & frame["period_start"].notna()
         & frame["period_end"].notna()
+        # A fact can be published before its labelled period in malformed,
+        # projected, or otherwise non-historical SEC contexts.  It must not
+        # enter a point-in-time event window merely because its filing is old
+        # enough; the observed period itself must also be at or before cutoff.
+        & frame["period_end"].le(cutoff)
         & frame["filed_at"].notna()
         & frame["available_at"].notna()
         & frame["available_at"].le(cutoff)

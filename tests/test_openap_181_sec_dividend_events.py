@@ -177,6 +177,28 @@ def test_sec_divomit_emits_positive_for_six_regular_quarters_then_zero() -> None
     assert result["formula_sha256"] == DIVOMIT_FORMULA_SHA256
 
 
+def test_sec_divomit_rejects_future_period_even_if_filed_before_formation() -> None:
+    facts = _omission_facts().iloc[:-1].copy()
+    future = _omission_facts().iloc[-1].copy()
+    future["period_start"] = "2026-07-01"
+    future["period_end"] = "2026-09-30"
+    future["filed"] = "2026-08-06"
+    future["available_at"] = "2026-08-06T21:18:06Z"
+    future["value"] = 0.0
+    facts = pd.concat([facts, pd.DataFrame([future])], ignore_index=True)
+
+    result = calculate_sec_divomit_current(
+        facts,
+        _status(),
+        formation_at=FORMATION_AT,
+        retrieved_at=RETRIEVED_AT,
+    ).iloc[0]
+
+    assert pd.isna(result["value"])
+    assert not result["current_usable"]
+    assert result["reason_if_missing"].startswith("no_complete_6q_regular")
+
+
 def test_sec_divomit_fails_closed_on_missing_regular_quarter() -> None:
     facts = _omission_facts().drop(index=2).reset_index(drop=True)
     result = calculate_sec_divomit_current(
