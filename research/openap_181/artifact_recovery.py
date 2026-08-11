@@ -681,33 +681,32 @@ def validate_recovered_market_security_master(
             & security_master["issuer_primary_security"].eq(True)  # noqa: E712
             & security_master["ranking_eligible"].eq(True)  # noqa: E712
         )
+    source_sec = (
+        security_master["source_sec"].fillna("").astype(str).str.strip()
+    )
+    legacy_fallback_scope = official_scope & source_sec.eq(
+        LEGACY_SEC_IDENTITY_SOURCE
+    )
+    identity_required_scope = official_scope & ~legacy_fallback_scope
     non_official_source_count = int(
         (
             official_scope
             & ~(
-                security_master["source_sec"]
-                .fillna("")
-                .astype(str)
-                .str.strip()
-                .str.startswith("sec_company_tickers")
-                | security_master["source_sec"]
-                .fillna("")
-                .astype(str)
-                .str.strip()
-                .eq(LEGACY_SEC_IDENTITY_SOURCE)
+                source_sec.str.startswith("sec_company_tickers")
+                | source_sec.eq(LEGACY_SEC_IDENTITY_SOURCE)
             )
         ).sum()
     )
     if non_official_source_count:
         contract_errors.append(f"non_official_source:{non_official_source_count}")
     invalid_identity_count = int(
-        (official_scope & identity_retrieved_at.isna()).sum()
+        (identity_required_scope & identity_retrieved_at.isna()).sum()
     )
     if invalid_identity_count:
         contract_errors.append(f"invalid_retrieved_at_sec:{invalid_identity_count}")
     invalid_share_class_count = int(
         (
-            official_scope
+            identity_required_scope
             & (
                 share_class_count.isna()
                 | share_class_count.lt(1)

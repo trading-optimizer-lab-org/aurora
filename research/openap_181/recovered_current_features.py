@@ -417,6 +417,11 @@ def _validate_security_master(
     official_scope = pd.Series(True, index=security.index)
     if official_identity_universe is not None:
         official_scope = security["ranking_eligible"].eq(True)  # noqa: E712
+    source_sec = security["source_sec"].fillna("").astype(str).str.strip()
+    legacy_fallback_scope = official_scope & source_sec.eq(
+        LEGACY_SEC_IDENTITY_SOURCE
+    )
+    identity_required_scope = official_scope & ~legacy_fallback_scope
     if (
         len(security) != int(summary["security_master_rows"])
         or security.empty
@@ -429,20 +434,12 @@ def _validate_security_master(
         or not (
             ~official_scope
             | (
-                security["source_sec"]
-                .fillna("")
-                .astype(str)
-                .str.strip()
-                .str.startswith("sec_company_tickers")
-                | security["source_sec"]
-                .fillna("")
-                .astype(str)
-                .str.strip()
-                .eq(LEGACY_SEC_IDENTITY_SOURCE)
+                source_sec.str.startswith("sec_company_tickers")
+                | source_sec.eq(LEGACY_SEC_IDENTITY_SOURCE)
             )
         ).all()
-        or identity_available_at.loc[official_scope].isna().any()
-        or identity_available_at.loc[official_scope].gt(source_as_of).any()
+        or identity_available_at.loc[identity_required_scope].isna().any()
+        or identity_available_at.loc[identity_required_scope].gt(source_as_of).any()
     ):
         raise ValueError("security master identity contract is invalid")
     security["_normalised_cik"] = security["cik"].map(_normalise_cik)
@@ -902,6 +899,8 @@ def build_recovered_current_feature_observations(
             reason = "sec_available_at_missing"
         elif sec_available_at > source_as_of:
             reason = "sec_lookahead"
+        elif pd.isna(identity["_identity_available_at"]):
+            reason = "identity_available_at_missing"
         elif pd.isna(period_end):
             reason = "effective_period_missing"
         elif pd.isna(filed_at):
