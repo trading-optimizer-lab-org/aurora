@@ -17,6 +17,7 @@ from aurora.core.execution_policy import require_github_actions_or_explicit_loca
 from aurora.core.runtime_paths import base_data_dir
 from aurora.research.openap_181.artifact_recovery import (
     HttpRangeReader,
+    SEC_TICKER_EXCHANGE_URL,
     inspect_zip_members,
     read_zip_members,
     validate_recovered_market_security_master,
