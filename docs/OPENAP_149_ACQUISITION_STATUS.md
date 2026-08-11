@@ -1096,3 +1096,21 @@ observaciones y la formula
 demasiado baja y la fidelidad Thomson/CRSP no esta demostrada: sigue sin ser
 estricta. El lote de origen no se ha consolidado, por lo que tampoco cambia los
 recuentos globales demostrados.
+
+## Estado actual del transporte SEC
+
+La rama autoritativa actual no descarga `companyfacts.zip` durante el calculo
+de CompanyFacts. El workflow
+`.github/workflows/openap-149-sec-companyfacts.yml` recibe un
+`sec_artifact_run_id` y descarga los artefactos `openap-sec-repair-lake-*`;
+`scripts/run_openap_149_sec_companyfacts.py` solo acepta los 48 shards
+verificados (`sec_companyfacts_*.parquet`, `sec_submissions_*.parquet`,
+`sec_status_*.csv` y sus resumenes). No existe en esta rama una funcion
+`_download_sec_archive` que pueda corregirse localmente para resolver el 403
+historico del archivo bulk.
+
+Por tanto, el 403 documentado en el handoff pertenece a la adquisicion previa
+del lago SEC, no al calculador actual. Sin un nuevo artefacto de shards o sin
+autorizar el workflow que lo produzca, las senales SEC pendientes no pueden
+calcularse de forma reproducible. Esta aclaracion no cambia los recuentos,
+la matriz ni el score estricto.
