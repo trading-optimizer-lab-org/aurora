@@ -4,10 +4,12 @@ import json
 
 import numpy as np
 import pandas as pd
+import aurora.infra.sp500_search_method_benchmark.benchmark as benchmark_module
 from aurora.infra.sp500_search_method_benchmark.benchmark import (
     METHODS,
     SEEDS,
     _genome_canonical,
+    _static_proposals,
     _warm_start,
     canonical_hash,
     parse_causal_dates,
@@ -29,10 +31,54 @@ def test_numeric_dates_require_explicit_unit_and_preserve_expected_boundary():
         raise AssertionError("numeric dates must not be guessed")
 
 
+def test_prepare_uses_explicit_fast_source_path_and_date_firewall(monkeypatch, tmp_path):
+    calls = {}
+
+    def fake_prepare_market_snapshot(root, package, **kwargs):
+        calls.update(kwargs)
+        index = pd.bdate_range("1993-01-22", "2010-12-31")
+        close = pd.Series(100.0, index=index)
+        prices = pd.DataFrame(
+            {
+                "open": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "volume": 100_000.0,
+            },
+            index=index,
+        )
+        ledger, _ = build_total_return_ledger(prices)
+        write_fixture_snapshot(root, ledger, split="train")
+        return {
+            "minimum_date": "1993-01-22",
+            "maximum_date": "2010-12-31",
+            "locked_opened": False,
+            "receipts": [],
+        }
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(benchmark_module, "prepare_market_snapshot", fake_prepare_market_snapshot)
+    benchmark_module.prepare_benchmark_data(tmp_path / "prepared")
+
+    manifest = json.loads((tmp_path / "prepared" / "benchmark_dataset_manifest.json").read_text())
+    assert calls["skip_independent_price_sources"] is True
+    assert manifest["date_parser"] == "strict_explicit_numeric_unit_seconds"
+    assert manifest["locked_start_unopened"] == "2021-01-01"
+    assert manifest["loaded_last_date"] == "2010-12-31"
+
+
 def test_common_warm_start_is_identical_for_all_methods():
     warm = _warm_start(SEEDS[0])
     assert warm.shape == (32, 15)
     assert all(np.array_equal(warm, _warm_start(SEEDS[0])) for _ in METHODS)
+
+
+def test_differential_evolution_proposals_are_deterministic_and_use_the_full_budget():
+    first = _static_proposals("M4_DIFFERENTIAL_EVOLUTION", SEEDS[0])
+    second = _static_proposals("M4_DIFFERENTIAL_EVOLUTION", SEEDS[0])
+    assert first.shape == (256, 15)
+    assert np.array_equal(first, second)
 
 
 def test_methods_share_the_same_representable_space():

@@ -1,0 +1,1016 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
+from aurora.infra.sp500_megarun.feature_contract import load_and_validate_feature_contract
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DATA_CONTRACT_PATH = REPO_ROOT / "config" / "sp500_megarun_free_data_240.json"
+FEATURE_CONTRACT_PATH = REPO_ROOT / "config" / "sp500_megarun_feature_contract_240.json"
+
+
+class _FakeCategoricalHyperparameter:
+    def __init__(
+        self,
+        name: str,
+        *,
+        choices: tuple[object, ...],
+        default_value: object,
+    ) -> None:
+        self.name = name
+        self.choices = tuple(choices)
+        self.default_value = default_value
+
+
+class _FakeForbiddenEqualsClause:
+    def __init__(self, hyperparameter: _FakeCategoricalHyperparameter, value: object) -> None:
+        self.hyperparameter = hyperparameter
+        self.value = value
+
+
+class _FakeForbiddenAndConjunction:
+    def __init__(self, *clauses: _FakeForbiddenEqualsClause) -> None:
+        self.clauses = clauses
+
+
+class _FakeConfigurationSpace:
+    def __init__(self, *, seed: int) -> None:
+        self.seed = seed
+        self.hyperparameters: list[_FakeCategoricalHyperparameter] = []
+        self.forbidden_clauses: list[_FakeForbiddenAndConjunction] = []
+
+    def add(self, items: list[object]) -> None:
+        for item in items:
+            if isinstance(item, _FakeCategoricalHyperparameter):
+                self.hyperparameters.append(item)
+            elif isinstance(item, _FakeForbiddenAndConjunction):
+                self.forbidden_clauses.append(item)
+            else:
+                raise TypeError(f"unsupported fake ConfigSpace item: {item!r}")
+
+    def __getitem__(self, name: str) -> _FakeCategoricalHyperparameter:
+        return next(item for item in self.hyperparameters if item.name == name)
+
+
+FAKE_CONFIGSPACE = SimpleNamespace(
+    ConfigurationSpace=_FakeConfigurationSpace,
+    CategoricalHyperparameter=_FakeCategoricalHyperparameter,
+    ForbiddenEqualsClause=_FakeForbiddenEqualsClause,
+    ForbiddenAndConjunction=_FakeForbiddenAndConjunction,
+)
+
+
+@pytest.fixture(scope="module")
+def feature_contract():
+    data_contract = load_and_validate_contract(DATA_CONTRACT_PATH)
+    return load_and_validate_feature_contract(FEATURE_CONTRACT_PATH, data_contract)
+
+
+def test_builds_all_240_exact_discrete_configspaces(feature_contract) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_all_lane_configspaces
+
+    spaces = build_all_lane_configspaces(
+        feature_contract,
+        base_seed=7300,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    assert [row.lane_id for row in spaces] == [f"F{index:03d}" for index in range(1, 241)]
+    assert all(row.seed == 7300 + index for index, row in enumerate(spaces))
+    assert all(row.canonical_sha256 == feature_contract.lanes[index].canonical_sha256 for index, row in enumerate(spaces))
+    assert all(row.dimensions for row in spaces)
+    for row, lane in zip(spaces, feature_contract.lanes, strict=True):
+        fake_space = row.configspace
+        assert [item.name for item in fake_space.hyperparameters] == list(
+            lane.parameter_space
+        )
+        assert {
+            item.name: item.choices for item in fake_space.hyperparameters
+        } == lane.parameter_space
+        assert all(
+            item.default_value == item.choices[0]
+            for item in fake_space.hyperparameters
+        )
+
+
+def test_single_lane_space_rejects_unknown_or_non_executable_lane(feature_contract) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import (
+        DehbConfigSpaceError,
+        build_lane_configspace,
+    )
+
+    with pytest.raises(DehbConfigSpaceError, match="UNKNOWN_LANE:F999"):
+        build_lane_configspace(
+            feature_contract,
+            "F999",
+            seed=1,
+            configspace_module=FAKE_CONFIGSPACE,
+        )
+
+    blocked_lane = feature_contract.lanes[0].__class__(
+        **{
+            **feature_contract.lanes[0].__dict__,
+            "implementation_status": "blueprint_only",
+        }
+    )
+    blocked_contract = feature_contract.__class__(
+        **{
+            **feature_contract.__dict__,
+            "lanes": (blocked_lane, *feature_contract.lanes[1:]),
+        }
+    )
+    with pytest.raises(DehbConfigSpaceError, match="LANE_NOT_EXECUTABLE:F001"):
+        build_lane_configspace(
+            blocked_contract,
+            "F001",
+            seed=1,
+            configspace_module=FAKE_CONFIGSPACE,
+        )
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "left", "right", "expected_count"),
+    [
+        ("F002", "fast", "slow", 3),
+        ("F120", "embargo", "horizon", 3),
+    ],
+)
+def test_relationally_invalid_pairs_are_physically_forbidden(
+    feature_contract,
+    lane_id: str,
+    left: str,
+    right: str,
+    expected_count: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=19,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    assert row.forbidden_configuration_count == expected_count
+    pairs = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+    }
+    assert all(
+        {name for name, _value in pair} == {left, right}
+        for pair in pairs
+    )
+
+
+def test_empty_window_normalization_combinations_are_forbidden(feature_contract) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F023",
+        seed=23,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    assert row.forbidden_configuration_count == 2
+    assert len(row.configspace.forbidden_clauses) == 2
+
+
+def test_empirical_tail_choices_with_same_effective_rank_are_forbidden(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F022",
+        seed=22,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    assert row.forbidden_configuration_count == 3
+    forbidden = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+    }
+
+    assert (("window", 20), ("tail", 0.025)) in forbidden
+    assert (("window", 20), ("tail", 0.05)) in forbidden
+    assert (("window", 40), ("tail", 0.025)) in forbidden
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "expected_count"),
+    [
+        ("F051", 4),
+        ("F055", 1),
+        ("F057", 5),
+        ("F058", 6),
+        ("F059", 2),
+        ("F060", 20),
+        ("F069", 2),
+        ("F074", 6),
+        ("F079", 2),
+        ("F082", 6),
+        ("F083", 6),
+        ("F084", 7),
+        ("F085", 5),
+        ("F086", 7),
+        ("F087", 21),
+        ("F088", 16),
+        ("F089", 3),
+        ("F091", 7),
+        ("F093", 14),
+        ("F095", 9),
+        ("F097", 4),
+        ("F098", 3),
+        ("F099", 11),
+        ("F100", 9),
+        ("F101", 6),
+        ("F102", 9),
+        ("F103", 9),
+        ("F104", 3),
+        ("F105", 3),
+        ("F106", 12),
+        ("F108", 2),
+        ("F110", 9),
+        ("F113", 14),
+        ("F115", 4),
+        ("F116", 4),
+        ("F117", 8),
+        ("F118", 2),
+        ("F120", 3),
+        ("F121", 21),
+        ("F123", 10),
+        ("F124", 4),
+        ("F125", 19),
+        ("F127", 15),
+        ("F128", 26),
+        ("F130", 24),
+        ("F132", 9),
+        ("F133", 8),
+        ("F135", 18),
+        ("F136", 3),
+        ("F137", 9),
+        ("F139", 12),
+        ("F140", 12),
+        ("F141", 15),
+        ("F142", 13),
+        ("F143", 3),
+        ("F144", 20),
+        ("F145", 8),
+        ("F148", 4),
+        ("F149", 8),
+        ("F150", 13),
+        ("F161", 14),
+        ("F162", 6),
+        ("F165", 9),
+        ("F169", 16),
+        ("F170", 14),
+        ("F171", 8),
+        ("F172", 9),
+        ("F173", 4),
+        ("F174", 13),
+        ("F176", 13),
+        ("F177", 6),
+        ("F178", 3),
+        ("F179", 3),
+        ("F180", 12),
+        ("F181", 14),
+        ("F182", 26),
+        ("F183", 8),
+        ("F184", 30),
+        ("F185", 47),
+        ("F186", 18),
+        ("F187", 26),
+        ("F188", 41),
+        ("F190", 9),
+        ("F191", 12),
+        ("F192", 12),
+        ("F193", 48),
+        ("F194", 12),
+        ("F195", 36),
+        ("F196", 60),
+        ("F197", 42),
+        ("F198", 36),
+        ("F199", 36),
+        ("F200", 12),
+        ("F201", 48),
+        ("F202", 30),
+        ("F203", 30),
+        ("F204", 36),
+        ("F205", 12),
+        ("F206", 12),
+        ("F207", 12),
+        ("F208", 30),
+        ("F209", 36),
+        ("F210", 24),
+        ("F211", 53),
+        ("F212", 4),
+        ("F213", 37),
+        ("F214", 44),
+        ("F215", 50),
+        ("F216", 45),
+        ("F217", 34),
+        ("F218", 26),
+        ("F219", 14),
+        ("F220", 62),
+        ("F221", 18),
+        ("F222", 52),
+        ("F223", 52),
+        ("F224", 36),
+        ("F225", 38),
+        ("F226", 64),
+        ("F227", 54),
+        ("F228", 78),
+        ("F229", 14),
+        ("F230", 0),
+        ("F231", 18),
+        ("F232", 54),
+        ("F233", 84),
+        ("F234", 76),
+        ("F235", 56),
+        ("F236", 46),
+        ("F237", 14),
+        ("F238", 14),
+        ("F239", 14),
+        ("F240", 12),
+    ],
+)
+def test_conditionally_inactive_model_parameters_are_forbidden(
+    feature_contract,
+    lane_id: str,
+    expected_count: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    assert row.forbidden_configuration_count == expected_count
+    assert len(row.configspace.forbidden_clauses) == expected_count
+
+
+def test_f148_invalid_receptive_fields_are_forbidden_as_exact_triplets(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F148",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    forbidden = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+    }
+    assert forbidden == {
+        (("sequence", 10), ("kernel", 3), ("dilation", 8)),
+        (("sequence", 10), ("kernel", 5), ("dilation", 4)),
+        (("sequence", 10), ("kernel", 5), ("dilation", 8)),
+        (("sequence", 20), ("kernel", 5), ("dilation", 8)),
+    }
+
+
+def test_f169_effective_selection_count_clones_are_forbidden_as_triplets(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    lane = next(item for item in feature_contract.lanes if item.lane_id == "F169")
+    assert lane.parameter_space["selection_fraction"] == (0.1, 0.25, 0.33, 0.5)
+    row = build_lane_configspace(
+        feature_contract,
+        "F169",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    triplets = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 3
+    }
+    assert triplets == {
+        (("aggregation", aggregation), ("universe", universe), ("selection_fraction", fraction))
+        for aggregation in ("mean", "median")
+        for universe, fraction in (
+            ("regions_only", 0.25),
+            ("regions_only", 0.33),
+            ("developed_ex_us_plus_regions", 0.25),
+            ("developed_ex_us_plus_regions", 0.5),
+            ("all_available", 0.33),
+        )
+    }
+
+
+def test_f173_tail_fractions_have_three_distinct_nine_currency_counts(
+    feature_contract,
+) -> None:
+    lane = next(item for item in feature_contract.lanes if item.lane_id == "F173")
+
+    assert lane.parameter_space["selection_fraction"] == (0.2, 0.25, 0.5)
+
+
+def test_f172_does_not_forbid_independent_window_pairs(feature_contract) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F172",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    forbidden_names = {
+        tuple(clause.hyperparameter.name for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+    }
+
+    assert ("window", "long_window") not in forbidden_names
+
+
+def test_f180_long_window_rules_are_scoped_to_the_statistics_that_use_it(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F180",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    forbidden = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+    }
+
+    assert forbidden == {
+        (("statistic", statistic), ("long_window", long_window))
+        for statistic in ("correlation", "beta")
+        for long_window in (252, 504, 756)
+    } | {
+        (("statistic", statistic), ("window", window), ("long_window", long_window))
+        for statistic in ("decoupling", "sign_change")
+        for window, long_window in ((126, 126), (252, 126), (252, 252))
+    }
+
+
+def test_f183_removes_the_physical_train_duplicate_median_basis(
+    feature_contract,
+) -> None:
+    lane = next(item for item in feature_contract.lanes if item.lane_id == "F183")
+
+    assert lane.parameter_space["inflation_basis"] == ("cpi", "pce", "pgdp")
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "scoped_statistic", "excluded_statistics", "expected_triplets"),
+    [
+        ("F184", "baa_aaa", ("credit_stress_composite",), 24),
+        ("F185", "quality_spread", ("spread_volume_composite",), 32),
+        ("F188", "total_growth", ("consumer_credit_stress",), 32),
+        (
+            "F193",
+            "nonresidential_investment",
+            ("housing_investment_composite", "revision_composite"),
+            30,
+        ),
+        ("F195", "payroll_first", ("labor_composite",), 30),
+        (
+            "F196",
+            "industrial_production",
+            ("production_capacity_composite", "revision_composite"),
+            36,
+        ),
+        ("F197", "output_nowcast", ("macro_outlook_composite",), 36),
+        (
+            "F198",
+            "ngdp_iqr",
+            ("macro_disagreement", "disagreement_breadth"),
+            30,
+        ),
+        (
+            "F199",
+            "forecast_revision",
+            ("rolling_bias", "rolling_absolute_error"),
+            30,
+        ),
+        ("F201", "household_equity_share", ("risk_appetite",), 24),
+        ("F202", "household_leverage", ("household_balance_composite",), 24),
+        ("F203", "corporate_leverage", ("corporate_balance_composite",), 24),
+        ("F204", "corporate_net_issuance", ("issuance_pressure",), 18),
+        ("F208", "broker_leverage", ("dealer_capacity",), 24),
+        ("F209", "tic_treasury_flow", ("combined_foreign_flow",), 30),
+        (
+            "F210",
+            "household_to_fund",
+            (
+                "interconnection_mean",
+                "interconnection_max",
+                "interconnection_composite",
+            ),
+            18,
+        ),
+        ("F211", "vix_level", ("vix_zscore", "vix_percentile"), 32),
+        ("F213", "implied_variance", ("spread_zscore",), 30),
+        (
+            "F214",
+            "shock_magnitude",
+            (
+                "shock_indicator",
+                "shock_duration",
+                "distance_from_peak",
+                "tail_percentile",
+            ),
+            12,
+        ),
+        ("F215", "commercial_breadth", ("breadth_zscore",), 32),
+        (
+            "F216",
+            "positioning_disagreement",
+            ("disagreement_zscore", "dispersion_zscore", "reversal_pressure"),
+            24,
+        ),
+        (
+            "F217",
+            "commercial_net",
+            (
+                "commercial_zscore",
+                "commercial_percentile",
+                "commercial_open_interest_interaction",
+            ),
+            16,
+        ),
+        ("F220", "open_interest", ("crowding_composite",), 56),
+        (
+            "F222",
+            "statement_gap",
+            ("statement_gap_zscore", "statement_irregularity"),
+            32,
+        ),
+        (
+            "F223",
+            "publication_lag",
+            ("publication_lag_zscore", "minutes_gap_zscore"),
+            40,
+        ),
+        ("F224", "cadence_gap", ("joint_irregularity",), 32),
+        ("F226", "bid_to_cover", ("demand_yield_balance",), 40),
+        ("F227", "weighted_maturity", ("refinancing_pressure",), 48),
+        ("F228", "total_debt", ("debt_growth_zscore",), 60),
+        (
+            "F232",
+            "announcement_count",
+            ("announcement_density", "cluster_pressure"),
+            48,
+        ),
+        ("F233", "document_count", ("publication_density",), 56),
+        (
+            "F234",
+            "treasury_equity_divergence",
+            ("divergence_zscore", "rolling_correlation"),
+            40,
+        ),
+        (
+            "F235",
+            "precipitation",
+            ("precipitation_anomaly", "wet_low_visibility"),
+            50,
+        ),
+        (
+            "F236",
+            "temperature",
+            (
+                "temperature_anomaly",
+                "pressure_anomaly",
+                "temperature_extreme",
+                "storm_composite",
+            ),
+            40,
+        ),
+        (
+            "F240",
+            "total_event_count",
+            (
+                "rolling_event_density",
+                "type_weighted_density",
+                "event_breadth",
+                "event_concentration",
+                "macro_policy_overlap",
+                "public_arrival_pressure",
+            ),
+            8,
+        ),
+    ],
+)
+def test_internal_composites_keep_their_window_while_raw_simple_statistics_do_not(
+    feature_contract,
+    lane_id: str,
+    scoped_statistic: str,
+    excluded_statistics: tuple[str, ...],
+    expected_triplets: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    triplets = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 3
+        and any(clause.hyperparameter.name == "window" for clause in conjunction.clauses)
+    }
+
+    assert len(triplets) == expected_triplets
+    assert any(("statistic", scoped_statistic) in item for item in triplets)
+    assert all(
+        ("statistic", excluded_statistic) not in item
+        for item in triplets
+        for excluded_statistic in excluded_statistics
+    )
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "scoped_statistic", "excluded_statistic", "expected_triplets"),
+    [
+        ("F201", "household_equity_share", "equity_share_change", 24),
+        ("F204", "corporate_net_issuance", "issuance_change", 18),
+    ],
+)
+def test_internal_changes_keep_change_lag_while_other_raw_statistics_do_not(
+    feature_contract,
+    lane_id: str,
+    scoped_statistic: str,
+    excluded_statistic: str,
+    expected_triplets: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    triplets = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 3
+        and any(
+            clause.hyperparameter.name == "change_lag"
+            for clause in conjunction.clauses
+        )
+    }
+
+    assert len(triplets) == expected_triplets
+    assert any(("statistic", scoped_statistic) in item for item in triplets)
+    assert all(("statistic", excluded_statistic) not in item for item in triplets)
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "active_statistic", "expected_pairs"),
+    [
+        ("F211", "vix_trend", 15),
+        ("F214", "normalization_speed", 20),
+        ("F215", "breadth_trend", 12),
+        ("F216", "disagreement_change", 15),
+        ("F217", "commercial_change", 12),
+        ("F218", "noncommercial_change", 12),
+    ],
+)
+def test_lag_is_forbidden_only_for_statistics_that_do_not_use_it(
+    feature_contract,
+    lane_id: str,
+    active_statistic: str,
+    expected_pairs: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    pairs = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 2
+        and any(clause.hyperparameter.name == "lag" for clause in conjunction.clauses)
+    }
+
+    assert len(pairs) == expected_pairs
+    assert all(("statistic", active_statistic) not in item for item in pairs)
+
+
+def test_f213_realized_window_is_active_except_for_implied_variance(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F213",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    pairs = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 2
+        and any(
+            clause.hyperparameter.name == "realized_window"
+            for clause in conjunction.clauses
+        )
+    }
+
+    assert pairs == {
+        (("statistic", "implied_variance"), ("realized_window", window))
+        for window in (10, 20, 63)
+    }
+
+
+def test_f214_tail_is_active_only_for_shock_indicator_and_duration(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F214",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    pairs = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 2
+        and any(clause.hyperparameter.name == "tail" for clause in conjunction.clauses)
+    }
+
+    assert len(pairs) == 8
+    assert all(("statistic", "shock_indicator") not in item for item in pairs)
+    assert all(("statistic", "shock_duration") not in item for item in pairs)
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "active_statistics", "expected_triplets"),
+    [
+        (
+            "F221",
+            ("decision_rate_change", "decision_direction", "decision_magnitude"),
+            12,
+        ),
+        ("F222", ("statement_gap_change",), 20),
+        ("F223", ("publication_lag_change",), 12),
+        ("F225", ("offer_growth",), 30),
+        ("F226", ("yield_change", "demand_change"), 24),
+        (
+            "F228",
+            (
+                "debt_growth",
+                "debt_acceleration",
+                "composition_change",
+                "debt_growth_zscore",
+            ),
+            18,
+        ),
+    ],
+)
+def test_f221_f230_internal_changes_keep_change_lag_active(
+    feature_contract,
+    lane_id: str,
+    active_statistics: tuple[str, ...],
+    expected_triplets: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    triplets = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 3
+        and any(
+            clause.hyperparameter.name == "change_lag"
+            for clause in conjunction.clauses
+        )
+    }
+
+    assert len(triplets) == expected_triplets
+    assert all(
+        ("statistic", active_statistic) not in item
+        for item in triplets
+        for active_statistic in active_statistics
+    )
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "parameter", "expected_pairs"),
+    [
+        ("F221", "window", 6),
+        ("F225", "window", 8),
+        ("F229", "window", 8),
+        ("F224", "change_lag", 4),
+        ("F227", "change_lag", 6),
+        ("F229", "change_lag", 6),
+        ("F231", "window", 8),
+        ("F237", "window", 8),
+        ("F238", "window", 8),
+        ("F239", "window", 8),
+        ("F232", "change_lag", 6),
+        ("F235", "change_lag", 6),
+        ("F236", "change_lag", 6),
+        ("F237", "change_lag", 6),
+        ("F238", "change_lag", 6),
+        ("F239", "change_lag", 6),
+        ("F240", "change_lag", 4),
+    ],
+)
+def test_f221_f240_generic_normalization_parameters_are_not_duplicated(
+    feature_contract,
+    lane_id: str,
+    parameter: str,
+    expected_pairs: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    pairs = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 2
+        and any(clause.hyperparameter.name == parameter for clause in conjunction.clauses)
+    }
+
+    assert len(pairs) == expected_pairs
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "active_statistics", "expected_triplets"),
+    [
+        ("F231", ("breadth_change",), 10),
+        ("F233", ("mix_change",), 28),
+        ("F234", ("divergence_change",), 36),
+    ],
+)
+def test_f231_f240_internal_changes_keep_change_lag_active(
+    feature_contract,
+    lane_id: str,
+    active_statistics: tuple[str, ...],
+    expected_triplets: int,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        lane_id,
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+    triplets = {
+        tuple((clause.hyperparameter.name, clause.value) for clause in conjunction.clauses)
+        for conjunction in row.configspace.forbidden_clauses
+        if len(conjunction.clauses) == 3
+        and any(
+            clause.hyperparameter.name == "change_lag"
+            for clause in conjunction.clauses
+        )
+    }
+
+    assert len(triplets) == expected_triplets
+    assert all(
+        ("statistic", active_statistic) not in item
+        for item in triplets
+        for active_statistic in active_statistics
+    )
+
+
+def test_f230_keeps_window_and_change_lag_active_for_every_statistic(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_lane_configspace
+
+    row = build_lane_configspace(
+        feature_contract,
+        "F230",
+        seed=51,
+        configspace_module=FAKE_CONFIGSPACE,
+    )
+
+    assert row.forbidden_configuration_count == 0
+
+
+def test_physical_train_duplicates_are_removed_from_f223_and_f231(
+    feature_contract,
+) -> None:
+    lanes = {lane.lane_id: lane for lane in feature_contract.lanes}
+
+    assert lanes["F223"].parameter_space["change_lag"] == (1, 2)
+    assert lanes["F231"].parameter_space["change_lag"] == (1, 2)
+    assert "vintage_count" not in lanes["F231"].parameter_space["statistic"]
+
+
+def test_manifest_freezes_fidelities_versions_boundaries_and_exact_choices(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_dehb_space_manifest
+
+    versions = {"DEHB": "0.1.2", "ConfigSpace": "1.2.2", "python": "3.11.9"}
+    first = build_dehb_space_manifest(feature_contract, runtime_versions=versions)
+    second = build_dehb_space_manifest(feature_contract, runtime_versions=versions)
+
+    assert first == second
+    assert first["manifest_sha256"] == second["manifest_sha256"]
+    assert first["feature_contract_sha256"] == feature_contract.sha256
+    assert first["search_end"] == "2010-12-31"
+    assert first["validation_opened"] is False
+    assert first["locked_opened"] is False
+    assert first["fidelities"] == [1, 3, 9, 27]
+    assert first["eta"] == 3
+    assert first["lane_count"] == 240
+    assert first["lanes"][0]["lane_id"] == "F001"
+    assert first["lanes"][0]["parameter_space"] == {
+        name: list(values)
+        for name, values in feature_contract.lanes[0].parameter_space.items()
+    }
+    assert json.loads(json.dumps(first, sort_keys=True)) == first
+
+
+def test_crosses_are_frozen_separately_without_implicit_cartesian_product(
+    feature_contract,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import build_cross_manifest
+    from aurora.infra.sp500_megarun.feature_contract import is_cross_allowed
+
+    manifest = build_cross_manifest(feature_contract)
+
+    assert manifest["cross_rule_count"] == len(feature_contract.cross_rules)
+    assert manifest["implicit_crosses_in_lane_spaces"] is False
+    assert all(row["max_features"] <= 5 for row in manifest["rules"])
+    assert all(row["compositions"] for row in manifest["rules"])
+    assert any(
+        "F001" in row["left_lanes"] and "F019" in row["right_lanes"]
+        for row in manifest["rules"]
+    )
+    assert is_cross_allowed(feature_contract, "F001", "F019") is True
+    assert is_cross_allowed(feature_contract, "F001", "F239") is False
+
+
+def test_manifest_fails_closed_if_validation_or_locked_is_open(feature_contract) -> None:
+    from aurora.infra.sp500_megarun.dehb_configspace import (
+        DehbConfigSpaceError,
+        build_dehb_space_manifest,
+    )
+
+    versions = {"DEHB": "0.1.2", "ConfigSpace": "1.2.2", "python": "3.11.9"}
+    opened = feature_contract.__class__(
+        **{**feature_contract.__dict__, "validation_opened": True}
+    )
+    with pytest.raises(DehbConfigSpaceError, match="VALIDATION_MUST_REMAIN_CLOSED"):
+        build_dehb_space_manifest(opened, runtime_versions=versions)
+
+    opened = feature_contract.__class__(
+        **{**feature_contract.__dict__, "locked_opened": True}
+    )
+    with pytest.raises(DehbConfigSpaceError, match="LOCKED_MUST_REMAIN_CLOSED"):
+        build_dehb_space_manifest(opened, runtime_versions=versions)
+
+
+def test_dependency_import_failure_has_an_actionable_error(feature_contract, monkeypatch) -> None:
+    import aurora.infra.sp500_megarun.dehb_configspace as api
+
+    def _missing(_: str):
+        raise ModuleNotFoundError("ConfigSpace")
+
+    monkeypatch.setattr(api.importlib, "import_module", _missing)
+
+    with pytest.raises(api.DehbConfigSpaceError, match="CONFIGSPACE_DEPENDENCY_MISSING"):
+        api.build_lane_configspace(feature_contract, "F001", seed=1)

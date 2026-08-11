@@ -5,6 +5,8 @@ import json
 from dataclasses import asdict, replace
 from pathlib import Path
 
+import pandas as pd
+
 from aurora.infra.sp500_long_short_daily.data import (
     DataGateError,
     download_stooq_history,
@@ -32,6 +34,8 @@ def download_window(
         else None
     )
     provider_error: DataGateError | None = None
+    dividends = pd.DataFrame(columns=["date", "distribution"])
+    splits = pd.DataFrame(columns=["date", "split_ratio"])
     if source_mode not in {"stooq-with-fallback", "yahoo-fallback"}:
         raise ValueError(f"UNSUPPORTED_SP500_PRICE_SOURCE_MODE:{source_mode}")
     if fallback_reason is None:
@@ -55,42 +59,60 @@ def download_window(
             if provider_error is not None:
                 raise provider_error
             raise DataGateError(fallback_reason)
-        frame, _, _, fallback_receipts = download_yahoo_history(
+        frame, dividends, splits, fallback_receipts = download_yahoo_history(
             "SPY",
             start,
             end,
             split=split,
             raw_dir=output_dir,
-            include_events=False,
+            include_events=True,
         )
-        frame = frame.loc[:, ["date", "open", "high", "low", "close", "volume"]]
+        frame = frame.loc[
+            :, ["date", "open", "high", "low", "close", "adj_close", "volume"]
+        ]
         payload = frame.to_csv(index=False, lineterminator="\n").encode("utf-8")
         (output_dir / "stooq_spy_us_history.csv").write_bytes(payload)
         fallback_receipt = fallback_receipts[0]
         receipt = replace(
             fallback_receipt,
             dataset_id="DS002",
-            status="downloaded_documented_free_fallback_yahoo_raw_unadjusted",
+            status="downloaded_documented_free_yahoo_adjusted_close_with_events",
             reason=(
                 f"fallback_for={fallback_reason};"
                 f"fallback_dataset_id={fallback_receipt.dataset_id};"
                 f"fallback_sha256={fallback_receipt.sha256}"
             ),
         )
-        effective_source = "yahoo_chart_raw_unadjusted_fallback"
+        effective_source = "yahoo_chart_adjusted_close_with_events"
         print(
             f"[sp500-data] Stooq unavailable ({fallback_reason}); "
             f"using documented bounded Yahoo fallback window={window_id}",
             flush=True,
         )
+    for frame_to_write, filename, columns in (
+        (dividends, "spy_distributions.csv", ("date", "distribution")),
+        (splits, "spy_splits.csv", ("date", "split_ratio")),
+    ):
+        normalized = frame_to_write.reindex(columns=columns).copy()
+        if len(normalized):
+            normalized["date"] = pd.to_datetime(
+                normalized["date"], errors="raise"
+            ).dt.strftime("%Y-%m-%d")
+        normalized.to_csv(output_dir / filename, index=False, lineterminator="\n")
+
     metadata: dict[str, object] = {
-        "schema_version": "2",
+        "schema_version": "3",
         "window_id": str(window_id),
         "requested_start": start,
         "requested_end": end,
         "split": split,
         "rows": len(frame),
         "effective_source": effective_source,
+        "adjusted_close_complete": bool(
+            "adj_close" in frame and frame["adj_close"].notna().all()
+        ),
+        "distribution_event_count": int(len(dividends)),
+        "split_event_count": int(len(splits)),
         "receipt": asdict(receipt),
     }
     (output_dir / "stooq_window_receipt.json").write_text(

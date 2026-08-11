@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "D_SPY": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "existing",
+      "adapter": "existing_spy_snapshot",
+      "maximum_observation_date": "2010-12-31",
+      "resources": []
+    },
+    "D_VIX": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "cboe_causal_vol30_bridge",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"vxo_1986_2003","url":"https://cdn.cboe.com/resources/us/indices/vxoarchive.xls","format":"xls","first_dissemination":"contemporaneous"},
+        {"id":"vxo_2004_2010","url":"https://cdn.cboe.com/resources/us/indices/vxocurrent.csv","format":"csv","first_dissemination":"contemporaneous"},
+        {"id":"vix_from_2003","url":"https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv","format":"csv","first_dissemination":"2003-09-22"}
+      ]
+    },
+    "D_VXO": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "cboe_history_csv",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"vxo_1986_2003","url":"https://cdn.cboe.com/resources/us/indices/vxoarchive.xls","format":"xls"},
+        {"id":"vxo_2004_2010","url":"https://cdn.cboe.com/resources/us/indices/vxocurrent.csv","format":"csv"}
+      ]
+    },
+    "D_CFTC": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "cftc_legacy_zip",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"legacy_futures_only","url_template":"https://www.cftc.gov/files/dea/history/deacot{year}.zip","years":[1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010],"format":"zip_csv"},
+        {"id":"legacy_futures_options_early","url_template":"https://www.cftc.gov/files/dea/history/deahistfo_{year}.zip","years":[1998,1999,2000,2001,2002,2003],"format":"zip_csv"},
+        {"id":"legacy_futures_options_late","url_template":"https://www.cftc.gov/files/dea/history/deahistfo{year}.zip","years":[2004,2005,2006,2007,2008,2009,2010],"format":"zip_csv"}
+      ]
+    },
+    "D_RATES": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "federal_reserve_ddp_zip_xml",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"federal_reserve_h15_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=H15","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31","includes":"Treasury maturities, federal funds and Moody's corporate yields"}
+      ]
+    },
+    "D_FIN_COND": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "derived",
+      "adapter": "derived_conditions_composite",
+      "maximum_observation_date": "2010-12-31",
+      "resources": []
+    },
+    "D_MACRO_PIT": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "alfred_philly_pit_bundle",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"federal_reserve_h3_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=H3","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31"},
+        {"id":"federal_reserve_h6_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=H6","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31"},
+        {"id":"federal_reserve_h8_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=H8","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31"},
+        {"id":"federal_reserve_g19_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=G19","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31"},
+        {"id":"federal_reserve_cp_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=CP","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31"},
+        {"id":"philly_real_output_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/routput_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_real_consumption_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/rcon_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_cpi_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/pcpi_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_core_cpi_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/pcpix_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_core_pce_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/pconx_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_payroll_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/employ_level_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_industrial_production_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/ipt_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_manufacturing_production_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/ipm_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_capacity_utilization_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/cut_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_manufacturing_capacity_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/cum_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_nonresidential_investment_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/rinvbf_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_residential_investment_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/rinvresid_first_second_third.xlsx","format":"xlsx"},
+        {"id":"philly_housing_starts_first_releases","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/hstarts_first_second_third.xlsx","format":"xlsx"}
+      ]
+    },
+    "D_PHILLY_RT": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "philadelphia_realtime_bundle",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"real_output_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/ROUTPUTQvQd.xlsx","format":"xlsx","vintage_axis":"quarterly"},
+        {"id":"real_gdi_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/yrgdiQvQd.xlsx","format":"xlsx","vintage_axis":"quarterly"},
+        {"id":"nominal_consumption_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/nconQvQd.xlsx","format":"xlsx","vintage_axis":"quarterly"},
+        {"id":"nominal_disposable_income_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/ndpiQvQd.xlsx","format":"xlsx","vintage_axis":"quarterly"},
+        {"id":"saving_rate_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/ratesavQvQd.xlsx","format":"xlsx","vintage_axis":"quarterly"},
+        {"id":"real_output_monthly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/routputMvQd.xlsx","format":"xlsx","vintage_axis":"monthly"},
+        {"id":"unemployment_quarterly_vintages","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/real-time-data/data-files/xlsx/rucQvMd.xlsx","format":"xlsx","vintage_axis":"quarterly"}
+      ]
+    },
+    "D_MARGIN": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "finra_margin_xlsx",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"finra_margin_history","url":"https://www.finra.org/rules-guidance/key-topics/margin-accounts/margin-statistics","format":"html_with_official_xlsx_link","publication_lag":"third_week_following_reference_month"}
+      ]
+    },
+    "D_WURGLER": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "academic_table",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"sentiment_vintage_2003","url":"https://pages.stern.nyu.edu/jwurgler/data/BW%20sentiment%20data%20v.%2012012003.xls","format":"xls","available_at":"2003-12-09"},
+        {"id":"sentiment_vintage_2005","url":"https://pages.stern.nyu.edu/jwurgler/data/Investor%20Sentiment%20Data%20Post%20v4.xls","format":"xls","available_at":"2005-10-26"},
+        {"id":"sentiment_vintage_2007","url":"https://pages.stern.nyu.edu/jwurgler/data/Investor_Sentiment_Data_v9_post.xls","format":"xls","available_at":"2007-03-26"},
+        {"id":"sentiment_vintage_2010","url":"https://pages.stern.nyu.edu/jwurgler/data/Investor_Sentiment_V16_Post.xls","format":"xls","available_at":"2010-02-06"},
+        {"id":"equity_share_vintage_2005","url":"https://pages.stern.nyu.edu/jwurgler/data/equity%20share.xls","format":"xls","available_at":"2005-10-26"},
+        {"id":"equity_share_vintage_2010","url":"https://pages.stern.nyu.edu/jwurgler/data/Equity_Share_3.xls","format":"xls","available_at":"2010-02-06"}
+      ]
+    },
+    "D_EPU": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "derived",
+      "adapter": "derived_uncertainty_composite",
+      "maximum_observation_date": "2010-12-31",
+      "resources": []
+    },
+    "D_FRENCH_FACTORS": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "french_zip_csv",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"ff3_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip","format":"zip_csv"},
+        {"id":"size_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_ME_Daily_CSV.zip","format":"zip_csv"},
+        {"id":"book_to_market_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_BE-ME_Daily_CSV.zip","format":"zip_csv"}
+      ]
+    },
+    "D_FRENCH_INDUSTRIES": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "french_zip_csv",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"industry_48_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/48_Industry_Portfolios_daily_CSV.zip","format":"zip_csv"}
+      ]
+    },
+    "D_GOYAL": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "academic_table",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"predictor_data_original_2005","url":"https://drive.usercontent.google.com/download?id=1T0pCslc2vxMDt7EFGI0MJ6mndeQvObBT&export=download&confirm=t","format":"xls","available_at":"2006-01-01"},
+        {"id":"predictor_data_updated","url":"https://docs.google.com/spreadsheets/d/1qwpl2R_DNujpU5YUkk8lacP1tTeMb9iJ/export?format=xlsx","format":"xlsx","use_only_for_reconstructable_2006_2010_inputs":true}
+      ]
+    },
+    "D_SHILLER": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "shiller_monthly_excel",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"shiller_ie_data","url":"https://img1.wsimg.com/blobby/go/e5e77e0b-59d1-44d9-ab25-4763ac982e53/downloads/e27e58c1-8ae0-488c-a976-a298708c7175/ie_data.xls","format":"xls","monthly_interpolation_forbidden":true,"use_lagged_reported_annual_totals_only":true}
+      ]
+    },
+    "D_WTI": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "world_bank_pink_sheet",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"world_bank_monthly_commodities","url":"https://thedocs.worldbank.org/en/doc/18675f1d1639c7a34d463f59263ba0a2-0050012025/related/CMO-Historical-Data-Monthly.xlsx","format":"xlsx","series":"Crude oil, WTI","decision_lag":"second_business_day_of_following_month_plus_one_session"}
+      ]
+    },
+    "D_GOLD": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "world_bank_pink_sheet",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"world_bank_monthly_commodities","url":"https://thedocs.worldbank.org/en/doc/18675f1d1639c7a34d463f59263ba0a2-0050012025/related/CMO-Historical-Data-Monthly.xlsx","format":"xlsx","series":"Gold","decision_lag":"second_business_day_of_following_month_plus_one_session"}
+      ]
+    },
+    "D_FX": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "direct",
+      "adapter": "federal_reserve_ddp_zip_xml",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"federal_reserve_h10_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=H10","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2010-12-31","series":"JPY, GBP, CHF and CAD daily exchange rates"}
+      ]
+    },
+    "D_CALENDAR": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "derived",
+      "adapter": "derived_spy_calendar",
+      "maximum_observation_date": "2010-12-31",
+      "resources": []
+    },
+    "D_FOMC_PUBLIC": {
+      "execution": "github_actions_only",
+      "acquisition_kind": "bundle",
+      "adapter": "fomc_public_archive",
+      "maximum_observation_date": "2010-12-31",
+      "resources": [
+        {"id":"fomc_historical_public_documents","url":"https://www.federalreserve.gov/monetarypolicy/fomc_historical_year.htm","format":"html_archive","years":[1993,1994,1995,1996,1997,1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010],"document_kinds":["meeting","statement","minutes","transcript"]}
+      ]
+    }
+  }
+}

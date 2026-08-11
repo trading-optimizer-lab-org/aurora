@@ -96,6 +96,28 @@ def test_no_unmarked_live_data_loads():
             "test_global_technical_buy_indicator.py",
             "test_external_pack_workflow_is_github_only_manual_ubuntu_hosted",
         ),
+        # These mega-run tests build tiny synthetic SPY parquet fixtures under
+        # pytest's isolated tmp_path. They never consult the vendor cache.
+        (
+            "test_sp500_megarun_dehb_runtime_inputs.py",
+            "test_runtime_input_pack_is_self_verifying_and_train_only",
+        ),
+        (
+            "test_sp500_megarun_dehb_runtime_inputs.py",
+            "test_runtime_input_pack_rejects_tampered_file",
+        ),
+        (
+            "test_sp500_megarun_dehb_worker.py",
+            "test_train_snapshot_loader_requires_exact_partition_manifest_and_adjusted_close",
+        ),
+        (
+            "test_sp500_megarun_dehb_worker.py",
+            "test_train_snapshot_loader_rejects_unbound_manifest_or_spy_hash",
+        ),
+        (
+            "test_sp500_megarun_dehb_worker.py",
+            "test_train_lane_registry_verified_prefix_hides_later_dataset_rows",
+        ),
     }
 
     def _has_integration_marker(fn: ast.FunctionDef) -> bool:

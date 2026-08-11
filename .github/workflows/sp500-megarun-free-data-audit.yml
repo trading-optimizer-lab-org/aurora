@@ -1,0 +1,73 @@
+name: SP500 Megarun Free Data Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: sp500-megarun-free-data-audit
+  cancel-in-progress: false
+
+jobs:
+  framework_contract:
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: sp500-free-data-framework-contract
+      retention_days: 1
+      forced_job_count: 1
+
+  audit:
+    needs: framework_contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PYTHONUTF8: "1"
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+    steps:
+      - name: Check out the audited branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Aurora
+        run: python -m pip install -e . "pytest==9.0.3"
+
+      - name: Verify the contract and local guards
+        run: >-
+          python -m pytest
+          tests/test_sp500_megarun_data_contract.py
+          tests/test_sp500_megarun_source_probe.py
+          -q
+
+      - name: Probe every free source
+        id: probe
+        continue-on-error: true
+        run: >-
+          python scripts/probe_sp500_megarun_free_sources.py
+          --contract config/sp500_megarun_free_data_120.json
+          --sources config/sp500_megarun_free_sources.json
+          --output outputs/sp500_megarun_free_data/source_probe_report.json
+
+      - name: Upload the complete source audit
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-free-data-source-audit
+          path: outputs/sp500_megarun_free_data/source_probe_report.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Fail closed when any source is unavailable
+        if: steps.probe.outcome != 'success'
+        run: exit 1

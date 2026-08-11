@@ -1,0 +1,73 @@
+name: SP500 Megarun Train Normalization Probe
+
+on:
+  push:
+    branches:
+      - codex/sp500-search-method-benchmark-short
+    paths:
+      - .github/workflows/sp500-megarun-normalization-probe.yml
+      - infra/sp500_megarun/snapshot_normalization_probe.py
+      - scripts/probe_sp500_megarun_train_normalization.py
+      - tests/test_sp500_megarun_snapshot_normalization_probe.py
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Verified data-preflight run containing the immutable train artifact
+        required: true
+        default: "31324786647"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  probe_f021_f040:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      SOURCE_RUN_ID: ${{ inputs.source_run_id || '31324786647' }}
+    steps:
+      - name: Check out the exact probe revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Restore bounded inspection runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install "pytest==9.0.3"
+          python -m pip install --no-deps -e .
+      - name: Verify the fail-closed normalization probe
+        run: |
+          python -m pytest \
+            tests/test_sp500_megarun_snapshot_normalization_probe.py \
+            tests/test_sp500_megarun_snapshot_schema_inventory.py \
+            -q
+      - name: Download only the verified train snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-train-1993-2010-F001-F240-${{ env.SOURCE_RUN_ID }}
+          path: ${{ runner.temp }}/train_snapshot_1993_2010
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Probe F021-F040 schemas without strategy evaluation
+        run: |
+          python scripts/probe_sp500_megarun_train_normalization.py \
+            --train-snapshot "$RUNNER_TEMP/train_snapshot_1993_2010" \
+            --output outputs/sp500_megarun_normalization_probe/f021_f040_normalization_probe.json
+      - name: Upload train-only normalization evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-megarun-normalization-probe-F021-F040-${{ github.run_id }}
+          path: outputs/sp500_megarun_normalization_probe
+          if-no-files-found: error
+          retention-days: 90

@@ -770,6 +770,81 @@ def test_stooq_window_merge_preserves_rows_hashes_and_locked_boundary(tmp_path: 
     ).hexdigest()
 
 
+def test_yahoo_window_merge_preserves_adjusted_close_and_corporate_events(
+    tmp_path: Path,
+) -> None:
+    input_root = tmp_path / "windows"
+    windows = (
+        (
+            "000",
+            "2009-03-19,80,81,79,80,79.43828,1000000\n"
+            "2009-03-20,79.5,80.5,78.5,79.5,79.5,1100000\n",
+            "2009-03-20,0.56172\n",
+        ),
+        (
+            "001",
+            "2009-03-23,80.5,81.5,79.5,80.5,80.5,1200000\n",
+            "",
+        ),
+    )
+    for window_id, rows, distributions in windows:
+        root = input_root / f"window-{window_id}"
+        root.mkdir(parents=True)
+        (root / "stooq_spy_us_history.csv").write_text(
+            "date,open,high,low,close,adj_close,volume\n" + rows,
+            encoding="utf-8",
+        )
+        (root / "spy_distributions.csv").write_text(
+            "date,distribution\n" + distributions,
+            encoding="utf-8",
+        )
+        (root / "spy_splits.csv").write_text(
+            "date,split_ratio\n",
+            encoding="utf-8",
+        )
+        (root / "stooq_window_receipt.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "3",
+                    "window_id": window_id,
+                    "requested_start": "2009-03-19",
+                    "requested_end": "2009-03-23",
+                    "effective_source": "yahoo_chart_adjusted_close_with_events",
+                    "receipt": {
+                        "dataset_id": "DS002",
+                        "status": "downloaded_documented_free_yahoo_adjusted_close_with_events",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    output = tmp_path / "merged"
+    manifest = merge_windows(
+        input_root,
+        output,
+        expected_windows=2,
+        requested_start="2009-03-19",
+        requested_end="2009-03-23",
+    )
+
+    merged = pd.read_csv(output / "stooq_spy_us_history.csv")
+    events = pd.read_csv(output / "spy_distributions.csv")
+    assert "adj_close" in merged
+    assert len(merged) == 3
+    assert events.to_dict(orient="records") == [
+        {"date": "2009-03-20", "distribution": 0.56172}
+    ]
+    assert manifest["adjusted_close_complete"] is True
+    assert manifest["distribution_event_count"] == 1
+    assert manifest["split_event_count"] == 0
+    corporate_action_hashes = manifest["corporate_action_files_sha256"]
+    assert isinstance(corporate_action_hashes, dict)
+    assert corporate_action_hashes["distributions"] == hashlib.sha256(
+        (output / "spy_distributions.csv").read_bytes()
+    ).hexdigest()
+
+
 @pytest.mark.parametrize(
     "provider_error",
     ["STOOQ_DAILY_HITS_LIMIT", "STOOQ_HTML_HISTORY_ROWS_NOT_FOUND"],
@@ -786,9 +861,14 @@ def test_stooq_window_uses_documented_yahoo_fallback_for_provider_unavailability
             "high": [91.0, 92.0],
             "low": [89.0, 90.0],
             "close": [90.5, 91.5],
+            "adj_close": [90.5, 91.5],
             "volume": [1_000_000, 1_100_000],
         }
     )
+    dividends = pd.DataFrame(
+        {"date": pd.to_datetime(["2009-01-05"]), "distribution": [0.5]}
+    )
+    splits = pd.DataFrame(columns=["date", "split_ratio"])
     fallback_receipt = DownloadReceipt(
         dataset_id="YAHOO_SPY_BOUNDED_CHART",
         url_template="https://query1.finance.yahoo.com/v8/finance/chart/SPY",
@@ -808,9 +888,8 @@ def test_stooq_window_uses_documented_yahoo_fallback_for_provider_unavailability
         **kwargs: object,
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, tuple[DownloadReceipt, ...]]:
         del args
-        assert kwargs["include_events"] is False
-        empty = pd.DataFrame(columns=["date"])
-        return frame, empty, empty, (fallback_receipt,)
+        assert kwargs["include_events"] is True
+        return frame, dividends, splits, (fallback_receipt,)
 
     monkeypatch.setattr(
         "scripts.download_sp500_stooq_window.download_stooq_history",
@@ -827,15 +906,22 @@ def test_stooq_window_uses_documented_yahoo_fallback_for_provider_unavailability
         window_id="000",
         output_dir=tmp_path,
     )
-    assert metadata["effective_source"] == "yahoo_chart_raw_unadjusted_fallback"
+    assert metadata["effective_source"] == "yahoo_chart_adjusted_close_with_events"
     receipt = metadata["receipt"]
     assert isinstance(receipt, dict)
     assert receipt["dataset_id"] == "DS002"
-    assert receipt["status"] == "downloaded_documented_free_fallback_yahoo_raw_unadjusted"
+    assert receipt["status"] == (
+        "downloaded_documented_free_yahoo_adjusted_close_with_events"
+    )
     assert f"fallback_for={provider_error}" in str(receipt["reason"])
     written = pd.read_csv(tmp_path / "stooq_spy_us_history.csv")
     assert len(written) == 2
     assert written["date"].tolist() == ["2009-01-02", "2009-01-05"]
+    assert written["adj_close"].tolist() == [90.5, 91.5]
+    assert pd.read_csv(tmp_path / "spy_distributions.csv").to_dict(
+        orient="records"
+    ) == [{"date": "2009-01-05", "distribution": 0.5}]
+    assert pd.read_csv(tmp_path / "spy_splits.csv").empty
 
 
 def test_stooq_window_does_not_hide_unexpected_provider_failure(
@@ -871,6 +957,7 @@ def test_stooq_window_can_freeze_confirmed_provider_outage_mode(
             "high": [91.0],
             "low": [89.0],
             "close": [90.5],
+            "adj_close": [90.5],
             "volume": [1_000_000],
         }
     )
@@ -909,7 +996,7 @@ def test_stooq_window_can_freeze_confirmed_provider_outage_mode(
         output_dir=tmp_path,
         source_mode="yahoo-fallback",
     )
-    assert metadata["effective_source"] == "yahoo_chart_raw_unadjusted_fallback"
+    assert metadata["effective_source"] == "yahoo_chart_adjusted_close_with_events"
     assert "STOOQ_PROVIDER_OUTAGE_CONFIRMED" in str(metadata["receipt"])
 
 

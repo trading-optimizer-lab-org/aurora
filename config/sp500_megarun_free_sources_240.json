@@ -1,0 +1,95 @@
+{
+  "schema_version": 2,
+  "extends": "sp500_megarun_free_sources.json",
+  "remove_sources": ["D_WURGLER"],
+  "source_overrides": {
+    "D_SPY": {"maximum_observation_date":"2020-12-31"},
+    "D_VIX": {"maximum_observation_date":"2020-12-31"},
+    "D_VXO": {"maximum_observation_date":"2020-12-31"},
+    "D_CFTC": {"maximum_observation_date":"2020-12-31","resources":[
+      {"id":"legacy_futures_only","url_template":"https://www.cftc.gov/files/dea/history/deacot{year}.zip","years":[1986,1987,1988,1989,1990,1991,1992,1993,1994,1995,1996,1997,1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020],"format":"zip_csv"},
+      {"id":"legacy_futures_options_early","url_template":"https://www.cftc.gov/files/dea/history/deahistfo_{year}.zip","years":[1995,1996,1997,1998,1999,2000,2001,2002,2003],"format":"zip_csv"},
+      {"id":"legacy_futures_options_late","url_template":"https://www.cftc.gov/files/dea/history/deahistfo{year}.zip","years":[2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020],"format":"zip_csv"}
+    ]},
+    "D_RATES": {"maximum_observation_date":"2020-12-31"},
+    "D_FIN_COND": {"maximum_observation_date":"2020-12-31"},
+    "D_MACRO_PIT": {"maximum_observation_date":"2020-12-31"},
+    "D_PHILLY_RT": {"maximum_observation_date":"2020-12-31"},
+    "D_MARGIN": {"maximum_observation_date":"2020-12-31"},
+    "D_EPU": {"maximum_observation_date":"2020-12-31"},
+    "D_FRENCH_FACTORS": {"maximum_observation_date":"2020-12-31","resources":[
+      {"id":"ff3_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"size_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_ME_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"book_to_market_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_BE-ME_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"profitability_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_OP_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"investment_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_INV_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"momentum_10_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/10_Portfolios_Prior_12_2_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"short_reversal_10_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/10_Portfolios_Prior_1_0_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"long_reversal_10_daily","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/10_Portfolios_Prior_60_13_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"accruals_monthly","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_AC_CSV.zip","format":"zip_csv","frequency":"monthly","current_vintage_revision_warning":true},
+      {"id":"beta_monthly","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_BETA_CSV.zip","format":"zip_csv","frequency":"monthly","current_vintage_revision_warning":true},
+      {"id":"net_share_issues_monthly","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_NI_CSV.zip","format":"zip_csv","frequency":"monthly","current_vintage_revision_warning":true},
+      {"id":"variance_monthly","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_VAR_CSV.zip","format":"zip_csv","frequency":"monthly","current_vintage_revision_warning":true},
+      {"id":"residual_variance_monthly","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_RESVAR_CSV.zip","format":"zip_csv","frequency":"monthly","current_vintage_revision_warning":true}
+    ]},
+    "D_FRENCH_INDUSTRIES": {"maximum_observation_date":"2020-12-31"},
+    "D_GOYAL": {"maximum_observation_date":"2020-12-31"},
+    "D_SHILLER": {"maximum_observation_date":"2020-12-31"},
+    "D_WTI": {"maximum_observation_date":"2020-12-31"},
+    "D_GOLD": {"maximum_observation_date":"2020-12-31"},
+    "D_FX": {"maximum_observation_date":"2020-12-31"},
+    "D_CALENDAR": {"maximum_observation_date":"2020-12-31"}
+  },
+  "sources": {
+    "D_CBOE_VOL": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_cboe_vol_bundle","maximum_observation_date":"2020-12-31","resources":[]},
+    "D_CBOE_PCR": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"cftc_cross_market_fallback","maximum_observation_date":"2020-12-31","resources":[],"frozen_variant":"CFTC_CROSS_MARKET_FALLBACK_ONLY"},
+    "D_CFTC_LEGACY": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_cftc_legacy","maximum_observation_date":"2020-12-31","resources":[]},
+    "D_FED_H15_H10": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_fed_h15_h10","maximum_observation_date":"2020-12-31","resources":[]},
+    "D_FED_H3_H6_H8_G19_CP": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_fed_macro_bundle","maximum_observation_date":"2020-12-31","resources":[]},
+    "D_SPF": {"execution":"github_actions_only","acquisition_kind":"direct","adapter":"philadelphia_spf_bundle","maximum_observation_date":"2020-12-31","resources":[
+      {"id":"spf_mean_level","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/survey-of-professional-forecasters/historical-data/meanLevel.xlsx","format":"xlsx"},
+      {"id":"spf_median_level","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/survey-of-professional-forecasters/historical-data/medianLevel.xlsx","format":"xlsx"},
+      {"id":"spf_dispersion","url":"https://www.philadelphiafed.org/-/media/FRBP/Assets/Surveys-And-Data/survey-of-professional-forecasters/historical-data/Dispersion_1.xlsx","format":"xlsx"}
+    ]},
+    "D_SLOOS": {"execution":"github_actions_only","acquisition_kind":"direct","adapter":"federal_reserve_sloos_bundle","maximum_observation_date":"2020-12-31","resources":[
+      {"id":"sloos_public_downloads","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=SLOOS","format":"zip_xml"}
+    ]},
+    "D_Z1": {"execution":"github_actions_only","acquisition_kind":"direct","adapter":"federal_reserve_z1_bundle","maximum_observation_date":"2020-12-31","resources":[
+      {"id":"federal_reserve_z1_all","url":"https://www.federalreserve.gov/datadownload/Output.aspx?filetype=zip&rel=Z1","format":"zip_xml","probe_mode":"prefix","use_observations_through":"2020-12-31"}
+    ]},
+    "D_FINRA_MARGIN": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_finra_margin","maximum_observation_date":"2020-12-31","resources":[]},
+    "D_FRENCH_US": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_french_us","maximum_observation_date":"2020-12-31","resources":[]},
+    "D_FRENCH_GLOBAL": {"execution":"github_actions_only","acquisition_kind":"bundle","adapter":"french_global_zip_csv","maximum_observation_date":"2020-12-31","resources":[
+      {"id":"developed_five_factors","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Developed_5_Factors_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"developed_momentum","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Developed_Mom_Factor_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"developed_ex_us","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Developed_ex_US_5_Factors_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"europe","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Europe_5_Factors_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"japan","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Japan_5_Factors_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"asia_pacific_ex_japan","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Asia_Pacific_ex_Japan_5_Factors_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"developed_ex_us_momentum","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Developed_ex_US_Mom_Factor_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"europe_momentum","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Europe_Mom_Factor_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"japan_momentum","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Japan_Mom_Factor_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true},
+      {"id":"asia_pacific_ex_japan_momentum","url":"https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Asia_Pacific_ex_Japan_MOM_Factor_Daily_CSV.zip","format":"zip_csv","frequency":"daily","current_vintage_revision_warning":true}
+    ]},
+    "D_WORLD_BANK_COMMODITIES": {"execution":"github_actions_only","acquisition_kind":"direct","adapter":"world_bank_all_commodities","maximum_observation_date":"2020-12-31","resources":[
+      {"id":"world_bank_monthly_commodities","url":"https://thedocs.worldbank.org/en/doc/18675f1d1639c7a34d463f59263ba0a2-0050012025/related/CMO-Historical-Data-Monthly.xlsx","format":"xlsx","decision_lag":"second_business_day_of_following_month_plus_one_session"}
+    ]},
+    "D_TREASURY_AUCTIONS": {"execution":"github_actions_only","acquisition_kind":"direct","adapter":"treasury_fiscal_json","maximum_observation_date":"2020-12-31","resources":[
+      {"id":"treasury_auctions_1993_2020","url":"https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/od/auctions_query?filter=auction_date:gte:1993-01-01,auction_date:lte:2020-12-31&page[size]=10000","format":"json"}
+    ]},
+    "D_TREASURY_FISCAL": {"execution":"github_actions_only","acquisition_kind":"direct","adapter":"treasury_fiscal_json","maximum_observation_date":"2020-12-31","resources":[
+      {"id":"debt_to_penny_1993_2020","url":"https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/debt_to_penny?filter=record_date:gte:1993-01-01,record_date:lte:2020-12-31&page[size]=10000","format":"json"}
+    ]},
+    "D_TIC": {"execution":"github_actions_only","acquisition_kind":"direct","adapter":"treasury_tic_bundle","maximum_observation_date":"2020-12-31","resources":[
+      {"id":"tic_treasury_sector","url":"https://ticdata.treasury.gov/resource-center/data-chart-center/tic/Documents/tressect.txt","format":"txt"},
+      {"id":"tic_equity_sector","url":"https://ticdata.treasury.gov/resource-center/data-chart-center/tic/Documents/stksect.txt","format":"txt"}
+    ]},
+    "D_FOMC_PUBLIC": {"execution":"github_actions_only","acquisition_kind":"bundle","adapter":"fomc_public_archive","maximum_observation_date":"2020-12-31","resources":[
+      {"id":"fomc_historical_year","url_template":"https://www.federalreserve.gov/monetarypolicy/fomchistorical{year}.htm","years":[1993,1994,1995,1996,1997,1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020],"format":"html","discover_tabular_links":false}
+    ]},
+    "D_NOAA_NY": {"execution":"github_actions_only","acquisition_kind":"bundle","adapter":"noaa_gsod_bundle","maximum_observation_date":"2020-12-31","resources":[
+      {"id":"noaa_ny_laguardia_gsod","url_template":"https://www.ncei.noaa.gov/data/global-summary-of-the-day/access/{year}/72503014732.csv","years":[1993,1994,1995,1996,1997,1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020],"format":"csv"}
+    ]},
+    "D_DERIVED_CAUSAL": {"execution":"github_actions_only","acquisition_kind":"derived","adapter":"derived_causal_ledger","maximum_observation_date":"2020-12-31","resources":[]}
+  }
+}

@@ -1,9 +1,11 @@
 """Train-only, causal benchmark of seven search methods.
 
-This module deliberately reuses Aurora's SPY data acquisition, total-return
-ledger and FeatureStore.  It is a method benchmark, not a new backtester.
-All scientific inputs are bounded at 2010-12-31 and all decisions execute at
-the next available open through the existing ledger helper.
+This module reuses Aurora's bounded Yahoo acquisition, official distribution
+audit, total-return ledger and FeatureStore. It is a method benchmark, not a
+new backtester. The benchmark opts into the explicit fast primary-source path;
+production campaigns retain the full Stooq/Kibot adjudication path. All
+scientific inputs are bounded at 2010-12-31 and all decisions execute at the
+next available open through the existing ledger helper.
 """
 
 from __future__ import annotations
@@ -189,6 +191,7 @@ def prepare_benchmark_data(output_dir: Path) -> None:
         start="1993-01-22",
         end="2010-12-31",
         split="train",
+        skip_independent_price_sources=True,
     )
     loaded = load_price_data(root)
     if loaded.frame.index.max() > TRAIN_END or loaded.frame.index.max() >= LOCKED_START:
@@ -204,6 +207,8 @@ def prepare_benchmark_data(output_dir: Path) -> None:
             "validation_start_unopened": VALIDATION_START.date().isoformat(),
             "locked_start_unopened": LOCKED_START.date().isoformat(),
             "date_parser": "strict_explicit_numeric_unit_seconds",
+            "price_source_mode": "bounded_yahoo_primary_with_official_distribution_audit",
+            "independent_price_adjudication": "not_requested_for_benchmark",
             "loaded_first_date": loaded.frame.index.min().date().isoformat(),
             "loaded_last_date": loaded.frame.index.max().date().isoformat(),
         }
@@ -511,7 +516,8 @@ def _evolutionary_proposals(method: str, seed: int, records: list[dict[str, Any]
     out = list(population)
     while len(out) < MAX_UNIQUE_EVALUATIONS:
         if method == "M4_DIFFERENTIAL_EVOLUTION":
-            a, b, c = population[rng.integers(0, len(population), 3)]
+            indices = rng.integers(0, len(population), 3)
+            a, b, c = (population[int(index)] for index in indices)
             donor = np.clip(a + 0.7 * (b - c), 0.0, 0.999999)
             mask = rng.random(GENOME_DIM) < 0.7
             mask[rng.integers(0, GENOME_DIM)] = True

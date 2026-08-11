@@ -1928,8 +1928,14 @@ def prepare_market_snapshot(
     end: str,
     split: str,
     allow_diagnostic_yahoo_distributions: bool = False,
+    skip_independent_price_sources: bool = False,
 ) -> Mapping[str, Any]:
-    """Acquire one immutable bounded snapshot on GitHub Actions."""
+    """Acquire one immutable bounded snapshot on GitHub Actions.
+
+    The benchmark-only fast path keeps the bounded Yahoo series and official
+    distribution audit but does not wait for optional Stooq/Kibot adjudication.
+    Production callers retain the full multi-source path by default.
+    """
 
     require_github_only_execution("SP500_LONG_SHORT_DAILY_PREPARE")
     start_date, end_date = _bounded_dates(start, end, split=split)
@@ -2018,73 +2024,108 @@ def prepare_market_snapshot(
             sponsor_path.read_bytes(),
         )
         distribution_receipts = [sponsor_receipt]
-    print("[sp500-data] stooq history start", flush=True)
-    stooq, stooq_receipt = download_stooq_history(
-        "spy.us",
-        start_date,
-        end_date,
-        split=split,
-        session=client,
-        raw_dir=raw_root,
-    )
-    print(f"[sp500-data] stooq history complete rows={len(stooq)}", flush=True)
-    print("[sp500-data] kibot adjudication history start", flush=True)
-    kibot, kibot_receipt = download_kibot_unadjusted_history(
-        "SPY",
-        start_date,
-        end_date,
-        split=split,
-        session=client,
-        raw_dir=raw_root,
-    )
-    stooq, price_adjudication = _adjudicate_stooq_open_prices(prices, stooq, kibot)
-    _store_raw(
-        raw_root,
-        "spy_price_adjudication.json",
-        json.dumps(price_adjudication, sort_keys=True, separators=(",", ":")).encode("utf-8"),
-    )
-    print(
-        "[sp500-data] kibot adjudication complete "
-        f"changed_opens={price_adjudication['changed_open_count']} "
-        f"changed_closes={price_adjudication['changed_close_count']}",
-        flush=True,
-    )
-    reconciliation = _reconcile_spy_sources(
-        prices,
-        stooq,
-        dividends,
-        splits,
-        minimum_overlap=min(1000, max(200, len(prices) - 1)),
-        close_consensus_dates=(
-            price_adjudication["fields"]["close"]["yahoo_supported_repair_dates"]
-            + price_adjudication["fields"]["close"]["kibot_bridge_repair_dates"]
-            + price_adjudication["fields"]["close"]["three_source_median_repair_dates"]
-            + price_adjudication["fields"]["close"][
-                "primary_volume_supported_repair_dates"
-            ]
-            + price_adjudication["fields"]["close"]["retained_stooq_dates"]
-        ),
-    )
-    stooq_fallback_used = "fallback" in stooq_receipt.status
-    yahoo_fallback_used = stooq_fallback_used and "yahoo" in (stooq_receipt.reason or "")
-    reconciliation = {
-        **reconciliation,
-        "canonical_price_source": (
-            "yahoo_raw_ohlcv_fallback_with_kibot_reconciliation"
-            if yahoo_fallback_used
-            else "stooq_raw_ohlcv_with_kibot_adjudicated_open_and_close"
-        ),
-        "independent_reconciliation_sources": (
-            ["kibot_unadjusted_daily_ohlcv"]
-            if yahoo_fallback_used
-            else ["yahoo_raw_ohlcv", "kibot_unadjusted_daily_ohlcv"]
-        ),
-        "stooq_provider_outage_fallback_used": stooq_fallback_used,
-        "stooq_provider_outage_fallback_source": (
-            "yahoo_raw_ohlcv" if yahoo_fallback_used else None
-        ),
-        "price_adjudication": price_adjudication,
-    }
+    price_adjudication: Mapping[str, Any]
+    reconciliation: Mapping[str, Any]
+    if skip_independent_price_sources:
+        # Explicit benchmark-only fast path. The bounded Yahoo series and
+        # official distribution audit remain in force; only optional provider
+        # adjudication is omitted. Production callers use the full path.
+        stooq = prices.loc[:, ["date", "open", "high", "low", "close", "volume"]].copy()
+        price_adjudication = {
+            "mode": "benchmark_primary_yahoo_without_independent_adjudication",
+            "changed_open_count": 0,
+            "changed_close_count": 0,
+        }
+        stooq_receipt = replace(
+            yahoo_receipts[0],
+            dataset_id="DS002",
+            status="benchmark_yahoo_primary_raw_ohlcv",
+            reason="bounded_method_benchmark_fast_path;stooq_kibot_not_requested",
+        )
+        kibot_receipt = DownloadReceipt(
+            dataset_id="KIBOT_SPY_UNADJUSTED_ADJUDICATOR",
+            url_template=KIBOT_API_ENDPOINT,
+            sha256="",
+            byte_count=0,
+            minimum_date=None,
+            maximum_date=None,
+            status="not_requested_benchmark_fast_path",
+            reason="optional_independent_price_adjudication_skipped",
+        )
+        reconciliation = {
+            "canonical_price_source": "yahoo_raw_ohlcv_bounded_benchmark",
+            "independent_reconciliation_sources": [],
+            "independent_price_adjudication_skipped": True,
+            "price_adjudication": price_adjudication,
+        }
+    else:
+        print("[sp500-data] stooq history start", flush=True)
+        stooq, stooq_receipt = download_stooq_history(
+            "spy.us",
+            start_date,
+            end_date,
+            split=split,
+            session=client,
+            raw_dir=raw_root,
+        )
+        print(f"[sp500-data] stooq history complete rows={len(stooq)}", flush=True)
+        print("[sp500-data] kibot adjudication history start", flush=True)
+        kibot, kibot_receipt = download_kibot_unadjusted_history(
+            "SPY",
+            start_date,
+            end_date,
+            split=split,
+            session=client,
+            raw_dir=raw_root,
+        )
+        stooq, price_adjudication = _adjudicate_stooq_open_prices(prices, stooq, kibot)
+        _store_raw(
+            raw_root,
+            "spy_price_adjudication.json",
+            json.dumps(price_adjudication, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        )
+        print(
+            "[sp500-data] kibot adjudication complete "
+            f"changed_opens={price_adjudication['changed_open_count']} "
+            f"changed_closes={price_adjudication['changed_close_count']}",
+            flush=True,
+        )
+        reconciliation = _reconcile_spy_sources(
+            prices,
+            stooq,
+            dividends,
+            splits,
+            minimum_overlap=min(1000, max(200, len(prices) - 1)),
+            close_consensus_dates=(
+                price_adjudication["fields"]["close"]["yahoo_supported_repair_dates"]
+                + price_adjudication["fields"]["close"]["kibot_bridge_repair_dates"]
+                + price_adjudication["fields"]["close"]["three_source_median_repair_dates"]
+                + price_adjudication["fields"]["close"][
+                    "primary_volume_supported_repair_dates"
+                ]
+                + price_adjudication["fields"]["close"]["retained_stooq_dates"]
+            ),
+        )
+        stooq_fallback_used = "fallback" in stooq_receipt.status
+        yahoo_fallback_used = stooq_fallback_used and "yahoo" in (stooq_receipt.reason or "")
+        reconciliation = {
+            **reconciliation,
+            "canonical_price_source": (
+                "yahoo_raw_ohlcv_fallback_with_kibot_reconciliation"
+                if yahoo_fallback_used
+                else "stooq_raw_ohlcv_with_kibot_adjudicated_open_and_close"
+            ),
+            "independent_reconciliation_sources": (
+                ["kibot_unadjusted_daily_ohlcv"]
+                if yahoo_fallback_used
+                else ["yahoo_raw_ohlcv", "kibot_unadjusted_daily_ohlcv"]
+            ),
+            "stooq_provider_outage_fallback_used": stooq_fallback_used,
+            "stooq_provider_outage_fallback_source": (
+                "yahoo_raw_ohlcv" if yahoo_fallback_used else None
+            ),
+            "price_adjudication": price_adjudication,
+        }
     ledger, audit = build_total_return_ledger(stooq, dividends, splits)
 
     receipts: list[DownloadReceipt] = [
