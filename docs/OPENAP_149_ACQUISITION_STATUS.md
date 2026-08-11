@@ -336,6 +336,14 @@ Dos auditorias del resto fijan el siguiente trabajo concreto:
   que la fuente fijada no carga activos: divide ventas del segmento por ventas
   anuales y aplica alli el corte. Esa contradiccion de formula debe resolverse
   antes de escribir el calculador; no es ausencia de una fuente gratuita.
+- `Mom6mJunk` tiene una ruta SEC gratuita positiva, no un panel completo. La
+  formula fijada usa el rating S&P del emisor, forward-fill y la momentum
+  geometrica de los retardos 1 a 5; el filtro oficial es `0 < credrat <= 14`,
+  descrito en `SignalDoc.csv` como BBB o inferior. Solo se aceptan ratings
+  corporativos/emisor publicados con CIK y fecha verificables. No se pueden
+  usar ratings de una emision, inferir junk por ausencia de rating ni llamar
+  estricta a la salida. La ruta sera reconstruida, positiva y parcial; la
+  escala numerica abierta de `currentratingnum`/`credrat` sigue pendiente.
 
 ## Diecisiete senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 

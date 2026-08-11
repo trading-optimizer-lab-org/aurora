@@ -649,6 +649,27 @@ cerradas. Los retornos stand-alone pueden salir de los artefactos de mercado
 ya adquiridos, con `available_at` igual al maximo de filing, identidad y mes de
 retorno. La salida seguiria siendo `reconstructed_not_strict`.
 
+`Mom6mJunk` tiene una ruta gratuita positiva pero no un panel completo. El
+script OpenAP fijado por hash lee el retorno mensual de `SignalMasterTable`,
+usa el rating S&P del emisor (`m_SP_creditratings`) y deja Capital IQ como
+respaldo (`m_CIQ_creditratings`); hace forward-fill del ultimo rating y emite
+la momentum geometrica de los retardos 1 a 5 solo cuando `0 < credrat <= 14`.
+La documentacion oficial de la señal expresa ese mismo corte como rating S&P
+BBB o inferior. WRDS identifica `splticrm` como rating S&P domestico de largo
+plazo del emisor, distinto de un rating de deuda individual. SEC publica en
+filings y exhibits algunos ratings corporativos/emisor actuales, por ejemplo
+BB+ o inferiores, pero no ofrece un panel historico estructurado equivalente a
+Compustat/Capital IQ para todos los emisores. Por tanto, la ruta gratuita solo
+acepta observaciones con rating de emisor explicitamente identificado, CIK y
+fecha de publicacion/aceptacion; no infiere junk por ausencia de rating ni usa
+ratings de una emision como sustituto. La salida sera
+`reconstructed_not_strict`, positiva y parcial, con `available_at` no anterior
+al filing SEC que publica el rating y al cierre del ultimo mes de retornos
+utilizado. La escala numerica exacta de `currentratingnum`/`credrat` debe
+conservarse como contrato pendiente si no puede probarse en una fuente abierta;
+el filtro textual BBB o inferior no autoriza a fingir una equivalencia numerica
+para ratings ambiguos.
+
 La reauditoria de los numeros finitos no utilizables del artefacto OpenAP93
 rechaza otras tres recuperaciones aparentes:
 
