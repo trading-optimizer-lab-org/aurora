@@ -506,14 +506,14 @@ def _validate_reconstructed_rows(
     expected_retrieved = pd.to_datetime(source.get("retrieved_at"), errors="coerce", utc=True)
     if (
         formation.isna().any()
-        or period_end.isna().any()
-        or available_at.isna().any()
         or retrieved_at.isna().any()
         or pd.isna(expected_formation)
         or pd.isna(expected_retrieved)
         or not formation.eq(expected_formation).all()
         or not retrieved_at.eq(expected_retrieved).all()
-        or available_at.gt(formation).any()
+        or (usable & period_end.isna()).any()
+        or (usable & available_at.isna()).any()
+        or (usable & available_at.gt(formation)).any()
         or (usable & available_at.lt(period_end)).any()
         or (usable & filed_at.notna() & available_at.lt(filed_at)).any()
     ):
