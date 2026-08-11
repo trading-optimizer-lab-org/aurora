@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 from importlib import metadata
+from itertools import product
 import json
 import math
 import os
@@ -423,6 +424,68 @@ def _verify_forbidden_config_rejection_guard(
         _close_dehb(instance)
 
 
+def verify_f015_parameter_grid(
+    contract: FrozenFeatureContract,
+) -> Mapping[str, Any]:
+    """Exercise every F015 combination across zero-volatility transitions."""
+
+    import numpy as np
+    import pandas as pd
+
+    from aurora.infra.sp500_megarun.feature_engine import evaluate_price_lane
+
+    lane = next((item for item in contract.lanes if item.lane_id == "F015"), None)
+    if lane is None:
+        raise OfficialDehbSmokeError("F015_PARAMETER_SPACE_MISSING")
+    names = ("kind", "window", "statistic")
+    if set(lane.parameter_space) != set(names):
+        raise OfficialDehbSmokeError("F015_PARAMETER_SPACE_CHANGED")
+    dates = pd.bdate_range("2007-01-02", periods=1_000)
+    close = np.concatenate(
+        [
+            np.linspace(100.0, 130.0, 300),
+            np.linspace(130.0, 80.0, 300),
+            np.full(200, 80.0),
+            np.linspace(80.0, 120.0, 200),
+        ]
+    )
+    open_ = pd.Series(close).shift(1).fillna(close[0]).to_numpy()
+    spy = pd.DataFrame(
+        {
+            "date": dates,
+            "open": open_,
+            "high": np.maximum(open_, close) + 1.0,
+            "low": np.minimum(open_, close) - 1.0,
+            "close": close,
+            "volume": np.linspace(1_000_000.0, 2_000_000.0, len(dates)),
+            "available_at": dates + pd.offsets.BDay(1),
+        }
+    )
+    combination_count = 0
+    infinite_outputs = 0
+    choices = (lane.parameter_space[name] for name in names)
+    for values in product(*choices):
+        parameters = dict(zip(names, values, strict=True))
+        frame = evaluate_price_lane("F015", spy, parameters)
+        output = frame["value"].to_numpy(dtype=float)
+        combination_count += 1
+        infinite_outputs += int(np.isinf(output).sum())
+        if not frame["value"].notna().any():
+            raise OfficialDehbSmokeError(
+                f"F015_EMPTY_PARAMETER_COMBINATION:{parameters}"
+            )
+    if infinite_outputs:
+        raise OfficialDehbSmokeError(
+            f"F015_INFINITE_PARAMETER_GRID:{infinite_outputs}"
+        )
+    return {
+        "valid": True,
+        "lane_id": "F015",
+        "parameter_combinations": combination_count,
+        "infinite_outputs": infinite_outputs,
+    }
+
+
 def validate_official_smoke_report(report: Mapping[str, Any]) -> None:
     """Fail unless every technical and scientific gate is simultaneously true."""
 
@@ -438,6 +501,7 @@ def validate_official_smoke_report(report: Mapping[str, Any]) -> None:
         "worker_equivalence_1_2_4": True,
         "checkpoint_resume_exact": True,
         "forbidden_config_rejection_safe": True,
+        "f015_parameter_grid_finite": True,
         "search_end": "2010-12-31",
         "validation_opened": False,
         "locked_opened": False,
@@ -491,6 +555,7 @@ def run_official_dehb_smoke(
     forbidden_guard = _verify_forbidden_config_rejection_guard(
         dehb_module, contract, output_dir=runs_dir
     )
+    f015_grid = verify_f015_parameter_grid(contract)
     manifest = build_dehb_space_manifest(contract, runtime_versions=versions)
     cross_manifest = build_cross_manifest(contract)
     report: dict[str, Any] = {
@@ -499,6 +564,7 @@ def run_official_dehb_smoke(
             and checkpoint_resume
             and four_worker["valid"]
             and forbidden_guard["valid"]
+            and f015_grid["valid"]
         ),
         "official_dehb_version": versions["DEHB"],
         "configspace_version": versions["ConfigSpace"],
@@ -519,6 +585,8 @@ def run_official_dehb_smoke(
         "checkpoint_resume_exact": checkpoint_resume,
         "forbidden_config_rejection_safe": bool(forbidden_guard["valid"]),
         "forbidden_config_rejection_details": dict(forbidden_guard),
+        "f015_parameter_grid_finite": bool(f015_grid["valid"]),
+        "f015_parameter_grid_details": dict(f015_grid),
         "search_end": contract.search_end.isoformat(),
         "validation_opened": False,
         "locked_opened": False,
@@ -545,5 +613,6 @@ __all__ = [
     "run_official_dehb_smoke",
     "synthetic_objective",
     "validate_official_smoke_report",
+    "verify_f015_parameter_grid",
     "verify_dependency_lock",
 ]

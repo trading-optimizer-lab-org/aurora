@@ -80,6 +80,7 @@ def test_finalist_evidence_closes_all_non_global_train_gates(tmp_path: Path) -> 
                 "worker_equivalence_1_2_4": True,
                 "checkpoint_resume_exact": True,
                 "forbidden_config_rejection_safe": True,
+                "f015_parameter_grid_finite": True,
                 "search_end": "2010-12-31",
                 "validation_opened": False,
                 "locked_opened": False,

@@ -55,6 +55,7 @@ jobs:
           python -m pytest \
             tests/test_sp500_megarun_dehb_configspace.py \
             tests/test_sp500_megarun_dehb_official_smoke.py \
+            tests/test_sp500_megarun_feature_engine_price.py \
             tests/test_sp500_megarun_feature_contract.py \
             tests/test_sp500_megarun_data_contract.py \
             -q

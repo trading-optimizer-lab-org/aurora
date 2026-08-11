@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from itertools import product
 from pathlib import Path
 
 import numpy as np
@@ -139,6 +140,39 @@ def test_every_frozen_f001_f020_parameter_choice_is_executable() -> None:
                     )
                 result = api.evaluate_price_lane(lane.lane_id, spy, parameters)
                 assert result["value"].notna().any(), (lane.lane_id, name, choice)
+
+
+def test_every_f015_parameter_combination_avoids_infinite_volatility_change() -> None:
+    root = Path(__file__).resolve().parents[1]
+    data = load_and_validate_contract(root / "config" / "sp500_megarun_free_data_240.json")
+    contract = load_and_validate_feature_contract(
+        root / "config" / "sp500_megarun_feature_contract_240.json",
+        data,
+    )
+    lane = contract.lanes[14]
+    api = _engine_api()
+    spy = _spy_frame(1_000)
+    close = np.concatenate(
+        [
+            np.linspace(100.0, 130.0, 300),
+            np.linspace(130.0, 80.0, 300),
+            np.full(200, 80.0),
+            np.linspace(80.0, 120.0, 200),
+        ]
+    )
+    spy["close"] = close
+    spy["open"] = pd.Series(close).shift(1).fillna(close[0]).to_numpy()
+    spy["high"] = np.maximum(spy["open"], spy["close"]) + 1.0
+    spy["low"] = np.minimum(spy["open"], spy["close"]) - 1.0
+
+    names = ("kind", "window", "statistic")
+    choices = (lane.parameter_space[name] for name in names)
+    for values in product(*choices):
+        parameters = dict(zip(names, values, strict=True))
+        result = api.evaluate_price_lane("F015", spy, parameters)
+        output = result["value"].to_numpy(dtype=float)
+        assert not np.isinf(output).any(), parameters
+        assert result["value"].notna().any(), parameters
 
 
 @pytest.mark.parametrize(

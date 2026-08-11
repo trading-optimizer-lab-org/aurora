@@ -137,6 +137,9 @@ def build_technical_evidence(
             "forbidden_config_rejection_safe": report[
                 "forbidden_config_rejection_safe"
             ],
+            "f015_parameter_grid_finite": report[
+                "f015_parameter_grid_finite"
+            ],
             "actual_four_worker_run": report["actual_four_worker_run"],
         },
         "fault_injection": dict(faults),
