@@ -13,8 +13,15 @@ ROOT = Path(__file__).resolve().parents[1]
 CAMPAIGN_PATH = ROOT / "config" / "sp500_megarun_dehb_campaign_v1.json"
 
 
-def test_launch_contract_script_bootstraps_without_numpy() -> None:
-    script = ROOT / "scripts" / "build_sp500_megarun_dehb_launch_contract.py"
+@pytest.mark.parametrize(
+    "script_name",
+    [
+        "build_sp500_megarun_dehb_launch_contract.py",
+        "plan_sp500_megarun_dehb_campaign.py",
+    ],
+)
+def test_controller_scripts_bootstrap_without_numpy(script_name: str) -> None:
+    script = ROOT / "scripts" / script_name
     probe = f"""
 import builtins
 import os
