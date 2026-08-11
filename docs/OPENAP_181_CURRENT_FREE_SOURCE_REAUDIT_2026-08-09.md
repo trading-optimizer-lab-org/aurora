@@ -670,6 +670,38 @@ conservarse como contrato pendiente si no puede probarse en una fuente abierta;
 el filtro textual BBB o inferior no autoriza a fingir una equivalencia numerica
 para ratings ambiguos.
 
+`Activism1` y `Activism2` comparten el script oficial fijado
+`ZZ1_Activism1_Activism2.py`. Este exige `TR_13F.maxinstown_perc`, la clase de
+accion historica `monthlyCRSP.shrcls` y `GovIndex.G` unido por ticker y mes.
+SEC EDGAR/13F puede suministrar la posicion institucional y una identidad
+point-in-time, pero no publica un panel estandarizado y completo del indice de
+gobierno de 24 provisiones ni una historia fiable de clases duales para todo el
+universo. El codigo calcula `Activism1` como `24-G` solo en el cuartil superior
+de blockholdings mayores del 5 % y sin clase dual; `Activism2` conserva el
+blockholding bajo las mismas exclusiones y exige `24-G >= 19`. La ruta SEC es
+por tanto de reconstruccion parcial y no estricta; no se puede rellenar `G`
+por ausencia de una provision ni hacer el enlace solo por ticker.
+
+`AgeIPO` usa oficialmente `IPODates` con `IPOdate` y `FoundingYear`, limita la
+senal a 3--36 meses desde la salida y exige al menos 100 IPO recientes en cada
+mes. La base publica de Ritter ofrece fechas de fundacion para IPOs de
+1975--2025 y fue actualizada en enero de 2026, pero no cubre las salidas de
+2026 necesarias para una formacion actual. SEC puede ayudar a reconstruir
+fechas de oferta e identidad, pero no convierte automaticamente prospectos en
+un panel completo de `FoundingYear`; mientras no se alcance el umbral mensual,
+la senal queda bloqueada por cobertura.
+
+`BetaLiquidityPS` requiere retornos mensuales por accion, los factores
+Fama--French y la innovacion de liquidez de Pastor--Stambaugh; la formula
+fijada estima una regresion rolling de 60 observaciones con minimo 36 y emite
+el coeficiente de `ps_innov`. La pagina oficial de Pastor ofrece gratuitamente
+la serie de innovaciones hasta diciembre de 2025, y Kenneth French ofrece los
+factores, pero no existe aun una observacion oficial de innovacion para la
+formacion de julio/agosto de 2026. Puede calcularse historicamente hasta el
+ultimo mes cubierto, no llamarse valor actual para la fecha maxima del lote.
+El bloqueo es de actualidad y despues quedan por verificar identidad,
+cobertura y equivalencia de retornos.
+
 La reauditoria de los numeros finitos no utilizables del artefacto OpenAP93
 rechaza otras tres recuperaciones aparentes:
 

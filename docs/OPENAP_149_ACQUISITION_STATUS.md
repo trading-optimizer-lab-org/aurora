@@ -344,6 +344,20 @@ Dos auditorias del resto fijan el siguiente trabajo concreto:
   usar ratings de una emision, inferir junk por ausencia de rating ni llamar
   estricta a la salida. La ruta sera reconstruida, positiva y parcial; la
   escala numerica abierta de `currentratingnum`/`credrat` sigue pendiente.
+- `Activism1` y `Activism2` comparten la formula oficial: `TR_13F` para
+  `maxinstown_perc`, `monthlyCRSP.shrcls` y `GovIndex.G` unido por ticker y
+  mes. SEC/13F cubre la posicion institucional, pero no ofrece un panel
+  completo y estandarizado de las 24 provisiones de `G` ni una historia fiable
+  de clases duales. Se mantienen como reconstrucciones parciales no estrictas.
+- `AgeIPO` requiere `IPOdate`, `FoundingYear`, una ventana de 3--36 meses y
+  al menos 100 IPO recientes por mes. Ritter cubre fechas de fundacion hasta
+  2025, pero faltan IPOs de 2026 para una formacion actual; el lote existente
+  queda bloqueado por cobertura.
+- `BetaLiquidityPS` requiere retornos mensuales, factores Fama--French y
+  `ps_innov` en una regresion rolling de 60 meses con minimo 36. La serie
+  oficial gratuita de Pastor llega a diciembre de 2025: sirve para historia,
+  pero no para el valor actual de julio/agosto de 2026. Sigue bloqueada por
+  actualidad, identidad y cobertura pendiente.
 
 ## Diecisiete senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 
