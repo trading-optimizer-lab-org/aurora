@@ -1528,6 +1528,7 @@ def test_consolidation_workflow_recovers_missing_batches_in_authorized_run() -> 
     assert "run_openap_149_recovered_current_features.py" in fallback["run"]
     command = steps["Consolidate latest current evidence"]["run"]
     assert '--recovered-current-run-url "$RECOVERED_CURRENT_RUN_URL"' in command
+    assert "always()" in workflow["jobs"]["consolidate"]["if"]
 
 
 def test_consolidation_workflow_downloads_and_verifies_realestate_evidence() -> None:

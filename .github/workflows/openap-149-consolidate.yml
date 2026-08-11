@@ -158,7 +158,9 @@ jobs:
             -q --tb=short
 
   consolidate:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    # Preserve audit evidence even when the contract exposes unrelated branch failures.
+    # The overall workflow remains failed until the contract is repaired.
+    if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     needs: contract
     runs-on: ubuntu-24.04
     timeout-minutes: 120
