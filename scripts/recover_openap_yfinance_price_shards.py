@@ -513,6 +513,7 @@ def main() -> int:
         total_range_requests += artifact_reader.range_requests
         _progress(f"price_shard_{chunk_index}_materialized")
 
+    _progress("price_shards_complete")
     materialized_members = {
         "security_master.parquet": "security_master.parquet",
         "source_manifest.csv": "source_manifest.csv",
@@ -520,12 +521,15 @@ def main() -> int:
         "execution_summary.json": "source_execution_summary.json",
         "output_manifest.csv": "source_output_manifest.csv",
     }
+    _progress("audited_members_materialization_start")
     for member_name, target_name in materialized_members.items():
         (output / target_name).write_bytes(audited_members[member_name])
+    _progress("audited_members_materialization_complete")
     official_identity_target = None
     official_identity_accepted_sha256 = ""
     official_identity_rejected_sha256 = ""
     if args.official_identity_universe is not None:
+        _progress("official_identity_materialization_start")
         official_identity_target = output / "official_identity_universe.csv"
         official_identity_target.write_text(
             official_identity_universe.to_csv(index=False),
@@ -537,6 +541,7 @@ def main() -> int:
         official_identity_rejected_sha256 = _sha256_file(
             args.official_identity_universe.parent / "current_universe_rejected.csv"
         )
+        _progress("official_identity_materialization_complete")
     recovery = {
         "contract_version": 1,
         **source_evidence,
@@ -631,12 +636,16 @@ def main() -> int:
         raise RuntimeError("recovery did not materialize exactly 48 price shards")
     if len(recovered_derived_rows) != len(RECOVERED_CURRENT_FEATURE_DERIVED_MEMBERS):
         raise RuntimeError("recovery did not materialize every current feature member")
+    _progress("recovery_manifest_write_start")
     manifest_path = output / "recovered_yfinance_price_manifest.json"
     manifest_path.write_text(
         json.dumps(recovery, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    _progress("recovery_manifest_write_complete")
+    _progress("recovery_json_print_start")
     print(json.dumps(recovery, sort_keys=True))
+    _progress("recovery_json_print_complete")
     return 0
 
 
