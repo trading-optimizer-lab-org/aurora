@@ -381,7 +381,7 @@ jobs:
               matrix["strict_score_eligible"].astype(str).str.lower().eq("true")
           )
           assert summary["target_signals"] == 149
-          assert summary["latest_formation_at"] == "2026-08-09T23:59:59+00:00"
+          assert summary["latest_formation_at"] == "2026-08-10T23:59:59+00:00"
           assert summary["data_acquired"] == int(data_acquired.sum())
           assert summary["current_values_calculated"] == int(current_calculated.sum())
           assert summary["reconstructed_not_strict"] == int((current_calculated & reconstructed).sum())
