@@ -277,7 +277,7 @@ jobs:
             inputs/exchange_switch_current/sec_listing_identity_manifest.json \
             --official-identity-universe \
             inputs/exchange_switch_current/current_universe_accepted.csv \
-            --output-dir outputs/recovery
+            --output-dir "$GITHUB_WORKSPACE/outputs/recovery"
           echo "recovery_boundary=artifact_identity_validation_complete"
           curl --fail --location --silent --show-error \
             --output inputs/factors/ff3_daily.zip \
@@ -293,18 +293,18 @@ jobs:
           test -s inputs/factors/pastor_stambaugh.txt
           echo "recovery_boundary=factor_download_complete"
           python scripts/run_openap_149_recovered_yfinance_market.py \
-            --recovery-root outputs/recovery \
+            --recovery-root "$GITHUB_WORKSPACE/outputs/recovery" \
             --formation-at "2026-08-09T23:59:59Z" \
             --implementation-sha "$SOURCE_SHA" \
             --ff3-daily-zip inputs/factors/ff3_daily.zip \
             --ff3-monthly-zip inputs/factors/ff3_monthly.zip \
             --pastor-stambaugh-file inputs/factors/pastor_stambaugh.txt \
-            --output-dir inputs/recovered_market
+            --output-dir "$GITHUB_WORKSPACE/inputs/recovered_market"
           echo "recovery_boundary=market_calculation_complete"
           python scripts/run_openap_149_recovered_current_features.py \
-            --recovery-root outputs/recovery \
+            --recovery-root "$GITHUB_WORKSPACE/outputs/recovery" \
             --implementation-sha "$SOURCE_SHA" \
-            --output-dir inputs/recovered_current_features
+            --output-dir "$GITHUB_WORKSPACE/inputs/recovered_current_features"
           echo "recovery_boundary=feature_calculation_complete"
           echo "RECOVERED_CURRENT_RUN_URL=https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
       - name: Download pinned official formula evidence
@@ -341,7 +341,7 @@ jobs:
             --recovered-current-run-url "$RECOVERED_CURRENT_RUN_URL" \
             --evidence-run-url "$run_url" \
             --evidence-artifact "$OUTPUT_ARTIFACT" \
-            --output-dir openap_149_current_consolidated
+            --output-dir "$GITHUB_WORKSPACE/outputs/openap_149_current_consolidated"
       - name: Verify consolidated result
         run: |
           python - <<'PY'
