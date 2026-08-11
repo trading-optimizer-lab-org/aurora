@@ -644,7 +644,18 @@ def main() -> int:
     )
     _progress("recovery_manifest_write_complete")
     _progress("recovery_json_print_start")
-    print(json.dumps(recovery, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "recovery_manifest": manifest_path.as_posix(),
+                "recovered_price_shard_count": len(recovered_rows),
+                "recovered_current_feature_member_count": len(recovered_derived_rows),
+                "strict_score_eligible": False,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     _progress("recovery_json_print_complete")
     return 0
 
