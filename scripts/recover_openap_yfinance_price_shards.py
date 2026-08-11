@@ -189,6 +189,12 @@ def main() -> int:
         type=int,
         default=512 * 1024 * 1024,
     )
+    parser.add_argument(
+        "--sec-identity-evidence",
+        type=Path,
+        default=None,
+        help="Optional official SEC identity manifest from a corroborating current batch",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     require_github_actions_or_explicit_local_permission(
@@ -225,11 +231,23 @@ def main() -> int:
     if audited_declared_bytes > args.maximum_shard_compressed_bytes:
         raise RuntimeError("audited metadata recovery exceeds the per-artifact limit")
     audited_members = read_zip_members(audited_reader, AUDITED_MEMBERS)
+    official_identity_evidence = None
+    if args.sec_identity_evidence is not None:
+        try:
+            official_identity_evidence = json.loads(
+                args.sec_identity_evidence.read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("official SEC identity evidence is invalid JSON") from exc
+        if not isinstance(official_identity_evidence, dict):
+            raise RuntimeError("official SEC identity evidence must be a JSON object")
+
     audited_evidence = validate_recovered_market_security_master(
         audited_run,
         audited_jobs,
         audited_artifact,
         audited_members,
+        official_identity_evidence=official_identity_evidence,
     )
     source_manifest = validate_yfinance_source_manifest(
         audited_members["yfinance_source_manifest.csv"]

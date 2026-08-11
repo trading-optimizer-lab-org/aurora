@@ -332,6 +332,8 @@ def validate_recovered_market_security_master(
     jobs: Sequence[Mapping[str, Any]],
     artifact: Mapping[str, Any],
     members: Mapping[str, bytes],
+    *,
+    official_identity_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate the narrow identity input recovered from a successful base run."""
 
@@ -411,24 +413,65 @@ def validate_recovered_market_security_master(
             "recovered market source manifest lacks columns: "
             f"{sorted(missing_source_columns)}"
         )
-    identity_sources = source_manifest.loc[
-        source_manifest["role"].astype(str).eq("ticker_cik_universe")
-    ]
-    if (
-        len(identity_sources) != 1
-        or str(identity_sources.iloc[0]["source"])
-        != "company_tickers_exchange.json"
-        or str(identity_sources.iloc[0]["source_url"])
-        != SEC_TICKER_EXCHANGE_URL
-        or str(identity_sources.iloc[0]["source_mode"]) != "sec_official_live"
-        or re.fullmatch(
-            r"[0-9a-fA-F]{64}", str(identity_sources.iloc[0]["sha256"])
+    if official_identity_evidence is None:
+        identity_sources = source_manifest.loc[
+            source_manifest["role"].astype(str).eq("ticker_cik_universe")
+        ]
+        if (
+            len(identity_sources) != 1
+            or str(identity_sources.iloc[0]["source"])
+            != "company_tickers_exchange.json"
+            or str(identity_sources.iloc[0]["source_url"])
+            != SEC_TICKER_EXCHANGE_URL
+            or str(identity_sources.iloc[0]["source_mode"]) != "sec_official_live"
+            or re.fullmatch(
+                r"[0-9a-fA-F]{64}", str(identity_sources.iloc[0]["sha256"])
+            )
+            is None
+        ):
+            raise ValueError(
+                "recovered market source manifest lacks one official SEC ticker source"
+            )
+        identity_source_url = SEC_TICKER_EXCHANGE_URL
+        identity_source_mode = "sec_official_live"
+        identity_source_sha256 = str(identity_sources.iloc[0]["sha256"]).lower()
+    else:
+        identity_source_url = str(
+            official_identity_evidence.get("identity_source_url", "")
         )
-        is None
-    ):
-        raise ValueError(
-            "recovered market source manifest lacks one official SEC ticker source"
+        identity_source_mode = str(
+            official_identity_evidence.get("identity_source_mode", "")
         )
+        identity_source_sha256 = str(
+            official_identity_evidence.get("identity_source_sha256", "")
+        ).lower()
+        identity_access_method = str(
+            official_identity_evidence.get("identity_access_method", "")
+        )
+        identity_retrieved_at = pd.to_datetime(
+            official_identity_evidence.get("identity_retrieved_at"),
+            errors="coerce",
+            utc=True,
+        )
+        if (
+            str(official_identity_evidence.get("implementation_sha", "")).lower()
+            != head_sha.lower()
+            or identity_source_url != SEC_TICKER_EXCHANGE_URL
+            or identity_source_mode
+            != "sec_official_live_with_audited_transport"
+            or identity_access_method
+            not in {"sec_official_direct", "sec_via_jina_readthrough"}
+            or re.fullmatch(r"[0-9a-fA-F]{64}", identity_source_sha256) is None
+            or pd.isna(identity_retrieved_at)
+            or int(official_identity_evidence.get("current_universe_rows", 0)) <= 1000
+            or official_identity_evidence.get("current_signal_computed") is not True
+            or official_identity_evidence.get("strict_score_eligible") is not False
+            or official_identity_evidence.get("locked_opened") is not False
+            or official_identity_evidence.get("forward_opened") is not False
+        ):
+            raise ValueError(
+                "official SEC identity evidence is incomplete or not hash-bound"
+            )
 
     try:
         security_master = pd.read_parquet(
@@ -475,9 +518,9 @@ def validate_recovered_market_security_master(
         "source_artifact_size_bytes": int(artifact["size_in_bytes"]),
         "eligible_symbols": int(summary["eligible_symbols"]),
         "security_master_rows": int(summary["security_master_rows"]),
-        "identity_source_url": SEC_TICKER_EXCHANGE_URL,
-        "identity_source_mode": "sec_official_live",
-        "identity_source_sha256": str(identity_sources.iloc[0]["sha256"]).lower(),
+        "identity_source_url": identity_source_url,
+        "identity_source_mode": identity_source_mode,
+        "identity_source_sha256": identity_source_sha256,
         "locked_opened": False,
         "backtest_enabled": False,
         "validation_used_for_selection": False,

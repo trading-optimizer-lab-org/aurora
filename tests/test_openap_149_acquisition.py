@@ -1524,6 +1524,8 @@ def test_consolidation_workflow_recovers_missing_batches_in_authorized_run() -> 
     assert "recovered_market_download.outcome" in fallback["if"]
     assert "recovered_features_download.outcome" in fallback["if"]
     assert "recover_openap_yfinance_price_shards.py" in fallback["run"]
+    assert "--sec-identity-evidence" in fallback["run"]
+    assert "inputs/exchange_switch_current/sec_listing_identity_manifest.json" in fallback["run"]
     assert "run_openap_149_recovered_yfinance_market.py" in fallback["run"]
     assert "run_openap_149_recovered_current_features.py" in fallback["run"]
     command = steps["Consolidate latest current evidence"]["run"]

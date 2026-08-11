@@ -155,6 +155,7 @@ jobs:
             tests/test_openap_149_recovered_current_features.py \
             tests/test_openap_149_recovered_openap93_proxies.py \
             tests/test_openap_149_verified_current_batches.py \
+            tests/test_openap_93_artifact_recovery.py \
             -q --tb=short
 
   consolidate:
@@ -269,6 +270,8 @@ jobs:
             --repository "${GITHUB_REPOSITORY}" \
             --source-run-id "$YFINANCE_SOURCE_RUN_ID" \
             --audited-market-run-id "$AUDITED_MARKET_RUN_ID" \
+            --sec-identity-evidence \
+            inputs/exchange_switch_current/sec_listing_identity_manifest.json \
             --output-dir outputs/recovery
           curl --fail --location --silent --show-error \
             --output inputs/factors/ff3_daily.zip \

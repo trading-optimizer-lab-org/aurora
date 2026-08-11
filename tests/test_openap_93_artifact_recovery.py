@@ -358,3 +358,30 @@ def test_market_security_master_recovery_requires_success_and_safe_summary() -> 
             artifact,
             {**members, "source_manifest.csv": fallback_manifest},
         )
+
+    official_identity_evidence = {
+        "implementation_sha": "b" * 40,
+        "identity_source_url": (
+            "https://www.sec.gov/files/company_tickers_exchange.json"
+        ),
+        "identity_source_mode": "sec_official_live_with_audited_transport",
+        "identity_source_sha256": "d" * 64,
+        "identity_access_method": "sec_official_direct",
+        "identity_retrieved_at": "2026-08-10T12:00:00+00:00",
+        "current_universe_rows": 2157,
+        "current_signal_computed": True,
+        "strict_score_eligible": False,
+        "locked_opened": False,
+        "forward_opened": False,
+    }
+    corroborated = module.validate_recovered_market_security_master(
+        run,
+        jobs,
+        artifact,
+        {**members, "source_manifest.csv": fallback_manifest},
+        official_identity_evidence=official_identity_evidence,
+    )
+    assert corroborated["identity_source_mode"] == (
+        "sec_official_live_with_audited_transport"
+    )
+    assert corroborated["identity_source_sha256"] == "d" * 64
