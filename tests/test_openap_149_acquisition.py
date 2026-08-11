@@ -165,7 +165,7 @@ def test_current_sec_event_source_aliases_match_documented_free_routes() -> None
         "recovered_yfinance_artifacts|kenneth_french_factors|pastor_stambaugh",
     )
     assert module._source_allowed(
-        "recovered_openap_features_31270341796|sec_edgar|"
+        "recovered_openap_features_31388342037|sec_edgar|"
         "recovered_yfinance_artifacts_31256096194",
         "recovered_openap_features|sec_edgar|recovered_yfinance_artifacts",
     )
@@ -212,7 +212,7 @@ def test_seventeen_recovered_accounting_routes_remain_prepared_and_non_strict() 
         "recovered_yfinance_artifacts", regex=False
     ).all()
     assert selected["current_remaining_blocker"].eq(
-        "audited_run_31270341796_hash_bound_current_feature_route_"
+        "audited_run_31388342037_hash_bound_current_feature_route_"
         "prepared_unexecuted_source_as_of_retained_sec_and_market_available_at_"
         "identity_coverage_and_strict_fidelity_pending"
     ).all()
@@ -852,7 +852,7 @@ def test_consolidation_recovered_loaders_bind_csv_hash_and_source_revision(
         "available_at": "2026-07-31T20:00:00Z",
         "fidelity_class": "unvalidated_proxy",
         "source_id": (
-            "recovered_openap_features_31270341796|sec_edgar|"
+            "recovered_openap_features_31388342037|sec_edgar|"
             "recovered_yfinance_artifacts"
         ),
         "formula_id": "openap_accrualsbm_sec_ocf_double_sort_proxy",
@@ -1196,7 +1196,7 @@ def test_consolidation_cli_includes_realestate_and_audited_event_batches(
         "value": 1.0,
         "fidelity_class": "unvalidated_proxy",
         "source_id": (
-            "recovered_openap_features_31270341796|sec_edgar|"
+            "recovered_openap_features_31388342037|sec_edgar|"
             "recovered_yfinance_artifacts"
         ),
         "source_url": "https://github.com/org/repo/actions/runs/10",
@@ -1507,7 +1507,7 @@ def test_consolidation_workflow_recovers_missing_batches_in_authorized_run() -> 
 
     dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
     assert dispatch_inputs["yfinance_source_run_id"]["default"] == "31256096194"
-    assert dispatch_inputs["audited_market_run_id"]["default"] == "31270341796"
+    assert dispatch_inputs["audited_market_run_id"]["default"] == "31388342037"
     steps = {
         step["name"]: step
         for step in workflow["jobs"]["consolidate"]["steps"]

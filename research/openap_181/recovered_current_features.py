@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 
-RECOVERED_CURRENT_FEATURE_SOURCE_RUN_ID = 31_270_341_796
+RECOVERED_CURRENT_FEATURE_SOURCE_RUN_ID = 31_388_342_037
 RECOVERED_CURRENT_FEATURE_SOURCE_URL = (
     "https://github.com/trading-optimizer-lab-org/aurora/actions/runs/"
     f"{RECOVERED_CURRENT_FEATURE_SOURCE_RUN_ID}"

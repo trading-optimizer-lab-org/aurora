@@ -102,7 +102,7 @@ on:
       audited_market_run_id:
         description: Pinned successful merge containing audited source hashes
         required: true
-        default: "31270341796"
+        default: "31388342037"
         type: string
       formula_evidence_run_id:
         description: Successful run containing the pinned formula inventory

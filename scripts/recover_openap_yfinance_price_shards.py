@@ -32,7 +32,7 @@ from aurora.research.openap_181.recovered_current_features import (
 
 
 API_ROOT = "https://api.github.com"
-AUDITED_MARKET_RUN_ID = 31_270_341_796
+AUDITED_MARKET_RUN_ID = 31_388_342_037
 AUDITED_ARTIFACT_NAME = "openap-yfinance-sec-current-score-results"
 ARTIFACT_PATTERN = "openap-yfinance-*"
 AUDITED_MEMBERS = (

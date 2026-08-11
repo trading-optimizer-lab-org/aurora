@@ -375,7 +375,7 @@ def test_manual_workflow_reuses_artifacts_without_new_yahoo_or_twelve_calls() ->
 
     assert "workflow_dispatch:" in workflow
     assert 'default: "31256096194"' in workflow
-    assert 'default: "31270341796"' in workflow
+    assert 'default: "31388342037"' in workflow
     assert "github.event.repository.private" in workflow
     assert "QF_DATA_DIR" in workflow
     assert "TWELVE_DATA_API_KEY" not in workflow

@@ -430,7 +430,7 @@ def test_current_feature_observations_keep_source_as_of_and_fail_closed() -> Non
         r"[0-9a-f]{64}"
     ).all()
     assert aaa["source_id"].str.contains(
-        "recovered_openap_features_31270341796", regex=False
+        "recovered_openap_features_31388342037", regex=False
     ).all()
 
     bbb = observations.loc[observations["ticker"].eq("BBB")]
