@@ -575,7 +575,8 @@ def evaluate_price_lane(
         if statistic == "level":
             value = realized
         elif statistic == "change":
-            value = realized.pct_change(fill_method=None)
+            previous = realized.shift(1).replace(0.0, np.nan)
+            value = realized / previous - 1.0
         elif statistic == "spread":
             value = realized - realized.rolling(window, min_periods=window).mean()
         elif statistic == "percentile":

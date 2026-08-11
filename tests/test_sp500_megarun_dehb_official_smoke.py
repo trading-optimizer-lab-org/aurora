@@ -66,6 +66,7 @@ def test_report_gate_requires_every_official_dehb_guarantee() -> None:
         "worker_equivalence_1_2_4": True,
         "checkpoint_resume_exact": True,
         "forbidden_config_rejection_safe": True,
+        "f015_parameter_grid_finite": True,
         "search_end": "2010-12-31",
         "validation_opened": False,
         "locked_opened": False,
@@ -81,6 +82,37 @@ def test_report_gate_requires_every_official_dehb_guarantee() -> None:
     forbidden_broken = {**report, "forbidden_config_rejection_safe": False}
     with pytest.raises(OfficialDehbSmokeError, match="SMOKE_GATE_FAILED"):
         validate_official_smoke_report(forbidden_broken)
+
+    f015_broken = {**report, "f015_parameter_grid_finite": False}
+    with pytest.raises(OfficialDehbSmokeError, match="SMOKE_GATE_FAILED"):
+        validate_official_smoke_report(f015_broken)
+
+
+def test_f015_official_smoke_exercises_every_parameter_combination() -> None:
+    from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
+    from aurora.infra.sp500_megarun.dehb_official_smoke import (
+        verify_f015_parameter_grid,
+    )
+    from aurora.infra.sp500_megarun.feature_contract import (
+        load_and_validate_feature_contract,
+    )
+
+    data = load_and_validate_contract(
+        REPO_ROOT / "config" / "sp500_megarun_free_data_240.json"
+    )
+    contract = load_and_validate_feature_contract(
+        REPO_ROOT / "config" / "sp500_megarun_feature_contract_240.json",
+        data,
+    )
+
+    receipt = verify_f015_parameter_grid(contract)
+
+    assert receipt == {
+        "valid": True,
+        "lane_id": "F015",
+        "parameter_combinations": 224,
+        "infinite_outputs": 0,
+    }
 
 
 def test_dependency_lock_is_domain_hash_bound_and_contains_exact_official_pins() -> None:
