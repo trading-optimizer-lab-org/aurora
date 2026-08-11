@@ -441,8 +441,8 @@ def _validate_security_master(
                 .eq(LEGACY_SEC_IDENTITY_SOURCE)
             )
         ).all()
-        or identity_available_at.isna().any()
-        or identity_available_at.gt(source_as_of).any()
+        or identity_available_at.loc[official_scope].isna().any()
+        or identity_available_at.loc[official_scope].gt(source_as_of).any()
     ):
         raise ValueError("security master identity contract is invalid")
     security["_normalised_cik"] = security["cik"].map(_normalise_cik)

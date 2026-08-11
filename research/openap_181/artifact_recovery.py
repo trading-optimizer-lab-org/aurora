@@ -700,14 +700,19 @@ def validate_recovered_market_security_master(
     )
     if non_official_source_count:
         contract_errors.append(f"non_official_source:{non_official_source_count}")
-    invalid_identity_count = int(identity_retrieved_at.isna().sum())
+    invalid_identity_count = int(
+        (official_scope & identity_retrieved_at.isna()).sum()
+    )
     if invalid_identity_count:
         contract_errors.append(f"invalid_retrieved_at_sec:{invalid_identity_count}")
     invalid_share_class_count = int(
         (
-            share_class_count.isna()
-            | share_class_count.lt(1)
-            | share_class_count.mod(1).ne(0)
+            official_scope
+            & (
+                share_class_count.isna()
+                | share_class_count.lt(1)
+                | share_class_count.mod(1).ne(0)
+            )
         ).sum()
     )
     if invalid_share_class_count:
