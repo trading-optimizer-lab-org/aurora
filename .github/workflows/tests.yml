@@ -15,7 +15,9 @@ jobs:
         python: ["3.11", "3.12", "3.13"]
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # The complete Windows 3.12 suite can exceed 30 minutes on a busy hosted
+    # runner. Keep a bounded ceiling without cancelling a healthy final shard.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
