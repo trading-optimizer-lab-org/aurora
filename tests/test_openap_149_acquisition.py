@@ -217,10 +217,7 @@ def test_seventeen_recovered_accounting_routes_remain_prepared_and_non_strict() 
         "identity_coverage_and_strict_fidelity_pending"
     ).all()
     assert selected["strict_score_eligible"].eq(False).all()  # noqa: E712
-    assert selected.drop(index="BetaLiquidityPS")["source_checked_at"].eq(
-        "2026-08-10"
-    ).all()
-    assert selected.loc["BetaLiquidityPS", "source_checked_at"] == "2026-08-11"
+    assert selected["source_checked_at"].eq("2026-08-10").all()
 
 
 def test_all_31_frozen_market_routes_record_the_recovered_artifact_route() -> None:
@@ -335,7 +332,10 @@ def test_all_31_frozen_market_routes_record_the_recovered_artifact_route() -> No
         "are_stale_reference_only;current_factor_release_historical_ticker_"
         "intervals_coverage_and_fidelity_pending"
     )
-    assert selected["source_checked_at"].eq("2026-08-10").all()
+    assert selected.drop(index="BetaLiquidityPS")["source_checked_at"].eq(
+        "2026-08-10"
+    ).all()
+    assert selected.loc["BetaLiquidityPS", "source_checked_at"] == "2026-08-11"
     assert selected["strict_score_eligible"].astype(str).str.lower().eq(
         "false"
     ).all()
