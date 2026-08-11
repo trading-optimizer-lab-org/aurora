@@ -63,7 +63,7 @@ on:
       sec_current_run_id:
         description: Successful OpenAP 149 SEC CompanyFacts run
         required: true
-        default: "31392473937"
+        default: "31490896342"
         type: string
       finra_current_run_id:
         description: Successful OpenAP 149 FINRA ShortInterest run

@@ -386,7 +386,7 @@ def test_current_companyfacts_routes_record_executed_batch() -> None:
         "ConvDebt": 265,
         "DelDRC": 1949,
         "DelNetFin": 36,
-        "DivOmit": 14,
+        "DivOmit": 13,
         "DivSeason": 3,
         "EarningsConsistency": 1441,
         "EarningsSurprise": 2132,
@@ -397,7 +397,7 @@ def test_current_companyfacts_routes_record_executed_batch() -> None:
     for signal, count in expected_counts.items():
         blocker = routes.loc[signal, "current_remaining_blocker"]
         assert (
-            f"companyfacts_run_31392473937_current_value_count_{count}"
+            f"companyfacts_run_31490896342_current_value_count_{count}"
             in blocker
         )
         assert "prepared_unexecuted" not in blocker
@@ -1435,7 +1435,7 @@ def test_consolidation_workflow_pins_verified_source_runs() -> None:
     dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
     expected = {
         "current_93_run_id": "31341580689",
-        "sec_current_run_id": "31392473937",
+        "sec_current_run_id": "31490896342",
         "finra_current_run_id": "31384007094",
         "realestate_current_run_id": "31384049772",
         "exchange_switch_current_run_id": "31389285731",

@@ -350,10 +350,10 @@ def test_production_contracts_pin_the_six_executed_free_batches() -> None:
     }
     expected = {
         "sec_companyfacts": (
-            31392473937,
-            "7eda9f626c80ca38bfebfd47001cc47a83d4d5080abda6517d76f62f0d2d19ca",
-            95936,
-            95936,
+            31490896342,
+            "03cac84d7f999a211402f27a3db0bef41902af42a78c85b4ef29ac6056e96212",
+            95935,
+            95935,
         ),
         "finra_short_interest": (
             31384007094,

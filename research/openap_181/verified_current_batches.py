@@ -112,15 +112,15 @@ _COMPANYFACTS_SIGNALS = (
 CURRENT_BATCH_CONTRACTS: dict[str, CurrentBatchContract] = {
     "sec_companyfacts": CurrentBatchContract(
         batch_id="sec_companyfacts",
-        run_id=31392473937,
+        run_id=31490896342,
         csv_filename="openap_149_sec_companyfacts_current.csv",
         manifest_filename="openap_149_sec_companyfacts_manifest.json",
         csv_sha256=(
-            "7eda9f626c80ca38bfebfd47001cc47a83d4d5080abda6517d76f62f0d2d19ca"
+            "03cac84d7f999a211402f27a3db0bef41902af42a78c85b4ef29ac6056e96212"
         ),
         expected_signals=_COMPANYFACTS_SIGNALS,
-        expected_rows=95936,
-        expected_usable_rows=95936,
+        expected_rows=95935,
+        expected_usable_rows=95935,
         expected_sources=tuple(
             (signal, "sec_edgar") for signal in _COMPANYFACTS_SIGNALS
         ),
