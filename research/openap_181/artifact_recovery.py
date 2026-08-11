@@ -28,9 +28,6 @@ MARKET_SECURITY_MASTER_RECOVERY_MEMBERS = (
 SEC_TICKER_EXCHANGE_URL = (
     "https://www.sec.gov/files/company_tickers_exchange.json"
 )
-OFFICIAL_SEC_IDENTITY_SOURCES = frozenset(
-    {"sec_company_tickers_exchange", "sec_company_tickers"}
-)
 _MARKET_SECURITY_MASTER_REQUIRED_COLUMNS = {
     "security_id",
     "symbol",
@@ -166,8 +163,8 @@ def normalise_recovered_security_master(
         pd.Series("", index=normalised.index, dtype="object"),
     ).fillna("").astype(str)
     unmatched_ranked = ranked & ~matched
-    legacy_official_fallback = unmatched_ranked & source_sec.isin(
-        OFFICIAL_SEC_IDENTITY_SOURCES
+    legacy_official_fallback = unmatched_ranked & source_sec.str.startswith(
+        "sec_company_tickers"
     )
     if (unmatched_ranked & ~legacy_official_fallback).any():
         missing_ranked_keys = [
@@ -685,9 +682,10 @@ def validate_recovered_market_security_master(
     non_official_source_count = int(
         (
             official_scope
-            & ~security_master["source_sec"].fillna("").astype(str).isin(
-                OFFICIAL_SEC_IDENTITY_SOURCES
-            )
+            & ~security_master["source_sec"]
+            .fillna("")
+            .astype(str)
+            .str.startswith("sec_company_tickers")
         ).sum()
     )
     if non_official_source_count:
