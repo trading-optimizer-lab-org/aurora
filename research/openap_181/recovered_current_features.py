@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from aurora.research.openap_181.artifact_recovery import (
+    LEGACY_SEC_IDENTITY_SOURCE,
     normalise_recovered_security_master,
 )
 
@@ -427,10 +428,18 @@ def _validate_security_master(
         or security["symbol"].duplicated(keep=False).any()
         or not (
             ~official_scope
-            | security["source_sec"]
-            .fillna("")
-            .astype(str)
-            .str.startswith("sec_company_tickers")
+            | (
+                security["source_sec"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.startswith("sec_company_tickers")
+                | security["source_sec"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .eq(LEGACY_SEC_IDENTITY_SOURCE)
+            )
         ).all()
         or identity_available_at.isna().any()
         or identity_available_at.gt(source_as_of).any()

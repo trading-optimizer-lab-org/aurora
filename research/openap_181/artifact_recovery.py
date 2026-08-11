@@ -28,6 +28,7 @@ MARKET_SECURITY_MASTER_RECOVERY_MEMBERS = (
 SEC_TICKER_EXCHANGE_URL = (
     "https://www.sec.gov/files/company_tickers_exchange.json"
 )
+LEGACY_SEC_IDENTITY_SOURCE = "sec_cik_mapper_pinned_sec_derived"
 _MARKET_SECURITY_MASTER_REQUIRED_COLUMNS = {
     "security_id",
     "symbol",
@@ -163,10 +164,10 @@ def normalise_recovered_security_master(
         pd.Series("", index=normalised.index, dtype="object"),
     ).fillna("").astype(str).str.strip()
     unmatched_ranked = ranked & ~matched
-    legacy_official_fallback = unmatched_ranked & source_sec.str.startswith(
-        "sec_company_tickers"
+    legacy_sec_fallback = unmatched_ranked & source_sec.eq(
+        LEGACY_SEC_IDENTITY_SOURCE
     )
-    if (unmatched_ranked & ~legacy_official_fallback).any():
+    if (unmatched_ranked & ~legacy_sec_fallback).any():
         missing_ranked_keys = [
             f"{cik}:{symbol}:source={source}"
             for (cik, symbol), source, is_ranked, is_matched in zip(
@@ -180,7 +181,7 @@ def normalise_recovered_security_master(
         ]
         raise ValueError(
             "ranked recovered market identity is absent from official SEC universe: "
-            f"count={int((unmatched_ranked & ~legacy_official_fallback).sum())} "
+            f"count={int((unmatched_ranked & ~legacy_sec_fallback).sum())} "
             f"examples={missing_ranked_keys[:10]}"
         )
     matched_keys = [
@@ -197,9 +198,9 @@ def normalise_recovered_security_master(
         normalised.at[index, "issuer_share_class_count"] = official_row[
             "issuer_share_class_count"
         ]
-    fallback_count = int(legacy_official_fallback.sum())
+    fallback_count = int(legacy_sec_fallback.sum())
     if fallback_count:
-        mode += f"+legacy_official_sec_identity_fallback_{fallback_count}"
+        mode += f"+legacy_sec_identity_fallback_{fallback_count}"
     return normalised, mode + "+official_sec_identity_rebind"
 
 
@@ -683,10 +684,18 @@ def validate_recovered_market_security_master(
     non_official_source_count = int(
         (
             official_scope
-            & ~security_master["source_sec"]
-            .fillna("")
-            .astype(str)
-            .str.startswith("sec_company_tickers")
+            & ~(
+                security_master["source_sec"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.startswith("sec_company_tickers")
+                | security_master["source_sec"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .eq(LEGACY_SEC_IDENTITY_SOURCE)
+            )
         ).sum()
     )
     if non_official_source_count:

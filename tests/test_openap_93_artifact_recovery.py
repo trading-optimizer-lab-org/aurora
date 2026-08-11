@@ -447,3 +447,45 @@ def test_legacy_market_identity_rebinds_only_to_hash_bound_official_rows() -> No
     assert normalised.loc[0, "source_sec"] == "sec_company_tickers_exchange"
     assert normalised.loc[0, "issuer_share_class_count"] == 2
     assert normalised.loc[0, "retrieved_at_sec"] == "2026-08-10T11:00:00Z"
+
+
+def test_unmatched_legacy_sec_identity_is_explicitly_non_strict() -> None:
+    module = _module()
+    market = pd.DataFrame(
+        [
+            {
+                "symbol": "AEP",
+                "cik": 4904,
+                "eligible_common_stock": True,
+                "issuer_primary_security": True,
+                "ranking_eligible": True,
+                "source_sec": "sec_cik_mapper_pinned_sec_derived",
+                "retrieved_at_sec": "2026-08-10T10:00:00Z",
+                "issuer_share_class_count": 1,
+            }
+        ]
+    )
+    official = pd.DataFrame(
+        [
+            {
+                "security_id": "US-SEC-0000999999-OTHER",
+                "ticker": "OTHER",
+                "cik": "0000999999",
+                "issuer_share_class_count": 1,
+                "identity_available_at": "2026-08-10T11:00:00Z",
+                "identity_source_url": (
+                    "https://www.sec.gov/files/company_tickers_exchange.json"
+                ),
+            }
+        ]
+    )
+
+    normalised, mode = module.normalise_recovered_security_master(
+        market,
+        official_identity_universe=official,
+    )
+
+    assert mode.endswith(
+        "+legacy_sec_identity_fallback_1+official_sec_identity_rebind"
+    )
+    assert normalised.loc[0, "source_sec"] == "sec_cik_mapper_pinned_sec_derived"
