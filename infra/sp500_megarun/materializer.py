@@ -14,7 +14,6 @@ from typing import Any, Mapping
 from urllib.parse import urljoin, urlparse
 
 import pandas as pd
-import requests
 
 from aurora.infra.sp500_megarun.data_contract import FreeDataContract, SourcePlanItem
 from aurora.infra.sp500_megarun.source_adapters import (
@@ -91,6 +90,8 @@ def _request_headers(url: str) -> dict[str, str]:
 
 
 def _download(url: str, *, cache_dir: Path) -> tuple[bytes, str]:
+    import requests
+
     cache_dir.mkdir(parents=True, exist_ok=True)
     target = _cache_path(cache_dir, url)
     if target.exists() and target.stat().st_size > 0:

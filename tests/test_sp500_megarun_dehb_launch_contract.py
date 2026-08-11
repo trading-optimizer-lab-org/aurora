@@ -88,6 +88,36 @@ assert receipt["verified"] is True
     assert result.returncode == 0, result.stderr
 
 
+def test_worker_feature_modules_bootstrap_without_download_client() -> None:
+    probe = """
+import builtins
+
+original_import = builtins.__import__
+
+def import_without_requests(name, *args, **kwargs):
+    if name == "requests" or name.startswith("requests."):
+        raise ModuleNotFoundError("requests deliberately unavailable")
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = import_without_requests
+
+from aurora.infra.sp500_megarun import feature_smoke
+from aurora.infra.sp500_megarun.materializer import parquet_safe_frame
+
+assert feature_smoke is not None
+assert callable(parquet_safe_frame)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def _canonical_hash(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
