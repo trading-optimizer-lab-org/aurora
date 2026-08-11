@@ -7,9 +7,10 @@ from datetime import date
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-import pandas as pd
+if TYPE_CHECKING:
+    import pandas as pd
 
 from aurora.infra.sp500_megarun.data_contract import FreeDataContract
 
@@ -448,6 +449,8 @@ def _session_on_or_after(
     *,
     strictly_after: bool,
 ) -> pd.Series:
+    import pandas as pd
+
     normalized_sessions = pd.DatetimeIndex(pd.to_datetime(sessions)).normalize().unique().sort_values()
     target_values = pd.to_datetime(targets, errors="coerce").dt.normalize()
     positions = normalized_sessions.searchsorted(
@@ -468,6 +471,8 @@ def apply_available_at_policy(
     sessions: pd.DatetimeIndex,
 ) -> pd.DataFrame:
     """Add observed_at and available_at without filling from a future observation."""
+
+    import pandas as pd
 
     if "date" not in frame:
         raise FeatureContractError("DATE_COLUMN_REQUIRED_FOR_AVAILABILITY")
@@ -531,6 +536,8 @@ def _nth_session_of_offset_month(
     month_offset: int,
     session_number: int,
 ) -> pd.Series:
+    import pandas as pd
+
     normalized_sessions = pd.DatetimeIndex(pd.to_datetime(sessions)).normalize().unique().sort_values()
     output = pd.Series(pd.NaT, index=observed_at.index, dtype="datetime64[ns]")
     for index, observed in observed_at.items():
@@ -549,6 +556,8 @@ def maximum_input_available_at(
     columns: Sequence[str],
 ) -> pd.Series:
     """A feature becomes usable only when its slowest required input is usable."""
+
+    import pandas as pd
 
     if not columns:
         raise FeatureContractError("NO_AVAILABLE_AT_INPUTS")

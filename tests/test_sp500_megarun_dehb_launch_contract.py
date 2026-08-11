@@ -51,6 +51,43 @@ runpy.run_path({str(script)!r}, run_name="__main__")
     assert result.returncode == 0, result.stderr
 
 
+def test_campaign_binding_validation_bootstraps_without_numeric_dependencies() -> None:
+    probe = f"""
+import builtins
+from pathlib import Path
+
+original_import = builtins.__import__
+
+def import_without_numeric_dependencies(name, *args, **kwargs):
+    if name in {{"numpy", "pandas"}} or name.startswith(("numpy.", "pandas.")):
+        raise ModuleNotFoundError(f"{{name}} deliberately unavailable")
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = import_without_numeric_dependencies
+
+from aurora.infra.sp500_megarun.dehb_campaign_contract import (
+    load_and_validate_campaign_contract,
+    validate_campaign_bindings,
+)
+
+root = Path({str(ROOT)!r})
+contract = load_and_validate_campaign_contract(
+    root / "config" / "sp500_megarun_dehb_campaign_v1.json"
+)
+receipt = validate_campaign_bindings(contract, repo_root=root)
+assert receipt["verified"] is True
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def _canonical_hash(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
