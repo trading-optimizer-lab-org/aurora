@@ -28,6 +28,9 @@ MARKET_SECURITY_MASTER_RECOVERY_MEMBERS = (
 SEC_TICKER_EXCHANGE_URL = (
     "https://www.sec.gov/files/company_tickers_exchange.json"
 )
+OFFICIAL_SEC_IDENTITY_SOURCES = frozenset(
+    {"sec_company_tickers_exchange", "sec_company_tickers"}
+)
 _MARKET_SECURITY_MASTER_REQUIRED_COLUMNS = {
     "security_id",
     "symbol",
@@ -158,7 +161,15 @@ def normalise_recovered_security_master(
     ):
         if column in normalised.columns:
             ranked &= normalised[column].eq(True)  # noqa: E712
-    if (ranked & ~matched).any():
+    source_sec = normalised.get(
+        "source_sec",
+        pd.Series("", index=normalised.index, dtype="object"),
+    ).fillna("").astype(str)
+    unmatched_ranked = ranked & ~matched
+    legacy_official_fallback = unmatched_ranked & source_sec.isin(
+        OFFICIAL_SEC_IDENTITY_SOURCES
+    )
+    if (unmatched_ranked & ~legacy_official_fallback).any():
         missing_ranked_keys = [
             f"{cik}:{symbol}"
             for (cik, symbol), is_ranked, is_matched in zip(
@@ -171,7 +182,7 @@ def normalise_recovered_security_master(
         ]
         raise ValueError(
             "ranked recovered market identity is absent from official SEC universe: "
-            f"count={len(missing_ranked_keys)} "
+            f"count={int((unmatched_ranked & ~legacy_official_fallback).sum())} "
             f"examples={missing_ranked_keys[:10]}"
         )
     matched_keys = [
@@ -188,6 +199,9 @@ def normalise_recovered_security_master(
         normalised.at[index, "issuer_share_class_count"] = official_row[
             "issuer_share_class_count"
         ]
+    fallback_count = int(legacy_official_fallback.sum())
+    if fallback_count:
+        mode += f"+legacy_official_sec_identity_fallback_{fallback_count}"
     return normalised, mode + "+official_sec_identity_rebind"
 
 
@@ -671,8 +685,8 @@ def validate_recovered_market_security_master(
     non_official_source_count = int(
         (
             official_scope
-            & ~security_master["source_sec"].fillna("").astype(str).eq(
-                "sec_company_tickers_exchange"
+            & ~security_master["source_sec"].fillna("").astype(str).isin(
+                OFFICIAL_SEC_IDENTITY_SOURCES
             )
         ).sum()
     )

@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from aurora.research.openap_181.artifact_recovery import (
+    OFFICIAL_SEC_IDENTITY_SOURCES,
     normalise_recovered_security_master,
 )
 
@@ -427,8 +428,8 @@ def _validate_security_master(
         or security["symbol"].duplicated(keep=False).any()
         or not (
             ~official_scope
-            | security["source_sec"].fillna("").astype(str).eq(
-                "sec_company_tickers_exchange"
+            | security["source_sec"].fillna("").astype(str).isin(
+                OFFICIAL_SEC_IDENTITY_SOURCES
             )
         ).all()
         or identity_available_at.isna().any()
