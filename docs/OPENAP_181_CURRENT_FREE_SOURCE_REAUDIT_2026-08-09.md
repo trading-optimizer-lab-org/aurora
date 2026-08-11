@@ -742,6 +742,34 @@ un dia sin negociacion y el calculador recuperado usa ventanas de sesiones
 fuente gratuita de precios puede ayudar, pero la formula e identidad PIT
 siguen sin estar validadas.
 
+`CitationsRD` no usa el total bruto de citas. El script oficial requiere
+`PatentDataProcessed.ncitscale`, aplica un rezago de seis meses a las citas y
+de 24 meses a `xrd`, suma cada serie en ventanas calendario de 48 meses y
+forma `sum_ncit / sum_xrd` en junio. Despues aplica las medianas NYSE y los
+terciles dentro de tamano pequeno. PatentsView ofrece datos abiertos, pero el
+campo escalado por subcategoria, su fecha causal de disponibilidad y el puente
+de patente a emisor/GVKEY/PERMNO no estan demostrados; usar citas totales o
+una fecha de concesion como sustituto cambiaria la senal.
+
+`FirmAgeMom` define `age` como el numero de observaciones mensuales desde la
+primera aparicion de cada `permno` en el panel limpio, exige al menos 12 meses
+y precio absoluto de al menos 5, calcula la momentum geometrica de los
+retardos 1 a 5 y conserva solo el quintil mas joven de cada mes. No usa una
+fecha de fundacion ni una fecha IPO. Los 373 valores finitos rechazados nacen
+de un artefacto cuya primera fecha de precio coincide con el limite de
+descarga de 84 meses; por tanto no prueba la primera aparicion. La ruta
+gratuita exige reconstruir historiales de cotizacion e identidad de cada
+`permno` antes de calcularla.
+
+`MS` es el G-score de Mohanram: primero limita al quintil inferior de BM y a
+industrias SIC2 con al menos tres empresas; despues usa variables trimestrales
+para rentabilidad, cash-flow, crecimiento y volatilidad, con sumas de 12
+meses y desviaciones de 48 meses, y compara varios indicadores con medianas
+de industria. SEC puede aportar piezas contables, pero los cuatro valores
+finitos del artefacto anterior proceden de un proxy anual que no reproduce las
+ventanas trimestrales ni el universo bajo-BM. Queda como reconstruccion no
+estricta hasta disponer de historia trimestral causal, identidad y cobertura.
+
 La reauditoria de los numeros finitos no utilizables del artefacto OpenAP93
 rechaza otras tres recuperaciones aparentes:
 

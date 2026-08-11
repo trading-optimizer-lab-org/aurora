@@ -373,6 +373,16 @@ Dos auditorias del resto fijan el siguiente trabajo concreto:
 - `zerotrade1M`, `zerotrade6M` y `zerotrade12M` requieren dias sin negociacion,
   turnover y el ajuste `21 / dias_de_negociacion`; las ventanas basadas solo
   en volumen cero no reproducen la formula.
+- `CitationsRD` requiere `ncitscale`, no citas brutas: aplica rezagos de 6 y
+  24 meses y sumas moviles de 48 meses antes de los terciles. PatentsView no
+  demuestra por si solo ese campo escalado ni el puente causal a GVKEY/PERMNO.
+- `FirmAgeMom` define edad como primera aparicion mensual limpia del `permno`,
+  exige 12 meses y calcula los retardos 1--5 en el quintil mas joven. Los 373
+  valores antiguos empiezan en el limite de descarga y no prueban esa primera
+  aparicion; sigue bloqueada por fidelidad e identidad.
+- `MS` exige el G-score trimestral sobre el quintil inferior de BM, con
+  ventanas de 12 y 48 meses y medianas SIC2. El proxy anual SEC anterior no
+  reproduce la formula ni sus fechas point-in-time.
 
 ## Diecisiete senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 
