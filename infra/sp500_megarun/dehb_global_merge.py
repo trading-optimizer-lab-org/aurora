@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -26,6 +27,55 @@ class GlobalMergeError(ValueError):
 
 
 BundleVerifier = Callable[..., Mapping[str, Any]]
+_ARCHIVE_KEY_REL_TOLERANCE = 1e-12
+_ARCHIVE_KEY_ABS_TOLERANCE = 1e-12
+
+
+def candidate_records_equivalent(
+    left: Mapping[str, Any], right: Mapping[str, Any]
+) -> bool:
+    """Compare candidate identity while tolerating replica float serialization noise.
+
+    The strategy and position fingerprints, lane, configuration, and feasibility
+    must remain exact. Only archive-score floats may differ within a tight
+    numerical tolerance because independent replicas can serialize the same
+    deterministic score with a final-bit rounding difference.
+    """
+
+    for key in (
+        "candidate_id",
+        "strategy_fingerprint",
+        "position_fingerprint",
+        "lane_id",
+        "configuration",
+        "train_feasible",
+    ):
+        if left.get(key) != right.get(key):
+            return False
+    left_archive = left.get("archive_key")
+    right_archive = right.get("archive_key")
+    if not isinstance(left_archive, Sequence) or isinstance(left_archive, (str, bytes)):
+        return False
+    if not isinstance(right_archive, Sequence) or isinstance(
+        right_archive, (str, bytes)
+    ):
+        return False
+    if len(left_archive) != len(right_archive):
+        return False
+    try:
+        return all(
+            math.isfinite(float(left_value))
+            and math.isfinite(float(right_value))
+            and math.isclose(
+                float(left_value),
+                float(right_value),
+                rel_tol=_ARCHIVE_KEY_REL_TOLERANCE,
+                abs_tol=_ARCHIVE_KEY_ABS_TOLERANCE,
+            )
+            for left_value, right_value in zip(left_archive, right_archive)
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def compare_prefix_feature_frames(
@@ -324,8 +374,10 @@ def collect_verified_campaign_inventory(
                 "train_feasible": info.get("train_feasible") is True,
             }
             existing = candidates.get(identity)
-            if existing is not None and existing != candidate:
-                raise GlobalMergeError("CANDIDATE_IDENTITY_COLLISION")
+            if existing is not None:
+                if not candidate_records_equivalent(existing, candidate):
+                    raise GlobalMergeError("CANDIDATE_IDENTITY_COLLISION")
+                continue
             candidates[identity] = candidate
         champion = manifest.get("champion")
         if isinstance(champion, Mapping):

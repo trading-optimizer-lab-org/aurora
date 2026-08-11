@@ -37,6 +37,33 @@ def test_seed_consensus_groups_behavior_clones_and_requires_two_of_three() -> No
     assert finalists[0]["supporting_islands"] == ["F001-R1", "F001-R2"]
 
 
+def test_candidate_records_accept_replica_float_roundoff_but_reject_material_drift() -> None:
+    from aurora.infra.sp500_megarun.dehb_global_merge import (
+        candidate_records_equivalent,
+    )
+
+    base = {
+        "candidate_id": "a" * 64,
+        "strategy_fingerprint": "a" * 64,
+        "position_fingerprint": "b" * 64,
+        "lane_id": "F001",
+        "configuration": {"window": 20},
+        "archive_key": [1.0, 10.0, 1.600029791180237, -0.0512234362344039],
+        "train_feasible": False,
+    }
+    replica_roundoff = {
+        **base,
+        "archive_key": [1.0, 10.0, 1.600029791180237, -0.05122343623440387],
+    }
+    material_drift = {
+        **base,
+        "archive_key": [1.0, 10.0, 1.6000297912, -0.0512234362344039],
+    }
+
+    assert candidate_records_equivalent(base, replica_roundoff) is True
+    assert candidate_records_equivalent(base, material_drift) is False
+
+
 def test_seed_consensus_excludes_local_robustness_failure() -> None:
     from aurora.infra.sp500_megarun.dehb_global_merge import (
         select_seed_consensus_finalists,
