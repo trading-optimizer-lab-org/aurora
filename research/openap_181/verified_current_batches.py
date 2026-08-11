@@ -763,7 +763,11 @@ def load_verified_current_batch(
     if csv_hash != contract.csv_sha256:
         raise ValueError(f"CSV SHA-256 mismatch for {contract.batch_id}")
     manifest = _read_manifest(manifest_path)
-    frame = pd.read_csv(csv_path, low_memory=False)
+    frame = pd.read_csv(
+        csv_path,
+        low_memory=False,
+        keep_default_na=False,
+    )
     frame, normalized_current, normalized_strict = _validate_frame(
         frame,
         manifest,
