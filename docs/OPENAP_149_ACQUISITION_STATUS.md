@@ -277,6 +277,65 @@ Dos auditorias del resto fijan el siguiente trabajo concreto:
   ambos cortes; la reconstruccion debe respetar esas dos reglas. Sigue sin ser
   Compustat exacta porque las taxonomias y la base fiscal de AOCI pueden
   diferir, pero no necesita una fuente de pago.
+- `OrderBacklog` y `OrderBacklogChg` tienen datos gratuitos en filings, aunque
+  no en el alias cerrado actual. El calculador solo busca
+  `us-gaap:OrderBacklog` en Company Facts; esa API excluye etiquetas propias y
+  por eso obtuvo cobertura cero. EDGAR contiene etiquetas de emisor como
+  `tgen:Backlog` y 10-K actuales que declaran el backlog operativo con importes
+  comparables de dos cierres. La ingesta debe aceptar un hecho monetario
+  instantaneo o una tabla/texto solo cuando etiqueta, definicion y contexto
+  demuestren pedidos/contratos operativos pendientes; debe rechazar el activo
+  intangible denominado backlog. Tampoco puede sustituir automaticamente
+  `RevenueRemainingPerformanceObligation`, cuya definicion ASC 606 es precio
+  de transaccion no reconocido, no backlog de pedidos. Para la primera senal
+  hacen falta backlog y activos actual/anterior; para el cambio hacen falta
+  dos ratios causales completos, incluido el tercer corte de activos. Cada
+  version debe conservar su propia accesion y `accepted`, sin retrotraer el
+  comparable republicado por un filing posterior.
+- `CBOperProf` no requiere una fuente nueva, sino completar la formula. Los
+  415 numeros antiguos restan solo cambios de cuentas a cobrar e inventario y
+  omiten prepagos, deferred revenue corriente/no corriente, cuentas a pagar y
+  gastos devengados; por eso siguen en cuarentena. SEC publica conceptos
+  estandar para los cinco grupos, incluidos `PrepaidExpenseCurrent`,
+  `ContractWithCustomerLiabilityCurrent/Noncurrent`,
+  `AccountsPayableCurrent` y `AccruedLiabilitiesCurrent`. La reparacion debe
+  retener todos los campos actuales y de doce meses, aplicar exactamente el
+  zero-fill de OpenAP a cada variable del numerador y despues imponer acciones
+  ordinarias, capitalizacion/BM, activos y exclusion SIC 6000-6999. Los
+  agregados amplios de prepagos o cuentas a pagar mas devengos son proxies y
+  deben distinguirse de los conceptos separados.
+- `EarnSupBig` puede derivarse del lote gratuito ya adquirido. CompanyFacts
+  `31392473937` produjo 2.132 `EarningsSurprise` actuales con 21 trimestres; el
+  repositorio ya dispone del mapa oficial FF48 de Kenneth French y de
+  capitalizacion de emisor. El calculador anterior usa la industria Yahoo,
+  que no es la formula. Hay que mapear el SIC SEC actual a FF48, calcular por
+  industria-mes el percentil de capitalizacion, promediar
+  `EarningsSurprise` solo en el 30 % superior y emitirlo solo para el 70 %
+  restante. `available_at` debe ser el maximo de todas las empresas grandes
+  que intervienen en cada media, no solo la fecha de la empresa receptora.
+- `CustomerMomentum` admite una salida positiva parcial desde SEC Notes y
+  filings. La formula fijada usa la media simple de retornos de clientes
+  identificados, no una ponderacion por ventas como afirma el contrato local;
+  hace disponible la relacion seis meses despues del cierre y la deja caducar
+  aproximadamente a los doce meses. Solo deben aceptarse clientes nombrados
+  que resuelvan sin ambiguedad a CIK y clase de accion. Filings que digan
+  "Customer 1" o "un cliente", entidades privadas y ausencias no producen
+  enlaces ni ceros. El resultado sera reconstruido y de cobertura parcial.
+- `iomom_cust` y `iomom_supp` disponen gratuitamente de Supply/Make/Use y
+  vintages BEA. El bloqueo real es asignar cada empresa al NAICS historico y
+  despues a la industria BEA de 71 categorias: SEC ofrece SIC y las
+  concordancias Census pueden ser muchos-a-muchos. El R oficial aplica cinco
+  anos de retraso, excluye la propia industria y guarda el retorno industrial
+  relacionado continuo. Ese R no esta fijado por hash en el contrato y declara
+  un bug post-1997 para proveedores; hay que congelar y probar el
+  comportamiento literal antes de calcular `iomom_supp`.
+- `retConglomerate` tiene tablas SEC actuales de ingresos por segmento, pero
+  no un SIC2 estandar por segmento. Solo puede reconstruirse para emisores con
+  ventas reconciliadas y descripciones que permitan asignacion SIC2 univoca.
+  Ademas, el contrato local exige activos y "80 % asset coverage", mientras
+  que la fuente fijada no carga activos: divide ventas del segmento por ventas
+  anuales y aplica alli el corte. Esa contradiccion de formula debe resolverse
+  antes de escribir el calculador; no es ausencia de una fuente gratuita.
 
 ## Diecisiete senales OpenAP93: recuperacion selectiva preparada, no ejecutada
 

@@ -39,6 +39,7 @@ La primera pregunta sigue siendo muy exigente. La segunda es la que corresponde 
 - [SEC EDGAR XBRL Guide 2026](https://www.sec.gov/file/xbrl-guide-2026-01-16): los filings Inline XBRL pueden declarar `dei:TradingSymbol`, `dei:SecurityExchangeName` y `dei:Security12bTitle` por contexto. Sirven para corroborar observaciones historicas CIK-clase-ticker-bolsa, pero no autorizan a convertir la asociacion actual de `company_tickers_exchange.json` en un intervalo historico ni en identidad PERMNO.
 - [SEC Financial Statement Data Sets](https://www.sec.gov/data-research/sec-markets-data/financial-statement-data-sets): estados numericos XBRL `as filed` desde 2009, con accesion y enmiendas.
 - [SEC Financial Statement and Notes Data Sets](https://www.sec.gov/data-research/sec-markets-data/financial-statement-notes-data-sets): notas y tablas XBRL, incluidas etiquetas estandar y propias necesarias para segmentos, clientes y desgloses menos comunes.
+- [Especificacion SEC de Financial Statement and Notes](https://www.sec.gov/dera/data/fsnds.pdf): `TAG` incluye etiquetas estandar y personalizadas tal como fueron presentadas y `DIM` conserva las combinaciones de ejes y miembros. Un [10-K 2025 de Cardinal Health](https://www.sec.gov/Archives/edgar/data/721371/000072137125000079/cah-20250630.htm) nombra a CVS Health y OptumRx y publica su peso en ingresos, mientras que otros filings solo dicen "un cliente". EDGAR permite una ruta positiva para relaciones identificadas, no un panel completo ni ceros para relaciones no declaradas.
 - [Taxonomia US-GAAP 2026 de FASB](https://xbrl.fasb.org/us-gaap/2026/elts/): esquema y definiciones oficiales de las etiquetas XBRL. Confirma que `CommonStockCapitalSharesReservedForFutureIssuance` es un agregado para cualquier emision futura, mientras que `ConvertibleDebt` y sus porciones describen saldos de deuda convertible; no son por si solos equivalencias de los campos Compustat `dc/cshrc`.
 - [FAQ de taxonomia GAAP de FASB](https://www.fasb.org/taxonomyfaq): documenta
   la separacion dimensional de tesoreria comun y preferente y el concepto
@@ -47,6 +48,8 @@ La primera pregunta sigue siendo muy exigente. La segunda es la que corresponde 
   [`PreferredStockAmountOfPreferredDividendsInArrears`](https://www.sec.gov/Archives/edgar/data/1232582/000123258226000118/R61.htm).
 - [Ejemplos primarios de pensiones y AOCI en EDGAR](https://www.sec.gov/Archives/edgar/data/1311370/000162828025007441/R103.htm): los filings muestran `DefinedBenefitPlanFairValueOfPlanAssets`, `DefinedBenefitPlanBenefitObligation` y ejes para separar pensiones. Un [10-K con planes en superavit y deficit](https://www.sec.gov/Archives/edgar/data/16875/000001687525000008/cp-20241231.htm) demuestra el desglose necesario para `FR`; un [roll-forward AOCI por componente](https://www.sec.gov/Archives/edgar/data/81362/000162828026028949/R23.htm) demuestra los saldos de traduccion y valores disponibles para la venta requeridos por `RDS`.
 - [Dividendos comunes y preferentes en EDGAR](https://www.sec.gov/Archives/edgar/data/93751/000009375126000124/R110.htm): la taxonomia publica `DividendsPreferredStockCash`; tambien publica [`DividendsCommonStockCash`](https://www.sec.gov/Archives/edgar/data/1012100/000101210026000016/R145.htm). Son entradas gratuitas para la reconstruccion de `RDS`, sujetas al mismo periodo anual y fecha de aceptacion.
+- [Backlog operativo en filings EDGAR](https://www.sec.gov/Archives/edgar/data/1808997/000180899726000031/aout-20260430.htm): un 10-K actual publica los importes de pedidos pendientes de 2026 y 2025; otros filings usan etiquetas propias como [`tgen:Backlog`](https://www.sec.gov/Archives/edgar/data/1537435/000153743525000018/R47.htm). En cambio, el concepto estandar [`RevenueRemainingPerformanceObligation`](https://www.sec.gov/Archives/edgar/data/101829/000010182926000011/R74.htm) se define como precio de transaccion asignado a obligaciones de desempeno aun no reconocido. No equivale automaticamente al `ob` de Compustat.
+- [Componentes SEC de cash-based operating profitability](https://www.sec.gov/Archives/edgar/data/1053507/000105350722000017/R72.htm): EDGAR expone prepagos corrientes; tambien publica [contract liabilities corrientes y no corrientes](https://www.sec.gov/Archives/edgar/data/108312/000119312526195984/R59.htm), [cuentas a pagar](https://www.sec.gov/Archives/edgar/data/1103601/000119312512335468/R30.htm) y [gastos devengados](https://www.sec.gov/Archives/edgar/data/1321655/000132165525000131/R40.htm). Son los cinco grupos que faltan en el proxy parcial de `CBOperProf`.
 - [SEC Form 13F Data Sets](https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets): posiciones institucionales trimestrales estructuradas desde 2013.
 - [Twelve Data Basic](https://twelvedata.com/pricing): plan gratuito de 800 creditos diarios; su [inicio rapido oficial](https://twelvedata.com/docs/introduction/quickstart) documenta la clave en cabecera, el [historico diario](https://support.twelvedata.com/en/articles/5656039-how-to-get-historical-prices) cubre normalmente desde la primera cotizacion y el [ajuste de precios](https://support.twelvedata.com/en/articles/5179064-are-the-prices-adjusted) puede controlarse. Sus [terminos](https://twelvedata.com/terms) permiten uso interno y datos derivados no reversibles, sin redistribuir el dato bruto.
 - [Twelve Data Dividends](https://twelvedata.com/docs/advanced): el endpoint
@@ -62,7 +65,7 @@ La primera pregunta sigue siendo muy exigente. La segunda es la que corresponde 
 - [Tradier Options Chains](https://docs.tradier.com/reference/brokerage-api-markets-get-options-chains): cadenas actuales con IV y griegas; [API sin coste para titulares de cuenta](https://production.tradier.com/individuals/pricing), limitada a uso personal segun su [FAQ](https://docs.tradier.com/docs/faq).
 - [OpenFIGI](https://www.openfigi.com/api/documentation): mapeo gratuito de CUSIP, ISIN, ticker y FIGI, con y sin clave.
 - [USPTO PatentsView](https://www.uspto.gov/ip-policy/economic-research/patentsview): descargas estructuradas de patentes, citas y cesionarios, actualizadas hasta diciembre de 2025 en el Open Data Portal. La [API PatentSearch](https://search.patentsview.org/docs/docs/Search%20API/SearchAPIReference/) exige clave, limita a 45 peticiones por minuto y tiene suspendida temporalmente la concesion de claves nuevas; la ruta de estas senales debe usar los bulk downloads, no depender de esa API.
-- [BEA Input-Output Accounts](https://www.bea.gov/data/industries/input-output-accounts-data): relaciones entre industrias, actualizadas anualmente, con archivo de vintages.
+- [BEA Input-Output Accounts](https://www.bea.gov/data/industries/input-output-accounts-data): relaciones entre industrias, actualizadas anualmente, 71 categorias de industria y archivo de estimaciones publicadas anteriormente. La [guia oficial](https://www.bea.gov/resources/guide-interactive-industry-input-output-accounts-tables) distingue tablas Supply, Use y Make y sus niveles de agregacion; no aporta una clasificacion NAICS por empresa.
 - [Cboe VIX historical data](https://www.cboe.com/tradable_products/vix/vix_historical_data): VIX diario desde 1990; es proxy, no sustituto exacto de VXO despues de 2021.
 - [FRED GNPDEF](https://fred.stlouisfed.org/series/GNPDEF): deflactor implicito del GNP con origen BEA, frecuencia trimestral, acceso CSV sin clave y etiqueta `Public Domain: Citation Requested`; se autoriza como entrada reconstruida de OScore con atribucion a BEA/FRED.
 - [Kenneth French Data Library](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html): factores y carteras de investigacion actuales y descargables.
@@ -223,6 +226,56 @@ codigo oficial trata el termino de pensiones como cero cuando falta `pcupsu` o
 `paddml`, regla que debe conservarse. La salida sera reconstruida/no estricta:
 la taxonomia y la base antes/despues de impuestos no demuestran equivalencia
 exacta con `msa/recta`, pero no se necesita una fuente de pago.
+
+`OrderBacklog` y `OrderBacklogChg` quedaron a cero por un alias imposible, no
+por ausencia de datos. El calculador actual filtra Company Facts a taxonomia
+`us-gaap` y solo acepta el nombre literal `OrderBacklog`; Company Facts no
+agrega etiquetas propias. EDGAR si publica hechos monetarios instantaneos como
+`tgen:Backlog` y 10-K actuales con el backlog operativo y dos cierres
+comparables. El parser de Notes/filing debe exigir que etiqueta, definicion,
+seccion y texto describan pedidos o contratos operativos pendientes, con fecha
+`as of`, unidad, accesion y `accepted`; debe rechazar el activo intangible
+llamado order backlog. `RevenueRemainingPerformanceObligation` tampoco se
+convierte silenciosamente en backlog: ASC 606 lo define como precio de
+transaccion asignado a obligaciones aun no reconocidas y puede excluir o
+incluir compromisos distintos. Solo se admite si el propio filing demuestra
+la equivalencia semantica.
+
+La formula de `OrderBacklog` necesita `ob_t`, `at_t` y `at_t-12`. La de
+`OrderBacklogChg` resta dos ratios completos y, por tanto, necesita tambien
+`ob_t-12` y `at_t-24`. Deben construirse desde versiones `as filed` causales:
+el comparable anterior republicado en el filing actual no se retrotrae a la
+fecha de formacion anterior. Cero backlog sigue convirtiendose en ausente, tal
+como hace OpenAP. Esta ruta puede dar cobertura parcial y reconstruida sin
+fuente de pago; el siguiente paso es retener etiquetas personalizadas y el
+texto Inline XBRL, resolver los tres cortes de activos y medir la cobertura.
+
+`CBOperProf` ya genero 415 numeros en un artefacto antiguo, pero no son la
+formula oficial y siguen rechazados. El calculador parcial usa ingresos, coste,
+SG&A, I+D y cambios de cuentas a cobrar e inventario; omite cambios de prepagos
+(`xpp`), deferred revenue corriente y no corriente (`drc/drlt`), cuentas a
+pagar (`ap`) y gastos devengados (`xacc`). EDGAR publica conceptos estandar
+para esos grupos: `PrepaidExpenseCurrent` o, con menor fidelidad,
+`PrepaidExpenseAndOtherAssetsCurrent`;
+`ContractWithCustomerLiabilityCurrent/Noncurrent` y etiquetas de deferred
+revenue; `AccountsPayableCurrent`; y `AccruedLiabilitiesCurrent`. La nueva
+retencion debe recoger los dos cortes anuales, aplicar el zero-fill que OpenAP
+ordena para todas las variables del numerador y exigir despues activos,
+capitalizacion/BM, accion ordinaria y exclusion SIC 6000-6999. Un agregado
+combinado de prepagos u obligaciones no se presenta como campo Compustat
+exacto. La ruta es gratuita, reconstruida y con cobertura por medir.
+
+`EarnSupBig` tampoco necesita una fuente adicional. El run CompanyFacts
+`31392473937` ya produjo 2.132 valores actuales de `EarningsSurprise` a partir
+de 21 trimestres SEC, y el repositorio conserva el mapa SIC-FF48 oficial de
+Kenneth French y capitalizacion actual de emisor. El calculador anterior usa
+la industria descriptiva de Yahoo y por eso no reproduce OpenAP. La
+reparacion debe mapear SIC SEC a FF48, calcular el percentil de capitalizacion
+en cada industria-mes, promediar la sorpresa solo entre el 30 % superior y
+asignar esa media unicamente al 70 % restante. Como es una senal transversal,
+su `available_at` debe ser el maximo de las observaciones de todas las empresas
+grandes incluidas en la media. El resultado seguira reconstruido por identidad
+SIC/CRSP y fidelidad `epspxq`, pero los datos gratuitos ya existen.
 
 `DelDRC`, `ConvDebt`, `OrderBacklog` y `OrderBacklogChg` no necesitan Twelve
 Data para sus entradas contables. La API `companyfacts` solo agrega hechos de
@@ -572,7 +625,29 @@ corresponda + SEC para eventos o clasificacion. Twelve Data queda como respaldo.
 
 AnnouncementReturn, Beta, BetaFP, BetaLiquidityPS, BetaTailRisk, betaVIX, CoskewACX, Coskewness, FirmAgeMom, High52, IdioVol3F, IdioVolAHT, IndMom, IndRetBig, Mom6mJunk, MomOffSeason11YrPlus, MomRev, MomVol, PriceDelayRsq, PriceDelaySlope, PriceDelayTstat, RealizedVol, ResidualMomentum, retConglomerate, ReturnSkew3F, Size, TrendFactor.
 
-`betaVIX` solo puede ser proxy desde que VXO dejo de publicarse en 2021. `retConglomerate` exige reconstruir segmentos SEC y no debe llamarse equivalente exacto a Compustat sin validacion.
+`betaVIX` solo puede ser proxy desde que VXO dejo de publicarse en 2021.
+`retConglomerate` exige reconstruir segmentos SEC y no debe llamarse
+equivalente exacto a Compustat sin validacion. La fuente Python fijada usa
+segmentos `OPSEG/BUSSEG`, descarta ventas negativas o ausentes, agrega ventas
+por SIC de dos digitos y divide cada fila de industria por ventas anuales del
+emisor. Despues forma retornos medios de empresas stand-alone por SIC2 y los
+combina con ponderaciones de ventas del conglomerado. El contrato local no
+refleja ese codigo: afirma cobertura de activos superior al 80 % y exige
+`segment_assets`, aunque el predictor fijado no carga activos y aplica el corte
+del 80 % sobre `segment sales / annual sales` en cada fila. Esa contradiccion
+debe resolverse contra el codigo fuente fijado antes de implementar; no se
+puede reinterpretar silenciosamente como una puerta de activos.
+
+SEC Notes si contiene etiquetas personalizadas, dimensiones, texto y tablas
+de ingresos por segmento; filings actuales publican, por ejemplo, ingresos
+externos por Gas Utility, Gas Marketing y Midstream. No existe, sin embargo,
+un SIC2 estandar por segmento. La reconstruccion gratuita solo puede emitir
+cuando cada segmento operativo se reconcilia causalmente con ventas anuales y
+su descripcion permite una asignacion SIC2 unica y auditable; descripciones
+ambiguas, eliminaciones no reconciliadas o un unico segmento deben fallar
+cerradas. Los retornos stand-alone pueden salir de los artefactos de mercado
+ya adquiridos, con `available_at` igual al maximo de filing, identidad y mes de
+retorno. La salida seguiria siendo `reconstructed_not_strict`.
 
 La reauditoria de los numeros finitos no utilizables del artefacto OpenAP93
 rechaza otras tres recuperaciones aparentes:
@@ -746,6 +821,43 @@ CitationsRD, CustomerMomentum, FirmAge, Herf, HerfAsset, HerfBE, hire, iomom_cus
 `CustomerMomentum`, `FirmAge` y `sinAlgo` son reconstrucciones actuales: los
 campos publicos existen, pero la semantica Compustat/CRSP y la cobertura deben
 medirse.
+
+La fuente fijada de `CustomerMomentum` no pondera por ventas: filtra clientes
+de tipo `COMPANY`, enlaza sus nombres con empresas, hace disponible cada
+relacion seis meses despues de `datadate`, la arrastra como maximo hasta la
+fila de parada de doce meses y calcula la media simple del retorno mensual de
+los clientes identificados. El contrato local que la describe como
+"sales-weighted" es incorrecto y debe corregirse bajo TDD. SEC permite una
+ruta positiva parcial porque algunos 10-K nombran al cliente y su porcentaje,
+pero otros solo publican `Customer 1` o "un cliente". La ingesta debe conservar
+accesion, `accepted`, periodo y texto; aceptar solo un nombre que resuelva a un
+unico CIK y clase de accion; y fijar la disponibilidad de la relacion en el
+maximo entre aceptacion y cierre fiscal mas seis meses. Una coincidencia solo
+por nombre normalizado, una entidad privada, un alias ambiguo o una ausencia
+de declaracion no genera enlace ni cero. El retorno procede del ultimo mes
+completo y la salida es reconstruida, no Compustat/CRSP exacta.
+
+`iomom_cust` y `iomom_supp` tienen gratis la matriz industrial, pero no todo el
+puente de empresa. El script R fijado usa Supply/Make para clientes y Use para
+proveedores, excluye la propia industria, calcula retornos mensuales de
+industria ponderados por capitalizacion y luego promedia las industrias
+relacionadas con los pesos BEA. Los pesos de cada hoja solo se vuelven
+disponibles cinco anos despues; las empresas se asignan por prefijos NAICS de
+cuatro, tres o dos digitos. El valor guardado es `retmatch`, no el decil
+`portind`.
+
+BEA publica las tablas y sus vintages; Census publica concordancias SIC-NAICS,
+pero una concordancia muchos-a-muchos no demuestra el NAICS historico de una
+empresa y SEC estandariza SIC, no `naicsh` Compustat. Una reconstruccion actual
+solo puede aceptar una asignacion empresa-NAICS oficial o una cadena
+SIC-NAICS univoca para el periodo; el resto debe quedar `blocked_identity`.
+Ademas, el contrato actual fija solo el wrapper Python, aunque la formula esta
+en el fichero R, y este declara un bug post-1997 en `iomom_supp`: construye la
+matriz transpuesta en `temp` pero continua calculando con `temp1`. Antes de
+emitir esa senal hay que fijar por hash el R y probar explicitamente si se
+replica el comportamiento OpenAP publicado; corregir el bug produciria otra
+senal y no puede hacerse en silencio. Ambas salidas serian reconstruidas y no
+estrictas aun con cobertura.
 
 Para `sinAlgo` queda preparada una ruta positiva sin fuente de pago. Usa el SIC
 del ultimo filing SEC causal y emite 1 solo para cerveza (`2080-2085`) o tabaco
