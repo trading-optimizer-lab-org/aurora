@@ -154,10 +154,10 @@ def _validate_recovery(
         shards.append(frame.loc[frame["date"].ge(history_start)].copy())
     security_master = pd.read_parquet(security_master_path)
     official_identity_path = recovery_root / str(
-        recovery_manifest.get("official_identity_universe_relative_path", "")
+        manifest.get("official_identity_universe_relative_path", "")
     )
     expected_official_hash = str(
-        recovery_manifest.get("official_identity_universe_sha256", "")
+        manifest.get("official_identity_universe_sha256", "")
     )
     if (
         not official_identity_path.is_file()
