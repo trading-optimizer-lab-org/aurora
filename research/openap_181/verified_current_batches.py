@@ -692,19 +692,21 @@ def _validate_frame(
         ):
             raise ValueError(f"current batch formula SHA-256 mismatch for {signal}")
 
-    formation = pd.to_datetime(frame["formation_at"], utc=True, errors="coerce")
+    formation = pd.to_datetime(
+        frame["formation_at"], format="mixed", utc=True, errors="coerce"
+    )
     if formation.isna().any():
         raise ValueError("current batch has invalid formation timestamps")
     usable_rows_frame = frame.loc[usable]
     usable_formation = formation.loc[usable]
     period_end = pd.to_datetime(
-        usable_rows_frame["period_end"], utc=True, errors="coerce"
+        usable_rows_frame["period_end"], format="mixed", utc=True, errors="coerce"
     )
     available = pd.to_datetime(
-        usable_rows_frame["available_at"], utc=True, errors="coerce"
+        usable_rows_frame["available_at"], format="mixed", utc=True, errors="coerce"
     )
     retrieved = pd.to_datetime(
-        usable_rows_frame["retrieved_at"], utc=True, errors="coerce"
+        usable_rows_frame["retrieved_at"], format="mixed", utc=True, errors="coerce"
     )
     if (
         period_end.isna().any()
@@ -720,12 +722,15 @@ def _validate_frame(
         raise ValueError("current batch has lookahead timestamps")
     filed_text = usable_rows_frame["filed_at"].fillna("").astype(str).str.strip()
     filed_mask = filed_text.ne("")
-    filed = pd.to_datetime(filed_text.loc[filed_mask], utc=True, errors="coerce")
+    filed = pd.to_datetime(
+        filed_text.loc[filed_mask], format="mixed", utc=True, errors="coerce"
+    )
     if filed.isna().any() or (filed > available.loc[filed_mask]).any():
         raise ValueError("current batch has lookahead filing timestamps")
 
     manifest_formation = pd.to_datetime(
         manifest.get(contract.manifest_formation_key),
+        format="mixed",
         utc=True,
         errors="coerce",
     )
