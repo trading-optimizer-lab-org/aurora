@@ -79,6 +79,7 @@ def test_finalist_evidence_closes_all_non_global_train_gates(tmp_path: Path) -> 
                 "actual_four_worker_run": True,
                 "worker_equivalence_1_2_4": True,
                 "checkpoint_resume_exact": True,
+                "forbidden_config_rejection_safe": True,
                 "search_end": "2010-12-31",
                 "validation_opened": False,
                 "locked_opened": False,

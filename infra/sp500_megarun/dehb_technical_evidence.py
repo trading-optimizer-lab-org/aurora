@@ -134,6 +134,9 @@ def build_technical_evidence(
             "configspace_version": report["configspace_version"],
             "worker_equivalence_1_2_4": report["worker_equivalence_1_2_4"],
             "checkpoint_resume_exact": report["checkpoint_resume_exact"],
+            "forbidden_config_rejection_safe": report[
+                "forbidden_config_rejection_safe"
+            ],
             "actual_four_worker_run": report["actual_four_worker_run"],
         },
         "fault_injection": dict(faults),

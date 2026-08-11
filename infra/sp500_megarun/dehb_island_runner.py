@@ -33,6 +33,7 @@ class IslandSliceResult:
     full_fidelity_evaluations: int
     completed_since_improvement: int
     seconds_since_improvement: float
+    invalid_config_rejections: int
     best_archive_key: tuple[float, ...] | None
     trials: tuple[Mapping[str, Any], ...]
 
@@ -73,6 +74,50 @@ def _validated_result(result: Mapping[str, Any]) -> tuple[float, float, Mapping[
     return fitness, cost, info
 
 
+def _is_configspace_forbidden_value(exc: Exception) -> bool:
+    error_type = type(exc)
+    return (
+        error_type.__name__ == "ForbiddenValueError"
+        and error_type.__module__.startswith("ConfigSpace")
+    )
+
+
+def _ask_valid_batch(
+    optimizer: Any,
+    *,
+    n_configs: int,
+    rejection_limit: int,
+) -> tuple[list[Mapping[str, Any]], int]:
+    """Collect one batch without losing jobs asked before a forbidden vector.
+
+    DEHB 0.1.2 converts each differential-evolution vector to ConfigSpace only
+    after mutating its internal state.  Asking for a batch can therefore raise
+    midway through the batch and hide already registered jobs from the caller.
+    Asking one job at a time preserves every valid job.  Only ConfigSpace's
+    explicit forbidden-value exception is recoverable; every other error stays
+    fail-closed.
+    """
+
+    jobs: list[Mapping[str, Any]] = []
+    rejected = 0
+    while len(jobs) < n_configs:
+        try:
+            job = optimizer.ask(n_configs=1)
+        except Exception as exc:
+            if not _is_configspace_forbidden_value(exc):
+                raise
+            rejected += 1
+            if rejected > rejection_limit:
+                raise IslandRunnerError(
+                    "OFFICIAL_DEHB_FORBIDDEN_REJECTION_LIMIT"
+                ) from exc
+            continue
+        if not isinstance(job, Mapping):
+            raise IslandRunnerError("OFFICIAL_DEHB_ASK_JOB_NOT_MAPPING")
+        jobs.append(job)
+    return jobs, rejected
+
+
 def run_ask_tell_slice(
     optimizer: Any,
     objective: Objective,
@@ -87,7 +132,9 @@ def run_ask_tell_slice(
     initial_full_fidelity_evaluations: int = 0,
     initial_completed_since_improvement: int = 0,
     initial_seconds_since_improvement: float = 0.0,
+    initial_invalid_config_rejections: int = 0,
     initial_best_archive_key: tuple[float, ...] | None = None,
+    max_invalid_config_rejections_per_slice: int = 10_000,
     clock: Callable[[], float] = time.monotonic,
     executor_factory: Any = ProcessPoolExecutor,
 ) -> IslandSliceResult:
@@ -105,8 +152,11 @@ def run_ask_tell_slice(
         initial_evaluations,
         initial_full_fidelity_evaluations,
         initial_completed_since_improvement,
+        initial_invalid_config_rejections,
     ) < 0 or initial_seconds_since_improvement < 0.0:
         raise IslandRunnerError("INVALID_INITIAL_SLICE_STATE")
+    if max_invalid_config_rejections_per_slice < 1:
+        raise IslandRunnerError("INVALID_FORBIDDEN_REJECTION_LIMIT")
 
     started = clock()
     last_improvement = started - initial_seconds_since_improvement
@@ -114,6 +164,8 @@ def run_ask_tell_slice(
     best_archive_key = initial_best_archive_key
     evaluations = initial_evaluations
     full_fidelity_evaluations = initial_full_fidelity_evaluations
+    invalid_config_rejections = initial_invalid_config_rejections
+    slice_invalid_config_rejections = 0
     trials: list[Mapping[str, Any]] = []
     status = "paused_at_runner_slice"
     stop_reason = "runner_slice_elapsed"
@@ -122,9 +174,16 @@ def run_ask_tell_slice(
         while True:
             if clock() - started >= slice_seconds:
                 break
-            jobs = optimizer.ask(n_configs=n_workers)
-            if not isinstance(jobs, list) or len(jobs) != n_workers:
-                raise IslandRunnerError("OFFICIAL_DEHB_ASK_BATCH_MISMATCH")
+            jobs, rejected = _ask_valid_batch(
+                optimizer,
+                n_configs=n_workers,
+                rejection_limit=(
+                    max_invalid_config_rejections_per_slice
+                    - slice_invalid_config_rejections
+                ),
+            )
+            slice_invalid_config_rejections += rejected
+            invalid_config_rejections += rejected
             futures = [
                 executor.submit(objective, job["config"], float(job["fidelity"]))
                 for job in jobs
@@ -185,6 +244,7 @@ def run_ask_tell_slice(
         full_fidelity_evaluations=full_fidelity_evaluations,
         completed_since_improvement=completed_since_improvement,
         seconds_since_improvement=max(0.0, clock() - last_improvement),
+        invalid_config_rejections=invalid_config_rejections,
         best_archive_key=best_archive_key,
         trials=tuple(trials),
     )
@@ -373,6 +433,7 @@ def write_island_bundle(
             "status": search.status,
             "stop_reason": search.stop_reason,
             "evaluations": search.evaluations,
+            "invalid_config_rejections": search.invalid_config_rejections,
         },
     )
     ledger_receipt = verify_event_ledger(
@@ -466,6 +527,7 @@ def write_island_bundle(
         "full_fidelity_evaluations": search.full_fidelity_evaluations,
         "completed_since_improvement": search.completed_since_improvement,
         "seconds_since_improvement": search.seconds_since_improvement,
+        "invalid_config_rejections": search.invalid_config_rejections,
         "best_archive_key": list(search.best_archive_key)
         if search.best_archive_key is not None
         else None,
@@ -522,6 +584,7 @@ def write_island_bundle(
         "stop_reason": search.stop_reason,
         "evaluations": search.evaluations,
         "full_fidelity_evaluations": search.full_fidelity_evaluations,
+        "invalid_config_rejections": search.invalid_config_rejections,
         "checkpoint_sha256": envelope["checkpoint_envelope_sha256"],
         "official_dehb_native_checkpoint": True,
         "native_checkpoint_sha256": native_receipt["aggregate_sha256"],
@@ -764,6 +827,9 @@ def run_official_dehb_island(
             ),
             initial_seconds_since_improvement=float(
                 initial.get("seconds_since_improvement", 0.0)
+            ),
+            initial_invalid_config_rejections=int(
+                initial.get("invalid_config_rejections", 0)
             ),
             initial_best_archive_key=tuple(float(value) for value in prior_best)
             if isinstance(prior_best, list)
