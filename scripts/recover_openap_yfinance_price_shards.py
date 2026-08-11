@@ -472,8 +472,11 @@ def main() -> int:
     for artifact in source_evidence["artifacts"]:
         chunk_index = int(artifact["chunk_index"])
         member_name = f"prices_{chunk_index:03d}.parquet"
+        _progress(f"price_shard_{chunk_index}_reader_start")
         artifact_reader = _reader(args.repository, artifact, token)
+        _progress(f"price_shard_{chunk_index}_reader_ready")
         inspection = inspect_zip_members(artifact_reader, (member_name,))
+        _progress(f"price_shard_{chunk_index}_inspected")
         declared_bytes = int(inspection[member_name]["compress_size"])
         if declared_bytes > args.maximum_shard_compressed_bytes:
             raise RuntimeError(
@@ -483,6 +486,7 @@ def main() -> int:
         if total_declared_bytes > args.maximum_total_compressed_bytes:
             raise RuntimeError("price recovery exceeds the total compressed-byte limit")
         payload = read_zip_members(artifact_reader, (member_name,))[member_name]
+        _progress(f"price_shard_{chunk_index}_read")
         manifest_row = source_manifest.loc[
             source_manifest["chunk_index"].eq(chunk_index)
         ].iloc[0]
@@ -491,6 +495,7 @@ def main() -> int:
             payload,
             manifest_row,
         )
+        _progress(f"price_shard_{chunk_index}_validated")
         target = shard_root / member_name
         target.write_bytes(payload)
         evidence.update(
@@ -506,6 +511,7 @@ def main() -> int:
         recovered_rows.append(evidence)
         total_fetched_bytes += artifact_reader.bytes_fetched
         total_range_requests += artifact_reader.range_requests
+        _progress(f"price_shard_{chunk_index}_materialized")
 
     materialized_members = {
         "security_master.parquet": "security_master.parquet",
