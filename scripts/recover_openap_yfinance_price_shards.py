@@ -11,6 +11,8 @@ from typing import Any
 import urllib.error
 import urllib.request
 
+import pandas as pd
+
 from aurora.core.execution_policy import require_github_actions_or_explicit_local_permission
 from aurora.core.runtime_paths import base_data_dir
 from aurora.research.openap_181.artifact_recovery import (
