@@ -542,22 +542,45 @@ def validate_recovered_market_security_master(
     share_class_count = pd.to_numeric(
         security_master["issuer_share_class_count"], errors="coerce"
     )
-    if (
-        len(security_master) != int(summary["security_master_rows"])
-        or security_master.empty
-        or security_master["security_id"].isna().any()
-        or security_master["security_id"].astype(str).str.strip().eq("").any()
-        or security_master["security_id"].duplicated(keep=False).any()
-        or not security_master["source_sec"].fillna("").astype(str).eq(
-            "sec_company_tickers_exchange"
-        ).all()
-        or identity_retrieved_at.isna().any()
-        or share_class_count.isna().any()
-        or share_class_count.lt(1).any()
-        or share_class_count.mod(1).ne(0).any()
-    ):
+    contract_errors: list[str] = []
+    if len(security_master) != int(summary["security_master_rows"]):
+        contract_errors.append("row_count")
+    if security_master.empty:
+        contract_errors.append("empty")
+    if security_master["security_id"].isna().any():
+        contract_errors.append("missing_security_id")
+    if security_master["security_id"].astype(str).str.strip().eq("").any():
+        contract_errors.append("blank_security_id")
+    if security_master["security_id"].duplicated(keep=False).any():
+        contract_errors.append("duplicate_security_id")
+    non_official_source_count = int(
+        (
+            ~security_master["source_sec"].fillna("").astype(str).eq(
+                "sec_company_tickers_exchange"
+            )
+        ).sum()
+    )
+    if non_official_source_count:
+        contract_errors.append(f"non_official_source:{non_official_source_count}")
+    invalid_identity_count = int(identity_retrieved_at.isna().sum())
+    if invalid_identity_count:
+        contract_errors.append(f"invalid_retrieved_at_sec:{invalid_identity_count}")
+    invalid_share_class_count = int(
+        (
+            share_class_count.isna()
+            | share_class_count.lt(1)
+            | share_class_count.mod(1).ne(0)
+        ).sum()
+    )
+    if invalid_share_class_count:
+        contract_errors.append(
+            f"invalid_issuer_share_class_count:{invalid_share_class_count}"
+        )
+    if contract_errors:
         raise ValueError(
-            "recovered security master row or SEC identity provenance contract is invalid"
+            "recovered security master row or SEC identity provenance contract is "
+            "invalid: "
+            + ",".join(contract_errors)
         )
 
     return {
