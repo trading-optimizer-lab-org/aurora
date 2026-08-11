@@ -564,7 +564,13 @@ def build_acquisition_matrix(
     rows = _validate_current_rows(current_rows)
     route_signals = set(routes["signal"].astype(str))
     rows = rows.loc[rows["signal"].astype(str).isin(route_signals)].copy()
-    universe_size = int(current_rows["security_id"].dropna().astype(str).nunique())
+    declared_universe = current_rows.attrs.get("universe_count")
+    try:
+        universe_size = int(declared_universe)
+    except (TypeError, ValueError):
+        universe_size = 0
+    if universe_size <= 0:
+        universe_size = int(current_rows["security_id"].dropna().astype(str).nunique())
     hashes = _formula_hashes(formula_inventory)
 
     approved_parts: list[pd.DataFrame] = []

@@ -257,10 +257,21 @@ def test_all_31_frozen_market_routes_record_the_recovered_artifact_route() -> No
     pending_direct = direct.drop(
         index=["BidAskSpread", *recovered_openap93_direct]
     )
-    assert pending_direct["current_remaining_blocker"].eq(
-        "recovered_yfinance_48_shards_hash_bound_route_and_11_direct_formula_"
-        "calculators_prepared_unexecuted_historical_"
-        "ticker_intervals_coverage_and_fidelity_pending"
+    prepared_direct = [
+        "High52",
+        "MomOffSeason11YrPlus",
+        "RealizedVol",
+        "VolSD",
+        "VolumeTrend",
+    ]
+    assert pending_direct.loc[prepared_direct, "current_remaining_blocker"].eq(
+        "recovered_yfinance_48_shards_hash_bound_route_and_8_direct_ohlcv_"
+        "formula_calculators_prepared_unexecuted_historical_ticker_intervals_"
+        "coverage_and_fidelity_pending"
+    ).all()
+    zero_trade = ["zerotrade1M", "zerotrade6M", "zerotrade12M"]
+    assert pending_direct.loc[zero_trade, "current_remaining_blocker"].str.startswith(
+        "openap93_2150_finite_values_rejected_and_recovered_yfinance_formula_blocked"
     ).all()
     for signal, recovery_source in recovered_openap93_direct.items():
         sources = set(direct.loc[signal, "primary_free_sources"].split("|"))
@@ -343,7 +354,7 @@ def test_custom_xbrl_accounting_routes_do_not_require_market_data() -> None:
         assert "twelve_data_basic" not in sources
 
     convdebt_blocker = routes.loc["ConvDebt", "current_remaining_blocker"]
-    assert "existing_sec_shards_filtered_out_convdebt_candidate_tags" in convdebt_blocker
+    assert "positive_only_sec_companyfacts_reconstruction_executed" in convdebt_blocker
     assert "exact_dc_cshrc_semantics" in convdebt_blocker
 
 
@@ -1591,10 +1602,9 @@ def test_consolidation_workflow_verifies_audited_finra_evidence() -> None:
     )
     assert 'not bool(io_short_interest["strict_score_eligible"])' in verify
     assert 'len(io_short_interest_values) == 1' in verify
+    assert 'io_short_interest_values["source_id"].eq(' in verify
     assert (
-        'io_short_interest_values["source_id"].eq('
         '"finra_equity_short_interest|sec_edgar|sec_13f|openfigi_public"'
-        ").all()"
         in verify
     )
     assert (

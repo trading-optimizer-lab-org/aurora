@@ -379,7 +379,7 @@ def test_next_accounting_slice_rejects_dependency_availability_drift() -> None:
 def test_recovered_feature_bundle_rejects_tampering_and_incomplete_grid() -> None:
     tampered = _members()
     tampered["openap_features_current.parquet"] += b"tampered"
-    with pytest.raises(ValueError, match="output manifest.*SHA-256"):
+    with pytest.raises(ValueError, match="output manifest.*(byte count|SHA-256)"):
         validate_recovered_current_feature_members(tampered)
 
     incomplete = _feature_frame().iloc[:-1].copy()

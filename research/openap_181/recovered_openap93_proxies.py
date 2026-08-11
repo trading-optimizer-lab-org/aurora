@@ -996,7 +996,9 @@ def load_verified_openap93_proxy_batch(
         "validation_used_for_selection": False,
         "cost_eur": 0,
     }
-    return current.reset_index(drop=True), list(paths.values()), evidence
+    current = current.reset_index(drop=True)
+    current.attrs["universe_count"] = universe_count
+    return current, list(paths.values()), evidence
 
 
 def load_verified_openap93_comp_equ_iss(
