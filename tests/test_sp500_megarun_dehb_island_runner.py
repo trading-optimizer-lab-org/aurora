@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 class _ImmediateExecutor:
     def __init__(self, *, max_workers: int) -> None:
@@ -30,7 +32,7 @@ class _FakeOptimizer:
         self.asked = 0
         self.told: list[int] = []
 
-    def ask(self, n_configs: int):
+    def ask(self, n_configs: int = 1):
         jobs = []
         for _ in range(n_configs):
             index = self.asked
@@ -42,10 +44,45 @@ class _FakeOptimizer:
                     "config_id": index,
                 }
             )
-        return jobs
+        return jobs[0] if n_configs == 1 else jobs
 
     def tell(self, job, _result) -> None:
         self.told.append(int(job["config_id"]))
+
+
+_ForbiddenValueError = type(
+    "ForbiddenValueError",
+    (ValueError,),
+    {"__module__": "ConfigSpace.exceptions"},
+)
+
+
+class _ForbiddenOnceOptimizer(_FakeOptimizer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.request_sizes: list[int] = []
+        self.rejected = False
+
+    def ask(self, n_configs: int = 1):
+        self.request_sizes.append(n_configs)
+        if n_configs != 1:
+            raise AssertionError("runner must not lose partial DEHB batches")
+        if not self.rejected:
+            self.rejected = True
+            raise _ForbiddenValueError("forbidden synthetic vector")
+        return super().ask(n_configs=n_configs)
+
+
+class _AlwaysForbiddenOptimizer:
+    def ask(self, n_configs: int = 1):
+        assert n_configs == 1
+        raise _ForbiddenValueError("always forbidden synthetic vector")
+
+
+class _BrokenOptimizer:
+    def ask(self, n_configs: int = 1):
+        assert n_configs == 1
+        raise RuntimeError("unrelated optimizer failure")
 
 
 class _Clock:
@@ -124,6 +161,72 @@ def test_official_ask_tell_slice_pauses_at_runner_boundary_for_exact_resume() ->
     assert optimizer.told == [0, 1, 2, 3]
 
 
+def test_official_ask_tell_slice_rejects_only_forbidden_configspace_vectors() -> None:
+    from aurora.infra.sp500_megarun.dehb_island_runner import run_ask_tell_slice
+
+    optimizer = _ForbiddenOnceOptimizer()
+    result = run_ask_tell_slice(
+        optimizer,
+        _objective,
+        n_workers=4,
+        full_fidelity=27,
+        slice_seconds=10,
+        plateau_minimum_completed=128,
+        plateau_completed_without_improvement=512,
+        plateau_seconds_without_improvement=120,
+        clock=_Clock([0.0, 1.0, 11.0]),
+        executor_factory=_ImmediateExecutor,
+    )
+
+    assert result.evaluations == 4
+    assert result.invalid_config_rejections == 1
+    assert optimizer.told == [0, 1, 2, 3]
+    assert optimizer.request_sizes == [1, 1, 1, 1, 1]
+
+
+def test_official_ask_tell_slice_fails_closed_after_forbidden_rejection_limit() -> None:
+    from aurora.infra.sp500_megarun.dehb_island_runner import (
+        IslandRunnerError,
+        run_ask_tell_slice,
+    )
+
+    with pytest.raises(
+        IslandRunnerError,
+        match="OFFICIAL_DEHB_FORBIDDEN_REJECTION_LIMIT",
+    ):
+        run_ask_tell_slice(
+            _AlwaysForbiddenOptimizer(),
+            _objective,
+            n_workers=4,
+            full_fidelity=27,
+            slice_seconds=10,
+            plateau_minimum_completed=128,
+            plateau_completed_without_improvement=512,
+            plateau_seconds_without_improvement=120,
+            max_invalid_config_rejections_per_slice=2,
+            clock=_Clock([0.0, 1.0]),
+            executor_factory=_ImmediateExecutor,
+        )
+
+
+def test_official_ask_tell_slice_does_not_mask_unrelated_optimizer_errors() -> None:
+    from aurora.infra.sp500_megarun.dehb_island_runner import run_ask_tell_slice
+
+    with pytest.raises(RuntimeError, match="unrelated optimizer failure"):
+        run_ask_tell_slice(
+            _BrokenOptimizer(),
+            _objective,
+            n_workers=4,
+            full_fidelity=27,
+            slice_seconds=10,
+            plateau_minimum_completed=128,
+            plateau_completed_without_improvement=512,
+            plateau_seconds_without_improvement=120,
+            clock=_Clock([0.0, 1.0]),
+            executor_factory=_ImmediateExecutor,
+        )
+
+
 def test_island_bundle_contains_native_checkpoint_ledgers_and_closed_audits(
     tmp_path: Path,
 ) -> None:
@@ -193,7 +296,10 @@ def test_island_bundle_contains_native_checkpoint_ledgers_and_closed_audits(
     assert result["locked_opened"] is False
     manifest = json.loads((bundle / "island_manifest.json").read_text("utf-8"))
     assert manifest["official_dehb_native_checkpoint"] is True
+    assert manifest["invalid_config_rejections"] == 0
     assert manifest["champion"]["robustness_passed"] is False
+    runtime_audit = json.loads((bundle / "runtime_audit.json").read_text("utf-8"))
+    assert runtime_audit["invalid_config_rejections"] == 0
     assert verify_island_bundle(
         campaign, bundle, expected_island_id=str(assignment["island_id"])
     )["verified"] is True

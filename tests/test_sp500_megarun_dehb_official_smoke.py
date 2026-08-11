@@ -65,6 +65,7 @@ def test_report_gate_requires_every_official_dehb_guarantee() -> None:
         "actual_four_worker_run": True,
         "worker_equivalence_1_2_4": True,
         "checkpoint_resume_exact": True,
+        "forbidden_config_rejection_safe": True,
         "search_end": "2010-12-31",
         "validation_opened": False,
         "locked_opened": False,
@@ -76,6 +77,10 @@ def test_report_gate_requires_every_official_dehb_guarantee() -> None:
     broken = {**report, "checkpoint_resume_exact": False}
     with pytest.raises(OfficialDehbSmokeError, match="SMOKE_GATE_FAILED"):
         validate_official_smoke_report(broken)
+
+    forbidden_broken = {**report, "forbidden_config_rejection_safe": False}
+    with pytest.raises(OfficialDehbSmokeError, match="SMOKE_GATE_FAILED"):
+        validate_official_smoke_report(forbidden_broken)
 
 
 def test_dependency_lock_is_domain_hash_bound_and_contains_exact_official_pins() -> None:

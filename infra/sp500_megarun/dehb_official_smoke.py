@@ -366,6 +366,63 @@ def _verify_actual_four_worker_run(
         _close_dehb(instance)
 
 
+class _SingleBatchClock:
+    """Deterministic clock that lets the island runner finish one full batch."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> float:
+        self.calls += 1
+        return 0.0 if self.calls <= 2 else 2.0
+
+
+def _verify_forbidden_config_rejection_guard(
+    dehb_module: Any,
+    contract: FrozenFeatureContract,
+    *,
+    output_dir: Path,
+) -> Mapping[str, Any]:
+    """Replay the exact F136 seed that broke the first 360-worker launch."""
+
+    from aurora.infra.sp500_megarun.dehb_island_runner import run_ask_tell_slice
+
+    seed = 1546602341
+    lane_space = build_lane_configspace(contract, "F136", seed=seed)
+    instance = _new_dehb(
+        dehb_module,
+        lane_space,
+        n_workers=1,
+        seed=seed,
+        output_path=output_dir / "forbidden_config_rejection_guard",
+    )
+    try:
+        result = run_ask_tell_slice(
+            instance,
+            synthetic_objective,
+            n_workers=4,
+            full_fidelity=FIDELITIES[-1],
+            slice_seconds=1.0,
+            plateau_minimum_completed=128,
+            plateau_completed_without_improvement=512,
+            plateau_seconds_without_improvement=120.0,
+            clock=_SingleBatchClock(),
+        )
+        return {
+            "valid": (
+                result.evaluations == 4
+                and result.invalid_config_rejections >= 1
+                and len(result.trials) == 4
+            ),
+            "lane_id": "F136",
+            "seed": seed,
+            "completed_evaluations": result.evaluations,
+            "invalid_config_rejections": result.invalid_config_rejections,
+        }
+    finally:
+        _close_dehb(instance)
+
+
 def validate_official_smoke_report(report: Mapping[str, Any]) -> None:
     """Fail unless every technical and scientific gate is simultaneously true."""
 
@@ -380,6 +437,7 @@ def validate_official_smoke_report(report: Mapping[str, Any]) -> None:
         "actual_four_worker_run": True,
         "worker_equivalence_1_2_4": True,
         "checkpoint_resume_exact": True,
+        "forbidden_config_rejection_safe": True,
         "search_end": "2010-12-31",
         "validation_opened": False,
         "locked_opened": False,
@@ -430,10 +488,18 @@ def run_official_dehb_smoke(
     four_worker = _verify_actual_four_worker_run(
         dehb_module, contract, output_dir=runs_dir
     )
+    forbidden_guard = _verify_forbidden_config_rejection_guard(
+        dehb_module, contract, output_dir=runs_dir
+    )
     manifest = build_dehb_space_manifest(contract, runtime_versions=versions)
     cross_manifest = build_cross_manifest(contract)
     report: dict[str, Any] = {
-        "ready": bool(worker_equivalence and checkpoint_resume and four_worker["valid"]),
+        "ready": bool(
+            worker_equivalence
+            and checkpoint_resume
+            and four_worker["valid"]
+            and forbidden_guard["valid"]
+        ),
         "official_dehb_version": versions["DEHB"],
         "configspace_version": versions["ConfigSpace"],
         "python_version": versions["python"],
@@ -451,6 +517,8 @@ def run_official_dehb_smoke(
         "four_worker_details": four_worker,
         "worker_equivalence_1_2_4": worker_equivalence,
         "checkpoint_resume_exact": checkpoint_resume,
+        "forbidden_config_rejection_safe": bool(forbidden_guard["valid"]),
+        "forbidden_config_rejection_details": dict(forbidden_guard),
         "search_end": contract.search_end.isoformat(),
         "validation_opened": False,
         "locked_opened": False,
