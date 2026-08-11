@@ -360,7 +360,7 @@ def test_market_security_master_recovery_requires_success_and_safe_summary() -> 
         )
 
     official_identity_evidence = {
-        "implementation_sha": "b" * 40,
+        "implementation_sha": "c" * 40,
         "identity_source_url": (
             "https://www.sec.gov/files/company_tickers_exchange.json"
         ),
@@ -385,3 +385,4 @@ def test_market_security_master_recovery_requires_success_and_safe_summary() -> 
         "sec_official_live_with_audited_transport"
     )
     assert corroborated["identity_source_sha256"] == "d" * 64
+    assert corroborated["identity_evidence_implementation_sha"] == "c" * 40

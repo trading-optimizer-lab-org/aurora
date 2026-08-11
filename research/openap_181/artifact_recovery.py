@@ -434,6 +434,7 @@ def validate_recovered_market_security_master(
             )
         identity_source_url = SEC_TICKER_EXCHANGE_URL
         identity_source_mode = "sec_official_live"
+        identity_evidence_implementation_sha = head_sha.lower()
         identity_source_sha256 = str(identity_sources.iloc[0]["sha256"]).lower()
     else:
         identity_source_url = str(
@@ -442,6 +443,9 @@ def validate_recovered_market_security_master(
         identity_source_mode = str(
             official_identity_evidence.get("identity_source_mode", "")
         )
+        identity_evidence_implementation_sha = str(
+            official_identity_evidence.get("implementation_sha", "")
+        ).lower()
         identity_source_sha256 = str(
             official_identity_evidence.get("identity_source_sha256", "")
         ).lower()
@@ -454,8 +458,8 @@ def validate_recovered_market_security_master(
             utc=True,
         )
         if (
-            str(official_identity_evidence.get("implementation_sha", "")).lower()
-            != head_sha.lower()
+            re.fullmatch(r"[0-9a-fA-F]{40}", identity_evidence_implementation_sha)
+            is None
             or identity_source_url != SEC_TICKER_EXCHANGE_URL
             or identity_source_mode
             != "sec_official_live_with_audited_transport"
@@ -521,6 +525,7 @@ def validate_recovered_market_security_master(
         "identity_source_url": identity_source_url,
         "identity_source_mode": identity_source_mode,
         "identity_source_sha256": identity_source_sha256,
+        "identity_evidence_implementation_sha": identity_evidence_implementation_sha,
         "locked_opened": False,
         "backtest_enabled": False,
         "validation_used_for_selection": False,
