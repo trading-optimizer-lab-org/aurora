@@ -82,6 +82,102 @@ def _is_configspace_forbidden_value(exc: Exception) -> bool:
     )
 
 
+def _resume_safe_dehb_class(base_class: type[Any]) -> type[Any]:
+    """Replay one native checkpoint with the runner's original batch semantics.
+
+    DEHB 0.1.2 assumes one ask immediately followed by one tell while replaying.
+    This runner asks four jobs before telling their results. It also leaves
+    repository ID gaps when ConfigSpace rejects a generated vector. During
+    replay the converted configuration is only a temporary container and is
+    replaced by the checkpoint's exact vector, so a valid placeholder preserves
+    DEHB's state transitions without evaluating or accepting a forbidden point.
+    """
+
+    class ResumeSafeDEHB(base_class):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.resume_forbidden_rejections = 0
+            self._checkpoint_replay_buffer: list[
+                tuple[Mapping[str, Any], Mapping[str, Any]]
+            ] = []
+            self._replaying_checkpoint = bool(kwargs.get("resume", False))
+            try:
+                super().__init__(*args, **kwargs)
+                if self._checkpoint_replay_buffer:
+                    raise IslandRunnerError(
+                        "OFFICIAL_DEHB_CHECKPOINT_NOT_AT_FOUR_JOB_BOUNDARY"
+                    )
+            finally:
+                self._replaying_checkpoint = False
+
+        def _load_checkpoint(self, run_dir: str) -> Any:
+            original_converters: list[tuple[Any, Callable[..., Any]]] = []
+            for subpopulation in self.de.values():
+                original = subpopulation.vector_to_configspace
+
+                def replay_converter(
+                    vector: Any,
+                    *,
+                    original_converter: Callable[..., Any] = original,
+                ) -> Any:
+                    try:
+                        return original_converter(vector)
+                    except Exception as exc:
+                        if not _is_configspace_forbidden_value(exc):
+                            raise
+                        self.resume_forbidden_rejections += 1
+                        if self.resume_forbidden_rejections > 10_000:
+                            raise IslandRunnerError(
+                                "OFFICIAL_DEHB_RESUME_FORBIDDEN_REJECTION_LIMIT"
+                            ) from exc
+                        return self.cs.get_default_configuration()
+
+                original_converters.append((subpopulation, original))
+                subpopulation.vector_to_configspace = replay_converter
+
+            try:
+                return super()._load_checkpoint(run_dir)
+            finally:
+                for subpopulation, original in original_converters:
+                    subpopulation.vector_to_configspace = original
+
+        def tell(
+            self,
+            job_info: Mapping[str, Any],
+            result: Mapping[str, Any],
+            replay: bool = False,
+        ) -> None:
+            if not replay or not self._replaying_checkpoint:
+                return super().tell(job_info, result, replay=replay)
+
+            self._checkpoint_replay_buffer.append((job_info, result))
+            if len(self._checkpoint_replay_buffer) < 4:
+                return None
+
+            replay_batch = self._checkpoint_replay_buffer
+            self._checkpoint_replay_buffer = []
+            containers = [super().ask(n_configs=1) for _ in replay_batch]
+            for container, (historical_job, historical_result) in zip(
+                containers, replay_batch, strict=True
+            ):
+                historical_id = int(historical_job["config_id"])
+                while len(self.config_repository.configs) <= historical_id:
+                    self.config_repository.announce_config(
+                        historical_job["config"], historical_job["fidelity"]
+                    )
+                container["fidelity"] = historical_job["fidelity"]
+                container["config"] = historical_job["config"]
+                container["config_id"] = historical_id
+                self.config_repository.configs[
+                    historical_id
+                ].config = historical_job["config"]
+                super().tell(container, historical_result, replay=False)
+            return None
+
+    ResumeSafeDEHB.__name__ = f"ResumeSafe{base_class.__name__}"
+    ResumeSafeDEHB.__qualname__ = ResumeSafeDEHB.__name__
+    return ResumeSafeDEHB
+
+
 def _ask_valid_batch(
     optimizer: Any,
     *,
@@ -786,7 +882,8 @@ def run_official_dehb_island(
             seed=int(assignment["restart_seed"]),
         )
     module = dehb_module or importlib.import_module("dehb")
-    optimizer = module.DEHB(
+    optimizer_class = _resume_safe_dehb_class(module.DEHB) if resume else module.DEHB
+    optimizer = optimizer_class(
         cs=lane_space.configspace,
         f=objective,
         min_fidelity=min(fidelity_years),

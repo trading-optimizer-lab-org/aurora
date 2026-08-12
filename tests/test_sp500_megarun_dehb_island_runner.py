@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import Future
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -83,6 +84,66 @@ class _BrokenOptimizer:
     def ask(self, n_configs: int = 1):
         assert n_configs == 1
         raise RuntimeError("unrelated optimizer failure")
+
+
+class _FakeConfigRepository:
+    def __init__(self) -> None:
+        self.configs = [SimpleNamespace(config={"initial": index}) for index in range(4)]
+
+    def announce_config(self, config, _fidelity) -> int:
+        config_id = len(self.configs)
+        self.configs.append(SimpleNamespace(config=config))
+        return config_id
+
+
+class _ReplaySubpopulation:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def vector_to_configspace(self, vector):
+        self.calls += 1
+        if self.calls == 1:
+            raise _ForbiddenValueError("forbidden checkpoint replay vector")
+        return {"vector": vector}
+
+
+class _BatchedCheckpointReplayOptimizer:
+    def __init__(self, *, resume: bool) -> None:
+        self.ask_calls = 0
+        self.events: list[str] = []
+        self.cs = SimpleNamespace(get_default_configuration=lambda: {"default": True})
+        self.de = {1: _ReplaySubpopulation()}
+        self.config_repository = _FakeConfigRepository()
+        if resume:
+            self._load_checkpoint("checkpoint")
+
+    def _load_checkpoint(self, _run_dir: str) -> bool:
+        for index, config_id in enumerate((4, 6, 7, 9)):
+            self.tell(
+                {"config": {"index": index}, "fidelity": 27, "config_id": config_id},
+                {"fitness": float(index), "cost": 1.0, "info": {}},
+                replay=True,
+            )
+        return True
+
+    def ask(self, n_configs: int = 1):
+        assert n_configs == 1
+        self.ask_calls += 1
+        self.events.append("ask")
+        configuration = self.de[1].vector_to_configspace(self.ask_calls)
+        index = self.config_repository.announce_config(configuration, 1)
+        return {
+            "config": configuration,
+            "fidelity": 1,
+            "config_id": index,
+            "parent_id": index,
+            "bracket_id": 0,
+        }
+
+    def tell(self, job_info, _result, replay: bool = False) -> None:
+        if replay:
+            job_info = self.ask()
+        self.events.append("tell")
 
 
 class _Clock:
@@ -225,6 +286,22 @@ def test_official_ask_tell_slice_does_not_mask_unrelated_optimizer_errors() -> N
             clock=_Clock([0.0, 1.0]),
             executor_factory=_ImmediateExecutor,
         )
+
+
+def test_official_checkpoint_resume_replays_original_four_job_batches() -> None:
+    from aurora.infra.sp500_megarun.dehb_island_runner import (
+        _resume_safe_dehb_class,
+    )
+
+    guarded = _resume_safe_dehb_class(_BatchedCheckpointReplayOptimizer)
+    optimizer = guarded(resume=True)
+
+    assert optimizer.events == ["ask"] * 4 + ["tell"] * 4
+    assert optimizer.ask_calls == 4
+    assert optimizer.resume_forbidden_rejections == 1
+    assert len(optimizer.config_repository.configs) == 10
+    assert optimizer.config_repository.configs[9].config == {"index": 3}
+    assert optimizer.de[1].vector_to_configspace.__self__ is optimizer.de[1]
 
 
 def test_island_bundle_contains_native_checkpoint_ledgers_and_closed_audits(
