@@ -81,6 +81,20 @@ def test_controller_normalizes_outputs_without_python_one_liner_syntax_hazard() 
     assert 'printf \'next_restart_ordinal=%s\\n\'' in block
 
 
+def test_controller_continuation_reads_decision_artifact_after_reduce() -> None:
+    workflow = _load(CONTROLLER)
+    text = CONTROLLER.read_text(encoding="utf-8")
+    continuation = workflow["jobs"]["continue"]
+    block = text[text.index("  continue:"):]
+
+    assert "always()" in continuation["if"]
+    assert "needs.reduce.result == 'success'" in continuation["if"]
+    assert "sp500-dehb-controller-decision" in block
+    assert "controller_decision.json" in block
+    assert "steps.decision.outputs.action" in block
+    assert "needs.reduce.outputs.action" not in block
+
+
 def test_initial_matrix_outputs_fit_below_github_job_output_limit() -> None:
     from aurora.infra.sp500_megarun.dehb_campaign_contract import (
         load_and_validate_campaign_contract,

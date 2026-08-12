@@ -456,17 +456,37 @@ jobs:
 
   continue:
     needs: reduce
-    if: inputs.auto_continue && (needs.reduce.outputs.action == 'retry_jobs' || needs.reduce.outputs.action == 'dispatch_next_wave')
+    if: always() && inputs.auto_continue && needs.reduce.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Dispatch exact retry or next scientific wave
+      - name: Read controller decision artifact
+        id: decision
         shell: bash
         run: |
           set -euo pipefail
-          action="${{ needs.reduce.outputs.action }}"
+          decision_dir="$RUNNER_TEMP/controller_decision"
+          mkdir -p "$decision_dir"
+          gh run download "${{ github.run_id }}" \
+            --name sp500-dehb-controller-decision \
+            --dir "$decision_dir"
+          action="$(python - "$decision_dir/controller_decision.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              print(json.load(handle)["action"])
+          PY
+          )"
+          printf 'action=%s\n' "$action" >> "$GITHUB_OUTPUT"
+      - name: Dispatch exact retry or next scientific wave
+        if: steps.decision.outputs.action == 'retry_jobs' || steps.decision.outputs.action == 'dispatch_next_wave'
+        shell: bash
+        run: |
+          set -euo pipefail
+          action="${{ steps.decision.outputs.action }}"
           evidence_ids="${{ inputs.evidence_run_ids }}"
           checkpoint_ids="${{ inputs.checkpoint_run_ids }}"
           if [[ "$action" == "retry_jobs" ]]; then
