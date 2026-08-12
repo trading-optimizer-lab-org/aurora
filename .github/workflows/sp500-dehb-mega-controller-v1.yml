@@ -470,6 +470,7 @@ jobs:
           decision_dir="$RUNNER_TEMP/controller_decision"
           mkdir -p "$decision_dir"
           gh run download "${{ github.run_id }}" \
+            --repo "${{ github.repository }}" \
             --name sp500-dehb-controller-decision \
             --dir "$decision_dir"
           action="$(python - "$decision_dir/controller_decision.json" <<'PY'
@@ -500,6 +501,7 @@ jobs:
             evidence_ids=""
           fi
           gh workflow run sp500-dehb-mega-controller-v1.yml \
+            --repo "${{ github.repository }}" \
             --ref "${{ github.ref_name }}" \
             -f commit_sha="${{ inputs.commit_sha }}" \
             -f wave="$next_wave" \
