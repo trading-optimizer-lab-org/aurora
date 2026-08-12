@@ -434,7 +434,9 @@ jobs:
           RESTART_COMPLETE: ${{ steps.controller_complete.outputs.next_restart_ordinal }}
           RESTART_RETRY: ${{ steps.controller_retry.outputs.next_restart_ordinal }}
         run: |
-          python -c "import os,pathlib; o=pathlib.Path(os.environ['GITHUB_OUTPUT']); f=o.open('a',encoding='utf-8'); [f.write(k+'='+(os.environ[a] or os.environ[b])+'\n') for k,a,b in [('action','ACTION_COMPLETE','ACTION_RETRY'),('next_wave','WAVE_COMPLETE','WAVE_RETRY'),('next_restart_ordinal','RESTART_COMPLETE','RESTART_RETRY')]; f.close()"
+          printf 'action=%s\n' "${ACTION_COMPLETE:-$ACTION_RETRY}" >> "$GITHUB_OUTPUT"
+          printf 'next_wave=%s\n' "${WAVE_COMPLETE:-$WAVE_RETRY}" >> "$GITHUB_OUTPUT"
+          printf 'next_restart_ordinal=%s\n' "${RESTART_COMPLETE:-$RESTART_RETRY}" >> "$GITHUB_OUTPUT"
       - name: Upload controller decision
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

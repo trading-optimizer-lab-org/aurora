@@ -68,6 +68,19 @@ def test_controller_is_indefinite_train_only_and_retries_exact_jobs() -> None:
     assert "timeout-hours" not in text
 
 
+def test_controller_normalizes_outputs_without_python_one_liner_syntax_hazard() -> None:
+    text = CONTROLLER.read_text(encoding="utf-8")
+
+    normalize_start = text.index("      - name: Normalize controller outputs")
+    normalize_end = text.index("      - name: Upload controller decision", normalize_start)
+    block = text[normalize_start:normalize_end]
+
+    assert "python -c" not in block
+    assert 'printf \'action=%s\\n\'' in block
+    assert 'printf \'next_wave=%s\\n\'' in block
+    assert 'printf \'next_restart_ordinal=%s\\n\'' in block
+
+
 def test_initial_matrix_outputs_fit_below_github_job_output_limit() -> None:
     from aurora.infra.sp500_megarun.dehb_campaign_contract import (
         load_and_validate_campaign_contract,
