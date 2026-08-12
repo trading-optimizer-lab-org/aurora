@@ -378,13 +378,37 @@ class _SingleBatchClock:
         return 0.0 if self.calls <= 2 else 2.0
 
 
+class _ForbiddenOnceAskProxy:
+    """Inject one real ConfigSpace rejection, then delegate to official DEHB."""
+
+    def __init__(self, optimizer: Any) -> None:
+        self._optimizer = optimizer
+        self.injected = False
+
+    def ask(self, *args: Any, **kwargs: Any) -> Any:
+        if not self.injected:
+            from ConfigSpace.exceptions import ForbiddenValueError
+
+            self.injected = True
+            raise ForbiddenValueError("deterministic smoke forbidden vector")
+        return self._optimizer.ask(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._optimizer, name)
+
+
 def _verify_forbidden_config_rejection_guard(
     dehb_module: Any,
     contract: FrozenFeatureContract,
     *,
     output_dir: Path,
 ) -> Mapping[str, Any]:
-    """Replay the exact F136 seed that broke the first 360-worker launch."""
+    """Exercise one real ConfigSpace rejection on an official DEHB instance.
+
+    Whether DEHB happens to sample a forbidden vector is runtime-dependent.
+    The safety property is deterministic: the runner must recover one real
+    ConfigSpace exception, preserve the batch, and complete four evaluations.
+    """
 
     from aurora.infra.sp500_megarun.dehb_island_runner import run_ask_tell_slice
 
@@ -399,7 +423,7 @@ def _verify_forbidden_config_rejection_guard(
     )
     try:
         result = run_ask_tell_slice(
-            instance,
+            _ForbiddenOnceAskProxy(instance),
             synthetic_objective,
             n_workers=4,
             full_fidelity=FIDELITIES[-1],
@@ -417,6 +441,7 @@ def _verify_forbidden_config_rejection_guard(
             ),
             "lane_id": "F136",
             "seed": seed,
+            "injected_real_configspace_rejection": True,
             "completed_evaluations": result.evaluations,
             "invalid_config_rejections": result.invalid_config_rejections,
         }
