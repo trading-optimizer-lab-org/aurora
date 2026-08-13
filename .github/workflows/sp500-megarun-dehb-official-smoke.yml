@@ -44,11 +44,14 @@ jobs:
         with:
           python-version: "3.11"
           cache: ""
-      - name: Install only the hash-locked official DEHB runtime
+      - name: Install hash-locked DEHB runtime and isolated test dependencies
         run: |
           set -euo pipefail
           python -m pip install --require-hashes -r requirements/dehb-official.lock
-          python -m pip install "pytest==9.0.3"
+          python -m pip install \
+            "pytest==9.0.3" \
+            "pydantic==2.13.4" \
+            "jsonschema==4.26.0"
           python -m pip check
       - name: Verify adapter and GitHub-only fail-closed gates
         run: |
