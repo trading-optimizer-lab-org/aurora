@@ -169,6 +169,8 @@ def _objective(config, fidelity):
             "archive_key": [0.0, -0.20, -0.60, -0.10],
             "full_fidelity": True,
             "train_feasible": True,
+            "validation_opened": False,
+            "locked_opened": False,
             "strategy_fingerprint": f"fingerprint-{index}",
             "position_fingerprint": f"positions-{index}",
         },
