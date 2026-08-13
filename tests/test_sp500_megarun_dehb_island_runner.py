@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
 import pytest
 
 
@@ -174,6 +175,20 @@ def _objective(config, fidelity):
     }
 
 
+def _determinism_audit(lane_id: str) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "lane_id": lane_id,
+        "fidelity": 27,
+        "configuration_sha256": "1" * 64,
+        "result_sha256": "2" * 64,
+        "independent_process_evaluations": 2,
+        "passed": True,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+
+
 def test_official_ask_tell_slice_uses_four_parallel_slots_and_stops_on_plateau() -> None:
     from aurora.infra.sp500_megarun.dehb_island_runner import run_ask_tell_slice
 
@@ -321,9 +336,7 @@ def test_island_bundle_contains_native_checkpoint_ledgers_and_closed_audits(
     campaign = load_and_validate_campaign_contract(
         repo / "config" / "sp500_megarun_dehb_campaign_v1.json"
     )
-    assignment = build_job_payload(
-        campaign, job_index=0, wave=0, restart_ordinal=0
-    )["islands"][0]
+    assignment = build_job_payload(campaign, job_index=0, wave=0, restart_ordinal=0)["islands"][0]
     search = run_ask_tell_slice(
         _FakeOptimizer(),
         _objective,
@@ -353,6 +366,7 @@ def test_island_bundle_contains_native_checkpoint_ledgers_and_closed_audits(
             "validation_opened": False,
             "locked_opened": False,
         },
+        determinism_audit=_determinism_audit(str(assignment["lane_id"])),
     )
 
     required = {
@@ -364,6 +378,8 @@ def test_island_bundle_contains_native_checkpoint_ledgers_and_closed_audits(
         "annual_metrics.parquet",
         "failure_ledger.jsonl",
         "runtime_audit.json",
+        "evaluation_cache_manifest.json",
+        "determinism_audit.json",
         "data_access_audit.json",
         "checksums.sha256",
     }
@@ -377,16 +393,124 @@ def test_island_bundle_contains_native_checkpoint_ledgers_and_closed_audits(
     assert manifest["champion"]["robustness_passed"] is False
     runtime_audit = json.loads((bundle / "runtime_audit.json").read_text("utf-8"))
     assert runtime_audit["invalid_config_rejections"] == 0
-    assert verify_island_bundle(
-        campaign, bundle, expected_island_id=str(assignment["island_id"])
-    )["verified"] is True
+    assert runtime_audit["physical_evaluations"] == 4
+    assert runtime_audit["full_fidelity_physical_evaluations"] == 4
+    assert runtime_audit["cache_hits"] == 0
+    assert runtime_audit["cache_hits_by_origin"] == {}
+    assert runtime_audit["unique_strategies"] == 4
+    trial_ledger = pd.read_parquet(bundle / "trial_ledger.parquet")
+    assert {
+        "cache_key_sha256",
+        "run_id",
+        "wave",
+        "island_id",
+        "evaluation_origin",
+        "cache_result_sha256",
+        "cache_source_run_id",
+        "cache_source_wave",
+        "cache_source_island_id",
+        "cache_source_evaluation",
+        "physical_runtime_seconds",
+    } <= set(trial_ledger.columns)
+    assert set(trial_ledger["evaluation_origin"]) == {"physical"}
+    assert manifest["physical_evaluations"] == 4
+    assert manifest["cache_hits"] == 0
+    assert (
+        verify_island_bundle(campaign, bundle, expected_island_id=str(assignment["island_id"]))[
+            "verified"
+        ]
+        is True
+    )
 
     (bundle / "runtime_audit.json").write_text("{}", "utf-8")
     try:
-        verify_island_bundle(
-            campaign, bundle, expected_island_id=str(assignment["island_id"])
-        )
+        verify_island_bundle(campaign, bundle, expected_island_id=str(assignment["island_id"]))
     except ValueError as exc:
         assert "BUNDLE_CHECKSUM_MISMATCH" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("tampered bundle was accepted")
+
+
+def test_verified_cache_round_trip_rejects_incompatible_evaluator(
+    tmp_path: Path,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_campaign_contract import (
+        load_and_validate_campaign_contract,
+    )
+    from aurora.infra.sp500_megarun.dehb_campaign_runtime import build_job_payload
+    from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+        EvaluationCacheKeyV1,
+    )
+    from aurora.infra.sp500_megarun.dehb_island_runner import (
+        IslandRunnerError,
+        load_verified_evaluation_cache,
+        run_ask_tell_slice,
+        write_island_bundle,
+    )
+
+    repo = Path(__file__).resolve().parents[1]
+    campaign = load_and_validate_campaign_contract(
+        repo / "config" / "sp500_megarun_dehb_campaign_v1.json"
+    )
+    assignment = build_job_payload(campaign, job_index=0, wave=0, restart_ordinal=0)["islands"][0]
+    evaluator_sha = "7" * 64
+    search = run_ask_tell_slice(
+        _FakeOptimizer(),
+        _objective,
+        n_workers=4,
+        full_fidelity=27,
+        slice_seconds=10,
+        plateau_minimum_completed=128,
+        plateau_completed_without_improvement=512,
+        plateau_seconds_without_improvement=120,
+        clock=_Clock([0.0, 1.0, 11.0]),
+        executor_factory=_ImmediateExecutor,
+        evaluation_key=lambda job: EvaluationCacheKeyV1.build(
+            scientific_evaluator_sha256=evaluator_sha,
+            train_snapshot_manifest_sha256=(campaign.train_snapshot_manifest_sha256),
+            lane_id=str(assignment["lane_id"]),
+            configuration=job["config"],
+            fidelity=job["fidelity"],
+        ),
+        source_run_id=123,
+        source_wave=0,
+        source_island_id=str(assignment["island_id"]),
+    )
+    bundle = tmp_path / str(assignment["island_id"])
+    native = bundle / "native_checkpoint"
+    native.mkdir(parents=True)
+    (native / "dehb_state.json").write_text("{}", encoding="utf-8")
+    write_island_bundle(
+        campaign,
+        assignment=assignment,
+        wave=0,
+        search=search,
+        output_dir=bundle,
+        data_access_audit={
+            "validation_opened": False,
+            "locked_opened": False,
+        },
+        launch_contract_sha256="8" * 64,
+        scientific_evaluator_sha256=evaluator_sha,
+        source_run_id=123,
+        determinism_audit=_determinism_audit(str(assignment["lane_id"])),
+    )
+
+    cache = load_verified_evaluation_cache(
+        campaign,
+        bundle_sources=((bundle, 123, "prior_wave_cache"),),
+        lane_id=str(assignment["lane_id"]),
+        scientific_evaluator_sha256=evaluator_sha,
+        expected_launch_contract_sha256="8" * 64,
+    )
+
+    assert len(cache) == 4
+    assert {entry["source_run_id"] for entry in cache.values()} == {123}
+    with pytest.raises(IslandRunnerError, match="CACHE_MANIFEST_MISMATCH"):
+        load_verified_evaluation_cache(
+            campaign,
+            bundle_sources=((bundle, 123, "prior_wave_cache"),),
+            lane_id=str(assignment["lane_id"]),
+            scientific_evaluator_sha256="9" * 64,
+            expected_launch_contract_sha256="8" * 64,
+        )

@@ -35,6 +35,8 @@ def _launch() -> SimpleNamespace:
         sha256="f" * 64,
         campaign_contract_sha256="a" * 64,
         runtime_input_aggregate_sha256="e" * 64,
+        runtime_scientific_input_binding_sha256="9" * 64,
+        code_commit_sha="8" * 40,
         validation_opened=False,
         locked_opened=False,
     )
@@ -104,6 +106,13 @@ def test_two_island_job_is_sequential_closed_and_resumes_only_marked_island(
             "checkpoint_sha256": "f" * 64,
             "evaluations": 4,
             "full_fidelity_evaluations": 1,
+            "physical_evaluations": 3,
+            "full_fidelity_physical_evaluations": 1,
+            "cache_hits": 1,
+            "cache_hits_by_origin": {"island_cache": 1},
+            "unique_strategies": 3,
+            "determinism_audit_passed": True,
+            "determinism_audit_physical_evaluations": 2,
             "champion": None,
         }
 
@@ -128,6 +137,10 @@ def test_two_island_job_is_sequential_closed_and_resumes_only_marked_island(
     assert result["validation_opened"] is False
     assert result["locked_opened"] is False
     assert result["launch_contract_sha256"] == "f" * 64
+    assert result["physical_evaluations"] == 6
+    assert result["cache_hits"] == 2
+    assert result["determinism_audit_physical_evaluations"] == 4
+    assert calls[0]["scientific_evaluator_sha256"] == calls[1]["scientific_evaluator_sha256"]
     assert (tmp_path / "out" / "worker_result.json").is_file()
 
 
@@ -147,3 +160,22 @@ def test_job_payload_hash_tampering_is_rejected(tmp_path: Path) -> None:
         assert "JOB_PAYLOAD_SHA256_MISMATCH" in str(exc)
     else:
         raise AssertionError("tampered payload was accepted")
+
+
+def test_cache_peer_jobs_cover_both_lanes_and_all_three_replicates() -> None:
+    from aurora.infra.sp500_megarun.dehb_campaign_contract import (
+        load_and_validate_campaign_contract,
+    )
+    from aurora.infra.sp500_megarun.dehb_campaign_runtime import build_job_payload
+    from aurora.infra.sp500_megarun.dehb_job_runner import cache_peer_job_ids
+
+    repo = Path(__file__).resolve().parents[1]
+    campaign = load_and_validate_campaign_contract(
+        repo / "config" / "sp500_megarun_dehb_campaign_v1.json"
+    )
+    payload = build_job_payload(campaign, job_index=0, wave=1, restart_ordinal=0)
+
+    peer_ids = cache_peer_job_ids(campaign, payload)
+
+    assert len(peer_ids) == 3
+    assert str(payload["job_id"]) in peer_ids

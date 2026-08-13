@@ -32,6 +32,10 @@ on:
         description: Comma-separated runs holding prior-wave island checkpoints
         required: false
         default: ""
+      evaluation_cache_run_ids:
+        description: Comma-separated verified prior attempts and waves used only as evaluation cache
+        required: false
+        default: ""
       auto_continue:
         description: Dispatch retry or next wave automatically
         required: true
@@ -233,6 +237,7 @@ jobs:
           runtime-input-run-id: ${{ inputs.runtime_input_run_id }}
           launch-contract-run-id: ${{ github.run_id }}
           checkpoint-run-ids: ${{ inputs.checkpoint_run_ids }}
+          evaluation-cache-run-ids: ${{ inputs.evaluation_cache_run_ids }}
           github-token: ${{ github.token }}
 
 
@@ -268,6 +273,7 @@ jobs:
           runtime-input-run-id: ${{ inputs.runtime_input_run_id }}
           launch-contract-run-id: ${{ github.run_id }}
           checkpoint-run-ids: ${{ inputs.checkpoint_run_ids }}
+          evaluation-cache-run-ids: ${{ inputs.evaluation_cache_run_ids }}
           github-token: ${{ github.token }}
 
 
@@ -303,6 +309,7 @@ jobs:
           runtime-input-run-id: ${{ inputs.runtime_input_run_id }}
           launch-contract-run-id: ${{ github.run_id }}
           checkpoint-run-ids: ${{ inputs.checkpoint_run_ids }}
+          evaluation-cache-run-ids: ${{ inputs.evaluation_cache_run_ids }}
           github-token: ${{ github.token }}
 
 
@@ -490,6 +497,8 @@ jobs:
           action="${{ steps.decision.outputs.action }}"
           evidence_ids="${{ inputs.evidence_run_ids }}"
           checkpoint_ids="${{ inputs.checkpoint_run_ids }}"
+          cache_ids="${{ inputs.evaluation_cache_run_ids }}"
+          cache_ids="${cache_ids:+$cache_ids,}${{ github.run_id }}"
           if [[ "$action" == "retry_jobs" ]]; then
             next_wave="${{ inputs.wave }}"
             next_restart="${{ inputs.restart_ordinal }}"
@@ -511,5 +520,6 @@ jobs:
             -f prior_decision_run_id="${{ github.run_id }}" \
             -f evidence_run_ids="$evidence_ids" \
             -f checkpoint_run_ids="$checkpoint_ids" \
+            -f evaluation_cache_run_ids="$cache_ids" \
             -f auto_continue=true \
             -f launch_only=false

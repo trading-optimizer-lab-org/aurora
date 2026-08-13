@@ -87,22 +87,33 @@ def test_prefix_comparison_detects_any_changed_past_value() -> None:
     full = pd.DataFrame(
         {
             "date": pd.to_datetime(["2000-01-03", "2000-01-04", "2006-01-03"]),
-            "available_at": pd.to_datetime(
-                ["2000-01-03", "2000-01-04", "2006-01-03"]
-            ),
+            "available_at": pd.to_datetime(["2000-01-03", "2000-01-04", "2006-01-03"]),
             "value": [1.0, 2.0, 3.0],
         }
     )
     same = full.iloc[:2].copy()
 
-    assert compare_prefix_feature_frames(
-        full, same, cutoff="2005-12-31"
-    )["passed"] is True
+    assert compare_prefix_feature_frames(full, same, cutoff="2005-12-31")["passed"] is True
 
     changed = same.copy()
     changed.loc[1, "value"] = 2.1
-    report = compare_prefix_feature_frames(
-        full, changed, cutoff="2005-12-31"
-    )
+    report = compare_prefix_feature_frames(full, changed, cutoff="2005-12-31")
     assert report["passed"] is False
     assert report["reason"] == "PREFIX_VALUES_CHANGED"
+
+
+def test_global_merge_rejects_one_cache_key_with_two_result_hashes() -> None:
+    from aurora.infra.sp500_megarun.dehb_global_merge import (
+        GlobalMergeError,
+        register_evaluation_result_hash,
+    )
+
+    registry: dict[str, str] = {}
+    register_evaluation_result_hash(registry, cache_key_sha256="a" * 64, result_sha256="b" * 64)
+
+    try:
+        register_evaluation_result_hash(registry, cache_key_sha256="a" * 64, result_sha256="c" * 64)
+    except GlobalMergeError as exc:
+        assert "GLOBAL_EVALUATION_CACHE_CONFLICT" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("conflicting cache result was accepted")

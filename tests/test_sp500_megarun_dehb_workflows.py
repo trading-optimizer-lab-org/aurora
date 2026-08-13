@@ -22,9 +22,7 @@ def test_three_shards_request_360_jobs_and_skip_inside_called_worker() -> None:
 
     jobs = controller["jobs"]
     assert "preflight" in jobs
-    assert jobs["framework_contract"]["uses"] == (
-        "./.github/workflows/_aurora-future-run-v3.yml"
-    )
+    assert jobs["framework_contract"]["uses"] == ("./.github/workflows/_aurora-future-run-v3.yml")
     assert jobs["preflight"]["needs"] == "framework_contract"
     assert jobs["plan"]["needs"] == "preflight"
     for shard_id in "abc":
@@ -34,19 +32,21 @@ def test_three_shards_request_360_jobs_and_skip_inside_called_worker() -> None:
         assert job["strategy"]["fail-fast"] is False
         assert job["timeout-minutes"] == 330
         assert job["continue-on-error"] is True
-        assert job["steps"][1]["uses"] == (
-            "./.github/actions/sp500-dehb-mega-worker"
-        )
-        assert job["steps"][1]["if"] == (
-            "${{ !startsWith(matrix.job_id, 'SKIP-') }}"
+        assert job["steps"][1]["uses"] == ("./.github/actions/sp500-dehb-mega-worker")
+        assert job["steps"][1]["if"] == ("${{ !startsWith(matrix.job_id, 'SKIP-') }}")
+        assert job["steps"][1]["with"]["evaluation-cache-run-ids"] == (
+            "${{ inputs.evaluation_cache_run_ids }}"
         )
     assert worker["runs"]["using"] == "composite"
-    assert all(jobs["shard_a"]["env"][name] == "1" for name in (
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
-    ))
+    assert all(
+        jobs["shard_a"]["env"][name] == "1"
+        for name in (
+            "OMP_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+        )
+    )
 
 
 def test_controller_is_indefinite_train_only_and_retries_exact_jobs() -> None:
@@ -66,6 +66,17 @@ def test_controller_is_indefinite_train_only_and_retries_exact_jobs() -> None:
     assert "validation_2011_2020" not in text
     assert "2021" not in text
     assert "timeout-hours" not in text
+    assert "evaluation_cache_run_ids" in text
+    assert '-f evaluation_cache_run_ids="$cache_ids"' in text
+
+
+def test_worker_downloads_only_three_peer_artifacts_per_cache_run() -> None:
+    text = WORKER_ACTION.read_text(encoding="utf-8")
+
+    assert "list_sp500_megarun_dehb_cache_peer_jobs.py" in text
+    assert 'test "${#peer_jobs[@]}" -eq 3' in text
+    assert '--name "sp500-dehb-worker-$peer_job"' in text
+    assert "--evaluation-cache-root" in text
 
 
 def test_controller_normalizes_outputs_without_python_one_liner_syntax_hazard() -> None:
@@ -76,16 +87,16 @@ def test_controller_normalizes_outputs_without_python_one_liner_syntax_hazard() 
     block = text[normalize_start:normalize_end]
 
     assert "python -c" not in block
-    assert 'printf \'action=%s\\n\'' in block
-    assert 'printf \'next_wave=%s\\n\'' in block
-    assert 'printf \'next_restart_ordinal=%s\\n\'' in block
+    assert "printf 'action=%s\\n'" in block
+    assert "printf 'next_wave=%s\\n'" in block
+    assert "printf 'next_restart_ordinal=%s\\n'" in block
 
 
 def test_controller_continuation_reads_decision_artifact_after_reduce() -> None:
     workflow = _load(CONTROLLER)
     text = CONTROLLER.read_text(encoding="utf-8")
     continuation = workflow["jobs"]["continue"]
-    block = text[text.index("  continue:"):]
+    block = text[text.index("  continue:") :]
 
     assert "always()" in continuation["if"]
     assert "needs.reduce.result == 'success'" in continuation["if"]
@@ -106,8 +117,7 @@ def test_initial_matrix_outputs_fit_below_github_job_output_limit() -> None:
     )
     matrices = build_shard_matrices(campaign)
     encoded = [
-        json.dumps(matrices[shard], ensure_ascii=True, separators=(",", ":"))
-        for shard in "ABC"
+        json.dumps(matrices[shard], ensure_ascii=True, separators=(",", ":")) for shard in "ABC"
     ]
     estimated_utf16_bytes = sum(len(value) * 2 for value in encoded)
 

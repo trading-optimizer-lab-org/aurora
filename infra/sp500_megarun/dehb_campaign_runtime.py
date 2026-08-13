@@ -90,9 +90,7 @@ def _job_payload(
 ) -> Mapping[str, Any]:
     island_rows: list[dict[str, Any]] = []
     for island in job.islands:
-        island_ordinal = int(
-            island_restart_ordinals.get(island.island_id, restart_ordinal)
-        )
+        island_ordinal = int(island_restart_ordinals.get(island.island_id, restart_ordinal))
         if island_ordinal < 0:
             raise CampaignRuntimeError("NEGATIVE_RESTART_ORDINAL")
         island_rows.append(
@@ -185,16 +183,12 @@ def build_shard_matrices(
         shard: {"include": []} for shard in "ABC"
     }
     schedule = build_island_schedule(contract)
-    valid_island_ids = {
-        island.island_id for job in schedule for island in job.islands
-    }
+    valid_island_ids = {island.island_id for job in schedule for island in job.islands}
     override_ids = set(island_restart_ordinals or {})
     resume_ids = set(resume_island_ids or ())
     unknown_ids = sorted((override_ids | resume_ids) - valid_island_ids)
     if unknown_ids:
-        raise CampaignRuntimeError(
-            f"UNKNOWN_ISLAND_RUNTIME_OVERRIDE:{','.join(unknown_ids)}"
-        )
+        raise CampaignRuntimeError(f"UNKNOWN_ISLAND_RUNTIME_OVERRIDE:{','.join(unknown_ids)}")
     manifest_hash = str(build_campaign_manifest(contract)["manifest_sha256"])
     for job in schedule:
         payload = _job_payload(
@@ -347,8 +341,7 @@ def validate_checkpoint_envelope(
     if envelope.get("campaign_contract_sha256") != contract.sha256:
         raise CampaignRuntimeError("CHECKPOINT_CAMPAIGN_MISMATCH")
     if expected_launch_contract_sha256 is not None and (
-        envelope.get("launch_contract_sha256")
-        != expected_launch_contract_sha256
+        envelope.get("launch_contract_sha256") != expected_launch_contract_sha256
     ):
         raise CampaignRuntimeError("CHECKPOINT_LAUNCH_CONTRACT_MISMATCH")
     if envelope.get("island_id") != expected_island_id:
@@ -358,9 +351,7 @@ def validate_checkpoint_envelope(
     if envelope.get("search_end") != contract.search_end:
         raise CampaignRuntimeError("CHECKPOINT_SEARCH_END_MISMATCH")
     preimage = {
-        key: value
-        for key, value in envelope.items()
-        if key != "checkpoint_envelope_sha256"
+        key: value for key, value in envelope.items() if key != "checkpoint_envelope_sha256"
     }
     expected_hash = _hash_payload(preimage, domain=_CHECKPOINT_DOMAIN)
     if envelope.get("checkpoint_envelope_sha256") != expected_hash:
@@ -419,6 +410,15 @@ def _validate_worker_result(
             or not _is_sha256(row.get("checkpoint_sha256"))
             or int(row.get("evaluations", -1)) < 0
             or int(row.get("full_fidelity_evaluations", -1)) < 0
+            or int(row.get("physical_evaluations", -1)) < 0
+            or int(row.get("cache_hits", -1)) < 0
+            or int(row.get("physical_evaluations", -1)) + int(row.get("cache_hits", -1))
+            != int(row.get("evaluations", -1))
+            or int(row.get("full_fidelity_physical_evaluations", -1)) < 0
+            or int(row.get("full_fidelity_physical_evaluations", -1))
+            > int(row.get("full_fidelity_evaluations", -1))
+            or row.get("determinism_audit_passed") is not True
+            or int(row.get("determinism_audit_physical_evaluations", -1)) != 2
         ):
             valid = False
     if not valid:
@@ -490,8 +490,7 @@ def controller_decision(
 
     all_islands = [island for _, islands in by_job.values() for island in islands]
     budget_floor_complete = all(
-        int(island.get("full_fidelity_evaluations", 0)) >= 1
-        for island in all_islands
+        int(island.get("full_fidelity_evaluations", 0)) >= 1 for island in all_islands
     )
     if global_robustness is not None:
         if (

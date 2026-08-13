@@ -36,6 +36,7 @@ def main() -> int:
     parser.add_argument("--runtime-input-pack", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--previous-worker-dir", type=Path)
+    parser.add_argument("--evaluation-cache-root", type=Path)
     parser.add_argument("--slice-seconds", type=float)
     args = parser.parse_args()
     campaign = load_and_validate_campaign_contract(args.campaign_contract)
@@ -46,9 +47,7 @@ def main() -> int:
         expected_code_commit_sha=args.expected_code_commit_sha,
     )
     data_contract = load_and_validate_contract(args.data_contract)
-    feature_contract = load_and_validate_feature_contract(
-        args.feature_contract, data_contract
-    )
+    feature_contract = load_and_validate_feature_contract(args.feature_contract, data_contract)
     result = run_dehb_job(
         campaign,
         feature_contract,
@@ -57,6 +56,8 @@ def main() -> int:
         runtime_input_pack=args.runtime_input_pack,
         output_dir=args.output_dir,
         previous_worker_dir=args.previous_worker_dir,
+        evaluation_cache_root=args.evaluation_cache_root,
+        current_run_id=int(os.environ["GITHUB_RUN_ID"]),
         slice_seconds=args.slice_seconds,
     )
     print(json.dumps(result, sort_keys=True))
