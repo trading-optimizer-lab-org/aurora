@@ -155,7 +155,9 @@ def _resume_safe_dehb_class(base_class: type[Any]) -> type[Any]:
 
             replay_batch = self._checkpoint_replay_buffer
             self._checkpoint_replay_buffer = []
-            containers = [super().ask(n_configs=1) for _ in replay_batch]
+            containers = []
+            for _ in replay_batch:
+                containers.append(super().ask(n_configs=1))
             for container, (historical_job, historical_result) in zip(
                 containers, replay_batch, strict=True
             ):
