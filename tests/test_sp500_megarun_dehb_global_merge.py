@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 
 
@@ -117,3 +119,77 @@ def test_global_merge_rejects_one_cache_key_with_two_result_hashes() -> None:
         assert "GLOBAL_EVALUATION_CACHE_CONFLICT" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("conflicting cache result was accepted")
+
+
+def test_cache_conflict_diagnostic_reports_sources_and_changed_fields(tmp_path) -> None:
+    from aurora.infra.sp500_megarun.dehb_global_merge import (
+        diagnose_evaluation_result_conflicts,
+    )
+
+    cache_key = "a" * 64
+    rows = (
+        {
+            "evaluation": 17,
+            "run_id": 101,
+            "wave": 0,
+            "island_id": "F067-R1",
+            "fidelity": 8,
+            "fitness": -0.21,
+            "cost": 8.0,
+            "configuration_json": '{"window":20}',
+            "info_json": json.dumps(
+                {
+                    "annualized_alpha": 0.11,
+                    "position_fingerprint": "b" * 64,
+                    "validation_opened": False,
+                    "locked_opened": False,
+                },
+                sort_keys=True,
+            ),
+            "cache_key_sha256": cache_key,
+            "cache_result_sha256": "c" * 64,
+            "evaluation_origin": "physical",
+        },
+        {
+            "evaluation": 9,
+            "run_id": 101,
+            "wave": 0,
+            "island_id": "F067-R2",
+            "fidelity": 8,
+            "fitness": -0.22,
+            "cost": 8.0,
+            "configuration_json": '{"window":20}',
+            "info_json": json.dumps(
+                {
+                    "annualized_alpha": 0.10,
+                    "position_fingerprint": "d" * 64,
+                    "validation_opened": False,
+                    "locked_opened": False,
+                },
+                sort_keys=True,
+            ),
+            "cache_key_sha256": cache_key,
+            "cache_result_sha256": "e" * 64,
+            "evaluation_origin": "physical",
+        },
+    )
+    for index, row in enumerate(rows, start=1):
+        bundle = tmp_path / f"worker-{index}" / f"island-{index}"
+        bundle.mkdir(parents=True)
+        pd.DataFrame([row]).to_parquet(bundle / "trial_ledger.parquet", index=False)
+
+    report = diagnose_evaluation_result_conflicts(tmp_path)
+
+    assert report["conflict_count"] == 1
+    conflict = report["conflicts"][0]
+    assert conflict["cache_key_sha256"] == cache_key
+    assert conflict["result_hashes"] == ["c" * 64, "e" * 64]
+    assert [source["island_id"] for source in conflict["sources"]] == [
+        "F067-R1",
+        "F067-R2",
+    ]
+    assert "fitness" in conflict["changed_fields"]
+    assert "info.annualized_alpha" in conflict["changed_fields"]
+    assert "info.position_fingerprint" in conflict["changed_fields"]
+    assert report["validation_opened"] is False
+    assert report["locked_opened"] is False

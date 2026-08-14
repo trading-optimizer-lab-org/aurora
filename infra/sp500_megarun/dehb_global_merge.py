@@ -26,6 +26,136 @@ class GlobalMergeError(ValueError):
     """Raised when campaign evidence is missing, duplicated, or inconsistent."""
 
 
+def _changed_result_fields(values: Sequence[object], *, prefix: str = "") -> list[str]:
+    """Return dotted paths whose canonical values differ across results."""
+
+    if not values:
+        return []
+    if all(isinstance(value, Mapping) for value in values):
+        keys = sorted({str(key) for value in values for key in value})
+        changed: list[str] = []
+        for key in keys:
+            path = f"{prefix}.{key}" if prefix else key
+            child_values = [value.get(key) for value in values]
+            changed.extend(_changed_result_fields(child_values, prefix=path))
+        return changed
+    normalized = [
+        json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        for value in values
+    ]
+    return [] if len(set(normalized)) == 1 else [prefix]
+
+
+def diagnose_evaluation_result_conflicts(
+    worker_root: Path, *, cache_key_sha256: str | None = None
+) -> Mapping[str, Any]:
+    """Locate every conflicting cache result with exact worker provenance."""
+
+    target = str(cache_key_sha256) if cache_key_sha256 is not None else None
+    if target is not None and len(target) != 64:
+        raise GlobalMergeError("DIAGNOSTIC_CACHE_KEY_INVALID")
+    by_key: dict[str, list[dict[str, Any]]] = {}
+    ledgers = sorted(Path(worker_root).rglob("trial_ledger.parquet"))
+    if not ledgers:
+        raise GlobalMergeError("DIAGNOSTIC_TRIAL_LEDGERS_MISSING")
+    for ledger_path in ledgers:
+        frame = pd.read_parquet(ledger_path)
+        required = {
+            "evaluation",
+            "run_id",
+            "wave",
+            "island_id",
+            "fidelity",
+            "fitness",
+            "cost",
+            "configuration_json",
+            "info_json",
+            "cache_key_sha256",
+            "cache_result_sha256",
+            "evaluation_origin",
+        }
+        if not required <= set(frame.columns):
+            raise GlobalMergeError(f"DIAGNOSTIC_TRIAL_COLUMNS_MISSING:{ledger_path}")
+        for row in frame.to_dict(orient="records"):
+            key = str(row["cache_key_sha256"])
+            result_hash = str(row["cache_result_sha256"])
+            if target is not None and key != target:
+                continue
+            if len(key) != 64 or len(result_hash) != 64:
+                raise GlobalMergeError("DIAGNOSTIC_TRIAL_HASH_INVALID")
+            try:
+                configuration = json.loads(str(row["configuration_json"]))
+                info = json.loads(str(row["info_json"]))
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise GlobalMergeError("DIAGNOSTIC_TRIAL_JSON_INVALID") from exc
+            if not isinstance(info, Mapping):
+                raise GlobalMergeError("DIAGNOSTIC_TRIAL_INFO_INVALID")
+            if info.get("validation_opened") is not False:
+                raise GlobalMergeError("DIAGNOSTIC_OPENED_VALIDATION")
+            if info.get("locked_opened") is not False:
+                raise GlobalMergeError("DIAGNOSTIC_OPENED_LOCKED")
+            scientific_info = {
+                str(field): value
+                for field, value in info.items()
+                if field not in {"objective_runtime_seconds", "physical_runtime_seconds"}
+            }
+            by_key.setdefault(key, []).append(
+                {
+                    "result_sha256": result_hash,
+                    "run_id": int(row["run_id"]),
+                    "wave": int(row["wave"]),
+                    "island_id": str(row["island_id"]),
+                    "evaluation": int(row["evaluation"]),
+                    "fidelity": int(row["fidelity"]),
+                    "evaluation_origin": str(row["evaluation_origin"]),
+                    "configuration": configuration,
+                    "result": {
+                        "fitness": float(row["fitness"]),
+                        "cost": float(row["cost"]),
+                        "info": scientific_info,
+                    },
+                    "ledger_path": str(ledger_path),
+                }
+            )
+    conflicts: list[Mapping[str, Any]] = []
+    for key, sources in sorted(by_key.items()):
+        result_hashes = sorted({str(source["result_sha256"]) for source in sources})
+        if len(result_hashes) < 2:
+            continue
+        representatives = [
+            next(source for source in sources if source["result_sha256"] == result_hash)
+            for result_hash in result_hashes
+        ]
+        ordered_sources = sorted(
+            sources,
+            key=lambda source: (
+                int(source["run_id"]),
+                int(source["wave"]),
+                str(source["island_id"]),
+                int(source["evaluation"]),
+            ),
+        )
+        conflicts.append(
+            {
+                "cache_key_sha256": key,
+                "result_hashes": result_hashes,
+                "changed_fields": _changed_result_fields(
+                    [source["result"] for source in representatives]
+                ),
+                "sources": ordered_sources,
+            }
+        )
+    return {
+        "schema_version": 1,
+        "ledger_count": len(ledgers),
+        "cache_key_count": len(by_key),
+        "conflict_count": len(conflicts),
+        "conflicts": conflicts,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+
+
 def register_evaluation_result_hash(
     registry: dict[str, str], *, cache_key_sha256: object, result_sha256: object
 ) -> None:

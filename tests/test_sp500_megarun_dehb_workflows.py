@@ -10,6 +10,7 @@ from aurora.infra.github_performance.preflight import load_github_yaml
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLLER = ROOT / ".github/workflows/sp500-dehb-mega-controller-v1.yml"
 WORKER_ACTION = ROOT / ".github/actions/sp500-dehb-mega-worker/action.yml"
+CONFLICT_DIAGNOSTIC = ROOT / ".github/workflows/sp500-dehb-cache-conflict-diagnostic.yml"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -123,3 +124,17 @@ def test_initial_matrix_outputs_fit_below_github_job_output_limit() -> None:
 
     assert [len(matrices[shard]["include"]) for shard in "ABC"] == [120, 120, 120]
     assert estimated_utf16_bytes < 1_000_000
+
+
+def test_cache_conflict_diagnostic_is_github_only_and_train_evidence_only() -> None:
+    workflow = _load(CONFLICT_DIAGNOSTIC)
+    text = CONFLICT_DIAGNOSTIC.read_text(encoding="utf-8")
+
+    assert set(workflow["on"]) == {"workflow_dispatch"}
+    assert workflow["permissions"] == {"actions": "read", "contents": "read"}
+    assert "source_run_id" in workflow["on"]["workflow_dispatch"]["inputs"]
+    assert 'gh run download "$SOURCE_RUN_ID"' in text
+    assert '--pattern "sp500-dehb-worker-*"' in text
+    assert "diagnose_sp500_megarun_dehb_cache_conflicts.py" in text
+    assert "validation_2011_2020" not in text
+    assert "locked_2021" not in text
