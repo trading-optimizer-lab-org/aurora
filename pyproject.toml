@@ -27,6 +27,7 @@ dependencies = [
     "jsonschema>=4.23",
     "cryptography>=42",
     "requests>=2.32",
+    "psycopg[binary,pool]>=3.2,<4",
 ]
 
 [project.optional-dependencies]

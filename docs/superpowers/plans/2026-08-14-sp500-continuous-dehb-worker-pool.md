@@ -125,7 +125,7 @@ git commit -m "feat: define continuous DEHB identities"
 - Consumes: model schema versions from Task 1.
 - Produces: `SCHEMA_VERSION = 1`, `schema_statements() -> Sequence[str]`, `apply_schema(connection) -> SchemaReceiptV1`.
 
-- [ ] **Step 1: Add failing schema-shape tests**
+- [x] **Step 1: Add failing schema-shape tests**
 
 ```python
 def test_schema_has_unique_scientific_work_and_slot_caps():
@@ -136,21 +136,21 @@ def test_schema_has_unique_scientific_work_and_slot_caps():
     assert "validation_opened boolean NOT NULL CHECK (validation_opened = false)" in sql
 ```
 
-- [ ] **Step 2: Confirm failure, then add psycopg dependency**
+- [x] **Step 2: Confirm failure, then add psycopg dependency**
 
 Run: `C:/Python314/python.exe -m pytest tests/test_sp500_megarun_dehb_continuous_schema.py -q`
 
 Add `"psycopg[binary,pool]>=3.2,<4"` to project dependencies so GitHub workers share one tested driver and connection pool.
 
-- [ ] **Step 3: Implement idempotent DDL**
+- [x] **Step 3: Implement idempotent DDL**
 
 Create all tables listed in the design, append-only `audit_events`, `BIGINT` sequences, foreign keys, result immutability triggers, 360 session permits, 1,440 slot permits, lease expiries, partial unique indexes for active leases, and database roles `sp500_dehb_coordinator`, `sp500_dehb_worker`, `sp500_dehb_reducer`.
 
-- [ ] **Step 4: Run schema tests and package metadata tests**
+- [x] **Step 4: Run schema tests and package metadata tests**
 
 Run: `C:/Python314/python.exe -m pytest tests/test_sp500_megarun_dehb_continuous_schema.py tests/test_audit_fixes.py tests/test_lint_config.py -q`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add pyproject.toml infra/sp500_megarun/dehb_continuous_schema.py tests/test_sp500_megarun_dehb_continuous_schema.py
