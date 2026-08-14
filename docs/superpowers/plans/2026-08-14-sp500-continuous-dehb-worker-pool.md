@@ -213,7 +213,7 @@ git commit -m "feat: add atomic continuous DEHB store"
 - Produces: `ContinuousIslandState.restore`, `ask_batch() -> IslandBatchV1`, `tell_batch(batch, results) -> IslandAdvanceV1`, `checkpoint_bytes()`.
 - Reuses: `_ask_valid_batch`, `_validated_result`, `_resume_safe_dehb_class` without changing v1 results.
 
-- [ ] **Step 1: Freeze v1 trajectory fixtures**
+- [x] **Step 1: Freeze v1 trajectory fixtures**
 
 ```python
 def test_out_of_order_arrival_keeps_v1_trajectory(frozen_optimizer):
@@ -225,19 +225,19 @@ def test_out_of_order_arrival_keeps_v1_trajectory(frozen_optimizer):
     assert state.trajectory_receipt() == baseline.trajectory_receipt()
 ```
 
-- [ ] **Step 2: Run and confirm the adapter is absent**
+- [x] **Step 2: Run and confirm the adapter is absent**
 
 Run: `C:/Python314/python.exe -m pytest tests/test_sp500_megarun_dehb_continuous_island.py -q`
 
-- [ ] **Step 3: Extract reusable four-job ask/tell primitives and implement the adapter**
+- [x] **Step 3: Extract reusable four-job ask/tell primitives and implement the adapter**
 
 The adapter asks four valid jobs, assigns stable slots 0-3, buffers arbitrary arrival order, calls official DEHB `tell` in slot order, stores consumed result hashes and creates a hash-chain checkpoint only at a complete four-job boundary.
 
-- [ ] **Step 4: Run conformance plus all existing island tests**
+- [x] **Step 4: Run conformance plus all existing island tests**
 
 Run: `C:/Python314/python.exe -m pytest tests/test_sp500_megarun_dehb_continuous_island.py tests/test_sp500_megarun_dehb_island_runner.py tests/test_sp500_megarun_dehb_plan_resume.py -q`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add infra/sp500_megarun/dehb_continuous_island.py infra/sp500_megarun/dehb_island_runner.py tests/test_sp500_megarun_dehb_continuous_island.py
