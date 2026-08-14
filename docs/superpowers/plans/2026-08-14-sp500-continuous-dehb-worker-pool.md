@@ -167,7 +167,7 @@ git commit -m "feat: add continuous DEHB PostgreSQL schema"
 **Interfaces:**
 - Produces: `ContinuousCampaignStore` protocol and `PostgresContinuousCampaignStore` with `register_proposal`, `claim_worker_session`, `claim_evaluation`, `heartbeat`, `publish_position_key`, `complete_evaluation`, `release_lease`, `fetch_completed_batches`, `append_checkpoint`, and `snapshot_cutoff`.
 
-- [ ] **Step 1: Add an in-memory contract harness and collision tests**
+- [x] **Step 1: Add an in-memory contract harness and collision tests**
 
 ```python
 def test_500_concurrent_proposals_create_one_physical_work_item(store):
@@ -183,11 +183,11 @@ def test_conflicting_completion_halts_campaign(store):
     assert store.campaign_state() == "halted_conflict"
 ```
 
-- [ ] **Step 2: Confirm contract tests fail**
+- [x] **Step 2: Confirm contract tests fail**
 
 Run: `C:/Python314/python.exe -m pytest tests/test_sp500_megarun_dehb_continuous_store.py -q`
 
-- [ ] **Step 3: Implement serializable transactions**
+- [x] **Step 3: Implement serializable transactions**
 
 Use PostgreSQL `INSERT ON CONFLICT` and `SELECT FOR UPDATE SKIP LOCKED`, opaque random lease tokens, database timestamps, advisory coordinator lock, atomic audit sequence allocation and idempotent same-hash completion. Never interpolate identifiers or payload values into SQL.
 
@@ -195,7 +195,7 @@ Use PostgreSQL `INSERT ON CONFLICT` and `SELECT FOR UPDATE SKIP LOCKED`, opaque 
 
 Run: `C:/Python314/python.exe -m pytest tests/test_sp500_megarun_dehb_continuous_store.py tests/integration/test_sp500_megarun_dehb_continuous_postgres.py -q`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add infra/sp500_megarun/dehb_continuous_store.py tests/test_sp500_megarun_dehb_continuous_store.py tests/integration/test_sp500_megarun_dehb_continuous_postgres.py

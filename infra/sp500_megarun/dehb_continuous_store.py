@@ -1,0 +1,880 @@
+"""Transactional store contract for continuous SP500 DEHB coordination."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+import secrets
+from threading import RLock
+from typing import Callable, Protocol
+import uuid
+from urllib.parse import parse_qs, urlparse
+
+from aurora.infra.sp500_megarun.dehb_continuous_models import (
+    EvaluationCacheKeyV2,
+    EvaluationProposalV2,
+    EvaluationResultV2,
+)
+
+
+class ContinuousStoreError(RuntimeError):
+    """Base class for continuous campaign persistence failures."""
+
+
+class LeaseLostError(ContinuousStoreError):
+    """Raised when a completion no longer owns the evaluation lease."""
+
+
+class ResultConflictError(ContinuousStoreError):
+    """Raised when one scientific key produces two result hashes."""
+
+
+class WorkerCapacityError(ContinuousStoreError):
+    """Raised when all 360 GitHub worker-session permits are occupied."""
+
+
+class PostgresStoreConfigurationError(ContinuousStoreError):
+    """Raised before connecting when PostgreSQL transport is unsafe or incomplete."""
+
+
+@dataclass(frozen=True)
+class ProposalRegistrationV1:
+    proposal_id: int
+    evaluation_id: int
+    evaluation_key: EvaluationCacheKeyV2
+    physical_work_created: bool
+    cache_hit: bool
+
+
+@dataclass(frozen=True)
+class WorkerSessionLeaseV1:
+    worker_session_id: str
+    permit_number: int
+    lease_expires_at: datetime
+
+
+@dataclass(frozen=True)
+class EvaluationLeaseV1:
+    evaluation_id: int
+    cache_key_sha256: str
+    evaluation_key: EvaluationCacheKeyV2
+    lease_token: str
+    worker_session_id: str
+    slot_index: int
+    lease_expires_at: datetime
+
+
+@dataclass(frozen=True)
+class EvaluationCompletionV1:
+    evaluation_id: int
+    result_sha256: str
+    subscriber_count: int
+
+
+class ContinuousCampaignStore(Protocol):
+    """Behavior required by coordinators and physical workers."""
+
+    def register_proposal(self, proposal: EvaluationProposalV2) -> ProposalRegistrationV1: ...
+
+    def claim_evaluation(
+        self, *, worker_session_id: str, slot_index: int, lease_seconds: int
+    ) -> EvaluationLeaseV1 | None: ...
+
+    def complete_evaluation(
+        self, lease: EvaluationLeaseV1, result: EvaluationResultV2
+    ) -> EvaluationCompletionV1: ...
+
+
+@dataclass
+class _EvaluationRecord:
+    evaluation_id: int
+    key: EvaluationCacheKeyV2
+    state: str = "ready"
+    lease: EvaluationLeaseV1 | None = None
+    result: EvaluationResultV2 | None = None
+
+
+@dataclass
+class _WorkerSession:
+    lease: WorkerSessionLeaseV1
+    pool_generation: str
+    github_run_id: int
+    github_job: str
+    state: str = "active"
+
+
+class InMemoryContinuousCampaignStore:
+    """Thread-safe executable reference for the PostgreSQL transaction contract."""
+
+    def __init__(
+        self,
+        *,
+        campaign_id: str,
+        scientific_contract_sha256: str,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self.campaign_id = str(campaign_id)
+        self.scientific_contract_sha256 = str(scientific_contract_sha256)
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._lock = RLock()
+        self._state = "searching"
+        self._next_evaluation_id = 1
+        self._next_proposal_id = 1
+        self._evaluations_by_key: dict[str, _EvaluationRecord] = {}
+        self._evaluations_by_id: dict[int, _EvaluationRecord] = {}
+        self._proposals: dict[tuple[str, int, int], tuple[int, int]] = {}
+        self._subscribers: dict[int, set[int]] = {}
+        self._sessions: dict[str, _WorkerSession] = {}
+        self._slots: dict[tuple[str, int], int] = {}
+
+    def register_proposal(self, proposal: EvaluationProposalV2) -> ProposalRegistrationV1:
+        if proposal.campaign_id != self.campaign_id:
+            raise ContinuousStoreError("CONTINUOUS_PROPOSAL_CAMPAIGN_MISMATCH")
+        identity = (proposal.island_id, proposal.batch_sequence, proposal.batch_slot)
+        with self._lock:
+            existing_proposal = self._proposals.get(identity)
+            if existing_proposal is not None:
+                proposal_id, evaluation_id = existing_proposal
+                record = self._evaluations_by_id[evaluation_id]
+                if record.key.sha256 != proposal.evaluation_key.sha256:
+                    raise ResultConflictError("CONTINUOUS_PROPOSAL_IDENTITY_CONFLICT")
+                return ProposalRegistrationV1(
+                    proposal_id=proposal_id,
+                    evaluation_id=evaluation_id,
+                    evaluation_key=record.key,
+                    physical_work_created=False,
+                    cache_hit=record.state == "completed",
+                )
+
+            record = self._evaluations_by_key.get(proposal.evaluation_key.sha256)
+            physical_work_created = record is None
+            if record is None:
+                record = _EvaluationRecord(
+                    evaluation_id=self._next_evaluation_id,
+                    key=proposal.evaluation_key,
+                )
+                self._next_evaluation_id += 1
+                self._evaluations_by_key[record.key.sha256] = record
+                self._evaluations_by_id[record.evaluation_id] = record
+                self._subscribers[record.evaluation_id] = set()
+
+            proposal_id = self._next_proposal_id
+            self._next_proposal_id += 1
+            self._proposals[identity] = (proposal_id, record.evaluation_id)
+            self._subscribers[record.evaluation_id].add(proposal_id)
+            return ProposalRegistrationV1(
+                proposal_id=proposal_id,
+                evaluation_id=record.evaluation_id,
+                evaluation_key=record.key,
+                physical_work_created=physical_work_created,
+                cache_hit=record.state == "completed",
+            )
+
+    def claim_worker_session(
+        self,
+        *,
+        pool_generation: str,
+        github_run_id: int,
+        github_job: str,
+        lease_seconds: int,
+    ) -> WorkerSessionLeaseV1:
+        if lease_seconds < 1:
+            raise ContinuousStoreError("CONTINUOUS_WORKER_LEASE_SECONDS_INVALID")
+        with self._lock:
+            used = {
+                session.lease.permit_number
+                for session in self._sessions.values()
+                if session.state != "closed"
+            }
+            permit = next((number for number in range(1, 361) if number not in used), None)
+            if permit is None:
+                raise WorkerCapacityError("CONTINUOUS_WORKER_SESSION_CAPACITY")
+            session_id = str(uuid.uuid4())
+            lease = WorkerSessionLeaseV1(
+                worker_session_id=session_id,
+                permit_number=permit,
+                lease_expires_at=self._clock() + timedelta(seconds=lease_seconds),
+            )
+            self._sessions[session_id] = _WorkerSession(
+                lease=lease,
+                pool_generation=str(pool_generation),
+                github_run_id=int(github_run_id),
+                github_job=str(github_job),
+            )
+            return lease
+
+    def close_worker_session(self, worker_session_id: str) -> None:
+        with self._lock:
+            session = self._sessions.get(str(worker_session_id))
+            if session is None:
+                raise ContinuousStoreError("CONTINUOUS_WORKER_SESSION_UNKNOWN")
+            for slot_key, evaluation_id in list(self._slots.items()):
+                if slot_key[0] != worker_session_id:
+                    continue
+                record = self._evaluations_by_id[evaluation_id]
+                if record.state == "leased":
+                    record.state = "ready"
+                    record.lease = None
+                del self._slots[slot_key]
+            session.state = "closed"
+
+    def claim_evaluation(
+        self,
+        *,
+        worker_session_id: str,
+        slot_index: int,
+        lease_seconds: int,
+    ) -> EvaluationLeaseV1 | None:
+        if slot_index not in range(4):
+            raise ContinuousStoreError("CONTINUOUS_WORKER_SLOT_INVALID")
+        if lease_seconds < 1:
+            raise ContinuousStoreError("CONTINUOUS_EVALUATION_LEASE_SECONDS_INVALID")
+        with self._lock:
+            session = self._sessions.get(str(worker_session_id))
+            if session is None or session.state != "active":
+                raise ContinuousStoreError("CONTINUOUS_WORKER_SESSION_NOT_ACTIVE")
+            slot_key = (str(worker_session_id), slot_index)
+            if slot_key in self._slots:
+                raise ContinuousStoreError("CONTINUOUS_WORKER_SLOT_OCCUPIED")
+            record = next(
+                (
+                    item
+                    for item in sorted(
+                        self._evaluations_by_id.values(), key=lambda value: value.evaluation_id
+                    )
+                    if item.state == "ready"
+                ),
+                None,
+            )
+            if record is None:
+                return None
+            lease = EvaluationLeaseV1(
+                evaluation_id=record.evaluation_id,
+                cache_key_sha256=record.key.sha256,
+                evaluation_key=record.key,
+                lease_token=secrets.token_hex(32),
+                worker_session_id=str(worker_session_id),
+                slot_index=slot_index,
+                lease_expires_at=self._clock() + timedelta(seconds=lease_seconds),
+            )
+            record.state = "leased"
+            record.lease = lease
+            self._slots[slot_key] = record.evaluation_id
+            return lease
+
+    def requeue_expired_leases(self) -> int:
+        now = self._clock()
+        count = 0
+        with self._lock:
+            for record in self._evaluations_by_id.values():
+                if (
+                    record.state == "leased"
+                    and record.lease is not None
+                    and record.lease.lease_expires_at < now
+                ):
+                    slot_key = (record.lease.worker_session_id, record.lease.slot_index)
+                    self._slots.pop(slot_key, None)
+                    record.lease = None
+                    record.state = "ready"
+                    count += 1
+        return count
+
+    def complete_evaluation(
+        self,
+        lease: EvaluationLeaseV1,
+        result: EvaluationResultV2,
+    ) -> EvaluationCompletionV1:
+        with self._lock:
+            record = self._evaluations_by_id.get(lease.evaluation_id)
+            if record is None or record.key.sha256 != result.key.sha256:
+                raise ContinuousStoreError("CONTINUOUS_EVALUATION_RESULT_KEY_MISMATCH")
+            if record.result is not None:
+                if record.result.result_sha256 != result.result_sha256:
+                    self._state = "halted_conflict"
+                    raise ResultConflictError("CONTINUOUS_RESULT_HASH_CONFLICT")
+                return EvaluationCompletionV1(
+                    evaluation_id=record.evaluation_id,
+                    result_sha256=record.result.result_sha256,
+                    subscriber_count=len(self._subscribers[record.evaluation_id]),
+                )
+            if record.lease is None or record.lease.lease_token != lease.lease_token:
+                raise LeaseLostError("CONTINUOUS_EVALUATION_LEASE_LOST")
+            record.result = result
+            record.state = "completed"
+            record.lease = None
+            self._slots.pop((lease.worker_session_id, lease.slot_index), None)
+            return EvaluationCompletionV1(
+                evaluation_id=record.evaluation_id,
+                result_sha256=result.result_sha256,
+                subscriber_count=len(self._subscribers[record.evaluation_id]),
+            )
+
+    def campaign_state(self) -> str:
+        with self._lock:
+            return self._state
+
+    def count_ready_work_items(self) -> int:
+        with self._lock:
+            return sum(record.state == "ready" for record in self._evaluations_by_id.values())
+
+    def count_subscribers(self) -> int:
+        with self._lock:
+            return sum(len(value) for value in self._subscribers.values())
+
+    def count_completed_subscribers(self) -> int:
+        with self._lock:
+            return sum(
+                len(self._subscribers[record.evaluation_id])
+                for record in self._evaluations_by_id.values()
+                if record.state == "completed"
+            )
+
+    def count_physical_completions(self) -> int:
+        with self._lock:
+            return sum(record.result is not None for record in self._evaluations_by_id.values())
+
+    def maximum_active_leases_per_key(self) -> int:
+        with self._lock:
+            counts = [1 for record in self._evaluations_by_id.values() if record.state == "leased"]
+            return max(counts, default=0)
+
+
+class PostgresContinuousCampaignStore:
+    """Psycopg-backed implementation using short transaction-pooler-safe claims."""
+
+    def __init__(
+        self,
+        *,
+        dsn: str,
+        campaign_id: str,
+        pool: object | None = None,
+        pool_min_size: int = 1,
+        pool_max_size: int = 6,
+    ) -> None:
+        parsed = urlparse(str(dsn))
+        sslmode = parse_qs(parsed.query).get("sslmode", [""])[0].lower()
+        if parsed.scheme not in {"postgres", "postgresql"} or sslmode not in {
+            "require",
+            "verify-ca",
+            "verify-full",
+        }:
+            raise PostgresStoreConfigurationError("CONTINUOUS_POSTGRES_TLS_REQUIRED")
+        if not str(campaign_id):
+            raise PostgresStoreConfigurationError("CONTINUOUS_POSTGRES_CAMPAIGN_ID_REQUIRED")
+        self.campaign_id = str(campaign_id)
+        if pool is None:
+            try:
+                from psycopg_pool import ConnectionPool
+            except ImportError as exc:  # pragma: no cover - dependency gate
+                raise PostgresStoreConfigurationError(
+                    "CONTINUOUS_POSTGRES_PSYCOPG_REQUIRED"
+                ) from exc
+            pool = ConnectionPool(
+                conninfo=str(dsn),
+                min_size=int(pool_min_size),
+                max_size=int(pool_max_size),
+                kwargs={"autocommit": False},
+                open=True,
+            )
+        self._pool = pool
+
+    @staticmethod
+    def _jsonb(value: object) -> object:
+        from psycopg.types.json import Jsonb
+
+        return Jsonb(value)
+
+    def _next_sequence(self, cursor: object) -> int:
+        cursor.execute(
+            """
+            UPDATE campaigns
+            SET next_event_sequence = next_event_sequence + 1,
+                updated_at = clock_timestamp()
+            WHERE campaign_id = %s AND state NOT LIKE 'halted_%%'
+            RETURNING next_event_sequence - 1
+            """,
+            (self.campaign_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise ContinuousStoreError("CONTINUOUS_CAMPAIGN_NOT_MUTABLE")
+        return int(row[0])
+
+    @staticmethod
+    def _serializable(cursor: object) -> None:
+        cursor.execute("SET LOCAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+
+    def register_proposal(self, proposal: EvaluationProposalV2) -> ProposalRegistrationV1:
+        if proposal.campaign_id != self.campaign_id:
+            raise ContinuousStoreError("CONTINUOUS_PROPOSAL_CAMPAIGN_MISMATCH")
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                self._serializable(cursor)
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    INSERT INTO evaluations (
+                        campaign_id, schema_version, cache_key_sha256, key_payload,
+                        state, created_sequence, updated_sequence
+                    ) VALUES (%s, 2, %s, %s, 'ready', %s, %s)
+                    ON CONFLICT (campaign_id, cache_key_sha256) DO NOTHING
+                    RETURNING evaluation_id
+                    """,
+                    (
+                        self.campaign_id,
+                        proposal.evaluation_key.sha256,
+                        self._jsonb(dict(proposal.evaluation_key.payload)),
+                        sequence,
+                        sequence,
+                    ),
+                )
+                inserted = cursor.fetchone()
+                physical_work_created = inserted is not None
+                if inserted is None:
+                    cursor.execute(
+                        """
+                        SELECT evaluation_id, state
+                        FROM evaluations
+                        WHERE campaign_id = %s AND cache_key_sha256 = %s
+                        """,
+                        (self.campaign_id, proposal.evaluation_key.sha256),
+                    )
+                    evaluation_row = cursor.fetchone()
+                    if evaluation_row is None:
+                        raise ContinuousStoreError("CONTINUOUS_EVALUATION_UPSERT_LOST")
+                    evaluation_id, evaluation_state = int(evaluation_row[0]), str(
+                        evaluation_row[1]
+                    )
+                else:
+                    evaluation_id, evaluation_state = int(inserted[0]), "ready"
+                    cursor.execute(
+                        """
+                        INSERT INTO work_items (
+                            campaign_id, evaluation_id, schema_version, state,
+                            created_sequence, updated_sequence
+                        ) VALUES (%s, %s, 1, 'ready', %s, %s)
+                        """,
+                        (self.campaign_id, evaluation_id, sequence, sequence),
+                    )
+                cursor.execute(
+                    """
+                    INSERT INTO proposals (
+                        campaign_id, island_id, batch_sequence, batch_slot,
+                        schema_version, evaluation_id, dehb_job,
+                        created_sequence, updated_sequence
+                    ) VALUES (%s, %s, %s, %s, 2, %s, %s, %s, %s)
+                    ON CONFLICT (campaign_id, island_id, batch_sequence, batch_slot)
+                    DO NOTHING
+                    RETURNING proposal_id
+                    """,
+                    (
+                        self.campaign_id,
+                        proposal.island_id,
+                        proposal.batch_sequence,
+                        proposal.batch_slot,
+                        evaluation_id,
+                        self._jsonb(dict(proposal.dehb_job)),
+                        sequence,
+                        sequence,
+                    ),
+                )
+                proposal_row = cursor.fetchone()
+                if proposal_row is None:
+                    cursor.execute(
+                        """
+                        SELECT proposal_id, evaluation_id
+                        FROM proposals
+                        WHERE campaign_id = %s AND island_id = %s
+                          AND batch_sequence = %s AND batch_slot = %s
+                        """,
+                        (
+                            self.campaign_id,
+                            proposal.island_id,
+                            proposal.batch_sequence,
+                            proposal.batch_slot,
+                        ),
+                    )
+                    existing = cursor.fetchone()
+                    if existing is None or int(existing[1]) != evaluation_id:
+                        raise ResultConflictError("CONTINUOUS_PROPOSAL_IDENTITY_CONFLICT")
+                    proposal_id = int(existing[0])
+                else:
+                    proposal_id = int(proposal_row[0])
+                cursor.execute(
+                    """
+                    INSERT INTO evaluation_subscribers (
+                        campaign_id, evaluation_id, proposal_id, schema_version,
+                        created_sequence, updated_sequence
+                    ) VALUES (%s, %s, %s, 1, %s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        self.campaign_id,
+                        evaluation_id,
+                        proposal_id,
+                        sequence,
+                        sequence,
+                    ),
+                )
+        return ProposalRegistrationV1(
+            proposal_id=proposal_id,
+            evaluation_id=evaluation_id,
+            evaluation_key=proposal.evaluation_key,
+            physical_work_created=physical_work_created,
+            cache_hit=evaluation_state == "completed",
+        )
+
+    def claim_worker_session(
+        self,
+        *,
+        pool_generation: str,
+        github_run_id: int,
+        github_job: str,
+        lease_seconds: int,
+    ) -> WorkerSessionLeaseV1:
+        if lease_seconds < 1:
+            raise ContinuousStoreError("CONTINUOUS_WORKER_LEASE_SECONDS_INVALID")
+        session_id = str(uuid.uuid4())
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                self._serializable(cursor)
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 360))",
+                    (self.campaign_id,),
+                )
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    UPDATE worker_sessions
+                    SET state = 'closed', updated_sequence = %s,
+                        updated_at = clock_timestamp()
+                    WHERE campaign_id = %s AND state <> 'closed'
+                      AND lease_expires_at < clock_timestamp()
+                    """,
+                    (sequence, self.campaign_id),
+                )
+                cursor.execute(
+                    """
+                    SELECT permit
+                    FROM generate_series(1, 360) AS permit
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM worker_sessions
+                        WHERE campaign_id = %s AND permit_number = permit
+                          AND state <> 'closed'
+                    )
+                    ORDER BY permit
+                    LIMIT 1
+                    """,
+                    (self.campaign_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise WorkerCapacityError("CONTINUOUS_WORKER_SESSION_CAPACITY")
+                permit = int(row[0])
+                cursor.execute(
+                    """
+                    INSERT INTO worker_sessions (
+                        worker_session_id, campaign_id, schema_version,
+                        pool_generation, github_run_id, github_job, permit_number,
+                        state, lease_expires_at, created_sequence, updated_sequence
+                    ) VALUES (
+                        %s, %s, 1, %s, %s, %s, %s, 'active',
+                        clock_timestamp() + make_interval(secs => %s), %s, %s
+                    ) RETURNING lease_expires_at
+                    """,
+                    (
+                        session_id,
+                        self.campaign_id,
+                        str(pool_generation),
+                        int(github_run_id),
+                        str(github_job),
+                        permit,
+                        int(lease_seconds),
+                        sequence,
+                        sequence,
+                    ),
+                )
+                expires = cursor.fetchone()[0]
+        return WorkerSessionLeaseV1(session_id, permit, expires)
+
+    def claim_evaluation(
+        self,
+        *,
+        worker_session_id: str,
+        slot_index: int,
+        lease_seconds: int,
+    ) -> EvaluationLeaseV1 | None:
+        if slot_index not in range(4):
+            raise ContinuousStoreError("CONTINUOUS_WORKER_SLOT_INVALID")
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    SELECT 1 FROM worker_sessions
+                    WHERE worker_session_id = %s AND campaign_id = %s
+                      AND state = 'active' AND lease_expires_at >= clock_timestamp()
+                    FOR UPDATE
+                    """,
+                    (worker_session_id, self.campaign_id),
+                )
+                if cursor.fetchone() is None:
+                    raise ContinuousStoreError("CONTINUOUS_WORKER_SESSION_NOT_ACTIVE")
+                cursor.execute(
+                    """
+                    SELECT w.work_item_id, w.evaluation_id, e.cache_key_sha256,
+                           e.key_payload
+                    FROM work_items w
+                    JOIN evaluations e ON e.evaluation_id = w.evaluation_id
+                    WHERE w.campaign_id = %s AND w.state = 'ready'
+                    ORDER BY w.priority DESC, w.work_item_id
+                    FOR UPDATE OF w SKIP LOCKED
+                    LIMIT 1
+                    """,
+                    (self.campaign_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+                work_item_id, evaluation_id, key_sha256, key_payload = row
+                token = secrets.token_hex(32)
+                cursor.execute(
+                    """
+                    INSERT INTO worker_slot_leases (
+                        campaign_id, worker_session_id, slot_index, schema_version,
+                        lease_token, lease_expires_at, created_sequence, updated_sequence
+                    ) VALUES (
+                        %s, %s, %s, 1, %s,
+                        clock_timestamp() + make_interval(secs => %s), %s, %s
+                    )
+                    """,
+                    (
+                        self.campaign_id,
+                        worker_session_id,
+                        slot_index,
+                        token,
+                        int(lease_seconds),
+                        sequence,
+                        sequence,
+                    ),
+                )
+                cursor.execute(
+                    """
+                    UPDATE work_items SET state = 'leased', lease_token = %s,
+                        leased_by_session_id = %s, leased_by_slot = %s,
+                        lease_expires_at = clock_timestamp() + make_interval(secs => %s),
+                        attempt_count = attempt_count + 1, updated_sequence = %s,
+                        updated_at = clock_timestamp()
+                    WHERE work_item_id = %s
+                    RETURNING lease_expires_at
+                    """,
+                    (
+                        token,
+                        worker_session_id,
+                        slot_index,
+                        int(lease_seconds),
+                        sequence,
+                        int(work_item_id),
+                    ),
+                )
+                expires = cursor.fetchone()[0]
+                cursor.execute(
+                    """
+                    UPDATE evaluations SET state = 'leased', updated_sequence = %s,
+                        updated_at = clock_timestamp() WHERE evaluation_id = %s
+                    """,
+                    (sequence, int(evaluation_id)),
+                )
+        key = EvaluationCacheKeyV2(sha256=str(key_sha256), payload=dict(key_payload))
+        return EvaluationLeaseV1(
+            evaluation_id=int(evaluation_id),
+            cache_key_sha256=str(key_sha256),
+            evaluation_key=key,
+            lease_token=token,
+            worker_session_id=str(worker_session_id),
+            slot_index=int(slot_index),
+            lease_expires_at=expires,
+        )
+
+    def complete_evaluation(
+        self,
+        lease: EvaluationLeaseV1,
+        result: EvaluationResultV2,
+    ) -> EvaluationCompletionV1:
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                self._serializable(cursor)
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    SELECT w.lease_token, w.state, r.result_sha256
+                    FROM work_items w
+                    LEFT JOIN results r ON r.evaluation_id = w.evaluation_id
+                    WHERE w.campaign_id = %s AND w.evaluation_id = %s
+                    FOR UPDATE OF w
+                    """,
+                    (self.campaign_id, lease.evaluation_id),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise ContinuousStoreError("CONTINUOUS_EVALUATION_UNKNOWN")
+                active_token, state, existing_hash = row
+                if existing_hash is not None:
+                    if str(existing_hash) != result.result_sha256:
+                        cursor.execute(
+                            "UPDATE campaigns SET state = 'halted_conflict' WHERE campaign_id = %s",
+                            (self.campaign_id,),
+                        )
+                        raise ResultConflictError("CONTINUOUS_RESULT_HASH_CONFLICT")
+                elif str(active_token) != lease.lease_token or state != "leased":
+                    raise LeaseLostError("CONTINUOUS_EVALUATION_LEASE_LOST")
+                else:
+                    if result.key.sha256 != lease.cache_key_sha256:
+                        raise ContinuousStoreError("CONTINUOUS_EVALUATION_RESULT_KEY_MISMATCH")
+                    cursor.execute(
+                        """
+                        INSERT INTO results (
+                            campaign_id, schema_version, evaluation_id, result_sha256,
+                            result_payload, evaluation_origin, physical_runtime_seconds,
+                            validation_opened, locked_opened,
+                            created_sequence, updated_sequence
+                        ) VALUES (%s, 2, %s, %s, %s, 'physical', 0, false, false, %s, %s)
+                        """,
+                        (
+                            self.campaign_id,
+                            lease.evaluation_id,
+                            result.result_sha256,
+                            self._jsonb(dict(result.result)),
+                            sequence,
+                            sequence,
+                        ),
+                    )
+                    cursor.execute(
+                        """
+                        UPDATE evaluations SET state = 'completed', updated_sequence = %s,
+                            updated_at = clock_timestamp() WHERE evaluation_id = %s
+                        """,
+                        (sequence, lease.evaluation_id),
+                    )
+                    cursor.execute(
+                        """
+                        UPDATE work_items SET state = 'completed', lease_token = NULL,
+                            leased_by_session_id = NULL, leased_by_slot = NULL,
+                            lease_expires_at = NULL, updated_sequence = %s,
+                            updated_at = clock_timestamp() WHERE evaluation_id = %s
+                        """,
+                        (sequence, lease.evaluation_id),
+                    )
+                    cursor.execute(
+                        """
+                        DELETE FROM worker_slot_leases
+                        WHERE campaign_id = %s AND worker_session_id = %s
+                          AND slot_index = %s AND lease_token = %s
+                        """,
+                        (
+                            self.campaign_id,
+                            lease.worker_session_id,
+                            lease.slot_index,
+                            lease.lease_token,
+                        ),
+                    )
+                cursor.execute(
+                    """
+                    SELECT count(*) FROM evaluation_subscribers
+                    WHERE campaign_id = %s AND evaluation_id = %s
+                    """,
+                    (self.campaign_id, lease.evaluation_id),
+                )
+                subscriber_count = int(cursor.fetchone()[0])
+        return EvaluationCompletionV1(
+            evaluation_id=lease.evaluation_id,
+            result_sha256=result.result_sha256,
+            subscriber_count=subscriber_count,
+        )
+
+    def requeue_expired_leases(self) -> int:
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    WITH expired AS (
+                        UPDATE work_items
+                        SET state = 'ready', lease_token = NULL,
+                            leased_by_session_id = NULL, leased_by_slot = NULL,
+                            lease_expires_at = NULL, updated_sequence = %s,
+                            updated_at = clock_timestamp()
+                        WHERE campaign_id = %s AND state = 'leased'
+                          AND lease_expires_at < clock_timestamp()
+                        RETURNING evaluation_id
+                    )
+                    UPDATE evaluations SET state = 'ready', updated_sequence = %s,
+                        updated_at = clock_timestamp()
+                    WHERE evaluation_id IN (SELECT evaluation_id FROM expired)
+                    RETURNING evaluation_id
+                    """,
+                    (sequence, self.campaign_id, sequence),
+                )
+                rows = cursor.fetchall()
+                cursor.execute(
+                    """
+                    DELETE FROM worker_slot_leases
+                    WHERE campaign_id = %s AND lease_expires_at < clock_timestamp()
+                    """,
+                    (self.campaign_id,),
+                )
+        return len(rows)
+
+    def close_worker_session(self, worker_session_id: str) -> None:
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    UPDATE work_items SET state = 'ready', lease_token = NULL,
+                        leased_by_session_id = NULL, leased_by_slot = NULL,
+                        lease_expires_at = NULL, updated_sequence = %s,
+                        updated_at = clock_timestamp()
+                    WHERE campaign_id = %s AND leased_by_session_id = %s
+                      AND state = 'leased' RETURNING evaluation_id
+                    """,
+                    (sequence, self.campaign_id, worker_session_id),
+                )
+                evaluation_ids = [int(row[0]) for row in cursor.fetchall()]
+                if evaluation_ids:
+                    cursor.execute(
+                        """
+                        UPDATE evaluations SET state = 'ready', updated_sequence = %s,
+                            updated_at = clock_timestamp()
+                        WHERE campaign_id = %s AND evaluation_id = ANY(%s)
+                        """,
+                        (sequence, self.campaign_id, evaluation_ids),
+                    )
+                cursor.execute(
+                    "DELETE FROM worker_slot_leases WHERE worker_session_id = %s",
+                    (worker_session_id,),
+                )
+                cursor.execute(
+                    """
+                    UPDATE worker_sessions SET state = 'closed', updated_sequence = %s,
+                        updated_at = clock_timestamp()
+                    WHERE worker_session_id = %s AND campaign_id = %s
+                    """,
+                    (sequence, worker_session_id, self.campaign_id),
+                )
+
+
+__all__ = [
+    "ContinuousCampaignStore",
+    "ContinuousStoreError",
+    "EvaluationCompletionV1",
+    "EvaluationLeaseV1",
+    "InMemoryContinuousCampaignStore",
+    "LeaseLostError",
+    "PostgresContinuousCampaignStore",
+    "PostgresStoreConfigurationError",
+    "ProposalRegistrationV1",
+    "ResultConflictError",
+    "WorkerCapacityError",
+    "WorkerSessionLeaseV1",
+]

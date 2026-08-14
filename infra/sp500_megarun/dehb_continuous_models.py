@@ -191,9 +191,61 @@ class EvaluationResultV2:
         )
 
 
+@dataclass(frozen=True)
+class EvaluationProposalV2:
+    """One official-DEHB request subscribed to a global evaluation key."""
+
+    campaign_id: str
+    island_id: str
+    batch_sequence: int
+    batch_slot: int
+    evaluation_key: EvaluationCacheKeyV2
+    dehb_job: Mapping[str, Any]
+    schema_version: int = 2
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        campaign_id: str,
+        island_id: str,
+        batch_sequence: int,
+        batch_slot: int,
+        evaluation_key: EvaluationCacheKeyV2,
+        dehb_job: Mapping[str, Any],
+    ) -> "EvaluationProposalV2":
+        campaign = str(campaign_id)
+        island = str(island_id)
+        if not campaign:
+            raise ContinuousModelError("CONTINUOUS_PROPOSAL_CAMPAIGN_ID_INVALID")
+        if not island:
+            raise ContinuousModelError("CONTINUOUS_PROPOSAL_ISLAND_ID_INVALID")
+        sequence = _require_positive_integer(
+            batch_sequence, "CONTINUOUS_PROPOSAL_BATCH_SEQUENCE_INVALID"
+        )
+        try:
+            slot = int(batch_slot)
+        except (TypeError, ValueError) as exc:
+            raise ContinuousModelError("CONTINUOUS_PROPOSAL_BATCH_SLOT_INVALID") from exc
+        if slot not in range(4) or slot != batch_slot:
+            raise ContinuousModelError("CONTINUOUS_PROPOSAL_BATCH_SLOT_INVALID")
+        normalized_job = _json_value(dehb_job)
+        if not isinstance(normalized_job, Mapping):
+            raise ContinuousModelError("CONTINUOUS_PROPOSAL_DEHB_JOB_INVALID")
+        return cls(
+            campaign_id=campaign,
+            island_id=island,
+            batch_sequence=sequence,
+            batch_slot=slot,
+            evaluation_key=evaluation_key,
+            dehb_job=normalized_job,
+        )
+
+
 __all__ = [
     "ContinuousModelError",
     "EvaluationCacheKeyV2",
+    "EvaluationProposalV2",
     "EvaluationResultV2",
     "StrategyEvaluationKeyV1",
 ]
