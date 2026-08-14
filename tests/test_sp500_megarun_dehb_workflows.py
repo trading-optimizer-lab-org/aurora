@@ -12,10 +12,23 @@ CONTROLLER = ROOT / ".github/workflows/sp500-dehb-mega-controller-v1.yml"
 WORKER_ACTION = ROOT / ".github/actions/sp500-dehb-mega-worker/action.yml"
 CONFLICT_DIAGNOSTIC = ROOT / ".github/workflows/sp500-dehb-cache-conflict-diagnostic.yml"
 CROSS_RUNNER = ROOT / ".github/workflows/sp500-dehb-cross-runner-determinism.yml"
+CONTINUOUS_SMOKE = ROOT / ".github/workflows/sp500-dehb-continuous-smoke-v2.yml"
 
 
 def _load(path: Path) -> dict[str, Any]:
     return dict(load_github_yaml(path))
+
+
+def test_continuous_smoke_uses_exact_commit_and_postgres_16_without_later_data() -> None:
+    workflow = _load(CONTINUOUS_SMOKE)
+    text = CONTINUOUS_SMOKE.read_text(encoding="utf-8")
+
+    job = workflow["jobs"]["postgres_contract"]
+    assert job["services"]["postgres"]["image"] == "postgres:16.4-alpine"
+    assert job["steps"][0]["with"]["ref"] == "${{ inputs.commit_sha }}"
+    assert "test_sp500_megarun_dehb_continuous_postgres.py" in text
+    assert "validation_2011_2020" not in text
+    assert "2021" not in text
 
 
 def test_three_shards_request_360_jobs_and_skip_inside_called_worker() -> None:

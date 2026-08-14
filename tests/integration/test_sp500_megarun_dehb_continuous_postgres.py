@@ -27,8 +27,13 @@ def postgres_store():
     campaign_id = f"campaign-{uuid.uuid4()}"
     with psycopg.connect(dsn, autocommit=True) as admin:
         admin.execute(f'CREATE SCHEMA "{schema}"')
-    schema_dsn = f"{dsn} options='-c search_path={schema}'"
-    pool = pool_module.ConnectionPool(schema_dsn, min_size=4, max_size=32, open=True)
+    pool = pool_module.ConnectionPool(
+        dsn,
+        min_size=4,
+        max_size=32,
+        kwargs={"options": f"-c search_path={schema}"},
+        open=True,
+    )
     try:
         with pool.connection() as connection:
             apply_schema(connection)
@@ -64,10 +69,10 @@ def postgres_store():
                     """
                     INSERT INTO island_batches (
                         campaign_id, island_id, batch_sequence, schema_version,
-                        status, created_sequence, updated_sequence
-                    ) VALUES (%s, 'F067-R0', 1, 1, 'open', 0, 0)
+                        status, batch_sha256, created_sequence, updated_sequence
+                    ) VALUES (%s, 'F067-R0', 1, 1, 'open', %s, 0, 0)
                     """,
-                    (campaign_id,),
+                    (campaign_id, "9" * 64),
                 )
         yield PostgresContinuousCampaignStore(
             dsn="postgresql://test.invalid/aurora?sslmode=require",
