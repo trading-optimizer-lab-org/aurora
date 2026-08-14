@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -30,6 +30,19 @@ _PROCESS_CONTEXTS: dict[
 
 class DehbWorkerError(RuntimeError):
     """Raised when an island input, feature, or objective breaks the contract."""
+
+
+@dataclass(frozen=True)
+class PreparedLaneCandidate:
+    """Position path generated before the expensive objective calculation."""
+
+    lane_id: str
+    configuration: Mapping[str, Any]
+    fidelity: int
+    target_years: tuple[int, ...]
+    decisions: pd.Series
+    strategy_fingerprint: str
+    position_fingerprint: str
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -138,6 +151,107 @@ def feature_frame_to_decisions(
     return decisions
 
 
+def prepare_lane_candidate(
+    config: Any,
+    fidelity: float,
+    *,
+    lane_id: str,
+    feature_evaluator: FeatureEvaluator,
+    fidelity_years: Mapping[int, tuple[int, ...]],
+    allowed_end: str,
+) -> PreparedLaneCandidate:
+    """Generate and fingerprint positions without running the expensive score."""
+
+    normalized_config = _configuration_dict(config)
+    budget = int(float(fidelity))
+    if float(fidelity) != float(budget) or budget not in fidelity_years:
+        raise DehbWorkerError(f"UNKNOWN_FIDELITY:{fidelity:g}")
+    try:
+        feature = feature_evaluator(lane_id, normalized_config)
+        decisions = feature_frame_to_decisions(feature, allowed_end=allowed_end)
+    except (ObjectiveContractError, KeyError, TypeError, ValueError) as exc:
+        if isinstance(exc, DehbWorkerError):
+            raise
+        raise DehbWorkerError(
+            f"LANE_POSITION_BUILD_FAILED:{lane_id}:{type(exc).__name__}:{exc}"
+        ) from exc
+    strategy_fingerprint, position_fingerprint = candidate_fingerprints(
+        lane_id, normalized_config, decisions
+    )
+    return PreparedLaneCandidate(
+        lane_id=str(lane_id),
+        configuration=normalized_config,
+        fidelity=budget,
+        target_years=tuple(int(year) for year in fidelity_years[budget]),
+        decisions=decisions,
+        strategy_fingerprint=strategy_fingerprint,
+        position_fingerprint=position_fingerprint,
+    )
+
+
+def score_prepared_lane_candidate(
+    prepared: PreparedLaneCandidate,
+    *,
+    ledger: pd.DataFrame,
+    fidelity_years: Mapping[int, tuple[int, ...]],
+    allowed_end: str,
+) -> Mapping[str, Any]:
+    """Score a verified position path and bind metrics to its originating config."""
+
+    started = time.perf_counter()
+    if tuple(fidelity_years.get(prepared.fidelity, ())) != prepared.target_years:
+        raise DehbWorkerError("PREPARED_FIDELITY_RECIPE_MISMATCH")
+    try:
+        objective = score_ledger_decisions(
+            ledger,
+            prepared.decisions,
+            target_years=prepared.target_years,
+            allowed_end=allowed_end,
+        )
+    except (ObjectiveContractError, KeyError, TypeError, ValueError) as exc:
+        raise DehbWorkerError(
+            f"LANE_OBJECTIVE_FAILED:{prepared.lane_id}:{type(exc).__name__}:{exc}"
+        ) from exc
+    score = objective.score
+    archive_key = candidate_rank_key(score)
+    config_sha256 = hashlib.sha256(_canonical_bytes(prepared.configuration)).hexdigest()
+    annual = {
+        str(year): asdict(row) for year, row in score.annual_returns.items()
+    }
+    result = {
+        "fitness": float(score.dehb_fitness),
+        "cost": float(prepared.fidelity),
+        "info": {
+            "lane_id": prepared.lane_id,
+            "fidelity": prepared.fidelity,
+            "target_years": list(prepared.target_years),
+            "config": dict(prepared.configuration),
+            "config_sha256": config_sha256,
+            "strategy_fingerprint": prepared.strategy_fingerprint,
+            "position_fingerprint": prepared.position_fingerprint,
+            "train_feasible": score.feasible,
+            "failed_years": list(score.failed_years),
+            "annual_returns": annual,
+            "annualized_strategy_return": score.annualized_strategy_return,
+            "annualized_spy_return": score.annualized_spy_return,
+            "annualized_alpha": score.annualized_alpha,
+            "weekly_spy_beat_rate": score.weekly_spy_beat_rate,
+            "weeks_beating_spy": score.weeks_beating_spy,
+            "week_count": score.week_count,
+            "archive_key": list(archive_key),
+            "objective_runtime_seconds": max(0.0, time.perf_counter() - started),
+            "full_fidelity": prepared.fidelity == max(fidelity_years),
+            "validation_opened": False,
+            "locked_opened": False,
+        },
+    }
+    from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+        normalize_scientific_result,
+    )
+
+    return normalize_scientific_result(result)
+
+
 def evaluate_lane_candidate(
     config: Any,
     fidelity: float,
@@ -150,67 +264,20 @@ def evaluate_lane_candidate(
 ) -> Mapping[str, Any]:
     """Evaluate one actual lane configuration under one frozen DEHB fidelity."""
 
-    normalized_config = _configuration_dict(config)
-    started = time.perf_counter()
-    budget = int(float(fidelity))
-    if float(fidelity) != float(budget) or budget not in fidelity_years:
-        raise DehbWorkerError(f"UNKNOWN_FIDELITY:{fidelity:g}")
-    try:
-        feature = feature_evaluator(lane_id, normalized_config)
-        decisions = feature_frame_to_decisions(feature, allowed_end=allowed_end)
-        objective = score_ledger_decisions(
-            ledger,
-            decisions,
-            target_years=fidelity_years[budget],
-            allowed_end=allowed_end,
-        )
-    except (ObjectiveContractError, KeyError, TypeError, ValueError) as exc:
-        if isinstance(exc, DehbWorkerError):
-            raise
-        raise DehbWorkerError(
-            f"LANE_OBJECTIVE_FAILED:{lane_id}:{type(exc).__name__}:{exc}"
-        ) from exc
-    score = objective.score
-    archive_key = candidate_rank_key(score)
-    config_sha256 = hashlib.sha256(_canonical_bytes(normalized_config)).hexdigest()
-    strategy_fingerprint, position_fingerprint = candidate_fingerprints(
-        lane_id, normalized_config, decisions
+    prepared = prepare_lane_candidate(
+        config,
+        fidelity,
+        lane_id=lane_id,
+        feature_evaluator=feature_evaluator,
+        fidelity_years=fidelity_years,
+        allowed_end=allowed_end,
     )
-    annual = {
-        str(year): asdict(row) for year, row in score.annual_returns.items()
-    }
-    result = {
-        "fitness": float(score.dehb_fitness),
-        "cost": float(budget),
-        "info": {
-            "lane_id": lane_id,
-            "fidelity": budget,
-            "target_years": list(fidelity_years[budget]),
-            "config": dict(normalized_config),
-            "config_sha256": config_sha256,
-            "strategy_fingerprint": strategy_fingerprint,
-            "position_fingerprint": position_fingerprint,
-            "train_feasible": score.feasible,
-            "failed_years": list(score.failed_years),
-            "annual_returns": annual,
-            "annualized_strategy_return": score.annualized_strategy_return,
-            "annualized_spy_return": score.annualized_spy_return,
-            "annualized_alpha": score.annualized_alpha,
-            "weekly_spy_beat_rate": score.weekly_spy_beat_rate,
-            "weeks_beating_spy": score.weeks_beating_spy,
-            "week_count": score.week_count,
-            "archive_key": list(archive_key),
-            "objective_runtime_seconds": max(0.0, time.perf_counter() - started),
-            "full_fidelity": budget == max(fidelity_years),
-            "validation_opened": False,
-            "locked_opened": False,
-        },
-    }
-    from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
-        normalize_scientific_result,
+    return score_prepared_lane_candidate(
+        prepared,
+        ledger=ledger,
+        fidelity_years=fidelity_years,
+        allowed_end=allowed_end,
     )
-
-    return normalize_scientific_result(result)
 
 
 def evaluate_physical_lane_candidate(

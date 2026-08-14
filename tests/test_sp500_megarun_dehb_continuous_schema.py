@@ -41,6 +41,9 @@ def test_schema_enforces_global_evaluation_and_position_uniqueness():
     assert "unique (campaign_id, cache_key_sha256)" in sql
     assert "unique (campaign_id, strategy_key_sha256)" in sql
     assert "unique (campaign_id, island_id, batch_sequence, batch_slot)" in sql
+    strategy_section = sql.split("create table if not exists strategy_evaluations", 1)[1]
+    strategy_section = strategy_section.split("create table if not exists results", 1)[0]
+    assert "result_payload jsonb" in strategy_section
 
 
 def test_schema_makes_later_partition_flags_false_only():

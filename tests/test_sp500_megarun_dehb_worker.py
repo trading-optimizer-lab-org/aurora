@@ -91,6 +91,48 @@ def test_candidate_objective_uses_only_fidelity_years_and_returns_exact_archive_
     assert result["info"]["locked_opened"] is False
 
 
+def test_prepare_then_score_is_exactly_equivalent_to_combined_evaluation() -> None:
+    from aurora.infra.sp500_megarun.dehb_worker import (
+        evaluate_lane_candidate,
+        prepare_lane_candidate,
+        score_prepared_lane_candidate,
+    )
+
+    ledger = _ledger()
+    ledger["long_return"] = -0.0002
+    feature_evaluator = lambda _lane, _config: _feature(-np.ones(len(ledger)))
+    arguments = {
+        "config": {"window": 20},
+        "fidelity": 1,
+        "lane_id": "F001",
+        "ledger": ledger,
+        "feature_evaluator": feature_evaluator,
+        "fidelity_years": {1: (2000,), 3: (2000, 2001)},
+        "allowed_end": "2010-12-31",
+    }
+
+    combined = evaluate_lane_candidate(**arguments)
+    prepared = prepare_lane_candidate(
+        config=arguments["config"],
+        fidelity=arguments["fidelity"],
+        lane_id=arguments["lane_id"],
+        feature_evaluator=feature_evaluator,
+        fidelity_years=arguments["fidelity_years"],
+        allowed_end=arguments["allowed_end"],
+    )
+    split = score_prepared_lane_candidate(
+        prepared,
+        ledger=ledger,
+        fidelity_years=arguments["fidelity_years"],
+        allowed_end=arguments["allowed_end"],
+    )
+
+    combined["info"].pop("objective_runtime_seconds")
+    split["info"].pop("objective_runtime_seconds")
+    assert split == combined
+    assert prepared.position_fingerprint == combined["info"]["position_fingerprint"]
+
+
 def test_candidate_result_is_stable_at_twelve_significant_digits() -> None:
     from aurora.infra.sp500_megarun.dehb_worker import evaluate_lane_candidate
 

@@ -211,6 +211,7 @@ def schema_statements() -> Sequence[str]:
             owner_evaluation_id bigint NOT NULL REFERENCES evaluations(evaluation_id),
             state text NOT NULL CHECK (state IN ('owned', 'completed', 'conflict')),
             result_sha256 char(64),
+            result_payload jsonb,
             created_sequence bigint NOT NULL,
             updated_sequence bigint NOT NULL,
             created_at timestamptz NOT NULL DEFAULT clock_timestamp(),

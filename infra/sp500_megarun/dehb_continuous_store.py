@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import secrets
-from threading import RLock
+from threading import Condition, RLock
+import time
 from typing import Callable, Protocol
 import uuid
 from urllib.parse import parse_qs, urlparse
@@ -14,6 +15,11 @@ from aurora.infra.sp500_megarun.dehb_continuous_models import (
     EvaluationCacheKeyV2,
     EvaluationProposalV2,
     EvaluationResultV2,
+    StrategyEvaluationKeyV1,
+)
+from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+    normalize_scientific_result,
+    scientific_result_sha256,
 )
 
 
@@ -71,6 +77,20 @@ class EvaluationCompletionV1:
     subscriber_count: int
 
 
+@dataclass(frozen=True)
+class StrategyClaimV1:
+    strategy_key_sha256: str
+    owner: bool
+    result: dict | None
+
+
+@dataclass
+class _StrategyRecord:
+    owner_evaluation_id: int
+    result: dict | None = None
+    result_sha256: str | None = None
+
+
 class ContinuousCampaignStore(Protocol):
     """Behavior required by coordinators and physical workers."""
 
@@ -117,6 +137,7 @@ class InMemoryContinuousCampaignStore:
         self.scientific_contract_sha256 = str(scientific_contract_sha256)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._lock = RLock()
+        self._strategy_condition = Condition(self._lock)
         self._state = "searching"
         self._next_evaluation_id = 1
         self._next_proposal_id = 1
@@ -126,6 +147,11 @@ class InMemoryContinuousCampaignStore:
         self._subscribers: dict[int, set[int]] = {}
         self._sessions: dict[str, _WorkerSession] = {}
         self._slots: dict[tuple[str, int], int] = {}
+        self._coordinator_owner_token: str | None = None
+        self._coordinator_lease_expires_at: datetime | None = None
+        self._island_checkpoint_hashes: dict[str, str] = {}
+        self._open_island_batches: set[tuple[str, int]] = set()
+        self._strategies: dict[str, _StrategyRecord] = {}
 
     def register_proposal(self, proposal: EvaluationProposalV2) -> ProposalRegistrationV1:
         if proposal.campaign_id != self.campaign_id:
@@ -309,9 +335,146 @@ class InMemoryContinuousCampaignStore:
                 subscriber_count=len(self._subscribers[record.evaluation_id]),
             )
 
+    def claim_strategy_evaluation(
+        self,
+        *,
+        evaluation_id: int,
+        strategy_key: StrategyEvaluationKeyV1,
+    ) -> StrategyClaimV1:
+        with self._strategy_condition:
+            record = self._strategies.get(strategy_key.sha256)
+            if record is None:
+                self._strategies[strategy_key.sha256] = _StrategyRecord(
+                    owner_evaluation_id=int(evaluation_id)
+                )
+                return StrategyClaimV1(strategy_key.sha256, True, None)
+            return StrategyClaimV1(
+                strategy_key.sha256,
+                False,
+                None if record.result is None else dict(record.result),
+            )
+
+    def complete_strategy_evaluation(
+        self,
+        *,
+        evaluation_id: int,
+        strategy_key: StrategyEvaluationKeyV1,
+        result: dict,
+    ) -> dict:
+        normalized = dict(normalize_scientific_result(result))
+        result_hash = scientific_result_sha256(normalized)
+        with self._strategy_condition:
+            record = self._strategies.get(strategy_key.sha256)
+            if record is None or record.owner_evaluation_id != int(evaluation_id):
+                raise LeaseLostError("CONTINUOUS_STRATEGY_OWNERSHIP_LOST")
+            if record.result_sha256 is not None and record.result_sha256 != result_hash:
+                self._state = "halted_conflict"
+                raise ResultConflictError("CONTINUOUS_STRATEGY_RESULT_HASH_CONFLICT")
+            record.result = normalized
+            record.result_sha256 = result_hash
+            self._strategy_condition.notify_all()
+            return dict(normalized)
+
+    def wait_strategy_result(
+        self,
+        *,
+        strategy_key: StrategyEvaluationKeyV1,
+        timeout_seconds: float,
+    ) -> dict:
+        with self._strategy_condition:
+            ready = self._strategy_condition.wait_for(
+                lambda: (
+                    strategy_key.sha256 in self._strategies
+                    and self._strategies[strategy_key.sha256].result is not None
+                ),
+                timeout=float(timeout_seconds),
+            )
+            if not ready:
+                raise ContinuousStoreError("CONTINUOUS_STRATEGY_RESULT_TIMEOUT")
+            result = self._strategies[strategy_key.sha256].result
+            if result is None:  # pragma: no cover - condition invariant
+                raise ContinuousStoreError("CONTINUOUS_STRATEGY_RESULT_MISSING")
+            return dict(result)
+
     def campaign_state(self) -> str:
         with self._lock:
             return self._state
+
+    def acquire_coordinator_leadership(self, owner_token: str, lease_seconds: int) -> bool:
+        now = self._clock()
+        with self._lock:
+            expired = (
+                self._coordinator_lease_expires_at is None
+                or self._coordinator_lease_expires_at < now
+            )
+            if (
+                self._coordinator_owner_token not in {None, str(owner_token)}
+                and not expired
+            ):
+                return False
+            self._coordinator_owner_token = str(owner_token)
+            self._coordinator_lease_expires_at = now + timedelta(seconds=lease_seconds)
+            return True
+
+    def coordinator_owner(self) -> str | None:
+        with self._lock:
+            if (
+                self._coordinator_lease_expires_at is not None
+                and self._coordinator_lease_expires_at < self._clock()
+            ):
+                self._coordinator_owner_token = None
+                self._coordinator_lease_expires_at = None
+            return self._coordinator_owner_token
+
+    def release_coordinator_leadership(self, owner_token: str) -> None:
+        with self._lock:
+            if self._coordinator_owner_token == str(owner_token):
+                self._coordinator_owner_token = None
+                self._coordinator_lease_expires_at = None
+
+    def resolved_batch_results(
+        self,
+        *,
+        island_id: str,
+        batch_sequence: int,
+    ) -> dict[int, dict] | None:
+        with self._lock:
+            resolved: dict[int, dict] = {}
+            for slot in range(4):
+                proposal_record = self._proposals.get(
+                    (str(island_id), int(batch_sequence), slot)
+                )
+                if proposal_record is None:
+                    return None
+                evaluation = self._evaluations_by_id[proposal_record[1]]
+                if evaluation.result is None:
+                    return None
+                resolved[slot] = dict(evaluation.result.result)
+            return resolved
+
+    def record_island_advance(self, advance: object) -> None:
+        island_id = str(getattr(advance, "island_id"))
+        prior = getattr(advance, "prior_checkpoint_sha256")
+        checkpoint = str(getattr(advance, "checkpoint_sha256"))
+        with self._lock:
+            if self._island_checkpoint_hashes.get(island_id) != prior:
+                raise ResultConflictError("CONTINUOUS_ISLAND_CHECKPOINT_CHAIN_CONFLICT")
+            self._island_checkpoint_hashes[island_id] = checkpoint
+            self._open_island_batches.discard(
+                (island_id, int(getattr(advance, "batch_sequence")))
+            )
+
+    def open_island_batch(self, batch: object) -> None:
+        identity = (
+            str(getattr(batch, "island_id")),
+            int(getattr(batch, "batch_sequence")),
+        )
+        with self._lock:
+            self._open_island_batches.add(identity)
+
+    def count_open_island_batches(self) -> int:
+        with self._lock:
+            return len(self._open_island_batches)
 
     def count_ready_work_items(self) -> int:
         with self._lock:
@@ -863,6 +1026,300 @@ class PostgresContinuousCampaignStore:
                     (sequence, worker_session_id, self.campaign_id),
                 )
 
+    def acquire_coordinator_leadership(self, owner_token: str, lease_seconds: int) -> bool:
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 720))",
+                    (self.campaign_id,),
+                )
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    INSERT INTO campaign_leases (
+                        campaign_id, schema_version, owner_token, lease_expires_at,
+                        created_sequence, updated_sequence
+                    ) VALUES (
+                        %s, 1, %s, clock_timestamp() + make_interval(secs => %s), %s, %s
+                    )
+                    ON CONFLICT (campaign_id) DO UPDATE SET
+                        owner_token = EXCLUDED.owner_token,
+                        lease_expires_at = EXCLUDED.lease_expires_at,
+                        updated_sequence = EXCLUDED.updated_sequence,
+                        updated_at = clock_timestamp()
+                    WHERE campaign_leases.lease_expires_at < clock_timestamp()
+                       OR campaign_leases.owner_token = EXCLUDED.owner_token
+                    RETURNING owner_token
+                    """,
+                    (
+                        self.campaign_id,
+                        str(owner_token),
+                        int(lease_seconds),
+                        sequence,
+                        sequence,
+                    ),
+                )
+                row = cursor.fetchone()
+        return row is not None and str(row[0]) == str(owner_token)
+
+    def coordinator_owner(self) -> str | None:
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT owner_token FROM campaign_leases
+                    WHERE campaign_id = %s AND lease_expires_at >= clock_timestamp()
+                    """,
+                    (self.campaign_id,),
+                )
+                row = cursor.fetchone()
+        return None if row is None else str(row[0])
+
+    def release_coordinator_leadership(self, owner_token: str) -> None:
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM campaign_leases WHERE campaign_id = %s AND owner_token = %s",
+                    (self.campaign_id, str(owner_token)),
+                )
+
+    def open_island_batch(self, batch: object) -> None:
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    INSERT INTO island_batches (
+                        campaign_id, island_id, batch_sequence, schema_version,
+                        status, checkpoint_before_sha256,
+                        created_sequence, updated_sequence
+                    )
+                    SELECT %s, %s, %s, 1, 'open', checkpoint_sha256, %s, %s
+                    FROM islands WHERE campaign_id = %s AND island_id = %s
+                    ON CONFLICT (campaign_id, island_id, batch_sequence) DO NOTHING
+                    RETURNING batch_sequence
+                    """,
+                    (
+                        self.campaign_id,
+                        str(getattr(batch, "island_id")),
+                        int(getattr(batch, "batch_sequence")),
+                        sequence,
+                        sequence,
+                        self.campaign_id,
+                        str(getattr(batch, "island_id")),
+                    ),
+                )
+                inserted = cursor.fetchone()
+                if inserted is None:
+                    cursor.execute(
+                        """
+                        SELECT status FROM island_batches
+                        WHERE campaign_id = %s AND island_id = %s AND batch_sequence = %s
+                        """,
+                        (
+                            self.campaign_id,
+                            str(getattr(batch, "island_id")),
+                            int(getattr(batch, "batch_sequence")),
+                        ),
+                    )
+                    row = cursor.fetchone()
+                    if row is None or str(row[0]) != "open":
+                        raise ResultConflictError("CONTINUOUS_ISLAND_BATCH_IDENTITY_CONFLICT")
+
+    def resolved_batch_results(
+        self,
+        *,
+        island_id: str,
+        batch_sequence: int,
+    ) -> dict[int, dict] | None:
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT p.batch_slot, r.result_payload
+                    FROM proposals p
+                    JOIN results r ON r.evaluation_id = p.evaluation_id
+                    WHERE p.campaign_id = %s AND p.island_id = %s
+                      AND p.batch_sequence = %s
+                    ORDER BY p.batch_slot
+                    """,
+                    (self.campaign_id, str(island_id), int(batch_sequence)),
+                )
+                rows = cursor.fetchall()
+        if len(rows) != 4 or {int(row[0]) for row in rows} != {0, 1, 2, 3}:
+            return None
+        return {int(slot): dict(payload) for slot, payload in rows}
+
+    def record_island_advance(self, advance: object) -> None:
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                self._serializable(cursor)
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    UPDATE islands SET checkpoint_bytes = %s, checkpoint_sha256 = %s,
+                        prior_checkpoint_sha256 = %s, next_batch_sequence = %s,
+                        status = %s, updated_sequence = %s,
+                        updated_at = clock_timestamp()
+                    WHERE campaign_id = %s AND island_id = %s
+                      AND checkpoint_sha256 IS NOT DISTINCT FROM %s
+                    RETURNING island_id
+                    """,
+                    (
+                        bytes(getattr(advance, "checkpoint_bytes")),
+                        str(getattr(advance, "checkpoint_sha256")),
+                        getattr(advance, "prior_checkpoint_sha256"),
+                        int(getattr(advance, "batch_sequence")) + 1,
+                        "plateau" if bool(getattr(advance, "stopped")) else "runnable",
+                        sequence,
+                        self.campaign_id,
+                        str(getattr(advance, "island_id")),
+                        getattr(advance, "prior_checkpoint_sha256"),
+                    ),
+                )
+                if cursor.fetchone() is None:
+                    raise ResultConflictError("CONTINUOUS_ISLAND_CHECKPOINT_CHAIN_CONFLICT")
+                cursor.execute(
+                    """
+                    UPDATE island_batches SET status = 'applied', checkpoint_after_sha256 = %s,
+                        updated_sequence = %s, updated_at = clock_timestamp()
+                    WHERE campaign_id = %s AND island_id = %s AND batch_sequence = %s
+                      AND status = 'open'
+                    """,
+                    (
+                        str(getattr(advance, "checkpoint_sha256")),
+                        sequence,
+                        self.campaign_id,
+                        str(getattr(advance, "island_id")),
+                        int(getattr(advance, "batch_sequence")),
+                    ),
+                )
+
+    def claim_strategy_evaluation(
+        self,
+        *,
+        evaluation_id: int,
+        strategy_key: StrategyEvaluationKeyV1,
+    ) -> StrategyClaimV1:
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    INSERT INTO strategy_evaluations (
+                        campaign_id, schema_version, strategy_key_sha256, key_payload,
+                        owner_evaluation_id, state, created_sequence, updated_sequence
+                    ) VALUES (%s, 1, %s, %s, %s, 'owned', %s, %s)
+                    ON CONFLICT (campaign_id, strategy_key_sha256) DO NOTHING
+                    RETURNING strategy_evaluation_id
+                    """,
+                    (
+                        self.campaign_id,
+                        strategy_key.sha256,
+                        self._jsonb(dict(strategy_key.payload)),
+                        int(evaluation_id),
+                        sequence,
+                        sequence,
+                    ),
+                )
+                inserted = cursor.fetchone()
+                if inserted is not None:
+                    return StrategyClaimV1(strategy_key.sha256, True, None)
+                cursor.execute(
+                    """
+                    SELECT state, result_payload FROM strategy_evaluations
+                    WHERE campaign_id = %s AND strategy_key_sha256 = %s
+                    """,
+                    (self.campaign_id, strategy_key.sha256),
+                )
+                row = cursor.fetchone()
+                if row is None or str(row[0]) == "conflict":
+                    raise ResultConflictError("CONTINUOUS_STRATEGY_REGISTRY_CONFLICT")
+                payload = None if row[1] is None else dict(row[1])
+                return StrategyClaimV1(strategy_key.sha256, False, payload)
+
+    def complete_strategy_evaluation(
+        self,
+        *,
+        evaluation_id: int,
+        strategy_key: StrategyEvaluationKeyV1,
+        result: dict,
+    ) -> dict:
+        normalized = dict(normalize_scientific_result(result))
+        result_hash = scientific_result_sha256(normalized)
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                self._serializable(cursor)
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    SELECT owner_evaluation_id, state, result_sha256
+                    FROM strategy_evaluations
+                    WHERE campaign_id = %s AND strategy_key_sha256 = %s
+                    FOR UPDATE
+                    """,
+                    (self.campaign_id, strategy_key.sha256),
+                )
+                row = cursor.fetchone()
+                if row is None or int(row[0]) != int(evaluation_id):
+                    raise LeaseLostError("CONTINUOUS_STRATEGY_OWNERSHIP_LOST")
+                if row[2] is not None and str(row[2]) != result_hash:
+                    cursor.execute(
+                        """
+                        UPDATE strategy_evaluations SET state = 'conflict',
+                            updated_sequence = %s WHERE campaign_id = %s
+                            AND strategy_key_sha256 = %s
+                        """,
+                        (sequence, self.campaign_id, strategy_key.sha256),
+                    )
+                    cursor.execute(
+                        "UPDATE campaigns SET state = 'halted_conflict' WHERE campaign_id = %s",
+                        (self.campaign_id,),
+                    )
+                    raise ResultConflictError("CONTINUOUS_STRATEGY_RESULT_HASH_CONFLICT")
+                if row[2] is None:
+                    cursor.execute(
+                        """
+                        UPDATE strategy_evaluations
+                        SET state = 'completed', result_sha256 = %s, result_payload = %s,
+                            updated_sequence = %s, updated_at = clock_timestamp()
+                        WHERE campaign_id = %s AND strategy_key_sha256 = %s
+                        """,
+                        (
+                            result_hash,
+                            self._jsonb(normalized),
+                            sequence,
+                            self.campaign_id,
+                            strategy_key.sha256,
+                        ),
+                    )
+        return normalized
+
+    def wait_strategy_result(
+        self,
+        *,
+        strategy_key: StrategyEvaluationKeyV1,
+        timeout_seconds: float,
+    ) -> dict:
+        deadline = time.monotonic() + float(timeout_seconds)
+        while time.monotonic() < deadline:
+            with self._pool.connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT state, result_payload FROM strategy_evaluations
+                        WHERE campaign_id = %s AND strategy_key_sha256 = %s
+                        """,
+                        (self.campaign_id, strategy_key.sha256),
+                    )
+                    row = cursor.fetchone()
+            if row is not None and str(row[0]) == "completed" and row[1] is not None:
+                return dict(row[1])
+            if row is not None and str(row[0]) == "conflict":
+                raise ResultConflictError("CONTINUOUS_STRATEGY_REGISTRY_CONFLICT")
+            time.sleep(0.2)
+        raise ContinuousStoreError("CONTINUOUS_STRATEGY_RESULT_TIMEOUT")
+
 
 __all__ = [
     "ContinuousCampaignStore",
@@ -875,6 +1332,7 @@ __all__ = [
     "PostgresStoreConfigurationError",
     "ProposalRegistrationV1",
     "ResultConflictError",
+    "StrategyClaimV1",
     "WorkerCapacityError",
     "WorkerSessionLeaseV1",
 ]
