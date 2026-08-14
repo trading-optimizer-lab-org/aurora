@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 
@@ -51,6 +53,63 @@ def verify_database_contract(dsn: str, *, max_connections: int) -> DatabaseContr
     if int(max_connections) < 400:
         raise ContinuousSupervisorError("CONTINUOUS_DATABASE_CAPACITY_TOO_LOW")
     return DatabaseContractV1(tls_required=True, max_connections=int(max_connections))
+
+
+def probe_database_client_capacity(
+    dsn: str,
+    *,
+    required_connections: int = 400,
+    connection_factory: Callable[[str], Any] | None = None,
+    max_workers: int = 40,
+) -> DatabaseContractV1:
+    """Prove that the TLS endpoint accepts the required simultaneous clients."""
+
+    required = int(required_connections)
+    workers = int(max_workers)
+    if required < 1 or required > 10_000 or workers < 1:
+        raise ContinuousSupervisorError("CONTINUOUS_DATABASE_CAPACITY_PROBE_INVALID")
+    contract = verify_database_contract(dsn, max_connections=required)
+
+    if connection_factory is None:
+        import psycopg
+
+        def connection_factory(value: str) -> Any:
+            return psycopg.connect(
+                value,
+                connect_timeout=15,
+                autocommit=True,
+            )
+
+    def open_checked_connection() -> Any:
+        connection = connection_factory(str(dsn))
+        try:
+            row = connection.execute("SELECT 1").fetchone()
+            if row is None or int(row[0]) != 1:
+                raise RuntimeError("database probe returned an invalid result")
+            return connection
+        except Exception:
+            connection.close()
+            raise
+
+    connections: list[Any] = []
+    first_error: BaseException | None = None
+    try:
+        with ThreadPoolExecutor(max_workers=min(required, workers)) as executor:
+            futures = [executor.submit(open_checked_connection) for _ in range(required)]
+            for future in as_completed(futures):
+                try:
+                    connections.append(future.result())
+                except BaseException as exc:  # fail closed after all clients are reaped
+                    if first_error is None:
+                        first_error = exc
+        if first_error is not None or len(connections) != required:
+            raise ContinuousSupervisorError(
+                "CONTINUOUS_DATABASE_CAPACITY_PROBE_FAILED"
+            ) from first_error
+        return contract
+    finally:
+        for connection in connections:
+            connection.close()
 
 
 class PoolSupervisor:
@@ -106,5 +165,6 @@ __all__ = [
     "PoolDecisionV1",
     "PoolGenerationReservationV1",
     "PoolSupervisor",
+    "probe_database_client_capacity",
     "verify_database_contract",
 ]

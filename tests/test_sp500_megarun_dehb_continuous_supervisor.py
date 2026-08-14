@@ -39,6 +39,83 @@ def test_pool_generation_reservation_is_idempotent_and_keeps_360_sessions():
     assert decision.target_sessions == 360
 
 
+def test_database_client_probe_opens_required_clients_and_closes_them():
+    from aurora.infra.sp500_megarun.dehb_continuous_supervisor import (
+        probe_database_client_capacity,
+    )
+
+    opened = []
+
+    class FakeConnection:
+        def __init__(self):
+            self.closed = False
+
+        def execute(self, sql):
+            assert sql == "SELECT 1"
+            return self
+
+        def fetchone(self):
+            return (1,)
+
+        def close(self):
+            self.closed = True
+
+    def connect(_dsn):
+        connection = FakeConnection()
+        opened.append(connection)
+        return connection
+
+    contract = probe_database_client_capacity(
+        "postgresql://db.example/aurora?sslmode=require",
+        required_connections=400,
+        connection_factory=connect,
+        max_workers=40,
+    )
+
+    assert contract.required_connections == 400
+    assert contract.max_connections == 400
+    assert len(opened) == 400
+    assert all(connection.closed for connection in opened)
+
+
+def test_database_client_probe_fails_closed_and_closes_partial_clients():
+    from aurora.infra.sp500_megarun.dehb_continuous_supervisor import (
+        ContinuousSupervisorError,
+        probe_database_client_capacity,
+    )
+
+    opened = []
+
+    class FakeConnection:
+        closed = False
+
+        def execute(self, _sql):
+            return self
+
+        def fetchone(self):
+            return (1,)
+
+        def close(self):
+            self.closed = True
+
+    def connect(_dsn):
+        if len(opened) == 7:
+            raise RuntimeError("capacity exhausted")
+        connection = FakeConnection()
+        opened.append(connection)
+        return connection
+
+    with pytest.raises(ContinuousSupervisorError, match="CAPACITY_PROBE_FAILED"):
+        probe_database_client_capacity(
+            "postgresql://db.example/aurora?sslmode=require",
+            required_connections=400,
+            connection_factory=connect,
+            max_workers=1,
+        )
+    assert opened
+    assert all(connection.closed for connection in opened)
+
+
 @pytest.mark.parametrize(
     ("changes", "expected"),
     [

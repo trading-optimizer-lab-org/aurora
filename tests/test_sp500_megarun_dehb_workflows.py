@@ -127,6 +127,16 @@ def test_continuous_pool_has_three_120_parallel_shards_and_four_slots() -> None:
     )
     assert "--executor-slots 4" in CONTINUOUS_WORKER_ACTION.read_text(encoding="utf-8")
     assert action["runs"]["using"] == "composite"
+    worker_script = (ROOT / "scripts/run_sp500_dehb_continuous_worker.py").read_text(
+        encoding="utf-8"
+    )
+    assert "pool_min_size=0" in worker_script
+    assert "pool_max_size=1" in worker_script
+    bootstrap_script = (
+        ROOT / "scripts/init_sp500_dehb_continuous_campaign.py"
+    ).read_text(encoding="utf-8")
+    assert "probe_database_client_capacity" in bootstrap_script
+    assert "required_connections=400" in bootstrap_script
 
 
 def test_continuous_workflows_are_exact_commit_train_only_and_never_call_v1() -> None:

@@ -148,7 +148,12 @@ def main() -> int:
         rebound["info"] = info
         return rebound
 
-    store = PostgresContinuousCampaignStore(dsn=dsn, campaign_id=args.campaign_id)
+    store = PostgresContinuousCampaignStore(
+        dsn=dsn,
+        campaign_id=args.campaign_id,
+        pool_min_size=0,
+        pool_max_size=1,
+    )
     runtime = ContinuousWorkerRuntime(
         store=store,
         pool_generation=args.pool_generation,

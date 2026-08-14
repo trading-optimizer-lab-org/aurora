@@ -20,6 +20,9 @@ from aurora.infra.sp500_megarun.dehb_launch_contract import (
 from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
     numeric_runtime_profile_sha256,
 )
+from aurora.infra.sp500_megarun.dehb_continuous_supervisor import (
+    probe_database_client_capacity,
+)
 
 
 def main() -> int:
@@ -35,6 +38,10 @@ def main() -> int:
     dsn = os.environ.get(args.database_url_env)
     if not dsn:
         raise RuntimeError("CONTINUOUS_BOOTSTRAP_DATABASE_URL_MISSING")
+    database_contract = probe_database_client_capacity(
+        dsn,
+        required_connections=400,
+    )
     campaign = load_and_validate_campaign_contract(args.campaign_contract)
     launch = load_and_validate_launch_contract(args.launch_contract, campaign)
 
@@ -52,7 +59,9 @@ def main() -> int:
         )
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(asdict(receipt), indent=2, sort_keys=True) + "\n", "utf-8")
+    payload = asdict(receipt)
+    payload["database_contract"] = asdict(database_contract)
+    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", "utf-8")
     return 0
 
 
