@@ -61,7 +61,7 @@ def postgres_store():
                     INSERT INTO islands (
                         campaign_id, island_id, schema_version, lane_id, replica,
                         restart_seed, status, created_sequence, updated_sequence
-                    ) VALUES (%s, 'F067-R0', 1, 'F067', 0, 7, 'runnable', 0, 0)
+                    ) VALUES (%s, 'F067-R1', 1, 'F067', 1, 7, 'runnable', 0, 0)
                     """,
                     (campaign_id,),
                 )
@@ -70,7 +70,7 @@ def postgres_store():
                     INSERT INTO island_batches (
                         campaign_id, island_id, batch_sequence, schema_version,
                         status, batch_sha256, created_sequence, updated_sequence
-                    ) VALUES (%s, 'F067-R0', 1, 1, 'open', %s, 0, 0)
+                    ) VALUES (%s, 'F067-R1', 1, 1, 'open', %s, 0, 0)
                     """,
                     (campaign_id, "9" * 64),
                 )
@@ -107,7 +107,7 @@ def test_postgres_registers_one_work_item_for_100_concurrent_duplicates(postgres
     def register(slot):
         proposal = EvaluationProposalV2.build(
             campaign_id=postgres_store.campaign_id,
-            island_id="F067-R0",
+            island_id="F067-R1",
             batch_sequence=1,
             batch_slot=slot,
             evaluation_key=key,
