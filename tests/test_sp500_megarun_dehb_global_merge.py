@@ -184,12 +184,63 @@ def test_cache_conflict_diagnostic_reports_sources_and_changed_fields(tmp_path) 
     conflict = report["conflicts"][0]
     assert conflict["cache_key_sha256"] == cache_key
     assert conflict["result_hashes"] == ["c" * 64, "e" * 64]
-    assert [source["island_id"] for source in conflict["sources"]] == [
+    assert conflict["classification"] == "material"
+    assert conflict["source_count"] == 2
+    assert [source["island_id"] for source in conflict["representative_sources"]] == [
         "F067-R1",
         "F067-R2",
     ]
     assert "fitness" in conflict["changed_fields"]
     assert "info.annualized_alpha" in conflict["changed_fields"]
     assert "info.position_fingerprint" in conflict["changed_fields"]
+    assert report["material_conflict_count"] == 1
+    assert report["numerical_roundoff_conflict_count"] == 0
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False
+
+
+def test_cache_conflict_diagnostic_classifies_last_bit_float_drift_as_roundoff(
+    tmp_path,
+) -> None:
+    from aurora.infra.sp500_megarun.dehb_global_merge import (
+        diagnose_evaluation_result_conflicts,
+    )
+
+    cache_key = "f" * 64
+    for index, alpha in enumerate((0.10236801163130663, 0.10236801163130664), start=1):
+        bundle = tmp_path / f"worker-{index}" / f"island-{index}"
+        bundle.mkdir(parents=True)
+        pd.DataFrame(
+            [
+                {
+                    "evaluation": index,
+                    "run_id": 101,
+                    "wave": 0,
+                    "island_id": f"F002-R{index}",
+                    "fidelity": 1,
+                    "fitness": 2.019766135586006,
+                    "cost": 1.0,
+                    "configuration_json": '{"window":20}',
+                    "info_json": json.dumps(
+                        {
+                            "annualized_alpha": alpha,
+                            "position_fingerprint": "b" * 64,
+                            "strategy_fingerprint": "c" * 64,
+                            "validation_opened": False,
+                            "locked_opened": False,
+                        },
+                        sort_keys=True,
+                    ),
+                    "cache_key_sha256": cache_key,
+                    "cache_result_sha256": ("d" if index == 1 else "e") * 64,
+                    "evaluation_origin": "physical",
+                }
+            ]
+        ).to_parquet(bundle / "trial_ledger.parquet", index=False)
+
+    report = diagnose_evaluation_result_conflicts(tmp_path)
+
+    assert report["material_conflict_count"] == 0
+    assert report["numerical_roundoff_conflict_count"] == 1
+    assert report["conflicts"][0]["classification"] == "numerical_roundoff"
+    assert report["conflicts"][0]["changed_fields"] == ["info.annualized_alpha"]

@@ -46,6 +46,47 @@ def _changed_result_fields(values: Sequence[object], *, prefix: str = "") -> lis
     return [] if len(set(normalized)) == 1 else [prefix]
 
 
+def _scientific_values_equivalent(left: object, right: object) -> bool:
+    """Compare scientific values with the campaign's 1e-12 float tolerance."""
+
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        if set(left) != set(right):
+            return False
+        return all(_scientific_values_equivalent(left[key], right[key]) for key in left)
+    if (
+        isinstance(left, Sequence)
+        and not isinstance(left, (str, bytes))
+        and isinstance(right, Sequence)
+        and not isinstance(right, (str, bytes))
+    ):
+        return len(left) == len(right) and all(
+            _scientific_values_equivalent(left_item, right_item)
+            for left_item, right_item in zip(left, right)
+        )
+    if (
+        isinstance(left, (int, float))
+        and not isinstance(left, bool)
+        and isinstance(right, (int, float))
+        and not isinstance(right, bool)
+    ):
+        return math.isfinite(float(left)) and math.isfinite(float(right)) and math.isclose(
+            float(left),
+            float(right),
+            rel_tol=_ARCHIVE_KEY_REL_TOLERANCE,
+            abs_tol=_ARCHIVE_KEY_ABS_TOLERANCE,
+        )
+    return left == right
+
+
+def _result_value_at_path(result: Mapping[str, Any], path: str) -> object:
+    value: object = result
+    for field in path.split("."):
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(field)
+    return value
+
+
 def diagnose_evaluation_result_conflicts(
     worker_root: Path, *, cache_key_sha256: str | None = None
 ) -> Mapping[str, Any]:
@@ -135,21 +176,73 @@ def diagnose_evaluation_result_conflicts(
                 int(source["evaluation"]),
             ),
         )
+        changed_fields = _changed_result_fields(
+            [source["result"] for source in representatives]
+        )
+        numerical_roundoff = all(
+            _scientific_values_equivalent(
+                representatives[0]["result"],
+                source["result"],
+            )
+            for source in representatives[1:]
+        )
+        representative_sources = [
+            {
+                field: source[field]
+                for field in (
+                    "result_sha256",
+                    "run_id",
+                    "wave",
+                    "island_id",
+                    "evaluation",
+                    "fidelity",
+                    "evaluation_origin",
+                    "configuration",
+                    "ledger_path",
+                )
+            }
+            for source in representatives
+        ]
         conflicts.append(
             {
                 "cache_key_sha256": key,
                 "result_hashes": result_hashes,
-                "changed_fields": _changed_result_fields(
-                    [source["result"] for source in representatives]
+                "classification": (
+                    "numerical_roundoff" if numerical_roundoff else "material"
                 ),
-                "sources": ordered_sources,
+                "changed_fields": changed_fields,
+                "changed_values": {
+                    field: [
+                        {
+                            "result_sha256": source["result_sha256"],
+                            "value": _result_value_at_path(source["result"], field),
+                        }
+                        for source in representatives
+                    ]
+                    for field in changed_fields
+                },
+                "source_count": len(ordered_sources),
+                "physical_source_count": sum(
+                    source["evaluation_origin"] == "physical" for source in ordered_sources
+                ),
+                "representative_sources": representative_sources,
             }
         )
+    material_conflicts = [
+        conflict for conflict in conflicts if conflict["classification"] == "material"
+    ]
+    numerical_roundoff_conflicts = [
+        conflict
+        for conflict in conflicts
+        if conflict["classification"] == "numerical_roundoff"
+    ]
     return {
         "schema_version": 1,
         "ledger_count": len(ledgers),
         "cache_key_count": len(by_key),
         "conflict_count": len(conflicts),
+        "material_conflict_count": len(material_conflicts),
+        "numerical_roundoff_conflict_count": len(numerical_roundoff_conflicts),
         "conflicts": conflicts,
         "validation_opened": False,
         "locked_opened": False,

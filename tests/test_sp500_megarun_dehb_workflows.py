@@ -135,7 +135,9 @@ def test_cache_conflict_diagnostic_is_github_only_and_train_evidence_only() -> N
         "codex/sp500-search-method-benchmark-short"
     ]
     assert workflow["on"]["push"]["paths"] == [
-        ".github/workflows/sp500-dehb-cache-conflict-diagnostic.yml"
+        ".github/workflows/sp500-dehb-cache-conflict-diagnostic.yml",
+        "infra/sp500_megarun/dehb_global_merge.py",
+        "scripts/diagnose_sp500_megarun_dehb_cache_conflicts.py",
     ]
     assert workflow["permissions"] == {"actions": "read", "contents": "read"}
     assert "source_run_id" in workflow["on"]["workflow_dispatch"]["inputs"]

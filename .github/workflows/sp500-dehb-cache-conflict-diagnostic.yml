@@ -6,6 +6,8 @@ on:
       - codex/sp500-search-method-benchmark-short
     paths:
       - .github/workflows/sp500-dehb-cache-conflict-diagnostic.yml
+      - infra/sp500_megarun/dehb_global_merge.py
+      - scripts/diagnose_sp500_megarun_dehb_cache_conflicts.py
   workflow_dispatch:
     inputs:
       source_run_id:
