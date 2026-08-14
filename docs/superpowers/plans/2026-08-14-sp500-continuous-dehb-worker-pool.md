@@ -48,7 +48,7 @@
 - Consumes: `_canonical_bytes`, `_json_value`, `scientific_result_sha256` from `dehb_evaluation_cache.py`.
 - Produces: `EvaluationCacheKeyV2.build`, `StrategyEvaluationKeyV1.build`, `EvaluationProposalV2`, `EvaluationLeaseV1`, `EvaluationResultV2`.
 
-- [ ] **Step 1: Add failing key and boundary tests**
+- [x] **Step 1: Add failing key and boundary tests**
 
 ```python
 def test_v2_key_is_stable_and_seed_sensitive():
@@ -63,11 +63,11 @@ def test_result_rejects_opened_partitions():
         EvaluationResultV2.build(key=build_key(), result=result(validation_opened=True))
 ```
 
-- [ ] **Step 2: Run the tests and confirm the missing module failure**
+- [x] **Step 2: Run the tests and confirm the missing module failure**
 
 Run: `C:/Python314/python.exe -m pytest tests/test_sp500_megarun_dehb_continuous_models.py -q`
 
-- [ ] **Step 3: Implement frozen dataclasses and domain-separated hashes**
+- [x] **Step 3: Implement frozen dataclasses and domain-separated hashes**
 
 ```python
 @dataclass(frozen=True)
@@ -103,11 +103,11 @@ class EvaluationCacheKeyV2:
 
 The implementation validates every SHA-256, lane `F001`-`F240`, positive integral fidelity, non-empty robustness identity and exact `validation_opened=False`/`locked_opened=False` result flags.
 
-- [ ] **Step 4: Run focused tests and existing cache tests**
+- [x] **Step 4: Run focused tests and existing cache tests**
 
 Run: `C:/Python314/python.exe -m pytest tests/test_sp500_megarun_dehb_continuous_models.py tests/test_sp500_megarun_dehb_evaluation_cache.py -q`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add infra/sp500_megarun/dehb_continuous_models.py tests/test_sp500_megarun_dehb_continuous_models.py
