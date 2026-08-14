@@ -207,6 +207,60 @@ def build_shard_matrices(
     return matrices
 
 
+def validate_job_payload(
+    contract: FrozenCampaignContract,
+    payload: Mapping[str, Any],
+    *,
+    expected_launch_contract_sha256: str | None = None,
+    expected_wave: int | None = None,
+) -> Mapping[str, Any]:
+    """Verify one exact dynamic worker plan without reconstructing generic state."""
+
+    if payload.get("validation_opened") is not False or payload.get("locked_opened") is not False:
+        raise CampaignRuntimeError("JOB_PAYLOAD_BOUNDARY_OPEN")
+    if payload.get("campaign_contract_sha256") != contract.sha256:
+        raise CampaignRuntimeError("JOB_PAYLOAD_CAMPAIGN_MISMATCH")
+    if expected_launch_contract_sha256 is not None and (
+        payload.get("launch_contract_sha256") != expected_launch_contract_sha256
+    ):
+        raise CampaignRuntimeError("JOB_PAYLOAD_LAUNCH_CONTRACT_MISMATCH")
+    preimage = {key: value for key, value in payload.items() if key != "payload_sha256"}
+    if payload.get("payload_sha256") != _hash_payload(preimage):
+        raise CampaignRuntimeError("JOB_PAYLOAD_HASH_MISMATCH")
+    try:
+        job_index = int(payload["job_index"])
+        wave = int(payload["wave"])
+        restart_ordinal = int(payload["restart_ordinal"])
+        islands = payload["islands"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CampaignRuntimeError("JOB_PAYLOAD_FIELDS_INVALID") from exc
+    if expected_wave is not None and wave != int(expected_wave):
+        raise CampaignRuntimeError("JOB_PAYLOAD_WAVE_MISMATCH")
+    if not isinstance(islands, list) or len(islands) != 2:
+        raise CampaignRuntimeError("JOB_PAYLOAD_ISLANDS_INVALID")
+    island_restart_ordinals: dict[str, int] = {}
+    resume_island_ids: set[str] = set()
+    for island in islands:
+        if not isinstance(island, Mapping):
+            raise CampaignRuntimeError("JOB_PAYLOAD_ISLAND_INVALID")
+        island_id = str(island.get("island_id", ""))
+        island_restart_ordinals[island_id] = int(island.get("restart_ordinal", -1))
+        if island.get("resume_from_previous_wave") is True:
+            resume_island_ids.add(island_id)
+    expected = build_job_payload(
+        contract,
+        job_index=job_index,
+        wave=wave,
+        restart_ordinal=restart_ordinal,
+        launch_contract_sha256=expected_launch_contract_sha256,
+        island_restart_ordinals=island_restart_ordinals,
+        resume_island_ids=resume_island_ids,
+    )
+    if dict(payload) != dict(expected):
+        raise CampaignRuntimeError("JOB_PAYLOAD_CONTRACT_MISMATCH")
+    return payload
+
+
 def verify_event_ledger(
     path: Path,
     *,
@@ -370,7 +424,9 @@ def _validate_worker_result(
     result: Mapping[str, Any],
     *,
     expected_payloads: Mapping[int, Mapping[str, Any]],
+    planned_payloads: Mapping[int, Mapping[str, Any]] | None = None,
     launch_contract_sha256: str | None = None,
+    expected_wave: int | None = None,
 ) -> tuple[int, str, list[Mapping[str, Any]]]:
     if result.get("validation_opened") is not False or result.get("locked_opened") is not False:
         raise CampaignRuntimeError("WORKER_BOUNDARY_OPEN")
@@ -381,10 +437,22 @@ def _validate_worker_result(
     ):
         raise CampaignRuntimeError("WORKER_LAUNCH_CONTRACT_MISMATCH")
     job_index = int(result.get("job_index", -1))
-    try:
-        payload = expected_payloads[job_index]
-    except KeyError as exc:
-        raise CampaignRuntimeError(f"JOB_INDEX_OUT_OF_RANGE:{job_index}") from exc
+    embedded_payload = result.get("job_payload")
+    planned_payload = (planned_payloads or {}).get(job_index)
+    if isinstance(embedded_payload, Mapping):
+        payload = validate_job_payload(
+            contract,
+            embedded_payload,
+            expected_launch_contract_sha256=launch_contract_sha256,
+            expected_wave=expected_wave,
+        )
+        if planned_payload is not None and dict(payload) != dict(planned_payload):
+            raise CampaignRuntimeError("WORKER_PLANNED_PAYLOAD_MISMATCH")
+    else:
+        try:
+            payload = planned_payload or expected_payloads[job_index]
+        except KeyError as exc:
+            raise CampaignRuntimeError(f"JOB_INDEX_OUT_OF_RANGE:{job_index}") from exc
     if result.get("job_id") != payload["job_id"]:
         raise CampaignRuntimeError("WORKER_JOB_ID_MISMATCH")
     if result.get("job_payload_sha256") != payload["payload_sha256"]:
@@ -437,6 +505,7 @@ def controller_decision(
     restart_ordinal: int | None = None,
     island_restart_ordinals: Mapping[str, int] | None = None,
     resume_island_ids: AbstractSet[str] | None = None,
+    planned_job_payloads: Mapping[int, Mapping[str, Any]] | None = None,
     global_robustness: Mapping[str, Any] | None = None,
 ) -> Mapping[str, Any]:
     """Retry incomplete work, freeze a consensus winner, or open a diverse wave."""
@@ -455,12 +524,28 @@ def controller_decision(
         for shard in "ABC"
         for payload in matrices[shard]["include"]
     }
+    exact_planned_payloads: dict[int, Mapping[str, Any]] = {}
+    for job_index, payload in (planned_job_payloads or {}).items():
+        normalized_index = int(job_index)
+        if normalized_index in exact_planned_payloads:
+            raise CampaignRuntimeError(f"DUPLICATE_PLANNED_JOB:{normalized_index}")
+        validated = validate_job_payload(
+            contract,
+            payload,
+            expected_launch_contract_sha256=launch_contract_sha256,
+            expected_wave=wave,
+        )
+        if int(validated["job_index"]) != normalized_index:
+            raise CampaignRuntimeError("PLANNED_JOB_INDEX_MISMATCH")
+        exact_planned_payloads[normalized_index] = validated
     for result in worker_results:
         job_index, state, islands = _validate_worker_result(
             contract,
             result,
             expected_payloads=expected_payloads,
+            planned_payloads=exact_planned_payloads,
             launch_contract_sha256=launch_contract_sha256,
+            expected_wave=wave,
         )
         if job_index in by_job:
             raise CampaignRuntimeError(f"DUPLICATE_WORKER_RESULT:{job_index}")
@@ -481,11 +566,22 @@ def controller_decision(
     if launch_contract_sha256 is not None:
         common["launch_contract_sha256"] = launch_contract_sha256
     if retry:
+        retry_payloads: list[Mapping[str, Any]] = []
+        for index in retry:
+            if exact_planned_payloads:
+                try:
+                    retry_payloads.append(exact_planned_payloads[index])
+                except KeyError as exc:
+                    raise CampaignRuntimeError(
+                        f"MISSING_EXACT_RETRY_PAYLOAD:{index}"
+                    ) from exc
+            else:
+                retry_payloads.append(expected_payloads[index])
         return {
             **common,
             "action": "retry_jobs",
             "retry_job_indices": retry,
-            "retry_job_payloads": [expected_payloads[index] for index in retry],
+            "retry_job_payloads": retry_payloads,
         }
 
     all_islands = [island for _, islands in by_job.values() for island in islands]
@@ -557,6 +653,7 @@ __all__ = [
     "build_shard_matrices",
     "controller_decision",
     "derive_restart_seed",
+    "validate_job_payload",
     "validate_checkpoint_envelope",
     "verify_event_ledger",
 ]

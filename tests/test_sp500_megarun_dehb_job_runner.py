@@ -137,6 +137,7 @@ def test_two_island_job_is_sequential_closed_and_resumes_only_marked_island(
     assert result["validation_opened"] is False
     assert result["locked_opened"] is False
     assert result["launch_contract_sha256"] == "f" * 64
+    assert result["job_payload"] == _payload(resume=True)
     assert result["physical_evaluations"] == 6
     assert result["cache_hits"] == 2
     assert result["determinism_audit_physical_evaluations"] == 4

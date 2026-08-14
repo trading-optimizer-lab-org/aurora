@@ -107,6 +107,15 @@ def test_controller_continuation_reads_decision_artifact_after_reduce() -> None:
     assert "needs.reduce.outputs.action" not in block
 
 
+def test_reducer_validates_exact_wave_plan_instead_of_reconstructing_it() -> None:
+    text = CONTROLLER.read_text(encoding="utf-8")
+    reduce_block = text[text.index("  reduce:") : text.index("  continue:")]
+
+    assert "Download exact wave plan" in reduce_block
+    assert "name: sp500-dehb-wave-plan" in reduce_block
+    assert '--wave-plan "$RUNNER_TEMP/dehb_wave_plan"' in reduce_block
+
+
 def test_initial_matrix_outputs_fit_below_github_job_output_limit() -> None:
     from aurora.infra.sp500_megarun.dehb_campaign_contract import (
         load_and_validate_campaign_contract,

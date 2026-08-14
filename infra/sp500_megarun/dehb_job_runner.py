@@ -228,6 +228,7 @@ def run_dehb_job(
         "job_index": int(payload["job_index"]),
         "shard_id": str(payload["shard_id"]),
         "wave": int(payload["wave"]),
+        "job_payload": dict(payload),
         "job_payload_sha256": str(payload["payload_sha256"]),
         "scientific_evaluator_sha256": evaluator_sha256,
         "physical_evaluations": sum(row["physical_evaluations"] for row in manifests),

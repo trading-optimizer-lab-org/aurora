@@ -349,6 +349,11 @@ jobs:
         with:
           name: sp500-dehb-launch-contract
           path: ${{ runner.temp }}/dehb_launch
+      - name: Download exact wave plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-dehb-wave-plan
+          path: ${{ runner.temp }}/dehb_wave_plan
       - name: Download complete worker artifacts across retries
         run: |
           set -euo pipefail
@@ -414,6 +419,7 @@ jobs:
             --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json" \
             --expected-code-commit-sha "${{ inputs.commit_sha }}" \
             --wave "${{ inputs.wave }}" \
+            --wave-plan "$RUNNER_TEMP/dehb_wave_plan" \
             --global-robustness outputs/global_reduce/global_robustness.json \
             --output outputs/controller/controller_decision.json \
             --github-output "$GITHUB_OUTPUT"
@@ -426,6 +432,7 @@ jobs:
             --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json" \
             --expected-code-commit-sha "${{ inputs.commit_sha }}" \
             --wave "${{ inputs.wave }}" \
+            --wave-plan "$RUNNER_TEMP/dehb_wave_plan" \
             --output outputs/controller/controller_decision.json \
             --github-output "$GITHUB_OUTPUT"
       - name: Fail closed if global reduction failed with complete evidence
