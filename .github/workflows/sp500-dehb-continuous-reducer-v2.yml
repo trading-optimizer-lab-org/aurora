@@ -7,8 +7,9 @@ on:
       campaign_id: {required: true}
       cutoff_sequence: {required: true, default: "latest"}
       runtime_input_run_id: {required: true}
+      bootstrap_run_id: {required: true}
 
-permissions: {contents: read}
+permissions: {actions: read, contents: read}
 concurrency:
   group: sp500-continuous-reducer-${{ inputs.campaign_id }}
   cancel-in-progress: false
@@ -19,6 +20,7 @@ jobs:
     timeout-minutes: 300
     env:
       GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
       SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
     steps:
       - name: Check out exact revision
@@ -40,6 +42,23 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Download exact launch contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-dehb-continuous-bootstrap
+          path: ${{ runner.temp }}/dehb_bootstrap
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.bootstrap_run_id }}
+      - name: Download exact technical evidence named by launch contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          technical_run_id="$(jq -r '.technical_evidence_run_id' "$RUNNER_TEMP/dehb_bootstrap/launch_contract.json")"
+          [[ "$technical_run_id" =~ ^[1-9][0-9]*$ ]]
+          gh run download "$technical_run_id" \
+            --name "sp500-megarun-official-dehb-smoke-$technical_run_id" \
+            --dir "$RUNNER_TEMP/dehb_technical"
       - name: Reduce immutable train-only cutoff
         run: >-
           python scripts/reduce_sp500_dehb_continuous_snapshot.py
@@ -47,6 +66,8 @@ jobs:
           --data-contract config/sp500_megarun_free_data_240.json
           --feature-contract config/sp500_megarun_feature_contract_240.json
           --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs"
+          --launch-contract "$RUNNER_TEMP/dehb_bootstrap/launch_contract.json"
+          --technical-evidence "$RUNNER_TEMP/dehb_technical/technical_evidence.json"
           --campaign-id "${{ inputs.campaign_id }}"
           --cutoff-sequence "${{ inputs.cutoff_sequence }}"
           --output outputs/reducer/snapshot.json

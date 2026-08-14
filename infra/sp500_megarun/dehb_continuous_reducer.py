@@ -121,7 +121,10 @@ class ContinuousReducer:
             dict(row)
             for row in snapshot.finalists
             if row.get("global_robustness_passed") is True
-            and row.get("all_60_train_gates_passed") is True
+            and (
+                row.get("train_freeze_eligible") is True
+                or row.get("all_60_train_gates_passed") is True
+            )
             and row.get("train_feasible") is True
             and row.get("validation_opened") is False
             and row.get("locked_opened") is False
