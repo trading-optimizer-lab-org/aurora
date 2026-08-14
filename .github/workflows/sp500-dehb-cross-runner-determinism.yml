@@ -1,0 +1,122 @@
+name: SP500 DEHB Cross Runner Determinism
+
+on:
+  push:
+    branches:
+      - codex/sp500-search-method-benchmark-short
+    paths:
+      - .github/workflows/sp500-dehb-cross-runner-determinism.yml
+      - infra/sp500_megarun/dehb_evaluation_cache.py
+      - infra/sp500_megarun/dehb_worker.py
+      - scripts/probe_sp500_megarun_dehb_cross_runner_determinism.py
+      - scripts/reduce_sp500_megarun_dehb_cross_runner_determinism.py
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2, 3, 4, 5, 6]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    steps:
+      - name: Check out exact probe revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install frozen official DEHB runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install --no-deps -e .
+      - name: Download immutable train-only runtime inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-31418682679
+          path: ${{ runner.temp }}/dehb_runtime_inputs
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: "31418682679"
+      - name: Download compact classified conflict evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-dehb-cache-conflict-diagnostic-31736846293-31774646675
+          path: ${{ runner.temp }}/conflicts
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: "31774646675"
+      - name: Replay all 35 material conflicts
+        run: |
+          set -euo pipefail
+          python scripts/probe_sp500_megarun_dehb_cross_runner_determinism.py \
+            --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+            --data-contract config/sp500_megarun_free_data_240.json \
+            --feature-contract config/sp500_megarun_feature_contract_240.json \
+            --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs" \
+            --conflict-report "$RUNNER_TEMP/conflicts/report.json" \
+            --replica "${{ matrix.replica }}" \
+            --output outputs/probe/report.json
+      - name: Upload independent probe result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-cross-runner-probe-${{ matrix.replica }}
+          path: outputs/probe
+          if-no-files-found: error
+          retention-days: 30
+
+  reduce:
+    needs: probe
+    if: always() && needs.probe.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact probe revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install package without research dependencies
+        run: python -m pip install --no-deps -e .
+      - name: Download all independent reports
+        run: gh run download "${{ github.run_id }}" --pattern 'sp500-dehb-cross-runner-probe-*' --dir "$RUNNER_TEMP/probes"
+      - name: Require exact agreement across all runners
+        run: |
+          python scripts/reduce_sp500_megarun_dehb_cross_runner_determinism.py \
+            --root "$RUNNER_TEMP/probes" \
+            --expected-replicas 6 \
+            --output outputs/cross-runner-determinism/summary.json
+      - name: Upload determinism verdict
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-cross-runner-determinism-${{ github.run_id }}
+          path: outputs/cross-runner-determinism
+          if-no-files-found: error
+          retention-days: 30

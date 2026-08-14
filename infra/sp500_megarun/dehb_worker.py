@@ -21,6 +21,7 @@ from aurora.infra.sp500_megarun.dehb_objective import (
 
 
 FeatureEvaluator = Callable[[str, Mapping[str, Any]], pd.DataFrame]
+_DECISION_ZERO_TOLERANCE = 1e-12
 _PROCESS_CONTEXTS: dict[
     tuple[str, str, str, tuple[tuple[str, str], ...]],
     tuple[pd.DataFrame, FeatureEvaluator],
@@ -130,8 +131,9 @@ def feature_frame_to_decisions(
     if np.isinf(values.to_numpy()).any():
         raise DehbWorkerError("NONFINITE_FEATURE_VALUE")
     decisions = pd.Series(np.nan, index=pd.DatetimeIndex(frame["date"]), dtype=float)
-    decisions.loc[values.to_numpy() > 0.0] = 1.0
-    decisions.loc[values.to_numpy() < 0.0] = -1.0
+    numeric_values = values.to_numpy()
+    decisions.loc[numeric_values > _DECISION_ZERO_TOLERANCE] = 1.0
+    decisions.loc[numeric_values < -_DECISION_ZERO_TOLERANCE] = -1.0
     decisions.name = "decision"
     return decisions
 
@@ -177,7 +179,7 @@ def evaluate_lane_candidate(
     annual = {
         str(year): asdict(row) for year, row in score.annual_returns.items()
     }
-    return {
+    result = {
         "fitness": float(score.dehb_fitness),
         "cost": float(budget),
         "info": {
@@ -204,6 +206,11 @@ def evaluate_lane_candidate(
             "locked_opened": False,
         },
     }
+    from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+        normalize_scientific_result,
+    )
+
+    return normalize_scientific_result(result)
 
 
 def evaluate_physical_lane_candidate(

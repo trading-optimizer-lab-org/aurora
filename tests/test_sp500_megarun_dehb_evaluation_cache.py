@@ -163,6 +163,31 @@ def test_scientific_evaluator_binding_changes_with_any_frozen_input() -> None:
     )
 
 
+def test_scientific_result_normalization_removes_final_bit_noise_only() -> None:
+    from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+        normalize_scientific_result,
+        scientific_result_sha256,
+    )
+
+    first = _result()
+    second = _result()
+    first["fitness"] = 0.123456789012341
+    second["fitness"] = 0.123456789012349
+    first["info"]["objective_runtime_seconds"] = 1.0
+    second["info"]["objective_runtime_seconds"] = 99.0
+
+    normalized_first = normalize_scientific_result(first)
+    normalized_second = normalize_scientific_result(second)
+
+    assert normalized_first["fitness"] == 0.123456789012
+    assert normalized_second["fitness"] == 0.123456789012
+    assert normalized_first["info"]["objective_runtime_seconds"] == 1.0
+    assert normalized_second["info"]["objective_runtime_seconds"] == 99.0
+    assert scientific_result_sha256(normalized_first) == scientific_result_sha256(
+        normalized_second
+    )
+
+
 def test_cache_registry_rejects_one_key_with_two_scientific_results() -> None:
     from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
         EvaluationCacheConflictError,

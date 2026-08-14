@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTROLLER = ROOT / ".github/workflows/sp500-dehb-mega-controller-v1.yml"
 WORKER_ACTION = ROOT / ".github/actions/sp500-dehb-mega-worker/action.yml"
 CONFLICT_DIAGNOSTIC = ROOT / ".github/workflows/sp500-dehb-cache-conflict-diagnostic.yml"
+CROSS_RUNNER = ROOT / ".github/workflows/sp500-dehb-cross-runner-determinism.yml"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -114,6 +115,16 @@ def test_reducer_validates_exact_wave_plan_instead_of_reconstructing_it() -> Non
     assert "Download exact wave plan" in reduce_block
     assert "name: sp500-dehb-wave-plan" in reduce_block
     assert '--wave-plan "$RUNNER_TEMP/dehb_wave_plan"' in reduce_block
+
+
+def test_cross_runner_probe_replays_all_material_conflicts_on_six_hosts() -> None:
+    text = CROSS_RUNNER.read_text(encoding="utf-8")
+
+    assert "replica: [1, 2, 3, 4, 5, 6]" in text
+    assert "Replay all 35 material conflicts" in text
+    assert "--expected-replicas 6" in text
+    assert 'run-id: "31418682679"' in text
+    assert 'run-id: "31774646675"' in text
 
 
 def test_initial_matrix_outputs_fit_below_github_job_output_limit() -> None:

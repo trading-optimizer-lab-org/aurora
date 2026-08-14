@@ -15,6 +15,7 @@ _RUNTIME_ONLY_INFO_FIELDS = {
     "objective_runtime_seconds",
     "physical_runtime_seconds",
 }
+_SCIENTIFIC_SIGNIFICANT_DIGITS = 12
 
 
 class EvaluationCacheError(ValueError):
@@ -58,8 +59,44 @@ def _canonical_bytes(value: Any) -> bytes:
         raise EvaluationCacheError("EVALUATION_CACHE_VALUE_NOT_CANONICAL") from exc
 
 
+def _normalize_scientific_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _normalize_scientific_value(item)
+            for key, item in sorted(value.items())
+        }
+    if isinstance(value, (list, tuple)):
+        return [_normalize_scientific_value(item) for item in value]
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise EvaluationCacheError("EVALUATION_CACHE_NONFINITE_VALUE")
+        normalized = float(format(value, f".{_SCIENTIFIC_SIGNIFICANT_DIGITS}g"))
+        return 0.0 if normalized == 0.0 else normalized
+    return value
+
+
+def normalize_scientific_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Put hardware-level float noise on one stable scientific grid."""
+
+    if not isinstance(result, Mapping):
+        raise EvaluationCacheError("EVALUATION_CACHE_RESULT_NOT_MAPPING")
+    raw = _json_value(result)
+    normalized = _normalize_scientific_value(raw)
+    if not isinstance(normalized, Mapping):  # pragma: no cover - guarded above
+        raise EvaluationCacheError("EVALUATION_CACHE_RESULT_NOT_MAPPING")
+    raw_info = raw.get("info") if isinstance(raw, Mapping) else None
+    normalized_info = normalized.get("info")
+    if isinstance(raw_info, Mapping) and isinstance(normalized_info, Mapping):
+        normalized = dict(normalized)
+        normalized["info"] = dict(normalized_info)
+        for key in _RUNTIME_ONLY_INFO_FIELDS:
+            if key in raw_info:
+                normalized["info"][key] = raw_info[key]
+    return normalized
+
+
 def _scientific_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
-    normalized = _json_value(result)
+    normalized = normalize_scientific_result(result)
     if not isinstance(normalized, Mapping):  # pragma: no cover - guarded by caller
         raise EvaluationCacheError("EVALUATION_CACHE_RESULT_NOT_MAPPING")
     info = normalized.get("info")
@@ -283,6 +320,7 @@ __all__ = [
     "EvaluationCacheKeyV1",
     "EvaluationCacheRegistry",
     "audit_multiprocess_determinism",
+    "normalize_scientific_result",
     "scientific_evaluator_binding_sha256",
     "scientific_result_sha256",
 ]

@@ -46,6 +46,23 @@ def test_feature_values_become_exact_long_short_decisions_with_carry_on_zero() -
     assert decisions.index.equals(pd.DatetimeIndex(frame["date"]))
 
 
+def test_feature_values_inside_numeric_noise_band_carry_state() -> None:
+    from aurora.infra.sp500_megarun.dehb_worker import feature_frame_to_decisions
+
+    frame = pd.DataFrame(
+        {
+            "date": pd.bdate_range("2000-01-03", periods=6),
+            "available_at": pd.bdate_range("2000-01-03", periods=6),
+            "value": [1e-13, -1e-13, 1e-12, -1e-12, 1.01e-12, -1.01e-12],
+        }
+    )
+
+    decisions = feature_frame_to_decisions(frame, allowed_end="2010-12-31")
+
+    assert decisions.iloc[:4].isna().all()
+    assert decisions.iloc[4:].tolist() == [1.0, -1.0]
+
+
 def test_candidate_objective_uses_only_fidelity_years_and_returns_exact_archive_key() -> None:
     from aurora.infra.sp500_megarun.dehb_worker import evaluate_lane_candidate
 
@@ -72,6 +89,28 @@ def test_candidate_objective_uses_only_fidelity_years_and_returns_exact_archive_
     assert len(result["info"]["position_fingerprint"]) == 64
     assert result["info"]["validation_opened"] is False
     assert result["info"]["locked_opened"] is False
+
+
+def test_candidate_result_is_stable_at_twelve_significant_digits() -> None:
+    from aurora.infra.sp500_megarun.dehb_worker import evaluate_lane_candidate
+
+    ledger = _ledger()
+    ledger["long_return"] = -0.0002
+    result = evaluate_lane_candidate(
+        config={"threshold": 0.10000000000000002},
+        fidelity=1,
+        lane_id="F001",
+        ledger=ledger,
+        feature_evaluator=lambda _lane, _config: _feature(-np.ones(len(ledger))),
+        fidelity_years={1: (2000,)},
+        allowed_end="2010-12-31",
+    )
+
+    assert result["fitness"] == float(f"{result['fitness']:.12g}")
+    assert result["info"]["annualized_strategy_return"] == float(
+        f"{result['info']['annualized_strategy_return']:.12g}"
+    )
+    assert result["info"]["objective_runtime_seconds"] >= 0.0
 
 
 def test_candidate_objective_rejects_future_availability_and_unknown_fidelity() -> None:
