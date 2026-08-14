@@ -64,6 +64,18 @@ def test_schema_caps_worker_sessions_and_executor_slots():
     assert "unique (campaign_id, worker_session_id, slot_index)" in sql
 
 
+def test_schema_persists_island_runtime_and_open_batch_recovery_state():
+    sql = _normalized_sql()
+    islands = sql.split("create table if not exists islands", 1)[1]
+    islands = islands.split("create table if not exists island_batches", 1)[0]
+    batches = sql.split("create table if not exists island_batches", 1)[1]
+    batches = batches.split("create table if not exists evaluations", 1)[0]
+
+    assert "runtime_state jsonb not null" in islands
+    assert "check (replica between 1 and 3)" in islands
+    assert "batch_sha256 char(64) not null" in batches
+
+
 def test_role_contract_separates_coordinator_worker_and_reducer():
     from aurora.infra.sp500_megarun.dehb_continuous_schema import role_statements
 

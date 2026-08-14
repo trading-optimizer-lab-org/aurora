@@ -254,7 +254,7 @@ git commit -m "feat: preserve DEHB islands in continuous batches"
 **Interfaces:**
 - Produces: `ContinuousCampaignCoordinator.run_once() -> CoordinatorCycleV1`, `run_forever(stop_event)`, weighted-deficit scheduler and leader handoff.
 
-- [ ] **Step 1: Add failing fairness, restart and cache fan-out tests**
+- [x] **Step 1: Add failing fairness, restart and cache fan-out tests**
 
 ```python
 def test_240_lanes_all_advance_without_global_barrier(coordinator):
@@ -268,19 +268,19 @@ def test_second_leader_cannot_mutate(coordinator_pair):
     assert not second.acquire_leadership()
 ```
 
-- [ ] **Step 2: Confirm failures**
+- [x] **Step 2: Confirm failures**
 
 Run: `C:/Python314/python.exe -m pytest tests/test_sp500_megarun_dehb_continuous_coordinator.py -q`
 
-- [ ] **Step 3: Implement one-cycle idempotency and queue watermarks**
+- [x] **Step 3: Implement one-cycle idempotency and queue watermarks**
 
 Restore runnable islands, deliver cache hits before creating work, register at most one unresolved batch per island, replenish toward 2,880 ready unique evaluations, checkpoint after each complete batch and stop proposal creation only in `freezing`, `frozen` or fail-closed states.
 
-- [ ] **Step 4: Run coordinator, store and conformance tests**
+- [x] **Step 4: Run coordinator, store and conformance tests**
 
 Run: `C:/Python314/python.exe -m pytest tests/test_sp500_megarun_dehb_continuous_coordinator.py tests/test_sp500_megarun_dehb_continuous_store.py tests/test_sp500_megarun_dehb_continuous_island.py -q`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add infra/sp500_megarun/dehb_continuous_coordinator.py scripts/run_sp500_dehb_continuous_coordinator.py tests/test_sp500_megarun_dehb_continuous_coordinator.py
@@ -299,7 +299,7 @@ git commit -m "feat: coordinate continuous DEHB islands"
 - Produces: `ContinuousWorkerRuntime.run()`, `run_executor_slot(slot_index)`, `build_strategy_key`, `EmergencySpoolV1`.
 - Reuses: `candidate_fingerprints`, `feature_frame_to_decisions`, `evaluate_lane_candidate`.
 
-- [ ] **Step 1: Add failing batch, position collision and lease-loss tests**
+- [x] **Step 1: Add failing batch, position collision and lease-loss tests**
 
 ```python
 def test_four_slots_never_receive_same_key(worker_store):
@@ -314,19 +314,19 @@ def test_same_positions_backtest_once(worker_store, evaluator_spy):
     assert worker_store.completed_subscriber_count() == 2
 ```
 
-- [ ] **Step 2: Confirm failures**
+- [x] **Step 2: Confirm failures**
 
 Run: `C:/Python314/python.exe -m pytest tests/test_sp500_megarun_dehb_continuous_worker.py -q`
 
-- [ ] **Step 3: Split position generation from expensive evaluation and implement runtime**
+- [x] **Step 3: Split position generation from expensive evaluation and implement runtime**
 
 Each spawned process claims independently, verifies the numeric environment and train hashes, generates positions, atomically publishes `StrategyEvaluationKeyV1`, waits on an existing owner or evaluates as owner, heartbeats during long work, and submits only hash-bound train-only results.
 
-- [ ] **Step 4: Run worker, numeric-runtime and objective tests**
+- [x] **Step 4: Run worker, numeric-runtime and objective tests**
 
 Run: `C:/Python314/python.exe -m pytest tests/test_sp500_megarun_dehb_continuous_worker.py tests/test_sp500_megarun_dehb_worker.py tests/test_sp500_megarun_dehb_numeric_runtime.py tests/test_sp500_megarun_dehb_objective.py -q`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add infra/sp500_megarun/dehb_continuous_worker.py infra/sp500_megarun/dehb_worker.py scripts/run_sp500_dehb_continuous_worker.py tests/test_sp500_megarun_dehb_continuous_worker.py

@@ -84,6 +84,19 @@ class StrategyClaimV1:
     result: dict | None
 
 
+@dataclass(frozen=True)
+class StoredIslandV1:
+    island_id: str
+    lane_id: str
+    replica: int
+    restart_seed: int
+    status: str
+    next_batch_sequence: int
+    checkpoint_bytes: bytes | None
+    checkpoint_sha256: str | None
+    runtime_state: dict
+
+
 @dataclass
 class _StrategyRecord:
     owner_evaluation_id: int
@@ -1091,10 +1104,10 @@ class PostgresContinuousCampaignStore:
                     """
                     INSERT INTO island_batches (
                         campaign_id, island_id, batch_sequence, schema_version,
-                        status, checkpoint_before_sha256,
+                        status, batch_sha256, checkpoint_before_sha256,
                         created_sequence, updated_sequence
                     )
-                    SELECT %s, %s, %s, 1, 'open', checkpoint_sha256, %s, %s
+                    SELECT %s, %s, %s, 1, 'open', %s, checkpoint_sha256, %s, %s
                     FROM islands WHERE campaign_id = %s AND island_id = %s
                     ON CONFLICT (campaign_id, island_id, batch_sequence) DO NOTHING
                     RETURNING batch_sequence
@@ -1103,6 +1116,7 @@ class PostgresContinuousCampaignStore:
                         self.campaign_id,
                         str(getattr(batch, "island_id")),
                         int(getattr(batch, "batch_sequence")),
+                        str(getattr(batch, "batch_sha256")),
                         sequence,
                         sequence,
                         self.campaign_id,
@@ -1159,7 +1173,7 @@ class PostgresContinuousCampaignStore:
                     """
                     UPDATE islands SET checkpoint_bytes = %s, checkpoint_sha256 = %s,
                         prior_checkpoint_sha256 = %s, next_batch_sequence = %s,
-                        status = %s, updated_sequence = %s,
+                        status = %s, runtime_state = %s, updated_sequence = %s,
                         updated_at = clock_timestamp()
                     WHERE campaign_id = %s AND island_id = %s
                       AND checkpoint_sha256 IS NOT DISTINCT FROM %s
@@ -1171,6 +1185,18 @@ class PostgresContinuousCampaignStore:
                         getattr(advance, "prior_checkpoint_sha256"),
                         int(getattr(advance, "batch_sequence")) + 1,
                         "plateau" if bool(getattr(advance, "stopped")) else "runnable",
+                        self._jsonb(
+                            {
+                                "evaluations": int(getattr(advance, "evaluations")),
+                                "full_fidelity_evaluations": int(
+                                    getattr(advance, "full_fidelity_evaluations")
+                                ),
+                                "completed_since_improvement": int(
+                                    getattr(advance, "completed_since_improvement")
+                                ),
+                                "best_archive_key": getattr(advance, "best_archive_key"),
+                            }
+                        ),
                         sequence,
                         self.campaign_id,
                         str(getattr(advance, "island_id")),
@@ -1320,6 +1346,73 @@ class PostgresContinuousCampaignStore:
             time.sleep(0.2)
         raise ContinuousStoreError("CONTINUOUS_STRATEGY_RESULT_TIMEOUT")
 
+    def load_island_records(self) -> tuple[StoredIslandV1, ...]:
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT island_id, lane_id, replica, restart_seed, status,
+                           next_batch_sequence, checkpoint_bytes, checkpoint_sha256,
+                           runtime_state
+                    FROM islands WHERE campaign_id = %s ORDER BY island_id
+                    """,
+                    (self.campaign_id,),
+                )
+                rows = cursor.fetchall()
+        records = tuple(
+            StoredIslandV1(
+                island_id=str(row[0]),
+                lane_id=str(row[1]),
+                replica=int(row[2]),
+                restart_seed=int(row[3]),
+                status=str(row[4]),
+                next_batch_sequence=int(row[5]),
+                checkpoint_bytes=None if row[6] is None else bytes(row[6]),
+                checkpoint_sha256=None if row[7] is None else str(row[7]),
+                runtime_state=dict(row[8]),
+            )
+            for row in rows
+        )
+        if len(records) != 720:
+            raise ContinuousStoreError("CONTINUOUS_ISLAND_INVENTORY_INCOMPLETE")
+        return records
+
+    def load_open_batches(self) -> dict[str, object]:
+        from aurora.infra.sp500_megarun.dehb_continuous_island import IslandBatchV1
+
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT b.island_id, b.batch_sequence, b.batch_sha256,
+                           p.batch_slot, p.dehb_job
+                    FROM island_batches b
+                    JOIN proposals p ON p.campaign_id = b.campaign_id
+                      AND p.island_id = b.island_id
+                      AND p.batch_sequence = b.batch_sequence
+                    WHERE b.campaign_id = %s AND b.status = 'open'
+                    ORDER BY b.island_id, b.batch_sequence, p.batch_slot
+                    """,
+                    (self.campaign_id,),
+                )
+                rows = cursor.fetchall()
+        grouped: dict[tuple[str, int, str], list[tuple[int, dict]]] = {}
+        for island_id, sequence, batch_hash, slot, job in rows:
+            grouped.setdefault(
+                (str(island_id), int(sequence), str(batch_hash)), []
+            ).append((int(slot), dict(job)))
+        batches: dict[str, object] = {}
+        for (island_id, sequence, batch_hash), items in grouped.items():
+            if [slot for slot, _job in items] != [0, 1, 2, 3]:
+                raise ContinuousStoreError("CONTINUOUS_OPEN_BATCH_INCOMPLETE")
+            batches[island_id] = IslandBatchV1(
+                island_id=island_id,
+                batch_sequence=sequence,
+                jobs=tuple(job for _slot, job in items),
+                batch_sha256=batch_hash,
+            )
+        return batches
+
 
 __all__ = [
     "ContinuousCampaignStore",
@@ -1333,6 +1426,7 @@ __all__ = [
     "ProposalRegistrationV1",
     "ResultConflictError",
     "StrategyClaimV1",
+    "StoredIslandV1",
     "WorkerCapacityError",
     "WorkerSessionLeaseV1",
 ]

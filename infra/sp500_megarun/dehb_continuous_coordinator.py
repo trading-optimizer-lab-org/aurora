@@ -43,6 +43,7 @@ class ContinuousCampaignCoordinator:
         islands: Iterable[ContinuousIslandState],
         proposal_builder: ProposalBuilder,
         owner_token: str,
+        open_batches: Iterable[IslandBatchV1] = (),
     ) -> None:
         self.store = store
         self.islands = tuple(sorted(islands, key=lambda island: island.island_id))
@@ -51,7 +52,9 @@ class ContinuousCampaignCoordinator:
         self._by_id = {island.island_id: island for island in self.islands}
         self.proposal_builder = proposal_builder
         self.owner_token = str(owner_token)
-        self._open_batches: dict[str, IslandBatchV1] = {}
+        self._open_batches: dict[str, IslandBatchV1] = {
+            batch.island_id: batch for batch in open_batches
+        }
         self._stopped: set[str] = set()
         self._round_robin_cursor = 0
 

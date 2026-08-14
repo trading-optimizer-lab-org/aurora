@@ -228,6 +228,18 @@ class ContinuousIslandState:
         self._open_batch = batch
         return batch
 
+    def restore_open_batch(self, expected_batch: IslandBatchV1) -> None:
+        """Replay deterministic ask from the prior checkpoint and verify exact identity."""
+
+        if expected_batch.island_id != self.island_id:
+            raise ContinuousIslandError("CONTINUOUS_ISLAND_RESTORED_BATCH_ISLAND_MISMATCH")
+        if expected_batch.batch_sequence != self.next_batch_sequence:
+            raise ContinuousIslandError("CONTINUOUS_ISLAND_RESTORED_BATCH_SEQUENCE_MISMATCH")
+        replayed = self.ask_batch()
+        if replayed.batch_sha256 != expected_batch.batch_sha256:
+            self._open_batch = None
+            raise ContinuousIslandError("CONTINUOUS_ISLAND_RESTORED_BATCH_HASH_MISMATCH")
+
     def tell_batch(
         self,
         batch: IslandBatchV1,

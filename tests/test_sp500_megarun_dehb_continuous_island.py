@@ -74,6 +74,23 @@ def test_island_exposes_only_one_unresolved_batch():
         island.ask_batch()
 
 
+def test_open_batch_can_be_restored_after_coordinator_restart():
+    original = state()
+    batch = original.ask_batch()
+    optimizer = FakeOptimizer()
+    restored = state(optimizer)
+
+    restored.restore_open_batch(batch)
+    advance = restored.tell_batch(
+        batch,
+        {slot: result(slot) for slot in range(4)},
+    )
+
+    assert optimizer.told == [(0, 0.0), (1, 1.0), (2, 2.0), (3, 3.0)]
+    assert advance.batch_sequence == 1
+    assert restored.next_batch_sequence == 2
+
+
 def test_missing_or_wrong_batch_result_fails_without_telling_optimizer():
     from aurora.infra.sp500_megarun.dehb_continuous_island import ContinuousIslandError
 

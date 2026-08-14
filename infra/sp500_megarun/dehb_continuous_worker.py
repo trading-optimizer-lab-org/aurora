@@ -5,6 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Lock
+import time
 from typing import Any, Callable, Mapping
 
 from aurora.infra.sp500_megarun.dehb_continuous_models import (
@@ -87,15 +88,27 @@ class ContinuousWorkerRuntime:
         self._physical_strategy_evaluations = 0
         self._strategy_cache_hits = 0
 
-    def _run_slot(self, worker_session_id: str, slot_index: int) -> None:
+    def _run_slot(
+        self,
+        worker_session_id: str,
+        slot_index: int,
+        *,
+        deadline: float | None,
+        idle_poll_seconds: float,
+    ) -> None:
         while True:
+            if deadline is not None and time.monotonic() >= deadline:
+                return
             lease = self.store.claim_evaluation(
                 worker_session_id=worker_session_id,
                 slot_index=slot_index,
                 lease_seconds=900,
             )
             if lease is None:
-                return
+                if deadline is None:
+                    return
+                time.sleep(idle_poll_seconds)
+                continue
             prepared = self.position_builder(lease.evaluation_key)
             strategy_key = StrategyEvaluationKeyV1.build(
                 evaluation_key=lease.evaluation_key,
@@ -131,17 +144,26 @@ class ContinuousWorkerRuntime:
             with self._counter_lock:
                 self._logical_completions += 1
 
-    def run_until_idle(self) -> ContinuousWorkerSummaryV1:
+    def _run(self, *, lifetime_seconds: float | None) -> ContinuousWorkerSummaryV1:
+        deadline = (
+            None if lifetime_seconds is None else time.monotonic() + float(lifetime_seconds)
+        )
         session = self.store.claim_worker_session(
             pool_generation=self.pool_generation,
             github_run_id=self.github_run_id,
             github_job=self.github_job,
-            lease_seconds=3_600,
+            lease_seconds=(3_600 if lifetime_seconds is None else int(lifetime_seconds) + 300),
         )
         try:
             with ThreadPoolExecutor(max_workers=self.executor_slots) as executor:
                 futures = [
-                    executor.submit(self._run_slot, session.worker_session_id, slot)
+                    executor.submit(
+                        self._run_slot,
+                        session.worker_session_id,
+                        slot,
+                        deadline=deadline,
+                        idle_poll_seconds=0.5,
+                    )
                     for slot in range(self.executor_slots)
                 ]
                 for future in futures:
@@ -155,6 +177,14 @@ class ContinuousWorkerRuntime:
             physical_strategy_evaluations=self._physical_strategy_evaluations,
             strategy_cache_hits=self._strategy_cache_hits,
         )
+
+    def run_until_idle(self) -> ContinuousWorkerSummaryV1:
+        return self._run(lifetime_seconds=None)
+
+    def run_for(self, *, lifetime_seconds: float) -> ContinuousWorkerSummaryV1:
+        if float(lifetime_seconds) <= 0:
+            raise ValueError("CONTINUOUS_WORKER_LIFETIME_INVALID")
+        return self._run(lifetime_seconds=float(lifetime_seconds))
 
 
 __all__ = [
