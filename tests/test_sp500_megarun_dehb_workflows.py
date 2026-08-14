@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from aurora.infra.github_performance.preflight import load_github_yaml
+from aurora.infra.sp500_megarun.dehb_numeric_runtime import DEHB_NUMERIC_ENV
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -137,6 +138,37 @@ def test_continuous_pool_has_three_120_parallel_shards_and_four_slots() -> None:
     ).read_text(encoding="utf-8")
     assert "probe_database_client_capacity" in bootstrap_script
     assert "required_connections=400" in bootstrap_script
+
+
+def test_every_scientific_continuous_job_exports_the_frozen_numeric_runtime() -> None:
+    coordinator = _load(CONTINUOUS_COORDINATOR)["jobs"]["coordinator"]
+    reducer = _load(CONTINUOUS_REDUCER)["jobs"]["reduce"]
+    pool_jobs = _load(CONTINUOUS_POOL)["jobs"]
+
+    scientific_jobs = [
+        coordinator,
+        reducer,
+        *(pool_jobs[f"shard_{shard}"] for shard in "abc"),
+    ]
+    for job in scientific_jobs:
+        assert {
+            name: str(job["env"].get(name, "")) for name in DEHB_NUMERIC_ENV
+        } == dict(DEHB_NUMERIC_ENV)
+
+
+def test_continuous_reducer_reads_nested_technical_evidence_run_reference() -> None:
+    reducer = _load(CONTINUOUS_REDUCER)["jobs"]["reduce"]
+    download_step = next(
+        step
+        for step in reducer["steps"]
+        if step["name"] == "Download exact technical evidence named by launch contract"
+    )
+
+    command = download_step["run"]
+    assert ".technical_evidence.workflow_run_id" in command
+    assert ".technical_evidence.artifact_name" in command
+    assert 'gh run download "$technical_run_id"' in command
+    assert '--name "$technical_artifact_name"' in command
 
 
 def test_continuous_workflows_are_exact_commit_train_only_and_never_call_v1() -> None:
