@@ -1,15 +1,6 @@
 name: SP500 DEHB Cross Runner Determinism
 
 on:
-  push:
-    branches:
-      - codex/sp500-search-method-benchmark-short
-    paths:
-      - .github/workflows/sp500-dehb-cross-runner-determinism.yml
-      - infra/sp500_megarun/dehb_evaluation_cache.py
-      - infra/sp500_megarun/dehb_worker.py
-      - scripts/probe_sp500_megarun_dehb_cross_runner_determinism.py
-      - scripts/reduce_sp500_megarun_dehb_cross_runner_determinism.py
   workflow_dispatch:
 
 permissions:
@@ -17,7 +8,18 @@ permissions:
   contents: read
 
 jobs:
+  framework_contract:
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: sp500-dehb-cross-runner-determinism-framework
+      retention_days: 1
+      execution_mode: optimized
+      forced_job_count: 1
+
   probe:
+    needs: framework_contract
     strategy:
       fail-fast: false
       matrix:

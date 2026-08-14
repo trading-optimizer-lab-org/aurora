@@ -120,6 +120,9 @@ def test_reducer_validates_exact_wave_plan_instead_of_reconstructing_it() -> Non
 def test_cross_runner_probe_replays_all_material_conflicts_on_six_hosts() -> None:
     text = CROSS_RUNNER.read_text(encoding="utf-8")
 
+    assert "push:" not in text
+    assert "framework_contract:" in text
+    assert "needs: framework_contract" in text
     assert "replica: [1, 2, 3, 4, 5, 6]" in text
     assert "Replay all 35 material conflicts" in text
     assert "--expected-replicas 6" in text
