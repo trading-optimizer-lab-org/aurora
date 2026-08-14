@@ -11,12 +11,30 @@ on:
         options:
           - official
           - continuous_postgres
+          - continuous_start
+          - continuous_continue
       commit_sha:
-        description: Exact revision for continuous_postgres mode
+        description: Exact revision for any continuous mode
         required: false
+      campaign_id:
+        description: Immutable continuous campaign identifier
+        required: false
+      runtime_input_run_id:
+        description: Immutable train-only runtime input run
+        required: false
+      launch_contract_run_id:
+        description: Exact run containing the launch contract
+        required: false
+      bootstrap_run_id:
+        description: Initial continuous run containing the bootstrap receipt
+        required: false
+      pool_generation:
+        description: Six-digit continuous pool generation
+        required: false
+        default: "000000"
 
 permissions:
-  actions: read
+  actions: write
   contents: read
 
 concurrency:
@@ -164,3 +182,136 @@ jobs:
           tests/test_sp500_megarun_dehb_workflows.py
           tests/integration/test_sp500_megarun_dehb_continuous_postgres.py
           -q
+
+  continuous_bootstrap:
+    if: ${{ inputs.mode == 'continuous_start' }}
+    uses: ./.github/workflows/sp500-dehb-continuous-bootstrap-v2.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      campaign_id: ${{ inputs.campaign_id }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      launch_contract_run_id: ${{ inputs.launch_contract_run_id }}
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+
+  continuous_coordinator:
+    needs: continuous_bootstrap
+    if: >-
+      ${{ always() &&
+          (inputs.mode == 'continuous_start' || inputs.mode == 'continuous_continue') &&
+          (inputs.mode == 'continuous_continue' || needs.continuous_bootstrap.result == 'success') }}
+    uses: ./.github/workflows/sp500-dehb-continuous-coordinator-v2.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      campaign_id: ${{ inputs.campaign_id }}
+      bootstrap_run_id: ${{ inputs.mode == 'continuous_start' && github.run_id || inputs.bootstrap_run_id }}
+      lifetime_minutes: "300"
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+
+  continuous_pool:
+    needs: continuous_bootstrap
+    if: >-
+      ${{ always() &&
+          (inputs.mode == 'continuous_start' || inputs.mode == 'continuous_continue') &&
+          (inputs.mode == 'continuous_continue' || needs.continuous_bootstrap.result == 'success') }}
+    uses: ./.github/workflows/sp500-dehb-continuous-worker-pool-v2.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      campaign_id: ${{ inputs.campaign_id }}
+      pool_generation: pool-${{ inputs.pool_generation }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      bootstrap_run_id: ${{ inputs.mode == 'continuous_start' && github.run_id || inputs.bootstrap_run_id }}
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+
+  continuous_reducer:
+    needs: continuous_bootstrap
+    if: >-
+      ${{ always() &&
+          (inputs.mode == 'continuous_start' || inputs.mode == 'continuous_continue') &&
+          (inputs.mode == 'continuous_continue' || needs.continuous_bootstrap.result == 'success') }}
+    uses: ./.github/workflows/sp500-dehb-continuous-reducer-v2.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      campaign_id: ${{ inputs.campaign_id }}
+      cutoff_sequence: latest
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      bootstrap_run_id: ${{ inputs.mode == 'continuous_start' && github.run_id || inputs.bootstrap_run_id }}
+      delay_minutes: "120"
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+
+  continuous_continue:
+    needs:
+      - continuous_bootstrap
+      - continuous_coordinator
+      - continuous_pool
+      - continuous_reducer
+    if: >-
+      ${{ always() &&
+          (inputs.mode == 'continuous_start' || inputs.mode == 'continuous_continue') &&
+          (inputs.mode == 'continuous_continue' || needs.continuous_bootstrap.result == 'success') &&
+          needs.continuous_coordinator.result == 'success' &&
+          needs.continuous_pool.result == 'success' &&
+          needs.continuous_reducer.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+    steps:
+      - name: Check out exact continuous revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Set up supervisor runtime
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install supervisor dependencies
+        run: |
+          python -m pip install "psycopg[binary,pool]>=3.2,<4"
+          python -m pip install --no-deps -e .
+      - name: Audit campaign and continue only when safe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/audit_sp500_dehb_continuous_campaign.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --pool-generation "pool-${{ inputs.pool_generation }}" \
+            --output "$RUNNER_TEMP/continuous-decision.json"
+          action="$(jq -r '.action' "$RUNNER_TEMP/continuous-decision.json")"
+          case "$action" in
+            healthy|dispatch_next_generation|recover_coordinator)
+              generation="${{ inputs.pool_generation }}"
+              [[ "$generation" =~ ^[0-9]{6}$ ]]
+              next_generation="$(printf '%06d' "$((10#$generation + 1))")"
+              bootstrap_run_id="${{ inputs.bootstrap_run_id }}"
+              if [[ "${{ inputs.mode }}" == "continuous_start" ]]; then
+                bootstrap_run_id="${{ github.run_id }}"
+              fi
+              gh workflow run sp500-megarun-dehb-official-smoke.yml \
+                --ref "${{ github.ref_name }}" \
+                -f mode=continuous_continue \
+                -f commit_sha="${{ inputs.commit_sha }}" \
+                -f campaign_id="${{ inputs.campaign_id }}" \
+                -f runtime_input_run_id="${{ inputs.runtime_input_run_id }}" \
+                -f bootstrap_run_id="$bootstrap_run_id" \
+                -f pool_generation="$next_generation"
+              ;;
+            drain)
+              echo "Campaign frozen; no further worker generation will be dispatched."
+              ;;
+            halt_conflict|halt_boundary)
+              echo "Fail-closed campaign halt: $action" >&2
+              exit 1
+              ;;
+            *)
+              echo "Unknown supervisor action: $action" >&2
+              exit 1
+              ;;
+          esac

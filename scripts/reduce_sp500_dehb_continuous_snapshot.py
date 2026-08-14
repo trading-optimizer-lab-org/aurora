@@ -7,6 +7,7 @@ from dataclasses import asdict
 import json
 import os
 from pathlib import Path
+import time
 from typing import Any, Mapping
 
 from aurora.core.execution_policy import require_github_only_execution
@@ -223,12 +224,17 @@ def main() -> int:
     parser.add_argument("--technical-evidence", type=Path, required=True)
     parser.add_argument("--campaign-id", required=True)
     parser.add_argument("--cutoff-sequence", required=True)
+    parser.add_argument("--delay-minutes", type=int, default=0)
     parser.add_argument("--database-url-env", default="SP500_DEHB_COORDINATOR_DATABASE_URL")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     dsn = os.environ.get(args.database_url_env)
     if not dsn:
         raise RuntimeError("CONTINUOUS_REDUCER_DATABASE_URL_MISSING")
+    if args.delay_minutes < 0:
+        raise RuntimeError("CONTINUOUS_REDUCER_DELAY_INVALID")
+    if args.delay_minutes:
+        time.sleep(args.delay_minutes * 60)
     store = PostgresContinuousCampaignStore(dsn=dsn, campaign_id=args.campaign_id)
     cutoff = (
         store.latest_event_sequence()

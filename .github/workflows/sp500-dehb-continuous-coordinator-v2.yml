@@ -1,6 +1,14 @@
 name: SP500 Continuous DEHB Coordinator v2
 
 on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+      campaign_id: {required: true, type: string}
+      bootstrap_run_id: {required: true, type: string}
+      lifetime_minutes: {required: true, type: string, default: "300"}
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: {required: true}
   workflow_dispatch:
     inputs:
       commit_sha: {required: true}
@@ -15,6 +23,11 @@ concurrency:
 
 jobs:
   coordinator:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        lifetime_ordinal: [0, 1]
     runs-on: ubuntu-24.04
     timeout-minutes: 330
     env:
@@ -48,6 +61,5 @@ jobs:
           --data-contract config/sp500_megarun_free_data_240.json
           --launch-contract "$RUNNER_TEMP/dehb_bootstrap/launch_contract.json"
           --campaign-id "${{ inputs.campaign_id }}"
-          --work-root "$RUNNER_TEMP/coordinator"
+          --work-root "$RUNNER_TEMP/coordinator-${{ matrix.lifetime_ordinal }}"
           --lifetime-minutes "${{ inputs.lifetime_minutes }}"
-

@@ -1,6 +1,13 @@
 name: SP500 Continuous DEHB Supervisor v2
 
 on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+      campaign_id: {required: true, type: string}
+      pool_generation: {required: true, type: string}
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: {required: true}
   workflow_dispatch:
     inputs:
       commit_sha: {required: true}
@@ -40,4 +47,3 @@ jobs:
       - name: Upload health decision
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with: {name: sp500-dehb-continuous-supervisor, path: outputs/supervisor, if-no-files-found: error, retention-days: 30}
-

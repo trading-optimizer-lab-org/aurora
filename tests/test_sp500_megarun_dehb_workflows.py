@@ -53,6 +53,65 @@ def test_registered_smoke_can_bridge_continuous_postgres_on_feature_branch() -> 
     assert "locked_2021" not in text
 
 
+def test_registered_bridge_can_start_and_continue_production_autonomously() -> None:
+    workflow = _load(REGISTERED_SMOKE_BRIDGE)
+    text = REGISTERED_SMOKE_BRIDGE.read_text(encoding="utf-8")
+
+    dispatch = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert {"continuous_start", "continuous_continue"}.issubset(
+        dispatch["mode"]["options"]
+    )
+    assert workflow["permissions"] == {"actions": "write", "contents": "read"}
+    assert workflow["jobs"]["continuous_bootstrap"]["uses"] == (
+        "./.github/workflows/sp500-dehb-continuous-bootstrap-v2.yml"
+    )
+    assert workflow["jobs"]["continuous_coordinator"]["uses"] == (
+        "./.github/workflows/sp500-dehb-continuous-coordinator-v2.yml"
+    )
+    assert workflow["jobs"]["continuous_pool"]["uses"] == (
+        "./.github/workflows/sp500-dehb-continuous-worker-pool-v2.yml"
+    )
+    assert workflow["jobs"]["continuous_reducer"]["uses"] == (
+        "./.github/workflows/sp500-dehb-continuous-reducer-v2.yml"
+    )
+    continuation = workflow["jobs"]["continuous_continue"]
+    assert continuation["needs"] == [
+        "continuous_bootstrap",
+        "continuous_coordinator",
+        "continuous_pool",
+        "continuous_reducer",
+    ]
+    assert "gh workflow run sp500-megarun-dehb-official-smoke.yml" in text
+    assert "continuous_continue" in text
+    assert "halt_conflict" in text
+    assert "halt_boundary" in text
+    assert "sp500-dehb-mega-controller-v1.yml" not in text
+    assert "validation_2011_2020" not in text
+    assert "locked_2021" not in text
+
+
+def test_continuous_children_are_reusable_and_cover_full_pool_generation() -> None:
+    coordinator = _load(CONTINUOUS_COORDINATOR)
+    reducer = _load(CONTINUOUS_REDUCER)
+
+    for path in (
+        CONTINUOUS_BOOTSTRAP,
+        CONTINUOUS_COORDINATOR,
+        CONTINUOUS_POOL,
+        CONTINUOUS_REDUCER,
+        CONTINUOUS_SUPERVISOR,
+    ):
+        assert "workflow_call" in _load(path)["on"]
+
+    coordinator_job = coordinator["jobs"]["coordinator"]
+    assert coordinator_job["strategy"]["max-parallel"] == 1
+    assert coordinator_job["strategy"]["matrix"]["lifetime_ordinal"] == [0, 1]
+    reducer_job = reducer["jobs"]["reduce"]
+    assert reducer_job["strategy"]["max-parallel"] == 1
+    assert reducer_job["strategy"]["matrix"]["reducer_ordinal"] == [0, 1, 2, 3]
+    assert "--delay-minutes" in CONTINUOUS_REDUCER.read_text(encoding="utf-8")
+
+
 def test_continuous_pool_has_three_120_parallel_shards_and_four_slots() -> None:
     workflow = _load(CONTINUOUS_POOL)
     action = _load(CONTINUOUS_WORKER_ACTION)

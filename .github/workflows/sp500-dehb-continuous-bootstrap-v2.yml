@@ -1,6 +1,14 @@
 name: SP500 Continuous DEHB Bootstrap v2
 
 on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+      campaign_id: {required: true, type: string}
+      runtime_input_run_id: {required: true, type: string}
+      launch_contract_run_id: {required: true, type: string}
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: {required: true}
   workflow_dispatch:
     inputs:
       commit_sha: {description: Exact accepted revision, required: true}

@@ -1,6 +1,16 @@
 name: SP500 Continuous DEHB Reducer v2
 
 on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+      campaign_id: {required: true, type: string}
+      cutoff_sequence: {required: true, type: string, default: "latest"}
+      runtime_input_run_id: {required: true, type: string}
+      bootstrap_run_id: {required: true, type: string}
+      delay_minutes: {required: true, type: string, default: "120"}
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: {required: true}
   workflow_dispatch:
     inputs:
       commit_sha: {required: true}
@@ -8,6 +18,7 @@ on:
       cutoff_sequence: {required: true, default: "latest"}
       runtime_input_run_id: {required: true}
       bootstrap_run_id: {required: true}
+      delay_minutes: {required: true, default: "120"}
 
 permissions: {actions: read, contents: read}
 concurrency:
@@ -16,8 +27,13 @@ concurrency:
 
 jobs:
   reduce:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        reducer_ordinal: [0, 1, 2, 3]
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    timeout-minutes: 360
     env:
       GITHUB_ACTIONS: "true"
       GH_TOKEN: ${{ github.token }}
@@ -70,7 +86,12 @@ jobs:
           --technical-evidence "$RUNNER_TEMP/dehb_technical/technical_evidence.json"
           --campaign-id "${{ inputs.campaign_id }}"
           --cutoff-sequence "${{ inputs.cutoff_sequence }}"
-          --output outputs/reducer/snapshot.json
+          --delay-minutes "${{ inputs.delay_minutes }}"
+          --output outputs/reducer/snapshot-${{ matrix.reducer_ordinal }}.json
       - name: Upload reducer decision
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with: {name: sp500-dehb-continuous-reducer, path: outputs/reducer, if-no-files-found: error, retention-days: 90}
+        with:
+          name: sp500-dehb-continuous-reducer-${{ matrix.reducer_ordinal }}
+          path: outputs/reducer
+          if-no-files-found: error
+          retention-days: 90
