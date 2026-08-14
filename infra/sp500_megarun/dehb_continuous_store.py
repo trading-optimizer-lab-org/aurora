@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import secrets
 from threading import Condition, RLock
 import time
-from typing import Callable, Protocol
+from typing import Any, Callable, Mapping, Protocol
 import uuid
 from urllib.parse import parse_qs, urlparse
 
@@ -1400,6 +1400,186 @@ class PostgresContinuousCampaignStore:
                 batch_sha256=batch_hash,
             )
         return batches
+
+    def latest_event_sequence(self) -> int:
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT last_value FROM continuous_event_sequence")
+                row = cursor.fetchone()
+        return 0 if row is None else int(row[0])
+
+    def result_rows(self, cutoff_sequence: int) -> list[dict[str, Any]]:
+        """Return one subscriber-aware, train-only row per island proposal."""
+
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT r.created_sequence, p.island_id, i.lane_id, i.replica,
+                           r.result_payload, r.validation_opened, r.locked_opened
+                    FROM results r
+                    JOIN proposals p ON p.campaign_id = r.campaign_id
+                      AND p.evaluation_id = r.evaluation_id
+                    JOIN islands i ON i.campaign_id = p.campaign_id
+                      AND i.island_id = p.island_id
+                    WHERE r.campaign_id = %s AND r.created_sequence <= %s
+                    ORDER BY r.created_sequence, p.island_id, p.proposal_id
+                    """,
+                    (self.campaign_id, int(cutoff_sequence)),
+                )
+                rows = cursor.fetchall()
+        output: list[dict[str, Any]] = []
+        for sequence, island_id, lane_id, replica, payload, validation, locked in rows:
+            result = dict(payload)
+            info = result.get("info")
+            if not isinstance(info, Mapping):
+                raise ContinuousStoreError("CONTINUOUS_RESULT_INFO_INVALID")
+            output.append(
+                {
+                    **dict(info),
+                    "created_sequence": int(sequence),
+                    "island_id": str(island_id),
+                    "lane_id": str(lane_id),
+                    "replicate": int(replica),
+                    "validation_opened": bool(validation),
+                    "locked_opened": bool(locked),
+                }
+            )
+        return output
+
+    def persist_reducer_snapshot(self, snapshot: object) -> int:
+        payload = {
+            "schema_version": int(getattr(snapshot, "schema_version")),
+            "cutoff_sequence": int(getattr(snapshot, "cutoff_sequence")),
+            "snapshot_sha256": str(getattr(snapshot, "snapshot_sha256")),
+            "physical_result_count": int(getattr(snapshot, "physical_result_count")),
+            "champion_count": int(getattr(snapshot, "champion_count")),
+            "finalists": [dict(row) for row in getattr(snapshot, "finalists")],
+            "validation_opened": False,
+            "locked_opened": False,
+        }
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    INSERT INTO reducer_snapshots (
+                        campaign_id, schema_version, cutoff_sequence,
+                        snapshot_sha256, snapshot_payload,
+                        validation_opened, locked_opened,
+                        created_sequence, updated_sequence
+                    ) VALUES (%s, 1, %s, %s, %s, false, false, %s, %s)
+                    ON CONFLICT (campaign_id, cutoff_sequence) DO NOTHING
+                    RETURNING snapshot_id
+                    """,
+                    (
+                        self.campaign_id,
+                        payload["cutoff_sequence"],
+                        payload["snapshot_sha256"],
+                        self._jsonb(payload),
+                        sequence,
+                        sequence,
+                    ),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    cursor.execute(
+                        """
+                        SELECT snapshot_id, snapshot_sha256 FROM reducer_snapshots
+                        WHERE campaign_id = %s AND cutoff_sequence = %s
+                        """,
+                        (self.campaign_id, payload["cutoff_sequence"]),
+                    )
+                    row = cursor.fetchone()
+                    if row is None or str(row[1]) != payload["snapshot_sha256"]:
+                        raise ResultConflictError("CONTINUOUS_SNAPSHOT_CUTOFF_CONFLICT")
+        return int(row[0])
+
+    def freeze_campaign(
+        self, snapshot_sha256: str, winner: Mapping[str, Any]
+    ) -> None:
+        if winner.get("validation_opened") is not False or winner.get(
+            "locked_opened"
+        ) is not False:
+            raise ContinuousStoreError("CONTINUOUS_FREEZE_BOUNDARY_OPEN")
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT 1 FROM reducer_snapshots
+                    WHERE campaign_id = %s AND snapshot_sha256 = %s
+                    FOR UPDATE
+                    """,
+                    (self.campaign_id, str(snapshot_sha256)),
+                )
+                if cursor.fetchone() is None:
+                    raise ContinuousStoreError("CONTINUOUS_FREEZE_SNAPSHOT_UNKNOWN")
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    UPDATE campaigns SET state = 'frozen', updated_sequence = %s,
+                        updated_at = clock_timestamp()
+                    WHERE campaign_id = %s AND state IN ('searching', 'freezing')
+                      AND validation_opened = false AND locked_opened = false
+                    RETURNING campaign_id
+                    """,
+                    (sequence, self.campaign_id),
+                )
+                if cursor.fetchone() is None:
+                    cursor.execute(
+                        "SELECT state FROM campaigns WHERE campaign_id = %s",
+                        (self.campaign_id,),
+                    )
+                    state = cursor.fetchone()
+                    if state is None or str(state[0]) != "frozen":
+                        raise ContinuousStoreError("CONTINUOUS_FREEZE_STATE_CONFLICT")
+
+    def health_snapshot(self) -> dict[str, Any]:
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT state, validation_opened, locked_opened
+                    FROM campaigns WHERE campaign_id = %s
+                    """,
+                    (self.campaign_id,),
+                )
+                campaign = cursor.fetchone()
+                if campaign is None:
+                    raise ContinuousStoreError("CONTINUOUS_CAMPAIGN_UNKNOWN")
+                cursor.execute(
+                    """
+                    SELECT
+                      count(*) FILTER (WHERE state = 'active' AND lease_expires_at >= clock_timestamp()),
+                      (SELECT count(*) FROM worker_slot_leases
+                       WHERE campaign_id = %s AND lease_expires_at >= clock_timestamp()),
+                      (SELECT count(*) FROM work_items
+                       WHERE campaign_id = %s AND state = 'ready'),
+                      (SELECT count(*) FROM evaluations
+                       WHERE campaign_id = %s AND state = 'conflict') +
+                      (SELECT count(*) FROM strategy_evaluations
+                       WHERE campaign_id = %s AND state = 'conflict'),
+                      (SELECT count(*) FROM results
+                       WHERE campaign_id = %s AND (validation_opened OR locked_opened)),
+                      (SELECT count(*) FROM campaign_leases
+                       WHERE campaign_id = %s AND lease_expires_at >= clock_timestamp())
+                    FROM worker_sessions WHERE campaign_id = %s
+                    """,
+                    (self.campaign_id,) * 7,
+                )
+                health = cursor.fetchone()
+        boundary_violations = int(health[4]) + int(bool(campaign[1])) + int(
+            bool(campaign[2])
+        )
+        return {
+            "campaign_state": str(campaign[0]),
+            "active_sessions": int(health[0]),
+            "active_slots": int(health[1]),
+            "ready_work": int(health[2]),
+            "coordinator_healthy": int(health[5]) == 1,
+            "conflict_count": int(health[3]),
+            "boundary_violations": boundary_violations,
+        }
 
 
 __all__ = [

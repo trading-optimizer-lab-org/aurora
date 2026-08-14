@@ -1,0 +1,68 @@
+name: SP500 Continuous DEHB Worker
+description: Run one four-vCPU globally deduplicated worker lifetime
+
+inputs:
+  commit-sha:
+    required: true
+  campaign-id:
+    required: true
+  pool-generation:
+    required: true
+  worker-lifetime-id:
+    required: true
+  runtime-input-run-id:
+    required: true
+  bootstrap-run-id:
+    required: true
+  github-token:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Verify exact continuous revision
+      shell: bash
+      run: test "$(git rev-parse HEAD)" = "${{ inputs.commit-sha }}"
+    - name: Set up isolated Python 3.11
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: "3.11"
+        cache: ""
+    - name: Install frozen scientific and database runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install --require-hashes -r requirements/dehb-official.lock
+        python -m pip install "psycopg[binary,pool]>=3.2,<4"
+        python -m pip install --no-deps -e .
+    - name: Download immutable train-only runtime pack
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime-input-run-id }}
+        path: ${{ runner.temp }}/dehb_runtime_inputs
+        github-token: ${{ inputs.github-token }}
+        repository: ${{ github.repository }}
+        run-id: ${{ inputs.runtime-input-run-id }}
+    - name: Download exact continuous bootstrap receipt
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: sp500-dehb-continuous-bootstrap
+        path: ${{ runner.temp }}/dehb_bootstrap
+        github-token: ${{ inputs.github-token }}
+        repository: ${{ github.repository }}
+        run-id: ${{ inputs.bootstrap-run-id }}
+    - name: Run four single-threaded executor slots
+      shell: bash
+      run: |
+        set -euo pipefail
+        python scripts/run_sp500_dehb_continuous_worker.py \
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+          --data-contract config/sp500_megarun_free_data_240.json \
+          --feature-contract config/sp500_megarun_feature_contract_240.json \
+          --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs" \
+          --campaign-id "${{ inputs.campaign-id }}" \
+          --pool-generation "${{ inputs.pool-generation }}" \
+          --worker-lifetime-id "${{ inputs.worker-lifetime-id }}" \
+          --executor-slots 4 \
+          --lifetime-minutes 300
+

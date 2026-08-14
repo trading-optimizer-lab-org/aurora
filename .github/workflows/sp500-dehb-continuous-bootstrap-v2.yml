@@ -1,0 +1,60 @@
+name: SP500 Continuous DEHB Bootstrap v2
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha: {description: Exact accepted revision, required: true}
+      campaign_id: {description: Unique continuous campaign id, required: true}
+      runtime_input_run_id: {description: Immutable train-only input run, required: true}
+      launch_contract_run_id: {description: Run containing exact launch contract, required: true}
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: sp500-continuous-bootstrap-${{ inputs.campaign_id }}
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GITHUB_ACTIONS: "true"
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - name: Install bootstrap runtime
+        run: |
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install "psycopg[binary,pool]>=3.2,<4"
+          python -m pip install --no-deps -e .
+      - name: Download exact launch contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-dehb-launch-contract
+          path: ${{ runner.temp }}/dehb_launch
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.launch_contract_run_id }}
+      - name: Initialize closed-boundary database
+        run: |
+          python scripts/init_sp500_dehb_continuous_campaign.py \
+            --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+            --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json" \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --output outputs/bootstrap/bootstrap_receipt.json
+          cp "$RUNNER_TEMP/dehb_launch/launch_contract.json" outputs/bootstrap/launch_contract.json
+      - name: Upload immutable bootstrap receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-continuous-bootstrap
+          path: outputs/bootstrap
+          if-no-files-found: error
+          retention-days: 90

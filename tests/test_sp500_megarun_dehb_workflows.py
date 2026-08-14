@@ -14,6 +14,12 @@ CONFLICT_DIAGNOSTIC = ROOT / ".github/workflows/sp500-dehb-cache-conflict-diagno
 CROSS_RUNNER = ROOT / ".github/workflows/sp500-dehb-cross-runner-determinism.yml"
 CONTINUOUS_SMOKE = ROOT / ".github/workflows/sp500-dehb-continuous-smoke-v2.yml"
 REGISTERED_SMOKE_BRIDGE = ROOT / ".github/workflows/sp500-megarun-dehb-official-smoke.yml"
+CONTINUOUS_BOOTSTRAP = ROOT / ".github/workflows/sp500-dehb-continuous-bootstrap-v2.yml"
+CONTINUOUS_COORDINATOR = ROOT / ".github/workflows/sp500-dehb-continuous-coordinator-v2.yml"
+CONTINUOUS_POOL = ROOT / ".github/workflows/sp500-dehb-continuous-worker-pool-v2.yml"
+CONTINUOUS_REDUCER = ROOT / ".github/workflows/sp500-dehb-continuous-reducer-v2.yml"
+CONTINUOUS_SUPERVISOR = ROOT / ".github/workflows/sp500-dehb-continuous-supervisor-v2.yml"
+CONTINUOUS_WORKER_ACTION = ROOT / ".github/actions/sp500-dehb-continuous-worker/action.yml"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -45,6 +51,43 @@ def test_registered_smoke_can_bridge_continuous_postgres_on_feature_branch() -> 
     assert "test_sp500_megarun_dehb_continuous_postgres.py" in text
     assert "validation_2011_2020" not in text
     assert "locked_2021" not in text
+
+
+def test_continuous_pool_has_three_120_parallel_shards_and_four_slots() -> None:
+    workflow = _load(CONTINUOUS_POOL)
+    action = _load(CONTINUOUS_WORKER_ACTION)
+
+    for shard in "abc":
+        job = workflow["jobs"][f"shard_{shard}"]
+        assert job["strategy"]["max-parallel"] == 120
+        assert job["strategy"]["fail-fast"] is False
+        assert job["runs-on"] == "ubuntu-24.04"
+        assert job["steps"][1]["uses"] == "./.github/actions/sp500-dehb-continuous-worker"
+    assert "run_sp500_dehb_continuous_worker.py" in CONTINUOUS_WORKER_ACTION.read_text(
+        encoding="utf-8"
+    )
+    assert "--executor-slots 4" in CONTINUOUS_WORKER_ACTION.read_text(encoding="utf-8")
+    assert action["runs"]["using"] == "composite"
+
+
+def test_continuous_workflows_are_exact_commit_train_only_and_never_call_v1() -> None:
+    paths = (
+        CONTINUOUS_BOOTSTRAP,
+        CONTINUOUS_COORDINATOR,
+        CONTINUOUS_POOL,
+        CONTINUOUS_REDUCER,
+        CONTINUOUS_SUPERVISOR,
+    )
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+
+    for path in paths:
+        assert path.exists()
+        assert "commit_sha" in path.read_text(encoding="utf-8")
+    assert "SP500_DEHB_COORDINATOR_DATABASE_URL" in combined
+    assert "sp500-dehb-mega-controller-v1.yml" not in combined
+    assert "validation_2011_2020" not in combined
+    assert "locked_2021" not in combined
+    assert "2021" not in combined
 
 
 def test_three_shards_request_360_jobs_and_skip_inside_called_worker() -> None:

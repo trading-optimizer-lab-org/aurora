@@ -1,0 +1,53 @@
+name: SP500 Continuous DEHB Coordinator v2
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha: {required: true}
+      campaign_id: {required: true}
+      bootstrap_run_id: {required: true}
+      lifetime_minutes: {required: true, default: "300"}
+
+permissions: {actions: read, contents: read}
+concurrency:
+  group: sp500-continuous-coordinator-${{ inputs.campaign_id }}
+  cancel-in-progress: false
+
+jobs:
+  coordinator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      GITHUB_ACTIONS: "true"
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - name: Set up runtime
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - name: Install frozen coordinator runtime
+        run: |
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install "psycopg[binary,pool]>=3.2,<4"
+          python -m pip install --no-deps -e .
+      - name: Download exact bootstrap receipt and launch contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-dehb-continuous-bootstrap
+          path: ${{ runner.temp }}/dehb_bootstrap
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.bootstrap_run_id }}
+      - name: Run leased coordinator
+        run: >-
+          python scripts/run_sp500_dehb_continuous_coordinator.py
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --feature-contract config/sp500_megarun_feature_contract_240.json
+          --data-contract config/sp500_megarun_free_data_240.json
+          --launch-contract "$RUNNER_TEMP/dehb_bootstrap/launch_contract.json"
+          --campaign-id "${{ inputs.campaign_id }}"
+          --work-root "$RUNNER_TEMP/coordinator"
+          --lifetime-minutes "${{ inputs.lifetime_minutes }}"
+

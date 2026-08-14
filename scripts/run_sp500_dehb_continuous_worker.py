@@ -56,6 +56,7 @@ def main() -> int:
     parser.add_argument("--pool-generation", required=True)
     parser.add_argument("--worker-lifetime-id", required=True)
     parser.add_argument("--lifetime-minutes", type=int, default=300)
+    parser.add_argument("--executor-slots", type=int, default=4)
     parser.add_argument("--database-url-env", default="SP500_DEHB_COORDINATOR_DATABASE_URL")
     args = parser.parse_args()
 
@@ -156,7 +157,7 @@ def main() -> int:
         position_builder=position_builder,
         physical_evaluator=physical_evaluator,
         result_binder=result_binder,
-        executor_slots=4,
+        executor_slots=args.executor_slots,
     )
     runtime.run_for(lifetime_seconds=max(1, args.lifetime_minutes) * 60 - 60)
     if runtime_manifest.get("validation_opened") is not False or runtime_manifest.get(
