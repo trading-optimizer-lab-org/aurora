@@ -657,7 +657,7 @@ class PostgresContinuousCampaignStore:
                         campaign_id, schema_version, cache_key_sha256, key_payload,
                         state, created_sequence, updated_sequence
                     ) VALUES (%s, 2, %s, %s, 'ready', %s, %s)
-                    ON CONFLICT (campaign_id, cache_key_sha256) DO NOTHING
+                    ON CONFLICT (cache_key_sha256) DO NOTHING
                     RETURNING evaluation_id
                     """,
                     (
@@ -675,9 +675,9 @@ class PostgresContinuousCampaignStore:
                         """
                         SELECT evaluation_id, state
                         FROM evaluations
-                        WHERE campaign_id = %s AND cache_key_sha256 = %s
+                        WHERE cache_key_sha256 = %s
                         """,
-                        (self.campaign_id, proposal.evaluation_key.sha256),
+                        (proposal.evaluation_key.sha256,),
                     )
                     evaluation_row = cursor.fetchone()
                     if evaluation_row is None:
@@ -1297,7 +1297,7 @@ class PostgresContinuousCampaignStore:
                         campaign_id, schema_version, strategy_key_sha256, key_payload,
                         owner_evaluation_id, state, created_sequence, updated_sequence
                     ) VALUES (%s, 1, %s, %s, %s, 'owned', %s, %s)
-                    ON CONFLICT (campaign_id, strategy_key_sha256) DO NOTHING
+                    ON CONFLICT (strategy_key_sha256) DO NOTHING
                     RETURNING strategy_evaluation_id
                     """,
                     (
@@ -1315,9 +1315,9 @@ class PostgresContinuousCampaignStore:
                 cursor.execute(
                     """
                     SELECT state, result_payload FROM strategy_evaluations
-                    WHERE campaign_id = %s AND strategy_key_sha256 = %s
+                    WHERE strategy_key_sha256 = %s
                     """,
-                    (self.campaign_id, strategy_key.sha256),
+                    (strategy_key.sha256,),
                 )
                 row = cursor.fetchone()
                 if row is None or str(row[0]) == "conflict":
@@ -1341,10 +1341,10 @@ class PostgresContinuousCampaignStore:
                     """
                     SELECT owner_evaluation_id, state, result_sha256
                     FROM strategy_evaluations
-                    WHERE campaign_id = %s AND strategy_key_sha256 = %s
+                    WHERE strategy_key_sha256 = %s
                     FOR UPDATE
                     """,
-                    (self.campaign_id, strategy_key.sha256),
+                    (strategy_key.sha256,),
                 )
                 row = cursor.fetchone()
                 if row is None or int(row[0]) != int(evaluation_id):
@@ -1353,10 +1353,9 @@ class PostgresContinuousCampaignStore:
                     cursor.execute(
                         """
                         UPDATE strategy_evaluations SET state = 'conflict',
-                            updated_sequence = %s WHERE campaign_id = %s
-                            AND strategy_key_sha256 = %s
+                            updated_sequence = %s WHERE strategy_key_sha256 = %s
                         """,
-                        (sequence, self.campaign_id, strategy_key.sha256),
+                        (sequence, strategy_key.sha256),
                     )
                     cursor.execute(
                         "UPDATE campaigns SET state = 'halted_conflict' WHERE campaign_id = %s",
@@ -1369,13 +1368,12 @@ class PostgresContinuousCampaignStore:
                         UPDATE strategy_evaluations
                         SET state = 'completed', result_sha256 = %s, result_payload = %s,
                             updated_sequence = %s, updated_at = clock_timestamp()
-                        WHERE campaign_id = %s AND strategy_key_sha256 = %s
+                        WHERE strategy_key_sha256 = %s
                         """,
                         (
                             result_hash,
                             self._jsonb(normalized),
                             sequence,
-                            self.campaign_id,
                             strategy_key.sha256,
                         ),
                     )
@@ -1394,9 +1392,9 @@ class PostgresContinuousCampaignStore:
                     cursor.execute(
                         """
                         SELECT state, result_payload FROM strategy_evaluations
-                        WHERE campaign_id = %s AND strategy_key_sha256 = %s
+                        WHERE strategy_key_sha256 = %s
                         """,
-                        (self.campaign_id, strategy_key.sha256),
+                        (strategy_key.sha256,),
                     )
                     row = cursor.fetchone()
             if row is not None and str(row[0]) == "completed" and row[1] is not None:
@@ -1490,12 +1488,11 @@ class PostgresContinuousCampaignStore:
                     SELECT r.created_sequence, p.island_id, i.lane_id, i.replica,
                            i.restart_seed, r.result_payload,
                            r.validation_opened, r.locked_opened
-                    FROM results r
-                    JOIN proposals p ON p.campaign_id = r.campaign_id
-                      AND p.evaluation_id = r.evaluation_id
+                    FROM proposals p
+                    JOIN results r ON r.evaluation_id = p.evaluation_id
                     JOIN islands i ON i.campaign_id = p.campaign_id
                       AND i.island_id = p.island_id
-                    WHERE r.campaign_id = %s AND r.created_sequence <= %s
+                    WHERE p.campaign_id = %s AND r.created_sequence <= %s
                     ORDER BY r.created_sequence, p.island_id, p.proposal_id
                     """,
                     (self.campaign_id, int(cutoff_sequence)),

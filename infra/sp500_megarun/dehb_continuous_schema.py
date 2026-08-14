@@ -115,7 +115,7 @@ def schema_statements() -> Sequence[str]:
             updated_sequence bigint NOT NULL,
             created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
             updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-            UNIQUE (campaign_id, cache_key_sha256)
+            UNIQUE (cache_key_sha256)
         )
         """,
         """
@@ -219,7 +219,7 @@ def schema_statements() -> Sequence[str]:
             updated_sequence bigint NOT NULL,
             created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
             updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-            UNIQUE (campaign_id, strategy_key_sha256)
+            UNIQUE (strategy_key_sha256)
         )
         """,
         """
@@ -344,6 +344,14 @@ def schema_statements() -> Sequence[str]:
         CREATE INDEX IF NOT EXISTS work_items_lease_expiry
         ON work_items (campaign_id, lease_expires_at)
         WHERE state = 'leased'
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS evaluations_global_cache_key
+        ON evaluations (cache_key_sha256)
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS strategies_global_cache_key
+        ON strategy_evaluations (strategy_key_sha256)
         """,
     )
 

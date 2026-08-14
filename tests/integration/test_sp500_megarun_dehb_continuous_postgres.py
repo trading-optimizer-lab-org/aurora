@@ -185,3 +185,65 @@ def test_postgres_completion_is_visible_to_sequence_cutoff_and_health(postgres_s
     assert rows[0]["validation_opened"] is False
     assert health["conflict_count"] == 0
     assert health["boundary_violations"] == 0
+
+    second_campaign = f"campaign-{uuid.uuid4()}"
+    with postgres_store._pool.connection() as connection:  # noqa: SLF001
+        with connection.transaction(), connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO campaigns (
+                    campaign_id, schema_version, state, scientific_contract_sha256,
+                    launch_contract_sha256, code_commit_sha, train_manifest_sha256,
+                    train_spy_sha256, numeric_profile_sha256
+                ) VALUES (%s, 1, 'searching', %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    second_campaign,
+                    "e" * 64,
+                    "1" * 64,
+                    "2" * 40,
+                    "c" * 64,
+                    "d" * 64,
+                    "b" * 64,
+                ),
+            )
+            cursor.execute(
+                """
+                INSERT INTO islands (
+                    campaign_id, island_id, schema_version, lane_id, replica,
+                    restart_seed, status, created_sequence, updated_sequence
+                ) VALUES (%s, 'F067-R1', 1, 'F067', 1, 8, 'runnable', 0, 0)
+                """,
+                (second_campaign,),
+            )
+            cursor.execute(
+                """
+                INSERT INTO island_batches (
+                    campaign_id, island_id, batch_sequence, schema_version,
+                    status, batch_sha256, created_sequence, updated_sequence
+                ) VALUES (%s, 'F067-R1', 1, 1, 'open', %s, 0, 0)
+                """,
+                (second_campaign, "8" * 64),
+            )
+    from aurora.infra.sp500_megarun.dehb_continuous_store import (
+        PostgresContinuousCampaignStore,
+    )
+
+    second_store = PostgresContinuousCampaignStore(
+        dsn="postgresql://test.invalid/aurora?sslmode=require",
+        campaign_id=second_campaign,
+        pool=postgres_store._pool,  # noqa: SLF001
+    )
+    second_proposal = EvaluationProposalV2.build(
+        campaign_id=second_campaign,
+        island_id="F067-R1",
+        batch_sequence=1,
+        batch_slot=0,
+        evaluation_key=key,
+        dehb_job={"config_id": 0, "fidelity": 27},
+    )
+    reused = second_store.register_proposal(second_proposal)
+
+    assert reused.physical_work_created is False
+    assert reused.cache_hit is True
+    assert len(second_store.result_rows(second_store.latest_event_sequence())) == 1
