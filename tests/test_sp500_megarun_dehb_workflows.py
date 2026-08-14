@@ -130,7 +130,13 @@ def test_cache_conflict_diagnostic_is_github_only_and_train_evidence_only() -> N
     workflow = _load(CONFLICT_DIAGNOSTIC)
     text = CONFLICT_DIAGNOSTIC.read_text(encoding="utf-8")
 
-    assert set(workflow["on"]) == {"workflow_dispatch"}
+    assert set(workflow["on"]) == {"push", "workflow_dispatch"}
+    assert workflow["on"]["push"]["branches"] == [
+        "codex/sp500-search-method-benchmark-short"
+    ]
+    assert workflow["on"]["push"]["paths"] == [
+        ".github/workflows/sp500-dehb-cache-conflict-diagnostic.yml"
+    ]
     assert workflow["permissions"] == {"actions": "read", "contents": "read"}
     assert "source_run_id" in workflow["on"]["workflow_dispatch"]["inputs"]
     assert 'gh run download "$SOURCE_RUN_ID"' in text
