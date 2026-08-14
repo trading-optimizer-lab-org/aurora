@@ -19,6 +19,7 @@ EXPECTED_TABLES = {
     "audit_events",
     "reducer_snapshots",
     "import_receipts",
+    "robustness_evidence",
 }
 
 
@@ -50,6 +51,14 @@ def test_schema_enforces_global_evaluation_and_position_uniqueness():
     strategy_section = sql.split("create table if not exists strategy_evaluations", 1)[1]
     strategy_section = strategy_section.split("create table if not exists results", 1)[0]
     assert "result_payload jsonb" in strategy_section
+
+
+def test_robustness_evidence_keeps_independent_seed_identity():
+    sql = _normalized_sql()
+    section = sql.split("create table if not exists robustness_evidence", 1)[1]
+    assert "unique (campaign_id, stage, strategy_fingerprint, robustness_seed)" in section
+    assert "validation_opened boolean not null default false" in section
+    assert "locked_opened boolean not null default false" in section
 
 
 def test_schema_makes_later_partition_flags_false_only():

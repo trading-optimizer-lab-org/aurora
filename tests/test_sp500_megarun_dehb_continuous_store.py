@@ -254,3 +254,35 @@ def test_postgres_store_exposes_the_same_transactional_operations():
         "close_worker_session",
     ):
         assert callable(getattr(registry, method))
+
+
+def test_robustness_cache_reuses_same_seed_but_never_merges_different_seeds():
+    registry = store()
+    evidence = {
+        "candidate_local_passed": True,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+
+    first = registry.put_robustness_evidence(
+        stage="candidate_local",
+        strategy_fingerprint=SHA_A,
+        position_fingerprint=SHA_B,
+        robustness_seed=7,
+        evidence=evidence,
+    )
+    same = registry.put_robustness_evidence(
+        stage="candidate_local",
+        strategy_fingerprint=SHA_A,
+        position_fingerprint=SHA_B,
+        robustness_seed=7,
+        evidence=evidence,
+    )
+    other_seed = registry.get_robustness_evidence(
+        stage="candidate_local",
+        strategy_fingerprint=SHA_A,
+        robustness_seed=8,
+    )
+
+    assert first == same
+    assert other_seed is None

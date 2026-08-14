@@ -223,6 +223,29 @@ def schema_statements() -> Sequence[str]:
         )
         """,
         """
+        CREATE TABLE IF NOT EXISTS robustness_evidence (
+            robustness_evidence_id bigserial PRIMARY KEY,
+            campaign_id text NOT NULL REFERENCES campaigns(campaign_id),
+            schema_version integer NOT NULL,
+            stage text NOT NULL CHECK (stage IN ('candidate_local', 'global_merge', 'technical')),
+            strategy_fingerprint char(64) NOT NULL,
+            position_fingerprint char(64) NOT NULL,
+            robustness_seed bigint NOT NULL,
+            evidence_sha256 char(64) NOT NULL,
+            evidence_payload jsonb NOT NULL,
+            validation_opened boolean NOT NULL DEFAULT false
+                CHECK (validation_opened = false),
+            locked_opened boolean NOT NULL DEFAULT false
+                CHECK (locked_opened = false),
+            created_sequence bigint NOT NULL,
+            updated_sequence bigint NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+            updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+            UNIQUE (campaign_id, stage, strategy_fingerprint, robustness_seed),
+            UNIQUE (campaign_id, evidence_sha256)
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS results (
             result_id bigserial PRIMARY KEY,
             campaign_id text NOT NULL REFERENCES campaigns(campaign_id),

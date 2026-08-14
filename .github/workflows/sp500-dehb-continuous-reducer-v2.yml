@@ -6,6 +6,7 @@ on:
       commit_sha: {required: true}
       campaign_id: {required: true}
       cutoff_sequence: {required: true, default: "latest"}
+      runtime_input_run_id: {required: true}
 
 permissions: {contents: read}
 concurrency:
@@ -28,15 +29,27 @@ jobs:
         with: {python-version: "3.11", cache: ""}
       - name: Install reducer runtime
         run: |
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
           python -m pip install "psycopg[binary,pool]>=3.2,<4"
           python -m pip install --no-deps -e .
+      - name: Download immutable train-only runtime pack
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          path: ${{ runner.temp }}/dehb_runtime_inputs
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
       - name: Reduce immutable train-only cutoff
         run: >-
           python scripts/reduce_sp500_dehb_continuous_snapshot.py
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --data-contract config/sp500_megarun_free_data_240.json
+          --feature-contract config/sp500_megarun_feature_contract_240.json
+          --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs"
           --campaign-id "${{ inputs.campaign_id }}"
           --cutoff-sequence "${{ inputs.cutoff_sequence }}"
           --output outputs/reducer/snapshot.json
       - name: Upload reducer decision
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with: {name: sp500-dehb-continuous-reducer, path: outputs/reducer, if-no-files-found: error, retention-days: 90}
-

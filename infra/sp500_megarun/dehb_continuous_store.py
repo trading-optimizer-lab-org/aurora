@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 import secrets
 from threading import Condition, RLock
 import time
@@ -165,6 +167,7 @@ class InMemoryContinuousCampaignStore:
         self._island_checkpoint_hashes: dict[str, str] = {}
         self._open_island_batches: set[tuple[str, int]] = set()
         self._strategies: dict[str, _StrategyRecord] = {}
+        self._robustness_evidence: dict[tuple[str, str, int], tuple[str, dict]] = {}
 
     def register_proposal(self, proposal: EvaluationProposalV2) -> ProposalRegistrationV1:
         if proposal.campaign_id != self.campaign_id:
@@ -513,6 +516,75 @@ class InMemoryContinuousCampaignStore:
         with self._lock:
             counts = [1 for record in self._evaluations_by_id.values() if record.state == "leased"]
             return max(counts, default=0)
+
+    def put_robustness_evidence(
+        self,
+        *,
+        stage: str,
+        strategy_fingerprint: str,
+        position_fingerprint: str,
+        robustness_seed: int,
+        evidence: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        checked, digest = _checked_robustness_evidence(
+            stage=stage,
+            strategy_fingerprint=strategy_fingerprint,
+            position_fingerprint=position_fingerprint,
+            robustness_seed=robustness_seed,
+            evidence=evidence,
+        )
+        identity = (str(stage), str(strategy_fingerprint), int(robustness_seed))
+        with self._lock:
+            existing = self._robustness_evidence.get(identity)
+            if existing is not None and existing[0] != digest:
+                self._state = "halted_conflict"
+                raise ResultConflictError("CONTINUOUS_ROBUSTNESS_EVIDENCE_CONFLICT")
+            self._robustness_evidence[identity] = (digest, checked)
+        return dict(checked)
+
+    def get_robustness_evidence(
+        self,
+        *,
+        stage: str,
+        strategy_fingerprint: str,
+        robustness_seed: int,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._robustness_evidence.get(
+                (str(stage), str(strategy_fingerprint), int(robustness_seed))
+            )
+            return None if row is None else dict(row[1])
+
+
+def _checked_robustness_evidence(
+    *,
+    stage: str,
+    strategy_fingerprint: str,
+    position_fingerprint: str,
+    robustness_seed: int,
+    evidence: Mapping[str, Any],
+) -> tuple[dict[str, Any], str]:
+    if str(stage) not in {"candidate_local", "global_merge", "technical"}:
+        raise ContinuousStoreError("CONTINUOUS_ROBUSTNESS_STAGE_INVALID")
+    if len(str(strategy_fingerprint)) != 64 or len(str(position_fingerprint)) != 64:
+        raise ContinuousStoreError("CONTINUOUS_ROBUSTNESS_FINGERPRINT_INVALID")
+    checked = json.loads(json.dumps(dict(evidence), sort_keys=True, allow_nan=False))
+    if checked.get("validation_opened") is not False:
+        raise ContinuousStoreError("CONTINUOUS_ROBUSTNESS_OPENED_VALIDATION")
+    if checked.get("locked_opened") is not False:
+        raise ContinuousStoreError("CONTINUOUS_ROBUSTNESS_OPENED_LOCKED")
+    payload = {
+        "stage": str(stage),
+        "strategy_fingerprint": str(strategy_fingerprint),
+        "position_fingerprint": str(position_fingerprint),
+        "robustness_seed": int(robustness_seed),
+        "evidence": checked,
+    }
+    digest = hashlib.sha256(
+        b"SP500-DEHB-ROBUSTNESS-EVIDENCE-V1\0"
+        + json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return checked, digest
 
 
 class PostgresContinuousCampaignStore:
@@ -1416,7 +1488,8 @@ class PostgresContinuousCampaignStore:
                 cursor.execute(
                     """
                     SELECT r.created_sequence, p.island_id, i.lane_id, i.replica,
-                           r.result_payload, r.validation_opened, r.locked_opened
+                           i.restart_seed, r.result_payload,
+                           r.validation_opened, r.locked_opened
                     FROM results r
                     JOIN proposals p ON p.campaign_id = r.campaign_id
                       AND p.evaluation_id = r.evaluation_id
@@ -1429,7 +1502,16 @@ class PostgresContinuousCampaignStore:
                 )
                 rows = cursor.fetchall()
         output: list[dict[str, Any]] = []
-        for sequence, island_id, lane_id, replica, payload, validation, locked in rows:
+        for (
+            sequence,
+            island_id,
+            lane_id,
+            replica,
+            restart_seed,
+            payload,
+            validation,
+            locked,
+        ) in rows:
             result = dict(payload)
             info = result.get("info")
             if not isinstance(info, Mapping):
@@ -1441,6 +1523,7 @@ class PostgresContinuousCampaignStore:
                     "island_id": str(island_id),
                     "lane_id": str(lane_id),
                     "replicate": int(replica),
+                    "restart_seed": int(restart_seed),
                     "validation_opened": bool(validation),
                     "locked_opened": bool(locked),
                 }
@@ -1580,6 +1663,103 @@ class PostgresContinuousCampaignStore:
             "conflict_count": int(health[3]),
             "boundary_violations": boundary_violations,
         }
+
+    def put_robustness_evidence(
+        self,
+        *,
+        stage: str,
+        strategy_fingerprint: str,
+        position_fingerprint: str,
+        robustness_seed: int,
+        evidence: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        checked, digest = _checked_robustness_evidence(
+            stage=stage,
+            strategy_fingerprint=strategy_fingerprint,
+            position_fingerprint=position_fingerprint,
+            robustness_seed=robustness_seed,
+            evidence=evidence,
+        )
+        with self._pool.connection() as connection, connection.transaction():
+            with connection.cursor() as cursor:
+                sequence = self._next_sequence(cursor)
+                cursor.execute(
+                    """
+                    INSERT INTO robustness_evidence (
+                        campaign_id, schema_version, stage, strategy_fingerprint,
+                        position_fingerprint, robustness_seed, evidence_sha256,
+                        evidence_payload, validation_opened, locked_opened,
+                        created_sequence, updated_sequence
+                    ) VALUES (%s, 1, %s, %s, %s, %s, %s, %s, false, false, %s, %s)
+                    ON CONFLICT (
+                        campaign_id, stage, strategy_fingerprint, robustness_seed
+                    ) DO NOTHING
+                    RETURNING evidence_sha256
+                    """,
+                    (
+                        self.campaign_id,
+                        str(stage),
+                        str(strategy_fingerprint),
+                        str(position_fingerprint),
+                        int(robustness_seed),
+                        digest,
+                        self._jsonb(checked),
+                        sequence,
+                        sequence,
+                    ),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    cursor.execute(
+                        """
+                        SELECT evidence_sha256, evidence_payload
+                        FROM robustness_evidence
+                        WHERE campaign_id = %s AND stage = %s
+                          AND strategy_fingerprint = %s AND robustness_seed = %s
+                        """,
+                        (
+                            self.campaign_id,
+                            str(stage),
+                            str(strategy_fingerprint),
+                            int(robustness_seed),
+                        ),
+                    )
+                    row = cursor.fetchone()
+                    if row is None or str(row[0]) != digest:
+                        cursor.execute(
+                            "UPDATE campaigns SET state = 'halted_conflict' WHERE campaign_id = %s",
+                            (self.campaign_id,),
+                        )
+                        raise ResultConflictError(
+                            "CONTINUOUS_ROBUSTNESS_EVIDENCE_CONFLICT"
+                        )
+                    return dict(row[1])
+        return checked
+
+    def get_robustness_evidence(
+        self,
+        *,
+        stage: str,
+        strategy_fingerprint: str,
+        robustness_seed: int,
+    ) -> dict[str, Any] | None:
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT evidence_payload FROM robustness_evidence
+                    WHERE campaign_id = %s AND stage = %s
+                      AND strategy_fingerprint = %s AND robustness_seed = %s
+                    """,
+                    (
+                        self.campaign_id,
+                        str(stage),
+                        str(strategy_fingerprint),
+                        int(robustness_seed),
+                    ),
+                )
+                row = cursor.fetchone()
+        return None if row is None else dict(row[0])
 
 
 __all__ = [
