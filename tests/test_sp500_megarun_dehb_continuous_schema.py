@@ -35,6 +35,12 @@ def test_schema_creates_every_durable_component():
     assert created == EXPECTED_TABLES
 
 
+def test_schema_uses_nonblocking_database_sequence_for_event_order():
+    sql = _normalized_sql()
+
+    assert "create sequence if not exists continuous_event_sequence" in sql
+
+
 def test_schema_enforces_global_evaluation_and_position_uniqueness():
     sql = _normalized_sql()
 

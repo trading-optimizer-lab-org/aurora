@@ -24,6 +24,7 @@ def schema_statements() -> Sequence[str]:
     """Return idempotent DDL in foreign-key-safe execution order."""
 
     return (
+        "CREATE SEQUENCE IF NOT EXISTS continuous_event_sequence AS bigint",
         """
         CREATE TABLE IF NOT EXISTS campaigns (
             campaign_id text PRIMARY KEY,
@@ -358,6 +359,7 @@ def role_statements() -> Sequence[str]:
         "GRANT SELECT, INSERT, UPDATE ON worker_slot_leases TO sp500_dehb_worker",
         "GRANT SELECT, INSERT ON results TO sp500_dehb_worker",
         "GRANT SELECT, INSERT, UPDATE ON strategy_evaluations TO sp500_dehb_worker",
+        "GRANT USAGE, SELECT ON SEQUENCE continuous_event_sequence TO sp500_dehb_worker",
         """
         DO $$ BEGIN
             EXECUTE format(

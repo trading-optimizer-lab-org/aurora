@@ -563,29 +563,21 @@ class PostgresContinuousCampaignStore:
     def _next_sequence(self, cursor: object) -> int:
         cursor.execute(
             """
-            UPDATE campaigns
-            SET next_event_sequence = next_event_sequence + 1,
-                updated_at = clock_timestamp()
-            WHERE campaign_id = %s AND state NOT LIKE 'halted_%%'
-            RETURNING next_event_sequence - 1
+            SELECT state FROM campaigns WHERE campaign_id = %s
             """,
             (self.campaign_id,),
         )
         row = cursor.fetchone()
-        if row is None:
+        if row is None or str(row[0]).startswith("halted_"):
             raise ContinuousStoreError("CONTINUOUS_CAMPAIGN_NOT_MUTABLE")
-        return int(row[0])
-
-    @staticmethod
-    def _serializable(cursor: object) -> None:
-        cursor.execute("SET LOCAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        cursor.execute("SELECT nextval('continuous_event_sequence')")
+        return int(cursor.fetchone()[0])
 
     def register_proposal(self, proposal: EvaluationProposalV2) -> ProposalRegistrationV1:
         if proposal.campaign_id != self.campaign_id:
             raise ContinuousStoreError("CONTINUOUS_PROPOSAL_CAMPAIGN_MISMATCH")
         with self._pool.connection() as connection, connection.transaction():
             with connection.cursor() as cursor:
-                self._serializable(cursor)
                 sequence = self._next_sequence(cursor)
                 cursor.execute(
                     """
@@ -713,7 +705,6 @@ class PostgresContinuousCampaignStore:
         session_id = str(uuid.uuid4())
         with self._pool.connection() as connection, connection.transaction():
             with connection.cursor() as cursor:
-                self._serializable(cursor)
                 cursor.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended(%s, 360))",
                     (self.campaign_id,),
@@ -879,7 +870,6 @@ class PostgresContinuousCampaignStore:
     ) -> EvaluationCompletionV1:
         with self._pool.connection() as connection, connection.transaction():
             with connection.cursor() as cursor:
-                self._serializable(cursor)
                 sequence = self._next_sequence(cursor)
                 cursor.execute(
                     """
@@ -1167,7 +1157,6 @@ class PostgresContinuousCampaignStore:
     def record_island_advance(self, advance: object) -> None:
         with self._pool.connection() as connection, connection.transaction():
             with connection.cursor() as cursor:
-                self._serializable(cursor)
                 sequence = self._next_sequence(cursor)
                 cursor.execute(
                     """
@@ -1275,7 +1264,6 @@ class PostgresContinuousCampaignStore:
         result_hash = scientific_result_sha256(normalized)
         with self._pool.connection() as connection, connection.transaction():
             with connection.cursor() as cursor:
-                self._serializable(cursor)
                 sequence = self._next_sequence(cursor)
                 cursor.execute(
                     """
