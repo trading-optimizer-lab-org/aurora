@@ -157,5 +157,8 @@ jobs:
           tests/test_sp500_megarun_dehb_continuous_coordinator.py
           tests/test_sp500_megarun_dehb_continuous_worker.py
           tests/test_sp500_megarun_dehb_continuous_bootstrap.py
+          tests/test_sp500_megarun_dehb_continuous_reducer.py
+          tests/test_sp500_megarun_dehb_continuous_supervisor.py
+          tests/test_sp500_megarun_dehb_workflows.py
           tests/integration/test_sp500_megarun_dehb_continuous_postgres.py
           -q
