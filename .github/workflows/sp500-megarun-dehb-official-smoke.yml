@@ -2,6 +2,18 @@ name: SP500 Megarun Official DEHB Infrastructure Smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Verification mode
+        type: choice
+        required: true
+        default: official
+        options:
+          - official
+          - continuous_postgres
+      commit_sha:
+        description: Exact revision for continuous_postgres mode
+        required: false
 
 permissions:
   actions: read
@@ -13,6 +25,7 @@ concurrency:
 
 jobs:
   framework_contract:
+    if: ${{ inputs.mode == 'official' }}
     uses: ./.github/workflows/_aurora-future-run-v3.yml
     with:
       spec_path: config/github_performance_reference.yaml
@@ -22,6 +35,7 @@ jobs:
       forced_job_count: 1
 
   official_dehb_smoke:
+    if: ${{ inputs.mode == 'official' }}
     needs: framework_contract
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -93,3 +107,55 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 90
+
+  continuous_postgres:
+    if: ${{ inputs.mode == 'continuous_postgres' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: aurora
+          POSTGRES_PASSWORD: continuous-test-only
+          POSTGRES_DB: aurora
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aurora -d aurora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SP500_DEHB_TEST_DATABASE_URL: postgresql://aurora:continuous-test-only@127.0.0.1:5432/aurora
+      PYTHONPATH: ${{ github.workspace }}/..
+    steps:
+      - name: Check out exact continuous revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Verify exact continuous revision
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.commit_sha }}"
+      - name: Set up isolated Python 3.11
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install focused PostgreSQL test runtime
+        run: |
+          python -m pip install "psycopg[binary,pool]>=3.2,<4" pytest numpy pandas pyarrow
+          python -m pip install --no-deps -e .
+      - name: Verify continuous unit and PostgreSQL contracts
+        run: >-
+          python -m pytest
+          tests/test_sp500_megarun_dehb_continuous_models.py
+          tests/test_sp500_megarun_dehb_continuous_schema.py
+          tests/test_sp500_megarun_dehb_continuous_store.py
+          tests/test_sp500_megarun_dehb_continuous_island.py
+          tests/test_sp500_megarun_dehb_continuous_coordinator.py
+          tests/test_sp500_megarun_dehb_continuous_worker.py
+          tests/test_sp500_megarun_dehb_continuous_bootstrap.py
+          tests/integration/test_sp500_megarun_dehb_continuous_postgres.py
+          -q

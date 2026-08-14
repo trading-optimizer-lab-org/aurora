@@ -13,6 +13,7 @@ WORKER_ACTION = ROOT / ".github/actions/sp500-dehb-mega-worker/action.yml"
 CONFLICT_DIAGNOSTIC = ROOT / ".github/workflows/sp500-dehb-cache-conflict-diagnostic.yml"
 CROSS_RUNNER = ROOT / ".github/workflows/sp500-dehb-cross-runner-determinism.yml"
 CONTINUOUS_SMOKE = ROOT / ".github/workflows/sp500-dehb-continuous-smoke-v2.yml"
+REGISTERED_SMOKE_BRIDGE = ROOT / ".github/workflows/sp500-megarun-dehb-official-smoke.yml"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -29,6 +30,21 @@ def test_continuous_smoke_uses_exact_commit_and_postgres_16_without_later_data()
     assert "test_sp500_megarun_dehb_continuous_postgres.py" in text
     assert "validation_2011_2020" not in text
     assert "2021" not in text
+
+
+def test_registered_smoke_can_bridge_continuous_postgres_on_feature_branch() -> None:
+    workflow = _load(REGISTERED_SMOKE_BRIDGE)
+    text = REGISTERED_SMOKE_BRIDGE.read_text(encoding="utf-8")
+
+    dispatch = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert dispatch["mode"]["default"] == "official"
+    assert "continuous_postgres" in dispatch["mode"]["options"]
+    job = workflow["jobs"]["continuous_postgres"]
+    assert job["if"] == "${{ inputs.mode == 'continuous_postgres' }}"
+    assert job["services"]["postgres"]["image"] == "postgres:16.4-alpine"
+    assert "test_sp500_megarun_dehb_continuous_postgres.py" in text
+    assert "validation_2011_2020" not in text
+    assert "locked_2021" not in text
 
 
 def test_three_shards_request_360_jobs_and_skip_inside_called_worker() -> None:
