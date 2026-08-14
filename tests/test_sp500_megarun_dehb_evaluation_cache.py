@@ -144,22 +144,32 @@ def test_scientific_evaluator_binding_changes_with_any_frozen_input() -> None:
         code_commit_sha="a" * 40,
         campaign_contract_sha256="1" * 64,
         runtime_scientific_input_binding_sha256="2" * 64,
+        numeric_runtime_profile_sha256="3" * 64,
     )
 
     assert baseline == scientific_evaluator_binding_sha256(
         code_commit_sha="a" * 40,
         campaign_contract_sha256="1" * 64,
         runtime_scientific_input_binding_sha256="2" * 64,
+        numeric_runtime_profile_sha256="3" * 64,
     )
     assert baseline != scientific_evaluator_binding_sha256(
         code_commit_sha="b" * 40,
         campaign_contract_sha256="1" * 64,
         runtime_scientific_input_binding_sha256="2" * 64,
+        numeric_runtime_profile_sha256="3" * 64,
     )
     assert baseline != scientific_evaluator_binding_sha256(
         code_commit_sha="a" * 40,
         campaign_contract_sha256="3" * 64,
         runtime_scientific_input_binding_sha256="2" * 64,
+        numeric_runtime_profile_sha256="3" * 64,
+    )
+    assert baseline != scientific_evaluator_binding_sha256(
+        code_commit_sha="a" * 40,
+        campaign_contract_sha256="1" * 64,
+        runtime_scientific_input_binding_sha256="2" * 64,
+        numeric_runtime_profile_sha256="4" * 64,
     )
 
 
@@ -173,6 +183,8 @@ def test_scientific_result_normalization_removes_final_bit_noise_only() -> None:
     second = _result()
     first["fitness"] = 0.123456789012341
     second["fitness"] = 0.123456789012349
+    first["info"]["config"] = {"threshold": 0.12345678901234567}
+    second["info"]["config"] = {"threshold": 0.12345678901234567}
     first["info"]["objective_runtime_seconds"] = 1.0
     second["info"]["objective_runtime_seconds"] = 99.0
 
@@ -181,6 +193,7 @@ def test_scientific_result_normalization_removes_final_bit_noise_only() -> None:
 
     assert normalized_first["fitness"] == 0.123456789012
     assert normalized_second["fitness"] == 0.123456789012
+    assert normalized_first["info"]["config"]["threshold"] == 0.12345678901234567
     assert normalized_first["info"]["objective_runtime_seconds"] == 1.0
     assert normalized_second["info"]["objective_runtime_seconds"] == 99.0
     assert scientific_result_sha256(normalized_first) == scientific_result_sha256(

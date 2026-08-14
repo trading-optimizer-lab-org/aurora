@@ -18,6 +18,9 @@ from aurora.infra.sp500_megarun.dehb_job_runner import (
 from aurora.infra.sp500_megarun.dehb_launch_contract import (
     load_and_validate_launch_contract,
 )
+from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
+    capture_numeric_runtime_report,
+)
 from aurora.infra.sp500_megarun.feature_contract import (
     load_and_validate_feature_contract,
 )
@@ -39,6 +42,7 @@ def main() -> int:
     parser.add_argument("--evaluation-cache-root", type=Path)
     parser.add_argument("--slice-seconds", type=float)
     args = parser.parse_args()
+    numeric_runtime_report = capture_numeric_runtime_report()
     campaign = load_and_validate_campaign_contract(args.campaign_contract)
     launch = load_and_validate_launch_contract(
         args.launch_contract,
@@ -59,6 +63,7 @@ def main() -> int:
         evaluation_cache_root=args.evaluation_cache_root,
         current_run_id=int(os.environ["GITHUB_RUN_ID"]),
         slice_seconds=args.slice_seconds,
+        numeric_runtime_report=numeric_runtime_report,
     )
     print(json.dumps(result, sort_keys=True))
     return 0

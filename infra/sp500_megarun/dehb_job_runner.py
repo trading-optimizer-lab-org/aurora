@@ -14,6 +14,9 @@ from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
 from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
     scientific_evaluator_binding_sha256,
 )
+from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
+    numeric_runtime_profile_sha256,
+)
 
 
 class DehbJobRunnerError(ValueError):
@@ -120,6 +123,7 @@ def run_dehb_job(
     slice_seconds: float | None = None,
     island_runner: IslandRunner | None = None,
     pack_verifier: PackVerifier = verify_runtime_input_pack,
+    numeric_runtime_report: Mapping[str, Any] | None = None,
 ) -> Mapping[str, Any]:
     """Run exactly two assigned islands sequentially and write one worker result."""
 
@@ -135,12 +139,21 @@ def run_dehb_job(
         expected_scientific_input_binding_sha256=(scientific_input_binding_sha256(contract)),
         expected_aggregate_sha256=expected_aggregate,
     )
+    numeric_profile_sha256 = numeric_runtime_profile_sha256()
+    if current_run_id > 0:
+        if (
+            not isinstance(numeric_runtime_report, Mapping)
+            or numeric_runtime_report.get("passed") is not True
+            or numeric_runtime_report.get("profile_sha256") != numeric_profile_sha256
+        ):
+            raise DehbJobRunnerError("NUMERIC_RUNTIME_REPORT_INVALID")
     evaluator_sha256 = scientific_evaluator_binding_sha256(
         code_commit_sha=launch_contract.code_commit_sha,
         campaign_contract_sha256=contract.sha256,
         runtime_scientific_input_binding_sha256=(
             launch_contract.runtime_scientific_input_binding_sha256
         ),
+        numeric_runtime_profile_sha256=numeric_profile_sha256,
     )
     root = Path(output_dir).resolve()
     if root.exists() and any(root.iterdir()):
@@ -231,6 +244,11 @@ def run_dehb_job(
         "job_payload": dict(payload),
         "job_payload_sha256": str(payload["payload_sha256"]),
         "scientific_evaluator_sha256": evaluator_sha256,
+        "numeric_runtime_profile_sha256": numeric_profile_sha256,
+        "numeric_runtime_verified": (
+            isinstance(numeric_runtime_report, Mapping)
+            and numeric_runtime_report.get("passed") is True
+        ),
         "physical_evaluations": sum(row["physical_evaluations"] for row in manifests),
         "cache_hits": sum(row["cache_hits"] for row in manifests),
         "determinism_audit_physical_evaluations": sum(

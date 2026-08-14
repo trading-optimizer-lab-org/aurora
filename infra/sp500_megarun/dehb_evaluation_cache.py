@@ -89,6 +89,8 @@ def normalize_scientific_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
     if isinstance(raw_info, Mapping) and isinstance(normalized_info, Mapping):
         normalized = dict(normalized)
         normalized["info"] = dict(normalized_info)
+        if "config" in raw_info:
+            normalized["info"]["config"] = raw_info["config"]
         for key in _RUNTIME_ONLY_INFO_FIELDS:
             if key in raw_info:
                 normalized["info"][key] = raw_info[key]
@@ -121,6 +123,7 @@ def scientific_evaluator_binding_sha256(
     code_commit_sha: str,
     campaign_contract_sha256: str,
     runtime_scientific_input_binding_sha256: str,
+    numeric_runtime_profile_sha256: str,
 ) -> str:
     """Bind cache reuse to the exact frozen code, campaign and training inputs."""
 
@@ -131,11 +134,14 @@ def scientific_evaluator_binding_sha256(
         raise EvaluationCacheError("EVALUATION_CACHE_CAMPAIGN_SHA256_INVALID")
     if not _is_sha256(runtime_scientific_input_binding_sha256):
         raise EvaluationCacheError("EVALUATION_CACHE_RUNTIME_BINDING_SHA256_INVALID")
+    if not _is_sha256(numeric_runtime_profile_sha256):
+        raise EvaluationCacheError("EVALUATION_CACHE_NUMERIC_RUNTIME_SHA256_INVALID")
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "code_commit_sha": commit,
         "campaign_contract_sha256": str(campaign_contract_sha256),
         "runtime_scientific_input_binding_sha256": str(runtime_scientific_input_binding_sha256),
+        "numeric_runtime_profile_sha256": str(numeric_runtime_profile_sha256),
     }
     return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
 

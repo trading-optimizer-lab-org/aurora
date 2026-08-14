@@ -49,6 +49,12 @@ def test_three_shards_request_360_jobs_and_skip_inside_called_worker() -> None:
             "NUMEXPR_NUM_THREADS",
         )
     )
+    for shard_id in "abc":
+        env = jobs[f"shard_{shard_id}"]["env"]
+        assert env["OPENBLAS_CORETYPE"] == "NEHALEM"
+        assert "AVX" in env["NPY_DISABLE_CPU_FEATURES"].split(",")
+        assert env["VECLIB_MAXIMUM_THREADS"] == "1"
+        assert env["BLIS_NUM_THREADS"] == "1"
 
 
 def test_controller_is_indefinite_train_only_and_retries_exact_jobs() -> None:
@@ -118,6 +124,7 @@ def test_reducer_validates_exact_wave_plan_instead_of_reconstructing_it() -> Non
 
 
 def test_cross_runner_probe_replays_all_material_conflicts_on_six_hosts() -> None:
+    workflow = _load(CROSS_RUNNER)
     text = CROSS_RUNNER.read_text(encoding="utf-8")
 
     assert "push:" not in text
@@ -128,6 +135,11 @@ def test_cross_runner_probe_replays_all_material_conflicts_on_six_hosts() -> Non
     assert "--expected-replicas 6" in text
     assert 'run-id: "31418682679"' in text
     assert 'run-id: "31774646675"' in text
+    env = workflow["jobs"]["probe"]["env"]
+    assert env["OPENBLAS_CORETYPE"] == "NEHALEM"
+    assert "AVX" in env["NPY_DISABLE_CPU_FEATURES"].split(",")
+    assert env["VECLIB_MAXIMUM_THREADS"] == "1"
+    assert env["BLIS_NUM_THREADS"] == "1"
 
 
 def test_initial_matrix_outputs_fit_below_github_job_output_limit() -> None:

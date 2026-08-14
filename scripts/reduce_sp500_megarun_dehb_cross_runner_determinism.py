@@ -20,19 +20,27 @@ def main() -> int:
     if len(reports) != args.expected_replicas:
         raise ValueError("CROSS_RUNNER_REPORT_COUNT_MISMATCH")
     by_key: dict[str, set[str]] = {}
+    runtime_profiles: set[str] = set()
     for report in reports:
         if report.get("validation_opened") is not False or report.get("locked_opened") is not False:
             raise ValueError("CROSS_RUNNER_BOUNDARY_OPEN")
+        runtime = report.get("numeric_runtime")
+        if not isinstance(runtime, dict) or runtime.get("passed") is not True:
+            raise ValueError("CROSS_RUNNER_NUMERIC_RUNTIME_UNVERIFIED")
+        runtime_profiles.add(str(report.get("numeric_runtime_profile_sha256", "")))
         for row in report.get("results", []):
             by_key.setdefault(str(row["cache_key_sha256"]), set()).add(
                 str(row["result_sha256"])
             )
+    if len(runtime_profiles) != 1 or any(len(value) != 64 for value in runtime_profiles):
+        raise ValueError("CROSS_RUNNER_NUMERIC_RUNTIME_PROFILE_MISMATCH")
     conflicts = {key: sorted(values) for key, values in by_key.items() if len(values) != 1}
     summary = {
         "schema_version": 1,
         "replica_count": len(reports),
         "case_count": len(by_key),
         "conflict_count": len(conflicts),
+        "numeric_runtime_profile_sha256": next(iter(runtime_profiles)),
         "conflicts": conflicts,
         "passed": not conflicts,
         "validation_opened": False,

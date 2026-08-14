@@ -8,13 +8,12 @@ import os
 from pathlib import Path
 import platform
 
-import numpy as np
-
 from aurora.core.execution_policy import require_github_only_execution
 from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.dehb_campaign_contract import load_and_validate_campaign_contract
 from aurora.infra.sp500_megarun.dehb_evaluation_cache import scientific_result_sha256
 from aurora.infra.sp500_megarun.dehb_lane_registry import default_lane_configurations
+from aurora.infra.sp500_megarun.dehb_numeric_runtime import capture_numeric_runtime_report
 from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
     scientific_input_binding_sha256,
     verify_runtime_input_pack,
@@ -66,6 +65,7 @@ def main() -> int:
     parser.add_argument("--replica", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    numeric_runtime = capture_numeric_runtime_report()
 
     campaign = load_and_validate_campaign_contract(args.campaign_contract)
     data_contract = load_and_validate_contract(args.data_contract)
@@ -118,7 +118,9 @@ def main() -> int:
         "github_job": os.environ.get("GITHUB_JOB", ""),
         "machine": platform.machine(),
         "processor": platform.processor(),
-        "numpy_version": np.__version__,
+        "numpy_version": numeric_runtime["numpy_version"],
+        "numeric_runtime_profile_sha256": numeric_runtime["profile_sha256"],
+        "numeric_runtime": numeric_runtime,
         "case_count": len(results),
         "results": results,
         "validation_opened": False,

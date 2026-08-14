@@ -21,6 +21,15 @@ def test_isolated_smoke_installs_dependencies_needed_by_workflow_contract_tests(
     assert '"jsonschema==4.26.0"' in workflow
 
 
+def test_official_smoke_uses_the_frozen_numeric_runtime() -> None:
+    workflow = OFFICIAL_SMOKE_WORKFLOW.read_text(encoding="utf-8")
+
+    assert 'OPENBLAS_CORETYPE: "NEHALEM"' in workflow
+    assert "NPY_DISABLE_CPU_FEATURES:" in workflow
+    assert 'VECLIB_MAXIMUM_THREADS: "1"' in workflow
+    assert 'BLIS_NUM_THREADS: "1"' in workflow
+
+
 def test_synthetic_objective_is_deterministic_and_pandas_serializable() -> None:
     from aurora.infra.sp500_megarun.dehb_official_smoke import synthetic_objective
 
