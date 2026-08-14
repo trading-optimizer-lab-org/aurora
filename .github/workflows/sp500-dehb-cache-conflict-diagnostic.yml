@@ -30,7 +30,7 @@ jobs:
       GITHUB_ACTIONS: "true"
       PYTHONUTF8: "1"
       SOURCE_RUN_ID: ${{ inputs.source_run_id || '31736846293' }}
-      CACHE_KEY_SHA256: ${{ inputs.cache_key_sha256 || '95c8068e41e8e508ec57b44ae456cda790ab8af56a39e293a72296f7e1995232' }}
+      CACHE_KEY_SHA256: ${{ inputs.cache_key_sha256 || '' }}
     steps:
       - name: Check out exact diagnostic revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803

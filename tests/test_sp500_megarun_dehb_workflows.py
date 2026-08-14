@@ -142,5 +142,6 @@ def test_cache_conflict_diagnostic_is_github_only_and_train_evidence_only() -> N
     assert 'gh run download "$SOURCE_RUN_ID"' in text
     assert '--pattern "sp500-dehb-worker-*"' in text
     assert "diagnose_sp500_megarun_dehb_cache_conflicts.py" in text
+    assert "95c8068e41e8e508ec57b44ae456cda790ab8af56a39e293a72296f7e1995232" not in text
     assert "validation_2011_2020" not in text
     assert "locked_2021" not in text
