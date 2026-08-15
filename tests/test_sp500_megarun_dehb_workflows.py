@@ -124,6 +124,7 @@ def test_registered_bridge_can_start_and_continue_production_autonomously() -> N
     assert workflow["jobs"]["continuous_reducer"]["uses"] == (
         "./.github/workflows/sp500-dehb-continuous-reducer-v2.yml"
     )
+    assert workflow["jobs"]["continuous_reducer"]["with"]["delay_minutes"] == "5"
     continuation = workflow["jobs"]["continuous_continue"]
     assert continuation["needs"] == [
         "continuous_bootstrap",
@@ -158,7 +159,7 @@ def test_continuous_children_are_reusable_and_cover_full_pool_generation() -> No
     assert coordinator_job["strategy"]["matrix"]["lifetime_ordinal"] == [0, 1]
     reducer_job = reducer["jobs"]["reduce"]
     assert reducer_job["strategy"]["max-parallel"] == 1
-    assert reducer_job["strategy"]["matrix"]["reducer_ordinal"] == [0, 1, 2, 3]
+    assert reducer_job["strategy"]["matrix"]["reducer_ordinal"] == list(range(60))
     assert "--delay-minutes" in CONTINUOUS_REDUCER.read_text(encoding="utf-8")
 
 

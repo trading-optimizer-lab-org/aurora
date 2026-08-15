@@ -395,7 +395,7 @@ jobs:
       cutoff_sequence: latest
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       bootstrap_run_id: ${{ inputs.mode == 'continuous_start' && github.run_id || inputs.bootstrap_run_id }}
-      delay_minutes: "120"
+      delay_minutes: "5"
     secrets:
       SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
 
