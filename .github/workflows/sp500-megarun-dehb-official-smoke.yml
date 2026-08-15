@@ -326,6 +326,13 @@ jobs:
               --exit-on-error \
               --single-transaction \
               /clone/coordinator.dump
+      - name: Compact the stopped clone without changing rows
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/compact_sp500_dehb_database_clone.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --output outputs/sp500_dehb_database_clone/compaction.json
       - name: Verify every campaign row and closed boundary
         shell: bash
         run: |

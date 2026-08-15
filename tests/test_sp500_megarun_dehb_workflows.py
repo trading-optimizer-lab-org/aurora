@@ -70,6 +70,10 @@ def test_registered_bridge_can_clone_and_verify_coordinator_database() -> None:
     )
     assert "pg_dump" in text
     assert "pg_restore" in text
+    assert "compact_sp500_dehb_database_clone.py" in text
+    assert text.index("compact_sp500_dehb_database_clone.py") < text.index(
+        "verify_sp500_dehb_database_clone.py"
+    )
     assert "close_sp500_dehb_database_run_sessions.py" in text
     assert '--github-run-id "${{ inputs.source_run_id }}"' in text
     assert "--terminate-stopped-run-backends" in text
