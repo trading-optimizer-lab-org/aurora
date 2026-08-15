@@ -26,3 +26,12 @@ Los valores conservados solo quedan demostrados hasta esa fecha de formacion.
 
 La matriz registra fuentes permitidas, hashes de formulas oficiales,
 fechas point-in-time, cobertura y bloqueo pendiente por senal.
+
+## Puerta de identidad posterior
+
+La ejecucion autoritativa de GitHub Actions del 15/08/2026 mantiene **0**
+senales aptas para el score estricto. Las siete rutas gratuitas examinadas
+produjeron `blocked_identity`, por lo que las 115 senales calculadas siguen
+siendo resultados no estrictos y no se autorizo el piloto de correlacion.
+Vease `docs/OPENAP_149_IDENTITY_GATE_STATUS.md` para la decision, hashes y
+condiciones exactas de reapertura.
