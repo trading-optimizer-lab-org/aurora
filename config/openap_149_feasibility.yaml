@@ -1,0 +1,28 @@
+dataset_id: openap_149_feasibility_v1
+target_count: 149
+strict_threshold: 0.90
+pilot_signals:
+  - Beta
+  - High52
+  - RealizedVol
+  - VolSD
+  - VolumeTrend
+  - Cash
+  - BM
+  - EP
+  - GP
+  - TotalAccruals
+source_blocked_signals:
+  Activism1: proprietary_governance_and_13f_inputs_without_complete_free_replacement
+  Activism2: proprietary_governance_and_13f_inputs_without_complete_free_replacement
+  Mom6mJunk: proprietary_historical_credit_ratings_without_complete_free_replacement
+  CustomerMomentum: proprietary_customer_relationship_history_without_complete_free_replacement
+  retConglomerate: proprietary_standardized_segment_history_without_complete_free_replacement
+  sinAlgo: proprietary_standardized_segment_industry_history_without_complete_free_replacement
+official_reference_unavailable:
+  Size: omitted_from_downloadable_openap_stock_panel
+expected_classes:
+  unproved: 142
+  blocked_source: 6
+  not_evaluable_reference: 1
+  approved: 0

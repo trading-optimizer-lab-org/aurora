@@ -55,7 +55,7 @@ jobs:
       - name: Compile and test auditor
         run: |
           python -m py_compile research/openap_proxy_real_correlation.py research/openap_proxy44_historical.py scripts/run_openap_proxy_real_correlation.py scripts/run_openap_proxy44_historical.py
-          python -m pytest tests/test_openap_proxy_real_correlation.py tests/test_openap_93_official_portfolio_similarity.py tests/test_openap_proxy44_historical.py -q
+          python -m pytest tests/test_openap_proxy_real_correlation.py tests/test_openap_93_official_portfolio_similarity.py tests/test_openap_proxy44_historical.py tests/test_openap_149_feasibility_gate.py -q
       - name: Enforce GitHub-only contract
         run: |
           grep -q "require_github_actions_or_explicit_local_permission" scripts/run_openap_proxy_real_correlation.py
@@ -64,6 +64,7 @@ jobs:
 
   audit:
     needs: validate
+    if: ${{ inputs.proxy_panel_url != 'IDENTITY_FEASIBILITY_ONLY' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
