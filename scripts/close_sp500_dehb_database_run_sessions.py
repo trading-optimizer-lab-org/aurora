@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from urllib.parse import urlsplit
 
 
 def main() -> int:
@@ -23,6 +24,10 @@ def main() -> int:
 
     terminated_backends = 0
     if args.terminate_stopped_run_backends:
+        if "-pooler." in str(urlsplit(database_url).hostname or ""):
+            raise RuntimeError(
+                "STOPPED_RUN_BACKEND_TERMINATION_REQUIRES_DIRECT_URL"
+            )
         with psycopg.connect(database_url, autocommit=True) as admin_connection:
             live_coordinators = int(
                 admin_connection.execute(
