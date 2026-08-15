@@ -234,7 +234,8 @@ def test_existing_workflow_has_isolated_identity_mode() -> None:
     )
     assert "run_openap_149_identity_gate.py" in workflow_text
     assert jobs["audit"]["if"] == (
-        "${{ inputs.proxy_panel_url != 'IDENTITY_FEASIBILITY_ONLY' }}"
+        "${{ inputs.proxy_panel_url != 'IDENTITY_FEASIBILITY_ONLY' && "
+        "inputs.proxy_panel_url != 'IDENTITY_SOURCE_RECOVERY_V2' }}"
     )
     upload = next(
         step
