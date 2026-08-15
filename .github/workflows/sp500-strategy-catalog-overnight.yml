@@ -1,0 +1,91 @@
+name: SP500 Strategy Catalog Overnight 360
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha: {description: Exact revision, required: true}
+      runtime_input_run_id: {description: Immutable train-only runtime pack, required: true, default: "31418682679"}
+
+permissions: {actions: read, contents: read}
+concurrency:
+  group: sp500-strategy-catalog-overnight-${{ inputs.commit_sha }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        shell: bash
+        run: echo 'matrix={"shard":['$(seq -s, 0 359)']}' >> "$GITHUB_OUTPUT"
+
+  evaluate:
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 360
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      GITHUB_ACTIONS: "true"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - run: |
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install --no-deps -e .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          path: ${{ runner.temp }}/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
+      - run: >-
+          python scripts/run_sp500_strategy_catalog_shard.py
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --data-contract config/sp500_megarun_free_data_240.json
+          --feature-contract config/sp500_megarun_feature_contract_240.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --shard-index "${{ matrix.shard }}" --total-shards 360
+          --output-dir "outputs/shard-${{ matrix.shard }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-catalog-shard-${{ matrix.shard }}
+          path: outputs/shard-${{ matrix.shard }}
+          if-no-files-found: error
+          retention-days: 30
+
+  reduce:
+    needs: evaluate
+    if: ${{ always() && needs.evaluate.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-catalog-shard-*
+          path: ${{ runner.temp }}/shards
+      - run: >-
+          python scripts/reduce_sp500_strategy_catalog_run.py
+          --input-root "$RUNNER_TEMP/shards"
+          --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl
+          --output-dir outputs/final
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-strategy-catalog-final-results
+          path: outputs/final
+          if-no-files-found: error
+          retention-days: 90
