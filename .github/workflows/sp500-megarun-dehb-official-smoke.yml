@@ -682,6 +682,29 @@ jobs:
           test "$(gh run view '${{ inputs.source_run_id }}' --json status --jq .status)" = "completed"
           test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL"
           echo "SP500_DEHB_SOURCE_RUN_COMPLETED=true" >> "$GITHUB_ENV"
+      - name: Normalize Neon direct endpoint for backend recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from urllib.parse import urlsplit, urlunsplit
+
+          database_url = os.environ["SP500_DEHB_COORDINATOR_DATABASE_URL"]
+          parsed = urlsplit(database_url)
+          hostname = parsed.hostname or ""
+          if "-pooler." in hostname:
+              if not hostname.endswith(".neon.tech"):
+                  raise RuntimeError("RECOVERY_UNKNOWN_POOLED_DATABASE_HOST")
+              direct_hostname = hostname.replace("-pooler.", ".", 1)
+              direct_netloc = parsed.netloc.replace(hostname, direct_hostname, 1)
+              database_url = urlunsplit(parsed._replace(netloc=direct_netloc))
+          print(f"::add-mask::{database_url}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(
+                  "SP500_DEHB_COORDINATOR_DATABASE_URL=" + database_url + "\n"
+              )
+          PY
       - name: Recover stopped sessions and rebuild unapplied batches
         shell: bash
         run: |
