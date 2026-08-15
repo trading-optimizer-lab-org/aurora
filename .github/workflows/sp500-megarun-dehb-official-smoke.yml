@@ -196,7 +196,7 @@ jobs:
 
   continuous_allocate:
     if: ${{ inputs.mode == 'continuous_allocate' }}
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 10
     steps:
       - name: Allocate and encrypt one accountless reserve database

@@ -84,7 +84,7 @@ def test_registered_bridge_can_allocate_an_encrypted_reserve_database() -> None:
     assert "continuous_allocate" in dispatch["mode"]["options"]
     allocation = workflow["jobs"]["continuous_allocate"]
     assert allocation["if"] == "${{ inputs.mode == 'continuous_allocate' }}"
-    assert allocation["runs-on"] == "macos-15"
+    assert allocation["runs-on"] == "macos-15-intel"
     assert "continuous_allocate' && 'allocation' || 'main'" in str(
         workflow["concurrency"]["group"]
     )
