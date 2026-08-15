@@ -209,39 +209,47 @@ def main() -> int:
                     (args.campaign_id,),
                 ).fetchall()
             deleted_open_batch_proposals = 0
-            for island_id, batch_sequence in reset_batches:
+            if reset_batches:
+                island_ids = [str(row[0]) for row in reset_batches]
+                batch_sequences = [int(row[1]) for row in reset_batches]
                 cursor.execute(
                     """
                     DELETE FROM evaluation_subscribers
                     WHERE campaign_id = %s AND proposal_id IN (
                       SELECT proposal_id FROM proposals
-                      WHERE campaign_id = %s AND island_id = %s
-                        AND batch_sequence = %s
+                      WHERE campaign_id = %s
+                        AND (island_id, batch_sequence) IN (
+                          SELECT * FROM unnest(%s::text[], %s::bigint[])
+                        )
                     )
                     """,
                     (
                         args.campaign_id,
                         args.campaign_id,
-                        str(island_id),
-                        int(batch_sequence),
+                        island_ids,
+                        batch_sequences,
                     ),
                 )
                 cursor.execute(
                     """
                     DELETE FROM proposals
-                    WHERE campaign_id = %s AND island_id = %s
-                      AND batch_sequence = %s
+                    WHERE campaign_id = %s
+                      AND (island_id, batch_sequence) IN (
+                        SELECT * FROM unnest(%s::text[], %s::bigint[])
+                      )
                     """,
-                    (args.campaign_id, str(island_id), int(batch_sequence)),
+                    (args.campaign_id, island_ids, batch_sequences),
                 )
-                deleted_open_batch_proposals += cursor.rowcount
+                deleted_open_batch_proposals = cursor.rowcount
                 cursor.execute(
                     """
                     DELETE FROM island_batches
-                    WHERE campaign_id = %s AND island_id = %s
-                      AND batch_sequence = %s AND status = 'open'
+                    WHERE campaign_id = %s AND status = 'open'
+                      AND (island_id, batch_sequence) IN (
+                        SELECT * FROM unnest(%s::text[], %s::bigint[])
+                      )
                     """,
-                    (args.campaign_id, str(island_id), int(batch_sequence)),
+                    (args.campaign_id, island_ids, batch_sequences),
                 )
             cursor.execute(
                 """
