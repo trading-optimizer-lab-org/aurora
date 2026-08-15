@@ -11,6 +11,7 @@ on:
         options:
           - official
           - continuous_postgres
+          - continuous_migrate
           - continuous_start
           - continuous_continue
       commit_sha:
@@ -32,6 +33,9 @@ on:
         description: Six-digit continuous pool generation
         required: false
         default: "000000"
+      source_run_id:
+        description: Completed continuous run stopped before a database clone
+        required: false
 
 permissions:
   actions: write
@@ -182,6 +186,82 @@ jobs:
           tests/test_sp500_megarun_dehb_workflows.py
           tests/integration/test_sp500_megarun_dehb_continuous_postgres.py
           -q
+
+  continuous_migrate:
+    if: ${{ inputs.mode == 'continuous_migrate' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT }}
+    steps:
+      - name: Check out exact migration revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Fail unless the source campaign run is stopped
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ inputs.source_run_id }}"
+          test "$(gh run view '${{ inputs.source_run_id }}' --json status --jq .status)" = "completed"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+          test "$SP500_DEHB_COORDINATOR_DATABASE_URL" != "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+      - name: Prove the source database has no live writers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "psycopg[binary]>=3.2,<4"
+          python -m pip install --no-deps -e .
+          python scripts/assert_sp500_dehb_database_quiescent.py \
+            --campaign-id "${{ inputs.campaign_id }}"
+      - name: Clone the stopped PostgreSQL database exactly
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sp500-dehb-clone"
+          docker run --rm \
+            -e SP500_DEHB_COORDINATOR_DATABASE_URL \
+            -v "$RUNNER_TEMP/sp500-dehb-clone:/clone" \
+            postgres:17.10-alpine \
+            pg_dump \
+              --dbname="$SP500_DEHB_COORDINATOR_DATABASE_URL" \
+              --format=custom \
+              --file=/clone/coordinator.dump \
+              --no-owner \
+              --no-privileges \
+              --serializable-deferrable
+          docker run --rm \
+            -e SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT \
+            -v "$RUNNER_TEMP/sp500-dehb-clone:/clone" \
+            postgres:17.10-alpine \
+            pg_restore \
+              --dbname="$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT" \
+              --clean \
+              --if-exists \
+              --no-owner \
+              --no-privileges \
+              --exit-on-error \
+              --single-transaction \
+              /clone/coordinator.dump
+      - name: Verify every campaign row and closed boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/verify_sp500_dehb_database_clone.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --output outputs/sp500_dehb_database_clone/verification.json
+      - name: Upload non-sensitive clone verification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-database-clone-verification
+          path: outputs/sp500_dehb_database_clone/verification.json
+          if-no-files-found: error
+          retention-days: 30
 
   continuous_bootstrap:
     if: ${{ inputs.mode == 'continuous_start' }}

@@ -54,6 +54,23 @@ def test_registered_smoke_can_bridge_continuous_postgres_on_feature_branch() -> 
     assert "locked_2021" not in text
 
 
+def test_registered_bridge_can_clone_and_verify_coordinator_database() -> None:
+    workflow = _load(REGISTERED_SMOKE_BRIDGE)
+    text = REGISTERED_SMOKE_BRIDGE.read_text(encoding="utf-8")
+
+    dispatch = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert "continuous_migrate" in dispatch["mode"]["options"]
+    migration = workflow["jobs"]["continuous_migrate"]
+    assert migration["if"] == "${{ inputs.mode == 'continuous_migrate' }}"
+    assert "SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT" in migration["env"]
+    assert "pg_dump" in text
+    assert "pg_restore" in text
+    assert "assert_sp500_dehb_database_quiescent.py" in text
+    assert "verify_sp500_dehb_database_clone.py" in text
+    assert "validation_2011_2020" not in text
+    assert "locked_2021" not in text
+
+
 def test_registered_bridge_can_start_and_continue_production_autonomously() -> None:
     workflow = _load(REGISTERED_SMOKE_BRIDGE)
     text = REGISTERED_SMOKE_BRIDGE.read_text(encoding="utf-8")
