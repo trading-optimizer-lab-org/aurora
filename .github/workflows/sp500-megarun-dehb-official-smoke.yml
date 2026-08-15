@@ -13,6 +13,7 @@ on:
           - continuous_postgres
           - continuous_allocate
           - continuous_migrate
+          - continuous_emergency_migrate
           - continuous_recover
           - continuous_start
           - continuous_continue
@@ -381,6 +382,145 @@ jobs:
         with:
           name: sp500-dehb-database-clone-verification
           path: outputs/sp500_dehb_database_clone/verification.json
+          if-no-files-found: error
+          retention-days: 30
+
+  continuous_emergency_migrate:
+    if: ${{ inputs.mode == 'continuous_emergency_migrate' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.migration_source == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.migration_source == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT: ${{ inputs.migration_target == 'current' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT }}
+    steps:
+      - name: Check out exact emergency migration revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Fail unless the source campaign run is stopped
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ inputs.source_run_id }}"
+          test "$(gh run view '${{ inputs.source_run_id }}' --json status --jq .status)" = "completed"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+          test "$SP500_DEHB_COORDINATOR_DATABASE_URL" != "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+          echo "SP500_DEHB_SOURCE_RUN_COMPLETED=true" >> "$GITHUB_ENV"
+      - name: Install emergency migration runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "psycopg[binary]>=3.2,<4"
+          python -m pip install --no-deps -e .
+      - name: Disconnect stopped source without writing its full tables
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+
+          import psycopg
+
+          database_url = os.environ["SP500_DEHB_COORDINATOR_DATABASE_URL"]
+          with psycopg.connect(database_url, autocommit=True) as connection:
+              terminated = connection.execute(
+                  """
+                  SELECT count(*) FILTER (WHERE pg_terminate_backend(pid))
+                  FROM pg_stat_activity
+                  WHERE datname = current_database()
+                    AND pid <> pg_backend_pid()
+                    AND backend_type = 'client backend'
+                  """
+              ).fetchone()[0]
+          with psycopg.connect(database_url) as connection:
+              remaining = connection.execute(
+                  """
+                  SELECT count(*) FROM pg_stat_activity
+                  WHERE datname = current_database()
+                    AND pid <> pg_backend_pid()
+                    AND backend_type = 'client backend'
+                  """
+              ).fetchone()[0]
+          if int(remaining) != 0:
+              raise RuntimeError("EMERGENCY_MIGRATION_SOURCE_BACKENDS_REMAIN")
+          print(json.dumps({"terminated_backends": int(terminated), "remaining": 0}))
+          PY
+      - name: Clone the read-only stopped database exactly
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sp500-dehb-emergency-clone"
+          docker run --rm \
+            -e SP500_DEHB_COORDINATOR_DATABASE_URL \
+            -v "$RUNNER_TEMP/sp500-dehb-emergency-clone:/clone" \
+            postgres:17.10-alpine \
+            pg_dump \
+              --dbname="$SP500_DEHB_COORDINATOR_DATABASE_URL" \
+              --format=custom \
+              --file=/clone/coordinator.dump \
+              --no-owner \
+              --no-privileges \
+              --serializable-deferrable
+          docker run --rm \
+            -e SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT \
+            -v "$RUNNER_TEMP/sp500-dehb-emergency-clone:/clone" \
+            postgres:17.10-alpine \
+            pg_restore \
+              --dbname="$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT" \
+              --clean \
+              --if-exists \
+              --no-owner \
+              --no-privileges \
+              --exit-on-error \
+              --single-transaction \
+              /clone/coordinator.dump
+      - name: Verify the untouched clone before target recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p outputs/sp500_dehb_emergency_clone
+          python scripts/verify_sp500_dehb_database_clone.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --output outputs/sp500_dehb_emergency_clone/verification.json
+      - name: Recover sessions and batches on the roomy target
+        shell: bash
+        run: |
+          set -euo pipefail
+          SP500_DEHB_COORDINATOR_DATABASE_URL="$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT" \
+            python scripts/close_sp500_dehb_database_run_sessions.py \
+              --campaign-id "${{ inputs.campaign_id }}" \
+              --github-run-id "${{ inputs.source_run_id }}" \
+              --terminate-stopped-run-backends \
+              --rebuild-open-batches \
+              > outputs/sp500_dehb_emergency_clone/recovery.json
+          SP500_DEHB_COORDINATOR_DATABASE_URL="$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT" \
+            python scripts/assert_sp500_dehb_database_quiescent.py \
+              --campaign-id "${{ inputs.campaign_id }}"
+          cat outputs/sp500_dehb_emergency_clone/recovery.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(
+              Path("outputs/sp500_dehb_emergency_clone/recovery.json").read_text()
+          )
+          assert report["physical_result_count"] > 0
+          assert report["conflict_count"] == 0
+          assert report["open_batch_count"] == 0
+          assert report["validation_opened"] is False
+          assert report["locked_opened"] is False
+          assert report["database_size_bytes"] < 100_000_000
+          PY
+      - name: Upload emergency clone evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-emergency-clone-evidence
+          path: outputs/sp500_dehb_emergency_clone
           if-no-files-found: error
           retention-days: 30
 

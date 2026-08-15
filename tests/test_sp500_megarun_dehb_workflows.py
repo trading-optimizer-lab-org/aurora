@@ -110,6 +110,30 @@ def test_registered_bridge_can_recover_same_database_without_cloning() -> None:
     assert "sp500-dehb-database-recovery" in text
 
 
+def test_registered_bridge_can_emergency_clone_full_stopped_database_before_recovery() -> None:
+    workflow = _load(REGISTERED_SMOKE_BRIDGE)
+    dispatch = workflow["on"]["workflow_dispatch"]["inputs"]
+    emergency = workflow["jobs"]["continuous_emergency_migrate"]
+    steps = emergency["steps"]
+    names = [step["name"] for step in steps]
+    combined = "\n".join(str(step.get("run", "")) for step in steps)
+
+    assert "continuous_emergency_migrate" in dispatch["mode"]["options"]
+    assert emergency["if"] == "${{ inputs.mode == 'continuous_emergency_migrate' }}"
+    assert names.index("Clone the read-only stopped database exactly") < names.index(
+        "Recover sessions and batches on the roomy target"
+    )
+    assert "pg_terminate_backend" in combined
+    assert "verify_sp500_dehb_database_clone.py" in combined
+    assert (
+        'SP500_DEHB_COORDINATOR_DATABASE_URL="$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"'
+        in combined
+    )
+    assert "--rebuild-open-batches" in combined
+    assert "assert_sp500_dehb_database_quiescent.py" in combined
+    assert "sp500-dehb-emergency-clone-evidence" in str(steps)
+
+
 def test_registered_bridge_can_allocate_an_encrypted_reserve_database() -> None:
     workflow = _load(REGISTERED_SMOKE_BRIDGE)
     text = REGISTERED_SMOKE_BRIDGE.read_text(encoding="utf-8")
