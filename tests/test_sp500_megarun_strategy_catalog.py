@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import shutil
+import sys
 
 import pytest
 
@@ -34,6 +37,28 @@ def cross_catalog(feature_contract, individual_catalog):
 
     individual_entries, _report = individual_catalog
     return build_cross_entries(feature_contract, individual_entries)
+
+
+@pytest.fixture(scope="module")
+def catalog_artifact_directories(tmp_path_factory):
+    from aurora.infra.sp500_megarun.strategy_catalog import (
+        build_and_write_strategy_catalog,
+    )
+
+    root = tmp_path_factory.mktemp("sp500_strategy_catalog")
+    first = root / "first"
+    second = root / "second"
+    build_and_write_strategy_catalog(
+        DATA_CONTRACT_PATH,
+        FEATURE_CONTRACT_PATH,
+        output_dir=first,
+    )
+    build_and_write_strategy_catalog(
+        DATA_CONTRACT_PATH,
+        FEATURE_CONTRACT_PATH,
+        output_dir=second,
+    )
+    return first, second
 
 
 def _single_payload(**overrides: object) -> dict[str, object]:
@@ -164,3 +189,61 @@ def test_commutative_crosses_canonicalize_component_permutations() -> None:
 
     assert left_components == right_components
     assert left_composition == right_composition == {"kind": "and"}
+
+
+def test_catalog_build_does_not_import_market_data_runtime() -> None:
+    from aurora.infra.sp500_megarun.strategy_catalog import build_strategy_catalog
+
+    before = set(sys.modules)
+    build_strategy_catalog(DATA_CONTRACT_PATH, FEATURE_CONTRACT_PATH)
+    imported = set(sys.modules) - before
+
+    assert not {
+        "aurora.infra.sp500_megarun.dehb_worker",
+        "aurora.infra.sp500_megarun.materializer",
+    } & imported
+
+
+def test_catalog_artifacts_are_byte_reproducible(
+    catalog_artifact_directories,
+) -> None:
+    first, second = catalog_artifact_directories
+
+    assert {path.name: path.read_bytes() for path in first.iterdir()} == {
+        path.name: path.read_bytes() for path in second.iterdir()
+    }
+
+
+def test_catalog_manifest_matches_all_rows(catalog_artifact_directories) -> None:
+    from aurora.infra.sp500_megarun.strategy_catalog import (
+        verify_strategy_catalog_directory,
+    )
+
+    first, _second = catalog_artifact_directories
+    receipt = verify_strategy_catalog_directory(first)
+    manifest = json.loads((first / "manifest.json").read_text(encoding="utf-8"))
+
+    assert receipt["accepted"] is True
+    assert receipt["uncovered_requirement_count"] == 0
+    assert receipt["strategy_count"] == manifest["strategy_count"]
+    assert receipt["validation_opened"] is False
+    assert receipt["locked_opened"] is False
+
+
+def test_catalog_verifier_rejects_an_altered_artifact(
+    tmp_path,
+    catalog_artifact_directories,
+) -> None:
+    from aurora.infra.sp500_megarun.strategy_catalog import (
+        CatalogBuildError,
+        verify_strategy_catalog_directory,
+    )
+
+    first, _second = catalog_artifact_directories
+    altered = tmp_path / "altered"
+    shutil.copytree(first, altered)
+    with (altered / "catalog.jsonl").open("ab") as handle:
+        handle.write(b" ")
+
+    with pytest.raises(CatalogBuildError, match="CATALOG_ARTIFACT_HASH_MISMATCH"):
+        verify_strategy_catalog_directory(altered)

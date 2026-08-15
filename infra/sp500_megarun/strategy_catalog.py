@@ -2,23 +2,31 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from fractions import Fraction
 import hashlib
+import io
 from itertools import product
 import json
 import math
+import os
+from pathlib import Path
 import re
+import shutil
+import tempfile
 from typing import Any, Mapping, Sequence
 
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.dehb_configspace import (
     _forbidden_parameter_pairs,
     _forbidden_parameter_triplets,
 )
 from aurora.infra.sp500_megarun.feature_contract import (
+    CrossRule,
     FeatureLaneSpec,
     FrozenFeatureContract,
-    CrossRule,
+    load_and_validate_feature_contract,
 )
 
 
@@ -28,10 +36,54 @@ CATALOG_CONFIGURATION_DOMAIN = b"AURORA-SP500-STRATEGY-CONFIGURATION-V1\0"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _LANE_RE = re.compile(r"^F\d{3}$")
 _JSON_ATOM_CACHE: dict[tuple[type[object], object], str] = {}
+_ARTIFACT_FILENAMES = (
+    "catalog.jsonl",
+    "catalog.csv",
+    "manifest.json",
+    "coverage.json",
+    "README.md",
+)
+_HASHED_ARTIFACT_FILENAMES = (
+    "catalog.jsonl",
+    "catalog.csv",
+    "coverage.json",
+    "README.md",
+)
+_CSV_COLUMNS = (
+    "strategy_id",
+    "scientific_recipe_sha256",
+    "strategy_kind",
+    "feature_count",
+    "initial_fidelity",
+    "lane_ids",
+    "components_json",
+    "composition_json",
+    "cross_rule_ids",
+    "economic_rationales",
+    "coverage_tags",
+    "feature_contract_sha256",
+    "search_end",
+    "validation_opened",
+    "locked_opened",
+    "performance_status",
+)
 
 
 class CatalogBuildError(ValueError):
     """Raised when a catalog row or artifact violates the frozen contract."""
+
+
+@dataclass(frozen=True)
+class StrategyCatalogBuildV1:
+    """Pure in-memory catalog plus its train-only provenance and coverage."""
+
+    entries: tuple[StrategyCatalogEntryV1, ...]
+    coverage: Mapping[str, Any]
+    data_contract_sha256: str
+    feature_contract_sha256: str
+    search_end: str
+    validation_opened: bool
+    locked_opened: bool
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -998,12 +1050,330 @@ def build_cross_entries(
     return entries, report
 
 
+_BUILD_CACHE: dict[tuple[str, str], StrategyCatalogBuildV1] = {}
+
+
+def _uncovered_requirement_count(coverage: Mapping[str, Any]) -> int:
+    individual = coverage.get("individual")
+    cross = coverage.get("cross")
+    if not isinstance(individual, Mapping) or not isinstance(cross, Mapping):
+        raise CatalogBuildError("CATALOG_COVERAGE_REPORT_INVALID")
+    keys = (
+        (individual, "uncovered_requirements"),
+        (cross, "uncovered_rule_composition_arities"),
+        (cross, "uncovered_authorized_left_right_pairs"),
+        (cross, "uncovered_parameter_values"),
+    )
+    count = 0
+    for report, key in keys:
+        values = report.get(key)
+        if not isinstance(values, list):
+            raise CatalogBuildError(f"CATALOG_COVERAGE_FIELD_INVALID:{key}")
+        count += len(values)
+    return count
+
+
+def build_strategy_catalog(
+    data_contract_path: Path,
+    feature_contract_path: Path,
+) -> StrategyCatalogBuildV1:
+    """Build the complete metadata-only catalog without loading market data."""
+
+    data_contract = load_and_validate_contract(Path(data_contract_path))
+    feature_contract = load_and_validate_feature_contract(
+        Path(feature_contract_path),
+        data_contract,
+    )
+    if data_contract.expected_lane_count != 240 or len(feature_contract.lanes) != 240:
+        raise CatalogBuildError("CATALOG_EXPECTED_240_LANES")
+    if any(lane.implementation_status != "executable" for lane in feature_contract.lanes):
+        raise CatalogBuildError("CATALOG_NON_EXECUTABLE_LANE")
+    if (
+        data_contract.boundaries.validation_opened
+        or data_contract.boundaries.locked_opened
+        or feature_contract.validation_opened
+        or feature_contract.locked_opened
+    ):
+        raise CatalogBuildError("CATALOG_BOUNDARY_OPEN")
+    if feature_contract.search_end.isoformat() != "2010-12-31":
+        raise CatalogBuildError("CATALOG_SEARCH_END_INVALID")
+
+    cache_key = (data_contract.sha256, feature_contract.sha256)
+    cached = _BUILD_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    individual_entries, individual_report = build_individual_entries(feature_contract)
+    cross_entries, cross_report = build_cross_entries(
+        feature_contract,
+        individual_entries,
+    )
+    entries = tuple(
+        sorted((*individual_entries, *cross_entries), key=lambda entry: entry.strategy_id)
+    )
+    if len({entry.strategy_id for entry in entries}) != len(entries):
+        raise CatalogBuildError("CATALOG_DUPLICATE_STRATEGY_ID")
+    if len({entry.scientific_recipe_sha256 for entry in entries}) != len(entries):
+        raise CatalogBuildError("CATALOG_DUPLICATE_SCIENTIFIC_RECIPE")
+    coverage: dict[str, Any] = {
+        "schema_version": 1,
+        "individual": individual_report,
+        "cross": cross_report,
+    }
+    if _uncovered_requirement_count(coverage) != 0:
+        raise CatalogBuildError("CATALOG_COVERAGE_INCOMPLETE")
+    build = StrategyCatalogBuildV1(
+        entries=entries,
+        coverage=coverage,
+        data_contract_sha256=data_contract.sha256,
+        feature_contract_sha256=feature_contract.sha256,
+        search_end=feature_contract.search_end.isoformat(),
+        validation_opened=False,
+        locked_opened=False,
+    )
+    _BUILD_CACHE[cache_key] = build
+    return build
+
+
+def _catalog_jsonl_bytes(entries: Sequence[StrategyCatalogEntryV1]) -> bytes:
+    return b"".join(canonical_json_bytes(entry.to_payload()) + b"\n" for entry in entries)
+
+
+def _catalog_csv_bytes(entries: Sequence[StrategyCatalogEntryV1]) -> bytes:
+    stream = io.StringIO(newline="")
+    writer = csv.DictWriter(
+        stream,
+        fieldnames=list(_CSV_COLUMNS),
+        lineterminator="\n",
+        quoting=csv.QUOTE_MINIMAL,
+    )
+    writer.writeheader()
+    for entry in entries:
+        payload = entry.to_payload()
+        writer.writerow(
+            {
+                "strategy_id": entry.strategy_id,
+                "scientific_recipe_sha256": entry.scientific_recipe_sha256,
+                "strategy_kind": entry.strategy_kind,
+                "feature_count": entry.feature_count,
+                "initial_fidelity": entry.initial_fidelity,
+                "lane_ids": "|".join(
+                    component.lane_id for component in entry.components
+                ),
+                "components_json": canonical_json_bytes(payload["components"]).decode(),
+                "composition_json": canonical_json_bytes(payload["composition"]).decode(),
+                "cross_rule_ids": "|".join(entry.cross_rule_ids),
+                "economic_rationales": canonical_json_bytes(
+                    payload["economic_rationales"]
+                ).decode(),
+                "coverage_tags": canonical_json_bytes(payload["coverage_tags"]).decode(),
+                "feature_contract_sha256": entry.feature_contract_sha256,
+                "search_end": entry.search_end,
+                "validation_opened": "false",
+                "locked_opened": "false",
+                "performance_status": entry.performance_status,
+            }
+        )
+    return stream.getvalue().encode("utf-8")
+
+
+def _readme_bytes(build: StrategyCatalogBuildV1) -> bytes:
+    individual = build.coverage["individual"]
+    cross = build.coverage["cross"]
+    text = f"""# SP500 Strategy Catalog V1
+
+Deterministic catalog of predefined SP500 strategy recipes. It is metadata only:
+no strategy in this directory has been backtested or ranked.
+
+- Training boundary: through {build.search_end}
+- Validation 2011-2020 opened: false
+- Locked 2021+ opened: false
+- Individual lanes: {individual["lane_count"]}
+- Cross rules: {cross["rule_count"]}
+- Strategies: {len(build.entries)}
+- Initial fidelity recommendation: 1
+- Performance status for every row: not_evaluated
+
+`catalog.jsonl` is authoritative. `catalog.csv` is a review-friendly projection.
+`coverage.json` records requirement coverage and `manifest.json` binds every file
+to its SHA-256 digest. This catalog does not change or launch the active DEHB
+campaign and does not decide any future integration with DEHB.
+"""
+    return text.encode("utf-8")
+
+
+def _artifact_payloads(build: StrategyCatalogBuildV1) -> dict[str, bytes]:
+    payloads = {
+        "catalog.jsonl": _catalog_jsonl_bytes(build.entries),
+        "catalog.csv": _catalog_csv_bytes(build.entries),
+        "coverage.json": canonical_json_bytes(build.coverage) + b"\n",
+        "README.md": _readme_bytes(build),
+    }
+    artifact_hashes = {
+        name: hashlib.sha256(payload).hexdigest()
+        for name, payload in sorted(payloads.items())
+    }
+    individual = build.coverage["individual"]
+    cross = build.coverage["cross"]
+    manifest = {
+        "schema_version": 1,
+        "catalog_id": "sp500-strategy-catalog-v1",
+        "data_contract_sha256": build.data_contract_sha256,
+        "feature_contract_sha256": build.feature_contract_sha256,
+        "search_end": build.search_end,
+        "validation_opened": build.validation_opened,
+        "locked_opened": build.locked_opened,
+        "performance_status": "not_evaluated",
+        "initial_fidelity": 1,
+        "lane_count": individual["lane_count"],
+        "cross_rule_count": cross["rule_count"],
+        "individual_strategy_count": individual["selected_strategy_count"],
+        "cross_strategy_count": cross["deduplicated_strategy_count"],
+        "strategy_count": len(build.entries),
+        "uncovered_requirement_count": _uncovered_requirement_count(build.coverage),
+        "artifacts_sha256": artifact_hashes,
+    }
+    payloads["manifest.json"] = canonical_json_bytes(manifest) + b"\n"
+    return payloads
+
+
+def verify_strategy_catalog_directory(output_dir: Path) -> dict[str, Any]:
+    """Reopen and fail closed on any inconsistent catalog artifact."""
+
+    root = Path(output_dir)
+    if not root.is_dir():
+        raise CatalogBuildError(f"CATALOG_DIRECTORY_NOT_FOUND:{root}")
+    actual_names = {path.name for path in root.iterdir() if path.is_file()}
+    if actual_names != set(_ARTIFACT_FILENAMES):
+        raise CatalogBuildError("CATALOG_ARTIFACT_SET_INVALID")
+    try:
+        manifest = json.loads((root / "manifest.json").read_bytes())
+        coverage = json.loads((root / "coverage.json").read_bytes())
+    except (json.JSONDecodeError, OSError) as exc:
+        raise CatalogBuildError("CATALOG_ARTIFACT_JSON_INVALID") from exc
+    if not isinstance(manifest, Mapping) or not isinstance(coverage, Mapping):
+        raise CatalogBuildError("CATALOG_ARTIFACT_ROOT_INVALID")
+    expected_hashes = manifest.get("artifacts_sha256")
+    if not isinstance(expected_hashes, Mapping):
+        raise CatalogBuildError("CATALOG_MANIFEST_HASHES_INVALID")
+    for name in _HASHED_ARTIFACT_FILENAMES:
+        expected = _require_sha256(expected_hashes.get(name), f"artifact:{name}")
+        actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+        if actual != expected:
+            raise CatalogBuildError(f"CATALOG_ARTIFACT_HASH_MISMATCH:{name}")
+
+    raw_lines = (root / "catalog.jsonl").read_bytes().splitlines()
+    entries: list[StrategyCatalogEntryV1] = []
+    for index, raw_line in enumerate(raw_lines, start=1):
+        try:
+            payload = json.loads(raw_line)
+        except json.JSONDecodeError as exc:
+            raise CatalogBuildError(f"CATALOG_JSONL_INVALID:{index}") from exc
+        if not isinstance(payload, Mapping):
+            raise CatalogBuildError(f"CATALOG_JSONL_ROW_INVALID:{index}")
+        if raw_line != canonical_json_bytes(payload):
+            raise CatalogBuildError(f"CATALOG_JSONL_NOT_CANONICAL:{index}")
+        entries.append(StrategyCatalogEntryV1.from_payload(payload))
+    if not entries:
+        raise CatalogBuildError("CATALOG_EMPTY")
+    if len({entry.strategy_id for entry in entries}) != len(entries):
+        raise CatalogBuildError("CATALOG_DUPLICATE_STRATEGY_ID")
+    if [entry.strategy_id for entry in entries] != sorted(
+        entry.strategy_id for entry in entries
+    ):
+        raise CatalogBuildError("CATALOG_ROW_ORDER_INVALID")
+
+    csv_text = (root / "catalog.csv").read_text(encoding="utf-8")
+    reader = csv.DictReader(io.StringIO(csv_text, newline=""))
+    if tuple(reader.fieldnames or ()) != _CSV_COLUMNS:
+        raise CatalogBuildError("CATALOG_CSV_COLUMNS_INVALID")
+    csv_rows = list(reader)
+    if [row["strategy_id"] for row in csv_rows] != [
+        entry.strategy_id for entry in entries
+    ]:
+        raise CatalogBuildError("CATALOG_CSV_ROWS_MISMATCH")
+
+    uncovered_count = _uncovered_requirement_count(coverage)
+    if uncovered_count != 0:
+        raise CatalogBuildError("CATALOG_COVERAGE_INCOMPLETE")
+    expected_count = int(manifest.get("strategy_count", -1))
+    if expected_count != len(entries) or len(csv_rows) != len(entries):
+        raise CatalogBuildError("CATALOG_MANIFEST_COUNT_MISMATCH")
+    if manifest.get("search_end") != "2010-12-31":
+        raise CatalogBuildError("CATALOG_SEARCH_END_INVALID")
+    if bool(manifest.get("validation_opened")) or bool(manifest.get("locked_opened")):
+        raise CatalogBuildError("CATALOG_BOUNDARY_OPEN")
+    if any(
+        entry.search_end != "2010-12-31"
+        or entry.validation_opened
+        or entry.locked_opened
+        or entry.performance_status != "not_evaluated"
+        for entry in entries
+    ):
+        raise CatalogBuildError("CATALOG_ROW_BOUNDARY_INVALID")
+    return {
+        "accepted": True,
+        "strategy_count": len(entries),
+        "individual_strategy_count": int(
+            manifest.get("individual_strategy_count", -1)
+        ),
+        "cross_strategy_count": int(manifest.get("cross_strategy_count", -1)),
+        "uncovered_requirement_count": uncovered_count,
+        "search_end": "2010-12-31",
+        "validation_opened": False,
+        "locked_opened": False,
+        "performance_status": "not_evaluated",
+    }
+
+
+def write_strategy_catalog(
+    build: StrategyCatalogBuildV1,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Write five deterministic files after verifying a complete staging copy."""
+
+    root = Path(output_dir)
+    root.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{root.name}.tmp-", dir=str(root.parent))
+    )
+    try:
+        payloads = _artifact_payloads(build)
+        if set(payloads) != set(_ARTIFACT_FILENAMES):
+            raise CatalogBuildError("CATALOG_ARTIFACT_SET_INVALID")
+        for name in _ARTIFACT_FILENAMES:
+            (staging / name).write_bytes(payloads[name])
+        verify_strategy_catalog_directory(staging)
+        root.mkdir(parents=True, exist_ok=True)
+        for name in _ARTIFACT_FILENAMES:
+            os.replace(staging / name, root / name)
+        return verify_strategy_catalog_directory(root)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
+def build_and_write_strategy_catalog(
+    data_contract_path: Path,
+    feature_contract_path: Path,
+    *,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Build and atomically write the train-only strategy catalog."""
+
+    build = build_strategy_catalog(data_contract_path, feature_contract_path)
+    return write_strategy_catalog(build, output_dir)
+
+
 __all__ = [
     "CatalogBuildError",
     "CatalogComponentV1",
+    "StrategyCatalogBuildV1",
     "StrategyCatalogEntryV1",
+    "build_and_write_strategy_catalog",
     "build_cross_entries",
     "build_individual_entries",
+    "build_strategy_catalog",
     "canonical_json_bytes",
     "canonicalize_composition",
     "configuration_sha256",
@@ -1013,4 +1383,6 @@ __all__ = [
     "scientific_recipe_sha256",
     "select_covering_configurations",
     "strategy_id_for",
+    "verify_strategy_catalog_directory",
+    "write_strategy_catalog",
 ]
