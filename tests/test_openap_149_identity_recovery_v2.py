@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import argparse
 import importlib
 from dataclasses import replace
 from datetime import datetime, timezone
 from importlib import util
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -15,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOGUE = ROOT / "config" / "openap_149_identity_sources_v2.yaml"
 WORKFLOW = ROOT / ".github" / "workflows" / "openap-proxy-real-correlation-audit.yml"
 MODULE_NAME = "aurora.research.openap_149.identity_recovery_v2"
+RUNNER = ROOT / "scripts" / "run_openap_149_identity_recovery_v2.py"
 
 
 class _Response:
@@ -42,6 +45,15 @@ def _module():
         "identity_recovery_v2 must implement the frozen recovery contract"
     )
     return importlib.import_module(MODULE_NAME)
+
+
+def _runner_module():
+    assert RUNNER.exists(), "the v2 GitHub-only runner must exist"
+    spec = util.spec_from_file_location("run_openap_149_identity_recovery_v2", RUNNER)
+    assert spec is not None and spec.loader is not None
+    module = util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_v2_catalogue_has_fifteen_explicit_unique_routes() -> None:
@@ -220,6 +232,206 @@ def test_no_passing_route_builds_canonical_empty_bridge() -> None:
 
     assert bridge.empty
     assert list(bridge.columns) == list(module.BRIDGE_COLUMNS)
+
+
+def _source_response(url: str) -> _Response:
+    if url.endswith("company_tickers_exchange.json"):
+        return _Response(
+            b'{"fields":["cik","name","ticker","exchange"],"data":[]}',
+            url=url,
+            content_type="application/json",
+        )
+    if url.endswith("michels-2017.csv"):
+        return _Response(
+            b"cusip,eventdate,cik,permno,gvkey\r\n12345678,2016-01-01,1,10001,1\r\n",
+            url=url,
+        )
+    if url.endswith(".pdf"):
+        return _Response(
+            b"%PDF-1.4 bounded sample evidence",
+            url=url,
+            content_type="application/pdf",
+        )
+    if url.endswith(".md"):
+        return _Response(
+            b"Public project evidence page",
+            url=url,
+            content_type="text/plain",
+        )
+    return _Response(
+        b"<html><body>Public evidence page</body></html>",
+        url=url,
+        content_type="text/html",
+    )
+
+
+def test_runner_emits_reconciled_no_candidate_bundle(tmp_path: Path) -> None:
+    runner = _runner_module()
+    output = tmp_path / "out"
+    args = argparse.Namespace(
+        catalogue=CATALOGUE,
+        output_dir=output,
+        repository_sha="f" * 40,
+        reference_spine=None,
+    )
+
+    assert runner.run(
+        args,
+        getter=lambda url, **kwargs: _source_response(url),
+        now=lambda: datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc),
+    ) == 0
+
+    decision = json.loads(
+        (output / "openap_149_identity_recovery_v2_decision.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    audit = pd.read_csv(output / "openap_149_identity_sources_v2_audit.csv")
+    receipts = [
+        json.loads(line)
+        for line in (
+            output / "openap_149_identity_source_probe_receipts.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    manifest = json.loads(
+        (output / "openap_149_identity_source_evidence_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    bridge = pd.read_parquet(output / "openap_permno_bridge_v2.parquet")
+    coverage = pd.read_csv(
+        output / "openap_permno_bridge_v2_monthly_coverage.csv"
+    )
+
+    assert decision["status"] == "blocked_identity_v2"
+    assert decision["pilot_authorized"] is False
+    assert decision["strictly_approved"] == 0
+    assert decision["candidate_routes"] == 0
+    assert decision["bridge_rows"] == 0
+    assert decision["locked_opened"] is False
+    assert decision["target_derived_used_for_identity"] is False
+    assert decision["repository_sha"] == "f" * 40
+    assert decision["route_class_counts"] == {
+        "blocked_access": 4,
+        "blocked_rights": 3,
+        "blocked_schema": 5,
+        "blocked_semantics": 2,
+        "blocked_target_derived": 1,
+    }
+    assert len(audit) == 15
+    assert len(receipts) == 15
+    assert sum(decision["route_class_counts"].values()) == 15
+    assert manifest["catalogue_source_count"] == 15
+    assert manifest["probe_receipt_count"] == 15
+    assert manifest["evidence_snapshot_count"] == 10
+    assert bridge.empty
+    assert list(bridge.columns) == list(_module().BRIDGE_COLUMNS)
+    assert coverage.empty
+    assert (output / "openap_149_identity_recovery_v2_summary.md").stat().st_size > 0
+
+
+def _passing_catalogue(path: Path) -> None:
+    payload = {
+        "dataset_id": "openap_149_identity_sources_v2",
+        "checked_at": "2026-08-15",
+        "sources": [
+            {
+                "source_id": "public_direct_history",
+                "evidence_url": "https://example.test/evidence",
+                "retrieval_url": "https://example.test/bridge.csv",
+                "probe_policy": "download_small",
+                "expected_media_type": "csv",
+                "parser": "canonical_bridge_csv",
+                "public_access_without_login": True,
+                "public_zero_cost": True,
+                "authorized_for_internal_research": True,
+                "upstream_license_required": False,
+                "provides_permno": True,
+                "provides_public_security_id": True,
+                "historical_intervals": True,
+                "share_class_specific": True,
+                "covers_2023_2024": True,
+                "broad_universe": True,
+                "target_derived": False,
+                "upstream_provenance": "Direct public identifier history",
+                "universe_limit": "Broad US equity security universe",
+                "documentary_blocker": "none_after_executable_probe",
+            }
+        ],
+    }
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def _canonical_bridge_csv() -> bytes:
+    columns = list(_module().BRIDGE_COLUMNS)
+    rows = []
+    for index, permno in enumerate((10001, 10002, 10003), start=1):
+        rows.append(
+            {
+                "canonical_security_id": f"sec:{index}",
+                "permno": permno,
+                "valid_from": "2023-01-01",
+                "valid_to": "2024-12-31",
+                "share_class_id": "A",
+                "evidence_url": "https://example.test/evidence",
+                "evidence_kind": "direct_identifier_history",
+                "source_id": "public_direct_history",
+                "source_retrieved_at": "2026-08-15T12:00:00Z",
+                "source_sha256": str(index) * 64,
+                "zero_cost_authorized": True,
+            }
+        )
+    return pd.DataFrame(rows, columns=columns).to_csv(index=False).encode("utf-8")
+
+
+def test_runner_freezes_bridge_before_identifier_only_coverage(tmp_path: Path) -> None:
+    runner = _runner_module()
+    catalogue = tmp_path / "passing.yaml"
+    _passing_catalogue(catalogue)
+    reference = tmp_path / "reference.csv"
+    reference_rows = [
+        {"permno": permno, "yyyymm": month.strftime("%Y%m")}
+        for month in pd.period_range("2023-01", "2024-12", freq="M")
+        for permno in (10001, 10002, 10003, 10004)
+    ]
+    pd.DataFrame(reference_rows).to_csv(reference, index=False)
+    output = tmp_path / "pass"
+    args = argparse.Namespace(
+        catalogue=catalogue,
+        output_dir=output,
+        repository_sha="e" * 40,
+        reference_spine=reference,
+    )
+    bridge_body = _canonical_bridge_csv()
+
+    assert runner.run(
+        args,
+        getter=lambda url, **kwargs: _Response(bridge_body, url=url),
+        now=lambda: datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc),
+    ) == 0
+
+    decision = json.loads(
+        (output / "openap_149_identity_recovery_v2_decision.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    bridge_manifest = json.loads(
+        (output / "openap_permno_bridge_v2_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    coverage = pd.read_csv(
+        output / "openap_permno_bridge_v2_monthly_coverage.csv"
+    )
+
+    assert decision["status"] == "identity_pass"
+    assert decision["pilot_authorized"] is True
+    assert decision["candidate_routes"] == 1
+    assert decision["bridge_rows"] == 3
+    assert decision["minimum_monthly_coverage"] == pytest.approx(0.75)
+    assert bridge_manifest["frozen_before_reference_read"] is True
+    assert len(coverage) == 24
+    assert coverage["coverage"].eq(0.75).all()
 
 
 def test_workflow_routes_v2_to_an_isolated_job() -> None:
