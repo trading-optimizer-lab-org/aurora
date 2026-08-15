@@ -62,7 +62,12 @@ def test_registered_bridge_can_clone_and_verify_coordinator_database() -> None:
     assert "continuous_migrate" in dispatch["mode"]["options"]
     migration = workflow["jobs"]["continuous_migrate"]
     assert migration["if"] == "${{ inputs.mode == 'continuous_migrate' }}"
-    assert "SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT" in migration["env"]
+    assert migration["env"]["SP500_DEHB_COORDINATOR_DATABASE_URL"] == (
+        "${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}"
+    )
+    assert migration["env"]["SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"] == (
+        "${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT }}"
+    )
     assert "pg_dump" in text
     assert "pg_restore" in text
     assert "assert_sp500_dehb_database_quiescent.py" in text
