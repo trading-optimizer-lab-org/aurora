@@ -41,6 +41,21 @@ def test_revision_guard_rejects_evaluator_or_contract_changes():
     )
 
 
+def test_revision_guard_accepts_isolated_unintegrated_strategy_catalog():
+    from aurora.infra.sp500_megarun.dehb_continuous_revision import (
+        unexpected_scientific_changes,
+    )
+
+    assert unexpected_scientific_changes(
+        [
+            "config/sp500_megarun_strategy_catalog_v1/catalog.jsonl",
+            "docs/superpowers/specs/2026-08-15-sp500-strategy-catalog-design.md",
+            "infra/sp500_megarun/strategy_catalog.py",
+            "scripts/build_sp500_megarun_strategy_catalog.py",
+        ]
+    ) == ()
+
+
 def test_revision_script_runs_before_package_installation():
     root = Path(__file__).resolve().parents[1]
     head = subprocess.run(

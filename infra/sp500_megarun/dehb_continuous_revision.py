@@ -5,7 +5,13 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 
-_OPERATIONAL_PREFIXES = (".github/", "tests/")
+_OPERATIONAL_PREFIXES = (
+    ".github/",
+    "config/sp500_megarun_strategy_catalog_v1/",
+    "docs/superpowers/plans/",
+    "docs/superpowers/specs/",
+    "tests/",
+)
 _OPERATIONAL_PATHS = frozenset(
     {
         "infra/sp500_megarun/dehb_continuous_coordinator.py",
@@ -15,8 +21,10 @@ _OPERATIONAL_PATHS = frozenset(
         "infra/sp500_megarun/dehb_continuous_schema.py",
         "infra/sp500_megarun/dehb_continuous_store.py",
         "infra/sp500_megarun/dehb_continuous_worker.py",
+        "infra/sp500_megarun/strategy_catalog.py",
         "scripts/assert_sp500_dehb_database_quiescent.py",
         "scripts/build_sp500_dehb_historical_archive.py",
+        "scripts/build_sp500_megarun_strategy_catalog.py",
         "scripts/close_sp500_dehb_database_run_sessions.py",
         "scripts/compact_sp500_dehb_database_clone.py",
         "scripts/reduce_sp500_dehb_continuous_snapshot.py",
