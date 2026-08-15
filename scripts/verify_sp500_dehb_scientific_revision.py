@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
+from pathlib import Path
 import re
 import subprocess
 
-from aurora.infra.sp500_megarun.dehb_continuous_revision import (
-    unexpected_scientific_changes,
-)
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REVISION_MODULE = REPOSITORY_ROOT / "infra/sp500_megarun/dehb_continuous_revision.py"
+_SPEC = importlib.util.spec_from_file_location("dehb_continuous_revision", REVISION_MODULE)
+if _SPEC is None or _SPEC.loader is None:
+    raise RuntimeError("CONTINUOUS_REVISION_GUARD_IMPORT_FAILED")
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+unexpected_scientific_changes = _MODULE.unexpected_scientific_changes
 
 
 def main() -> int:
