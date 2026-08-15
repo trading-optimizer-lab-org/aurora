@@ -11,6 +11,7 @@ on:
         options:
           - official
           - continuous_postgres
+          - continuous_probe
           - continuous_allocate
           - continuous_migrate
           - continuous_emergency_migrate
@@ -94,6 +95,98 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  continuous_probe:
+    if: ${{ inputs.mode == 'continuous_probe' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GITHUB_ACTIONS: "true"
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
+      SP500_DEHB_CAMPAIGN_ID: ${{ inputs.campaign_id }}
+    steps:
+      - name: Set up probe Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install read-only probe runtime
+        run: python -m pip install "psycopg[binary]>=3.2,<4"
+      - name: Probe live database without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p outputs/sp500_dehb_database_probe
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          import psycopg
+
+          campaign_id = os.environ["SP500_DEHB_CAMPAIGN_ID"]
+          with psycopg.connect(
+              os.environ["SP500_DEHB_COORDINATOR_DATABASE_URL"],
+              autocommit=True,
+          ) as connection:
+              with connection.cursor() as cursor:
+                  cursor.execute("SET default_transaction_read_only = on")
+                  cursor.execute(
+                      """
+                      SELECT
+                          pg_database_size(current_database()),
+                          c.state,
+                          c.validation_opened,
+                          c.locked_opened,
+                          (SELECT count(*) FROM evaluations e
+                           WHERE e.campaign_id = c.campaign_id),
+                          (SELECT count(*) FROM strategy_evaluations s
+                           WHERE s.campaign_id = c.campaign_id),
+                          (SELECT count(*) FROM results r
+                           WHERE r.campaign_id = c.campaign_id),
+                          (SELECT count(*) FROM island_batches b
+                           WHERE b.campaign_id = c.campaign_id
+                             AND b.status = 'applied'),
+                          (SELECT count(*) FROM island_batches b
+                           WHERE b.campaign_id = c.campaign_id
+                             AND b.status = 'open'),
+                          (SELECT count(*) FROM worker_sessions w
+                           WHERE w.campaign_id = c.campaign_id
+                             AND w.state <> 'closed')
+                      FROM campaigns c
+                      WHERE c.campaign_id = %s
+                      """,
+                      (campaign_id,),
+                  )
+                  row = cursor.fetchone()
+          if row is None:
+              raise RuntimeError("CONTINUOUS_PROBE_CAMPAIGN_NOT_FOUND")
+          payload = {
+              "campaign_id": campaign_id,
+              "database_size_bytes": int(row[0]),
+              "state": str(row[1]),
+              "validation_opened": bool(row[2]),
+              "locked_opened": bool(row[3]),
+              "evaluations": int(row[4]),
+              "strategies": int(row[5]),
+              "results": int(row[6]),
+              "applied_batches": int(row[7]),
+              "open_batches": int(row[8]),
+              "active_worker_sessions": int(row[9]),
+          }
+          if payload["validation_opened"] or payload["locked_opened"]:
+              raise RuntimeError("CONTINUOUS_PROBE_BOUNDARY_OPEN")
+          output = Path("outputs/sp500_dehb_database_probe/probe.json")
+          output.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+      - name: Upload non-sensitive probe evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-database-probe
+          path: outputs/sp500_dehb_database_probe/probe.json
+          if-no-files-found: error
+          retention-days: 7
+
   framework_contract:
     if: ${{ inputs.mode == 'official' }}
     uses: ./.github/workflows/_aurora-future-run-v3.yml

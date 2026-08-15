@@ -110,6 +110,24 @@ def test_registered_bridge_can_recover_same_database_without_cloning() -> None:
     assert "sp500-dehb-database-recovery" in text
 
 
+def test_registered_bridge_can_probe_live_database_without_mutation() -> None:
+    workflow = _load(REGISTERED_SMOKE_BRIDGE)
+    dispatch = workflow["on"]["workflow_dispatch"]["inputs"]
+
+    assert "continuous_probe" in dispatch["mode"]["options"]
+    probe = workflow["jobs"]["continuous_probe"]
+    assert probe["if"] == "${{ inputs.mode == 'continuous_probe' }}"
+    assert probe["env"]["SP500_DEHB_COORDINATOR_DATABASE_URL"] == (
+        "${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}"
+    )
+    command = "\n".join(str(step.get("run", "")) for step in probe["steps"])
+    assert "pg_database_size(current_database())" in command
+    assert "validation_opened" in command
+    assert "locked_opened" in command
+    assert "SELECT" in command
+    assert all(token not in command for token in ("INSERT", "UPDATE", "DELETE", "VACUUM"))
+
+
 def test_registered_bridge_can_emergency_clone_full_stopped_database_before_recovery() -> None:
     workflow = _load(REGISTERED_SMOKE_BRIDGE)
     dispatch = workflow["on"]["workflow_dispatch"]["inputs"]
