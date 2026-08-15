@@ -1,0 +1,85 @@
+schema_version: 1
+policy_name: openap_149_autonomous_free_reconstruction
+target_count: 149
+
+calculation_classes:
+  - formula_exacta
+  - aproximacion_solida
+  - bloqueada_gratis
+
+strict_stock_level_equivalence: false
+strict_score_eligible_default: false
+openap_stock_level_values_allowed: false
+oos_locked: true
+forward_locked: true
+
+openap_usage:
+  - pinned_formula
+  - orientation
+  - public_portfolio_rules
+  - public_portfolio_returns_diagnostic_only
+
+source_priority:
+  - official_public_api_or_bulk
+  - official_public_html_or_filing
+  - public_academic_with_affirmative_terms
+  - preserved_licensed_internal_artifact
+  - terminal_evidence_backed_block
+
+collector:
+  api_or_bulk_first: true
+  visible_browser_allowed: false
+  login_bypass_allowed: false
+  captcha_bypass_allowed: false
+  paywall_bypass_allowed: false
+  default_timeout_seconds: 30
+  maximum_attempts: 3
+  respect_robots_for_html: true
+  declared_user_agent_required: true
+  content_sha256_required: true
+  receipt_required: true
+  source_limits_per_second:
+    sec: 8.0
+    finra: 1.0
+    patentsview: 1.0
+    bea: 1.0
+    french: 0.2
+
+point_in_time:
+  required: true
+  reject_available_after_formation: true
+  sec_availability_timestamp: filing_acceptance_time
+  preserve_amendment_history: true
+  market_cutoff: last_completed_session_before_formation
+  release_data_timestamp: public_release_time
+  current_identity_backfill_allowed: false
+
+broad_signal_gate:
+  minimum_valid_securities: 500
+  minimum_source_eligible_coverage: 0.70
+  denominator: signal_source_eligible_universe
+
+sparse_signal_gate:
+  requires_frozen_applicability_rule: true
+  denominator: formula_applicable_universe
+  minimum_valid_observations: 3
+  minimum_distinct_values: 2
+  minimum_applicable_coverage: 0.70
+
+score:
+  formula_exact_name: aurora_formula_exact_score
+  extended_name: aurora_extended_provisional_score
+  missing_value_policy: frozen_neutral_with_lower_confidence
+  redundancy_group_fixed_vote: true
+  maximum_economic_family_share: 0.35
+
+extended_score:
+  approximation_weight_cap: 0.20
+  report_approximation_contribution_separately: true
+
+portfolio_behaviour:
+  minimum_overlap_months: 24
+  minimum_period_coverage: 0.70
+  high_similarity_spearman: 0.90
+  may_tune_formula_or_source: false
+  implies_stock_level_fidelity: false
