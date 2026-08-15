@@ -4,9 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from itertools import product
 import json
+import math
 import re
 from typing import Any, Mapping, Sequence
+
+from aurora.infra.sp500_megarun.dehb_configspace import (
+    _forbidden_parameter_pairs,
+    _forbidden_parameter_triplets,
+)
+from aurora.infra.sp500_megarun.feature_contract import (
+    FeatureLaneSpec,
+    FrozenFeatureContract,
+)
 
 
 CATALOG_ID_DOMAIN = b"AURORA-SP500-STRATEGY-CATALOG-V1\0"
@@ -14,6 +25,7 @@ CATALOG_RECIPE_DOMAIN = b"AURORA-SP500-STRATEGY-RECIPE-V1\0"
 CATALOG_CONFIGURATION_DOMAIN = b"AURORA-SP500-STRATEGY-CONFIGURATION-V1\0"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _LANE_RE = re.compile(r"^F\d{3}$")
+_JSON_ATOM_CACHE: dict[tuple[type[object], object], str] = {}
 
 
 class CatalogBuildError(ValueError):
@@ -289,12 +301,274 @@ class StrategyCatalogEntryV1:
         }
 
 
+def _lane_constraints(
+    lane: FeatureLaneSpec,
+) -> tuple[tuple[tuple[str, object], ...], ...]:
+    constraints: list[tuple[tuple[str, object], ...]] = []
+    for left_name, left_value, right_name, right_value in (
+        _forbidden_parameter_pairs(lane)
+    ):
+        constraints.append(
+            ((left_name, left_value), (right_name, right_value))
+        )
+    for (
+        first_name,
+        first_value,
+        second_name,
+        second_value,
+        third_name,
+        third_value,
+    ) in _forbidden_parameter_triplets(lane):
+        constraints.append(
+            (
+                (first_name, first_value),
+                (second_name, second_value),
+                (third_name, third_value),
+            )
+        )
+    return tuple(constraints)
+
+
+def _matches_constraint(
+    configuration: Mapping[str, object],
+    constraint: tuple[tuple[str, object], ...],
+) -> bool:
+    return all(configuration[name] == value for name, value in constraint)
+
+
+def enumerate_valid_configurations(
+    lane: FeatureLaneSpec,
+) -> tuple[dict[str, object], ...]:
+    """Enumerate one lane's exact discrete configurations and reject forbiddens."""
+
+    parameter_names = tuple(lane.parameter_space)
+    constraints = _lane_constraints(lane)
+    valid: list[dict[str, object]] = []
+    for values in product(*(lane.parameter_space[name] for name in parameter_names)):
+        configuration = dict(zip(parameter_names, values, strict=True))
+        if any(
+            _matches_constraint(configuration, constraint)
+            for constraint in constraints
+        ):
+            continue
+        valid.append(configuration)
+    valid.sort(key=canonical_json_bytes)
+    if not valid:
+        raise CatalogBuildError(f"CATALOG_LANE_HAS_NO_VALID_CONFIG:{lane.lane_id}")
+    return tuple(valid)
+
+
+def _json_atom(value: object) -> str:
+    try:
+        key = (type(value), value)
+        cached = _JSON_ATOM_CACHE.get(key)
+    except TypeError:
+        return canonical_json_bytes(value).decode("ascii")
+    if cached is None:
+        cached = canonical_json_bytes(value).decode("ascii")
+        _JSON_ATOM_CACHE[key] = cached
+    return cached
+
+
+def _configuration_requirement_tags(
+    configuration: Mapping[str, object],
+    parameter_names: Sequence[str],
+) -> tuple[str, ...]:
+    tags = [
+        f"parameter:{name}={_json_atom(configuration[name])}"
+        for name in parameter_names
+    ]
+    for left_index, left_name in enumerate(parameter_names):
+        for right_name in parameter_names[left_index + 1 :]:
+            tags.append(
+                "pair:"
+                f"{left_name}={_json_atom(configuration[left_name])}|"
+                f"{right_name}={_json_atom(configuration[right_name])}"
+            )
+    return tuple(tags)
+
+
+def individual_coverage_requirements(
+    lane: FeatureLaneSpec,
+    valid_configurations: Sequence[Mapping[str, object]],
+) -> tuple[str, ...]:
+    """Return every one-way and compatible pairwise requirement for one lane."""
+
+    parameter_names = tuple(lane.parameter_space)
+    requirements: set[str] = set()
+    for configuration in valid_configurations:
+        requirements.update(
+            _configuration_requirement_tags(configuration, parameter_names)
+        )
+    return tuple(sorted(requirements))
+
+
+def select_covering_configurations(
+    lane: FeatureLaneSpec,
+    valid_configurations: Sequence[Mapping[str, object]],
+) -> tuple[dict[str, object], ...]:
+    """Choose a deterministic greedy covering set, always including the default."""
+
+    if not valid_configurations:
+        raise CatalogBuildError(f"CATALOG_LANE_HAS_NO_VALID_CONFIG:{lane.lane_id}")
+    parameter_names = tuple(lane.parameter_space)
+    requirements = individual_coverage_requirements(lane, valid_configurations)
+    requirement_index = {
+        requirement: index for index, requirement in enumerate(requirements)
+    }
+    candidate_data: list[tuple[bytes, int]] = []
+    for configuration in valid_configurations:
+        mask = 0
+        for tag in _configuration_requirement_tags(configuration, parameter_names):
+            mask |= 1 << requirement_index[tag]
+        candidate_data.append((canonical_json_bytes(configuration), mask))
+
+    default = {
+        name: choices[0] for name, choices in lane.parameter_space.items()
+    }
+    default_bytes = canonical_json_bytes(default)
+    try:
+        default_index = next(
+            index
+            for index, (encoded, _mask) in enumerate(candidate_data)
+            if encoded == default_bytes
+        )
+    except StopIteration as exc:
+        raise CatalogBuildError(
+            f"CATALOG_DEFAULT_CONFIGURATION_FORBIDDEN:{lane.lane_id}"
+        ) from exc
+
+    selected_indices = [default_index]
+    selected_set = {default_index}
+    uncovered = (1 << len(requirements)) - 1
+    uncovered &= ~candidate_data[default_index][1]
+    while uncovered:
+        best_index = -1
+        best_score = 0
+        best_bytes = b""
+        for index, (encoded, coverage_mask) in enumerate(candidate_data):
+            if index in selected_set:
+                continue
+            score = (coverage_mask & uncovered).bit_count()
+            if score > best_score or (
+                score == best_score and score > 0 and encoded < best_bytes
+            ):
+                best_index = index
+                best_score = score
+                best_bytes = encoded
+        if best_index < 0 or best_score == 0:
+            raise CatalogBuildError(
+                f"CATALOG_INDIVIDUAL_COVERAGE_STALLED:{lane.lane_id}"
+            )
+        selected_indices.append(best_index)
+        selected_set.add(best_index)
+        uncovered &= ~candidate_data[best_index][1]
+
+    return tuple(dict(valid_configurations[index]) for index in selected_indices)
+
+
+def _validate_catalog_contract(contract: FrozenFeatureContract) -> None:
+    if len(contract.lanes) != 240:
+        raise CatalogBuildError(f"CATALOG_EXPECTED_240_LANES:{len(contract.lanes)}")
+    if any(lane.implementation_status != "executable" for lane in contract.lanes):
+        raise CatalogBuildError("CATALOG_LANE_NOT_EXECUTABLE")
+    if contract.search_end.isoformat() != "2010-12-31":
+        raise CatalogBuildError("CATALOG_SEARCH_END_INVALID")
+    if contract.validation_opened or contract.locked_opened:
+        raise CatalogBuildError("CATALOG_BOUNDARY_OPEN")
+
+
+def build_individual_entries(
+    contract: FrozenFeatureContract,
+) -> tuple[tuple[StrategyCatalogEntryV1, ...], dict[str, Any]]:
+    """Build the minimum deterministic individual catalog for all 240 lanes."""
+
+    _validate_catalog_contract(contract)
+    entries: list[StrategyCatalogEntryV1] = []
+    lane_reports: list[dict[str, object]] = []
+    raw_cartesian_count = 0
+    valid_configuration_count = 0
+    requirement_count = 0
+    for lane in contract.lanes:
+        lane_raw_count = math.prod(
+            len(choices) for choices in lane.parameter_space.values()
+        )
+        raw_cartesian_count += lane_raw_count
+        valid = enumerate_valid_configurations(lane)
+        selected = select_covering_configurations(lane, valid)
+        requirements = tuple(
+            sorted(
+                {
+                    tag
+                    for configuration in selected
+                    for tag in _configuration_requirement_tags(
+                        configuration,
+                        tuple(lane.parameter_space),
+                    )
+                }
+            )
+        )
+        valid_configuration_count += len(valid)
+        requirement_count += len(requirements)
+        selected_ids: list[str] = []
+        for configuration in selected:
+            component = CatalogComponentV1.create(lane.lane_id, configuration)
+            entry = StrategyCatalogEntryV1.create(
+                strategy_kind="single",
+                components=(component,),
+                composition={"kind": "identity"},
+                cross_rule_ids=(),
+                economic_rationales=(),
+                coverage_tags=(
+                    f"lane:{lane.lane_id}",
+                    *_configuration_requirement_tags(
+                        configuration,
+                        tuple(lane.parameter_space),
+                    ),
+                ),
+                feature_contract_sha256=contract.sha256,
+            )
+            entries.append(entry)
+            selected_ids.append(entry.strategy_id)
+        lane_reports.append(
+            {
+                "lane_id": lane.lane_id,
+                "raw_cartesian_count": lane_raw_count,
+                "valid_configuration_count": len(valid),
+                "requirement_count": len(requirements),
+                "selected_strategy_count": len(selected),
+                "selected_strategy_ids": selected_ids,
+                "uncovered_requirements": [],
+            }
+        )
+
+    if raw_cartesian_count != 682_652:
+        raise CatalogBuildError(
+            f"CATALOG_RAW_CARTESIAN_COUNT_MISMATCH:{raw_cartesian_count}"
+        )
+    entries.sort(key=lambda entry: entry.strategy_id)
+    report: dict[str, Any] = {
+        "lane_count": len(contract.lanes),
+        "raw_cartesian_count": raw_cartesian_count,
+        "valid_configuration_count": valid_configuration_count,
+        "requirement_count": requirement_count,
+        "selected_strategy_count": len(entries),
+        "uncovered_requirements": [],
+        "lanes": lane_reports,
+    }
+    return tuple(entries), report
+
+
 __all__ = [
     "CatalogBuildError",
     "CatalogComponentV1",
     "StrategyCatalogEntryV1",
+    "build_individual_entries",
     "canonical_json_bytes",
     "configuration_sha256",
+    "enumerate_valid_configurations",
+    "individual_coverage_requirements",
     "scientific_recipe_sha256",
+    "select_covering_configurations",
     "strategy_id_for",
 ]

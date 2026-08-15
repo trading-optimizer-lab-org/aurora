@@ -4,10 +4,28 @@ from pathlib import Path
 
 import pytest
 
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
+from aurora.infra.sp500_megarun.feature_contract import (
+    load_and_validate_feature_contract,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_CONTRACT_PATH = REPO_ROOT / "config" / "sp500_megarun_free_data_240.json"
 FEATURE_CONTRACT_PATH = REPO_ROOT / "config" / "sp500_megarun_feature_contract_240.json"
+
+
+@pytest.fixture(scope="module")
+def feature_contract():
+    data_contract = load_and_validate_contract(DATA_CONTRACT_PATH)
+    return load_and_validate_feature_contract(FEATURE_CONTRACT_PATH, data_contract)
+
+
+@pytest.fixture(scope="module")
+def individual_catalog(feature_contract):
+    from aurora.infra.sp500_megarun.strategy_catalog import build_individual_entries
+
+    return build_individual_entries(feature_contract)
 
 
 def _single_payload(**overrides: object) -> dict[str, object]:
@@ -57,3 +75,31 @@ def test_catalog_entry_rejects_open_boundaries(boundary: str) -> None:
 
     with pytest.raises(CatalogBuildError, match="CATALOG_BOUNDARY_OPEN"):
         StrategyCatalogEntryV1.from_payload(_single_payload(**{boundary: True}))
+
+
+def test_individual_catalog_covers_every_value_and_compatible_pair(
+    individual_catalog,
+) -> None:
+    entries, report = individual_catalog
+
+    assert {entry.components[0].lane_id for entry in entries} == {
+        f"F{index:03d}" for index in range(1, 241)
+    }
+    assert report["lane_count"] == 240
+    assert report["raw_cartesian_count"] == 682_652
+    assert report["uncovered_requirements"] == []
+    assert all(entry.strategy_kind == "single" for entry in entries)
+    assert all(entry.validation_opened is False for entry in entries)
+    assert all(entry.locked_opened is False for entry in entries)
+
+
+def test_individual_catalog_excludes_forbidden_f002_pairs(individual_catalog) -> None:
+    entries, _report = individual_catalog
+    f002 = [entry for entry in entries if entry.components[0].lane_id == "F002"]
+
+    assert f002
+    assert all(
+        entry.components[0].configuration["fast"]
+        < entry.components[0].configuration["slow"]
+        for entry in f002
+    )
