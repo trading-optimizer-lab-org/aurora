@@ -265,6 +265,33 @@ def main() -> int:
                 WHERE state <> 'closed'
                 """
             )
+            recovery_state = cursor.execute(
+                """
+                SELECT
+                  (SELECT count(*) FROM results WHERE campaign_id = %s),
+                  (SELECT count(*) FROM evaluations WHERE campaign_id = %s),
+                  (SELECT count(*) FROM strategy_evaluations
+                   WHERE campaign_id = %s AND state = 'completed'),
+                  (SELECT count(*) FROM evaluations
+                   WHERE campaign_id = %s AND state = 'conflict') +
+                  (SELECT count(*) FROM strategy_evaluations
+                   WHERE campaign_id = %s AND state = 'conflict'),
+                  (SELECT count(*) FROM island_batches
+                   WHERE campaign_id = %s AND status = 'open'),
+                  (SELECT validation_opened FROM campaigns WHERE campaign_id = %s),
+                  (SELECT locked_opened FROM campaigns WHERE campaign_id = %s),
+                  pg_database_size(current_database())
+                """,
+                (args.campaign_id,) * 8,
+            ).fetchone()
+            if recovery_state is None:
+                raise RuntimeError("RECOVERY_STATE_UNAVAILABLE")
+            if int(recovery_state[3]) != 0:
+                raise RuntimeError("RECOVERY_CONFLICTS_PRESENT")
+            if args.rebuild_open_batches and int(recovery_state[4]) != 0:
+                raise RuntimeError("RECOVERY_OPEN_BATCHES_REMAIN")
+            if bool(recovery_state[5]) or bool(recovery_state[6]):
+                raise RuntimeError("RECOVERY_BOUNDARY_OPENED")
     print(
         json.dumps(
             {
@@ -277,6 +304,14 @@ def main() -> int:
                 "rebuilt_open_batches": len(reset_batches),
                 "detached_open_batch_proposals": deleted_open_batch_proposals,
                 "terminated_backends": terminated_backends,
+                "physical_result_count": int(recovery_state[0]),
+                "evaluation_count": int(recovery_state[1]),
+                "completed_strategy_count": int(recovery_state[2]),
+                "conflict_count": int(recovery_state[3]),
+                "open_batch_count": int(recovery_state[4]),
+                "validation_opened": bool(recovery_state[5]),
+                "locked_opened": bool(recovery_state[6]),
+                "database_size_bytes": int(recovery_state[7]),
             },
             sort_keys=True,
         )

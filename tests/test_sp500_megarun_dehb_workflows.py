@@ -91,6 +91,25 @@ def test_registered_bridge_can_clone_and_verify_coordinator_database() -> None:
     assert "locked_2021" not in text
 
 
+def test_registered_bridge_can_recover_same_database_without_cloning() -> None:
+    workflow = _load(REGISTERED_SMOKE_BRIDGE)
+    text = REGISTERED_SMOKE_BRIDGE.read_text(encoding="utf-8")
+    dispatch = workflow["on"]["workflow_dispatch"]["inputs"]
+
+    assert "continuous_recover" in dispatch["mode"]["options"]
+    recovery = workflow["jobs"]["continuous_recover"]
+    assert recovery["if"] == "${{ inputs.mode == 'continuous_recover' }}"
+    assert recovery["env"]["SP500_DEHB_COORDINATOR_DATABASE_URL"] == (
+        "${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}"
+    )
+    assert "SP500_DEHB_SOURCE_RUN_COMPLETED=true" in text
+    assert "close_sp500_dehb_database_run_sessions.py" in text
+    assert "--terminate-stopped-run-backends" in text
+    assert "--rebuild-open-batches" in text
+    assert "assert_sp500_dehb_database_quiescent.py" in text
+    assert "sp500-dehb-database-recovery" in text
+
+
 def test_registered_bridge_can_allocate_an_encrypted_reserve_database() -> None:
     workflow = _load(REGISTERED_SMOKE_BRIDGE)
     text = REGISTERED_SMOKE_BRIDGE.read_text(encoding="utf-8")
