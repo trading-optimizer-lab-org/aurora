@@ -93,6 +93,9 @@ def test_registered_bridge_can_allocate_an_encrypted_reserve_database() -> None:
     assert "rsa_padding_mode:oaep" in text
     assert "connection-string.enc" in text
     assert "claim-url.enc" in text
+    assert '--header "Content-Type: application/json"' in text
+    assert "AURORA_DEHB_NEON_ALLOCATION_REF" in text
+    assert "--data" in text
 
 
 def test_registered_bridge_can_start_and_continue_production_autonomously() -> None:

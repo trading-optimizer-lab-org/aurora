@@ -203,6 +203,7 @@ jobs:
         shell: bash
         env:
           ALLOCATION_PUBLIC_KEY_B64: ${{ inputs.allocation_public_key_b64 }}
+          AURORA_DEHB_NEON_ALLOCATION_REF: aurora-sp500-dehb-reserve
         run: |
           set -euo pipefail
           umask 077
@@ -215,7 +216,9 @@ jobs:
             --fail-with-body \
             --request POST \
             --header "Accept: application/json" \
+            --header "Content-Type: application/json" \
             --header "User-Agent: Aurora-DEHB-Coordinator-Migration/1.0" \
+            --data "{\"ref\":\"$AURORA_DEHB_NEON_ALLOCATION_REF\"}" \
             --output "$RUNNER_TEMP/allocation.json" \
             https://neon.new/api/v1/database
           connection_string="$(jq -er '.connection_string' "$RUNNER_TEMP/allocation.json")"
