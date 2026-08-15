@@ -228,6 +228,7 @@ def test_continuous_coordinator_waits_for_recovered_open_batches() -> None:
     assert "Wait for recovered open batches" in text
     assert "CONTINUOUS_OPEN_BATCHES_STILL_INCOMPLETE" in text
     assert "e.state <> 'completed'" in text
+    assert "time.monotonic() + 1800" in text
 
 
 def test_continuous_workflows_are_exact_commit_train_only_and_never_call_v1() -> None:

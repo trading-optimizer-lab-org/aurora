@@ -71,7 +71,7 @@ jobs:
 
           import psycopg
 
-          deadline = time.monotonic() + 600
+          deadline = time.monotonic() + 1800
           while time.monotonic() < deadline:
               with psycopg.connect(
                   os.environ["SP500_DEHB_COORDINATOR_DATABASE_URL"]
