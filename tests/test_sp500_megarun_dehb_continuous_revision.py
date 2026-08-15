@@ -15,6 +15,11 @@ def test_revision_guard_accepts_only_explicit_operational_paths():
             ".github/workflows/sp500-dehb-continuous-worker-pool-v2.yml",
             "infra/sp500_megarun/dehb_continuous_worker.py",
             "infra/sp500_megarun/dehb_continuous_store.py",
+            "infra/sp500_megarun/dehb_continuous_archive.py",
+            "scripts/build_sp500_dehb_historical_archive.py",
+            "scripts/reduce_sp500_dehb_continuous_snapshot.py",
+            "scripts/run_sp500_dehb_continuous_worker.py",
+            "scripts/segment_sp500_dehb_continuous_state.py",
             "tests/test_sp500_megarun_dehb_continuous_worker.py",
         ]
     ) == ()
