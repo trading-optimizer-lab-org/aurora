@@ -76,6 +76,21 @@ def test_registered_bridge_can_clone_and_verify_coordinator_database() -> None:
     assert "locked_2021" not in text
 
 
+def test_registered_bridge_can_allocate_an_encrypted_reserve_database() -> None:
+    workflow = _load(REGISTERED_SMOKE_BRIDGE)
+    text = REGISTERED_SMOKE_BRIDGE.read_text(encoding="utf-8")
+
+    dispatch = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert "continuous_allocate" in dispatch["mode"]["options"]
+    allocation = workflow["jobs"]["continuous_allocate"]
+    assert allocation["if"] == "${{ inputs.mode == 'continuous_allocate' }}"
+    assert "allocation_public_key_b64" in dispatch
+    assert "openssl pkeyutl -encrypt" in text
+    assert "rsa_padding_mode:oaep" in text
+    assert "connection-string.enc" in text
+    assert "claim-url.enc" in text
+
+
 def test_registered_bridge_can_start_and_continue_production_autonomously() -> None:
     workflow = _load(REGISTERED_SMOKE_BRIDGE)
     text = REGISTERED_SMOKE_BRIDGE.read_text(encoding="utf-8")

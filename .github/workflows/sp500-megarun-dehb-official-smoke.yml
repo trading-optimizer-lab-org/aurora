@@ -11,6 +11,7 @@ on:
         options:
           - official
           - continuous_postgres
+          - continuous_allocate
           - continuous_migrate
           - continuous_start
           - continuous_continue
@@ -35,6 +36,9 @@ on:
         default: "000000"
       source_run_id:
         description: Completed continuous run stopped before a database clone
+        required: false
+      allocation_public_key_b64:
+        description: One-time RSA public key for encrypted reserve credentials
         required: false
 
 permissions:
@@ -186,6 +190,69 @@ jobs:
           tests/test_sp500_megarun_dehb_workflows.py
           tests/integration/test_sp500_megarun_dehb_continuous_postgres.py
           -q
+
+  continuous_allocate:
+    if: ${{ inputs.mode == 'continuous_allocate' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Allocate and encrypt one accountless reserve database
+        shell: bash
+        env:
+          ALLOCATION_PUBLIC_KEY_B64: ${{ inputs.allocation_public_key_b64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$ALLOCATION_PUBLIC_KEY_B64"
+          output="$RUNNER_TEMP/sp500-dehb-reserve"
+          mkdir -p "$output"
+          curl \
+            --silent \
+            --show-error \
+            --fail-with-body \
+            --request POST \
+            --header "Accept: application/json" \
+            --header "User-Agent: Aurora-DEHB-Coordinator-Migration/1.0" \
+            --output "$RUNNER_TEMP/allocation.json" \
+            https://neon.new/api/v1/database
+          connection_string="$(jq -er '.connection_string' "$RUNNER_TEMP/allocation.json")"
+          claim_url="$(jq -er '.claim_url' "$RUNNER_TEMP/allocation.json")"
+          echo "::add-mask::$connection_string"
+          echo "::add-mask::$claim_url"
+          printf '%s' "$ALLOCATION_PUBLIC_KEY_B64" | base64 --decode \
+            > "$RUNNER_TEMP/allocation-public.pem"
+          printf '%s' "$connection_string" > "$RUNNER_TEMP/connection-string.txt"
+          printf '%s' "$claim_url" > "$RUNNER_TEMP/claim-url.txt"
+          openssl pkeyutl -encrypt \
+            -pubin \
+            -inkey "$RUNNER_TEMP/allocation-public.pem" \
+            -in "$RUNNER_TEMP/connection-string.txt" \
+            -out "$output/connection-string.enc" \
+            -pkeyopt rsa_padding_mode:oaep \
+            -pkeyopt rsa_oaep_md:sha256 \
+            -pkeyopt rsa_mgf1_md:sha256
+          openssl pkeyutl -encrypt \
+            -pubin \
+            -inkey "$RUNNER_TEMP/allocation-public.pem" \
+            -in "$RUNNER_TEMP/claim-url.txt" \
+            -out "$output/claim-url.enc" \
+            -pkeyopt rsa_padding_mode:oaep \
+            -pkeyopt rsa_oaep_md:sha256 \
+            -pkeyopt rsa_mgf1_md:sha256
+          jq '{id,status,created_at,expires_at}' "$RUNNER_TEMP/allocation.json" \
+            > "$output/metadata.json"
+          rm -f \
+            "$RUNNER_TEMP/allocation.json" \
+            "$RUNNER_TEMP/allocation-public.pem" \
+            "$RUNNER_TEMP/connection-string.txt" \
+            "$RUNNER_TEMP/claim-url.txt"
+      - name: Upload encrypted reserve credentials
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-encrypted-reserve-${{ github.run_id }}
+          path: ${{ runner.temp }}/sp500-dehb-reserve
+          if-no-files-found: error
+          retention-days: 1
 
   continuous_migrate:
     if: ${{ inputs.mode == 'continuous_migrate' }}
