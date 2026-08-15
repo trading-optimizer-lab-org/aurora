@@ -705,6 +705,66 @@ jobs:
                   "SP500_DEHB_COORDINATOR_DATABASE_URL=" + database_url + "\n"
               )
           PY
+      - name: Reclaim stopped-session pages before recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "psycopg[binary]>=3.2,<4"
+          python - <<'PY'
+          import json
+          import os
+
+          import psycopg
+
+          database_url = os.environ["SP500_DEHB_COORDINATOR_DATABASE_URL"]
+          campaign_id = "${{ inputs.campaign_id }}"
+          with psycopg.connect(database_url) as connection:
+              boundary = connection.execute(
+                  """
+                  SELECT validation_opened, locked_opened
+                  FROM campaigns WHERE campaign_id = %s
+                  """,
+                  (campaign_id,),
+              ).fetchone()
+              if boundary is None or bool(boundary[0]) or bool(boundary[1]):
+                  raise RuntimeError("RECOVERY_RECLAIM_BOUNDARY_OPENED")
+              deleted_leases = connection.execute(
+                  """
+                  DELETE FROM worker_slot_leases leases
+                  USING worker_sessions sessions
+                  WHERE leases.worker_session_id = sessions.worker_session_id
+                    AND sessions.campaign_id = %s
+                    AND sessions.state = 'closed'
+                  """,
+                  (campaign_id,),
+              ).rowcount
+              deleted_sessions = connection.execute(
+                  """
+                  DELETE FROM worker_sessions
+                  WHERE campaign_id = %s AND state = 'closed'
+                  """,
+                  (campaign_id,),
+              ).rowcount
+          with psycopg.connect(database_url, autocommit=True) as connection:
+              connection.execute("VACUUM (ANALYZE) worker_sessions")
+              database_size = int(
+                  connection.execute(
+                      "SELECT pg_database_size(current_database())"
+                  ).fetchone()[0]
+              )
+          print(
+              json.dumps(
+                  {
+                      "deleted_closed_session_leases": int(deleted_leases),
+                      "deleted_closed_sessions": int(deleted_sessions),
+                      "database_size_bytes": database_size,
+                      "validation_opened": False,
+                      "locked_opened": False,
+                  },
+                  sort_keys=True,
+              )
+          )
+          PY
       - name: Recover stopped sessions and rebuild unapplied batches
         shell: bash
         run: |
