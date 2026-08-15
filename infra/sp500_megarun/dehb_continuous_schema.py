@@ -185,9 +185,17 @@ def schema_statements() -> Sequence[str]:
             created_sequence bigint NOT NULL,
             updated_sequence bigint NOT NULL,
             created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-            updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-            UNIQUE (campaign_id, permit_number)
+            updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
         )
+        """,
+        """
+        ALTER TABLE worker_sessions
+        DROP CONSTRAINT IF EXISTS worker_sessions_campaign_id_permit_number_key
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS worker_sessions_active_permit_unique
+        ON worker_sessions (campaign_id, permit_number)
+        WHERE state <> 'closed'
         """,
         """
         CREATE TABLE IF NOT EXISTS worker_slot_leases (

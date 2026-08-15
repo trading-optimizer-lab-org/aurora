@@ -284,12 +284,16 @@ jobs:
           test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL"
           test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
           test "$SP500_DEHB_COORDINATOR_DATABASE_URL" != "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+          echo "SP500_DEHB_SOURCE_RUN_COMPLETED=true" >> "$GITHUB_ENV"
       - name: Prove the source database has no live writers
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install "psycopg[binary]>=3.2,<4"
           python -m pip install --no-deps -e .
+          python scripts/close_sp500_dehb_database_run_sessions.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --github-run-id "${{ inputs.source_run_id }}"
           python scripts/assert_sp500_dehb_database_quiescent.py \
             --campaign-id "${{ inputs.campaign_id }}"
       - name: Clone the stopped PostgreSQL database exactly

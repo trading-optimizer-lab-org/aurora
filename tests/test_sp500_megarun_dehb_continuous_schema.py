@@ -75,7 +75,10 @@ def test_schema_caps_worker_sessions_and_executor_slots():
 
     assert "check (permit_number between 1 and 360)" in sql
     assert "check (slot_index between 0 and 3)" in sql
-    assert "unique (campaign_id, permit_number)" in sql
+    assert "unique (campaign_id, permit_number)" not in sql
+    assert "create unique index if not exists worker_sessions_active_permit_unique" in sql
+    assert "on worker_sessions (campaign_id, permit_number) where state <> 'closed'" in sql
+    assert "drop constraint if exists worker_sessions_campaign_id_permit_number_key" in sql
     assert "unique (campaign_id, worker_session_id, slot_index)" in sql
 
 

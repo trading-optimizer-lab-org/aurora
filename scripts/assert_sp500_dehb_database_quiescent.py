@@ -24,7 +24,8 @@ def main() -> int:
               (SELECT count(*) FROM campaign_leases
                WHERE campaign_id = %s AND lease_expires_at >= clock_timestamp()),
               (SELECT count(*) FROM worker_sessions
-               WHERE campaign_id = %s AND lease_expires_at >= clock_timestamp()),
+               WHERE campaign_id = %s AND state <> 'closed'
+                 AND lease_expires_at >= clock_timestamp()),
               (SELECT count(*) FROM worker_slot_leases
                WHERE campaign_id = %s AND lease_expires_at >= clock_timestamp())
             """,
