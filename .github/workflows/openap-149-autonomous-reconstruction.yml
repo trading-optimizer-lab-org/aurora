@@ -80,7 +80,10 @@ jobs:
         shell: bash
         run: |
           set +e
-          python -m pytest -q tests/test_openap_149_autonomous_policy.py 2>&1 | tee openap-149-focused-tests.log
+          python -m pytest -q \
+            tests/test_openap_149_autonomous_policy.py \
+            tests/test_openap_149_reconstruction_registry.py \
+            2>&1 | tee openap-149-focused-tests.log
           status=${PIPESTATUS[0]}
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           exit "$status"

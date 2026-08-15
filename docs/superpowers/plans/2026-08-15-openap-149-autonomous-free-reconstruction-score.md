@@ -33,7 +33,7 @@
 - Create: `tests/test_openap_149_autonomous_policy.py`
 - Modify: `docs/superpowers/plans/2026-08-15-openap-149-autonomous-free-reconstruction-score.md`
 
-- [ ] **Step 1: Write the failing policy tests**
+- [x] **Step 1: Write the failing policy tests**
 
 Test that the YAML freezes:
 
@@ -55,7 +55,7 @@ def test_policy_is_fail_closed_and_never_claims_strict_equivalence(policy):
 
 Also test the approximation contribution cap, minimum portfolio overlap, source-priority list and absence of unlock flags.
 
-- [ ] **Step 2: Add a manual workflow with a branch-only test bootstrap trigger**
+- [x] **Step 2: Add a manual workflow with a branch-only test bootstrap trigger**
 
 GitHub does not register a brand-new `workflow_dispatch` file until it exists on
 the default branch. Therefore the workflow also uses a path-limited `push`
@@ -82,7 +82,7 @@ Initial focused command:
 python -m pytest -q tests/test_openap_149_autonomous_policy.py
 ```
 
-- [ ] **Step 3: Commit and push the RED test/workflow**
+- [x] **Step 3: Commit and push the RED test/workflow**
 
 ```powershell
 git add .github/workflows/openap-149-autonomous-reconstruction.yml tests/test_openap_149_autonomous_policy.py docs/superpowers/plans/2026-08-15-openap-149-autonomous-free-reconstruction-score.md
@@ -94,11 +94,11 @@ gh run list --workflow openap-149-autonomous-reconstruction.yml --branch codex/o
 
 Expected: failure because the policy file does not exist.
 
-- [ ] **Step 4: Implement the minimum frozen YAML policy**
+- [x] **Step 4: Implement the minimum frozen YAML policy**
 
 Include source priorities, collector limits, three classes, point-in-time rules, broad/sparse admission policies, formula-exact and extended score names, family caps, approximation cap, and no-strict-equivalence flags.
 
-- [ ] **Step 5: Commit, push and obtain GREEN remotely**
+- [x] **Step 5: Commit, push and obtain GREEN remotely**
 
 ```powershell
 git add config/openap_149_autonomous_reconstruction.yaml
