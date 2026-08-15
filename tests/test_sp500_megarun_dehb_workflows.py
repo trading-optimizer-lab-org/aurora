@@ -60,10 +60,11 @@ def test_registered_bridge_can_clone_and_verify_coordinator_database() -> None:
 
     dispatch = workflow["on"]["workflow_dispatch"]["inputs"]
     assert "continuous_migrate" in dispatch["mode"]["options"]
+    assert dispatch["migration_source"]["default"] == "current"
     migration = workflow["jobs"]["continuous_migrate"]
     assert migration["if"] == "${{ inputs.mode == 'continuous_migrate' }}"
     assert migration["env"]["SP500_DEHB_COORDINATOR_DATABASE_URL"] == (
-        "${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}"
+        "${{ inputs.migration_source == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}"
     )
     assert migration["env"]["SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"] == (
         "${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT }}"
@@ -95,7 +96,8 @@ def test_registered_bridge_can_allocate_an_encrypted_reserve_database() -> None:
     assert "continuous_allocate" in dispatch["mode"]["options"]
     allocation = workflow["jobs"]["continuous_allocate"]
     assert allocation["if"] == "${{ inputs.mode == 'continuous_allocate' }}"
-    assert allocation["runs-on"] == "macos-15-intel"
+    assert allocation["runs-on"] == "${{ inputs.allocation_runner }}"
+    assert dispatch["allocation_runner"]["default"] == "ubuntu-24.04"
     assert "continuous_allocate' && 'allocation' || 'main'" in str(
         workflow["concurrency"]["group"]
     )
@@ -183,6 +185,9 @@ def test_continuous_pool_has_three_120_parallel_shards_and_four_slots() -> None:
         encoding="utf-8"
     )
     assert "--executor-slots 4" in CONTINUOUS_WORKER_ACTION.read_text(encoding="utf-8")
+    assert "verify_sp500_dehb_scientific_revision.py" in (
+        CONTINUOUS_WORKER_ACTION.read_text(encoding="utf-8")
+    )
     assert action["runs"]["using"] == "composite"
     worker_script = (ROOT / "scripts/run_sp500_dehb_continuous_worker.py").read_text(
         encoding="utf-8"
@@ -254,6 +259,29 @@ def test_continuous_workflows_are_exact_commit_train_only_and_never_call_v1() ->
     assert "validation_2011_2020" not in combined
     assert "locked_2021" not in combined
     assert "2021" not in combined
+
+
+def test_continuous_runtime_uses_current_infrastructure_with_frozen_science() -> None:
+    pool = _load(CONTINUOUS_POOL)
+    coordinator = _load(CONTINUOUS_COORDINATOR)
+    reducer = _load(CONTINUOUS_REDUCER)
+
+    assert pool["jobs"]["plan"]["steps"][0]["with"]["ref"] == "${{ github.sha }}"
+    for shard in "abc":
+        assert pool["jobs"][f"shard_{shard}"]["steps"][0]["with"]["ref"] == (
+            "${{ github.sha }}"
+        )
+    assert coordinator["jobs"]["coordinator"]["steps"][0]["with"]["ref"] == (
+        "${{ github.sha }}"
+    )
+    assert reducer["jobs"]["reduce"]["steps"][0]["with"]["ref"] == (
+        "${{ github.sha }}"
+    )
+    combined = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (CONTINUOUS_COORDINATOR, CONTINUOUS_POOL, CONTINUOUS_REDUCER)
+    )
+    assert combined.count("verify_sp500_dehb_scientific_revision.py") >= 2
 
 
 def test_three_shards_request_360_jobs_and_skip_inside_called_worker() -> None:

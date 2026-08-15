@@ -86,11 +86,13 @@ class ContinuousCampaignCoordinator:
     def run_once(self, *, max_islands: int | None = None) -> CoordinatorCycleV1:
         self._require_leadership()
         applied = 0
+        batch_identities = tuple(
+            (island_id, batch.batch_sequence)
+            for island_id, batch in self._open_batches.items()
+        )
+        resolved_batches = self.store.resolved_batches_results(batches=batch_identities)
         for island_id, batch in tuple(self._open_batches.items()):
-            results = self.store.resolved_batch_results(
-                island_id=island_id,
-                batch_sequence=batch.batch_sequence,
-            )
+            results = resolved_batches.get((island_id, batch.batch_sequence))
             if results is None:
                 continue
             advance = self._by_id[island_id].tell_batch(batch, results)

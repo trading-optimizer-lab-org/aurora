@@ -468,6 +468,29 @@ class InMemoryContinuousCampaignStore:
                 resolved[slot] = dict(evaluation.result.result)
             return resolved
 
+    def resolved_batches_results(
+        self,
+        *,
+        batches: tuple[tuple[str, int], ...],
+    ) -> dict[tuple[str, int], dict[int, dict]]:
+        with self._lock:
+            complete: dict[tuple[str, int], dict[int, dict]] = {}
+            for island_id, batch_sequence in batches:
+                resolved: dict[int, dict] = {}
+                for slot in range(4):
+                    proposal_record = self._proposals.get(
+                        (str(island_id), int(batch_sequence), slot)
+                    )
+                    if proposal_record is None:
+                        break
+                    evaluation = self._evaluations_by_id[proposal_record[1]]
+                    if evaluation.result is None:
+                        break
+                    resolved[slot] = dict(evaluation.result.result)
+                if set(resolved) == {0, 1, 2, 3}:
+                    complete[(str(island_id), int(batch_sequence))] = resolved
+            return complete
+
     def record_island_advance(self, advance: object) -> None:
         island_id = str(getattr(advance, "island_id"))
         prior = getattr(advance, "prior_checkpoint_sha256")
@@ -1225,6 +1248,49 @@ class PostgresContinuousCampaignStore:
         if len(rows) != 4 or {int(row[0]) for row in rows} != {0, 1, 2, 3}:
             return None
         return {int(slot): dict(payload) for slot, payload in rows}
+
+    def resolved_batches_results(
+        self,
+        *,
+        batches: tuple[tuple[str, int], ...],
+    ) -> dict[tuple[str, int], dict[int, dict]]:
+        if not batches:
+            return {}
+        requested = {(str(island_id), int(sequence)) for island_id, sequence in batches}
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    WITH complete_batches AS (
+                        SELECT b.island_id, b.batch_sequence
+                        FROM island_batches b
+                        JOIN proposals p ON p.campaign_id = b.campaign_id
+                          AND p.island_id = b.island_id
+                          AND p.batch_sequence = b.batch_sequence
+                        LEFT JOIN results r ON r.evaluation_id = p.evaluation_id
+                        WHERE b.campaign_id = %s AND b.status = 'open'
+                        GROUP BY b.island_id, b.batch_sequence
+                        HAVING count(*) = 4 AND count(r.evaluation_id) = 4
+                    )
+                    SELECT p.island_id, p.batch_sequence, p.batch_slot, r.result_payload
+                    FROM complete_batches c
+                    JOIN proposals p ON p.campaign_id = %s
+                      AND p.island_id = c.island_id
+                      AND p.batch_sequence = c.batch_sequence
+                    JOIN results r ON r.evaluation_id = p.evaluation_id
+                    ORDER BY p.island_id, p.batch_sequence, p.batch_slot
+                    """,
+                    (self.campaign_id, self.campaign_id),
+                )
+                rows = cursor.fetchall()
+        grouped: dict[tuple[str, int], dict[int, dict]] = {}
+        for island_id, sequence, slot, payload in rows:
+            identity = (str(island_id), int(sequence))
+            if identity in requested:
+                grouped.setdefault(identity, {})[int(slot)] = dict(payload)
+        if any(set(results) != {0, 1, 2, 3} for results in grouped.values()):
+            raise ContinuousStoreError("CONTINUOUS_RESOLVED_BATCH_INCOMPLETE")
+        return grouped
 
     def record_island_advance(self, advance: object) -> None:
         with self._pool.connection() as connection, connection.transaction():

@@ -164,3 +164,30 @@ def test_four_executor_slots_drain_more_than_one_round_without_duplicate_leases(
     assert summary.logical_completions == 8
     assert summary.executor_slots == 4
     assert registry.maximum_active_leases_per_key() <= 1
+
+
+def test_idle_backoff_is_bounded_deterministic_and_grows_exponentially():
+    from aurora.infra.sp500_megarun.dehb_continuous_worker import (
+        deterministic_idle_backoff_seconds,
+    )
+
+    delays = [
+        deterministic_idle_backoff_seconds(
+            worker_session_id="session-1",
+            slot_index=2,
+            consecutive_misses=misses,
+        )
+        for misses in range(1, 12)
+    ]
+
+    assert delays == [
+        deterministic_idle_backoff_seconds(
+            worker_session_id="session-1",
+            slot_index=2,
+            consecutive_misses=misses,
+        )
+        for misses in range(1, 12)
+    ]
+    assert all(0.75 <= delay <= 37.5 for delay in delays)
+    assert min(delays[-4:]) >= 22.5
+    assert max(delays) <= 37.5

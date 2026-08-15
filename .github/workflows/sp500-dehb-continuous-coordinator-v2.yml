@@ -42,9 +42,13 @@ jobs:
       OPENBLAS_CORETYPE: "NEHALEM"
       NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
     steps:
-      - name: Check out exact revision
+      - name: Check out current infrastructure revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", fetch-depth: 0, persist-credentials: false}
+      - name: Verify frozen scientific revision
+        run: >-
+          python scripts/verify_sp500_dehb_scientific_revision.py
+          --scientific-commit "${{ inputs.commit_sha }}"
       - name: Set up runtime
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with: {python-version: "3.11", cache: ""}

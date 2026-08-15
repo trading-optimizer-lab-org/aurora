@@ -196,6 +196,38 @@ def test_duplicate_batches_fan_out_to_independent_islands():
     assert registry.count_completed_subscribers() == 8
 
 
+def test_coordinator_fetches_all_open_batch_results_in_one_store_call():
+    from aurora.infra.sp500_megarun.dehb_continuous_coordinator import (
+        ContinuousCampaignCoordinator,
+    )
+
+    registry = make_store()
+    islands = [make_island(f"F{lane:03d}-R0", lane) for lane in range(1, 41)]
+    coordinator = ContinuousCampaignCoordinator(
+        store=registry,
+        islands=islands,
+        proposal_builder=proposal_builder,
+        owner_token="leader-1",
+    )
+    coordinator.run_once()
+    calls = Counter()
+    original_bulk = registry.resolved_batches_results
+
+    def counted_bulk(*, batches):
+        calls["bulk"] += 1
+        return original_bulk(batches=batches)
+
+    registry.resolved_batches_results = counted_bulk
+    registry.resolved_batch_results = lambda **_kwargs: (_ for _ in ()).throw(
+        AssertionError("single-batch query must not be used")
+    )
+
+    cycle = coordinator.run_once()
+
+    assert cycle.batches_applied == 0
+    assert calls == Counter({"bulk": 1})
+
+
 def test_weighted_round_robin_gives_every_lane_equal_first_turn():
     from aurora.infra.sp500_megarun.dehb_continuous_coordinator import (
         ContinuousCampaignCoordinator,

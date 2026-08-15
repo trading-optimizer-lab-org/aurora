@@ -40,6 +40,22 @@ on:
       allocation_public_key_b64:
         description: One-time RSA public key for encrypted reserve credentials
         required: false
+      allocation_runner:
+        description: GitHub runner used to allocate an independent reserve project
+        type: choice
+        required: false
+        default: ubuntu-24.04
+        options:
+          - ubuntu-24.04
+          - macos-15-intel
+      migration_source:
+        description: Source coordinator database secret used for a stopped clone
+        type: choice
+        required: false
+        default: current
+        options:
+          - current
+          - previous
 
 permissions:
   actions: write
@@ -196,7 +212,7 @@ jobs:
 
   continuous_allocate:
     if: ${{ inputs.mode == 'continuous_allocate' }}
-    runs-on: macos-15-intel
+    runs-on: ${{ inputs.allocation_runner }}
     timeout-minutes: 10
     steps:
       - name: Allocate and encrypt one accountless reserve database
@@ -267,7 +283,7 @@ jobs:
     env:
       GITHUB_ACTIONS: "true"
       GH_TOKEN: ${{ github.token }}
-      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.migration_source == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
       SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT }}
     steps:
       - name: Check out exact migration revision

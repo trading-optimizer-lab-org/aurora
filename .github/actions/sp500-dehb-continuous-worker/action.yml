@@ -20,9 +20,13 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Verify exact continuous revision
+    - name: Verify current infrastructure and frozen science
       shell: bash
-      run: test "$(git rev-parse HEAD)" = "${{ inputs.commit-sha }}"
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+        python scripts/verify_sp500_dehb_scientific_revision.py \
+          --scientific-commit "${{ inputs.commit-sha }}"
     - name: Set up isolated Python 3.11
       uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
       with:
@@ -65,4 +69,3 @@ runs:
           --worker-lifetime-id "${{ inputs.worker-lifetime-id }}" \
           --executor-slots 4 \
           --lifetime-minutes 300
-

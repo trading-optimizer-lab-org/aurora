@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import hashlib
 from threading import Lock
 import time
 from typing import Any, Callable, Mapping
@@ -41,6 +42,25 @@ ResultBinder = Callable[
 ]
 
 
+def deterministic_idle_backoff_seconds(
+    *,
+    worker_session_id: str,
+    slot_index: int,
+    consecutive_misses: int,
+    minimum_seconds: float = 1.0,
+    maximum_seconds: float = 30.0,
+) -> float:
+    """Return a stable jittered backoff so idle workers do not poll in lockstep."""
+
+    misses = max(1, int(consecutive_misses))
+    base = min(float(maximum_seconds), float(minimum_seconds) * (2 ** (misses - 1)))
+    digest = hashlib.sha256(
+        f"{worker_session_id}:{int(slot_index)}:{misses}".encode("utf-8")
+    ).digest()
+    jitter = 0.75 + (int.from_bytes(digest[:8], "big") / ((1 << 64) - 1)) * 0.5
+    return base * jitter
+
+
 def _default_result_binder(
     result: Mapping[str, Any],
     key: EvaluationCacheKeyV2,
@@ -71,6 +91,8 @@ class ContinuousWorkerRuntime:
         executor_slots: int = 4,
         result_binder: ResultBinder = _default_result_binder,
         strategy_wait_seconds: float = 300.0,
+        idle_poll_min_seconds: float = 1.0,
+        idle_poll_max_seconds: float = 30.0,
     ) -> None:
         if int(executor_slots) != 4:
             raise ValueError("CONTINUOUS_WORKER_REQUIRES_FOUR_SLOTS")
@@ -83,6 +105,10 @@ class ContinuousWorkerRuntime:
         self.executor_slots = int(executor_slots)
         self.result_binder = result_binder
         self.strategy_wait_seconds = float(strategy_wait_seconds)
+        self.idle_poll_min_seconds = float(idle_poll_min_seconds)
+        self.idle_poll_max_seconds = float(idle_poll_max_seconds)
+        if not 0 < self.idle_poll_min_seconds <= self.idle_poll_max_seconds:
+            raise ValueError("CONTINUOUS_WORKER_IDLE_BACKOFF_INVALID")
         self._counter_lock = Lock()
         self._logical_completions = 0
         self._physical_strategy_evaluations = 0
@@ -94,8 +120,8 @@ class ContinuousWorkerRuntime:
         slot_index: int,
         *,
         deadline: float | None,
-        idle_poll_seconds: float,
     ) -> None:
+        consecutive_misses = 0
         while True:
             if deadline is not None and time.monotonic() >= deadline:
                 return
@@ -107,8 +133,18 @@ class ContinuousWorkerRuntime:
             if lease is None:
                 if deadline is None:
                     return
-                time.sleep(idle_poll_seconds)
+                consecutive_misses += 1
+                time.sleep(
+                    deterministic_idle_backoff_seconds(
+                        worker_session_id=worker_session_id,
+                        slot_index=slot_index,
+                        consecutive_misses=consecutive_misses,
+                        minimum_seconds=self.idle_poll_min_seconds,
+                        maximum_seconds=self.idle_poll_max_seconds,
+                    )
+                )
                 continue
+            consecutive_misses = 0
             prepared = self.position_builder(lease.evaluation_key)
             strategy_key = StrategyEvaluationKeyV1.build(
                 evaluation_key=lease.evaluation_key,
@@ -162,7 +198,6 @@ class ContinuousWorkerRuntime:
                         session.worker_session_id,
                         slot,
                         deadline=deadline,
-                        idle_poll_seconds=0.5,
                     )
                     for slot in range(self.executor_slots)
                 ]
@@ -191,4 +226,5 @@ __all__ = [
     "ContinuousWorkerRuntime",
     "ContinuousWorkerSummaryV1",
     "PreparedPhysicalEvaluationV1",
+    "deterministic_idle_backoff_seconds",
 ]
