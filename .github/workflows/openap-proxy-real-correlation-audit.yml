@@ -54,7 +54,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e . pytest pyarrow pandas numpy scipy
       - name: Compile and test auditor
         run: |
-          python -m py_compile research/openap_proxy_real_correlation.py research/openap_proxy44_historical.py research/openap_149/feasibility.py research/openap_149/identity_sources.py research/openap_149/identity_gate.py research/openap_149/identity_recovery_v2.py scripts/run_openap_proxy_real_correlation.py scripts/run_openap_proxy44_historical.py scripts/run_openap_149_identity_gate.py scripts/run_openap_149_identity_recovery_v2.py
+          python -m py_compile research/openap_proxy_real_correlation.py research/openap_proxy44_historical.py research/openap_149/feasibility.py research/openap_149/identity_sources.py research/openap_149/identity_gate.py scripts/run_openap_proxy_real_correlation.py scripts/run_openap_proxy44_historical.py scripts/run_openap_149_identity_gate.py
           python -m pytest tests/test_openap_proxy_real_correlation.py tests/test_openap_93_official_portfolio_similarity.py tests/test_openap_proxy44_historical.py tests/test_openap_149_feasibility_gate.py tests/test_openap_149_identity_gate.py tests/test_openap_149_identity_recovery_v2.py -q
       - name: Enforce GitHub-only contract
         run: |

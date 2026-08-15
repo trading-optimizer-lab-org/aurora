@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import importlib
+from dataclasses import replace
+from datetime import datetime, timezone
 from importlib import util
 from pathlib import Path
 
+import pandas as pd
 import pytest
 import yaml
 
@@ -12,6 +15,26 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOGUE = ROOT / "config" / "openap_149_identity_sources_v2.yaml"
 WORKFLOW = ROOT / ".github" / "workflows" / "openap-proxy-real-correlation-audit.yml"
 MODULE_NAME = "aurora.research.openap_149.identity_recovery_v2"
+
+
+class _Response:
+    def __init__(
+        self,
+        body: bytes,
+        *,
+        url: str = "https://example.test/data.csv",
+        status_code: int = 200,
+        content_type: str = "text/csv; charset=utf-8",
+    ) -> None:
+        self._body = body
+        self.url = url
+        self.status_code = status_code
+        self.headers = {"content-type": content_type}
+        self.history: list[object] = []
+
+    def iter_content(self, chunk_size: int = 65_536):
+        for offset in range(0, len(self._body), chunk_size):
+            yield self._body[offset : offset + chunk_size]
 
 
 def _module():
@@ -116,6 +139,89 @@ def test_catalogue_rejects_duplicate_source_ids(tmp_path: Path) -> None:
         module.load_recovery_catalog(path)
 
 
+def test_documentary_only_source_never_calls_the_network() -> None:
+    module = _module()
+    source = next(
+        item
+        for item in module.load_recovery_catalog(CATALOGUE)
+        if item.source_id == "crsp_research_products"
+    )
+
+    def forbidden_getter(*args, **kwargs):
+        raise AssertionError("documentary-only routes must not call the network")
+
+    receipt = module.probe_source(
+        source,
+        getter=forbidden_getter,
+        now=lambda: datetime(2026, 8, 15, tzinfo=timezone.utc),
+    )
+
+    assert receipt.attempted is False
+    assert receipt.bytes_observed == 0
+    assert receipt.error == "documentary_only"
+
+
+def test_small_csv_probe_is_bounded_hashed_and_schema_observed() -> None:
+    module = _module()
+    source = next(
+        item
+        for item in module.load_recovery_catalog(CATALOGUE)
+        if item.source_id == "michels_2017"
+    )
+    body = b"cusip,cik,permno\r\n12345678,1,10001\r\n"
+
+    receipt = module.probe_source(
+        source,
+        getter=lambda *args, **kwargs: _Response(body),
+        now=lambda: datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert receipt.attempted is True
+    assert receipt.status_code == 200
+    assert receipt.bytes_observed == 36
+    assert receipt.sha256 == (
+        "b2c3a9d40afea0dcd349b131efd8498cf9df7f3a07bcff2be195ef712f8b60e2"
+    )
+    assert receipt.observed_columns == ("cusip", "cik", "permno")
+    assert receipt.error == ""
+
+
+def test_probe_rejects_redirect_to_login_or_payment() -> None:
+    module = _module()
+    source = next(
+        item
+        for item in module.load_recovery_catalog(CATALOGUE)
+        if item.source_id == "michels_2017"
+    )
+    response = _Response(
+        b"login required",
+        url="https://vendor.example/account/login?next=data",
+        content_type="text/html",
+    )
+
+    receipt = module.probe_source(
+        replace(source, retrieval_url="https://vendor.example/data.csv"),
+        getter=lambda *args, **kwargs: response,
+        now=lambda: datetime(2026, 8, 15, tzinfo=timezone.utc),
+    )
+
+    assert receipt.attempted is True
+    assert receipt.final_url == "https://vendor.example/account/login"
+    assert receipt.error == "redirected_to_login_or_payment"
+
+
+def test_no_passing_route_builds_canonical_empty_bridge() -> None:
+    module = _module()
+    audit = pd.DataFrame(
+        [{"source_id": "blocked", "terminal_class": "blocked_schema"}]
+    )
+
+    bridge = module.build_candidate_bridge(audit, {})
+
+    assert bridge.empty
+    assert list(bridge.columns) == list(module.BRIDGE_COLUMNS)
+
+
 def test_workflow_routes_v2_to_an_isolated_job() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     jobs = workflow["jobs"]
@@ -136,4 +242,3 @@ def test_workflow_routes_v2_to_an_isolated_job() -> None:
     )
     assert upload["with"]["name"] == "openap-149-identity-recovery-v2-results"
     assert upload["with"]["retention-days"] == "30"
-
