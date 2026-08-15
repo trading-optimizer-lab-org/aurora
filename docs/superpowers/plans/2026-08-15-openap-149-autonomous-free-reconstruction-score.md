@@ -496,8 +496,8 @@ git push origin codex/openap-proxy44-validation
 
 ```powershell
 $acquisitionRunId = 31506361550
-$formulaRunId = 31501243811
-$priceRunId = 31504207654
+$formulaRunId = 31396163422
+$priceRunId = 31388342037
 gh workflow run openap-149-autonomous-reconstruction.yml --ref codex/openap-proxy44-validation -f mode=reconstruct -f acquisition_run_id=$acquisitionRunId -f formula_run_id=$formulaRunId -f price_run_id=$priceRunId
 gh run list --workflow openap-149-autonomous-reconstruction.yml --branch codex/openap-proxy44-validation --limit 1
 $openapRunId = gh run list --workflow openap-149-autonomous-reconstruction.yml --branch codex/openap-proxy44-validation --limit 1 --json databaseId --jq '.[0].databaseId'
