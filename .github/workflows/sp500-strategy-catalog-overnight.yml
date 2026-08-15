@@ -1,6 +1,10 @@
 name: SP500 Strategy Catalog Overnight 360
 
 on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+      runtime_input_run_id: {required: true, type: string}
   workflow_dispatch:
     inputs:
       commit_sha: {description: Exact revision, required: true}

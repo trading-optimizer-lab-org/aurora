@@ -20,6 +20,7 @@ on:
           - continuous_segment
           - continuous_start
           - continuous_continue
+          - strategy_catalog_overnight
       commit_sha:
         description: Exact revision for any continuous mode
         required: false
@@ -96,6 +97,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  strategy_catalog_overnight:
+    if: ${{ inputs.mode == 'strategy_catalog_overnight' }}
+    uses: ./.github/workflows/sp500-strategy-catalog-overnight.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+
   continuous_probe:
     if: ${{ inputs.mode == 'continuous_probe' }}
     runs-on: ubuntu-24.04
