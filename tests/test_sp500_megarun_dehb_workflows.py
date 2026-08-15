@@ -222,6 +222,14 @@ def test_continuous_reducer_reads_nested_technical_evidence_run_reference() -> N
     assert '--name "$technical_artifact_name"' in command
 
 
+def test_continuous_coordinator_waits_for_recovered_open_batches() -> None:
+    text = CONTINUOUS_COORDINATOR.read_text(encoding="utf-8")
+
+    assert "Wait for recovered open batches" in text
+    assert "CONTINUOUS_OPEN_BATCHES_STILL_INCOMPLETE" in text
+    assert "e.state <> 'completed'" in text
+
+
 def test_continuous_workflows_are_exact_commit_train_only_and_never_call_v1() -> None:
     paths = (
         CONTINUOUS_BOOTSTRAP,

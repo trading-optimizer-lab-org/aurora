@@ -61,6 +61,46 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.bootstrap_run_id }}
+      - name: Wait for recovered open batches
+        env:
+          CAMPAIGN_ID: ${{ inputs.campaign_id }}
+        run: |
+          python - <<'PY'
+          import os
+          import time
+
+          import psycopg
+
+          deadline = time.monotonic() + 600
+          while time.monotonic() < deadline:
+              with psycopg.connect(
+                  os.environ["SP500_DEHB_COORDINATOR_DATABASE_URL"]
+              ) as connection:
+                  incomplete = int(
+                      connection.execute(
+                          """
+                          SELECT count(*) FROM island_batches b
+                          WHERE b.campaign_id = %s AND b.status = 'open'
+                            AND EXISTS (
+                              SELECT 1 FROM proposals p
+                              JOIN evaluations e
+                                ON e.evaluation_id = p.evaluation_id
+                              WHERE p.campaign_id = b.campaign_id
+                                AND p.island_id = b.island_id
+                                AND p.batch_sequence = b.batch_sequence
+                                AND e.state <> 'completed'
+                            )
+                          """,
+                          (os.environ["CAMPAIGN_ID"],),
+                      ).fetchone()[0]
+                  )
+              if incomplete == 0:
+                  print("recovered open batches are complete")
+                  break
+              time.sleep(5)
+          else:
+              raise RuntimeError("CONTINUOUS_OPEN_BATCHES_STILL_INCOMPLETE")
+          PY
       - name: Run leased coordinator
         run: >-
           python scripts/run_sp500_dehb_continuous_coordinator.py
