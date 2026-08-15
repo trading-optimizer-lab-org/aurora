@@ -55,7 +55,16 @@ on:
         default: current
         options:
           - current
+          - next
           - previous
+      migration_target:
+        description: Inactive coordinator database slot receiving the verified clone
+        type: choice
+        required: false
+        default: next
+        options:
+          - current
+          - next
       database_slot:
         description: Coordinator database slot used by continuous execution
         type: choice
@@ -292,8 +301,8 @@ jobs:
     env:
       GITHUB_ACTIONS: "true"
       GH_TOKEN: ${{ github.token }}
-      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.migration_source == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
-      SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.migration_source == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.migration_source == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT: ${{ inputs.migration_target == 'current' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT }}
     steps:
       - name: Check out exact migration revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803

@@ -61,13 +61,16 @@ def test_registered_bridge_can_clone_and_verify_coordinator_database() -> None:
     dispatch = workflow["on"]["workflow_dispatch"]["inputs"]
     assert "continuous_migrate" in dispatch["mode"]["options"]
     assert dispatch["migration_source"]["default"] == "current"
+    assert dispatch["migration_source"]["options"] == ["current", "next", "previous"]
+    assert dispatch["migration_target"]["default"] == "next"
+    assert dispatch["migration_target"]["options"] == ["current", "next"]
     migration = workflow["jobs"]["continuous_migrate"]
     assert migration["if"] == "${{ inputs.mode == 'continuous_migrate' }}"
     assert migration["env"]["SP500_DEHB_COORDINATOR_DATABASE_URL"] == (
-        "${{ inputs.migration_source == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}"
+        "${{ inputs.migration_source == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.migration_source == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}"
     )
     assert migration["env"]["SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"] == (
-        "${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT }}"
+        "${{ inputs.migration_target == 'current' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT }}"
     )
     assert "pg_dump" in text
     assert "pg_restore" in text
