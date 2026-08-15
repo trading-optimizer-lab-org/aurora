@@ -387,4 +387,3 @@ git push origin codex/openap-proxy44-validation
 Wait for all automatic exact-HEAD checks, verify `git diff --check`, confirm
 only `.artifacts/` remains untracked, and ensure local HEAD equals the remote
 branch before claiming completion.
-

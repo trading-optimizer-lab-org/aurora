@@ -262,4 +262,3 @@ This phase is complete when:
 - the workflow and focused tests pass at the exact repository SHA;
 - the final status distinguishes technical accessibility, legal/provenance
   suitability, identity semantics, coverage and OpenAP fidelity.
-
