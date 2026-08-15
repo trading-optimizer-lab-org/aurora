@@ -9,6 +9,13 @@ import os
 from pathlib import Path
 
 
+def compaction_units(columns: list[tuple[object, object]]) -> tuple[tuple[str, str], ...]:
+    """Plan one transaction and VACUUM FULL per independently stored payload."""
+
+    json_units = sorted((str(table), str(column)) for table, column in columns)
+    return tuple([*json_units, ("islands", "checkpoint_bytes")])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--campaign-id", required=True)
@@ -71,13 +78,11 @@ def main() -> int:
             """
         ).fetchall()
 
-    tables = sorted({str(table) for table, _ in columns} | {"islands"})
+    units = compaction_units(columns)
+    tables = sorted({table for table, _column in units})
     encoded_json_rows = 0
     encoded_checkpoint_rows = 0
-    for table in tables:
-        table_columns = [
-            str(column) for candidate, column in columns if str(candidate) == table
-        ]
+    for table, column in units:
         with psycopg.connect(database_url) as connection, connection.transaction():
             connection.execute("SET LOCAL lock_timeout = '60s'")
             connection.execute(
@@ -85,7 +90,7 @@ def main() -> int:
                     sql.Identifier(table)
                 )
             )
-            for column in table_columns:
+            if column != "checkpoint_bytes":
                 connection.execute(
                     sql.SQL(
                         "ALTER TABLE {} ALTER COLUMN {} SET COMPRESSION lz4"
@@ -115,7 +120,7 @@ def main() -> int:
                             updates,
                         )
                     encoded_json_rows += len(updates)
-            if table == "islands":
+            else:
                 checkpoints = connection.execute(
                     """
                     SELECT ctid::text, checkpoint_bytes FROM islands

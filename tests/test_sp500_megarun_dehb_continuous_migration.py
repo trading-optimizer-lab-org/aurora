@@ -60,3 +60,22 @@ def test_row_digest_is_order_sensitive_and_stable():
     assert canonical_rows_sha256(["one", "two"]) != canonical_rows_sha256(
         ["two", "one"]
     )
+
+
+def test_compaction_plans_one_vacuum_safe_unit_per_payload_column():
+    from scripts.compact_sp500_dehb_database_clone import compaction_units
+
+    units = compaction_units(
+        [
+            ("strategy_evaluations", "key_payload"),
+            ("strategy_evaluations", "result_payload"),
+            ("results", "result_payload"),
+        ]
+    )
+
+    assert units == (
+        ("results", "result_payload"),
+        ("strategy_evaluations", "key_payload"),
+        ("strategy_evaluations", "result_payload"),
+        ("islands", "checkpoint_bytes"),
+    )
