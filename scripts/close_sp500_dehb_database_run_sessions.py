@@ -11,6 +11,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--campaign-id", required=True)
     parser.add_argument("--github-run-id", required=True, type=int)
+    parser.add_argument("--terminate-stopped-run-backends", action="store_true")
     args = parser.parse_args()
     database_url = os.environ.get("SP500_DEHB_COORDINATOR_DATABASE_URL", "").strip()
     if not database_url:
@@ -19,6 +20,53 @@ def main() -> int:
         raise RuntimeError("SOURCE_RUN_COMPLETION_NOT_PROVEN")
 
     import psycopg
+
+    terminated_backends = 0
+    if args.terminate_stopped_run_backends:
+        with psycopg.connect(database_url, autocommit=True) as admin_connection:
+            live_coordinators = int(
+                admin_connection.execute(
+                    """
+                    SELECT count(*) FROM campaign_leases
+                    WHERE campaign_id = %s
+                      AND lease_expires_at >= clock_timestamp()
+                    """,
+                    (args.campaign_id,),
+                ).fetchone()[0]
+            )
+            foreign_live_sessions = int(
+                admin_connection.execute(
+                    """
+                    SELECT count(*) FROM worker_sessions
+                    WHERE campaign_id = %s AND state <> 'closed'
+                      AND lease_expires_at >= clock_timestamp()
+                      AND github_run_id <> %s
+                    """,
+                    (args.campaign_id, args.github_run_id),
+                ).fetchone()[0]
+            )
+            if live_coordinators:
+                raise RuntimeError("SOURCE_RUN_COORDINATOR_STILL_LIVE")
+            if foreign_live_sessions:
+                raise RuntimeError("OTHER_GITHUB_RUN_WORKERS_STILL_LIVE")
+            backend_pids = [
+                int(row[0])
+                for row in admin_connection.execute(
+                    """
+                    SELECT pid FROM pg_stat_activity
+                    WHERE datname = current_database() AND usename = current_user
+                      AND pid <> pg_backend_pid()
+                    """
+                ).fetchall()
+            ]
+            for backend_pid in backend_pids:
+                terminated_backends += int(
+                    bool(
+                        admin_connection.execute(
+                            "SELECT pg_terminate_backend(%s)", (backend_pid,)
+                        ).fetchone()[0]
+                    )
+                )
 
     with psycopg.connect(database_url) as connection, connection.transaction():
         with connection.cursor() as cursor:
@@ -142,6 +190,7 @@ def main() -> int:
                 "closed_sessions": closed_sessions,
                 "released_evaluations": len(released_evaluations),
                 "deleted_slot_leases": deleted_slots,
+                "terminated_backends": terminated_backends,
             },
             sort_keys=True,
         )
