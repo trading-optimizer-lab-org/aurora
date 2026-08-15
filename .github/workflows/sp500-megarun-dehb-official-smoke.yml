@@ -56,6 +56,15 @@ on:
         options:
           - current
           - previous
+      database_slot:
+        description: Coordinator database slot used by continuous execution
+        type: choice
+        required: false
+        default: current
+        options:
+          - current
+          - next
+          - previous
 
 permissions:
   actions: write
@@ -374,7 +383,7 @@ jobs:
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       launch_contract_run_id: ${{ inputs.launch_contract_run_id }}
     secrets:
-      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
 
   continuous_coordinator:
     needs: continuous_bootstrap
@@ -389,7 +398,7 @@ jobs:
       bootstrap_run_id: ${{ inputs.mode == 'continuous_start' && github.run_id || inputs.bootstrap_run_id }}
       lifetime_minutes: "300"
     secrets:
-      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
 
   continuous_pool:
     needs: continuous_bootstrap
@@ -405,7 +414,7 @@ jobs:
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       bootstrap_run_id: ${{ inputs.mode == 'continuous_start' && github.run_id || inputs.bootstrap_run_id }}
     secrets:
-      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
 
   continuous_reducer:
     needs: continuous_bootstrap
@@ -422,7 +431,7 @@ jobs:
       bootstrap_run_id: ${{ inputs.mode == 'continuous_start' && github.run_id || inputs.bootstrap_run_id }}
       delay_minutes: "5"
     secrets:
-      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
 
   continuous_continue:
     needs:
@@ -442,13 +451,18 @@ jobs:
     env:
       GITHUB_ACTIONS: "true"
       GH_TOKEN: ${{ github.token }}
-      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
     steps:
-      - name: Check out exact continuous revision
+      - name: Check out current infrastructure revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ inputs.commit_sha }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify frozen scientific revision
+        run: >-
+          python scripts/verify_sp500_dehb_scientific_revision.py
+          --scientific-commit "${{ inputs.commit_sha }}"
       - name: Set up supervisor runtime
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
@@ -483,6 +497,7 @@ jobs:
                 -f campaign_id="${{ inputs.campaign_id }}" \
                 -f runtime_input_run_id="${{ inputs.runtime_input_run_id }}" \
                 -f bootstrap_run_id="$bootstrap_run_id" \
+                -f database_slot="${{ inputs.database_slot }}" \
                 -f pool_generation="$next_generation"
               ;;
             drain)

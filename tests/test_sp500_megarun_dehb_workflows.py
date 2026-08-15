@@ -119,6 +119,7 @@ def test_registered_bridge_can_start_and_continue_production_autonomously() -> N
     assert {"continuous_start", "continuous_continue"}.issubset(
         dispatch["mode"]["options"]
     )
+    assert dispatch["database_slot"]["default"] == "current"
     assert workflow["permissions"] == {"actions": "write", "contents": "read"}
     assert workflow["jobs"]["continuous_bootstrap"]["uses"] == (
         "./.github/workflows/sp500-dehb-continuous-bootstrap-v2.yml"
@@ -141,6 +142,9 @@ def test_registered_bridge_can_start_and_continue_production_autonomously() -> N
         "continuous_reducer",
     ]
     assert "gh workflow run sp500-megarun-dehb-official-smoke.yml" in text
+    assert '-f database_slot="${{ inputs.database_slot }}"' in text
+    assert "SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT" in text
+    assert "SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS" in text
     assert "continuous_continue" in text
     assert "halt_conflict" in text
     assert "halt_boundary" in text
