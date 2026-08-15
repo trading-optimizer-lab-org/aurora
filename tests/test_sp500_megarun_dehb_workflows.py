@@ -84,6 +84,7 @@ def test_registered_bridge_can_allocate_an_encrypted_reserve_database() -> None:
     assert "continuous_allocate" in dispatch["mode"]["options"]
     allocation = workflow["jobs"]["continuous_allocate"]
     assert allocation["if"] == "${{ inputs.mode == 'continuous_allocate' }}"
+    assert allocation["runs-on"] == "macos-15"
     assert "allocation_public_key_b64" in dispatch
     assert "openssl pkeyutl -encrypt" in text
     assert "rsa_padding_mode:oaep" in text
