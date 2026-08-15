@@ -478,7 +478,7 @@ def build_candidate_bridge(
             raise IdentityRecoveryError(
                 f"{source_id}: canonical bridge payload is missing {missing}"
             )
-        frames.append(frame[BRIDGE_COLUMNS].copy())
+        frames.append(frame.loc[:, list(BRIDGE_COLUMNS)].copy())
     if not frames:
         return pd.DataFrame(columns=BRIDGE_COLUMNS)
     return (
