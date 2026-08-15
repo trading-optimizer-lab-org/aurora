@@ -111,11 +111,12 @@ def main() -> int:
                 (args.campaign_id,),
             ).fetchall()
             if rows:
-                target.executemany(
-                    f"INSERT INTO {table} SELECT * FROM "
-                    f"json_populate_record(NULL::{table}, %s::json)",
-                    rows,
-                )
+                with target.cursor() as cursor:
+                    cursor.executemany(
+                        f"INSERT INTO {table} SELECT * FROM "
+                        f"json_populate_record(NULL::{table}, %s::json)",
+                        rows,
+                    )
             copied[table] = len(rows)
 
         source_sequence = int(
