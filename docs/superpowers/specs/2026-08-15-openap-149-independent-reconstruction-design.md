@@ -2,7 +2,7 @@
 
 Date: 2026-08-15
 
-Status: feasibility-first revision, pending written-spec review
+Status: approved for phased implementation
 
 ## 1. Purpose
 
