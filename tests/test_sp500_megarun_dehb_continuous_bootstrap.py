@@ -48,7 +48,18 @@ def test_pool_generation_has_three_240_entry_shards_and_360_concurrency():
     assert all(entry["pool_generation"] == "pool-0001" for entry in all_entries)
     assert all(entry["executor_slots"] == 4 for entry in all_entries)
     assert all(entry["lifetime_minutes"] == 300 for entry in all_entries)
-    assert sum(matrix["max_parallel"] for matrix in matrices.values()) == 360
+
+
+def test_pool_generation_emits_valid_github_matrix_payloads():
+    from aurora.infra.sp500_megarun.dehb_continuous_bootstrap import (
+        build_worker_pool_matrices,
+    )
+
+    matrices = build_worker_pool_matrices("pool-0001")
+
+    # GitHub accepts ``include`` in a matrix payload, but scalar execution
+    # controls such as max-parallel belong to ``strategy``, not ``matrix``.
+    assert all(set(matrix) == {"include"} for matrix in matrices.values())
 
 
 class RecordingCursor:

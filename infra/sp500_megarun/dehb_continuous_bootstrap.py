@@ -78,7 +78,10 @@ def build_worker_pool_matrices(pool_generation: str) -> Mapping[str, Mapping[str
                     "locked_opened": False,
                 }
             )
-        matrices[shard] = {"include": entries, "max_parallel": 120}
+        # Execution controls such as ``max-parallel`` belong to the workflow's
+        # strategy block.  A scalar control inside ``matrix`` makes GitHub omit
+        # every expanded worker job even though the planning job succeeds.
+        matrices[shard] = {"include": entries}
     return matrices
 
 
