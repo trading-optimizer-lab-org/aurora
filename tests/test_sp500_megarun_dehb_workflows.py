@@ -173,9 +173,12 @@ def test_continuous_children_are_reusable_and_cover_full_pool_generation() -> No
     assert coordinator_job["strategy"]["max-parallel"] == 1
     assert coordinator_job["strategy"]["matrix"]["lifetime_ordinal"] == [0, 1]
     reducer_job = reducer["jobs"]["reduce"]
-    assert reducer_job["strategy"]["max-parallel"] == 1
-    assert reducer_job["strategy"]["matrix"]["reducer_ordinal"] == list(range(60))
-    assert "--delay-minutes" in CONTINUOUS_REDUCER.read_text(encoding="utf-8")
+    assert "strategy" not in reducer_job
+    reducer_text = CONTINUOUS_REDUCER.read_text(encoding="utf-8")
+    assert "for ordinal in $(seq 0 59)" in reducer_text
+    assert "snapshot-$ordinal.json" in reducer_text
+    assert "SP500_DEHB_REDUCER_SNAPSHOT" in reducer_text
+    assert "--delay-minutes" in reducer_text
 
 
 def test_continuous_pool_has_three_120_parallel_shards_and_four_slots() -> None:

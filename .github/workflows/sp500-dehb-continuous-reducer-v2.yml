@@ -27,11 +27,6 @@ concurrency:
 
 jobs:
   reduce:
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        reducer_ordinal: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59]
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
@@ -89,23 +84,34 @@ jobs:
           gh run download "$technical_run_id" \
             --name "$technical_artifact_name" \
             --dir "$RUNNER_TEMP/dehb_technical"
-      - name: Reduce immutable train-only cutoff
-        run: >-
-          python scripts/reduce_sp500_dehb_continuous_snapshot.py
-          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
-          --data-contract config/sp500_megarun_free_data_240.json
-          --feature-contract config/sp500_megarun_feature_contract_240.json
-          --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs"
-          --launch-contract "$RUNNER_TEMP/dehb_bootstrap/launch_contract.json"
-          --technical-evidence "$RUNNER_TEMP/dehb_technical/technical_evidence.json"
-          --campaign-id "${{ inputs.campaign_id }}"
-          --cutoff-sequence "${{ inputs.cutoff_sequence }}"
-          --delay-minutes "${{ inputs.delay_minutes }}"
-          --output outputs/reducer/snapshot-${{ matrix.reducer_ordinal }}.json
+      - name: Reduce immutable train-only cutoff continuously
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p outputs/reducer
+          for ordinal in $(seq 0 59); do
+            output="outputs/reducer/snapshot-$ordinal.json"
+            python scripts/reduce_sp500_dehb_continuous_snapshot.py \
+              --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+              --data-contract config/sp500_megarun_free_data_240.json \
+              --feature-contract config/sp500_megarun_feature_contract_240.json \
+              --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs" \
+              --launch-contract "$RUNNER_TEMP/dehb_bootstrap/launch_contract.json" \
+              --technical-evidence "$RUNNER_TEMP/dehb_technical/technical_evidence.json" \
+              --campaign-id "${{ inputs.campaign_id }}" \
+              --cutoff-sequence "${{ inputs.cutoff_sequence }}" \
+              --delay-minutes "${{ inputs.delay_minutes }}" \
+              --output "$output"
+            jq -c '{marker:"SP500_DEHB_REDUCER_SNAPSHOT",snapshot:.snapshot,decision:.decision}' \
+              "$output"
+            if [[ "$(jq -r '.decision.action' "$output")" != "searching" ]]; then
+              break
+            fi
+          done
       - name: Upload reducer decision
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: sp500-dehb-continuous-reducer-${{ matrix.reducer_ordinal }}
+          name: sp500-dehb-continuous-reducer-${{ github.run_id }}
           path: outputs/reducer
           if-no-files-found: error
           retention-days: 90
