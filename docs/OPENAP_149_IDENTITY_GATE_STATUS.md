@@ -1,6 +1,6 @@
 # OpenAP 149: decision de la puerta de identidad
 
-Estado autoritativo: **`blocked_identity`**.
+Estado autoritativo: **`blocked_identity_v2`**.
 
 No se autoriza el piloto de 10 senales ni la incorporacion de ninguna de las
 149 senales al score estricto. El bloqueo no significa que las formulas sean
@@ -9,7 +9,58 @@ comprobadas, no existe un puente historico amplio, por clase de accion y con
 intervalos de vigencia que permita enlazar de forma independiente las empresas
 con los PERMNO del panel oficial.
 
-## Evidencia de GitHub Actions
+## Resultado ampliado v2
+
+La segunda fase audito **15 rutas** y realizo sondeos reales y limitados de las
+10 que permitian descarga directa. Ninguna ruta cumplio simultaneamente acceso
+publico gratuito, derechos afirmativos para investigacion, PERMNO, identificador
+publico, intervalos historicos, clase de accion y cobertura amplia de 2023-2024.
+
+- `blocked_access`: **4**
+- `blocked_rights`: **3**
+- `blocked_schema`: **5**
+- `blocked_semantics`: **2**
+- `blocked_target_derived`: **1**
+- Rutas candidatas: **0**
+- Filas del puente: **0**
+- Enlaces ambiguos: **0**
+- Piloto autorizado: **no**
+- Senales aprobadas estrictamente: **0**
+
+El bloqueo de cada ruta es terminal y se asigna una sola vez. Los codigos HTTP
+no sustituyen la evaluacion de fondo: una fuente que respondio `200` sigue
+bloqueada si carece de derechos, identificadores o semantica historica; las tres
+respuestas `403` tampoco convierten en valida una ruta que ya incumple esos
+requisitos.
+
+### Evidencia v2 de GitHub Actions
+
+- Run: [31881228293](https://github.com/trading-optimizer-lab-org/aurora/actions/runs/31881228293)
+- Evento: `workflow_dispatch`
+- Rama: `codex/openap-proxy44-validation`
+- HEAD ejecutado: `2f874efa9a3377aabf5010f3d0f397d50a4a2dd3`
+- Resultado del workflow: `success`
+- Job `validate`: `success` (**62 pruebas enfocadas superadas**)
+- Job `identity_source_recovery_v2`: `success`
+- Jobs no aplicables `audit` e `identity_feasibility`: `skipped`
+- Artefacto: `openap-149-identity-recovery-v2-results`
+- ID del artefacto: `9246083168`
+- Digest del artefacto: `sha256:73981ceba1dde366ef23f62665fc882414cc82a9488ace866038cec81e09d6eb`
+- Tamano descargado declarado: `588944` bytes
+- Creado: `2026-08-15T11:08:49Z`
+- Caduca: `2026-09-14T11:08:48Z`
+- SHA-256 del catalogo congelado: `93c9e07f53214bd124270512e7e27da647316e5a1d241395422d7b11d34f06bb`
+
+El artefacto descargado contiene 15 recibos, 10 capturas de evidencia y 17
+archivos inventariados. Se recalcularon localmente sus hashes: **0
+discrepancias**. El puente vacio conserva las 11 columnas canonicas y su hash es
+`46aedf11835bfced73b35b202fc2c36a7ea16b1f2f1a5612dfe13036ecdc73bf`.
+
+El workflow termino verde porque ejecuto y reconcilio correctamente la puerta;
+la decision cientifica contenida en ella es un no-go. No se leyo ningun valor
+OpenAP para resolver identidades y no se abrio OOS.
+
+## Evidencia baseline de GitHub Actions
 
 - Run: [31878893909](https://github.com/trading-optimizer-lab-org/aurora/actions/runs/31878893909)
 - Evento: `workflow_dispatch`
@@ -46,7 +97,7 @@ cientifico. `success` no significa que la identidad haya superado la puerta.
 - Valores OpenAP usados para seleccionar identidad: **no**
 - Motivo de maquina: `no_authorized_zero_cost_historical_permno_bridge`
 
-## Resultado por ruta gratuita examinada
+## Resultado baseline por ruta gratuita examinada
 
 | Ruta | Por que no supera la puerta |
 |---|---|
@@ -58,7 +109,7 @@ cientifico. `success` no significa que la identidad haya superado la puerta.
 | Field-Ritter IPO | Es gratuito y contiene PERMNO, pero no aporta intervalos historicos ni cobertura amplia. |
 | KPSS patent-CRSP | Es gratuito y contiene PERMNO parcial, pero carece de identificador publico enlazable, intervalos y cobertura amplia. |
 
-## Verificacion del artefacto descargado
+## Verificacion del artefacto baseline descargado
 
 La inspeccion posterior al workflow confirmo el esquema y los recuentos. El
 Parquet vacio conserva las 11 columnas exigidas y su hash coincide con el
@@ -91,6 +142,7 @@ de correlacion.
 
 ## Cierre de fase
 
-Se aplica el Outcome A del diseno aprobado: bloqueo demostrado y reproducible.
-No se construyen calculadores del piloto, no se lanza otro run y no se integra
-ninguna senal en el score estricto.
+Se aplica el Outcome A del diseno aprobado: bloqueo v2 demostrado y
+reproducible. La infraestructura del piloto queda condicionada a que una fuente
+futura supere primero la puerta; no se ejecuta el piloto ni se integra ninguna
+senal en el score estricto.
