@@ -80,4 +80,3 @@ def test_policy_prioritises_authorised_zero_cost_sources() -> None:
         "public_portfolio_returns_diagnostic_only",
     ]
     assert policy["openap_stock_level_values_allowed"] is False
-

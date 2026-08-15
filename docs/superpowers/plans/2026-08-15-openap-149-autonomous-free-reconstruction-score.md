@@ -55,11 +55,19 @@ def test_policy_is_fail_closed_and_never_claims_strict_equivalence(policy):
 
 Also test the approximation contribution cap, minimum portfolio overlap, source-priority list and absence of unlock flags.
 
-- [ ] **Step 2: Add a manual-only workflow that can demonstrate RED remotely**
+- [ ] **Step 2: Add a manual workflow with a branch-only test bootstrap trigger**
+
+GitHub does not register a brand-new `workflow_dispatch` file until it exists on
+the default branch. Therefore the workflow also uses a path-limited `push`
+trigger on `codex/openap-proxy44-validation` for focused tests only. Live
+reconstruction and finalisation remain explicit modes and never run from an
+ordinary push.
 
 The workflow must:
 
-- use `workflow_dispatch` only;
+- expose `workflow_dispatch` for registered manual use;
+- limit the bootstrap `push` trigger to this branch and the autonomous OpenAP
+  implementation/test paths;
 - accept `mode` (`tests`, `reconstruct`, `finalize`) and optional upstream artifact run IDs;
 - check out the exact dispatched SHA;
 - install the package and declared test dependencies;

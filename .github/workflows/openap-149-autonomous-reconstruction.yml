@@ -1,6 +1,22 @@
 name: OpenAP 149 Autonomous Free Reconstruction
 
 on:
+  push:
+    branches:
+      - codex/openap-proxy44-validation
+    paths:
+      - .github/workflows/openap-149-autonomous-reconstruction.yml
+      - config/openap_149_autonomous_reconstruction.yaml
+      - config/openap_149_free_source_routes.yaml
+      - research/openap_149/**
+      - scripts/run_openap_149_autonomous_reconstruction.py
+      - tests/test_openap_149_autonomous_policy.py
+      - tests/test_openap_149_reconstruction_registry.py
+      - tests/test_openap_149_source_collector.py
+      - tests/test_openap_149_score_admission.py
+      - tests/test_openap_149_provisional_score.py
+      - tests/test_openap_149_family_orchestrator.py
+      - tests/test_openap_149_portfolio_behavior.py
   workflow_dispatch:
     inputs:
       mode:
@@ -39,7 +55,7 @@ concurrency:
 
 jobs:
   focused-tests:
-    if: inputs.mode == 'tests'
+    if: github.event_name == 'push' || inputs.mode == 'tests'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
