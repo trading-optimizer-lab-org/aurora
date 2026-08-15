@@ -28,6 +28,14 @@ def individual_catalog(feature_contract):
     return build_individual_entries(feature_contract)
 
 
+@pytest.fixture(scope="module")
+def cross_catalog(feature_contract, individual_catalog):
+    from aurora.infra.sp500_megarun.strategy_catalog import build_cross_entries
+
+    individual_entries, _report = individual_catalog
+    return build_cross_entries(feature_contract, individual_entries)
+
+
 def _single_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "schema_version": 1,
@@ -103,3 +111,56 @@ def test_individual_catalog_excludes_forbidden_f002_pairs(individual_catalog) ->
         < entry.components[0].configuration["slow"]
         for entry in f002
     )
+
+
+def test_cross_catalog_covers_every_rule_composition_and_arity(
+    cross_catalog,
+) -> None:
+    entries, report = cross_catalog
+
+    assert report["rule_count"] == 14
+    assert report["raw_pair_composition_count"] == 26_480
+    assert report["uncovered_rule_composition_arities"] == []
+    assert report["uncovered_authorized_left_right_pairs"] == []
+    assert report["uncovered_parameter_values"] == []
+    assert {rule_id for entry in entries for rule_id in entry.cross_rule_ids} == {
+        f"CR{index:02d}_{suffix}"
+        for index, suffix in (
+            (1, "TREND_CONFIRMATION"),
+            (2, "REVERSAL_PRESSURE"),
+            (3, "ADAPTIVE_TREND_REVERSAL"),
+            (4, "RISK_VOLATILITY_GATE"),
+            (5, "MACRO_VALUATION_TREND"),
+            (6, "INTERNALS_MARKET"),
+            (7, "CROSS_ASSET"),
+            (8, "PUBLIC_EVENTS"),
+            (9, "SIMPLE_ENSEMBLES"),
+            (10, "MULTISCALE_PATH"),
+            (11, "LIQUIDITY_FLOW"),
+            (12, "INTERPRETABLE_MODELS"),
+            (13, "VOLATILITY_POSITIONING"),
+            (14, "FORECAST_COMBINATION"),
+        )
+    }
+    assert all(2 <= entry.feature_count <= 5 for entry in entries)
+    assert len({entry.scientific_recipe_sha256 for entry in entries}) == len(entries)
+
+
+def test_commutative_crosses_canonicalize_component_permutations() -> None:
+    from aurora.infra.sp500_megarun.strategy_catalog import (
+        CatalogComponentV1,
+        canonicalize_composition,
+    )
+
+    first = CatalogComponentV1.create("F001", {"window": 20})
+    second = CatalogComponentV1.create("F019", {"window": 63})
+
+    left_components, left_composition = canonicalize_composition(
+        "and", (first, second)
+    )
+    right_components, right_composition = canonicalize_composition(
+        "and", (second, first)
+    )
+
+    assert left_components == right_components
+    assert left_composition == right_composition == {"kind": "and"}

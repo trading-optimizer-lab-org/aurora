@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 import hashlib
 from itertools import product
 import json
@@ -17,6 +18,7 @@ from aurora.infra.sp500_megarun.dehb_configspace import (
 from aurora.infra.sp500_megarun.feature_contract import (
     FeatureLaneSpec,
     FrozenFeatureContract,
+    CrossRule,
 )
 
 
@@ -559,15 +561,455 @@ def build_individual_entries(
     return tuple(entries), report
 
 
+_COMMUTATIVE_COMPOSITIONS = {"and", "vote", "weighted_score"}
+_WEIGHT_VALUES = (-2.0, -1.0, -0.5, 0.5, 1.0, 2.0)
+
+
+def _component_sort_key(component: CatalogComponentV1) -> tuple[str, str]:
+    return component.lane_id, component.configuration_sha256
+
+
+def _weight_ratio_key(weights: Sequence[float]) -> tuple[int, ...]:
+    doubled = [int(round(float(value) * 2.0)) for value in weights]
+    divisor = math.gcd(*[abs(value) for value in doubled])
+    ratio = tuple(value // divisor for value in doubled)
+    if ratio[0] < 0:
+        ratio = tuple(-value for value in ratio)
+    return ratio
+
+
+def _canonical_weight_values(weights: Sequence[float]) -> tuple[float, ...]:
+    if not weights or any(float(value) not in _WEIGHT_VALUES for value in weights):
+        raise CatalogBuildError("CATALOG_WEIGHT_INVALID")
+    ratio = _weight_ratio_key(weights)
+    allowed = {Fraction(str(value)) for value in _WEIGHT_VALUES}
+    candidates: list[tuple[Fraction, ...]] = []
+    for first_value in sorted(value for value in allowed if value > 0):
+        scale = first_value / ratio[0]
+        candidate = tuple(Fraction(value) * scale for value in ratio)
+        if all(value in allowed for value in candidate):
+            candidates.append(candidate)
+    if not candidates:
+        raise CatalogBuildError("CATALOG_WEIGHT_CANONICALIZATION_FAILED")
+    winner = min(
+        candidates,
+        key=lambda values: (sum(abs(value) for value in values), values),
+    )
+    return tuple(float(value) for value in winner)
+
+
+def canonicalize_composition(
+    kind: str,
+    components: Sequence[CatalogComponentV1],
+    *,
+    vote_mode: str | None = None,
+    weights: Sequence[float] | None = None,
+) -> tuple[tuple[CatalogComponentV1, ...], dict[str, object]]:
+    """Canonicalize component ordering and the exact composition payload."""
+
+    checked_components = tuple(components)
+    if not 2 <= len(checked_components) <= 5:
+        raise CatalogBuildError("CATALOG_CROSS_FEATURE_COUNT_INVALID")
+    if len({component.lane_id for component in checked_components}) != len(
+        checked_components
+    ):
+        raise CatalogBuildError("CATALOG_COMPONENT_LANE_DUPLICATE")
+    if kind not in {"and", "gate", "override", "vote", "weighted_score"}:
+        raise CatalogBuildError(f"CATALOG_COMPOSITION_INVALID:{kind}")
+
+    if kind == "weighted_score":
+        if weights is None or len(weights) != len(checked_components):
+            raise CatalogBuildError("CATALOG_WEIGHT_COUNT_INVALID")
+        ordered_pairs = sorted(
+            zip(checked_components, (float(value) for value in weights), strict=True),
+            key=lambda pair: _component_sort_key(pair[0]),
+        )
+        ordered_components = tuple(pair[0] for pair in ordered_pairs)
+        ordered_weights = _canonical_weight_values(
+            tuple(pair[1] for pair in ordered_pairs)
+        )
+        return ordered_components, {
+            "kind": "weighted_score",
+            "weights": list(ordered_weights),
+        }
+
+    if weights is not None:
+        raise CatalogBuildError("CATALOG_UNEXPECTED_WEIGHTS")
+    if kind in _COMMUTATIVE_COMPOSITIONS:
+        checked_components = tuple(sorted(checked_components, key=_component_sort_key))
+    if kind == "vote":
+        if vote_mode not in {"majority", "unanimity"}:
+            raise CatalogBuildError("CATALOG_VOTE_MODE_INVALID")
+        return checked_components, {
+            "kind": "vote",
+            "mode": vote_mode,
+        }
+    if vote_mode is not None:
+        raise CatalogBuildError("CATALOG_UNEXPECTED_VOTE_MODE")
+    payload: dict[str, object] = {"kind": kind}
+    if kind == "gate":
+        payload["base_component_index"] = 0
+    elif kind == "override":
+        payload["base_component_index"] = 0
+        payload["priority_component_index"] = len(checked_components) - 1
+    return checked_components, payload
+
+
+def _weight_patterns(arity: int) -> tuple[tuple[float, ...], ...]:
+    canonical_candidates = {
+        _canonical_weight_values(values)
+        for values in product(_WEIGHT_VALUES, repeat=arity)
+        if values[0] > 0
+    }
+    candidates = tuple(sorted(canonical_candidates))
+    parameter_names = tuple(f"weight_{index}" for index in range(arity))
+    candidate_maps = tuple(
+        dict(zip(parameter_names, values, strict=True)) for values in candidates
+    )
+    requirements: set[str] = set()
+    for candidate in candidate_maps:
+        requirements.update(_configuration_requirement_tags(candidate, parameter_names))
+    requirement_index = {
+        requirement: index for index, requirement in enumerate(sorted(requirements))
+    }
+    masks: list[int] = []
+    for candidate in candidate_maps:
+        mask = 0
+        for tag in _configuration_requirement_tags(candidate, parameter_names):
+            mask |= 1 << requirement_index[tag]
+        masks.append(mask)
+    uncovered = (1 << len(requirement_index)) - 1
+    selected: list[tuple[float, ...]] = []
+    selected_indexes: set[int] = set()
+    while uncovered:
+        best_index = -1
+        best_score = 0
+        for index, mask in enumerate(masks):
+            if index in selected_indexes:
+                continue
+            score = (mask & uncovered).bit_count()
+            if score > best_score:
+                best_index = index
+                best_score = score
+        if best_index < 0:
+            raise CatalogBuildError("CATALOG_WEIGHT_COVERAGE_STALLED")
+        selected_indexes.add(best_index)
+        selected.append(candidates[best_index])
+        uncovered &= ~masks[best_index]
+    return tuple(selected)
+
+
+def _higher_arity_lane_ids(
+    rule: CrossRule,
+    *,
+    arity: int,
+    row_index: int,
+) -> tuple[str, ...]:
+    left_lane = rule.left_lanes[row_index % len(rule.left_lanes)]
+    right_lane = next(
+        lane
+        for offset in range(len(rule.right_lanes))
+        if (lane := rule.right_lanes[(row_index + offset) % len(rule.right_lanes)])
+        != left_lane
+    )
+    selected = [left_lane, right_lane]
+    union = tuple(sorted(set(rule.left_lanes) | set(rule.right_lanes)))
+    if len(union) < arity:
+        raise CatalogBuildError(f"CATALOG_CROSS_ARITY_UNAVAILABLE:{rule.rule_id}")
+    offset = 0
+    while len(selected) < arity:
+        candidate = union[(row_index + offset) % len(union)]
+        offset += 1
+        if candidate not in selected:
+            selected.append(candidate)
+    return tuple(selected)
+
+
+def merge_duplicate_entries(
+    entries: Sequence[StrategyCatalogEntryV1],
+) -> tuple[StrategyCatalogEntryV1, ...]:
+    """Merge duplicate scientific recipes while retaining all provenance."""
+
+    merged: dict[str, StrategyCatalogEntryV1] = {}
+    for entry in entries:
+        prior = merged.get(entry.scientific_recipe_sha256)
+        if prior is None:
+            merged[entry.scientific_recipe_sha256] = entry
+            continue
+        if (
+            prior.strategy_id != entry.strategy_id
+            or prior.components != entry.components
+            or dict(prior.composition) != dict(entry.composition)
+        ):
+            raise CatalogBuildError("CATALOG_STRATEGY_ID_COLLISION")
+        merged_entry = StrategyCatalogEntryV1.create(
+            strategy_kind=prior.strategy_kind,
+            components=prior.components,
+            composition=prior.composition,
+            cross_rule_ids=(*prior.cross_rule_ids, *entry.cross_rule_ids),
+            economic_rationales=(
+                *prior.economic_rationales,
+                *entry.economic_rationales,
+            ),
+            coverage_tags=(*prior.coverage_tags, *entry.coverage_tags),
+            feature_contract_sha256=prior.feature_contract_sha256,
+            search_end=prior.search_end,
+        )
+        if merged_entry.strategy_id != prior.strategy_id:
+            raise CatalogBuildError("CATALOG_STRATEGY_ID_COLLISION")
+        merged[entry.scientific_recipe_sha256] = merged_entry
+    return tuple(sorted(merged.values(), key=lambda entry: entry.strategy_id))
+
+
+def build_cross_entries(
+    contract: FrozenFeatureContract,
+    individual_entries: Sequence[StrategyCatalogEntryV1],
+) -> tuple[tuple[StrategyCatalogEntryV1, ...], dict[str, Any]]:
+    """Expand CR01-CR14 with exact pair and higher-arity coverage."""
+
+    _validate_catalog_contract(contract)
+    if len(contract.cross_rules) != 14:
+        raise CatalogBuildError(
+            f"CATALOG_EXPECTED_14_CROSS_RULES:{len(contract.cross_rules)}"
+        )
+    by_lane: dict[str, list[CatalogComponentV1]] = {
+        lane.lane_id: [] for lane in contract.lanes
+    }
+    for entry in individual_entries:
+        if entry.strategy_kind != "single" or len(entry.components) != 1:
+            raise CatalogBuildError("CATALOG_INDIVIDUAL_INPUT_INVALID")
+        by_lane[entry.components[0].lane_id].append(entry.components[0])
+    if any(not values for values in by_lane.values()):
+        raise CatalogBuildError("CATALOG_INDIVIDUAL_LANE_MISSING")
+    for values in by_lane.values():
+        values.sort(key=_component_sort_key)
+
+    cursors = {lane_id: 0 for lane_id in by_lane}
+    used_components: dict[str, set[str]] = {
+        lane_id: set() for lane_id in by_lane
+    }
+    weight_patterns = {arity: _weight_patterns(arity) for arity in range(2, 6)}
+    weight_cursors = {arity: 0 for arity in range(2, 6)}
+    raw_entries: list[StrategyCatalogEntryV1] = []
+    covered_rule_composition_arities: set[str] = set()
+    covered_authorized_pairs: set[str] = set()
+    raw_pair_composition_count = 0
+
+    def next_component(
+        lane_id: str,
+        fixed: CatalogComponentV1 | None = None,
+    ) -> CatalogComponentV1:
+        if fixed is not None:
+            component = fixed
+        else:
+            values = by_lane[lane_id]
+            component = values[cursors[lane_id] % len(values)]
+            cursors[lane_id] += 1
+        used_components[lane_id].add(component.configuration_sha256)
+        return component
+
+    def emit(
+        rule: CrossRule,
+        composition_kind: str,
+        lane_ids: Sequence[str],
+        *,
+        fixed_components: Mapping[str, CatalogComponentV1] | None = None,
+        authorized_pair: tuple[str, str] | None = None,
+        supplemental: bool = False,
+    ) -> None:
+        components = tuple(
+            next_component(lane_id, (fixed_components or {}).get(lane_id))
+            for lane_id in lane_ids
+        )
+        variants: list[
+            tuple[str | None, tuple[float, ...] | None]
+        ] = [(None, None)]
+        if composition_kind == "vote":
+            variants = [("majority", None), ("unanimity", None)]
+        elif composition_kind == "weighted_score":
+            arity = len(components)
+            patterns = weight_patterns[arity]
+            pattern = patterns[weight_cursors[arity] % len(patterns)]
+            weight_cursors[arity] += 1
+            variants = [(None, pattern)]
+        for vote_mode, weights in variants:
+            ordered_components, composition = canonicalize_composition(
+                composition_kind,
+                components,
+                vote_mode=vote_mode,
+                weights=weights,
+            )
+            arity_tag = (
+                f"rule_composition_arity:{rule.rule_id}|"
+                f"{composition_kind}|{len(ordered_components)}"
+            )
+            tags = [
+                f"rule:{rule.rule_id}",
+                arity_tag,
+                *(
+                    f"component:{component.lane_id}|"
+                    f"{component.configuration_sha256}"
+                    for component in ordered_components
+                ),
+            ]
+            if authorized_pair is not None:
+                pair_tag = (
+                    f"authorized_pair:{rule.rule_id}|{composition_kind}|"
+                    f"{authorized_pair[0]}|{authorized_pair[1]}"
+                )
+                tags.append(pair_tag)
+                covered_authorized_pairs.add(pair_tag)
+            if supplemental:
+                tags.append("supplemental:component_configuration_coverage")
+            raw_entries.append(
+                StrategyCatalogEntryV1.create(
+                    strategy_kind="cross",
+                    components=ordered_components,
+                    composition=composition,
+                    cross_rule_ids=(rule.rule_id,),
+                    economic_rationales=(rule.economic_rationale,),
+                    coverage_tags=tags,
+                    feature_contract_sha256=contract.sha256,
+                )
+            )
+            covered_rule_composition_arities.add(arity_tag)
+
+    required_rule_composition_arities: set[str] = set()
+    required_authorized_pairs: set[str] = set()
+    participating_lanes: set[str] = set()
+    for rule in contract.cross_rules:
+        participating_lanes.update(rule.left_lanes)
+        participating_lanes.update(rule.right_lanes)
+        for composition_kind in rule.compositions:
+            for arity in range(2, rule.max_features + 1):
+                required_rule_composition_arities.add(
+                    f"rule_composition_arity:{rule.rule_id}|"
+                    f"{composition_kind}|{arity}"
+                )
+            for left_lane in rule.left_lanes:
+                for right_lane in rule.right_lanes:
+                    if left_lane == right_lane:
+                        continue
+                    raw_pair_composition_count += 1
+                    pair_tag = (
+                        f"authorized_pair:{rule.rule_id}|{composition_kind}|"
+                        f"{left_lane}|{right_lane}"
+                    )
+                    required_authorized_pairs.add(pair_tag)
+                    emit(
+                        rule,
+                        composition_kind,
+                        (left_lane, right_lane),
+                        authorized_pair=(left_lane, right_lane),
+                    )
+            for arity in range(3, rule.max_features + 1):
+                row_count = max(len(rule.left_lanes), len(rule.right_lanes))
+                for row_index in range(row_count):
+                    emit(
+                        rule,
+                        composition_kind,
+                        _higher_arity_lane_ids(
+                            rule,
+                            arity=arity,
+                            row_index=row_index,
+                        ),
+                    )
+
+    if raw_pair_composition_count != 26_480:
+        raise CatalogBuildError(
+            "CATALOG_RAW_CROSS_PAIR_COUNT_MISMATCH:"
+            f"{raw_pair_composition_count}"
+        )
+
+    for lane_id in sorted(participating_lanes):
+        required_components = by_lane[lane_id]
+        unused = [
+            component
+            for component in required_components
+            if component.configuration_sha256 not in used_components[lane_id]
+        ]
+        if not unused:
+            continue
+        eligible_rule = next(
+            rule
+            for rule in contract.cross_rules
+            if lane_id in rule.left_lanes or lane_id in rule.right_lanes
+        )
+        if lane_id in eligible_rule.left_lanes:
+            counterpart = next(
+                value for value in eligible_rule.right_lanes if value != lane_id
+            )
+            supplemental_lanes = (lane_id, counterpart)
+        else:
+            counterpart = next(
+                value for value in eligible_rule.left_lanes if value != lane_id
+            )
+            supplemental_lanes = (counterpart, lane_id)
+        for component in unused:
+            emit(
+                eligible_rule,
+                eligible_rule.compositions[0],
+                supplemental_lanes,
+                fixed_components={lane_id: component},
+                supplemental=True,
+            )
+
+    required_component_hashes = {
+        lane_id: {
+            component.configuration_sha256 for component in by_lane[lane_id]
+        }
+        for lane_id in sorted(participating_lanes)
+    }
+    uncovered_parameter_values = [
+        f"{lane_id}:{configuration_sha}"
+        for lane_id, required_hashes in required_component_hashes.items()
+        for configuration_sha in sorted(required_hashes - used_components[lane_id])
+    ]
+    uncovered_arities = sorted(
+        required_rule_composition_arities - covered_rule_composition_arities
+    )
+    uncovered_pairs = sorted(
+        required_authorized_pairs - covered_authorized_pairs
+    )
+    if uncovered_arities or uncovered_pairs or uncovered_parameter_values:
+        raise CatalogBuildError("CATALOG_CROSS_COVERAGE_INCOMPLETE")
+
+    entries = merge_duplicate_entries(raw_entries)
+    report: dict[str, Any] = {
+        "rule_count": len(contract.cross_rules),
+        "participating_lane_count": len(participating_lanes),
+        "raw_pair_composition_count": raw_pair_composition_count,
+        "raw_strategy_count": len(raw_entries),
+        "deduplicated_strategy_count": len(entries),
+        "duplicate_strategy_count": len(raw_entries) - len(entries),
+        "required_rule_composition_arities": sorted(
+            required_rule_composition_arities
+        ),
+        "uncovered_rule_composition_arities": uncovered_arities,
+        "required_authorized_left_right_pair_count": len(
+            required_authorized_pairs
+        ),
+        "uncovered_authorized_left_right_pairs": uncovered_pairs,
+        "required_component_configuration_count": sum(
+            len(values) for values in required_component_hashes.values()
+        ),
+        "uncovered_parameter_values": uncovered_parameter_values,
+    }
+    return entries, report
+
+
 __all__ = [
     "CatalogBuildError",
     "CatalogComponentV1",
     "StrategyCatalogEntryV1",
+    "build_cross_entries",
     "build_individual_entries",
     "canonical_json_bytes",
+    "canonicalize_composition",
     "configuration_sha256",
     "enumerate_valid_configurations",
     "individual_coverage_requirements",
+    "merge_duplicate_entries",
     "scientific_recipe_sha256",
     "select_covering_configurations",
     "strategy_id_for",
