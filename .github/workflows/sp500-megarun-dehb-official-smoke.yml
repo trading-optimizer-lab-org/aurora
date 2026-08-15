@@ -14,6 +14,7 @@ on:
           - continuous_allocate
           - continuous_migrate
           - continuous_emergency_migrate
+          - continuous_compact
           - continuous_recover
           - continuous_start
           - continuous_continue
@@ -363,13 +364,6 @@ jobs:
               --exit-on-error \
               --single-transaction \
               /clone/coordinator.dump
-      - name: Compact the stopped clone without changing rows
-        shell: bash
-        run: |
-          set -euo pipefail
-          python scripts/compact_sp500_dehb_database_clone.py \
-            --campaign-id "${{ inputs.campaign_id }}" \
-            --output outputs/sp500_dehb_database_clone/compaction.json
       - name: Verify every campaign row and closed boundary
         shell: bash
         run: |
@@ -377,6 +371,13 @@ jobs:
           python scripts/verify_sp500_dehb_database_clone.py \
             --campaign-id "${{ inputs.campaign_id }}" \
             --output outputs/sp500_dehb_database_clone/verification.json
+      - name: Compact the verified stopped clone
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/compact_sp500_dehb_database_clone.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --output outputs/sp500_dehb_database_clone/compaction.json
       - name: Upload non-sensitive clone verification
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -521,6 +522,58 @@ jobs:
         with:
           name: sp500-dehb-emergency-clone-evidence
           path: outputs/sp500_dehb_emergency_clone
+          if-no-files-found: error
+          retention-days: 30
+
+  continuous_compact:
+    if: ${{ inputs.mode == 'continuous_compact' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
+    steps:
+      - name: Check out exact compaction revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Fail unless the source campaign run is stopped
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ inputs.source_run_id }}"
+          test "$(gh run view '${{ inputs.source_run_id }}' --json status --jq .status)" = "completed"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+          echo "SP500_DEHB_SOURCE_RUN_COMPLETED=true" >> "$GITHUB_ENV"
+      - name: Compact deterministic payloads and checkpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "psycopg[binary]>=3.2,<4"
+          python -m pip install --no-deps -e .
+          mkdir -p outputs/sp500_dehb_database_compaction
+          python scripts/compact_sp500_dehb_database_clone.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --output outputs/sp500_dehb_database_compaction/compaction.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(
+              Path("outputs/sp500_dehb_database_compaction/compaction.json").read_text()
+          )
+          assert report["conflict_count"] == 0
+          assert report["validation_opened"] is False
+          assert report["locked_opened"] is False
+          assert report["after_bytes"] < 100_000_000
+          PY
+      - name: Upload database compaction evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-database-compaction
+          path: outputs/sp500_dehb_database_compaction/compaction.json
           if-no-files-found: error
           retention-days: 30
 

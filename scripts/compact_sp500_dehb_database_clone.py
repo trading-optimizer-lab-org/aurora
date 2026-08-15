@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,14 @@ def main() -> int:
 
     import psycopg
     from psycopg import sql
+    from psycopg.types.json import Jsonb
+
+    from aurora.infra.sp500_megarun.dehb_continuous_store import (
+        decode_checkpoint_bytes,
+        decode_storage_json,
+        encode_checkpoint_bytes,
+        encode_storage_json,
+    )
 
     with psycopg.connect(database_url) as connection:
         campaign = connection.execute(
@@ -62,7 +71,9 @@ def main() -> int:
             """
         ).fetchall()
 
-    tables = sorted({str(table) for table, _ in columns})
+    tables = sorted({str(table) for table, _ in columns} | {"islands"})
+    encoded_json_rows = 0
+    encoded_checkpoint_rows = 0
     for table in tables:
         table_columns = [
             str(column) for candidate, column in columns if str(candidate) == table
@@ -80,16 +91,50 @@ def main() -> int:
                         "ALTER TABLE {} ALTER COLUMN {} SET COMPRESSION lz4"
                     ).format(sql.Identifier(table), sql.Identifier(column))
                 )
-                connection.execute(
-                    sql.SQL(
-                        "UPDATE {} SET {} = ({}::text)::jsonb WHERE {} IS NOT NULL"
-                    ).format(
+                rows = connection.execute(
+                    sql.SQL("SELECT ctid::text, {} FROM {} WHERE {} IS NOT NULL").format(
+                        sql.Identifier(column),
                         sql.Identifier(table),
                         sql.Identifier(column),
-                        sql.Identifier(column),
-                        sql.Identifier(column),
                     )
-                )
+                ).fetchall()
+                updates = []
+                for row_id, payload in rows:
+                    if not isinstance(payload, Mapping):
+                        raise RuntimeError("COMPACTION_JSON_MAPPING_REQUIRED")
+                    decoded = decode_storage_json(payload)
+                    encoded = encode_storage_json(decoded)
+                    if encoded != payload:
+                        updates.append((Jsonb(encoded), str(row_id)))
+                if updates:
+                    with connection.cursor() as cursor:
+                        cursor.executemany(
+                            sql.SQL("UPDATE {} SET {} = %s WHERE ctid = %s::tid").format(
+                                sql.Identifier(table), sql.Identifier(column)
+                            ),
+                            updates,
+                        )
+                    encoded_json_rows += len(updates)
+            if table == "islands":
+                checkpoints = connection.execute(
+                    """
+                    SELECT ctid::text, checkpoint_bytes FROM islands
+                    WHERE checkpoint_bytes IS NOT NULL
+                    """
+                ).fetchall()
+                updates = []
+                for row_id, checkpoint in checkpoints:
+                    decoded = decode_checkpoint_bytes(bytes(checkpoint))
+                    encoded = encode_checkpoint_bytes(decoded)
+                    if encoded != bytes(checkpoint):
+                        updates.append((encoded, str(row_id)))
+                if updates:
+                    with connection.cursor() as cursor:
+                        cursor.executemany(
+                            "UPDATE islands SET checkpoint_bytes = %s WHERE ctid = %s::tid",
+                            updates,
+                        )
+                    encoded_checkpoint_rows += len(updates)
             connection.execute(
                 sql.SQL("ALTER TABLE {} ENABLE TRIGGER USER").format(
                     sql.Identifier(table)
@@ -121,6 +166,8 @@ def main() -> int:
         "campaign_id": args.campaign_id,
         "compression": "lz4",
         "jsonb_table_count": len(tables),
+        "encoded_json_rows": encoded_json_rows,
+        "encoded_checkpoint_rows": encoded_checkpoint_rows,
         "before_bytes": before_bytes,
         "after_bytes": after_bytes,
         "saved_bytes": before_bytes - after_bytes,

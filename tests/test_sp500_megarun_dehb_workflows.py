@@ -75,8 +75,8 @@ def test_registered_bridge_can_clone_and_verify_coordinator_database() -> None:
     assert "pg_dump" in text
     assert "pg_restore" in text
     assert "compact_sp500_dehb_database_clone.py" in text
-    assert text.index("compact_sp500_dehb_database_clone.py") < text.index(
-        "verify_sp500_dehb_database_clone.py"
+    assert text.index("verify_sp500_dehb_database_clone.py") < text.index(
+        "compact_sp500_dehb_database_clone.py"
     )
     assert "close_sp500_dehb_database_run_sessions.py" in text
     assert '--github-run-id "${{ inputs.source_run_id }}"' in text
@@ -132,6 +132,22 @@ def test_registered_bridge_can_emergency_clone_full_stopped_database_before_reco
     assert "--rebuild-open-batches" in combined
     assert "assert_sp500_dehb_database_quiescent.py" in combined
     assert "sp500-dehb-emergency-clone-evidence" in str(steps)
+
+
+def test_registered_bridge_can_compact_a_stopped_selected_database() -> None:
+    workflow = _load(REGISTERED_SMOKE_BRIDGE)
+    dispatch = workflow["on"]["workflow_dispatch"]["inputs"]
+    compact = workflow["jobs"]["continuous_compact"]
+    combined = "\n".join(str(step.get("run", "")) for step in compact["steps"])
+
+    assert "continuous_compact" in dispatch["mode"]["options"]
+    assert compact["if"] == "${{ inputs.mode == 'continuous_compact' }}"
+    assert compact["env"]["SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"] == (
+        "${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}"
+    )
+    assert "SP500_DEHB_SOURCE_RUN_COMPLETED=true" in combined
+    assert "compact_sp500_dehb_database_clone.py" in combined
+    assert "sp500-dehb-database-compaction" in str(compact["steps"])
 
 
 def test_registered_bridge_can_allocate_an_encrypted_reserve_database() -> None:

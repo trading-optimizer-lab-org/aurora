@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -12,6 +13,7 @@ import time
 from typing import Any, Callable, Mapping, Protocol
 import uuid
 from urllib.parse import parse_qs, urlparse
+import zlib
 
 from aurora.infra.sp500_megarun.dehb_continuous_models import (
     EvaluationCacheKeyV2,
@@ -43,6 +45,76 @@ class WorkerCapacityError(ContinuousStoreError):
 
 class PostgresStoreConfigurationError(ContinuousStoreError):
     """Raised before connecting when PostgreSQL transport is unsafe or incomplete."""
+
+
+_STORAGE_CODEC_KEY = "__aurora_storage_codec__"
+_STORAGE_CODEC_NAME = "zlib-json-v1"
+_CHECKPOINT_CODEC_PREFIX = b"AURORA-DEHB-CHECKPOINT-ZLIB-V1\0"
+
+
+def encode_storage_json(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a deterministic compact JSON object for PostgreSQL persistence."""
+
+    raw = json.dumps(
+        dict(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    compressed = zlib.compress(raw, level=9)
+    encoded = {
+        _STORAGE_CODEC_KEY: _STORAGE_CODEC_NAME,
+        "payload_b64": base64.b64encode(compressed).decode("ascii"),
+        "raw_sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    encoded_size = len(
+        json.dumps(encoded, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    if encoded_size >= len(raw):
+        return json.loads(raw)
+    return encoded
+
+
+def decode_storage_json(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Decode compact storage JSON while accepting legacy plain JSON rows."""
+
+    payload = dict(value)
+    if payload.get(_STORAGE_CODEC_KEY) != _STORAGE_CODEC_NAME:
+        return payload
+    if set(payload) != {_STORAGE_CODEC_KEY, "payload_b64", "raw_sha256"}:
+        raise ContinuousStoreError("CONTINUOUS_STORAGE_CODEC_FIELDS_INVALID")
+    try:
+        compressed = base64.b64decode(str(payload["payload_b64"]), validate=True)
+        raw = zlib.decompress(compressed)
+    except (ValueError, TypeError, zlib.error) as exc:
+        raise ContinuousStoreError("CONTINUOUS_STORAGE_CODEC_INVALID") from exc
+    if hashlib.sha256(raw).hexdigest() != str(payload["raw_sha256"]):
+        raise ContinuousStoreError("CONTINUOUS_STORAGE_CODEC_HASH_MISMATCH")
+    decoded = json.loads(raw)
+    if not isinstance(decoded, dict):
+        raise ContinuousStoreError("CONTINUOUS_STORAGE_CODEC_MAPPING_REQUIRED")
+    return decoded
+
+
+def encode_checkpoint_bytes(value: bytes) -> bytes:
+    """Compress checkpoint bytes only when doing so saves space."""
+
+    raw = bytes(value)
+    encoded = _CHECKPOINT_CODEC_PREFIX + zlib.compress(raw, level=9)
+    return encoded if len(encoded) < len(raw) else raw
+
+
+def decode_checkpoint_bytes(value: bytes) -> bytes:
+    """Decode compressed checkpoint bytes while accepting legacy rows."""
+
+    raw = bytes(value)
+    if not raw.startswith(_CHECKPOINT_CODEC_PREFIX):
+        return raw
+    try:
+        return zlib.decompress(raw[len(_CHECKPOINT_CODEC_PREFIX) :])
+    except zlib.error as exc:
+        raise ContinuousStoreError("CONTINUOUS_CHECKPOINT_CODEC_INVALID") from exc
 
 
 @dataclass(frozen=True)
@@ -655,6 +727,12 @@ class PostgresContinuousCampaignStore:
 
         return Jsonb(value)
 
+    @staticmethod
+    def _compressed_jsonb(value: Mapping[str, Any]) -> object:
+        from psycopg.types.json import Jsonb
+
+        return Jsonb(encode_storage_json(value))
+
     def _next_sequence(self, cursor: object) -> int:
         cursor.execute(
             """
@@ -686,7 +764,7 @@ class PostgresContinuousCampaignStore:
                     (
                         self.campaign_id,
                         proposal.evaluation_key.sha256,
-                        self._jsonb(dict(proposal.evaluation_key.payload)),
+                        self._compressed_jsonb(dict(proposal.evaluation_key.payload)),
                         sequence,
                         sequence,
                     ),
@@ -736,7 +814,7 @@ class PostgresContinuousCampaignStore:
                         proposal.batch_sequence,
                         proposal.batch_slot,
                         evaluation_id,
-                        self._jsonb(dict(proposal.dehb_job)),
+                        self._compressed_jsonb(dict(proposal.dehb_job)),
                         sequence,
                         sequence,
                     ),
@@ -947,7 +1025,9 @@ class PostgresContinuousCampaignStore:
                     """,
                     (sequence, int(evaluation_id)),
                 )
-        key = EvaluationCacheKeyV2(sha256=str(key_sha256), payload=dict(key_payload))
+        key = EvaluationCacheKeyV2(
+            sha256=str(key_sha256), payload=decode_storage_json(key_payload)
+        )
         return EvaluationLeaseV1(
             evaluation_id=int(evaluation_id),
             cache_key_sha256=str(key_sha256),
@@ -1005,7 +1085,7 @@ class PostgresContinuousCampaignStore:
                             self.campaign_id,
                             lease.evaluation_id,
                             result.result_sha256,
-                            self._jsonb(dict(result.result)),
+                            self._compressed_jsonb(dict(result.result)),
                             sequence,
                             sequence,
                         ),
@@ -1247,7 +1327,7 @@ class PostgresContinuousCampaignStore:
                 rows = cursor.fetchall()
         if len(rows) != 4 or {int(row[0]) for row in rows} != {0, 1, 2, 3}:
             return None
-        return {int(slot): dict(payload) for slot, payload in rows}
+        return {int(slot): decode_storage_json(payload) for slot, payload in rows}
 
     def resolved_batches_results(
         self,
@@ -1287,7 +1367,7 @@ class PostgresContinuousCampaignStore:
         for island_id, sequence, slot, payload in rows:
             identity = (str(island_id), int(sequence))
             if identity in requested:
-                grouped.setdefault(identity, {})[int(slot)] = dict(payload)
+                grouped.setdefault(identity, {})[int(slot)] = decode_storage_json(payload)
         if any(set(results) != {0, 1, 2, 3} for results in grouped.values()):
             raise ContinuousStoreError("CONTINUOUS_RESOLVED_BATCH_INCOMPLETE")
         return grouped
@@ -1307,12 +1387,12 @@ class PostgresContinuousCampaignStore:
                     RETURNING island_id
                     """,
                     (
-                        bytes(getattr(advance, "checkpoint_bytes")),
+                        encode_checkpoint_bytes(bytes(getattr(advance, "checkpoint_bytes"))),
                         str(getattr(advance, "checkpoint_sha256")),
                         getattr(advance, "prior_checkpoint_sha256"),
                         int(getattr(advance, "batch_sequence")) + 1,
                         "plateau" if bool(getattr(advance, "stopped")) else "runnable",
-                        self._jsonb(
+                        self._compressed_jsonb(
                             {
                                 "evaluations": int(getattr(advance, "evaluations")),
                                 "full_fidelity_evaluations": int(
@@ -1369,7 +1449,7 @@ class PostgresContinuousCampaignStore:
                     (
                         self.campaign_id,
                         strategy_key.sha256,
-                        self._jsonb(dict(strategy_key.payload)),
+                        self._compressed_jsonb(dict(strategy_key.payload)),
                         int(evaluation_id),
                         sequence,
                         sequence,
@@ -1388,7 +1468,7 @@ class PostgresContinuousCampaignStore:
                 row = cursor.fetchone()
                 if row is None or str(row[0]) == "conflict":
                     raise ResultConflictError("CONTINUOUS_STRATEGY_REGISTRY_CONFLICT")
-                payload = None if row[1] is None else dict(row[1])
+                payload = None if row[1] is None else decode_storage_json(row[1])
                 return StrategyClaimV1(strategy_key.sha256, False, payload)
 
     def complete_strategy_evaluation(
@@ -1438,7 +1518,7 @@ class PostgresContinuousCampaignStore:
                         """,
                         (
                             result_hash,
-                            self._jsonb(normalized),
+                            self._compressed_jsonb(normalized),
                             sequence,
                             strategy_key.sha256,
                         ),
@@ -1464,7 +1544,7 @@ class PostgresContinuousCampaignStore:
                     )
                     row = cursor.fetchone()
             if row is not None and str(row[0]) == "completed" and row[1] is not None:
-                return dict(row[1])
+                return decode_storage_json(row[1])
             if row is not None and str(row[0]) == "conflict":
                 raise ResultConflictError("CONTINUOUS_STRATEGY_REGISTRY_CONFLICT")
             time.sleep(0.2)
@@ -1491,9 +1571,11 @@ class PostgresContinuousCampaignStore:
                 restart_seed=int(row[3]),
                 status=str(row[4]),
                 next_batch_sequence=int(row[5]),
-                checkpoint_bytes=None if row[6] is None else bytes(row[6]),
+                checkpoint_bytes=(
+                    None if row[6] is None else decode_checkpoint_bytes(bytes(row[6]))
+                ),
                 checkpoint_sha256=None if row[7] is None else str(row[7]),
-                runtime_state=dict(row[8]),
+                runtime_state=decode_storage_json(row[8]),
             )
             for row in rows
         )
@@ -1524,7 +1606,7 @@ class PostgresContinuousCampaignStore:
         for island_id, sequence, batch_hash, slot, job in rows:
             grouped.setdefault(
                 (str(island_id), int(sequence), str(batch_hash)), []
-            ).append((int(slot), dict(job)))
+            ).append((int(slot), decode_storage_json(job)))
         batches: dict[str, object] = {}
         for (island_id, sequence, batch_hash), items in grouped.items():
             if [slot for slot, _job in items] != [0, 1, 2, 3]:
@@ -1575,7 +1657,7 @@ class PostgresContinuousCampaignStore:
             validation,
             locked,
         ) in rows:
-            result = dict(payload)
+            result = decode_storage_json(payload)
             info = result.get("info")
             if not isinstance(info, Mapping):
                 raise ContinuousStoreError("CONTINUOUS_RESULT_INFO_INVALID")
@@ -1622,7 +1704,7 @@ class PostgresContinuousCampaignStore:
                         self.campaign_id,
                         payload["cutoff_sequence"],
                         payload["snapshot_sha256"],
-                        self._jsonb(payload),
+                        self._compressed_jsonb(payload),
                         sequence,
                         sequence,
                     ),
@@ -1766,7 +1848,7 @@ class PostgresContinuousCampaignStore:
                         str(position_fingerprint),
                         int(robustness_seed),
                         digest,
-                        self._jsonb(checked),
+                        self._compressed_jsonb(checked),
                         sequence,
                         sequence,
                     ),
@@ -1796,7 +1878,7 @@ class PostgresContinuousCampaignStore:
                         raise ResultConflictError(
                             "CONTINUOUS_ROBUSTNESS_EVIDENCE_CONFLICT"
                         )
-                    return dict(row[1])
+                    return decode_storage_json(row[1])
         return checked
 
     def get_robustness_evidence(
@@ -1822,7 +1904,7 @@ class PostgresContinuousCampaignStore:
                     ),
                 )
                 row = cursor.fetchone()
-        return None if row is None else dict(row[0])
+        return None if row is None else decode_storage_json(row[0])
 
 
 __all__ = [
@@ -1840,4 +1922,8 @@ __all__ = [
     "StoredIslandV1",
     "WorkerCapacityError",
     "WorkerSessionLeaseV1",
+    "decode_checkpoint_bytes",
+    "decode_storage_json",
+    "encode_checkpoint_bytes",
+    "encode_storage_json",
 ]

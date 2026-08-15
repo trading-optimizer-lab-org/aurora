@@ -84,6 +84,42 @@ def store(clock=None):
     )
 
 
+def test_storage_json_codec_round_trips_and_shrinks_repetitive_results():
+    from aurora.infra.sp500_megarun.dehb_continuous_store import (
+        decode_storage_json,
+        encode_storage_json,
+    )
+
+    payload = {
+        "fitness": -1.25,
+        "info": {
+            "validation_opened": False,
+            "locked_opened": False,
+            "weekly_excess": [0.0125] * 520,
+            "positions": [1, 1, 0, 1] * 130,
+        },
+    }
+
+    encoded = encode_storage_json(payload)
+
+    assert encoded["__aurora_storage_codec__"] == "zlib-json-v1"
+    assert len(encoded["payload_b64"]) < 500
+    assert decode_storage_json(encoded) == payload
+
+
+def test_checkpoint_codec_preserves_exact_scientific_bytes():
+    from aurora.infra.sp500_megarun.dehb_continuous_store import (
+        decode_checkpoint_bytes,
+        encode_checkpoint_bytes,
+    )
+
+    checkpoint = (b"dehb-state-v1:" + b"1234567890" * 1000)
+    encoded = encode_checkpoint_bytes(checkpoint)
+
+    assert len(encoded) < len(checkpoint) // 5
+    assert decode_checkpoint_bytes(encoded) == checkpoint
+
+
 def worker_session(registry, *, job="job-1"):
     return registry.claim_worker_session(
         pool_generation="pool-1",
