@@ -1,0 +1,73 @@
+dataset_id: openap_149_identity_sources_v1
+checked_at: '2026-08-15'
+sources:
+  - source_id: sec_company_tickers_exchange
+    evidence_url: https://www.sec.gov/files/company_tickers_exchange.json
+    provides_permno: false
+    provides_public_identifier: true
+    historical_intervals: false
+    share_class_specific: false
+    broad_universe: true
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    target_derived: false
+  - source_id: sec_13f
+    evidence_url: https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets
+    provides_permno: false
+    provides_public_identifier: true
+    historical_intervals: true
+    share_class_specific: true
+    broad_universe: false
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    target_derived: false
+  - source_id: openfigi
+    evidence_url: https://www.openfigi.com/api/documentation
+    provides_permno: false
+    provides_public_identifier: true
+    historical_intervals: false
+    share_class_specific: true
+    broad_universe: true
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    target_derived: false
+  - source_id: openap_stock_panel
+    evidence_url: https://www.openassetpricing.com/data/
+    provides_permno: true
+    provides_public_identifier: false
+    historical_intervals: true
+    share_class_specific: true
+    broad_universe: true
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    target_derived: true
+  - source_id: crsp10
+    evidence_url: https://www.crsp.org/wp-content/uploads/guides/CRSP10_Year_US_Stock_Database_Guide.pdf
+    provides_permno: true
+    provides_public_identifier: true
+    historical_intervals: true
+    share_class_specific: true
+    broad_universe: true
+    public_zero_cost: false
+    authorized_for_internal_research: false
+    target_derived: false
+  - source_id: field_ritter_ipo
+    evidence_url: https://site.warrington.ufl.edu/ritter/files/IPO-age.xlsx
+    provides_permno: true
+    provides_public_identifier: true
+    historical_intervals: false
+    share_class_specific: true
+    broad_universe: false
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    target_derived: false
+  - source_id: kpss_patent_crsp_extended
+    evidence_url: https://github.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data/blob/2ee29097f7ca05fc0e56905e82474ad426c387b9/README.md
+    provides_permno: true
+    provides_public_identifier: false
+    historical_intervals: false
+    share_class_specific: true
+    broad_universe: false
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    target_derived: false

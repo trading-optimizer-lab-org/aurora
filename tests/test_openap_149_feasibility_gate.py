@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "config" / "openap_149_feasibility.yaml"
 ACQUISITION_PATH = ROOT / "docs" / "OPENAP_149_ACQUISITION_MATRIX.csv"
 REAUDIT_PATH = ROOT / "docs" / "OPENAP_181_CURRENT_FREE_SOURCE_REAUDIT_2026-08-09.csv"
+IDENTITY_SOURCES_PATH = ROOT / "config" / "openap_149_identity_sources.yaml"
 
 
 def _module():
@@ -20,6 +21,10 @@ def _module():
 
 def _contract() -> dict[str, object]:
     return yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+
+
+def _identity_module():
+    return importlib.import_module("aurora.research.openap_149.identity_sources")
 
 
 def _register() -> pd.DataFrame:
@@ -86,3 +91,37 @@ def test_existing_strict_approval_fails_closed() -> None:
             pd.read_csv(REAUDIT_PATH),
             _contract(),
         )
+
+
+def test_no_declared_route_currently_passes_all_identity_requirements() -> None:
+    module = _identity_module()
+    sources = module.load_identity_source_catalog(IDENTITY_SOURCES_PATH)
+    decisions = module.evaluate_public_identity_routes(sources)
+
+    assert len(decisions) == 7
+    assert not decisions["route_pass"].any()
+    openfigi = decisions.set_index("source_id").loc["openfigi"]
+    assert {"provides_permno", "historical_intervals"} <= set(
+        openfigi["missing_requirements"].split("|")
+    )
+
+
+def test_target_derived_source_can_never_build_bridge() -> None:
+    module = _identity_module()
+    sources = module.load_identity_source_catalog(IDENTITY_SOURCES_PATH)
+    decisions = module.evaluate_public_identity_routes(sources)
+
+    openap = decisions.set_index("source_id").loc["openap_stock_panel"]
+    assert not bool(openap["route_pass"])
+    assert "target_derived" in openap["disqualifiers"].split("|")
+
+
+def test_identity_catalog_rejects_duplicate_source_ids(tmp_path: Path) -> None:
+    module = _identity_module()
+    contract = yaml.safe_load(IDENTITY_SOURCES_PATH.read_text(encoding="utf-8"))
+    contract["sources"].append(dict(contract["sources"][0]))
+    duplicate = tmp_path / "duplicate.yaml"
+    duplicate.write_text(yaml.safe_dump(contract), encoding="utf-8")
+
+    with pytest.raises(module.IdentitySourceError, match="duplicad"):
+        module.load_identity_source_catalog(duplicate)
