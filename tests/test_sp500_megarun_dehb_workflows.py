@@ -231,7 +231,7 @@ def test_continuous_coordinator_waits_for_recovered_open_batches() -> None:
 
     assert "Wait for recovered open batches" in text
     assert "CONTINUOUS_OPEN_BATCHES_STILL_INCOMPLETE" in text
-    assert "e.state <> 'completed'" in text
+    assert "HAVING count(p.proposal_id) <> 4" in text
     assert "time.monotonic() + 1800" in text
 
 

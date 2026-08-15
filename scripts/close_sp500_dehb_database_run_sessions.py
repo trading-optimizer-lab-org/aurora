@@ -179,6 +179,54 @@ def main() -> int:
             else:
                 deleted_slots = 0
                 closed_sessions = 0
+            partial_batches = cursor.execute(
+                """
+                SELECT b.island_id, b.batch_sequence
+                FROM island_batches b
+                LEFT JOIN proposals p ON p.campaign_id = b.campaign_id
+                  AND p.island_id = b.island_id
+                  AND p.batch_sequence = b.batch_sequence
+                WHERE b.campaign_id = %s AND b.status = 'open'
+                GROUP BY b.island_id, b.batch_sequence
+                HAVING count(p.proposal_id) <> 4
+                """,
+                (args.campaign_id,),
+            ).fetchall()
+            deleted_partial_proposals = 0
+            for island_id, batch_sequence in partial_batches:
+                cursor.execute(
+                    """
+                    DELETE FROM evaluation_subscribers
+                    WHERE campaign_id = %s AND proposal_id IN (
+                      SELECT proposal_id FROM proposals
+                      WHERE campaign_id = %s AND island_id = %s
+                        AND batch_sequence = %s
+                    )
+                    """,
+                    (
+                        args.campaign_id,
+                        args.campaign_id,
+                        str(island_id),
+                        int(batch_sequence),
+                    ),
+                )
+                cursor.execute(
+                    """
+                    DELETE FROM proposals
+                    WHERE campaign_id = %s AND island_id = %s
+                      AND batch_sequence = %s
+                    """,
+                    (args.campaign_id, str(island_id), int(batch_sequence)),
+                )
+                deleted_partial_proposals += cursor.rowcount
+                cursor.execute(
+                    """
+                    DELETE FROM island_batches
+                    WHERE campaign_id = %s AND island_id = %s
+                      AND batch_sequence = %s AND status = 'open'
+                    """,
+                    (args.campaign_id, str(island_id), int(batch_sequence)),
+                )
             cursor.execute(
                 """
                 ALTER TABLE worker_sessions DROP CONSTRAINT IF EXISTS
@@ -202,6 +250,8 @@ def main() -> int:
                 "released_evaluations": len(released_evaluations),
                 "deleted_slot_leases": deleted_slots,
                 "deleted_orphaned_strategy_claims": deleted_strategy_claims,
+                "deleted_partial_batches": len(partial_batches),
+                "deleted_partial_proposals": deleted_partial_proposals,
                 "terminated_backends": terminated_backends,
             },
             sort_keys=True,

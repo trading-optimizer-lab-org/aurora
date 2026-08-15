@@ -79,17 +79,17 @@ jobs:
                   incomplete = int(
                       connection.execute(
                           """
-                          SELECT count(*) FROM island_batches b
-                          WHERE b.campaign_id = %s AND b.status = 'open'
-                            AND EXISTS (
-                              SELECT 1 FROM proposals p
-                              JOIN evaluations e
-                                ON e.evaluation_id = p.evaluation_id
-                              WHERE p.campaign_id = b.campaign_id
-                                AND p.island_id = b.island_id
-                                AND p.batch_sequence = b.batch_sequence
-                                AND e.state <> 'completed'
-                            )
+                          SELECT count(*) FROM (
+                            SELECT b.island_id, b.batch_sequence
+                            FROM island_batches b
+                            LEFT JOIN proposals p
+                              ON p.campaign_id = b.campaign_id
+                              AND p.island_id = b.island_id
+                              AND p.batch_sequence = b.batch_sequence
+                            WHERE b.campaign_id = %s AND b.status = 'open'
+                            GROUP BY b.island_id, b.batch_sequence
+                            HAVING count(p.proposal_id) <> 4
+                          ) AS partial_batches
                           """,
                           (os.environ["CAMPAIGN_ID"],),
                       ).fetchone()[0]
