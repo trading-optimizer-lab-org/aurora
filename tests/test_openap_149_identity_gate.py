@@ -8,9 +8,11 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github" / "workflows" / "openap-proxy-real-correlation-audit.yml"
 
 
 def _module():
@@ -218,3 +220,26 @@ def test_runner_artifacts_reconcile_and_remain_fail_closed(tmp_path: Path) -> No
     assert manifest["frozen_before_reference_read"] is False
     assert len(manifest["bridge_sha256"]) == 64
     assert (tmp_path / "openap_149_feasibility_summary.md").stat().st_size > 0
+
+
+def test_existing_workflow_has_isolated_identity_mode() -> None:
+    workflow_text = WORKFLOW.read_text(encoding="utf-8")
+    workflow = yaml.load(workflow_text, Loader=yaml.BaseLoader)
+    jobs = workflow["jobs"]
+
+    identity = jobs["identity_feasibility"]
+    assert identity["needs"] == "validate"
+    assert identity["if"] == (
+        "${{ inputs.proxy_panel_url == 'IDENTITY_FEASIBILITY_ONLY' }}"
+    )
+    assert "run_openap_149_identity_gate.py" in workflow_text
+    assert jobs["audit"]["if"] == (
+        "${{ inputs.proxy_panel_url != 'IDENTITY_FEASIBILITY_ONLY' }}"
+    )
+    upload = next(
+        step
+        for step in identity["steps"]
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert upload["with"]["name"] == "openap-149-identity-feasibility-results"
+    assert upload["with"]["retention-days"] == "30"
