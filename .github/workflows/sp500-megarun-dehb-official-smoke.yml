@@ -46,7 +46,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: sp500-megarun-official-dehb-smoke-${{ github.ref }}
+  group: >-
+    sp500-megarun-official-dehb-smoke-${{ github.ref }}-${{
+      inputs.mode == 'continuous_allocate' && 'allocation' || 'main'
+    }}
   cancel-in-progress: false
 
 jobs:
