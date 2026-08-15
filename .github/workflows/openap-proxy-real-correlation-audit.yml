@@ -54,13 +54,68 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e . pytest pyarrow pandas numpy scipy
       - name: Compile and test auditor
         run: |
-          python -m py_compile research/openap_proxy_real_correlation.py research/openap_proxy44_historical.py scripts/run_openap_proxy_real_correlation.py scripts/run_openap_proxy44_historical.py
+          python -m py_compile research/openap_proxy_real_correlation.py research/openap_proxy44_historical.py research/openap_149/feasibility.py research/openap_149/identity_sources.py research/openap_149/identity_gate.py scripts/run_openap_proxy_real_correlation.py scripts/run_openap_proxy44_historical.py scripts/run_openap_149_identity_gate.py
           python -m pytest tests/test_openap_proxy_real_correlation.py tests/test_openap_93_official_portfolio_similarity.py tests/test_openap_proxy44_historical.py tests/test_openap_149_feasibility_gate.py tests/test_openap_149_identity_gate.py -q
       - name: Enforce GitHub-only contract
         run: |
           grep -q "require_github_actions_or_explicit_local_permission" scripts/run_openap_proxy_real_correlation.py
           grep -q "local_runs_allowed: false" config/openap_proxy_real_correlation.yaml
           grep -q "no_positional_join: true" config/openap_proxy_real_correlation.yaml
+
+  identity_feasibility:
+    needs: validate
+    if: ${{ inputs.proxy_panel_url == 'IDENTITY_FEASIBILITY_ONLY' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install focused dependencies
+        run: python -m pip install --disable-pip-version-check -e . pandas pyarrow pyyaml
+      - name: Build fail-closed feasibility and identity evidence
+        run: |
+          python scripts/run_openap_149_identity_gate.py \
+            --repository-sha "${GITHUB_SHA}" \
+            --output-dir outputs/openap_149_identity_gate
+      - name: Verify identity decision and artifact reconciliation
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+
+          root = Path("outputs/openap_149_identity_gate")
+          decision = json.loads((root / "openap_identity_gate_decision.json").read_text())
+          summary = json.loads((root / "openap_149_feasibility_summary.json").read_text())
+          manifest = json.loads((root / "openap_permno_bridge_manifest.json").read_text())
+          register = pd.read_csv(root / "openap_149_feasibility_register.csv")
+          sources = pd.read_csv(root / "openap_149_identity_source_audit.csv")
+          bridge = pd.read_parquet(root / "openap_permno_bridge.parquet")
+          assert decision["status"] in {"blocked_identity", "pass"}
+          assert decision["locked_opened"] is False
+          assert decision["validation_used_for_identity"] is False
+          assert decision["strictly_approved"] == 0
+          assert summary["target_count"] == len(register) == 149
+          assert register["feasibility_class"].value_counts().to_dict() == {
+              "unproved": 142,
+              "blocked_source": 6,
+              "not_evaluable_reference": 1,
+          }
+          assert not sources["route_pass"].any()
+          assert bridge.empty
+          assert manifest["rows"] == 0
+          assert decision["pilot_authorized"] is False
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: openap-149-identity-feasibility-results
+          path: outputs/openap_149_identity_gate/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
   audit:
     needs: validate
