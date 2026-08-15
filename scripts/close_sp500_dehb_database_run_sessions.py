@@ -13,6 +13,7 @@ def main() -> int:
     parser.add_argument("--campaign-id", required=True)
     parser.add_argument("--github-run-id", required=True, type=int)
     parser.add_argument("--terminate-stopped-run-backends", action="store_true")
+    parser.add_argument("--rebuild-open-batches", action="store_true")
     args = parser.parse_args()
     database_url = os.environ.get("SP500_DEHB_COORDINATOR_DATABASE_URL", "").strip()
     if not database_url:
@@ -184,21 +185,31 @@ def main() -> int:
             else:
                 deleted_slots = 0
                 closed_sessions = 0
-            partial_batches = cursor.execute(
-                """
-                SELECT b.island_id, b.batch_sequence
-                FROM island_batches b
-                LEFT JOIN proposals p ON p.campaign_id = b.campaign_id
-                  AND p.island_id = b.island_id
-                  AND p.batch_sequence = b.batch_sequence
-                WHERE b.campaign_id = %s AND b.status = 'open'
-                GROUP BY b.island_id, b.batch_sequence
-                HAVING count(p.proposal_id) <> 4
-                """,
-                (args.campaign_id,),
-            ).fetchall()
-            deleted_partial_proposals = 0
-            for island_id, batch_sequence in partial_batches:
+            if args.rebuild_open_batches:
+                reset_batches = cursor.execute(
+                    """
+                    SELECT island_id, batch_sequence FROM island_batches
+                    WHERE campaign_id = %s AND status = 'open'
+                    ORDER BY island_id, batch_sequence
+                    """,
+                    (args.campaign_id,),
+                ).fetchall()
+            else:
+                reset_batches = cursor.execute(
+                    """
+                    SELECT b.island_id, b.batch_sequence
+                    FROM island_batches b
+                    LEFT JOIN proposals p ON p.campaign_id = b.campaign_id
+                      AND p.island_id = b.island_id
+                      AND p.batch_sequence = b.batch_sequence
+                    WHERE b.campaign_id = %s AND b.status = 'open'
+                    GROUP BY b.island_id, b.batch_sequence
+                    HAVING count(p.proposal_id) <> 4
+                    """,
+                    (args.campaign_id,),
+                ).fetchall()
+            deleted_open_batch_proposals = 0
+            for island_id, batch_sequence in reset_batches:
                 cursor.execute(
                     """
                     DELETE FROM evaluation_subscribers
@@ -223,7 +234,7 @@ def main() -> int:
                     """,
                     (args.campaign_id, str(island_id), int(batch_sequence)),
                 )
-                deleted_partial_proposals += cursor.rowcount
+                deleted_open_batch_proposals += cursor.rowcount
                 cursor.execute(
                     """
                     DELETE FROM island_batches
@@ -255,8 +266,8 @@ def main() -> int:
                 "released_evaluations": len(released_evaluations),
                 "deleted_slot_leases": deleted_slots,
                 "deleted_orphaned_strategy_claims": deleted_strategy_claims,
-                "deleted_partial_batches": len(partial_batches),
-                "deleted_partial_proposals": deleted_partial_proposals,
+                "rebuilt_open_batches": len(reset_batches),
+                "detached_open_batch_proposals": deleted_open_batch_proposals,
                 "terminated_backends": terminated_backends,
             },
             sort_keys=True,

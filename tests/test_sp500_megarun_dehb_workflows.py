@@ -77,6 +77,7 @@ def test_registered_bridge_can_clone_and_verify_coordinator_database() -> None:
     assert "close_sp500_dehb_database_run_sessions.py" in text
     assert '--github-run-id "${{ inputs.source_run_id }}"' in text
     assert "--terminate-stopped-run-backends" in text
+    assert "--rebuild-open-batches" in text
     assert text.index("close_sp500_dehb_database_run_sessions.py") < text.index(
         "assert_sp500_dehb_database_quiescent.py"
     )

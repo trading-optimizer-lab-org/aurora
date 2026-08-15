@@ -294,7 +294,8 @@ jobs:
           python scripts/close_sp500_dehb_database_run_sessions.py \
             --campaign-id "${{ inputs.campaign_id }}" \
             --github-run-id "${{ inputs.source_run_id }}" \
-            --terminate-stopped-run-backends
+            --terminate-stopped-run-backends \
+            --rebuild-open-batches
           python scripts/assert_sp500_dehb_database_quiescent.py \
             --campaign-id "${{ inputs.campaign_id }}"
       - name: Clone the stopped PostgreSQL database exactly
