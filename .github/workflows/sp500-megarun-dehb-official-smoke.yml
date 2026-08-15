@@ -90,7 +90,8 @@ permissions:
 concurrency:
   group: >-
     sp500-megarun-official-dehb-smoke-${{ github.ref }}-${{
-      inputs.mode == 'continuous_allocate' && 'allocation' || 'main'
+      inputs.mode == 'continuous_allocate' && 'allocation' ||
+      inputs.mode == 'continuous_probe' && 'probe' || 'main'
     }}
   cancel-in-progress: false
 

@@ -115,6 +115,9 @@ def test_registered_bridge_can_probe_live_database_without_mutation() -> None:
     dispatch = workflow["on"]["workflow_dispatch"]["inputs"]
 
     assert "continuous_probe" in dispatch["mode"]["options"]
+    assert "inputs.mode == 'continuous_probe' && 'probe'" in str(
+        workflow["concurrency"]["group"]
+    )
     probe = workflow["jobs"]["continuous_probe"]
     assert probe["if"] == "${{ inputs.mode == 'continuous_probe' }}"
     assert probe["env"]["SP500_DEHB_COORDINATOR_DATABASE_URL"] == (
