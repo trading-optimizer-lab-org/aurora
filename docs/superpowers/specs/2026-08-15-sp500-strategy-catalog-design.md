@@ -104,8 +104,8 @@ La selección será un set-cover codicioso determinista:
 4. se repite hasta que no queda ningún requisito;
 5. si un requisito válido queda sin cubrir, la construcción falla.
 
-El espacio cartesiano individual bruto del contrato vigente suma 55.763
-configuraciones antes de aplicar prohibiciones. Contiene 18.340 requisitos
+El espacio cartesiano individual bruto del contrato vigente suma 682.652
+configuraciones antes de aplicar prohibiciones. Contiene 27.377 requisitos
 brutos de parejas de valores. Estas cifras son límites de auditoría, no el
 tamaño prometido del catálogo: el tamaño final será el mínimo producido por la
 cobertura y las restricciones reales.

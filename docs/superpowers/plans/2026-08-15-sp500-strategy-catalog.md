@@ -136,7 +136,11 @@ def _matches_constraint(config: Mapping[str, object], constraint: tuple[tuple[st
     return all(config[name] == value for name, value in constraint)
 ```
 
-Require the raw Cartesian count to equal 55,763 across all lanes before filtering; fail with `CATALOG_RAW_CARTESIAN_COUNT_MISMATCH` if the frozen contract drifts.
+Require the raw Cartesian count to equal 682,652 across all lanes before
+filtering; fail with `CATALOG_RAW_CARTESIAN_COUNT_MISMATCH` if the frozen
+contract drifts. This count uses each lane's explicit `parameter_space`
+override before the shared operator default, matching
+`load_and_validate_feature_contract()`.
 
 - [ ] **Step 4: Implement deterministic set-cover selection**
 
