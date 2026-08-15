@@ -128,6 +128,7 @@ def main() -> int:
                 ).fetchone()[0]
             )
             released_evaluations: list[int] = []
+            deleted_strategy_claims = 0
             if session_ids:
                 cursor.execute(
                     """
@@ -151,6 +152,16 @@ def main() -> int:
                         """,
                         (sequence, args.campaign_id, released_evaluations),
                     )
+                    cursor.execute(
+                        """
+                        DELETE FROM strategy_evaluations
+                        WHERE campaign_id = %s AND state = 'owned'
+                          AND result_sha256 IS NULL AND result_payload IS NULL
+                          AND owner_evaluation_id = ANY(%s)
+                        """,
+                        (args.campaign_id, released_evaluations),
+                    )
+                    deleted_strategy_claims = cursor.rowcount
                 cursor.execute(
                     "DELETE FROM worker_slot_leases WHERE worker_session_id = ANY(%s)",
                     (session_ids,),
@@ -190,6 +201,7 @@ def main() -> int:
                 "closed_sessions": closed_sessions,
                 "released_evaluations": len(released_evaluations),
                 "deleted_slot_leases": deleted_slots,
+                "deleted_orphaned_strategy_claims": deleted_strategy_claims,
                 "terminated_backends": terminated_backends,
             },
             sort_keys=True,
