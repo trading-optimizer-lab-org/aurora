@@ -9,6 +9,7 @@ on:
       runtime_input_run_id: {required: true, type: string}
       bootstrap_run_id: {required: true, type: string}
       delay_minutes: {required: true, type: string, default: "5"}
+      history_run_id: {required: false, type: string, default: ""}
     secrets:
       SP500_DEHB_COORDINATOR_DATABASE_URL: {required: true}
   workflow_dispatch:
@@ -19,6 +20,7 @@ on:
       runtime_input_run_id: {required: true}
       bootstrap_run_id: {required: true}
       delay_minutes: {required: true, default: "5"}
+      history_run_id: {required: false, default: ""}
 
 permissions: {actions: read, contents: read}
 concurrency:
@@ -33,6 +35,7 @@ jobs:
       GITHUB_ACTIONS: "true"
       GH_TOKEN: ${{ github.token }}
       SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+      SP500_DEHB_SCIENTIFIC_COMMIT_SHA: ${{ inputs.commit_sha }}
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
@@ -73,6 +76,15 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.bootstrap_run_id }}
+      - name: Download verified historical cache
+        if: ${{ inputs.history_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-dehb-continuous-history
+          path: ${{ runner.temp }}/dehb_history
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.history_run_id }}
       - name: Download exact technical evidence named by launch contract
         shell: bash
         run: |
@@ -89,6 +101,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p outputs/reducer
+          history_args=()
+          if [[ -n "${{ inputs.history_run_id }}" ]]; then
+            history_args=(
+              --historical-cache-database "$RUNNER_TEMP/dehb_history/history.sqlite"
+              --historical-cache-manifest "$RUNNER_TEMP/dehb_history/history.manifest.json"
+            )
+          fi
           for ordinal in $(seq 0 59); do
             output="outputs/reducer/snapshot-$ordinal.json"
             python scripts/reduce_sp500_dehb_continuous_snapshot.py \
@@ -101,7 +120,8 @@ jobs:
               --campaign-id "${{ inputs.campaign_id }}" \
               --cutoff-sequence "${{ inputs.cutoff_sequence }}" \
               --delay-minutes "${{ inputs.delay_minutes }}" \
-              --output "$output"
+              --output "$output" \
+              "${history_args[@]}"
             jq -c '{marker:"SP500_DEHB_REDUCER_SNAPSHOT",snapshot:.snapshot,decision:.decision}' \
               "$output"
             if [[ "$(jq -r '.decision.action' "$output")" != "searching" ]]; then

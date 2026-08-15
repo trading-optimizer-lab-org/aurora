@@ -30,6 +30,8 @@ class ContinuousWorkerSummaryV1:
     logical_completions: int
     physical_strategy_evaluations: int
     strategy_cache_hits: int
+    historical_evaluation_cache_hits: int = 0
+    historical_strategy_cache_hits: int = 0
     schema_version: int = 1
 
 
@@ -93,6 +95,7 @@ class ContinuousWorkerRuntime:
         strategy_wait_seconds: float = 300.0,
         idle_poll_min_seconds: float = 1.0,
         idle_poll_max_seconds: float = 30.0,
+        historical_cache: object | None = None,
     ) -> None:
         if int(executor_slots) != 4:
             raise ValueError("CONTINUOUS_WORKER_REQUIRES_FOUR_SLOTS")
@@ -107,12 +110,15 @@ class ContinuousWorkerRuntime:
         self.strategy_wait_seconds = float(strategy_wait_seconds)
         self.idle_poll_min_seconds = float(idle_poll_min_seconds)
         self.idle_poll_max_seconds = float(idle_poll_max_seconds)
+        self.historical_cache = historical_cache
         if not 0 < self.idle_poll_min_seconds <= self.idle_poll_max_seconds:
             raise ValueError("CONTINUOUS_WORKER_IDLE_BACKOFF_INVALID")
         self._counter_lock = Lock()
         self._logical_completions = 0
         self._physical_strategy_evaluations = 0
         self._strategy_cache_hits = 0
+        self._historical_evaluation_cache_hits = 0
+        self._historical_strategy_cache_hits = 0
 
     def _run_slot(
         self,
@@ -145,38 +151,73 @@ class ContinuousWorkerRuntime:
                 )
                 continue
             consecutive_misses = 0
+            historical_result = None
+            if self.historical_cache is not None:
+                historical_result = self.historical_cache.get_evaluation(
+                    lease.evaluation_key
+                )
+            if historical_result is not None:
+                result = EvaluationResultV2.build(
+                    key=lease.evaluation_key,
+                    result=historical_result,
+                )
+                self.store.complete_evaluation(
+                    lease,
+                    result,
+                    evaluation_origin="prior_wave_cache",
+                )
+                with self._counter_lock:
+                    self._logical_completions += 1
+                    self._historical_evaluation_cache_hits += 1
+                continue
             prepared = self.position_builder(lease.evaluation_key)
             strategy_key = StrategyEvaluationKeyV1.build(
                 evaluation_key=lease.evaluation_key,
                 positions_sha256=prepared.positions_sha256,
             )
-            claim = self.store.claim_strategy_evaluation(
-                evaluation_id=lease.evaluation_id,
-                strategy_key=strategy_key,
-            )
-            if claim.owner:
-                raw_result = self.physical_evaluator(prepared, lease.evaluation_key)
-                shared_result = self.store.complete_strategy_evaluation(
+            historical_strategy_result = None
+            evaluation_origin = "physical"
+            if self.historical_cache is not None:
+                historical_strategy_result = self.historical_cache.get_strategy(
+                    strategy_key
+                )
+            if historical_strategy_result is not None:
+                shared_result = historical_strategy_result
+                evaluation_origin = "prior_wave_cache"
+                with self._counter_lock:
+                    self._historical_strategy_cache_hits += 1
+            else:
+                claim = self.store.claim_strategy_evaluation(
                     evaluation_id=lease.evaluation_id,
                     strategy_key=strategy_key,
-                    result=dict(raw_result),
                 )
-                with self._counter_lock:
-                    self._physical_strategy_evaluations += 1
-            elif claim.result is not None:
-                shared_result = claim.result
-                with self._counter_lock:
-                    self._strategy_cache_hits += 1
-            else:
-                shared_result = self.store.wait_strategy_result(
-                    strategy_key=strategy_key,
-                    timeout_seconds=self.strategy_wait_seconds,
-                )
-                with self._counter_lock:
-                    self._strategy_cache_hits += 1
+                if claim.owner:
+                    raw_result = self.physical_evaluator(prepared, lease.evaluation_key)
+                    shared_result = self.store.complete_strategy_evaluation(
+                        evaluation_id=lease.evaluation_id,
+                        strategy_key=strategy_key,
+                        result=dict(raw_result),
+                    )
+                    with self._counter_lock:
+                        self._physical_strategy_evaluations += 1
+                elif claim.result is not None:
+                    shared_result = claim.result
+                    with self._counter_lock:
+                        self._strategy_cache_hits += 1
+                else:
+                    shared_result = self.store.wait_strategy_result(
+                        strategy_key=strategy_key,
+                        timeout_seconds=self.strategy_wait_seconds,
+                    )
+                    with self._counter_lock:
+                        self._strategy_cache_hits += 1
             bound = self.result_binder(shared_result, lease.evaluation_key, prepared)
             result = EvaluationResultV2.build(key=lease.evaluation_key, result=bound)
-            self.store.complete_evaluation(lease, result)
+            self.store.complete_evaluation(
+                lease,
+                result,
+                evaluation_origin=evaluation_origin,
+            )
             with self._counter_lock:
                 self._logical_completions += 1
 
@@ -211,6 +252,8 @@ class ContinuousWorkerRuntime:
             logical_completions=self._logical_completions,
             physical_strategy_evaluations=self._physical_strategy_evaluations,
             strategy_cache_hits=self._strategy_cache_hits,
+            historical_evaluation_cache_hits=self._historical_evaluation_cache_hits,
+            historical_strategy_cache_hits=self._historical_strategy_cache_hits,
         )
 
     def run_until_idle(self) -> ContinuousWorkerSummaryV1:

@@ -19,6 +19,10 @@ from aurora.infra.sp500_megarun.dehb_campaign_contract import (
 from aurora.infra.sp500_megarun.dehb_continuous_store import (
     PostgresContinuousCampaignStore,
 )
+from aurora.infra.sp500_megarun.dehb_continuous_archive import (
+    ArchiveIdentityV1,
+    SqliteHistoricalCacheV1,
+)
 from aurora.infra.sp500_megarun.dehb_continuous_worker import (
     ContinuousWorkerRuntime,
     PreparedPhysicalEvaluationV1,
@@ -28,6 +32,7 @@ from aurora.infra.sp500_megarun.dehb_lane_registry import (
     default_lane_configurations,
 )
 from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
+    numeric_runtime_profile_sha256,
     verify_numeric_runtime_environment,
 )
 from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
@@ -58,6 +63,8 @@ def main() -> int:
     parser.add_argument("--lifetime-minutes", type=int, default=300)
     parser.add_argument("--executor-slots", type=int, default=4)
     parser.add_argument("--database-url-env", default="SP500_DEHB_COORDINATOR_DATABASE_URL")
+    parser.add_argument("--historical-cache-database", type=Path)
+    parser.add_argument("--historical-cache-manifest", type=Path)
     args = parser.parse_args()
 
     dsn = os.environ.get(args.database_url_env)
@@ -70,6 +77,25 @@ def main() -> int:
         args.runtime_input_pack,
         expected_scientific_input_binding_sha256=scientific_input_binding_sha256(campaign),
     )
+    if bool(args.historical_cache_database) != bool(args.historical_cache_manifest):
+        raise RuntimeError("CONTINUOUS_WORKER_HISTORICAL_CACHE_PAIR_REQUIRED")
+    historical_cache = None
+    if args.historical_cache_database is not None:
+        scientific_commit = os.environ.get("SP500_DEHB_SCIENTIFIC_COMMIT_SHA", "")
+        if len(scientific_commit) != 40:
+            raise RuntimeError("CONTINUOUS_WORKER_SCIENTIFIC_COMMIT_MISSING")
+        historical_cache = SqliteHistoricalCacheV1(
+            database_path=args.historical_cache_database,
+            manifest_path=args.historical_cache_manifest,
+            expected_identity=ArchiveIdentityV1(
+                campaign_id=args.campaign_id,
+                scientific_contract_sha256=campaign.sha256,
+                code_commit_sha=scientific_commit,
+                train_manifest_sha256=campaign.train_snapshot_manifest_sha256,
+                train_spy_sha256=campaign.train_spy_sha256,
+                numeric_profile_sha256=numeric_runtime_profile_sha256(),
+            ),
+        )
     pack = args.runtime_input_pack.resolve()
     train_snapshot = pack / "train_snapshot_1993_2010"
     baseline_dirs = {
@@ -163,6 +189,7 @@ def main() -> int:
         physical_evaluator=physical_evaluator,
         result_binder=result_binder,
         executor_slots=args.executor_slots,
+        historical_cache=historical_cache,
     )
     runtime.run_for(lifetime_seconds=max(1, args.lifetime_minutes) * 60 - 60)
     if runtime_manifest.get("validation_opened") is not False or runtime_manifest.get(

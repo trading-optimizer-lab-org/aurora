@@ -14,6 +14,9 @@ inputs:
     required: true
   bootstrap-run-id:
     required: true
+  history-run-id:
+    required: false
+    default: ""
   github-token:
     required: true
 
@@ -55,10 +58,30 @@ runs:
         github-token: ${{ inputs.github-token }}
         repository: ${{ github.repository }}
         run-id: ${{ inputs.bootstrap-run-id }}
-    - name: Run four single-threaded executor slots
+    - name: Download verified historical cache
+      if: ${{ inputs.history-run-id != '' }}
       shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
+        gh run download "${{ inputs.history-run-id }}" \
+          --repo "${{ github.repository }}" \
+          --name sp500-dehb-continuous-history \
+          --dir "$RUNNER_TEMP/dehb_history"
+    - name: Run four single-threaded executor slots
+      shell: bash
+      env:
+        SP500_DEHB_SCIENTIFIC_COMMIT_SHA: ${{ inputs.commit-sha }}
+      run: |
+        set -euo pipefail
+        history_args=()
+        if [[ -n "${{ inputs.history-run-id }}" ]]; then
+          history_args=(
+            --historical-cache-database "$RUNNER_TEMP/dehb_history/history.sqlite"
+            --historical-cache-manifest "$RUNNER_TEMP/dehb_history/history.manifest.json"
+          )
+        fi
         python scripts/run_sp500_dehb_continuous_worker.py \
           --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
           --data-contract config/sp500_megarun_free_data_240.json \
@@ -68,4 +91,5 @@ runs:
           --pool-generation "${{ inputs.pool-generation }}" \
           --worker-lifetime-id "${{ inputs.worker-lifetime-id }}" \
           --executor-slots 4 \
-          --lifetime-minutes 300
+          --lifetime-minutes 300 \
+          "${history_args[@]}"

@@ -191,3 +191,81 @@ def test_idle_backoff_is_bounded_deterministic_and_grows_exponentially():
     assert all(0.75 <= delay <= 37.5 for delay in delays)
     assert min(delays[-4:]) >= 22.5
     assert max(delays) <= 37.5
+
+
+def test_historical_evaluation_hit_skips_position_build_and_physical_scoring():
+    from aurora.infra.sp500_megarun.dehb_continuous_worker import (
+        ContinuousWorkerRuntime,
+    )
+
+    cached_key = key(21)
+    registry = registry_with([cached_key])
+    calls = Counter()
+
+    class HistoricalCache:
+        def get_evaluation(self, key_value):
+            calls["evaluation_lookup"] += 1
+            return scientific_result(key_value)
+
+        def get_strategy(self, _strategy_key):
+            raise AssertionError("strategy cache must not be consulted after evaluation hit")
+
+    summary = ContinuousWorkerRuntime(
+        store=registry,
+        pool_generation="test",
+        github_run_id=1,
+        github_job="worker",
+        position_builder=lambda _key: calls.update(["position_build"]),
+        physical_evaluator=lambda _prepared, _key: calls.update(["physical"]),
+        executor_slots=4,
+        historical_cache=HistoricalCache(),
+    ).run_until_idle()
+
+    assert summary.logical_completions == 1
+    assert summary.historical_evaluation_cache_hits == 1
+    assert summary.historical_strategy_cache_hits == 0
+    assert summary.physical_strategy_evaluations == 0
+    assert calls == Counter({"evaluation_lookup": 1})
+
+
+def test_historical_strategy_hit_skips_physical_scoring_after_position_build():
+    from aurora.infra.sp500_megarun.dehb_continuous_worker import (
+        ContinuousWorkerRuntime,
+        PreparedPhysicalEvaluationV1,
+    )
+
+    cached_key = key(21)
+    registry = registry_with([cached_key])
+    calls = Counter()
+
+    class HistoricalCache:
+        def get_evaluation(self, _key_value):
+            calls["evaluation_lookup"] += 1
+            return None
+
+        def get_strategy(self, _strategy_key):
+            calls["strategy_lookup"] += 1
+            return scientific_result(cached_key)
+
+    def prepare(_key_value):
+        calls["position_build"] += 1
+        return PreparedPhysicalEvaluationV1(positions_sha256=SHA_B, payload={})
+
+    summary = ContinuousWorkerRuntime(
+        store=registry,
+        pool_generation="test",
+        github_run_id=1,
+        github_job="worker",
+        position_builder=prepare,
+        physical_evaluator=lambda _prepared, _key: calls.update(["physical"]),
+        executor_slots=4,
+        historical_cache=HistoricalCache(),
+    ).run_until_idle()
+
+    assert summary.logical_completions == 1
+    assert summary.historical_evaluation_cache_hits == 0
+    assert summary.historical_strategy_cache_hits == 1
+    assert summary.physical_strategy_evaluations == 0
+    assert calls == Counter(
+        {"evaluation_lookup": 1, "position_build": 1, "strategy_lookup": 1}
+    )

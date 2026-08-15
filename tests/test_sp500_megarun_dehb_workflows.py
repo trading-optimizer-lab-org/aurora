@@ -270,6 +270,24 @@ def test_continuous_pool_has_three_120_parallel_shards_and_four_slots() -> None:
     assert "required_connections=400" in bootstrap_script
 
 
+def test_continuous_history_is_downloaded_by_workers_and_reducer_and_propagated() -> None:
+    official_text = REGISTERED_SMOKE_BRIDGE.read_text(encoding="utf-8")
+    pool_text = CONTINUOUS_POOL.read_text(encoding="utf-8")
+    worker_text = CONTINUOUS_WORKER_ACTION.read_text(encoding="utf-8")
+    reducer_text = CONTINUOUS_REDUCER.read_text(encoding="utf-8")
+
+    assert "continuous_segment" in official_text
+    assert "sp500-dehb-continuous-history" in official_text
+    assert "history_run_id" in official_text
+    assert '-f history_run_id="${{ inputs.history_run_id }}"' in official_text
+    assert "history-run-id" in pool_text
+    assert "history-run-id: ${{ inputs.history_run_id }}" in pool_text
+    assert "sp500-dehb-continuous-history" in worker_text
+    assert "--historical-cache-database" in worker_text
+    assert "sp500-dehb-continuous-history" in reducer_text
+    assert "--historical-cache-database" in reducer_text
+
+
 def test_every_scientific_continuous_job_exports_the_frozen_numeric_runtime() -> None:
     coordinator = _load(CONTINUOUS_COORDINATOR)["jobs"]["coordinator"]
     reducer = _load(CONTINUOUS_REDUCER)["jobs"]["reduce"]

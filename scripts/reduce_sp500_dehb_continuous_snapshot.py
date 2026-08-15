@@ -25,6 +25,13 @@ from aurora.infra.sp500_megarun.dehb_continuous_robustness import (
 from aurora.infra.sp500_megarun.dehb_continuous_store import (
     PostgresContinuousCampaignStore,
 )
+from aurora.infra.sp500_megarun.dehb_continuous_archive import (
+    ArchiveIdentityV1,
+    SqliteHistoricalCacheV1,
+)
+from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
+    numeric_runtime_profile_sha256,
+)
 from aurora.infra.sp500_megarun.dehb_robustness import (
     build_physical_candidate_robustness_reviewer,
 )
@@ -226,6 +233,8 @@ def main() -> int:
     parser.add_argument("--cutoff-sequence", required=True)
     parser.add_argument("--delay-minutes", type=int, default=0)
     parser.add_argument("--database-url-env", default="SP500_DEHB_COORDINATOR_DATABASE_URL")
+    parser.add_argument("--historical-cache-database", type=Path)
+    parser.add_argument("--historical-cache-manifest", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     dsn = os.environ.get(args.database_url_env)
@@ -233,6 +242,8 @@ def main() -> int:
         raise RuntimeError("CONTINUOUS_REDUCER_DATABASE_URL_MISSING")
     if args.delay_minutes < 0:
         raise RuntimeError("CONTINUOUS_REDUCER_DELAY_INVALID")
+    if bool(args.historical_cache_database) != bool(args.historical_cache_manifest):
+        raise RuntimeError("CONTINUOUS_REDUCER_HISTORICAL_CACHE_PAIR_REQUIRED")
     if args.delay_minutes:
         time.sleep(args.delay_minutes * 60)
     store = PostgresContinuousCampaignStore(dsn=dsn, campaign_id=args.campaign_id)
@@ -260,6 +271,42 @@ def main() -> int:
         "macro": pack / "baseline_macro",
     }
     raw_rows = store.result_rows(cutoff)
+    if args.historical_cache_database is not None:
+        scientific_commit = os.environ.get("SP500_DEHB_SCIENTIFIC_COMMIT_SHA", "")
+        if len(scientific_commit) != 40:
+            raise RuntimeError("CONTINUOUS_REDUCER_SCIENTIFIC_COMMIT_MISSING")
+        historical_cache = SqliteHistoricalCacheV1(
+            database_path=args.historical_cache_database,
+            manifest_path=args.historical_cache_manifest,
+            expected_identity=ArchiveIdentityV1(
+                campaign_id=args.campaign_id,
+                scientific_contract_sha256=campaign.sha256,
+                code_commit_sha=scientific_commit,
+                train_manifest_sha256=campaign.train_snapshot_manifest_sha256,
+                train_spy_sha256=campaign.train_spy_sha256,
+                numeric_profile_sha256=numeric_runtime_profile_sha256(),
+            ),
+        )
+        historical_rows = historical_cache.result_rows()
+        by_proposal = {
+            (
+                str(row["island_id"]),
+                int(row["batch_sequence"]),
+                int(row["batch_slot"]),
+            ): dict(row)
+            for row in historical_rows
+        }
+        for row in raw_rows:
+            identity = (
+                str(row["island_id"]),
+                int(row["batch_sequence"]),
+                int(row["batch_slot"]),
+            )
+            existing = by_proposal.get(identity)
+            if existing is not None and existing != row:
+                raise RuntimeError("CONTINUOUS_REDUCER_HISTORICAL_ROW_CONFLICT")
+            by_proposal[identity] = dict(row)
+        raw_rows = [by_proposal[key] for key in sorted(by_proposal)]
     reviewer_cache = {}
 
     def reviewer(request):

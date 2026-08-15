@@ -16,6 +16,7 @@ on:
           - continuous_emergency_migrate
           - continuous_compact
           - continuous_recover
+          - continuous_segment
           - continuous_start
           - continuous_continue
       commit_sha:
@@ -32,6 +33,9 @@ on:
         required: false
       bootstrap_run_id:
         description: Initial continuous run containing the bootstrap receipt
+        required: false
+      history_run_id:
+        description: Completed run containing cumulative verified train-only history
         required: false
       pool_generation:
         description: Six-digit continuous pool generation
@@ -223,6 +227,7 @@ jobs:
           tests/test_sp500_megarun_dehb_continuous_island.py
           tests/test_sp500_megarun_dehb_continuous_coordinator.py
           tests/test_sp500_megarun_dehb_continuous_worker.py
+          tests/test_sp500_megarun_dehb_continuous_archive.py
           tests/test_sp500_megarun_dehb_continuous_bootstrap.py
           tests/test_sp500_megarun_dehb_continuous_reducer.py
           tests/test_sp500_megarun_dehb_continuous_supervisor.py
@@ -525,6 +530,83 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  continuous_segment:
+    if: ${{ inputs.mode == 'continuous_segment' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.migration_source == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.migration_source == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT: ${{ inputs.migration_target == 'current' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT }}
+    steps:
+      - name: Check out exact segmentation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify stopped source and distinct empty target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ inputs.source_run_id }}"
+          test "$(gh run view '${{ inputs.source_run_id }}' --json status --jq .status)" = "completed"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+          test "$SP500_DEHB_COORDINATOR_DATABASE_URL" != "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+      - name: Install archive and segmentation runtime
+        run: |
+          python -m pip install "psycopg[binary,pool]>=3.2,<4"
+          python -m pip install --no-deps -e .
+      - name: Download prior cumulative history
+        if: ${{ inputs.history_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-dehb-continuous-history
+          path: ${{ runner.temp }}/prior_history
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.history_run_id }}
+      - name: Build cumulative immutable train-only history
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p outputs/sp500_dehb_history
+          prior_args=()
+          if [[ -n "${{ inputs.history_run_id }}" ]]; then
+            prior_args=(
+              --prior-database "$RUNNER_TEMP/prior_history/history.sqlite"
+              --prior-manifest "$RUNNER_TEMP/prior_history/history.manifest.json"
+            )
+          fi
+          python scripts/build_sp500_dehb_historical_archive.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --output-database outputs/sp500_dehb_history/history.sqlite \
+            --output-manifest outputs/sp500_dehb_history/history.manifest.json \
+            --output-receipt outputs/sp500_dehb_history/archive-receipt.json \
+            "${prior_args[@]}"
+      - name: Copy only live search state to fresh target
+        run: >-
+          python scripts/segment_sp500_dehb_continuous_state.py
+          --campaign-id "${{ inputs.campaign_id }}"
+          --output outputs/sp500_dehb_history/segment-receipt.json
+      - name: Verify segmented state and closed boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '.evaluation_count > 0 and .strategy_count > 0 and .result_row_count > 0 and .validation_opened == false and .locked_opened == false' \
+            outputs/sp500_dehb_history/archive-receipt.json >/dev/null
+          jq -e '.copied_state_rows.campaigns == 1 and .copied_state_rows.islands == 720 and .target_database_size_bytes < 30000000 and .validation_opened == false and .locked_opened == false' \
+            outputs/sp500_dehb_history/segment-receipt.json >/dev/null
+      - name: Upload cumulative verified history and segmentation evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-continuous-history
+          path: outputs/sp500_dehb_history
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
   continuous_compact:
     if: ${{ inputs.mode == 'continuous_compact' }}
     runs-on: ubuntu-24.04
@@ -683,6 +765,7 @@ jobs:
       pool_generation: pool-${{ inputs.pool_generation }}
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       bootstrap_run_id: ${{ inputs.mode == 'continuous_start' && github.run_id || inputs.bootstrap_run_id }}
+      history_run_id: ${{ inputs.history_run_id }}
     secrets:
       SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
 
@@ -699,6 +782,7 @@ jobs:
       cutoff_sequence: latest
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       bootstrap_run_id: ${{ inputs.mode == 'continuous_start' && github.run_id || inputs.bootstrap_run_id }}
+      history_run_id: ${{ inputs.history_run_id }}
       delay_minutes: "5"
     secrets:
       SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
@@ -767,6 +851,7 @@ jobs:
                 -f campaign_id="${{ inputs.campaign_id }}" \
                 -f runtime_input_run_id="${{ inputs.runtime_input_run_id }}" \
                 -f bootstrap_run_id="$bootstrap_run_id" \
+                -f history_run_id="${{ inputs.history_run_id }}" \
                 -f database_slot="${{ inputs.database_slot }}" \
                 -f pool_generation="$next_generation"
               ;;

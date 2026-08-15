@@ -188,7 +188,11 @@ class ContinuousCampaignStore(Protocol):
     ) -> EvaluationLeaseV1 | None: ...
 
     def complete_evaluation(
-        self, lease: EvaluationLeaseV1, result: EvaluationResultV2
+        self,
+        lease: EvaluationLeaseV1,
+        result: EvaluationResultV2,
+        *,
+        evaluation_origin: str = "physical",
     ) -> EvaluationCompletionV1: ...
 
 
@@ -397,7 +401,16 @@ class InMemoryContinuousCampaignStore:
         self,
         lease: EvaluationLeaseV1,
         result: EvaluationResultV2,
+        *,
+        evaluation_origin: str = "physical",
     ) -> EvaluationCompletionV1:
+        if evaluation_origin not in {
+            "physical",
+            "batch_cache",
+            "island_cache",
+            "prior_wave_cache",
+        }:
+            raise ContinuousStoreError("CONTINUOUS_EVALUATION_ORIGIN_INVALID")
         with self._lock:
             record = self._evaluations_by_id.get(lease.evaluation_id)
             if record is None or record.key.sha256 != result.key.sha256:
@@ -1042,7 +1055,16 @@ class PostgresContinuousCampaignStore:
         self,
         lease: EvaluationLeaseV1,
         result: EvaluationResultV2,
+        *,
+        evaluation_origin: str = "physical",
     ) -> EvaluationCompletionV1:
+        if evaluation_origin not in {
+            "physical",
+            "batch_cache",
+            "island_cache",
+            "prior_wave_cache",
+        }:
+            raise ContinuousStoreError("CONTINUOUS_EVALUATION_ORIGIN_INVALID")
         with self._pool.connection() as connection, connection.transaction():
             with connection.cursor() as cursor:
                 sequence = self._next_sequence(cursor)
@@ -1079,13 +1101,14 @@ class PostgresContinuousCampaignStore:
                             result_payload, evaluation_origin, physical_runtime_seconds,
                             validation_opened, locked_opened,
                             created_sequence, updated_sequence
-                        ) VALUES (%s, 2, %s, %s, %s, 'physical', 0, false, false, %s, %s)
+                        ) VALUES (%s, 2, %s, %s, %s, %s, 0, false, false, %s, %s)
                         """,
                         (
                             self.campaign_id,
                             lease.evaluation_id,
                             result.result_sha256,
                             self._compressed_jsonb(dict(result.result)),
+                            evaluation_origin,
                             sequence,
                             sequence,
                         ),
@@ -1633,7 +1656,8 @@ class PostgresContinuousCampaignStore:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT r.created_sequence, p.island_id, i.lane_id, i.replica,
+                    SELECT r.created_sequence, p.island_id, p.batch_sequence,
+                           p.batch_slot, i.lane_id, i.replica,
                            i.restart_seed, r.result_payload,
                            r.validation_opened, r.locked_opened
                     FROM proposals p
@@ -1650,6 +1674,8 @@ class PostgresContinuousCampaignStore:
         for (
             sequence,
             island_id,
+            batch_sequence,
+            batch_slot,
             lane_id,
             replica,
             restart_seed,
@@ -1666,6 +1692,8 @@ class PostgresContinuousCampaignStore:
                     **dict(info),
                     "created_sequence": int(sequence),
                     "island_id": str(island_id),
+                    "batch_sequence": int(batch_sequence),
+                    "batch_slot": int(batch_slot),
                     "lane_id": str(lane_id),
                     "replicate": int(replica),
                     "restart_seed": int(restart_seed),
