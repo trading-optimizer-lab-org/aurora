@@ -1,0 +1,317 @@
+dataset_id: openap_149_identity_sources_v2
+checked_at: '2026-08-15'
+sources:
+  - source_id: sec_company_tickers_exchange
+    evidence_url: https://www.sec.gov/files/company_tickers_exchange.json
+    retrieval_url: https://www.sec.gov/files/company_tickers_exchange.json
+    probe_policy: bounded_get
+    expected_media_type: json
+    parser: json_keys
+    public_access_without_login: true
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    upstream_license_required: false
+    provides_permno: false
+    provides_public_security_id: true
+    historical_intervals: false
+    share_class_specific: false
+    covers_2023_2024: true
+    broad_universe: true
+    target_derived: false
+    upstream_provenance: SEC company ticker and exchange file
+    universe_limit: Current SEC reporting issuers and listed tickers; no PERMNO history
+    documentary_blocker: missing_permno_and_historical_share_class_intervals
+
+  - source_id: sec_13f
+    evidence_url: https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets
+    retrieval_url: https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets
+    probe_policy: bounded_get
+    expected_media_type: html
+    parser: document
+    public_access_without_login: true
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    upstream_license_required: false
+    provides_permno: false
+    provides_public_security_id: true
+    historical_intervals: true
+    share_class_specific: true
+    covers_2023_2024: true
+    broad_universe: false
+    target_derived: false
+    upstream_provenance: SEC Form 13F public data sets
+    universe_limit: Securities reported by institutional investment managers; no PERMNO
+    documentary_blocker: missing_permno_and_incomplete_equity_universe
+
+  - source_id: openfigi
+    evidence_url: https://www.openfigi.com/api/documentation
+    retrieval_url: https://www.openfigi.com/api/documentation
+    probe_policy: bounded_get
+    expected_media_type: html
+    parser: document
+    public_access_without_login: true
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    upstream_license_required: false
+    provides_permno: false
+    provides_public_security_id: true
+    historical_intervals: false
+    share_class_specific: true
+    covers_2023_2024: true
+    broad_universe: true
+    target_derived: false
+    upstream_provenance: Bloomberg OpenFIGI public identifier service
+    universe_limit: FIGI mappings do not expose CRSP PERMNO validity history
+    documentary_blocker: missing_permno_and_historical_permno_intervals
+
+  - source_id: crsp_research_products
+    evidence_url: https://indexes.morningstar.com/research-data-products
+    retrieval_url: https://indexes.morningstar.com/research-data-products
+    probe_policy: documentary_only
+    expected_media_type: html
+    parser: document
+    public_access_without_login: false
+    public_zero_cost: false
+    authorized_for_internal_research: false
+    upstream_license_required: true
+    provides_permno: true
+    provides_public_security_id: true
+    historical_intervals: true
+    share_class_specific: true
+    covers_2023_2024: true
+    broad_universe: true
+    target_derived: false
+    upstream_provenance: CRSP licensed research databases
+    universe_limit: Full coverage requires a CRSP subscription and licence
+    documentary_blocker: paid_licensed_product
+
+  - source_id: crsp_sample_data
+    evidence_url: https://www.crsp.org/wp-content/uploads/2023/09/CRSP_Sample_Data_and_Software_Guide.pdf
+    retrieval_url: https://www.crsp.org/wp-content/uploads/2023/09/CRSP_Sample_Data_and_Software_Guide.pdf
+    probe_policy: bounded_get
+    expected_media_type: pdf
+    parser: document
+    public_access_without_login: true
+    public_zero_cost: true
+    authorized_for_internal_research: false
+    upstream_license_required: true
+    provides_permno: true
+    provides_public_security_id: true
+    historical_intervals: true
+    share_class_specific: true
+    covers_2023_2024: false
+    broad_universe: false
+    target_derived: false
+    upstream_provenance: CRSP promotional sample data
+    universe_limit: Twenty-five stock securities with history only through 2019
+    documentary_blocker: promotional_evaluation_only_and_no_2023_2024_coverage
+
+  - source_id: wrds_demo
+    evidence_url: https://wrds-www.wharton.upenn.edu/pages/about/demo-wrds/
+    retrieval_url: https://wrds-www.wharton.upenn.edu/pages/about/demo-wrds/
+    probe_policy: bounded_get
+    expected_media_type: html
+    parser: document
+    public_access_without_login: true
+    public_zero_cost: true
+    authorized_for_internal_research: false
+    upstream_license_required: true
+    provides_permno: true
+    provides_public_security_id: true
+    historical_intervals: false
+    share_class_specific: true
+    covers_2023_2024: false
+    broad_universe: false
+    target_derived: false
+    upstream_provenance: WRDS illustrative demonstration environment
+    universe_limit: Demonstration samples rather than exportable full CRSP history
+    documentary_blocker: demo_only_and_full_data_requires_subscription
+
+  - source_id: std_security_code
+    evidence_url: https://github.com/Wenzhi-Ding/Std_Security_Code
+    retrieval_url: https://raw.githubusercontent.com/Wenzhi-Ding/Std_Security_Code/main/README.md
+    probe_policy: bounded_get
+    expected_media_type: text
+    parser: document
+    public_access_without_login: true
+    public_zero_cost: true
+    authorized_for_internal_research: false
+    upstream_license_required: true
+    provides_permno: true
+    provides_public_security_id: true
+    historical_intervals: false
+    share_class_specific: false
+    covers_2023_2024: false
+    broad_universe: true
+    target_derived: false
+    upstream_provenance: Static link tables described by the publisher as mostly from WRDS
+    universe_limit: Static preliminary links without validity periods or independent verification
+    documentary_blocker: upstream_wrds_rights_unresolved_and_static_links
+
+  - source_id: open_source_bond_asset_pricing
+    evidence_url: https://openbondassetpricing.com/data/
+    retrieval_url: https://openbondassetpricing.com/data/
+    probe_policy: bounded_get
+    expected_media_type: html
+    parser: document
+    public_access_without_login: true
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    upstream_license_required: false
+    provides_permno: false
+    provides_public_security_id: true
+    historical_intervals: true
+    share_class_specific: false
+    covers_2023_2024: true
+    broad_universe: false
+    target_derived: false
+    upstream_provenance: Public TRACE-derived bond downloads excluding proprietary fields
+    universe_limit: Bond issuers only; public downloads exclude proprietary identifiers including the required link fields
+    documentary_blocker: public_release_excludes_permno_and_is_issuer_level
+
+  - source_id: chuck_fang_bond_firm_link
+    evidence_url: https://www.chuckfang.finance/
+    retrieval_url: https://www.chuckfang.finance/
+    probe_policy: documentary_only
+    expected_media_type: html
+    parser: document
+    public_access_without_login: false
+    public_zero_cost: false
+    authorized_for_internal_research: false
+    upstream_license_required: true
+    provides_permno: true
+    provides_public_security_id: true
+    historical_intervals: true
+    share_class_specific: false
+    covers_2023_2024: true
+    broad_universe: false
+    target_derived: false
+    upstream_provenance: Bond-firm links built with ICE TRACE Compustat and CRSP
+    universe_limit: Current distribution is through WRDS and maps bond issuers rather than all equity share classes
+    documentary_blocker: wrds_distribution_and_issuer_level_scope
+
+  - source_id: corp_bond_data
+    evidence_url: https://github.com/Cstolborg/corp-bond-data
+    retrieval_url: https://raw.githubusercontent.com/Cstolborg/corp-bond-data/main/README.md
+    probe_policy: documentary_only
+    expected_media_type: text
+    parser: document
+    public_access_without_login: false
+    public_zero_cost: false
+    authorized_for_internal_research: false
+    upstream_license_required: true
+    provides_permno: true
+    provides_public_security_id: true
+    historical_intervals: true
+    share_class_specific: false
+    covers_2023_2024: true
+    broad_universe: false
+    target_derived: false
+    upstream_provenance: Public pipeline requiring private WRDS TRACE FISD and CRSP inputs
+    universe_limit: Bond issuers only and source data require a WRDS account
+    documentary_blocker: public_code_but_wrds_source_data_required
+
+  - source_id: oxford_ownership_productivity
+    evidence_url: https://ora.ox.ac.uk/objects/uuid%3Ae2758f97-6250-4407-9f1c-1e98e377f674
+    retrieval_url: https://ora.ox.ac.uk/objects/uuid%3Ae2758f97-6250-4407-9f1c-1e98e377f674
+    probe_policy: bounded_get
+    expected_media_type: html
+    parser: document
+    public_access_without_login: false
+    public_zero_cost: true
+    authorized_for_internal_research: false
+    upstream_license_required: true
+    provides_permno: true
+    provides_public_security_id: true
+    historical_intervals: true
+    share_class_specific: true
+    covers_2023_2024: false
+    broad_universe: true
+    target_derived: false
+    upstream_provenance: Thesis describes an identifier panel built from CRSP and Compustat
+    universe_limit: Public archive exposes the thesis, not the data panel, and described coverage ends in 2020
+    documentary_blocker: identifier_dataset_not_public_and_ends_2020
+
+  - source_id: michels_2017
+    evidence_url: https://csvbase.com/rmirror/michels-2017/details
+    retrieval_url: https://csvbase.com/rmirror/michels-2017.csv
+    probe_policy: download_small
+    expected_media_type: csv
+    parser: csv_header
+    public_access_without_login: true
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    upstream_license_required: false
+    provides_permno: true
+    provides_public_security_id: true
+    historical_intervals: false
+    share_class_specific: false
+    covers_2023_2024: false
+    broad_universe: false
+    target_derived: false
+    upstream_provenance: farr package event sample based on Michels 2017
+    universe_limit: 423 natural-disaster event rows without monthly validity intervals
+    documentary_blocker: event_sample_without_intervals_or_broad_coverage
+
+  - source_id: field_ritter_ipo
+    evidence_url: https://site.warrington.ufl.edu/ritter/files/IPO-age.xlsx
+    retrieval_url: https://site.warrington.ufl.edu/ritter/files/IPO-age.xlsx
+    probe_policy: documentary_only
+    expected_media_type: xlsx
+    parser: document
+    public_access_without_login: true
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    upstream_license_required: false
+    provides_permno: true
+    provides_public_security_id: true
+    historical_intervals: false
+    share_class_specific: true
+    covers_2023_2024: true
+    broad_universe: false
+    target_derived: false
+    upstream_provenance: Jay Ritter public IPO-age research spreadsheet
+    universe_limit: IPO observations only, not a broad monthly security master
+    documentary_blocker: ipo_subset_without_historical_intervals
+
+  - source_id: kpss_patent_crsp_extended
+    evidence_url: https://github.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data
+    retrieval_url: https://raw.githubusercontent.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data/master/README.md
+    probe_policy: bounded_get
+    expected_media_type: text
+    parser: document
+    public_access_without_login: true
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    upstream_license_required: false
+    provides_permno: true
+    provides_public_security_id: false
+    historical_intervals: false
+    share_class_specific: true
+    covers_2023_2024: true
+    broad_universe: false
+    target_derived: false
+    upstream_provenance: Public KPSS patent-to-CRSP extended research data
+    universe_limit: Patent-linked firms only and no public security identifier for an independent join
+    documentary_blocker: missing_public_security_identifier_and_subset_only
+
+  - source_id: openap_characteristic_fingerprint
+    evidence_url: https://www.openassetpricing.com/data/
+    retrieval_url: https://www.openassetpricing.com/data/
+    probe_policy: documentary_only
+    expected_media_type: html
+    parser: document
+    public_access_without_login: true
+    public_zero_cost: true
+    authorized_for_internal_research: true
+    upstream_license_required: false
+    provides_permno: true
+    provides_public_security_id: false
+    historical_intervals: true
+    share_class_specific: true
+    covers_2023_2024: true
+    broad_universe: true
+    target_derived: true
+    upstream_provenance: Official OpenAP stock-level characteristic panel
+    universe_limit: Matching by OpenAP values would make the later fidelity test circular
+    documentary_blocker: target_derived_identity_is_prohibited
