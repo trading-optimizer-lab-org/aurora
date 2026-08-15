@@ -1,14 +1,29 @@
 from __future__ import annotations
 
+import argparse
 import importlib
+from importlib import util
+import json
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 def _module():
     return importlib.import_module("aurora.research.openap_149.identity_gate")
+
+
+def _runner_module():
+    path = ROOT / "scripts" / "run_openap_149_identity_gate.py"
+    spec = util.spec_from_file_location("run_openap_149_identity_gate", path)
+    assert spec is not None and spec.loader is not None
+    module = util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _valid_bridge() -> pd.DataFrame:
@@ -137,3 +152,69 @@ def test_coverage_rejects_unfrozen_bridge() -> None:
         module.evaluate_bridge_coverage(
             _valid_bridge(), _reference_spine(), manifest=manifest
         )
+
+
+def _runner_args(output_dir: Path) -> argparse.Namespace:
+    return argparse.Namespace(
+        acquisition_matrix=ROOT / "docs" / "OPENAP_149_ACQUISITION_MATRIX.csv",
+        reaudit=ROOT / "docs" / "OPENAP_181_CURRENT_FREE_SOURCE_REAUDIT_2026-08-09.csv",
+        feasibility_contract=ROOT / "config" / "openap_149_feasibility.yaml",
+        identity_sources=ROOT / "config" / "openap_149_identity_sources.yaml",
+        candidate_bridge=None,
+        reference_spine=None,
+        output_dir=output_dir,
+        repository_sha="f" * 40,
+    )
+
+
+def test_runner_without_candidate_bridge_emits_valid_no_go(tmp_path: Path) -> None:
+    runner = _runner_module()
+
+    assert runner.run(_runner_args(tmp_path)) == 0
+
+    decision = json.loads(
+        (tmp_path / "openap_identity_gate_decision.json").read_text(encoding="utf-8")
+    )
+    assert decision["status"] == "blocked_identity"
+    assert decision["strictly_approved"] == 0
+    assert decision["pilot_authorized"] is False
+    assert decision["reason"] == (
+        "no_authorized_zero_cost_historical_permno_bridge"
+    )
+    assert decision["locked_opened"] is False
+    assert decision["validation_used_for_identity"] is False
+
+
+def test_runner_artifacts_reconcile_and_remain_fail_closed(tmp_path: Path) -> None:
+    runner = _runner_module()
+    assert runner.run(_runner_args(tmp_path)) == 0
+
+    register = pd.read_csv(tmp_path / "openap_149_feasibility_register.csv")
+    sources = pd.read_csv(tmp_path / "openap_149_identity_source_audit.csv")
+    bridge = pd.read_parquet(tmp_path / "openap_permno_bridge.parquet")
+    audit = pd.read_csv(tmp_path / "openap_permno_bridge_audit.csv")
+    summary = json.loads(
+        (tmp_path / "openap_149_feasibility_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest = json.loads(
+        (tmp_path / "openap_permno_bridge_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert len(register) == 149
+    assert register["feasibility_class"].value_counts().to_dict() == {
+        "unproved": 142,
+        "blocked_source": 6,
+        "not_evaluable_reference": 1,
+    }
+    assert summary["strictly_approved"] == 0
+    assert summary["previously_calculated_non_strict"] == 115
+    assert len(sources) == 7 and not sources["route_pass"].any()
+    assert bridge.empty and audit.empty
+    assert manifest["rows"] == 0
+    assert manifest["frozen_before_reference_read"] is False
+    assert len(manifest["bridge_sha256"]) == 64
+    assert (tmp_path / "openap_149_feasibility_summary.md").stat().st_size > 0
