@@ -1,16 +1,22 @@
-# OpenAP 149 Independent Free Reconstruction
+# OpenAP 149 Free Feasibility and Independent Reconstruction
 
 Date: 2026-08-15
 
-Status: user-approved design, pending written-spec review
+Status: feasibility-first revision, pending written-spec review
 
 ## 1. Purpose
 
-Aurora will independently reconstruct the 149 targeted Open Asset Pricing
-signals from zero-cost raw sources. The official OpenAP stock-level panel may be
-used only after the independent outputs are frozen, and only to evaluate
-historical fidelity. Official values must never be read by production
-calculation code or used to calculate, correct, fit, tune, or select a proxy.
+Aurora will first determine whether the 149 targeted Open Asset Pricing signals
+can be faithfully reconstructed from zero-cost raw sources. It will not build
+all 149 merely because a formula can produce numeric values. Reconstruction
+expands only after historical identity is independently solved and a frozen
+10-signal pilot demonstrates that the free-source method can reproduce OpenAP
+at the required fidelity.
+
+The official OpenAP stock-level panel may be used only after independent
+outputs are frozen, and only to evaluate historical fidelity. Official values
+must never be read by production calculation code or used to calculate,
+correct, fit, tune, select, or rescue a proxy.
 
 The target is not merely to produce a number for every signal. A signal may
 enter the current stock score only when it demonstrates stock-level monthly
@@ -20,7 +26,7 @@ the other gates defined below.
 
 ## 2. Scope
 
-The program covers all 149 targeted signals:
+The feasibility register covers all 149 targeted signals:
 
 | Family | Count |
 |---|---:|
@@ -32,7 +38,7 @@ The program covers all 149 targeted signals:
 | Other | 11 |
 | **Total** | **149** |
 
-Every signal receives:
+Every signal eventually receives:
 
 - a versioned formula contract;
 - a zero-cost source route or a documented source block;
@@ -41,10 +47,32 @@ Every signal receives:
 - historical validation evidence when identity and reference coverage permit;
 - a final status explaining whether the signal may enter the score.
 
-The work is divided into independently reviewable subprojects: data and
-identity foundation, market and trading signals, accounting signals, event and
-13F signals, special-source signals, and final validation and score integration.
-Each subproject requires its own implementation plan and acceptance evidence.
+The work is divided into strict go/no-go stages: identity feasibility, a
+10-signal pilot, source-family expansion for methods that pass, and final score
+integration. Failure of the identity gate stops strict OpenAP validation.
+Failure of a pilot method stops expansion of that method or source family.
+
+## 2.1 Evidence at the design freeze
+
+The existing project evidence supports only the following claims:
+
+| Current evidence class | Count | Meaning |
+|---|---:|---|
+| Strictly approved | 0 | No independent signal has demonstrated the agreed monthly stock-level Spearman threshold |
+| Not ruled out, still unproved | 142 | No decisive source block is recorded, but source equivalence and fidelity are unknown and strict comparison is currently blocked by identity |
+| No complete zero-cost replacement found | 6 | A required proprietary source has no complete authorised free counterpart currently demonstrated |
+| Official comparison unavailable | 1 | `Size` is omitted from the downloadable OpenAP stock-level panel used for the agreed test |
+| **Total** | **149** | These classes describe feasibility evidence, not score eligibility |
+
+The six currently source-blocked signals are `Activism1`, `Activism2`,
+`Mom6mJunk`, `CustomerMomentum`, `retConglomerate`, and `sinAlgo`. This is not a
+claim of mathematical impossibility. It means that no complete, authorised,
+zero-cost source replacement has been demonstrated for their required original
+inputs.
+
+The project's 115 previously calculated signals are non-strict research
+proxies. They are not accepted inputs to the score and do not reduce the count
+of signals that still require independent validation.
 
 ## 3. Non-goals
 
@@ -53,6 +81,8 @@ Each subproject requires its own implementation plan and acceptance evidence.
 - Training a machine-learning model to imitate the OpenAP panel.
 - Calling a signal reliable because it has the same name or a similar formula.
 - Treating a calculated proxy as equivalent before independent validation.
+- Implementing all 149 before the identity and pilot gates establish viability.
+- Reporting the number of candidate calculations as the number of faithful signals.
 - Filling unavailable observations with zero.
 - Weakening the 0.90 threshold by averaging good and bad months.
 - Purchasing Compustat, CRSP, IBES, OptionMetrics, LSEG, or another paid feed.
@@ -68,6 +98,9 @@ Each subproject requires its own implementation plan and acceptance evidence.
 | OpenAP role | Post-freeze historical examination only |
 | Current calculation dependency on OpenAP values | Prohibited |
 | Primary fidelity gate | Monthly stock-level Spearman >= 0.90 |
+| Current number proven to meet that gate | 0 |
+| First implementation target | Identity gate, then frozen 10-signal pilot |
+| Expansion rule | Only passing methods and source families may expand |
 | Validation periods | 2023 first examination, 2024 final examination |
 | Formula changes after viewing OpenAP | Prohibited for the same examination |
 | Missing values | Remain missing; never converted to zero |
@@ -83,36 +116,42 @@ keys, command lines, or reports.
 
 ## 5. Architecture
 
-The pipeline has seven isolated stages:
+The pipeline has eight isolated stages:
 
-1. **Immutable raw source archive** records each source object, retrieval time,
+1. **Feasibility register** classifies all 149 without equating a documented
+   route with a faithful reconstruction.
+2. **Immutable raw source archive** records each source object, retrieval time,
    published-at time, license or access basis, and SHA-256 digest.
-2. **Security identity timeline** resolves issuer and share-class identity,
+3. **Security identity timeline** resolves issuer and share-class identity,
    ticker changes, exchange changes, splits, mergers, delistings, and other
    corporate actions.
-3. **Formula registry** defines each of the 149 calculations and all temporal,
+4. **Formula registry** defines each calculation and all temporal,
    universe, unit, sign, and missing-data rules.
-4. **Family calculators** transform only independent source data into one value
+5. **Pilot and family calculators** transform only independent source data into one value
    per security and formation month.
-5. **Freeze boundary** hashes formulas, source snapshots, identity maps, code,
+6. **Freeze boundary** hashes formulas, source snapshots, identity maps, code,
    dependencies, and calculated results before reference values are exposed.
-6. **Isolated OpenAP evaluator** joins frozen outputs to official historical
+7. **Isolated OpenAP evaluator** joins frozen outputs to official historical
    values and computes the declared metrics. Production calculators cannot
    import or read this component's reference datasets.
-7. **Score admission gate** exposes only signals that pass every mandatory
+8. **Score admission gate** exposes only signals that pass every mandatory
    criterion. All other signals retain explicit failure states.
 
 The intended data flow is:
 
 ```text
-free raw sources
+149-signal feasibility register
+  -> identity go/no-go gate
+  -> free raw sources for the 10-signal pilot
   -> immutable snapshots
   -> point-in-time normalization
   -> historical security identity
-  -> frozen formulas
-  -> monthly independent signals
+  -> frozen pilot formulas
+  -> monthly independent pilot signals
   -> frozen candidate artifact
   -> isolated OpenAP comparison
+  -> method/source-family go/no-go decisions
+  -> controlled expansion only for passing methods
   -> approved / rejected / pending / blocked / not_evaluable
   -> score input (approved only)
 ```
@@ -132,6 +171,12 @@ The primary zero-cost source stack is:
 | Market factors | Kenneth French Data Library | Independently derived market series when required |
 | Patent data | USPTO PatentsView | USPTO bulk research datasets |
 | Public identifiers | SEC ticker and exchange files, OpenFIGI, corporate actions | Issuer and exchange records |
+
+These sources are candidate routes, not evidence that the corresponding OpenAP
+inputs can be reproduced closely enough. SEC filings do not automatically
+replace Compustat's normalisation and history; free market feeds do not
+automatically replace CRSP; SEC 13F does not supply a PERMNO bridge; and public
+segment, rating, customer, or governance disclosures may be incomplete.
 
 No secondary source may silently replace a failed primary source. The output
 must identify which route supplied every field. If a free tier changes, loses
@@ -220,6 +265,22 @@ built, independent values may still be calculated for production identifiers,
 but strict OpenAP correlation remains `blocked_identity` and must not be
 claimed.
 
+This is the first implementation gate. Before any historical pilot calculation
+is launched, the bridge must demonstrate, using identity evidence only:
+
+- monthly security-level links to PERMNO for 2023 and 2024;
+- one-to-one share-class resolution for every retained interval;
+- at least 70 percent coverage of the applicable official comparison universe;
+- explicit treatment of ticker changes, reused tickers, mergers, delistings,
+  multiple share classes, and ambiguous links;
+- a frozen bridge and audit artifact created before any target values are read.
+
+If no authorised zero-cost route can satisfy these requirements, the program
+records a no-go decision: zero signals are claimed as meeting the agreed OpenAP
+fidelity test. Access to CRSP or WRDS supplied by the user or an institution may
+remove this block at no marginal cost, but it is not classified as publicly
+free and must not be assumed.
+
 ## 10. Calculation by family
 
 ### 10.1 Accounting
@@ -259,25 +320,42 @@ whose original proprietary input has no defensible free equivalent may still
 produce a clearly named candidate reconstruction, but cannot enter the score
 without passing all validation gates.
 
-## 11. First 40-signal wave
+## 11. Feasibility-first 10-signal pilot
 
-The first calculation wave is selected for expected coverage, economic
-relevance, source reuse, and independent reconstructability. Selection does not
-assert that any signal already passes the fidelity threshold.
+No 40-signal wave is authorised. After the identity gate passes, the first and
+only calculation wave is a frozen 10-signal pilot chosen to test the two
+largest, most reusable source families with comparatively direct formulas:
 
-**Market and trading (16):** Beta, BetaFP, High52, IdioVol3F, IdioVolAHT,
-RealizedVol, ResidualMomentum, ReturnSkew3F, CoskewACX, Coskewness, Size,
-PriceDelayRsq, PriceDelaySlope, PriceDelayTstat, VolMkt, and VolumeTrend.
+- **Market and trading:** `Beta`, `High52`, `RealizedVol`, `VolSD`, and
+  `VolumeTrend`.
+- **Accounting:** `Cash`, `BM`, `EP`, `GP`, and `TotalAccruals`.
 
-**Accounting (20):** AM, BM, BookLeverage, Cash, CashProd, CF, cfp, EP, GP,
-Investment, InvGrowth, Leverage, NOA, OperProf, PctTotAcc, RD, roaq, SP, tang,
-and TotalAccruals.
+Selection means only that these signals offer the best early test of whether
+free market and SEC data can reproduce OpenAP. It does not imply that any is
+currently accurate, score eligible, or expected to pass.
 
-**Event and positioning (4):** AnnouncementReturn, DivInit, DivOmit, and
-ShortInterest.
+For each pilot signal, work stops at the first failed gate:
 
-After the foundation and first wave are accepted, the same source-family
-engines expand to all remaining signals until all 149 have terminal evidence.
+1. the exact OpenAP formula and original input semantics are documented;
+2. the free source proves adequate historical fields, timestamps, units, and
+   coverage without substituting a merely related concept;
+3. the formula and identity bridge are frozen before reference values are read;
+4. the 2023 examination is run once and classified without target-driven
+   changes;
+5. only a 2023 pass proceeds unchanged to the 2024 final examination;
+6. only a 2024 pass becomes `approved` and score eligible.
+
+A failed signal is reported as `rejected` or `blocked`; it is not adjusted to
+look more like OpenAP after viewing the result. Implementation patterns and
+source routes may expand to related signals only when their pilot evidence
+passes all mandatory gates. If the supposedly direct pilot signals fail, the
+corresponding family does not expand to dozens of weaker proxies.
+
+The remaining 139 signals stay in the feasibility register until a passing
+pilot establishes a reusable route. The six known source-blocked signals remain
+blocked unless new authoritative zero-cost evidence changes their source
+classification. `Size` remains `not_evaluable` under this specific OpenAP
+comparison unless an official stock-level reference is made available.
 
 ## 12. Freeze and independent examination
 
@@ -372,48 +450,58 @@ Before production use, the combined score requires its own separately approved
 frozen validation design. Its score-level gates may be stricter, but must never
 weaken or replace any per-signal gate defined in this document.
 
-## 16. Delivery phases
+## 16. Delivery phases and stop conditions
 
-### Phase 1: data and identity foundation
+### Phase 0: reconcile feasibility evidence
 
-- Freeze schemas, source policy, and all 149 formula manifests.
-- Implement immutable snapshots and point-in-time normalization contracts.
-- Build issuer and security timelines.
-- Resolve or formally block the historical PERMNO bridge.
-- Produce synthetic and small frozen fixtures without running heavy research.
+- Freeze the 149-signal register and the evidence behind the 142/6/1 split.
+- Record exact original inputs, proposed free substitutes, historical coverage,
+  licensing basis, and unresolved equivalence risks.
+- Do not count a documented route or numeric proxy as a fidelity success.
 
-### Phase 2: first 40 signals
+### Phase 1: identity go/no-go
 
-- Implement the shared market, accounting, event, and short-interest engines.
-- Produce independent current and historical candidate outputs.
-- Run source-level and formula-level checks before any OpenAP comparison.
+- Build and audit the issuer, security, and PERMNO timelines using identity
+  evidence only.
+- Produce the frozen bridge before exposing target signal values.
+- **Stop condition:** if the bridge cannot meet the coverage and ambiguity
+  rules in section 9 at zero cost, mark strict validation `blocked_identity` and
+  do not implement the 149-signal reconstruction campaign.
 
-### Phase 3: expansion to all 149
+### Phase 2: frozen 10-signal pilot
 
-- Complete all source-family calculators.
-- Reconcile exactly 149 formula contracts and result states.
-- Freeze the full independent candidate bundle.
+- Implement only the five market/trading and five accounting signals in
+  section 11.
+- Run source and formula checks, freeze candidates, then examine 2023 once.
+- Proceed unchanged to 2024 only for signals that pass 2023.
+- **Stop condition:** reject or block each failed signal; do not retune it from
+  OpenAP outcomes and do not expand a failed method or source route.
 
-### Phase 4: isolated 2023 and 2024 examination
+### Phase 3: controlled family expansion
 
-- Join only through the accepted identity bridge.
-- Produce monthly per-signal evidence and strict status decisions.
-- Preserve exposed periods and prohibit retrospective retuning.
+- Expand only methods whose pilot evidence passed both periods.
+- Give each additional source family a small representative pilot before broad
+  implementation.
+- Reconcile exactly 149 formula contracts and evidence states, including
+  blocked and not-evaluable signals.
 
-### Phase 5: score integration
+### Phase 4: score integration
 
 - Admit approved signals only.
 - Apply redundancy and economic-family controls.
 - Produce current score, provenance, coverage, and strict limitations.
 
-Because the program contains multiple independent subsystems, each phase gets a
-focused implementation plan and acceptance review before the next phase starts.
+Each phase gets a focused implementation plan and acceptance review. A no-go
+result is a valid, conclusive deliverable and prevents further expenditure on
+unvalidated proxies.
 
 ## 17. Required artifacts
 
 At minimum, the program produces:
 
 ```text
+openap_149_feasibility_register.csv
+openap_149_feasibility_summary.md
 openap_149_formula_registry.csv
 openap_149_source_routes.csv
 raw_source_manifest.parquet
@@ -421,9 +509,14 @@ security_identity_timeline.parquet
 openap_permno_bridge.parquet
 openap_permno_bridge_audit.csv
 point_in_time_input_audit.parquet
-independent_signal_values.parquet
-independent_signal_manifest.json
-candidate_freeze_manifest.json
+openap_10_pilot_signal_values.parquet
+openap_10_pilot_manifest.json
+openap_10_pilot_freeze_manifest.json
+openap_10_pilot_2023_validation.parquet
+openap_10_pilot_2024_validation.parquet
+openap_10_pilot_gate_decisions.csv
+independent_approved_signal_values.parquet
+independent_approved_signal_manifest.json
 openap_2023_monthly_validation.parquet
 openap_2024_monthly_validation.parquet
 openap_149_strict_status.csv
@@ -462,17 +555,19 @@ authorization to launch them.
 
 The test layers are:
 
-1. schema and formula-contract tests;
-2. point-in-time and no-look-ahead tests;
-3. SEC tag and filing-context fixtures;
-4. corporate-action and security-identity fixtures;
-5. known-formula hand calculations;
-6. provider-response and rate-limit fixtures;
-7. missing, zero, negative, non-finite, and sparse-event cases;
-8. deterministic freeze and hash checks;
-9. isolated evaluator tests using synthetic reference data;
-10. GitHub source smoke, first-wave reconstruction, full reconstruction, and
-    sequential 2023/2024 examination.
+1. feasibility-register count and evidence reconciliation;
+2. schema and formula-contract tests;
+3. point-in-time and no-look-ahead tests;
+4. SEC tag and filing-context fixtures;
+5. corporate-action and security-identity fixtures;
+6. identity coverage, interval, ambiguity, and anti-circularity tests;
+7. known-formula hand calculations;
+8. provider-response and rate-limit fixtures;
+9. missing, zero, negative, non-finite, and sparse-event cases;
+10. deterministic freeze and hash checks;
+11. isolated evaluator tests using synthetic reference data;
+12. GitHub identity audit, pilot reconstruction, sequential 2023/2024 pilot
+    examination, and only then authorised family expansion.
 
 OpenAP reference files must not appear in calculator dependency graphs, test
 fixtures for production formulas, or score runtime paths.
@@ -489,23 +584,38 @@ fixtures for production formulas, or score runtime paths.
 
 ## 21. Completion criteria
 
-The reconstruction program is complete only when:
+The feasibility-first program has three legitimate completion outcomes.
 
-- all 149 signals have frozen formula and source contracts;
-- all 149 have an independently calculated result or a documented zero-cost
-  block;
-- every signal has exactly one evidence-backed terminal status;
-- 2023 and 2024 monthly validation reports exist for every evaluable signal;
+### Outcome A: identity no-go
+
+- all 149 signals have reconciled feasibility classifications;
+- the missing free identity route is documented with exact evidence;
+- strict validation and score eligibility remain zero;
+- no large reconstruction campaign is started and no 90 percent claim is made.
+
+### Outcome B: pilot no-go or partial pass
+
+- the identity gate passed;
+- all 10 pilot signals have frozen source, formula, and 2023 decisions;
+- only 2023 passes were examined unchanged in 2024;
+- each pilot has an evidence-backed `approved`, `rejected`, `blocked`, or
+  `not_evaluable` status;
+- only methods passing both periods are eligible for later expansion.
+
+### Outcome C: controlled successful expansion
+
+- all 149 signals have frozen formula and source contracts or documented
+  zero-cost blocks;
+- every implemented signal has independently frozen results and required
+  monthly validation evidence;
+- every signal has exactly one evidence-backed status;
 - no signal enters the score without passing every mandatory gate;
 - current score rows retain complete formula, source, identity, code, policy,
   and snapshot provenance;
-- expected, calculated, approved, rejected, pending, blocked, and not-evaluable
-  counts reconcile exactly;
-- the entire result can be reproduced from preserved raw source objects and the
-  frozen repository revision;
-- no claim of 90 percent fidelity is made where identity or independent
-  correlation evidence is missing.
+- all counts reconcile and the result is reproducible from preserved source
+  objects and the frozen repository revision.
 
-The objective does not require all 149 signals to pass. It requires all 149 to
-be reconstructed or conclusively classified, and it requires the score to use
-only the subset that independently demonstrates the requested fidelity.
+Under every outcome, the meaningful reported number is the count independently
+demonstrated at the agreed threshold. Candidate, calculated, reconstructed,
+source-documented, and identity-blocked counts must be reported separately and
+must never be presented as faithful OpenAP signals.
