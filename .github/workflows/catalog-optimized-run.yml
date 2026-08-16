@@ -58,9 +58,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-          cache-dependency-path: "requirements/catalog-optimized.lock"
+          cache-dependency-path: "requirements/catalog-recipe-worker.lock"
       - run: |
-          python -m pip install --require-hashes -r requirements/catalog-optimized.lock
+          python -m pip install --require-hashes -r requirements/catalog-recipe-worker.lock
           python -m pip install --no-deps -e .
       - name: Download compatible resume sources once for planning
         if: ${{ inputs.evaluation_cache_run_ids != '' }}
@@ -166,9 +166,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-          cache-dependency-path: "requirements/catalog-optimized.lock"
+          cache-dependency-path: "requirements/catalog-recipe-worker.lock"
       - run: |
-          python -m pip install --require-hashes -r requirements/catalog-optimized.lock
+          python -m pip install --require-hashes -r requirements/catalog-recipe-worker.lock
           python -m pip install --no-deps -e .
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         if: ${{ inputs.component_store_run_id == '' }}
@@ -277,9 +277,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-          cache-dependency-path: "requirements/catalog-optimized.lock"
+          cache-dependency-path: "requirements/catalog-recipe-worker.lock"
       - run: |
-          python -m pip install --require-hashes -r requirements/catalog-optimized.lock
+          python -m pip install --require-hashes -r requirements/catalog-recipe-worker.lock
           python -m pip install --no-deps -e .
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         if: ${{ needs.plan.outputs.pending_recipe_count != '0' }}

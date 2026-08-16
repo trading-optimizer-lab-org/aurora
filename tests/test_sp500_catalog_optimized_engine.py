@@ -70,11 +70,12 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert 'cache: ""' not in combined
     assert combined.count('cache: "pip"') >= 5
     assert combined.count(
-        'cache-dependency-path: "requirements/catalog-optimized.lock"'
-    ) >= 5
+        'cache-dependency-path: "requirements/catalog-recipe-worker.lock"'
+    ) >= 4
     component_worker = Path(
         ".github/workflows/catalog-component-worker.yml"
     ).read_text(encoding="utf-8")
+    assert "requirements/catalog-optimized.lock" in component_worker
     assert "--component-schedule" in component_worker
     assert "component_schedule.json" in component_worker
     assert "inputs.component_store_run_id == ''" in run
