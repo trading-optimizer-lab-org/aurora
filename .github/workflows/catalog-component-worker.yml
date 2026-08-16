@@ -64,12 +64,20 @@ jobs:
           RUNTIME_FRAGMENT_RUN_ID: ${{ inputs.runtime_fragment_run_id }}
         shell: bash
         run: |
+          mkdir -p "$RUNNER_TEMP/runtime-fragments"
+          mkdir -p "$RUNNER_TEMP/runtime/train_snapshot_1993_2010"
           while IFS= read -r dataset_id; do
             [ -n "$dataset_id" ] || continue
+            fragment_dir="$RUNNER_TEMP/runtime-fragments/$dataset_id"
+            mkdir -p "$fragment_dir"
             gh run download "$RUNTIME_FRAGMENT_RUN_ID" \
               --repo "$GITHUB_REPOSITORY" \
               --name "sp500-runtime-fragment-$dataset_id" \
-              --dir "$RUNNER_TEMP/runtime"
+              --dir "$fragment_dir"
+            fragment_file="$fragment_dir/train_snapshot_1993_2010/$dataset_id.parquet"
+            test -f "$fragment_file"
+            cp -- "$fragment_file" \
+              "$RUNNER_TEMP/runtime/train_snapshot_1993_2010/$dataset_id.parquet"
           done < "$RUNNER_TEMP/required-datasets.txt"
       - run: >-
           python scripts/build_sp500_component_store.py
