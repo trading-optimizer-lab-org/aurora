@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
@@ -1259,7 +1260,44 @@ def _rolling_sequence_model(
     fit: Callable[[np.ndarray, np.ndarray], Any],
     predict: Callable[[Any, np.ndarray], Mapping[str, float]],
     statistic: str,
+    parallel_refits: bool = False,
 ) -> pd.Series:
+    if parallel_refits:
+        refit_indices = [window]
+        refit_indices.extend(
+            index
+            for index in range(window + 1, len(market))
+            if _refit_due(market["date"], index, cadence, True)
+        )
+        minimum = max(30, window - sequences.shape[1])
+
+        def training_slice(index: int) -> tuple[np.ndarray, np.ndarray] | None:
+            start = max(0, index - window)
+            train_x = sequences[start:index]
+            train_y = target[start:index]
+            valid = np.isfinite(train_x).all(axis=(1, 2)) & np.isfinite(train_y)
+            if int(valid.sum()) < minimum:
+                return None
+            return train_x[valid], train_y[valid]
+
+        slices = [training_slice(index) for index in refit_indices]
+        if all(item is not None for item in slices):
+            checked_slices = [item for item in slices if item is not None]
+            with ThreadPoolExecutor(max_workers=min(4, len(checked_slices))) as executor:
+                models = list(executor.map(lambda item: fit(*item), checked_slices))
+            output = np.full(len(market), np.nan)
+            ends = [*refit_indices[1:], len(market)]
+            for model, start, end in zip(models, refit_indices, ends, strict=True):
+                for index in range(start, end):
+                    if not np.isfinite(sequences[index]).all():
+                        continue
+                    statistics = predict(model, sequences[index])
+                    if statistic not in statistics:
+                        raise PredictiveFeatureEngineError(
+                            f"UNKNOWN_MODEL_STATISTIC:{statistic}"
+                        )
+                    output[index] = statistics[statistic]
+            return pd.Series(output, index=market.index)
     output = np.full(len(market), np.nan)
     model: Any = None
     for index in range(len(market)):
@@ -1514,6 +1552,7 @@ def _f149(
         ),
         predict=_reservoir_statistics,
         statistic=str(parameters.get("statistic", "state_energy")),
+        parallel_refits=True,
     )
 
 

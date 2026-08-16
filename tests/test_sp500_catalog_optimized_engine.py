@@ -624,6 +624,49 @@ def test_vectorized_reservoir_states_match_frozen_python_kernel() -> None:
         np.testing.assert_allclose(actual, reference, rtol=1e-13, atol=1e-13)
 
 
+def test_parallel_sequence_refits_preserve_serial_results_exactly() -> None:
+    from aurora.infra.sp500_megarun.predictive_feature_engine import (
+        _rolling_sequence_model,
+    )
+
+    generator = np.random.default_rng(150)
+    market = pd.DataFrame(
+        {"date": pd.bdate_range("2000-01-03", periods=180)}
+    )
+    sequences = generator.normal(size=(180, 8, 4))
+    target = generator.normal(size=180)
+
+    def fit(x: np.ndarray, y: np.ndarray) -> dict[str, np.ndarray]:
+        return {"mean": np.mean(x, axis=(0, 1)), "target": np.array([y.mean()])}
+
+    def predict(model: dict[str, np.ndarray], row: np.ndarray) -> dict[str, float]:
+        return {"value": float(np.mean(row - model["mean"]) + model["target"][0])}
+
+    serial = _rolling_sequence_model(
+        market,
+        sequences,
+        target,
+        window=60,
+        cadence="monthly",
+        fit=fit,
+        predict=predict,
+        statistic="value",
+        parallel_refits=False,
+    )
+    parallel = _rolling_sequence_model(
+        market,
+        sequences,
+        target,
+        window=60,
+        cadence="monthly",
+        fit=fit,
+        predict=predict,
+        statistic="value",
+        parallel_refits=True,
+    )
+    np.testing.assert_array_equal(parallel.to_numpy(), serial.to_numpy())
+
+
 def test_component_store_round_trip_is_exact_and_conflicts_fail(tmp_path: Path) -> None:
     from aurora.infra.sp500_megarun.catalog_component_store import (
         CatalogComponentStore,
