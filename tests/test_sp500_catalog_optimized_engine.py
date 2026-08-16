@@ -38,6 +38,10 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
         "scripts/run_sp500_optimized_recipe_worker.py"
     ).read_text("utf-8")
     assert "component_store_run_id" in worker
+    assert "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d" in worker
+    assert "uv pip install --system --require-hashes" in worker
+    assert "PYTHONPATH: ${{ github.workspace }}/.." in worker
+    assert "pip install --no-deps -e ." not in worker
     assert "component_store_run_id" in run
     assert "inputs.component_store_run_id != '' || needs.merge_components.result == 'success'" in run
     assert "inputs.component_store_run_id || github.run_id" in run
@@ -68,10 +72,10 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
         )
     )
     assert 'cache: ""' not in combined
-    assert combined.count('cache: "pip"') >= 5
+    assert combined.count('cache: "pip"') >= 4
     assert combined.count(
         'cache-dependency-path: "requirements/catalog-recipe-worker.lock"'
-    ) >= 4
+    ) >= 3
     component_worker = Path(
         ".github/workflows/catalog-component-worker.yml"
     ).read_text(encoding="utf-8")

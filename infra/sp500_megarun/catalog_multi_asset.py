@@ -18,6 +18,19 @@ class AssetPanelV1:
     locked_opened: bool = False
 
 
+@dataclass(frozen=True)
+class MultiAssetEvaluationV1:
+    independent_signals: np.ndarray
+    cross_asset_signals: np.ndarray
+    asset_count: int
+    session_count: int
+    valid_observation_count: int
+    shared_calendar_builds: int
+    asset_specific_work_units: int
+    validation_opened: bool = False
+    locked_opened: bool = False
+
+
 def build_asset_panel(
     assets: Mapping[str, Mapping[Hashable, float]],
 ) -> AssetPanelV1:
@@ -42,4 +55,67 @@ def build_asset_panel(
     )
 
 
-__all__ = ["AssetPanelV1", "build_asset_panel"]
+def evaluate_multi_asset_panel(
+    panel: AssetPanelV1,
+    *,
+    lookback: int,
+) -> MultiAssetEvaluationV1:
+    """Build causal independent and cross-asset signals on one shared calendar."""
+
+    values = np.asarray(panel.values, dtype=np.float64)
+    valid = np.asarray(panel.valid_mask, dtype=bool)
+    expected_shape = (len(panel.asset_ids), len(panel.sessions))
+    if (
+        lookback < 1
+        or values.shape != expected_shape
+        or valid.shape != expected_shape
+        or not np.array_equal(valid, np.isfinite(values))
+        or panel.validation_opened
+        or panel.locked_opened
+    ):
+        raise ValueError("MULTI_ASSET_PANEL_INVALID")
+
+    independent = np.zeros(expected_shape, dtype=np.int8)
+    for asset_index in range(values.shape[0]):
+        observed: list[float] = []
+        for session_index in range(values.shape[1]):
+            if not valid[asset_index, session_index]:
+                continue
+            current = float(values[asset_index, session_index])
+            if len(observed) >= lookback:
+                reference = float(np.mean(observed[-lookback:]))
+                independent[asset_index, session_index] = (
+                    1 if current > reference else -1 if current < reference else 0
+                )
+            observed.append(current)
+
+    cross_asset = np.zeros(expected_shape, dtype=np.int8)
+    for session_index in range(values.shape[1]):
+        active = valid[:, session_index]
+        if not bool(active.any()):
+            continue
+        current = values[active, session_index]
+        reference = float(np.mean(current))
+        cross_asset[active, session_index] = np.where(
+            current > reference,
+            1,
+            np.where(current < reference, -1, 0),
+        ).astype(np.int8)
+
+    return MultiAssetEvaluationV1(
+        independent_signals=independent,
+        cross_asset_signals=cross_asset,
+        asset_count=values.shape[0],
+        session_count=values.shape[1],
+        valid_observation_count=int(valid.sum()),
+        shared_calendar_builds=1,
+        asset_specific_work_units=values.shape[0],
+    )
+
+
+__all__ = [
+    "AssetPanelV1",
+    "MultiAssetEvaluationV1",
+    "build_asset_panel",
+    "evaluate_multi_asset_panel",
+]

@@ -394,7 +394,10 @@ def test_reusable_workflow_skips_empty_matrix_groups_without_blocking_reduce() -
 
 
 def test_multi_asset_panel_preserves_calendar_and_asset_isolation() -> None:
-    from aurora.infra.sp500_megarun.catalog_multi_asset import build_asset_panel
+    from aurora.infra.sp500_megarun.catalog_multi_asset import (
+        build_asset_panel,
+        evaluate_multi_asset_panel,
+    )
 
     panel = build_asset_panel(
         {
@@ -412,10 +415,36 @@ def test_multi_asset_panel_preserves_calendar_and_asset_isolation() -> None:
     assert np.isnan(panel.values[0, 2])
     assert np.isnan(panel.values[1, 0])
 
+    evaluated = evaluate_multi_asset_panel(panel, lookback=1)
+    assert evaluated.asset_count == 2
+    assert evaluated.shared_calendar_builds == 1
+    assert evaluated.asset_specific_work_units == 2
+    assert evaluated.validation_opened is False
+    assert evaluated.locked_opened is False
+
+    changed = panel.values.copy()
+    changed[:, -1] = np.array([9999.0, -9999.0])
+    changed_panel = type(panel)(
+        asset_ids=panel.asset_ids,
+        sessions=panel.sessions,
+        values=changed,
+        valid_mask=panel.valid_mask,
+    )
+    changed_evaluation = evaluate_multi_asset_panel(changed_panel, lookback=1)
+    np.testing.assert_array_equal(
+        evaluated.independent_signals[:, :-1],
+        changed_evaluation.independent_signals[:, :-1],
+    )
+    np.testing.assert_array_equal(
+        evaluated.cross_asset_signals[:, :-1],
+        changed_evaluation.cross_asset_signals[:, :-1],
+    )
+
 
 def test_cross_sectional_engine_uses_point_in_time_membership_only() -> None:
     from aurora.infra.sp500_megarun.catalog_cross_sectional import (
         build_point_in_time_portfolio,
+        build_sparse_point_in_time_portfolio,
     )
 
     signals = np.array(
@@ -436,3 +465,56 @@ def test_cross_sectional_engine_uses_point_in_time_membership_only() -> None:
     assert portfolio.max_active_assets == 2
     assert portfolio.validation_opened is False
     assert portfolio.locked_opened is False
+
+    sparse = build_sparse_point_in_time_portfolio(
+        np.where(membership, signals, np.nan),
+        membership,
+        top_count=1,
+        bottom_count=1,
+    )
+    np.testing.assert_array_equal(sparse.to_dense(), portfolio.weights)
+    assert sparse.nonzero_weight_count == 6
+
+
+def test_cross_sectional_sparse_engine_scales_to_one_thousand_assets() -> None:
+    from aurora.infra.sp500_megarun.catalog_cross_sectional import (
+        build_sparse_point_in_time_portfolio,
+    )
+
+    dates = 64
+    assets = 1000
+    signals = np.arange(dates * assets, dtype=np.float64).reshape(dates, assets)
+    membership = np.ones((dates, assets), dtype=bool)
+    membership[:, ::17] = False
+    signals[~membership] = np.nan
+
+    portfolio = build_sparse_point_in_time_portfolio(
+        signals,
+        membership,
+        top_count=10,
+        bottom_count=10,
+    )
+
+    assert portfolio.asset_count == assets
+    assert portfolio.nonzero_weight_count == dates * 20
+    assert portfolio.storage_bytes < signals.nbytes / 10
+    np.testing.assert_allclose(portfolio.to_dense().sum(axis=1), 0.0)
+    assert portfolio.validation_opened is False
+    assert portfolio.locked_opened is False
+
+
+def test_future_architecture_qualification_is_github_only_and_bounded() -> None:
+    workflow = Path(".github/workflows/catalog-future-architecture.yml").read_text(
+        "utf-8"
+    )
+    script = Path("scripts/benchmark_catalog_future_architecture.py").read_text(
+        "utf-8"
+    )
+
+    assert "workflow_dispatch:" in workflow
+    assert "refs/heads/codex/sp500-search-method-benchmark-short" in workflow
+    assert "requirements/catalog-recipe-worker.lock" in workflow
+    assert "100, 256" in script
+    assert "128, 1000" in script
+    assert '"validation_opened": False' in script
+    assert '"locked_opened": False' in script
