@@ -104,6 +104,60 @@ def test_equivalence_report_counts_every_affected_strategy_but_bounds_details(
     assert len(report["first_differences"]) == 100
 
 
+def test_frozen_reference_manifest_verifies_exact_science_without_oracle_download(
+    tmp_path: Path,
+) -> None:
+    import hashlib
+    import json
+
+    from scripts.verify_sp500_optimized_run import (
+        scientific_results_sha256,
+        verify_reference_manifest,
+    )
+
+    optimized = tmp_path / "optimized"
+    optimized.mkdir()
+    (optimized / "results.jsonl").write_text(
+        json.dumps(
+            {
+                "strategy_id": "s0",
+                "result": {
+                    "fitness": 1.0,
+                    "info": {"objective_runtime_seconds": 99.0},
+                },
+            }
+        )
+        + "\n",
+        "utf-8",
+    )
+    count, result_sha256 = scientific_results_sha256(optimized)
+    identity = {
+        "schema_version": 1,
+        "reference_run_id": "123",
+        "strategy_count": count,
+        "scientific_results_sha256": result_sha256,
+        "normalization": "remove_objective_runtime_seconds_exact_json_v1",
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+    identity["manifest_sha256"] = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(identity), "utf-8")
+
+    report = verify_reference_manifest(
+        optimized,
+        manifest,
+        expected_reference_run_id="123",
+    )
+
+    assert report["equivalent"] is True
+    assert report["scientific_results_sha256"] == result_sha256
+    assert report["validation_opened"] is False
+    assert report["locked_opened"] is False
+
+
 def test_targeted_diagnostic_classifies_historical_result_origin() -> None:
     from scripts.diagnose_sp500_catalog_equivalence import classify_result
 

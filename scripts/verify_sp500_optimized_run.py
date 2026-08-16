@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -18,6 +19,8 @@ _ALLOWED_ADDITIVE_INFO_FIELDS = frozenset(
         "weekly_winning_or_positive_rate",
     }
 )
+
+_SCIENTIFIC_DIGEST_DOMAIN = b"aurora-catalog-scientific-results-v1\0"
 
 
 def _load_results(root: Path) -> dict[str, dict[str, Any]]:
@@ -35,6 +38,98 @@ def _load_results(root: Path) -> dict[str, dict[str, Any]]:
         if line
     ]
     return {str(row["strategy_id"]): dict(row["result"]) for row in rows}
+
+
+def _scientific_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _scientific_value(item)
+            for key, item in sorted(value.items())
+            if key != "objective_runtime_seconds"
+        }
+    if isinstance(value, list):
+        return [_scientific_value(item) for item in value]
+    return value
+
+
+def scientific_results_sha256(root: Path) -> tuple[int, str]:
+    """Hash every exact scientific result while excluding runtime telemetry."""
+
+    rows = _load_results(root)
+    digest = hashlib.sha256(_SCIENTIFIC_DIGEST_DOMAIN)
+    for strategy_id in sorted(rows):
+        payload = json.dumps(
+            {
+                "strategy_id": strategy_id,
+                "result": _scientific_value(rows[strategy_id]),
+            },
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+    return len(rows), digest.hexdigest()
+
+
+def verify_reference_manifest(
+    optimized: Path,
+    manifest_path: Path,
+    *,
+    expected_reference_run_id: str | None = None,
+) -> dict[str, object]:
+    """Verify exact equivalence from a small hash-bound frozen oracle manifest."""
+
+    manifest = json.loads(Path(manifest_path).read_text("utf-8"))
+    identity = {
+        key: value for key, value in manifest.items() if key != "manifest_sha256"
+    }
+    manifest_sha256 = hashlib.sha256(
+        json.dumps(
+            identity,
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    if (
+        manifest.get("schema_version") != 1
+        or manifest.get("normalization")
+        != "remove_objective_runtime_seconds_exact_json_v1"
+        or manifest.get("validation_opened") is not False
+        or manifest.get("locked_opened") is not False
+        or manifest.get("manifest_sha256") != manifest_sha256
+        or (
+            expected_reference_run_id is not None
+            and str(manifest.get("reference_run_id"))
+            != str(expected_reference_run_id)
+        )
+    ):
+        raise ValueError("REFERENCE_SCIENTIFIC_MANIFEST_INVALID")
+    observed_count, observed_sha256 = scientific_results_sha256(optimized)
+    expected_count = int(manifest["strategy_count"])
+    expected_sha256 = str(manifest["scientific_results_sha256"])
+    equivalent = (
+        observed_count == expected_count and observed_sha256 == expected_sha256
+    )
+    return {
+        "schema_version": 1,
+        "equivalent": equivalent,
+        "expected_count": expected_count,
+        "observed_count": observed_count,
+        "difference_count": 0 if equivalent else 1,
+        "affected_strategy_count": 0 if equivalent else observed_count,
+        "affected_strategy_ids": [],
+        "first_differences": [] if equivalent else ["scientific_results_sha256"],
+        "scientific_results_sha256": observed_sha256,
+        "reference_run_id": str(manifest["reference_run_id"]),
+        "absolute_tolerance": 0.0,
+        "relative_tolerance": 0.0,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
 
 
 def _compare(
@@ -150,10 +245,20 @@ def verify_equivalence(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--optimized", type=Path, required=True)
-    parser.add_argument("--reference", type=Path, required=True)
+    reference = parser.add_mutually_exclusive_group(required=True)
+    reference.add_argument("--reference", type=Path)
+    reference.add_argument("--reference-manifest", type=Path)
+    parser.add_argument("--expected-reference-run-id")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    report = verify_equivalence(args.optimized, args.reference)
+    if args.reference_manifest is not None:
+        report = verify_reference_manifest(
+            args.optimized,
+            args.reference_manifest,
+            expected_reference_run_id=args.expected_reference_run_id,
+        )
+    else:
+        report = verify_equivalence(args.optimized, args.reference)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", "utf-8")
     print(json.dumps(report, sort_keys=True))
