@@ -2,6 +2,15 @@ name: SP500 Search Method Benchmark Short
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Execution mode
+        required: true
+        default: selected_validation_once
+        type: choice
+        options:
+          - selected_validation_once
+          - f024_inverse_diagnostic
 
 permissions:
   actions: read
@@ -27,8 +36,15 @@ jobs:
       contents: read
 
   selected_validation_once:
-    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' }}
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'selected_validation_once' }}
     uses: ./.github/workflows/sp500-selected-validation-12-once.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      validation_ack: OPEN_SP500_MEGARUN_VALIDATION_2011_2020_SELECTED_12_ONCE
+
+  f024_inverse_diagnostic:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'f024_inverse_diagnostic' }}
+    uses: ./.github/workflows/sp500-f024-inverse-diagnostic.yml
     with:
       commit_sha: ${{ github.sha }}
       validation_ack: OPEN_SP500_MEGARUN_VALIDATION_2011_2020_SELECTED_12_ONCE

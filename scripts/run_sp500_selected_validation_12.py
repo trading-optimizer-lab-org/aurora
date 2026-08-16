@@ -40,6 +40,7 @@ from aurora.infra.sp500_megarun.selected_validation import (
     VALIDATION_END,
     VALIDATION_START,
     SelectedValidationError,
+    build_f024_inverse_diagnostic,
     build_authorized_validation_snapshot,
     compose_selected_signals,
     load_selection_manifest,
@@ -77,6 +78,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--working-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--authorization", required=True)
+    parser.add_argument("--f024-inverse-diagnostic", action="store_true")
     return parser
 
 
@@ -97,9 +99,9 @@ def _summary_row(row: dict[str, Any]) -> dict[str, Any]:
         "name": row["name"],
         "source_kind": row["source_kind"],
         "source_id": row["source_id"],
-        "train_annualized_return": row["train_metrics"][
+        "train_annualized_return": row["train_metrics"].get(
             "annualized_strategy_return"
-        ],
+        ),
         "validation_annualized_return": validation["annualized_strategy_return"],
         "validation_annualized_alpha": validation["annualized_alpha"],
         "validation_weekly_positive_rate": validation["weekly_positive_rate"],
@@ -115,6 +117,8 @@ def _summary_row(row: dict[str, Any]) -> dict[str, Any]:
         ],
         "validation_worst_annual_return": validation["worst_annual_return"],
         "validation_worst_annual_alpha": validation["worst_annual_alpha"],
+        "validation_informed": row["validation_informed"],
+        "independent_validation": row["independent_validation"],
     }
 
 
@@ -131,6 +135,11 @@ def main() -> int:
         data_contract,
     )
     selection = load_selection_manifest(args.selection_manifest)
+    strategies = (
+        (build_f024_inverse_diagnostic(selection),)
+        if args.f024_inverse_diagnostic
+        else selection.strategies
+    )
     boundaries = campaign.raw.get("boundaries", {})
     if (
         campaign.validation_opened
@@ -184,7 +193,7 @@ def main() -> int:
     )
     component_cache: dict[str, pd.Series] = {}
     result_rows: list[dict[str, Any]] = []
-    for strategy in selection.strategies:
+    for strategy in strategies:
         component_signals: list[pd.Series] = []
         for component in strategy.components:
             lane_id = str(component["lane_id"])
@@ -236,6 +245,8 @@ def main() -> int:
                 "position_fingerprint": position_fingerprint,
                 "validation_opened": True,
                 "locked_opened": False,
+                "validation_informed": strategy.validation_informed,
+                "independent_validation": strategy.independent_validation,
             }
         )
     output = args.output_dir.resolve()
@@ -261,7 +272,11 @@ def main() -> int:
     frozen_selection.write_bytes(args.selection_manifest.read_bytes())
     receipt = {
         "schema_version": 1,
-        "selection_id": selection.selection_id,
+        "selection_id": (
+            f"{selection.selection_id}:f024-inverse-diagnostic"
+            if args.f024_inverse_diagnostic
+            else selection.selection_id
+        ),
         "selection_manifest_sha256": selection.sha256,
         "campaign_id": campaign.raw["campaign_id"],
         "git_commit": os.environ.get("SCIENTIFIC_COMMIT_SHA"),
@@ -281,8 +296,14 @@ def main() -> int:
         "validation_end": VALIDATION_END.date().isoformat(),
         "validation_opened": True,
         "locked_opened": False,
+        "validation_informed": args.f024_inverse_diagnostic,
+        "independent_validation": not args.f024_inverse_diagnostic,
     }
-    if receipt["strategy_count"] != 12 or receipt["maximum_date"] != "2020-12-31":
+    expected_count = 1 if args.f024_inverse_diagnostic else 12
+    if (
+        receipt["strategy_count"] != expected_count
+        or receipt["maximum_date"] != "2020-12-31"
+    ):
         raise SelectedValidationError("SELECTED_VALIDATION_RECEIPT_INVALID")
     (output / "validation_receipt.json").write_text(
         json.dumps(receipt, indent=2, sort_keys=True) + "\n",

@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from aurora.infra.sp500_megarun import selected_validation
 from aurora.infra.sp500_megarun.dehb_lane_registry import (
     AuthorizedValidationLaneEvaluator,
     FamilyAdapter,
@@ -384,6 +385,32 @@ def test_committed_selection_is_frozen_and_still_closed_before_validation():
     assert manifest.validation_opened is False
     assert manifest.locked_opened is False
     assert len({row.recipe_sha256 for row in manifest.strategies}) == 12
+
+
+def test_f024_inverse_diagnostic_changes_only_direction_and_is_not_independent():
+    manifest = load_selection_manifest(
+        Path("config/sp500_megarun_selected_validation_12.json")
+    )
+
+    diagnostic = selected_validation.build_f024_inverse_diagnostic(manifest)
+
+    assert diagnostic.name == "F024 divergencia VXO/VIX invertida"
+    assert diagnostic.source_kind == "validation_informed_diagnostic"
+    assert diagnostic.components == (
+        {
+            "lane_id": "F024",
+            "configuration": {
+                "direction": "reversal",
+                "normalization": "none",
+                "statistic": "divergence",
+                "window": 63,
+            },
+        },
+    )
+    assert diagnostic.composition == {"kind": "identity"}
+    assert diagnostic.recipe_sha256 != manifest.strategies[9].recipe_sha256
+    assert diagnostic.validation_informed is True
+    assert diagnostic.independent_validation is False
 
 
 def test_validation_metrics_count_weekly_union_and_yearly_objective():

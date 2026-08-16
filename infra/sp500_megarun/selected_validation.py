@@ -51,6 +51,8 @@ class SelectedStrategy:
     composition: Mapping[str, Any]
     train_metrics: Mapping[str, float]
     recipe_sha256: str
+    validation_informed: bool = False
+    independent_validation: bool = True
 
 
 @dataclass(frozen=True)
@@ -206,6 +208,46 @@ def load_selection_manifest(path: Path) -> SelectionManifest:
         locked_opened=bool(payload["locked_opened"]),
         strategies=strategies,
         sha256=_sha256_file(target),
+    )
+
+
+def build_f024_inverse_diagnostic(
+    selection: SelectionManifest,
+) -> SelectedStrategy:
+    """Build the exact validation-informed inverse of the selected F024 recipe."""
+
+    expected = {
+        "direction": "continuation",
+        "normalization": "none",
+        "statistic": "divergence",
+        "window": 63,
+    }
+    matches = [
+        strategy
+        for strategy in selection.strategies
+        if strategy.composition == {"kind": "identity"}
+        and len(strategy.components) == 1
+        and strategy.components[0].get("lane_id") == "F024"
+        and strategy.components[0].get("configuration") == expected
+    ]
+    if len(matches) != 1:
+        raise SelectedValidationError("F024_INVERSE_SOURCE_NOT_UNIQUE")
+    configuration = dict(expected)
+    configuration["direction"] = "reversal"
+    components = ({"lane_id": "F024", "configuration": configuration},)
+    composition = {"kind": "identity"}
+    recipe_sha256 = _recipe_sha256(components, composition)
+    return SelectedStrategy(
+        selection_order=1,
+        name="F024 divergencia VXO/VIX invertida",
+        source_kind="validation_informed_diagnostic",
+        source_id=f"diagnostic-f024-inverse-{recipe_sha256}",
+        components=components,
+        composition=composition,
+        train_metrics={},
+        recipe_sha256=recipe_sha256,
+        validation_informed=True,
+        independent_validation=False,
     )
 
 
