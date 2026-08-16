@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated
 
+import yaml
 from pydantic import Field
 
 from aurora.infra.github_performance.contracts import (
@@ -16,7 +17,6 @@ from aurora.infra.github_performance.contracts import (
     Sha256,
     canonical_sha256,
 )
-from aurora.infra.github_performance.preflight import load_github_yaml
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
@@ -142,8 +142,10 @@ def validate_catalog_entrypoint(workflow_path: Path) -> tuple[str, ...]:
     """Require legacy/public callers to delegate to the guarded workflow."""
 
     try:
-        payload = load_github_yaml(Path(workflow_path))
-    except (OSError, ValueError):
+        payload = yaml.safe_load(Path(workflow_path).read_text("utf-8"))
+    except (OSError, yaml.YAMLError):
+        return ("CATALOG_WORKFLOW_PARSE_FAILED",)
+    if not isinstance(payload, Mapping):
         return ("CATALOG_WORKFLOW_PARSE_FAILED",)
     jobs = payload.get("jobs")
     if not isinstance(jobs, Mapping) or len(jobs) != 1:
