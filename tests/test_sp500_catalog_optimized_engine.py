@@ -57,6 +57,11 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "  verify_qualification:" not in run
     assert "sp500-catalog-runtime-audit" in run
     assert "pip install" not in run.split("  audit_runtime:", 1)[1]
+    assert "pip install --no-deps -e ." not in run
+    assert run.count(
+        "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d"
+    ) == 3
+    assert run.count("uv pip install --system --require-hashes") == 3
     assert "python -m scripts.compile_sp500_catalog_recipes" in run
     assert "--recipe-dag" in worker
     assert "verify_recipe_dag_artifacts" in Path(
@@ -72,10 +77,8 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
         )
     )
     assert 'cache: ""' not in combined
-    assert combined.count('cache: "pip"') >= 4
-    assert combined.count(
-        'cache-dependency-path: "requirements/catalog-recipe-worker.lock"'
-    ) >= 3
+    assert 'cache: "pip"' not in run
+    assert 'cache-dependency-path: "requirements/catalog-recipe-worker.lock"' not in run
     component_worker = Path(
         ".github/workflows/catalog-component-worker.yml"
     ).read_text(encoding="utf-8")

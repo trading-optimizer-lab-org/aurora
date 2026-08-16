@@ -150,8 +150,10 @@ def main() -> int:
         "utf-8",
     )
     summary_rows: list[dict[str, object]] = []
+    position_fingerprints: set[str] = set()
     for row in ordered:
         info = json.loads(str(row["result_json"]))["info"]
+        position_fingerprints.add(str(info["position_fingerprint"]))
         summary_rows.append(
             {
                 "strategy_id": row["strategy_id"],
@@ -232,12 +234,7 @@ def main() -> int:
     if worker_block_sizes != {plan.block_size}:
         raise SystemExit("REDUCE_WORKER_BLOCK_SIZE_MISMATCH")
     total_bytes = result_path.stat().st_size
-    unique_positions = len(
-        {
-            str(json.loads(str(row["result_json"]))["info"]["position_fingerprint"])
-            for row in ordered
-        }
-    )
+    unique_positions = len(position_fingerprints)
     top = sorted(
         summary_rows,
         key=lambda row: (

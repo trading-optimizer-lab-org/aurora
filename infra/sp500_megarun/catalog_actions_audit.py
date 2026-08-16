@@ -89,6 +89,20 @@ def build_actions_runtime_audit(
     compute_seconds = 0.0
     upload_seconds = 0.0
     step_seconds = 0.0
+    action_stage_seconds = {
+        "component_build": 0.0,
+        "component_merge": 0.0,
+        "recipe_evaluation": 0.0,
+        "reduction": 0.0,
+        "verification": 0.0,
+    }
+    stage_markers = {
+        "component_build": "scripts.build_sp500_component_store",
+        "component_merge": "scripts.merge_sp500_component_store",
+        "recipe_evaluation": "scripts.run_sp500_optimized_recipe_worker",
+        "reduction": "scripts.reduce_sp500_optimized_catalog_run",
+        "verification": "scripts.verify_sp500_optimized_run",
+    }
     for job in completed:
         steps = job.get("steps", ())
         if not isinstance(steps, Sequence):
@@ -122,6 +136,15 @@ def build_actions_runtime_audit(
             _duration(step["started_at"], step["completed_at"])
             for step in compute_steps
         )
+        for stage, marker in stage_markers.items():
+            action_stage_seconds[stage] += sum(
+                _duration(step["started_at"], step["completed_at"])
+                for step in steps
+                if isinstance(step, Mapping)
+                and marker in str(step.get("name", ""))
+                and step.get("started_at")
+                and step.get("completed_at")
+            )
         upload_seconds += sum(
             _duration(step["started_at"], step["completed_at"])
             for step in steps
@@ -158,6 +181,8 @@ def build_actions_runtime_audit(
         "setup_seconds_p50": _nearest_rank(setup_samples, 0.50),
         "setup_seconds_p95": _nearest_rank(setup_samples, 0.95),
         "compute_seconds": compute_seconds,
+        "action_stage_seconds": action_stage_seconds,
+        "reduction_wall_ratio": action_stage_seconds["reduction"] / wall_seconds,
         "upload_seconds": upload_seconds,
         "step_seconds": step_seconds,
         "unattributed_runner_seconds": unattributed_runner_seconds,

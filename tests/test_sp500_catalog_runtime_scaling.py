@@ -510,6 +510,8 @@ def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> 
     assert report["queue_seconds"] == 5.0
     assert report["setup_seconds_p50"] == 5.0
     assert report["compute_seconds"] == 20.0
+    assert report["action_stage_seconds"]["recipe_evaluation"] == 20.0
+    assert report["reduction_wall_ratio"] == 0.0
     assert report["upload_seconds"] == 5.0
     assert report["strategies_per_wall_minute"] == 160.0
     assert report["artifact_bytes_uploaded"] == 1000
