@@ -88,6 +88,26 @@ def apply_qualification_process_override(
     return RunOptimizationContractV1.model_validate(payload)
 
 
+def apply_qualification_component_process_override(
+    contract: RunOptimizationContractV1,
+    *,
+    component_processes_per_worker: int,
+    qualification_only: bool,
+) -> RunOptimizationContractV1:
+    """Measure component CPU topology independently from recipe topology."""
+
+    if not qualification_only:
+        raise ValueError("COMPONENT_PROCESS_OVERRIDE_REQUIRES_QUALIFICATION")
+    if int(component_processes_per_worker) not in (1, 2, 4):
+        raise ValueError("COMPONENT_PROCESS_OVERRIDE_INVALID")
+    payload = contract.model_dump(mode="python")
+    payload["execution"] = {
+        **payload["execution"],
+        "component_processes_per_worker": int(component_processes_per_worker),
+    }
+    return RunOptimizationContractV1.model_validate(payload)
+
+
 def build_repository_contract(
     *,
     repo_root: Path,
@@ -227,6 +247,8 @@ def write_catalog_run_plan(
             f"active_workers={plan.active_workers}",
             f"pending_recipe_count={plan.pending_recipe_count}",
             f"cached_recipe_count={plan.cached_recipe_count}",
+            "component_processes_per_worker="
+            f"{plan.component_processes_per_worker}",
             f"processes_per_worker={plan.processes_per_worker}",
             f"block_size={plan.block_size}",
         ]
@@ -246,6 +268,7 @@ def write_repository_catalog_run_plan(
     resume_roots: tuple[Path, ...] = (),
     benchmark_workers: int | None = None,
     benchmark_processes: int | None = None,
+    benchmark_component_processes: int | None = None,
 ) -> CatalogRunPlanV1:
     """Resolve the immutable contract from the checkout before admission."""
 
@@ -271,6 +294,15 @@ def write_repository_catalog_run_plan(
         contract = apply_qualification_process_override(
             contract,
             processes_per_worker=benchmark_processes,
+            qualification_only=evidence.qualification_only,
+        )
+    if benchmark_component_processes is not None:
+        evidence = CatalogAdmissionEvidenceV1.model_validate(
+            _read_json_object(evidence_path)
+        )
+        contract = apply_qualification_component_process_override(
+            contract,
+            component_processes_per_worker=benchmark_component_processes,
             qualification_only=evidence.qualification_only,
         )
     resolved_path = Path(output_dir).parent / "resolved-contract-input.json"
@@ -318,6 +350,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume-root", type=Path, action="append", default=[])
     parser.add_argument("--benchmark-workers", type=int, default=0)
     parser.add_argument("--benchmark-processes", type=int, default=0)
+    parser.add_argument("--benchmark-component-processes", type=int, default=0)
     return parser
 
 
@@ -349,6 +382,11 @@ def main() -> int:
             ),
             benchmark_processes=(
                 args.benchmark_processes if args.benchmark_processes else None
+            ),
+            benchmark_component_processes=(
+                args.benchmark_component_processes
+                if args.benchmark_component_processes
+                else None
             ),
         )
     return 0

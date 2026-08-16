@@ -256,6 +256,9 @@ def main() -> int:
         "result_sha256": sha256_file(result_path),
         "worker_receipt_count": len(worker_receipts),
         "workers": plan.active_workers,
+        "component_processes_per_worker": (
+            plan.component_processes_per_worker
+        ),
         "processes_per_worker": plan.processes_per_worker,
         "block_size": plan.block_size,
         "scientific_stage_seconds": scientific_stage_seconds,

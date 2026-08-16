@@ -10,6 +10,7 @@
   "execution": {
     "scheduler_version": "weighted-lpt-v1",
     "workers": 360,
+    "component_processes_per_worker": 1,
     "processes_per_worker": 1,
     "block_size": 1,
     "component_replication_budget": 0,

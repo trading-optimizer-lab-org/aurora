@@ -59,6 +59,7 @@ class CatalogRunPlanV1(FrozenModel):
     admission_token_sha256: Sha256
     workers: Annotated[int, Field(ge=1, le=360)]
     active_workers: Annotated[int, Field(ge=0, le=360)]
+    component_processes_per_worker: Annotated[int, Field(ge=1, le=4)]
     processes_per_worker: Annotated[int, Field(ge=1, le=4)]
     block_size: Annotated[int, Field(ge=1)]
     matrices: tuple[tuple[int, ...], ...]
@@ -226,6 +227,9 @@ def build_catalog_run_plan(
         ),
         workers=contract.execution.workers,
         active_workers=active_workers,
+        component_processes_per_worker=(
+            contract.execution.component_processes_per_worker
+        ),
         processes_per_worker=contract.execution.processes_per_worker,
         block_size=contract.execution.block_size,
         matrices=matrices,

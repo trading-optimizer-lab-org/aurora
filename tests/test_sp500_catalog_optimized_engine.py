@@ -22,7 +22,7 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "plan.processes_per_worker" in Path(
         "scripts/run_sp500_optimized_recipe_worker.py"
     ).read_text("utf-8")
-    assert "plan.processes_per_worker" in Path(
+    assert "plan.component_processes_per_worker" in Path(
         "scripts/build_sp500_component_store.py"
     ).read_text("utf-8")
     assert "score_prepared_lane_candidate" not in Path(

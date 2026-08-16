@@ -476,6 +476,7 @@ def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> 
         "prior_result_cache_hits": 20,
         "worker_receipt_count": 1,
         "workers": 60,
+        "component_processes_per_worker": 4,
         "processes_per_worker": 2,
         "block_size": 256,
         "result_bytes": 48000,
@@ -522,6 +523,7 @@ def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> 
     assert report["worker_cpu_seconds"] == 18.0
     assert report["worker_peak_memory_fraction"] == 0.2
     assert report["workers"] == 60
+    assert report["component_processes_per_worker"] == 4
     assert report["processes_per_worker"] == 2
     assert report["block_size"] == 256
     assert report["validation_opened"] is False

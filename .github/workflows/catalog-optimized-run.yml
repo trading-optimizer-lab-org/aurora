@@ -12,6 +12,7 @@ on:
       evaluation_cache_run_ids: {required: false, type: string, default: ""}
       benchmark_workers: {required: false, type: number, default: 0}
       benchmark_processes: {required: false, type: number, default: 0}
+      benchmark_component_processes: {required: false, type: number, default: 0}
   workflow_dispatch:
     inputs:
       commit_sha: {description: Exact revision, required: true}
@@ -21,6 +22,7 @@ on:
       evaluation_cache_run_ids: {description: Comma-separated compatible result or checkpoint runs, required: false, default: ""}
       benchmark_workers: {description: Qualification-only worker candidate; zero uses the promoted policy, required: false, type: number, default: 0}
       benchmark_processes: {description: Qualification-only process candidate; zero uses the promoted policy, required: false, type: number, default: 0}
+      benchmark_component_processes: {description: Qualification-only component process candidate; zero uses the promoted policy, required: false, type: number, default: 0}
 
 permissions: {actions: read, contents: read}
 concurrency:
@@ -94,6 +96,9 @@ jobs:
           fi
           if [ "${{ inputs.benchmark_processes }}" -ne 0 ]; then
             benchmark_args+=(--benchmark-processes "${{ inputs.benchmark_processes }}")
+          fi
+          if [ "${{ inputs.benchmark_component_processes }}" -ne 0 ]; then
+            benchmark_args+=(--benchmark-component-processes "${{ inputs.benchmark_component_processes }}")
           fi
           python scripts/plan_sp500_optimized_catalog_run.py \
             --repo-root . \

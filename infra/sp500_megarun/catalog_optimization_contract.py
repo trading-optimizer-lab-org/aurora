@@ -53,6 +53,7 @@ class CatalogWorkloadV1(FrozenModel):
 class CatalogExecutionV1(FrozenModel):
     scheduler_version: str = Field(min_length=1)
     workers: Annotated[int, Field(ge=1, le=360)]
+    component_processes_per_worker: Annotated[int, Field(ge=1, le=4)]
     processes_per_worker: Annotated[int, Field(ge=1, le=4)]
     block_size: PositiveInt
     component_replication_budget: NonNegativeInt

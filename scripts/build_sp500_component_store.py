@@ -245,7 +245,7 @@ def main() -> int:
     )
     component_profiles: dict[str, dict[str, object]] = {}
     shard_started = time.perf_counter()
-    process_count = plan.processes_per_worker
+    process_count = plan.component_processes_per_worker
     initializer_args = (
         str(snapshot),
         campaign.train_snapshot_manifest_sha256,
@@ -306,14 +306,12 @@ def main() -> int:
                 "component_shard_index": args.component_shard_index,
                 "component_profiles": component_profiles,
                 "physical_component_builds": len(component_profiles),
-                "processes_per_worker": process_count,
+                "component_processes_per_worker": process_count,
                 "physical_component_seconds": sum(
                     float(row["physical_seconds"])
                     for row in component_profiles.values()
                 ),
                 "shard_seconds": shard_seconds,
-                **resource_usage,
-                "processes_per_worker": process_count,
                 **resource_usage,
                 "validation_opened": False,
                 "locked_opened": False,
@@ -335,6 +333,7 @@ def main() -> int:
                 "component_schedule_sha256": schedule.plan_sha256,
                 "manifest_sha256": manifest.manifest_sha256,
                 "numeric_runtime_profile_sha256": numeric_runtime["profile_sha256"],
+                "component_processes_per_worker": process_count,
                 "shard_seconds": shard_seconds,
                 "validation_opened": False,
                 "locked_opened": False,

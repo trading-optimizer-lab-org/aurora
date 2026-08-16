@@ -35,6 +35,7 @@ def _valid_payload() -> dict[str, object]:
         "execution": {
             "scheduler_version": "weighted-lpt-v1",
             "workers": 360,
+            "component_processes_per_worker": 1,
             "processes_per_worker": 4,
             "block_size": 256,
             "component_replication_budget": 0,
@@ -411,6 +412,7 @@ def test_worker_benchmark_override_is_allowed_only_for_qualification() -> None:
     )
     from scripts.plan_sp500_optimized_catalog_run import (
         apply_qualification_process_override,
+        apply_qualification_component_process_override,
         apply_qualification_worker_override,
     )
 
@@ -445,6 +447,10 @@ def test_worker_benchmark_override_is_allowed_only_for_qualification() -> None:
     )
     assert process_selected.execution.processes_per_worker == 4
     assert process_selected.execution.workers == contract.execution.workers
+    assert (
+        process_selected.execution.component_processes_per_worker
+        == contract.execution.component_processes_per_worker
+    )
     with pytest.raises(ValueError, match="PROCESS_OVERRIDE_REQUIRES_QUALIFICATION"):
         apply_qualification_process_override(
             contract,
@@ -458,6 +464,32 @@ def test_worker_benchmark_override_is_allowed_only_for_qualification() -> None:
             qualification_only=True,
         )
 
+    component_selected = apply_qualification_component_process_override(
+        contract,
+        component_processes_per_worker=4,
+        qualification_only=True,
+    )
+    assert component_selected.execution.component_processes_per_worker == 4
+    assert (
+        component_selected.execution.processes_per_worker
+        == contract.execution.processes_per_worker
+    )
+    with pytest.raises(
+        ValueError,
+        match="COMPONENT_PROCESS_OVERRIDE_REQUIRES_QUALIFICATION",
+    ):
+        apply_qualification_component_process_override(
+            contract,
+            component_processes_per_worker=2,
+            qualification_only=False,
+        )
+    with pytest.raises(ValueError, match="COMPONENT_PROCESS_OVERRIDE_INVALID"):
+        apply_qualification_component_process_override(
+            contract,
+            component_processes_per_worker=3,
+            qualification_only=True,
+        )
+
     workflow = (
         ROOT / ".github/workflows/catalog-optimized-run.yml"
     ).read_text("utf-8")
@@ -465,6 +497,8 @@ def test_worker_benchmark_override_is_allowed_only_for_qualification() -> None:
     assert "--benchmark-workers" in workflow
     assert "benchmark_processes:" in workflow
     assert "--benchmark-processes" in workflow
+    assert "benchmark_component_processes:" in workflow
+    assert "--benchmark-component-processes" in workflow
 
 
 def test_worker_admission_rejects_wrong_token_or_partition(tmp_path: Path) -> None:
