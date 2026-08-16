@@ -156,7 +156,7 @@ jobs:
 
   merge_components:
     needs: [plan, build_components]
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && (inputs.component_store_run_id != '' || needs.build_components.result == 'success') }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' && needs.build_components.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -219,7 +219,7 @@ jobs:
 
   evaluate_a:
     needs: [plan, merge_components]
-    if: ${{ always() && needs.plan.result == 'success' && needs.merge_components.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && (inputs.component_store_run_id != '' || needs.merge_components.result == 'success') }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -228,14 +228,14 @@ jobs:
     with:
       commit_sha: ${{ inputs.commit_sha }}
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
-      component_store_run_id: ${{ github.run_id }}
+      component_store_run_id: ${{ inputs.component_store_run_id || github.run_id }}
       shard_index: ${{ matrix.shard }}
       active_workers: ${{ fromJSON(needs.plan.outputs.active_workers) }}
       admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
 
   evaluate_b:
     needs: [plan, merge_components]
-    if: ${{ always() && needs.plan.result == 'success' && needs.merge_components.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && fromJSON(needs.plan.outputs.active_workers) > 120 }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && (inputs.component_store_run_id != '' || needs.merge_components.result == 'success') && fromJSON(needs.plan.outputs.active_workers) > 120 }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -244,14 +244,14 @@ jobs:
     with:
       commit_sha: ${{ inputs.commit_sha }}
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
-      component_store_run_id: ${{ github.run_id }}
+      component_store_run_id: ${{ inputs.component_store_run_id || github.run_id }}
       shard_index: ${{ matrix.shard }}
       active_workers: ${{ fromJSON(needs.plan.outputs.active_workers) }}
       admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
 
   evaluate_c:
     needs: [plan, merge_components]
-    if: ${{ always() && needs.plan.result == 'success' && needs.merge_components.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && fromJSON(needs.plan.outputs.active_workers) > 240 }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && (inputs.component_store_run_id != '' || needs.merge_components.result == 'success') && fromJSON(needs.plan.outputs.active_workers) > 240 }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -260,7 +260,7 @@ jobs:
     with:
       commit_sha: ${{ inputs.commit_sha }}
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
-      component_store_run_id: ${{ github.run_id }}
+      component_store_run_id: ${{ inputs.component_store_run_id || github.run_id }}
       shard_index: ${{ matrix.shard }}
       active_workers: ${{ fromJSON(needs.plan.outputs.active_workers) }}
       admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
@@ -322,6 +322,20 @@ jobs:
             --admission-token "${{ needs.plan.outputs.admission_token_sha256 }}" \
             --output-dir outputs/final \
             "${resume_args[@]}"
+      - if: ${{ inputs.reference_run_id != '' }}
+        run: >-
+          python scripts/verify_sp500_optimized_run.py
+          --optimized outputs/final
+          --reference-manifest config/sp500_catalog_reference_science_v1.json
+          --expected-reference-run-id "${{ inputs.reference_run_id }}"
+          --output outputs/equivalence.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ always() && inputs.reference_run_id != '' }}
+        with:
+          name: sp500-catalog-qualification-evidence
+          path: outputs/equivalence.json
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: sp500-strategy-catalog-final-results
@@ -329,57 +343,15 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  verify_qualification:
-    needs: [plan, reduce]
-    if: ${{ always() && inputs.reference_run_id != '' && needs.plan.result == 'success' && needs.reduce.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: "requirements/catalog-optimized.lock"
-      - run: |
-          python -m pip install --require-hashes -r requirements/catalog-optimized.lock
-          python -m pip install --no-deps -e .
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-strategy-catalog-final-results
-          path: ${{ runner.temp }}/optimized
-      - run: >-
-          python scripts/verify_sp500_optimized_run.py
-          --optimized "$RUNNER_TEMP/optimized"
-          --reference-manifest config/sp500_catalog_reference_science_v1.json
-          --expected-reference-run-id "${{ inputs.reference_run_id }}"
-          --output outputs/equivalence.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ always() }}
-        with:
-          name: sp500-catalog-qualification-evidence
-          path: outputs/equivalence.json
-          if-no-files-found: error
-          retention-days: 90
-
   audit_runtime:
-    needs: [plan, reduce, verify_qualification]
-    if: ${{ always() && needs.plan.result == 'success' && needs.reduce.result == 'success' && (needs.verify_qualification.result == 'success' || needs.verify_qualification.result == 'skipped') }}
+    needs: [plan, reduce]
+    if: ${{ always() && needs.plan.result == 'success' && needs.reduce.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions: {actions: read, contents: read}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: "requirements/catalog-optimized.lock"
-      - run: |
-          python -m pip install --require-hashes -r requirements/catalog-optimized.lock
-          python -m pip install --no-deps -e .
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: sp500-strategy-catalog-final-results

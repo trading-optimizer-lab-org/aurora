@@ -33,6 +33,8 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     ).read_text("utf-8")
     assert "component_store_run_id" in worker
     assert "component_store_run_id" in run
+    assert "inputs.component_store_run_id != '' || needs.merge_components.result == 'success'" in run
+    assert "inputs.component_store_run_id || github.run_id" in run
     assert "component_cost_run_id" in run
     assert "evaluation_cache_run_ids" in run
     assert "pending_recipe_count" in run
@@ -40,7 +42,10 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "--resume-root" in run
     assert "python -m scripts.plan_sp500_component_schedule" in run
     assert "python -m scripts.audit_sp500_catalog_actions_run" in run
+    assert "python scripts/verify_sp500_optimized_run.py" in run
+    assert "  verify_qualification:" not in run
     assert "sp500-catalog-runtime-audit" in run
+    assert "pip install" not in run.split("  audit_runtime:", 1)[1]
     assert "python -m scripts.compile_sp500_catalog_recipes" in run
     assert "--recipe-dag" in worker
     assert "verify_recipe_dag_artifacts" in Path(
@@ -56,10 +61,10 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
         )
     )
     assert 'cache: ""' not in combined
-    assert combined.count('cache: "pip"') >= 7
+    assert combined.count('cache: "pip"') >= 5
     assert combined.count(
         'cache-dependency-path: "requirements/catalog-optimized.lock"'
-    ) >= 7
+    ) >= 5
     component_worker = Path(
         ".github/workflows/catalog-component-worker.yml"
     ).read_text(encoding="utf-8")
@@ -68,12 +73,14 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "inputs.component_store_run_id == ''" in run
     resume_gate = (
         "always() && needs.plan.result == 'success' && "
-        "needs.merge_components.result == 'success'"
+        "needs.plan.outputs.pending_recipe_count != '0' && "
+        "(inputs.component_store_run_id != '' || "
+        "needs.merge_components.result == 'success')"
     )
     assert run.count(resume_gate) == 3
     assert (
-        "always() && inputs.reference_run_id != '' && "
-        "needs.plan.result == 'success' && needs.reduce.result == 'success'"
+        "always() && needs.plan.result == 'success' && "
+        "needs.reduce.result == 'success'"
         in run
     )
 
