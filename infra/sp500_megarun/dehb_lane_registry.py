@@ -17,6 +17,8 @@ ContextBuilder = Callable[["TrainLaneEvaluator"], LaneEvaluator]
 
 _TRAIN_PARTITION = "train_snapshot_1993_2010"
 _TRAIN_END = pd.Timestamp("2010-12-31")
+_AUTHORIZED_VALIDATION_PARTITION = "authorized_validation_snapshot_1993_2020"
+_VALIDATION_END = pd.Timestamp("2020-12-31")
 _ALL_LANES = tuple(f"F{number:03d}" for number in range(1, 241))
 
 
@@ -93,9 +95,14 @@ class TrainLaneEvaluator:
         baseline_feature_dirs: Mapping[str, Path] | None = None,
         adapters: Sequence[FamilyAdapter] | None = None,
         maximum_date: str | pd.Timestamp | None = None,
+        _snapshot_name: str = _TRAIN_PARTITION,
+        _manifest_partition: str = "train",
+        _data_end: pd.Timestamp = _TRAIN_END,
+        _validation_opened: bool = False,
+        _mountable_by_first_cycle: bool = True,
     ) -> None:
         self.snapshot = Path(train_snapshot).resolve()
-        if self.snapshot.name != _TRAIN_PARTITION:
+        if self.snapshot.name != _snapshot_name:
             raise LaneRegistryError("TRAIN_SNAPSHOT_PARTITION_REQUIRED")
         manifest_path = self.snapshot / "snapshot_manifest.json"
         if _sha256_file(manifest_path) != expected_manifest_sha256:
@@ -105,10 +112,11 @@ class TrainLaneEvaluator:
         except (OSError, json.JSONDecodeError) as exc:
             raise LaneRegistryError("TRAIN_MANIFEST_INVALID") from exc
         if (
-            manifest.get("partition") != "train"
-            or manifest.get("validation_opened") is not False
+            manifest.get("partition") != _manifest_partition
+            or manifest.get("validation_opened") is not _validation_opened
             or manifest.get("locked_opened") is not False
-            or manifest.get("mountable_by_first_cycle") is not True
+            or manifest.get("mountable_by_first_cycle")
+            is not _mountable_by_first_cycle
         ):
             raise LaneRegistryError("TRAIN_SNAPSHOT_BOUNDARY_OPEN")
         datasets = manifest.get("datasets")
@@ -118,12 +126,13 @@ class TrainLaneEvaluator:
         if not isinstance(spy_row, Mapping) or spy_row.get("sha256") != expected_spy_sha256:
             raise LaneRegistryError("TRAIN_SPY_MANIFEST_SHA256_MISMATCH")
         self._datasets = datasets
+        self._data_end = pd.Timestamp(_data_end).normalize()
         self._maximum_date = (
             pd.Timestamp(maximum_date).normalize()
             if maximum_date is not None
             else None
         )
-        if self._maximum_date is not None and self._maximum_date > _TRAIN_END:
+        if self._maximum_date is not None and self._maximum_date > self._data_end:
             raise LaneRegistryError("PREFIX_DATE_AFTER_TRAIN_END")
         self._default_configurations = {
             str(lane): dict(configuration)
@@ -164,7 +173,7 @@ class TrainLaneEvaluator:
         if "date" not in frame or frame.empty:
             raise LaneRegistryError(f"EMPTY_TRAIN_DATASET:{dataset_id}")
         dates = pd.to_datetime(frame["date"], errors="coerce").dt.normalize()
-        if dates.isna().any() or dates.gt(_TRAIN_END).any():
+        if dates.isna().any() or dates.gt(self._data_end).any():
             raise LaneRegistryError(f"NON_TRAIN_DATASET_ROW:{dataset_id}")
         if self._maximum_date is not None:
             frame = frame.loc[dates.le(self._maximum_date)].copy()
@@ -179,7 +188,7 @@ class TrainLaneEvaluator:
     def _sessions(self, dataset_id: str = "D_SPY") -> pd.DatetimeIndex:
         dates = pd.to_datetime(self._read(dataset_id)["date"], errors="raise")
         sessions = pd.DatetimeIndex(dates).normalize().unique().sort_values()
-        return sessions[sessions <= _TRAIN_END]
+        return sessions[sessions <= self._data_end]
 
     def _default(self, lane_id: str) -> Mapping[str, Any]:
         return self._default_configurations[lane_id]
@@ -256,6 +265,39 @@ class TrainLaneEvaluator:
             evaluator = adapter.builder(self)
             self._contexts[key] = evaluator
         return evaluator(lane_id, configuration)
+
+
+class AuthorizedValidationLaneEvaluator(TrainLaneEvaluator):
+    """Mount the explicitly authorized 1993-2020 warm-up snapshot."""
+
+    def __init__(
+        self,
+        validation_snapshot: Path,
+        *,
+        expected_manifest_sha256: str,
+        expected_spy_sha256: str,
+        default_configurations: Mapping[str, Mapping[str, Any]],
+        authorization: str,
+        baseline_feature_dirs: Mapping[str, Path] | None = None,
+        adapters: Sequence[FamilyAdapter] | None = None,
+    ) -> None:
+        from aurora.infra.sp500_megarun.selected_validation import VALIDATION_ACK
+
+        if authorization != VALIDATION_ACK:
+            raise LaneRegistryError("VALIDATION_AUTHORIZATION_INVALID")
+        super().__init__(
+            validation_snapshot,
+            expected_manifest_sha256=expected_manifest_sha256,
+            expected_spy_sha256=expected_spy_sha256,
+            default_configurations=default_configurations,
+            baseline_feature_dirs=baseline_feature_dirs,
+            adapters=adapters,
+            _snapshot_name=_AUTHORIZED_VALIDATION_PARTITION,
+            _manifest_partition="authorized_validation",
+            _data_end=_VALIDATION_END,
+            _validation_opened=True,
+            _mountable_by_first_cycle=False,
+        )
 
 
 def _price(owner: TrainLaneEvaluator) -> LaneEvaluator:
@@ -612,6 +654,7 @@ def _default_adapters() -> tuple[FamilyAdapter, ...]:
 
 __all__ = [
     "FamilyAdapter",
+    "AuthorizedValidationLaneEvaluator",
     "LaneEvaluator",
     "LaneRegistryError",
     "TrainLaneEvaluator",
