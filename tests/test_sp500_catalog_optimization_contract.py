@@ -295,6 +295,31 @@ def test_repository_contract_is_derived_from_authoritative_artifacts() -> None:
     assert len(contract.science.evaluator_sha256) == 64
     assert len(contract.science.data_snapshot_sha256) == 64
     assert len(contract.science.catalog_manifest_sha256) == 64
+    from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
+        numeric_runtime_profile_sha256,
+    )
+
+    assert contract.science.numeric_profile == numeric_runtime_profile_sha256()
+
+
+def test_catalog_scientific_workers_enforce_frozen_numeric_runtime() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+    from aurora.infra.sp500_megarun.dehb_numeric_runtime import DEHB_NUMERIC_ENV
+
+    workflows = (
+        ROOT / ".github/workflows/catalog-component-worker.yml",
+        ROOT / ".github/workflows/catalog-optimized-worker.yml",
+    )
+    for path in workflows:
+        payload = load_github_yaml(path)
+        job = next(iter(payload["jobs"].values()))
+        assert all(job["env"].get(key) == value for key, value in DEHB_NUMERIC_ENV.items())
+    assert "verify_numeric_runtime_environment" in (
+        ROOT / "scripts/build_sp500_component_store.py"
+    ).read_text("utf-8")
+    assert "verify_numeric_runtime_environment" in (
+        ROOT / "scripts/run_sp500_optimized_recipe_worker.py"
+    ).read_text("utf-8")
 
 
 def test_repository_workflows_have_one_guarded_public_entrypoint() -> None:

@@ -15,6 +15,9 @@ from aurora.infra.sp500_megarun.catalog_admission import (
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
+from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
+    numeric_runtime_profile_sha256,
+)
 from aurora.infra.sp500_megarun.strategy_catalog import (
     verify_strategy_catalog_directory,
 )
@@ -93,6 +96,8 @@ def build_repository_contract(
     if not isinstance(estimates, dict):
         raise ValueError("CATALOG_WORKLOAD_ESTIMATES_INVALID")
     prior_cache_hits = int(estimates["expected_prior_cache_hits"])
+    if policy.get("numeric_profile") != "derived:dehb_numeric_runtime_v1":
+        raise ValueError("CATALOG_NUMERIC_PROFILE_POLICY_INVALID")
     manifest_path = Path(catalog_dir) / "manifest.json"
     payload = {
         "schema_version": policy["schema_version"],
@@ -109,7 +114,7 @@ def build_repository_contract(
             "train_end": boundaries["search_end"],
             "validation_opened": boundaries["validation_opened"],
             "locked_opened": boundaries["locked_opened"],
-            "numeric_profile": policy["numeric_profile"],
+            "numeric_profile": numeric_runtime_profile_sha256(),
         },
         "workload": {
             "requested_recipes": int(receipt["strategy_count"]),

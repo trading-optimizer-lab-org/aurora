@@ -27,6 +27,9 @@ from aurora.infra.sp500_megarun.dehb_worker import (
     load_train_total_return_ledger,
     score_prepared_lane_candidate,
 )
+from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
+    verify_numeric_runtime_environment,
+)
 from aurora.infra.sp500_megarun.strategy_catalog import (
     configuration_sha256,
     verify_strategy_catalog_directory,
@@ -130,6 +133,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    numeric_runtime = verify_numeric_runtime_environment()
     plan = verify_catalog_worker_admission(
         args.run_plan,
         admission_token_sha256=args.admission_token,
@@ -255,6 +259,7 @@ def main() -> int:
                 ),
                 "result_sha256": sha256_file(result_path),
                 "component_manifest_sha256": store.manifest.manifest_sha256,
+                "numeric_runtime_profile_sha256": numeric_runtime["profile_sha256"],
                 "physical_component_builds": 0,
                 "component_cache_hits": sum(len(row["components"]) for row in assigned),
                 "validation_opened": False,
