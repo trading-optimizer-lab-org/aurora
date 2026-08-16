@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
+from numba import njit
 from scipy.optimize import minimize
 from scipy.special import expit, gammaln
 
@@ -669,7 +670,7 @@ def _decode_volatility_parameters(
     raise AdvancedFeatureEngineError(f"F069_UNKNOWN_KIND:{kind}")
 
 
-def _variance_path(
+def _variance_path_python(
     residuals: np.ndarray,
     model: Mapping[str, Any],
     *,
@@ -710,6 +711,71 @@ def _variance_path(
         )
         path[index] = max(value, _EPSILON)
     return path
+
+
+@njit(cache=True)
+def _variance_path_compiled(
+    residuals: np.ndarray,
+    *,
+    variance: float,
+    omega: float,
+    alpha: np.ndarray,
+    gamma: np.ndarray,
+    beta: np.ndarray,
+    kind_code: int,
+    expected_absolute: float,
+) -> np.ndarray:
+    path = np.full(len(residuals), variance, dtype=np.float64)
+    start = max(len(alpha), len(beta))
+    if kind_code == 2:
+        log_path = np.full(len(residuals), np.log(variance), dtype=np.float64)
+        for index in range(start, len(residuals)):
+            value = omega
+            for offset in range(len(alpha)):
+                lag = offset + 1
+                lag_variance = max(np.exp(log_path[index - lag]), _EPSILON)
+                standardized = residuals[index - lag] / np.sqrt(lag_variance)
+                value += alpha[offset] * (abs(standardized) - expected_absolute)
+                value += gamma[offset] * standardized
+            for offset in range(len(beta)):
+                lag = offset + 1
+                value += beta[offset] * log_path[index - lag]
+            log_path[index] = min(max(value, -30.0), 30.0)
+        return np.exp(log_path)
+    for index in range(start, len(residuals)):
+        value = omega
+        for offset in range(len(alpha)):
+            lag = offset + 1
+            shock = residuals[index - lag] ** 2
+            value += alpha[offset] * shock
+            if residuals[index - lag] < 0.0:
+                value += gamma[offset] * shock
+        for offset in range(len(beta)):
+            lag = offset + 1
+            value += beta[offset] * path[index - lag]
+        path[index] = max(value, _EPSILON)
+    return path
+
+
+def _variance_path(
+    residuals: np.ndarray,
+    model: Mapping[str, Any],
+    *,
+    expected_absolute: float,
+) -> np.ndarray:
+    variance = max(float(np.var(residuals, ddof=0)), _EPSILON)
+    kind = str(model["kind"])
+    kind_code = 2 if kind == "egarch" else (1 if kind == "gjr" else 0)
+    return _variance_path_compiled(
+        np.asarray(residuals, dtype=np.float64),
+        variance=variance,
+        omega=float(model["omega"]),
+        alpha=np.asarray(model["alpha"], dtype=np.float64),
+        gamma=np.asarray(model["gamma"], dtype=np.float64),
+        beta=np.asarray(model["beta"], dtype=np.float64),
+        kind_code=kind_code,
+        expected_absolute=float(expected_absolute),
+    )
 
 
 def _volatility_nll(

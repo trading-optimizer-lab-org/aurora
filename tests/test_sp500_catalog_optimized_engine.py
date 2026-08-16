@@ -299,6 +299,40 @@ def test_catalog_science_identity_excludes_replaceable_run_infrastructure() -> N
     assert science.isdisjoint(infrastructure)
 
 
+@pytest.mark.parametrize("kind", ["garch", "gjr", "egarch"])
+def test_compiled_volatility_path_matches_frozen_python_kernel(kind: str) -> None:
+    from aurora.infra.sp500_megarun.advanced_feature_engine import (
+        _decode_volatility_parameters,
+        _variance_path,
+        _variance_path_python,
+    )
+
+    residuals = np.linspace(-1.2, 1.3, 96, dtype=np.float64)
+    p = 2
+    q = 2
+    count = 1 + (p + q if kind == "garch" else 2 * p + q)
+    model = _decode_volatility_parameters(
+        np.linspace(-0.4, 0.5, count, dtype=np.float64),
+        kind=kind,
+        p=p,
+        q=q,
+        variance=float(np.var(residuals)),
+    )
+
+    expected = _variance_path_python(
+        residuals,
+        model,
+        expected_absolute=np.sqrt(2.0 / np.pi),
+    )
+    observed = _variance_path(
+        residuals,
+        model,
+        expected_absolute=np.sqrt(2.0 / np.pi),
+    )
+
+    np.testing.assert_allclose(observed, expected, rtol=1e-13, atol=1e-13)
+
+
 def test_component_store_round_trip_is_exact_and_conflicts_fail(tmp_path: Path) -> None:
     from aurora.infra.sp500_megarun.catalog_component_store import (
         CatalogComponentStore,
