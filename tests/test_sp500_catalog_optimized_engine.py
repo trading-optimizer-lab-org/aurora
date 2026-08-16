@@ -34,6 +34,7 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     ).read_text(encoding="utf-8")
     assert "optimized_result_run_id" in verify_only
     assert "python -m scripts.verify_sp500_optimized_run" in verify_only
+    assert "if: ${{ always() }}" in verify_only
 
 
 def test_cost_model_and_affinity_scheduler_are_deterministic() -> None:

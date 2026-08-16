@@ -123,6 +123,7 @@ def main() -> int:
     report = verify_equivalence(args.optimized, args.reference)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", "utf-8")
+    print(json.dumps(report, sort_keys=True))
     if not report["equivalent"]:
         raise SystemExit("OPTIMIZED_REFERENCE_EQUIVALENCE_FAILED")
     return 0
