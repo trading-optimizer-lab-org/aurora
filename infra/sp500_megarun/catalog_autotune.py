@@ -59,16 +59,25 @@ class CatalogBenchmarkObservationV1(FrozenModel):
     head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     science_identity_sha256: Sha256
     thermal_state: ThermalState
-    workers: int = Field(ge=1, le=360)
+    workers: int = Field(ge=0, le=360)
     component_workers: int = Field(default=60, ge=1, le=120)
     component_processes_per_worker: int = Field(default=1, ge=1, le=4)
     processes_per_worker: int = Field(ge=1, le=4)
     block_size: int = Field(ge=1)
     wall_seconds: float = Field(gt=0)
-    peak_memory_fraction: float = Field(gt=0)
+    peak_memory_fraction: float = Field(ge=0)
     equivalent: bool
     validation_opened: Literal[False] = False
     locked_opened: Literal[False] = False
+
+    @model_validator(mode="after")
+    def _physical_work_valid(self) -> CatalogBenchmarkObservationV1:
+        if self.thermal_state == "fully_hot":
+            if self.workers != 0 or self.peak_memory_fraction != 0.0:
+                raise ValueError("CATALOG_AUTOTUNE_HOT_WORK_INVALID")
+        elif self.workers == 0 or self.peak_memory_fraction == 0.0:
+            raise ValueError("CATALOG_AUTOTUNE_ZERO_WORK_INVALID")
+        return self
 
 
 class CatalogPerformanceHistoryV1(FrozenModel):
@@ -184,6 +193,9 @@ def select_history_configuration(
 ) -> CatalogTuningDecisionV1:
     if minimum_samples < 3:
         raise ValueError("CATALOG_AUTOTUNE_MINIMUM_SAMPLES_INVALID")
+    if thermal_state == "fully_hot":
+        # With every result cached there is no physical topology to promote.
+        raise ValueError("CATALOG_TUNING_NO_SAFE_EQUIVALENT_CANDIDATE")
     grouped: dict[tuple[int, int, int, int, int], list[CatalogBenchmarkObservationV1]] = {}
     for observation in history.observations:
         if (

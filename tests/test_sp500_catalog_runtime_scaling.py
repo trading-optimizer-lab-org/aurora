@@ -552,6 +552,50 @@ def test_autotune_history_is_hash_bound_reproducible_and_requires_three_runs(
         )
 
 
+def test_autotune_records_fully_hot_zero_work_without_promoting_topology() -> None:
+    from aurora.infra.sp500_megarun.catalog_autotune import (
+        CatalogBenchmarkObservationV1,
+        CatalogPerformanceHistoryV1,
+        select_history_configuration,
+    )
+
+    observation = CatalogBenchmarkObservationV1(
+        run_id=7,
+        head_sha="b" * 40,
+        science_identity_sha256="a" * 64,
+        thermal_state="fully_hot",
+        workers=0,
+        component_workers=120,
+        component_processes_per_worker=4,
+        processes_per_worker=1,
+        block_size=1,
+        wall_seconds=50.0,
+        peak_memory_fraction=0.0,
+        equivalent=True,
+    )
+    history = CatalogPerformanceHistoryV1.create().append(observation)
+
+    assert history.observations == (observation,)
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_TUNING_NO_SAFE_EQUIVALENT_CANDIDATE",
+    ):
+        select_history_configuration(
+            history,
+            science_identity_sha256="a" * 64,
+            thermal_state="fully_hot",
+            minimum_samples=3,
+            previous_best_median_seconds=None,
+            max_regression_ratio=0.05,
+        )
+
+    with pytest.raises(ValueError, match="CATALOG_AUTOTUNE_ZERO_WORK_INVALID"):
+        CatalogBenchmarkObservationV1(
+            **observation.model_dump(mode="python")
+            | {"thermal_state": "cold"}
+        )
+
+
 def test_autotune_ingest_rejects_non_equivalent_or_open_boundaries(tmp_path: Path) -> None:
     from scripts.update_sp500_catalog_autotune import update_autotune_history
 
