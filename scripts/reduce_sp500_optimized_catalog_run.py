@@ -36,6 +36,7 @@ def main() -> int:
         if line
     ]
     expected_ids = [str(row["strategy_id"]) for row in expected_rows]
+    catalog_by_id = {str(row["strategy_id"]): row for row in expected_rows}
     tables = [pq.read_table(path) for path in sorted(args.input_root.rglob("results.parquet"))]
     if not tables:
         raise SystemExit("OPTIMIZED_RESULT_PARTITIONS_MISSING")
@@ -82,7 +83,9 @@ def main() -> int:
         summary_rows.append(
             {
                 "strategy_id": row["strategy_id"],
-                "strategy_kind": row["strategy_kind"],
+                "strategy_kind": catalog_by_id[str(row["strategy_id"])][
+                    "strategy_kind"
+                ],
                 "annualized_strategy_return": info["annualized_strategy_return"],
                 "annualized_alpha": info["annualized_alpha"],
                 "weekly_spy_beat_rate": info["weekly_spy_beat_rate"],
@@ -113,7 +116,10 @@ def main() -> int:
     ]
     total_bytes = result_path.stat().st_size
     unique_positions = len(
-        {str(row["position_fingerprint"]) for row in ordered}
+        {
+            str(json.loads(str(row["result_json"]))["info"]["position_fingerprint"])
+            for row in ordered
+        }
     )
     top = sorted(
         summary_rows,

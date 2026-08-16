@@ -46,9 +46,6 @@ from scripts.run_sp500_strategy_catalog_shard import (
 _RESULT_SCHEMA = pa.schema(
     [
         ("strategy_id", pa.string()),
-        ("scientific_recipe_sha256", pa.string()),
-        ("strategy_kind", pa.string()),
-        ("position_fingerprint", pa.string()),
         ("result_json", pa.string()),
     ]
 )

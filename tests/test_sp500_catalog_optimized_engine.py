@@ -7,6 +7,8 @@ import pytest
 
 
 def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> None:
+    from scripts.run_sp500_optimized_recipe_worker import _RESULT_SCHEMA
+
     worker = Path(".github/workflows/catalog-optimized-worker.yml").read_text(
         encoding="utf-8"
     )
@@ -42,6 +44,7 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "optimized_result_run_id" in verify_only
     assert "python -m scripts.verify_sp500_optimized_run" in verify_only
     assert "if: ${{ always() }}" in verify_only
+    assert _RESULT_SCHEMA.names == ["strategy_id", "result_json"]
 
 
 def test_equivalence_gate_allows_only_declared_additive_weekly_metrics() -> None:
