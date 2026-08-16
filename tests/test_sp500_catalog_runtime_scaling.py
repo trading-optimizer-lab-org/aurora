@@ -899,5 +899,7 @@ def test_future_architecture_qualification_is_github_only_and_bounded() -> None:
     assert "128, 1000" in script
     assert "128, 5000" in script
     assert "512, 4096" in script
+    assert "7_281, 4_516" in script
+    assert '"roundtrip_exact": True' in script
     assert '"validation_opened": False' in script
     assert '"locked_opened": False' in script

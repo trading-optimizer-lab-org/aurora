@@ -16,6 +16,10 @@ from aurora.infra.sp500_megarun.catalog_multi_asset import (
     build_asset_panel,
     evaluate_multi_asset_panel,
 )
+from aurora.infra.sp500_megarun.catalog_signal_codec import (
+    decode_signals,
+    encode_signals,
+)
 from aurora.infra.sp500_megarun.catalog_vector_engine import (
     evaluate_signal_block,
     scalar_reference,
@@ -128,6 +132,41 @@ def _vector_case(recipe_count: int, session_count: int) -> dict[str, int | float
     }
 
 
+def _signal_codec_case(component_count: int, session_count: int) -> dict[str, object]:
+    signals = np.zeros((component_count, session_count), dtype=np.int8)
+    signals[:, ::17] = 1
+    signals[:, 5::29] = -1
+    legacy_bytes = int(signals.size * np.dtype(np.float64).itemsize)
+    started = time.perf_counter()
+    int8 = encode_signals(signals)
+    int8_seconds = time.perf_counter() - started
+    started = time.perf_counter()
+    packed = encode_signals(signals, bit_packed=True)
+    packed_seconds = time.perf_counter() - started
+    started = time.perf_counter()
+    restored = decode_signals(packed)
+    decode_seconds = time.perf_counter() - started
+    if (
+        not np.array_equal(restored, signals)
+        or int8.payload.nbytes > legacy_bytes / 3
+        or packed.payload.nbytes > int8.payload.nbytes / 4
+    ):
+        raise ValueError("SIGNAL_CODEC_BENCHMARK_CONTRACT_FAILED")
+    return {
+        "component_count": component_count,
+        "session_count": session_count,
+        "legacy_float64_bytes": legacy_bytes,
+        "int8_bytes": int(int8.payload.nbytes),
+        "packed_2bit_bytes": int(packed.payload.nbytes),
+        "legacy_to_int8_ratio": legacy_bytes / int8.payload.nbytes,
+        "int8_to_2bit_ratio": int8.payload.nbytes / packed.payload.nbytes,
+        "int8_encode_seconds": int8_seconds,
+        "packed_encode_seconds": packed_seconds,
+        "packed_decode_seconds": decode_seconds,
+        "roundtrip_exact": True,
+    }
+
+
 def build_report() -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -138,6 +177,7 @@ def build_report() -> dict[str, object]:
         "cross_sectional_point_in_time": _cross_sectional_case(128, 1000),
         "cross_sectional_scale_5000": _cross_sectional_case(128, 5000),
         "vector_engine": _vector_case(512, 4096),
+        "signal_codec": _signal_codec_case(7_281, 4_516),
         "validation_opened": False,
         "locked_opened": False,
     }
