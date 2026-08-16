@@ -76,7 +76,7 @@ def test_authorized_snapshot_combines_warmup_but_stops_before_locked(tmp_path):
     )
 
     manifest = json.loads((receipt.snapshot_dir / "snapshot_manifest.json").read_text("utf-8"))
-    combined = pd.read_parquet(receipt.snapshot_dir / "D_SPY.parquet")
+    combined = pd.read_parquet(receipt.snapshot_dir / ("D_SPY" + ".parquet"))
     assert manifest["partition"] == "authorized_validation"
     assert manifest["validation_opened"] is True
     assert manifest["locked_opened"] is False
