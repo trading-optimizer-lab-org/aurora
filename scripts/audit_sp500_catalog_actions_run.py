@@ -42,6 +42,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--jobs", type=Path, required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
+    parser.add_argument("--component-store", type=Path)
     parser.add_argument(
         "--thermal-state",
         choices=("cold", "runtime_warm", "component_warm", "fully_hot"),
@@ -59,6 +60,11 @@ def main() -> int:
         artifacts=_flatten_artifacts(_read(args.artifacts)),
         receipt=_read(args.receipt),
         thermal_state=args.thermal_state,
+        component_store_runtime=(
+            _read(args.component_store / "runtime_manifest.json")
+            if args.component_store is not None
+            else None
+        ),
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(

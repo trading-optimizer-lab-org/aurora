@@ -35,7 +35,7 @@ from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
 )
 from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
     scientific_input_binding_sha256,
-    verify_runtime_input_pack,
+    verify_runtime_input_fragments,
 )
 from aurora.infra.sp500_megarun.dehb_worker import (
     feature_frame_to_decisions,
@@ -156,6 +156,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--catalog-dir", type=Path, required=True)
     parser.add_argument("--selected-config", type=Path, required=True)
     parser.add_argument("--runtime-input-pack", type=Path, required=True)
+    parser.add_argument("--runtime-source-run-id", required=True)
     parser.add_argument("--resolved-contract", type=Path, required=True)
     parser.add_argument("--run-plan", type=Path, required=True)
     parser.add_argument("--component-schedule", type=Path, required=True)
@@ -190,12 +191,6 @@ def main() -> int:
     receipt = verify_strategy_catalog_directory(args.catalog_dir)
     if receipt["validation_opened"] or receipt["locked_opened"]:
         raise SystemExit("COMPONENT_CATALOG_BOUNDARY_OPEN")
-    verify_runtime_input_pack(
-        args.runtime_input_pack,
-        expected_scientific_input_binding_sha256=scientific_input_binding_sha256(
-            campaign
-        ),
-    )
     snapshot = args.runtime_input_pack / "train_snapshot_1993_2010"
     ledger = load_train_total_return_ledger(
         snapshot,
@@ -237,6 +232,21 @@ def main() -> int:
     if shard.shard_index != args.component_shard_index:
         raise SystemExit("COMPONENT_SCHEDULE_INDEX_INVALID")
     assigned = tuple(all_by_id[component_id] for component_id in shard.component_ids)
+    required_datasets = {
+        dataset_id
+        for component in assigned
+        for lane in data_contract.lanes
+        if lane.lane_id == str(component["lane_id"])
+        for dataset_id in lane.required_datasets
+    }
+    runtime_fragment = verify_runtime_input_fragments(
+        args.runtime_input_pack,
+        expected_scientific_input_binding_sha256=scientific_input_binding_sha256(
+            campaign
+        ),
+        required_dataset_ids=required_datasets,
+        expected_runtime_source_run_id=args.runtime_source_run_id,
+    )
     writer = ComponentStoreWriter(
         args.output_dir,
         data_snapshot_sha256=resolved.science.data_snapshot_sha256,
@@ -307,6 +317,13 @@ def main() -> int:
                 "component_profiles": component_profiles,
                 "physical_component_builds": len(component_profiles),
                 "component_processes_per_worker": process_count,
+                "runtime_input_bytes": int(runtime_fragment["assembled_bytes"]),
+                "runtime_parent_total_bytes": int(
+                    runtime_fragment["parent_total_bytes"]
+                ),
+                "runtime_required_dataset_ids": list(
+                    runtime_fragment["required_dataset_ids"]
+                ),
                 "physical_component_seconds": sum(
                     float(row["physical_seconds"])
                     for row in component_profiles.values()

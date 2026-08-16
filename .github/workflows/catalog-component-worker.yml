@@ -5,6 +5,7 @@ on:
     inputs:
       commit_sha: {required: true, type: string}
       runtime_input_run_id: {required: true, type: string}
+      runtime_fragment_run_id: {required: true, type: string}
       component_shard_index: {required: true, type: number}
       total_component_shards: {required: true, type: number}
       admission_token_sha256: {required: true, type: string}
@@ -45,11 +46,31 @@ jobs:
           path: ${{ runner.temp }}/plan
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          name: sp500-runtime-fragment-core
           path: ${{ runner.temp }}/runtime
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Determine datasets required by this shard
+        shell: bash
+        run: >-
+          python -m scripts.sp500_component_runtime_requirements
+          --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl
+          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --data-contract config/sp500_megarun_free_data_240.json
+          --component-schedule "$RUNNER_TEMP/plan/component_schedule.json"
+          --shard-index "${{ inputs.component_shard_index }}"
+          --output "$RUNNER_TEMP/required-datasets.txt"
+      - name: Download only required dataset fragments
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNTIME_FRAGMENT_RUN_ID: ${{ inputs.runtime_fragment_run_id }}
+        shell: bash
+        run: |
+          while IFS= read -r dataset_id; do
+            [ -n "$dataset_id" ] || continue
+            gh run download "$RUNTIME_FRAGMENT_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "sp500-runtime-fragment-$dataset_id" \
+              --dir "$RUNNER_TEMP/runtime"
+          done < "$RUNNER_TEMP/required-datasets.txt"
       - run: >-
           python scripts/build_sp500_component_store.py
           --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
@@ -58,6 +79,7 @@ jobs:
           --catalog-dir config/sp500_megarun_strategy_catalog_v1
           --selected-config config/sp500_megarun_selected_dehb_13.json
           --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --runtime-source-run-id "${{ inputs.runtime_fragment_run_id }}"
           --resolved-contract "$RUNNER_TEMP/plan/resolved_contract.json"
           --run-plan "$RUNNER_TEMP/plan/run_plan.json"
           --component-schedule "$RUNNER_TEMP/plan/component_schedule.json"

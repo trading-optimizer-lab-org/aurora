@@ -72,8 +72,8 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "pip install --no-deps -e ." not in run
     assert run.count(
         "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d"
-    ) == 4
-    assert run.count("uv pip install --system --require-hashes") == 4
+    ) == 5
+    assert run.count("uv pip install --system --require-hashes") == 5
     assert "python -m scripts.compile_sp500_catalog_recipes" in run
     assert "--recipe-dag" in worker
     assert "verify_recipe_dag_artifacts" in Path(
@@ -465,6 +465,46 @@ def test_component_schedule_uses_measured_costs_and_assigns_each_key_once() -> N
     assert len(assigned) == len(set(assigned)) == 4
     assert all(shard.estimated_seconds > 0 for shard in schedule.shards)
     assert schedule.tail_ratio < 1.2
+
+
+def test_affinity_component_schedule_keeps_required_dataset_sets_together() -> None:
+    from aurora.infra.sp500_megarun.catalog_cost_model import CatalogCostModelV1
+    from aurora.infra.sp500_megarun.catalog_scheduler import (
+        schedule_components_by_affinity,
+    )
+
+    components = [
+        {"configuration_sha256": f"{index:064x}", "lane_id": "F001"}
+        for index in range(6)
+    ]
+    model = CatalogCostModelV1.from_samples(
+        {str(index): [1.0] for index in range(6)},
+        fallback_seconds=1.0,
+    )
+    affinity = {
+        f"{index:064x}": ("D_SPY",) if index < 3 else ("D_Z1",)
+        for index in range(6)
+    }
+    schedule = schedule_components_by_affinity(
+        components,
+        model=model,
+        workers=4,
+        affinity_by_component=affinity,
+    )
+    assert len(schedule.shards) == 4
+    assert sorted(
+        component_id
+        for shard in schedule.shards
+        for component_id in shard.component_ids
+    ) == sorted(affinity)
+    # Each group has two workers in this balanced fixture, so no shard can
+    # contain components from both input families.
+    for shard in schedule.shards:
+        families = {
+            "D_SPY" if component_id in {f"{i:064x}" for i in range(3)} else "D_Z1"
+            for component_id in shard.component_ids
+        }
+        assert len(families) <= 1
 
 
 def test_component_performance_merge_preserves_every_physical_cost(

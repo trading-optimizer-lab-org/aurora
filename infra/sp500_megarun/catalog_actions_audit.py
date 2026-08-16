@@ -56,6 +56,7 @@ def build_actions_runtime_audit(
     artifacts: Sequence[Mapping[str, object]],
     receipt: Mapping[str, object],
     thermal_state: str,
+    component_store_runtime: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Build honest wall, runner, queue, setup, compute and byte accounting."""
 
@@ -190,6 +191,13 @@ def build_actions_runtime_audit(
     )
     if not isinstance(scientific_wall_stage_seconds, Mapping):
         raise ValueError("CATALOG_ACTIONS_SCIENTIFIC_WALL_STAGES_INVALID")
+    component_runtime = component_store_runtime or {}
+    component_input_bytes = int(
+        component_runtime.get("component_worker_runtime_input_bytes", 0)
+    )
+    parent_input_bytes = int(component_runtime.get("runtime_parent_total_bytes", 0))
+    legacy_component_workers = 360
+    legacy_input_bytes = parent_input_bytes * legacy_component_workers
     return {
         "schema_version": 1,
         "run_id": int(run["id"]),
@@ -248,6 +256,16 @@ def build_actions_runtime_audit(
         "artifact_bytes_uploaded": artifact_bytes,
         "result_bytes": result_bytes,
         "result_bytes_per_recipe": result_bytes / strategy_count,
+        "component_worker_runtime_input_bytes": component_input_bytes,
+        "runtime_parent_total_bytes": parent_input_bytes,
+        "runtime_fragment_worker_count": int(
+            component_runtime.get("runtime_fragment_worker_count", 0)
+        ),
+        "runtime_input_reduction_vs_legacy": (
+            1.0 - component_input_bytes / legacy_input_bytes
+            if legacy_input_bytes
+            else 0.0
+        ),
         "validation_opened": False,
         "locked_opened": False,
     }

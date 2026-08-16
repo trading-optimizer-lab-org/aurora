@@ -168,6 +168,7 @@ jobs:
           python -m scripts.plan_sp500_component_schedule \
             --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl \
             --selected-config config/sp500_megarun_selected_dehb_13.json \
+            --data-contract config/sp500_megarun_free_data_240.json \
             --performance-report "$report" \
             --workers "${{ steps.plan.outputs.component_workers }}" \
             --output-dir outputs/plan
@@ -178,9 +179,96 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  build_components:
+  prepare_runtime_fragments:
     needs: plan
     if: ${{ needs.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          enable-cache: false
+      - run: >-
+          uv pip install --system --require-hashes
+          -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          path: ${{ runner.temp }}/runtime-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Create verified runtime fragments
+        shell: bash
+        run: >-
+          python -m scripts.prepare_sp500_runtime_fragments
+          --runtime-input-pack "$RUNNER_TEMP/runtime-source"
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --runtime-source-run-id "${{ github.run_id }}"
+          --output-dir outputs/runtime-fragments
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-runtime-fragment-core
+          path: outputs/runtime-fragments/runtime-fragment-core
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-runtime-fragment-D_CBOE_PCR
+          path: outputs/runtime-fragments/runtime-fragment-D_CBOE_PCR
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-runtime-fragment-D_CFTC_LEGACY
+          path: outputs/runtime-fragments/runtime-fragment-D_CFTC_LEGACY
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-runtime-fragment-D_CFTC
+          path: outputs/runtime-fragments/runtime-fragment-D_CFTC
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-runtime-fragment-D_Z1
+          path: outputs/runtime-fragments/runtime-fragment-D_Z1
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-runtime-fragment-D_FED_H3_H6_H8_G19_CP
+          path: outputs/runtime-fragments/runtime-fragment-D_FED_H3_H6_H8_G19_CP
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-runtime-fragment-D_MACRO_PIT
+          path: outputs/runtime-fragments/runtime-fragment-D_MACRO_PIT
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-runtime-fragment-D_FRENCH_US
+          path: outputs/runtime-fragments/runtime-fragment-D_FRENCH_US
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-runtime-fragment-D_FED_H15_H10
+          path: outputs/runtime-fragments/runtime-fragment-D_FED_H15_H10
+          if-no-files-found: error
+          retention-days: 7
+
+  build_components:
+    needs: [plan, prepare_runtime_fragments]
+    if: ${{ needs.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' && needs.prepare_runtime_fragments.result == 'success' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -189,6 +277,7 @@ jobs:
     with:
       commit_sha: ${{ inputs.commit_sha }}
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      runtime_fragment_run_id: ${{ github.run_id }}
       component_shard_index: ${{ matrix.component_shard }}
       total_component_shards: ${{ fromJSON(needs.plan.outputs.component_workers) }}
       admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
@@ -397,6 +486,11 @@ jobs:
         with:
           name: sp500-strategy-catalog-final-results
           path: ${{ runner.temp }}/final
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        if: ${{ inputs.component_store_run_id == '' }}
+        with:
+          name: sp500-global-component-store
+          path: ${{ runner.temp }}/component-store
       - name: Collect complete Actions metadata
         env:
           GH_TOKEN: ${{ github.token }}
@@ -418,13 +512,18 @@ jobs:
           elif [ -n "$COMPONENT_STORE_RUN_ID" ]; then
             thermal_state="component_warm"
           fi
+          component_store_args=()
+          if [ -f "$RUNNER_TEMP/component-store/runtime_manifest.json" ]; then
+            component_store_args+=(--component-store "$RUNNER_TEMP/component-store")
+          fi
           python -m scripts.audit_sp500_catalog_actions_run \
             --run "$RUNNER_TEMP/run.json" \
             --jobs "$RUNNER_TEMP/jobs.json" \
             --artifacts "$RUNNER_TEMP/artifacts.json" \
             --receipt "$RUNNER_TEMP/final/receipt.json" \
             --thermal-state "$thermal_state" \
-            --output outputs/runtime_audit.json
+            --output outputs/runtime_audit.json \
+            "${component_store_args[@]}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: sp500-catalog-runtime-audit

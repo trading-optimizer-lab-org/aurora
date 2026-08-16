@@ -1,0 +1,61 @@
+"""List runtime datasets required by one immutable component shard."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
+from aurora.infra.sp500_megarun.strategy_catalog import configuration_sha256
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--catalog", type=Path, required=True)
+    parser.add_argument("--selected-config", type=Path, required=True)
+    parser.add_argument("--data-contract", type=Path, required=True)
+    parser.add_argument("--component-schedule", type=Path, required=True)
+    parser.add_argument("--shard-index", type=int, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    contract = load_and_validate_contract(args.data_contract)
+    lane_datasets = {
+        lane.lane_id: set(lane.required_datasets) for lane in contract.lanes
+    }
+    catalog_rows = [
+        json.loads(line)
+        for line in args.catalog.read_text("utf-8").splitlines()
+        if line
+    ]
+    selected_rows = json.loads(args.selected_config.read_text("utf-8"))
+    components: dict[str, str] = {}
+    for row in catalog_rows:
+        for component in row["components"]:
+            components[str(component["configuration_sha256"])] = str(
+                component["lane_id"]
+            )
+    for row in selected_rows:
+        lane_id = str(row["lane_id"])
+        # Selected configurations are not necessarily present in the catalog.
+        components[configuration_sha256(lane_id, dict(row["configuration"]))] = lane_id
+    schedule = json.loads(args.component_schedule.read_text("utf-8"))
+    shards = schedule.get("shards")
+    if not isinstance(shards, list) or not 0 <= args.shard_index < len(shards):
+        raise SystemExit("COMPONENT_RUNTIME_SCHEDULE_INVALID")
+    component_ids = shards[args.shard_index].get("component_ids")
+    if not isinstance(component_ids, list):
+        raise SystemExit("COMPONENT_RUNTIME_SHARD_INVALID")
+    required: set[str] = set()
+    for component_id in component_ids:
+        lane_id = components.get(str(component_id))
+        if lane_id is None or lane_id not in lane_datasets:
+            raise SystemExit(f"COMPONENT_RUNTIME_LANE_UNKNOWN:{component_id}")
+        required.update(lane_datasets[lane_id])
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text("\n".join(sorted(required)) + ("\n" if required else ""), "utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

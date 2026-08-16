@@ -23,6 +23,9 @@ from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
 def merge_component_performance(input_root: Path) -> dict[str, object]:
     profiles: dict[str, dict[str, object]] = {}
     shard_seconds: list[float] = []
+    runtime_input_bytes = 0
+    runtime_parent_total_bytes = 0
+    runtime_shard_count = 0
     for path in sorted(Path(input_root).rglob("component_performance.json")):
         payload = json.loads(path.read_text("utf-8"))
         if (
@@ -32,6 +35,12 @@ def merge_component_performance(input_root: Path) -> dict[str, object]:
         ):
             raise ValueError("COMPONENT_PERFORMANCE_INVALID")
         shard_seconds.append(float(payload["shard_seconds"]))
+        runtime_input_bytes += int(payload.get("runtime_input_bytes", 0))
+        runtime_parent_total_bytes = max(
+            runtime_parent_total_bytes,
+            int(payload.get("runtime_parent_total_bytes", 0)),
+        )
+        runtime_shard_count += 1
         for key, profile in payload["component_profiles"].items():
             previous = profiles.get(str(key))
             if previous is not None and previous != profile:
@@ -53,6 +62,9 @@ def merge_component_performance(input_root: Path) -> dict[str, object]:
         "component_worker_p50_seconds": p50,
         "component_worker_p95_seconds": p95,
         "component_worker_tail_ratio": p95 / p50 if p50 else 1.0,
+        "runtime_input_bytes": runtime_input_bytes,
+        "runtime_parent_total_bytes": runtime_parent_total_bytes,
+        "runtime_fragment_worker_count": runtime_shard_count,
         "validation_opened": False,
         "locked_opened": False,
     }
@@ -105,6 +117,7 @@ def main() -> int:
         target = target_snapshot / filename
         shutil.copy2(source, target)
         copied[filename] = sha256_file(target)
+    performance = merge_component_performance(args.input_root)
     runtime_identity = {
         "schema_version": 1,
         "component_manifest_sha256": manifest.manifest_sha256,
@@ -112,12 +125,20 @@ def main() -> int:
         "search_end": "2010-12-31",
         "validation_opened": False,
         "locked_opened": False,
+        "component_worker_runtime_input_bytes": int(
+            performance["runtime_input_bytes"]
+        ),
+        "runtime_parent_total_bytes": int(
+            performance["runtime_parent_total_bytes"]
+        ),
+        "runtime_fragment_worker_count": int(
+            performance["runtime_fragment_worker_count"]
+        ),
     }
     (args.output_dir / "runtime_manifest.json").write_text(
         json.dumps(runtime_identity, indent=2, sort_keys=True) + "\n",
         "utf-8",
     )
-    performance = merge_component_performance(args.input_root)
     (args.output_dir / "component_performance.json").write_text(
         json.dumps(performance, indent=2, sort_keys=True) + "\n",
         "utf-8",

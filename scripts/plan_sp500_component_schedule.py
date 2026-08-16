@@ -8,14 +8,21 @@ import statistics
 from pathlib import Path
 
 from aurora.infra.sp500_megarun.catalog_cost_model import CatalogCostModelV1
-from aurora.infra.sp500_megarun.catalog_scheduler import schedule_components
+from aurora.infra.sp500_megarun.catalog_scheduler import (
+    schedule_components_by_affinity,
+)
+from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
+    RUNTIME_FRAGMENT_DATASET_IDS,
+)
 from scripts.build_sp500_component_store import collect_unique_components
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--catalog", type=Path, required=True)
     parser.add_argument("--selected-config", type=Path, required=True)
+    parser.add_argument("--data-contract", type=Path, required=True)
     parser.add_argument("--performance-report", type=Path, required=True)
     parser.add_argument("--workers", type=int, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -34,6 +41,11 @@ def main() -> int:
     ]
     selected_rows = json.loads(args.selected_config.read_text("utf-8"))
     components = collect_unique_components(catalog_rows, selected_rows)
+    data_contract = load_and_validate_contract(args.data_contract)
+    lane_datasets = {
+        lane.lane_id: tuple(sorted(lane.required_datasets))
+        for lane in data_contract.lanes
+    }
     component_ids = {str(item["configuration_sha256"]) for item in components}
     profiles = {
         key: profile
@@ -60,7 +72,22 @@ def main() -> int:
         profiles,
         fallback_seconds=float(statistics.median(p95_values)),
     )
-    schedule = schedule_components(components, model=model, workers=args.workers)
+    affinity_by_component = {
+        str(component["configuration_sha256"]): tuple(
+            sorted(
+                dataset_id
+                for dataset_id in lane_datasets[str(component["lane_id"])]
+                if dataset_id in RUNTIME_FRAGMENT_DATASET_IDS
+            )
+        )
+        for component in components
+    }
+    schedule = schedule_components_by_affinity(
+        components,
+        model=model,
+        workers=args.workers,
+        affinity_by_component=affinity_by_component,
+    )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "component_cost_model.json").write_text(
         model.model_dump_json(indent=2) + "\n",
@@ -79,6 +106,8 @@ def main() -> int:
         "measured_component_ratio": measured_ratio,
         "fallback_seconds": model.fallback_seconds,
         "estimated_tail_ratio": schedule.tail_ratio,
+        "affinity_mode": "heavy_runtime_dataset_set",
+        "affinity_group_count": len(set(affinity_by_component.values())),
         "cost_model_sha256": model.model_sha256,
         "component_schedule_sha256": schedule.plan_sha256,
         "validation_opened": False,

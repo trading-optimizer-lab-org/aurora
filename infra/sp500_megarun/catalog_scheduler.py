@@ -80,6 +80,85 @@ def schedule_components(
     )
 
 
+def schedule_components_by_affinity(
+    components: Sequence[Mapping[str, object]],
+    *,
+    model: CatalogCostModelV1,
+    workers: int,
+    affinity_by_component: Mapping[str, tuple[str, ...]],
+) -> CatalogComponentScheduleV1:
+    """Schedule components in data-affine groups to avoid repeated downloads.
+
+    Each exact required-dataset set receives at least one worker. Remaining
+    workers go to the groups with the largest estimated load per worker, then
+    normal weighted scheduling runs inside each group. This preserves one
+    physical build per component while keeping each worker's input subset
+    small and deterministic.
+    """
+
+    if workers < 1 or workers > min(360, len(components)):
+        raise ValueError("CATALOG_COMPONENT_SCHEDULER_WORKER_COUNT_INVALID")
+    by_id = {str(item["configuration_sha256"]): item for item in components}
+    if len(by_id) != len(components):
+        raise ValueError("CATALOG_COMPONENT_SCHEDULER_DUPLICATE")
+    groups: dict[tuple[str, ...], list[Mapping[str, object]]] = {}
+    for component_id in sorted(by_id):
+        affinity = tuple(sorted(str(item) for item in affinity_by_component[component_id]))
+        groups.setdefault(affinity, []).append(by_id[component_id])
+    if len(groups) > workers:
+        raise ValueError("CATALOG_COMPONENT_AFFINITY_GROUP_COUNT_INVALID")
+    group_costs = {
+        affinity: sum(
+            model.estimate(str(item["configuration_sha256"]))
+            for item in group
+        )
+        for affinity, group in groups.items()
+    }
+    allocation = {affinity: 1 for affinity in groups}
+    remaining = workers - len(groups)
+    while remaining:
+        candidates = [
+            affinity
+            for affinity, group in groups.items()
+            if allocation[affinity] < len(group)
+        ]
+        if not candidates:
+            raise ValueError("CATALOG_COMPONENT_AFFINITY_CAPACITY_EXHAUSTED")
+        affinity = max(
+            candidates,
+            key=lambda item: (
+                group_costs[item] / allocation[item],
+                group_costs[item],
+                item,
+            ),
+        )
+        allocation[affinity] += 1
+        remaining -= 1
+    combined: list[CatalogComponentShardV1] = []
+    for affinity in sorted(groups):
+        schedule = schedule_components(
+            groups[affinity],
+            model=model,
+            workers=allocation[affinity],
+        )
+        combined.extend(schedule.shards)
+    shards = tuple(
+        CatalogComponentShardV1(
+            shard_index=index,
+            component_ids=shard.component_ids,
+            estimated_seconds=shard.estimated_seconds,
+        )
+        for index, shard in enumerate(combined)
+    )
+    loads = [float(shard.estimated_seconds) for shard in shards if shard.estimated_seconds > 0]
+    tail_ratio = max(loads) / min(loads) if loads else 1.0
+    identity = {"schema_version": "1", "shards": shards, "tail_ratio": tail_ratio}
+    return CatalogComponentScheduleV1(
+        **identity,
+        plan_sha256=canonical_sha256(identity),
+    )
+
+
 def schedule_recipes(
     recipes: Sequence[Mapping[str, object]],
     *,
@@ -149,5 +228,6 @@ __all__ = [
     "CatalogScheduleV1",
     "CatalogShardV1",
     "schedule_components",
+    "schedule_components_by_affinity",
     "schedule_recipes",
 ]
