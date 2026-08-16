@@ -16,6 +16,10 @@ from aurora.infra.sp500_megarun.catalog_multi_asset import (
     build_asset_panel,
     evaluate_multi_asset_panel,
 )
+from aurora.infra.sp500_megarun.catalog_vector_engine import (
+    evaluate_signal_block,
+    scalar_reference,
+)
 
 
 def _multi_asset_case(asset_count: int, session_count: int) -> dict[str, int | float]:
@@ -87,6 +91,43 @@ def _cross_sectional_case(date_count: int, asset_count: int) -> dict[str, int | 
     }
 
 
+def _vector_case(recipe_count: int, session_count: int) -> dict[str, int | float]:
+    row = np.arange(recipe_count, dtype=np.int64)[:, None]
+    column = np.arange(session_count, dtype=np.int64)[None, :]
+    decisions = np.zeros((recipe_count, session_count), dtype=np.int8)
+    decisions[(column + row) % 31 == 0] = 1
+    decisions[(column * 3 + row) % 47 == 0] = -1
+    spy_returns = np.sin(np.arange(session_count)) * 0.0005
+    years = 1998 + np.minimum(
+        12,
+        np.arange(session_count) * 13 // session_count,
+    )
+
+    started = time.perf_counter()
+    scalar = scalar_reference(decisions, spy_returns, years)
+    scalar_seconds = time.perf_counter() - started
+    started = time.perf_counter()
+    vector = evaluate_signal_block(decisions, spy_returns, years)
+    vector_seconds = time.perf_counter() - started
+    if (
+        not np.array_equal(vector.annualized_return, scalar.annualized_return)
+        or not np.array_equal(vector.annual_returns, scalar.annual_returns)
+        or vector.position_hashes != scalar.position_hashes
+    ):
+        raise ValueError("VECTOR_BENCHMARK_EQUIVALENCE_FAILED")
+    speedup = scalar_seconds / vector_seconds
+    if speedup < 3.0:
+        raise ValueError("VECTOR_BENCHMARK_SPEEDUP_REGRESSION")
+    return {
+        "recipe_count": recipe_count,
+        "session_count": session_count,
+        "scalar_seconds": scalar_seconds,
+        "vector_seconds": vector_seconds,
+        "speedup": speedup,
+        "unique_position_count": vector.unique_position_count,
+    }
+
+
 def build_report() -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -95,6 +136,7 @@ def build_report() -> dict[str, object]:
             _multi_asset_case(100, 256),
         ],
         "cross_sectional_point_in_time": _cross_sectional_case(128, 1000),
+        "vector_engine": _vector_case(512, 4096),
         "validation_opened": False,
         "locked_opened": False,
     }

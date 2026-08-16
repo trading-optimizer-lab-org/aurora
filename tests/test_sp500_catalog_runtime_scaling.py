@@ -655,7 +655,7 @@ def test_future_architecture_qualification_is_github_only_and_bounded() -> None:
 
     assert "workflow_dispatch:" in workflow
     assert "workflow_call:" in workflow
-    assert "requirements/catalog-recipe-worker.lock" in workflow
+    assert "requirements/catalog-architecture.lock" in workflow
     entrypoint = Path(
         ".github/workflows/sp500-search-method-benchmark-short.yml"
     ).read_text("utf-8")
@@ -663,5 +663,6 @@ def test_future_architecture_qualification_is_github_only_and_bounded() -> None:
     assert "uses: ./.github/workflows/catalog-future-architecture.yml" in entrypoint
     assert "100, 256" in script
     assert "128, 1000" in script
+    assert "512, 4096" in script
     assert '"validation_opened": False' in script
     assert '"locked_opened": False' in script

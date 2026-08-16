@@ -44,11 +44,11 @@ def _positions_vectorized(decisions: np.ndarray) -> np.ndarray:
     nonzero_indices = np.where(decisions != 0, column, -1)
     source_indices = np.maximum.accumulate(nonzero_indices, axis=1)
     padded = np.concatenate(
-        [np.zeros((decisions.shape[0], 1), dtype=np.int8), decisions],
+        [np.ones((decisions.shape[0], 1), dtype=np.int8), decisions],
         axis=1,
     )
     positions = np.take_along_axis(padded, source_indices + 1, axis=1)
-    lagged = np.zeros_like(positions)
+    lagged = np.ones_like(positions)
     lagged[:, 1:] = positions[:, :-1]
     return lagged
 
@@ -69,12 +69,14 @@ def _metrics(
     unique_years = tuple(int(value) for value in np.unique(years))
     annual = np.column_stack(
         [
-            np.prod(1.0 + strategy_returns[:, years == year], axis=1) - 1.0
+            np.expm1(np.log1p(strategy_returns[:, years == year]).sum(axis=1))
             for year in unique_years
         ]
     )
-    total_growth = np.prod(1.0 + strategy_returns, axis=1)
-    annualized = np.power(total_growth, 252.0 / strategy_returns.shape[1]) - 1.0
+    total_log_growth = np.log1p(strategy_returns).sum(axis=1)
+    annualized = np.expm1(
+        total_log_growth * (252.0 / strategy_returns.shape[1])
+    )
     hashes = _position_hashes(positions)
     unique_count = len(set(hashes))
     return VectorEvaluationV1(
@@ -104,7 +106,7 @@ def scalar_reference(
     checked, returns, checked_years = _validate(decisions, spy_returns, years)
     positions = np.zeros_like(checked)
     for row_index, row in enumerate(checked):
-        current = np.int8(0)
+        current = np.int8(1)
         for column_index, decision in enumerate(row):
             positions[row_index, column_index] = current
             if decision != 0:
