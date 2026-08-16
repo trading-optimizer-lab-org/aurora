@@ -25,6 +25,9 @@ from aurora.infra.sp500_megarun.dehb_lane_registry import (
     default_lane_configurations,
 )
 from aurora.infra.sp500_megarun.dehb_objective import score_ledger_decisions
+from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
+    verify_numeric_runtime_environment,
+)
 from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
     scientific_input_binding_sha256,
     verify_runtime_input_pack,
@@ -204,6 +207,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    numeric_runtime = verify_numeric_runtime_environment()
     if args.total_shards != 360 or not 0 <= args.shard_index < args.total_shards:
         raise SystemExit("CATALOG_SHARD_INVALID")
     from aurora.infra.sp500_megarun.catalog_admission import (
@@ -397,7 +401,7 @@ def main() -> int:
             "utf-8",
         )
     performance_outputs = recorder.write(args.output_dir)
-    audit = {"schema_version": 1, "shard_index": args.shard_index, "total_shards": args.total_shards, "strategy_count": len(output), "selected_strategy_count": len(selected_output), "first_strategy_id": output[0]["strategy_id"] if output else None, "last_strategy_id": output[-1]["strategy_id"] if output else None, "performance_summary_sha256": performance_outputs.summary_sha256, "performance_events_sha256": performance_outputs.events_path_sha256, "physical_component_builds": recorder.summary()["physical_component_builds"], "component_cache_hits": recorder.summary()["component_cache_hits"], "thermal_state": args.thermal_state, "validation_opened": False, "locked_opened": False}
+    audit = {"schema_version": 1, "shard_index": args.shard_index, "total_shards": args.total_shards, "strategy_count": len(output), "selected_strategy_count": len(selected_output), "first_strategy_id": output[0]["strategy_id"] if output else None, "last_strategy_id": output[-1]["strategy_id"] if output else None, "performance_summary_sha256": performance_outputs.summary_sha256, "performance_events_sha256": performance_outputs.events_path_sha256, "physical_component_builds": recorder.summary()["physical_component_builds"], "component_cache_hits": recorder.summary()["component_cache_hits"], "thermal_state": args.thermal_state, "numeric_runtime_profile_sha256": numeric_runtime["profile_sha256"], "validation_opened": False, "locked_opened": False}
     (args.output_dir / "receipt.json").write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n", "utf-8")
     return 0
 

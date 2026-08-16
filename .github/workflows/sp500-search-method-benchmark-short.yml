@@ -15,6 +15,7 @@ on:
           - optimized_catalog_verify_only
           - optimized_catalog_equivalence_diagnostic
           - optimized_catalog_component_determinism
+          - optimized_catalog_reference_oracle
       component_store_run_id:
         description: Compatible component store from a prior optimized run
         required: false
@@ -90,3 +91,10 @@ jobs:
     uses: ./.github/workflows/catalog-component-determinism.yml
     with:
       commit_sha: ${{ github.sha }}
+
+  optimized_catalog_reference_oracle:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_reference_oracle' }}
+    uses: ./.github/workflows/catalog-reference-oracle.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      runtime_input_run_id: "31418682679"

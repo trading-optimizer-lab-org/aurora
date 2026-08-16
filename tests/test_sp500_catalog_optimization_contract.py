@@ -309,6 +309,7 @@ def test_catalog_scientific_workers_enforce_frozen_numeric_runtime() -> None:
     workflows = (
         ROOT / ".github/workflows/catalog-component-worker.yml",
         ROOT / ".github/workflows/catalog-optimized-worker.yml",
+        ROOT / ".github/workflows/catalog-reference-worker.yml",
     )
     for path in workflows:
         payload = load_github_yaml(path)
@@ -319,6 +320,9 @@ def test_catalog_scientific_workers_enforce_frozen_numeric_runtime() -> None:
     ).read_text("utf-8")
     assert "verify_numeric_runtime_environment" in (
         ROOT / "scripts/run_sp500_optimized_recipe_worker.py"
+    ).read_text("utf-8")
+    assert "verify_numeric_runtime_environment" in (
+        ROOT / "scripts/run_sp500_strategy_catalog_shard.py"
     ).read_text("utf-8")
 
 
