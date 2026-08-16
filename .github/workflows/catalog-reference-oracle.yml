@@ -31,7 +31,7 @@ jobs:
           --policy config/sp500_catalog_optimization_policy_v1.json
           --campaign config/sp500_megarun_dehb_campaign_v1.json
           --catalog-dir config/sp500_megarun_strategy_catalog_v1
-          --evidence config/sp500_catalog_admission_evidence_current_v1.json
+          --evidence config/sp500_catalog_admission_evidence_qualification_v1.json
           --output-dir outputs/plan
           --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

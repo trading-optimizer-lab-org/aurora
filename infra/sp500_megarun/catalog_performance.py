@@ -410,6 +410,45 @@ def aggregate_catalog_performance(roots: Sequence[Path]) -> dict[str, object]:
         for event in physical
     }
     redundant = len(physical) - len(unique_physical)
+    component_profiles: dict[str, dict[str, object]] = {}
+    for lane_id, configuration_sha256 in sorted(unique_physical):
+        selected = [
+            event
+            for event in physical
+            if str(event["lane_id"]) == lane_id
+            and str(event["configuration_sha256"]) == configuration_sha256
+        ]
+        durations = sorted(float(event["duration_seconds"]) for event in selected)
+        cpu_seconds = [float(event["cpu_seconds"]) for event in selected]
+        component_profiles[f"{lane_id}:{configuration_sha256}"] = {
+            "lane_id": lane_id,
+            "configuration_sha256": configuration_sha256,
+            "sample_count": len(durations),
+            "duration_samples": durations,
+            "physical_seconds": sum(durations),
+            "physical_cpu_seconds": sum(cpu_seconds),
+            "p50_seconds": _nearest_rank(durations, 0.50),
+            "p90_seconds": _nearest_rank(durations, 0.90),
+            "p95_seconds": _nearest_rank(durations, 0.95),
+            "p99_seconds": _nearest_rank(durations, 0.99),
+        }
+    phase_events = [event for event in events if event.get("event_kind") == "phase"]
+    phase_totals: dict[str, dict[str, int | float]] = {}
+    for phase in sorted({str(event["phase"]) for event in phase_events}):
+        selected = [event for event in phase_events if str(event["phase"]) == phase]
+        durations = [float(event["duration_seconds"]) for event in selected]
+        phase_totals[phase] = {
+            "count": len(selected),
+            "duration_seconds": sum(durations),
+            "cpu_seconds": sum(float(event["cpu_seconds"]) for event in selected),
+            "units_processed": sum(int(event["units_processed"]) for event in selected),
+            "bytes_read": sum(int(event["bytes_read"]) for event in selected),
+            "bytes_written": sum(int(event["bytes_written"]) for event in selected),
+            "p50_seconds": _nearest_rank(durations, 0.50),
+            "p90_seconds": _nearest_rank(durations, 0.90),
+            "p95_seconds": _nearest_rank(durations, 0.95),
+            "p99_seconds": _nearest_rank(durations, 0.99),
+        }
     return {
         "schema_version": 1,
         "completed_shards": len(summaries),
@@ -422,6 +461,7 @@ def aggregate_catalog_performance(roots: Sequence[Path]) -> dict[str, object]:
             event.get("cache_hit") is True for event in component_events
         ),
         "unique_physical_components": len(unique_physical),
+        "component_profiles": component_profiles,
         "redundant_component_builds": redundant,
         "redundant_component_build_ratio": (
             float(redundant / len(physical)) if physical else 0.0
@@ -432,6 +472,7 @@ def aggregate_catalog_performance(roots: Sequence[Path]) -> dict[str, object]:
         "physical_component_cpu_seconds": sum(
             float(event["cpu_seconds"]) for event in physical
         ),
+        "phase_totals": phase_totals,
         "peak_memory_mb": max(float(summary["peak_memory_mb"]) for summary in summaries),
         "validation_opened": False,
         "locked_opened": False,

@@ -215,6 +215,11 @@ def test_global_profile_detects_repeated_component_builds_between_shards(
     assert report["redundant_component_builds"] == 1
     assert report["redundant_component_build_ratio"] == 0.5
     assert report["physical_component_seconds"] == 3.0
+    profile = report["component_profiles"][f"F069:{'b' * 64}"]
+    assert profile["sample_count"] == 2
+    assert profile["duration_samples"] == [1.0, 2.0]
+    assert profile["p50_seconds"] == 1.0
+    assert profile["p95_seconds"] == 2.0
     assert report["peak_memory_mb"] == 100.0
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False
