@@ -592,6 +592,7 @@ def test_vectorized_temporal_convolution_matches_frozen_python_kernel() -> None:
 def test_vectorized_reservoir_states_match_frozen_python_kernel() -> None:
     from aurora.infra.sp500_megarun.predictive_feature_engine import (
         _reservoir_states,
+        _reservoir_final_states,
         _reservoir_states_python,
         _reservoir_weights,
     )
@@ -622,6 +623,18 @@ def test_vectorized_reservoir_states_match_frozen_python_kernel() -> None:
     )
     for actual, reference in zip(observed, expected, strict=True):
         np.testing.assert_allclose(actual, reference, rtol=1e-13, atol=1e-13)
+    np.testing.assert_allclose(
+        _reservoir_final_states(
+            sequences,
+            input_weight=input_weight,
+            recurrent=recurrent,
+            bias=bias,
+            leak=0.4,
+        ),
+        expected[0],
+        rtol=1e-13,
+        atol=1e-13,
+    )
 
 
 def test_parallel_sequence_refits_preserve_serial_results_exactly() -> None:

@@ -1449,6 +1449,33 @@ def _reservoir_states(
     return final, energy, alignment
 
 
+def _reservoir_final_states(
+    sequences: np.ndarray,
+    *,
+    input_weight: np.ndarray,
+    recurrent: np.ndarray,
+    bias: np.ndarray,
+    leak: float,
+) -> np.ndarray:
+    """Fit-only reservoir path without discarded energy/alignment allocations."""
+
+    final = np.full((len(sequences), len(bias)), np.nan)
+    valid = np.isfinite(sequences).all(axis=(1, 2))
+    valid_sequences = sequences[valid]
+    if not len(valid_sequences):
+        return final
+    state = np.zeros((len(valid_sequences), len(bias)))
+    for step in range(sequences.shape[1]):
+        candidate = np.tanh(
+            valid_sequences[:, step, :] @ input_weight.T
+            + state @ recurrent.T
+            + bias
+        )
+        state = (1.0 - leak) * state + leak * candidate
+    final[valid] = state
+    return final
+
+
 def _fit_reservoir(
     sequences: np.ndarray,
     y: np.ndarray,
@@ -1472,7 +1499,7 @@ def _fit_reservoir(
         spectral_radius=spectral_radius,
         seed=seed,
     )
-    states, _, _ = _reservoir_states(
+    states = _reservoir_final_states(
         standardized,
         input_weight=input_weight,
         recurrent=recurrent,
