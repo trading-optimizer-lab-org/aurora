@@ -127,6 +127,7 @@ class TrainLaneEvaluator:
             raise LaneRegistryError("TRAIN_SPY_MANIFEST_SHA256_MISMATCH")
         self._datasets = datasets
         self._data_end = pd.Timestamp(_data_end).normalize()
+        self._validation_opened = _validation_opened
         self._maximum_date = (
             pd.Timestamp(maximum_date).normalize()
             if maximum_date is not None
@@ -221,7 +222,7 @@ class TrainLaneEvaluator:
                     )
                 if (
                     value.get("ready") is not True
-                    or value.get("validation_opened") is not False
+                    or value.get("validation_opened") is not self._validation_opened
                     or value.get("locked_opened") is not False
                     or not isinstance(value.get("artifacts"), Mapping)
                 ):

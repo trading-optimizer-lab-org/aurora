@@ -8,7 +8,7 @@ import json
 import math
 from pathlib import Path
 import re
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -278,6 +278,137 @@ def score_validation_returns(
     }
 
 
+def compose_selected_signals(
+    signals: Sequence[pd.Series],
+    composition: Mapping[str, Any],
+) -> pd.Series:
+    """Apply the frozen catalog composition semantics to selected signals."""
+
+    if not signals:
+        raise SelectedValidationError("VALIDATION_COMPOSITION_EMPTY")
+    index = signals[0].index
+    if any(not signal.index.equals(index) for signal in signals):
+        raise SelectedValidationError("VALIDATION_COMPONENT_INDEX_MISMATCH")
+    values = np.column_stack(
+        [signal.fillna(0.0).to_numpy(dtype=float) for signal in signals]
+    )
+    kind = str(composition.get("kind"))
+    if kind == "identity":
+        out = values[:, 0]
+    elif kind == "and":
+        out = np.where(
+            np.all(values == 1.0, axis=1),
+            1.0,
+            np.where(np.all(values == -1.0, axis=1), -1.0, 0.0),
+        )
+    elif kind == "gate":
+        base = values[:, int(composition.get("base_component_index", 0))]
+        out = np.where(
+            (base != 0.0) & np.all(values == base[:, None], axis=1),
+            base,
+            0.0,
+        )
+    elif kind == "override":
+        base = values[:, int(composition.get("base_component_index", 0))]
+        priority = values[:, int(composition["priority_component_index"])]
+        out = np.where(priority != 0.0, priority, base)
+    elif kind == "vote":
+        positive = np.sum(values == 1.0, axis=1)
+        negative = np.sum(values == -1.0, axis=1)
+        needed = (
+            values.shape[1]
+            if composition.get("mode") == "unanimity"
+            else values.shape[1] // 2 + 1
+        )
+        out = np.where(
+            positive >= needed,
+            1.0,
+            np.where(negative >= needed, -1.0, 0.0),
+        )
+    elif kind == "weighted_score":
+        weights = np.asarray(composition["weights"], dtype=float)
+        if (
+            weights.shape != (values.shape[1],)
+            or not np.isfinite(weights).all()
+            or float(np.abs(weights).sum()) == 0.0
+        ):
+            raise SelectedValidationError("VALIDATION_WEIGHT_MISMATCH")
+        out = np.sign(values @ weights / np.abs(weights).sum())
+    else:
+        raise SelectedValidationError(f"VALIDATION_COMPOSITION_UNKNOWN:{kind}")
+    result = pd.Series(out, index=index, dtype=float, name="decision")
+    return result.mask(result == 0.0)
+
+
+def write_validation_baselines(
+    evaluator: Callable[[str, Mapping[str, Any]], pd.DataFrame],
+    default_configurations: Mapping[str, Mapping[str, Any]],
+    output_dir: Path,
+) -> Mapping[str, Path]:
+    """Materialize F001-F050 on the authorized warm-up snapshot."""
+
+    output = Path(output_dir).resolve()
+    if output.exists():
+        raise SelectedValidationError("VALIDATION_BASELINE_OUTPUT_ALREADY_EXISTS")
+    roots = {family: output / f"baseline_{family}" for family in ("price", "market", "macro")}
+    artifacts: dict[str, dict[str, Mapping[str, Any]]] = {
+        family: {} for family in roots
+    }
+    for lane_number in range(1, 51):
+        lane_id = f"F{lane_number:03d}"
+        configuration = default_configurations.get(lane_id)
+        if not isinstance(configuration, Mapping):
+            raise SelectedValidationError(f"VALIDATION_BASELINE_CONFIG_MISSING:{lane_id}")
+        feature = evaluator(lane_id, configuration)
+        if not isinstance(feature, pd.DataFrame) or not {
+            "date",
+            "available_at",
+            "value",
+        }.issubset(feature.columns):
+            raise SelectedValidationError(f"VALIDATION_BASELINE_INVALID:{lane_id}")
+        dates = pd.to_datetime(feature["date"], errors="raise").dt.normalize()
+        available = pd.to_datetime(
+            feature["available_at"], errors="raise"
+        ).dt.normalize()
+        if (
+            feature.empty
+            or dates.duplicated().any()
+            or not dates.is_monotonic_increasing
+            or dates.max() > VALIDATION_END
+            or available.max() > VALIDATION_END
+        ):
+            raise SelectedValidationError(f"VALIDATION_BASELINE_BOUNDARY:{lane_id}")
+        family = "price" if lane_number <= 20 else "market" if lane_number <= 31 else "macro"
+        root = roots[family]
+        (root / "features").mkdir(parents=True, exist_ok=True)
+        target = root / "features" / f"{lane_id}.parquet"
+        feature.to_parquet(target, index=False)
+        artifacts[family][lane_id] = {
+            "path": f"features/{lane_id}.parquet",
+            "sha256": _sha256_file(target),
+        }
+    report_names = {
+        "price": "feature_smoke_report.json",
+        "market": "market_feature_smoke_report.json",
+        "macro": "macro_feature_smoke_report.json",
+    }
+    for family, root in roots.items():
+        report = {
+            "schema_version": 1,
+            "ready": True,
+            "validation_start": VALIDATION_START.date().isoformat(),
+            "validation_end": VALIDATION_END.date().isoformat(),
+            "validation_opened": True,
+            "locked_opened": False,
+            "artifacts": artifacts[family],
+        }
+        (root / report_names[family]).write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    return roots
+
+
 def _load_manifest(path: Path, *, expected_partition: str) -> Mapping[str, Any]:
     target = path / "snapshot_manifest.json"
     try:
@@ -421,7 +552,9 @@ __all__ = [
     "SelectionManifest",
     "ValidationSnapshotReceipt",
     "build_authorized_validation_snapshot",
+    "compose_selected_signals",
     "load_selection_manifest",
     "score_validation_returns",
     "validate_selection_manifest",
+    "write_validation_baselines",
 ]

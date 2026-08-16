@@ -13,9 +13,11 @@ from aurora.infra.sp500_megarun.selected_validation import (
     VALIDATION_ACK,
     SelectedValidationError,
     build_authorized_validation_snapshot,
+    compose_selected_signals,
     load_selection_manifest,
     score_validation_returns,
     validate_selection_manifest,
+    write_validation_baselines,
 )
 
 
@@ -170,6 +172,73 @@ def test_only_authorized_evaluator_can_mount_opened_validation(tmp_path):
         )
 
 
+def test_authorized_evaluator_accepts_only_validation_bound_baselines(tmp_path):
+    train = _write_snapshot(
+        tmp_path / "train_snapshot_1993_2010",
+        partition="train",
+        dates=["2010-12-31"],
+    )
+    validation = _write_snapshot(
+        tmp_path / "validation_snapshot_2011_2020",
+        partition="validation",
+        dates=["2011-01-03", "2020-12-31"],
+    )
+    receipt = build_authorized_validation_snapshot(
+        train,
+        validation,
+        tmp_path / "authorized_validation_snapshot_1993_2020",
+        authorization=VALIDATION_ACK,
+    )
+    roots = {}
+    report_names = {
+        "price": "feature_smoke_report.json",
+        "market": "market_feature_smoke_report.json",
+        "macro": "macro_feature_smoke_report.json",
+    }
+    for family, report_name in report_names.items():
+        root = tmp_path / f"baseline_{family}"
+        (root / "features").mkdir(parents=True)
+        artifacts = {}
+        if family == "price":
+            feature = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(["2011-01-03"]),
+                    "available_at": pd.to_datetime(["2011-01-03"]),
+                    "value": [1.0],
+                }
+            )
+            target = root / "features" / "F001.parquet"
+            feature.to_parquet(target, index=False)
+            artifacts["F001"] = {
+                "path": "features/F001.parquet",
+                "sha256": _sha256(target),
+            }
+        (root / report_name).write_text(
+            json.dumps(
+                {
+                    "ready": True,
+                    "validation_opened": True,
+                    "locked_opened": False,
+                    "artifacts": artifacts,
+                }
+            ),
+            encoding="utf-8",
+        )
+        roots[family] = root
+    evaluator = AuthorizedValidationLaneEvaluator(
+        receipt.snapshot_dir,
+        expected_manifest_sha256=receipt.manifest_sha256,
+        expected_spy_sha256=receipt.spy_sha256,
+        default_configurations={f"F{number:03d}": {} for number in range(1, 241)},
+        authorization=VALIDATION_ACK,
+        baseline_feature_dirs=roots,
+    )
+
+    loaded = evaluator._baseline_features(["F001"])
+
+    assert loaded["F001"]["date"].max() == pd.Timestamp("2011-01-03")
+
+
 def _selection_payload(count: int = 12):
     return {
         "schema_version": 1,
@@ -261,3 +330,59 @@ def test_validation_metrics_reject_any_locked_date():
 
     with pytest.raises(SelectedValidationError, match="LOCKED"):
         score_validation_returns(returns, returns)
+
+
+def test_selected_compositions_keep_exact_catalog_semantics():
+    index = pd.to_datetime(["2011-01-03", "2011-01-04", "2011-01-05"])
+    first = pd.Series([1.0, -1.0, pd.NA], index=index, dtype="Float64")
+    second = pd.Series([1.0, 1.0, -1.0], index=index)
+
+    pd.testing.assert_series_equal(
+        compose_selected_signals([first], {"kind": "identity"}),
+        pd.Series([1.0, -1.0, float("nan")], index=index, name="decision"),
+    )
+    pd.testing.assert_series_equal(
+        compose_selected_signals([first, second], {"kind": "and"}),
+        pd.Series([1.0, float("nan"), float("nan")], index=index, name="decision"),
+    )
+    assert compose_selected_signals(
+        [first, second],
+        {"kind": "weighted_score", "weights": [1.0, -0.5]},
+    ).tolist() == [1.0, -1.0, 1.0]
+    assert compose_selected_signals(
+        [first, second],
+        {"kind": "override", "base_component_index": 0, "priority_component_index": 1},
+    ).tolist() == [1.0, 1.0, -1.0]
+
+
+def test_validation_baselines_cover_f001_f050_and_record_open_boundary(tmp_path):
+    calls = []
+
+    def evaluator(lane_id, configuration):
+        calls.append((lane_id, configuration))
+        return pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2010-12-31", "2020-12-31"]),
+                "available_at": pd.to_datetime(["2010-12-31", "2020-12-31"]),
+                "value": [0.0, 1.0],
+            }
+        )
+
+    roots = write_validation_baselines(
+        evaluator,
+        {f"F{number:03d}": {"window": number} for number in range(1, 241)},
+        tmp_path / "validation_baselines",
+    )
+
+    assert [lane for lane, _ in calls] == [f"F{number:03d}" for number in range(1, 51)]
+    for family, expected_count in {"price": 20, "market": 11, "macro": 19}.items():
+        report_name = {
+            "price": "feature_smoke_report.json",
+            "market": "market_feature_smoke_report.json",
+            "macro": "macro_feature_smoke_report.json",
+        }[family]
+        report = json.loads((roots[family] / report_name).read_text("utf-8"))
+        assert report["ready"] is True
+        assert report["validation_opened"] is True
+        assert report["locked_opened"] is False
+        assert len(report["artifacts"]) == expected_count
