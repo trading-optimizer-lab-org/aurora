@@ -28,8 +28,11 @@ from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
     verify_runtime_input_pack,
 )
 from aurora.infra.sp500_megarun.dehb_worker import (
+    PreparedLaneCandidate,
+    candidate_fingerprints,
     feature_frame_to_decisions,
     load_train_total_return_ledger,
+    score_prepared_lane_candidate,
 )
 from aurora.infra.sp500_megarun.feature_contract import (
     load_and_validate_feature_contract,
@@ -149,6 +152,32 @@ def main() -> int:
     signal = decisions.fillna(0.0).to_numpy(np.int8)
     values = pd.to_numeric(frame["value"], errors="raise").to_numpy(np.float64)
     finite_absolute = np.abs(values[np.isfinite(values)])
+    recipe_configuration = {
+        "scientific_recipe_sha256": target["scientific_recipe_sha256"]
+    }
+    strategy_fingerprint, position_fingerprint = candidate_fingerprints(
+        target_id,
+        recipe_configuration,
+        decisions,
+    )
+    prepared = PreparedLaneCandidate(
+        lane_id=target_id,
+        configuration=recipe_configuration,
+        fidelity=27,
+        target_years=tuple(range(1998, 2011)),
+        decisions=decisions,
+        strategy_fingerprint=strategy_fingerprint,
+        position_fingerprint=position_fingerprint,
+    )
+    result = score_prepared_lane_candidate(
+        prepared,
+        ledger=ledger,
+        fidelity_years={27: tuple(range(1998, 2011))},
+        allowed_end=campaign.search_end,
+    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    np.save(args.output.parent / "feature_values.npy", values, allow_pickle=False)
+    np.save(args.output.parent / "decisions.npy", signal, allow_pickle=False)
     payload = {
         "schema_version": 1,
         "target_index": args.target_index,
@@ -161,6 +190,9 @@ def main() -> int:
             b"catalog-component-probe-v1\0",
             signal.tobytes(),
         ),
+        "position_fingerprint": position_fingerprint,
+        "strategy_fingerprint": strategy_fingerprint,
+        "result": result,
         "positive_decisions": int(np.count_nonzero(signal == 1)),
         "negative_decisions": int(np.count_nonzero(signal == -1)),
         "flat_decisions": int(np.count_nonzero(signal == 0)),
@@ -182,7 +214,6 @@ def main() -> int:
         "validation_opened": False,
         "locked_opened": False,
     }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", "utf-8")
     print(json.dumps(payload, sort_keys=True))
     return 0
