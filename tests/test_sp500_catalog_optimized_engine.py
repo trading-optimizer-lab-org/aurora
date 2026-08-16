@@ -28,6 +28,12 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "score_prepared_lane_candidate" not in Path(
         "scripts/run_sp500_optimized_recipe_worker.py"
     ).read_text("utf-8")
+    assert "score_ledger_decisions" not in Path(
+        "scripts/run_sp500_optimized_recipe_worker.py"
+    ).read_text("utf-8")
+    assert "FastTrainObjective" in Path(
+        "scripts/run_sp500_optimized_recipe_worker.py"
+    ).read_text("utf-8")
     assert "scientific_stage_seconds" in Path(
         "scripts/run_sp500_optimized_recipe_worker.py"
     ).read_text("utf-8")
@@ -42,6 +48,7 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "--resume-root" in run
     assert "python -m scripts.plan_sp500_component_schedule" in run
     assert "python -m scripts.audit_sp500_catalog_actions_run" in run
+    assert "PYTHONPATH: ${{ github.workspace }}/.." in run
     assert "python scripts/verify_sp500_optimized_run.py" in run
     assert "  verify_qualification:" not in run
     assert "sp500-catalog-runtime-audit" in run
@@ -165,6 +172,46 @@ def test_single_pass_recipe_score_is_scientifically_exact() -> None:
     )
 
     assert scientific_result_sha256(observed) == scientific_result_sha256(expected)
+
+
+def test_fast_train_objective_is_exactly_equal_to_dataframe_reference() -> None:
+    from aurora.infra.sp500_megarun.catalog_fast_objective import (
+        FastTrainObjective,
+    )
+    from aurora.infra.sp500_megarun.dehb_objective import score_ledger_decisions
+    from scripts.run_sp500_strategy_catalog_shard import (
+        FULL_YEARS,
+        weekly_winning_or_positive_metrics,
+    )
+
+    index = pd.bdate_range("1996-01-02", "2010-12-31")
+    ledger = pd.DataFrame(
+        {"long_return": np.sin(np.arange(len(index))) * 0.0003},
+        index=index,
+    )
+    values = np.where(np.arange(len(index)) % 11 == 0, -1.0, np.nan)
+    values[np.arange(len(index)) % 17 == 0] = 1.0
+    decisions = pd.Series(values, index=index)
+
+    expected = score_ledger_decisions(
+        ledger,
+        decisions,
+        target_years=FULL_YEARS,
+        allowed_end="2010-12-31",
+    )
+    observed = FastTrainObjective(
+        ledger,
+        target_years=FULL_YEARS,
+        allowed_end="2010-12-31",
+    ).score(decisions)
+
+    assert observed.score == expected.score
+    pd.testing.assert_series_equal(observed.strategy_returns, expected.strategy_returns)
+    pd.testing.assert_series_equal(observed.spy_returns, expected.spy_returns)
+    assert observed.weekly_calendar_metrics == weekly_winning_or_positive_metrics(
+        expected.strategy_returns,
+        expected.spy_returns,
+    )
 
 
 def test_equivalence_gate_allows_only_declared_additive_weekly_metrics() -> None:

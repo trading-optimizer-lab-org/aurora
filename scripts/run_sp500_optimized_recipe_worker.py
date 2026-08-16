@@ -22,6 +22,7 @@ from aurora.infra.sp500_megarun.catalog_admission import (
     verify_catalog_worker_admission,
 )
 from aurora.infra.sp500_megarun.catalog_component_store import CatalogComponentStore
+from aurora.infra.sp500_megarun.catalog_fast_objective import FastTrainObjective
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
@@ -42,7 +43,6 @@ from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
 )
 from aurora.infra.sp500_megarun.dehb_objective import (
     candidate_rank_key,
-    score_ledger_decisions,
 )
 from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
     verify_numeric_runtime_environment,
@@ -56,7 +56,6 @@ from scripts.run_sp500_strategy_catalog_shard import (
     FULL_YEARS,
     compose_signals,
     merge_weekly_winning_or_positive_metrics,
-    weekly_winning_or_positive_metrics,
 )
 from scripts.compile_sp500_catalog_recipes import verify_recipe_dag_artifacts
 
@@ -71,6 +70,7 @@ _RESULT_SCHEMA = pa.schema(
 _PROCESS_STORE: CatalogComponentStore | None = None
 _PROCESS_LEDGER: pd.DataFrame | None = None
 _PROCESS_SEARCH_END: str | None = None
+_PROCESS_OBJECTIVE: FastTrainObjective | None = None
 
 
 def _signals_for_components(
@@ -94,18 +94,19 @@ def _evaluate(
     decisions: pd.Series,
     ledger: pd.DataFrame,
     search_end: str,
+    objective: FastTrainObjective | None = None,
 ) -> tuple[dict[str, object], str]:
     strategy_fingerprint, position_fingerprint = candidate_fingerprints(
         lane_id,
         configuration,
         decisions,
     )
-    realized = score_ledger_decisions(
+    active_objective = objective or FastTrainObjective(
         ledger,
-        decisions,
         target_years=FULL_YEARS,
         allowed_end=search_end,
     )
+    realized = active_objective.score(decisions)
     score = realized.score
     archive_key = candidate_rank_key(score)
     config_sha256 = hashlib.sha256(
@@ -152,10 +153,7 @@ def _evaluate(
     )
     result["info"] = merge_weekly_winning_or_positive_metrics(
         result["info"],
-        weekly_winning_or_positive_metrics(
-            realized.strategy_returns,
-            realized.spy_returns,
-        ),
+        realized.weekly_calendar_metrics,
     )
     return result, position_fingerprint
 
@@ -171,7 +169,7 @@ def _initialize_recipe_process(
 ) -> None:
     """Load immutable mmap and train-only ledger once per persistent process."""
 
-    global _PROCESS_LEDGER, _PROCESS_SEARCH_END, _PROCESS_STORE
+    global _PROCESS_LEDGER, _PROCESS_OBJECTIVE, _PROCESS_SEARCH_END, _PROCESS_STORE
     _PROCESS_STORE = CatalogComponentStore.open(
         Path(component_store),
         expected_data_snapshot_sha256=data_snapshot_sha256,
@@ -184,12 +182,18 @@ def _initialize_recipe_process(
         expected_spy_sha256=spy_sha256,
     )
     _PROCESS_SEARCH_END = search_end
+    _PROCESS_OBJECTIVE = FastTrainObjective(
+        _PROCESS_LEDGER,
+        target_years=FULL_YEARS,
+        allowed_end=search_end,
+    )
 
 
 def _evaluate_catalog_row(row: dict[str, Any]) -> dict[str, object]:
     if (
         _PROCESS_STORE is None
         or _PROCESS_LEDGER is None
+        or _PROCESS_OBJECTIVE is None
         or _PROCESS_SEARCH_END is None
     ):
         raise RuntimeError("RECIPE_PROCESS_NOT_INITIALIZED")
@@ -212,6 +216,7 @@ def _evaluate_catalog_row(row: dict[str, Any]) -> dict[str, object]:
         decisions=decisions,
         ledger=_PROCESS_LEDGER,
         search_end=_PROCESS_SEARCH_END,
+        objective=_PROCESS_OBJECTIVE,
     )
     objective_seconds = time.perf_counter() - started
     started = time.perf_counter()
@@ -380,6 +385,11 @@ def main() -> int:
     scientific_stage_seconds["write"] = time.perf_counter() - write_started
     selected_output: list[dict[str, object]] = []
     if args.shard_index == 0:
+        selected_objective = FastTrainObjective(
+            ledger,
+            target_years=FULL_YEARS,
+            allowed_end=campaign.search_end,
+        )
         selected_rows = json.loads(args.selected_config.read_text("utf-8"))
         for selected in selected_rows:
             lane_id = str(selected["lane_id"])
@@ -397,6 +407,7 @@ def main() -> int:
                 decisions=decisions,
                 ledger=ledger,
                 search_end=campaign.search_end,
+                objective=selected_objective,
             )
             selected_output.append(
                 {

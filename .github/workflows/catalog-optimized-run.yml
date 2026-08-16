@@ -368,6 +368,7 @@ jobs:
         env:
           PENDING_RECIPES: ${{ needs.plan.outputs.pending_recipe_count }}
           COMPONENT_STORE_RUN_ID: ${{ inputs.component_store_run_id }}
+          PYTHONPATH: ${{ github.workspace }}/..
         shell: bash
         run: |
           thermal_state="cold"
