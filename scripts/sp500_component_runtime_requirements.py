@@ -7,6 +7,9 @@ import json
 from pathlib import Path
 
 from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
+from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
+    RUNTIME_FRAGMENT_DATASET_IDS,
+)
 from aurora.infra.sp500_megarun.strategy_catalog import configuration_sha256
 
 
@@ -53,7 +56,12 @@ def main() -> int:
             raise SystemExit(f"COMPONENT_RUNTIME_LANE_UNKNOWN:{component_id}")
         required.update(lane_datasets[lane_id])
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text("\n".join(sorted(required)) + ("\n" if required else ""), "utf-8")
+    fragment_required = required.intersection(RUNTIME_FRAGMENT_DATASET_IDS)
+    args.output.write_text(
+        "\n".join(sorted(fragment_required))
+        + ("\n" if fragment_required else ""),
+        "utf-8",
+    )
     return 0
 
 
