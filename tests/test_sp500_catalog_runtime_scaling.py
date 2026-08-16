@@ -618,6 +618,13 @@ def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> 
             "serialization": 1.0,
             "write": 2.0,
         },
+        "scientific_wall_stage_seconds": {
+            "initialization": 1.0,
+            "evaluation": 16.0,
+            "write": 2.0,
+            "selected_verification": 1.0,
+        },
+        "scientific_attribution_difference_ratio": 0.0,
         "worker_cpu_seconds": 18.0,
         "worker_peak_memory_bytes": 2_000,
         "worker_available_memory_bytes": 10_000,
@@ -649,6 +656,8 @@ def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> 
     assert report["artifact_bytes_uploaded"] == 1000
     assert report["result_bytes_per_recipe"] == 400.0
     assert report["scientific_stage_seconds"]["objective"] == 12.0
+    assert report["scientific_wall_stage_seconds"]["evaluation"] == 16.0
+    assert report["scientific_attribution_difference_ratio"] == 0.0
     assert report["accounted_runner_seconds"] == report["runner_seconds"]
     assert report["accounting_difference_ratio"] <= 0.02
     assert report["worker_cpu_seconds"] == 18.0

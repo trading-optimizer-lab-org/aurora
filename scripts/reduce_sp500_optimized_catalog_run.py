@@ -201,6 +201,25 @@ def main() -> int:
             "write",
         )
     }
+    scientific_wall_stage_seconds = {
+        name: sum(
+            float(receipt.get("scientific_wall_stage_seconds", {}).get(name, 0.0))
+            for receipt in worker_receipts
+        )
+        for name in (
+            "initialization",
+            "evaluation",
+            "write",
+            "selected_verification",
+        )
+    }
+    scientific_attribution_difference_ratio = max(
+        (
+            float(receipt.get("scientific_attribution_difference_ratio", 1.0))
+            for receipt in worker_receipts
+        ),
+        default=1.0,
+    )
     worker_cpu_seconds = sum(
         float(receipt.get("cpu_seconds", 0.0)) for receipt in worker_receipts
     )
@@ -263,6 +282,10 @@ def main() -> int:
         "processes_per_worker": plan.processes_per_worker,
         "block_size": plan.block_size,
         "scientific_stage_seconds": scientific_stage_seconds,
+        "scientific_wall_stage_seconds": scientific_wall_stage_seconds,
+        "scientific_attribution_difference_ratio": (
+            scientific_attribution_difference_ratio
+        ),
         "worker_cpu_seconds": worker_cpu_seconds,
         "worker_peak_memory_bytes": worker_peak_memory_bytes,
         "worker_available_memory_bytes": worker_available_memory_bytes,

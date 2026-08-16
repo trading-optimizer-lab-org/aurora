@@ -184,6 +184,12 @@ def build_actions_runtime_audit(
     scientific_stage_seconds = receipt.get("scientific_stage_seconds", {})
     if not isinstance(scientific_stage_seconds, Mapping):
         raise ValueError("CATALOG_ACTIONS_SCIENTIFIC_STAGES_INVALID")
+    scientific_wall_stage_seconds = receipt.get(
+        "scientific_wall_stage_seconds",
+        {},
+    )
+    if not isinstance(scientific_wall_stage_seconds, Mapping):
+        raise ValueError("CATALOG_ACTIONS_SCIENTIFIC_WALL_STAGES_INVALID")
     return {
         "schema_version": 1,
         "run_id": int(run["id"]),
@@ -207,6 +213,13 @@ def build_actions_runtime_audit(
             str(name): float(value)
             for name, value in scientific_stage_seconds.items()
         },
+        "scientific_wall_stage_seconds": {
+            str(name): float(value)
+            for name, value in scientific_wall_stage_seconds.items()
+        },
+        "scientific_attribution_difference_ratio": float(
+            receipt.get("scientific_attribution_difference_ratio", 1.0)
+        ),
         "worker_cpu_seconds": float(receipt.get("worker_cpu_seconds", 0.0)),
         "worker_peak_memory_bytes": int(
             receipt.get("worker_peak_memory_bytes", 0)

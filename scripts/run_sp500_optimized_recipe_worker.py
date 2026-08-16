@@ -261,6 +261,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    scientific_wall_started = time.perf_counter()
     resource_started = ResourceUsageSnapshot.capture()
     numeric_runtime = verify_numeric_runtime_environment()
     plan = verify_catalog_worker_admission(
@@ -344,6 +345,8 @@ def main() -> int:
         campaign.train_snapshot_manifest_sha256,
         campaign.train_spy_sha256,
     )
+    evaluation_started = time.perf_counter()
+    initialization_seconds = evaluation_started - scientific_wall_started
     if process_count == 1:
         _initialize_recipe_process(*initializer_args)
         output = [_evaluate_catalog_row(row) for row in assigned]
@@ -361,6 +364,7 @@ def main() -> int:
                     chunksize=plan.block_size,
                 )
             )
+    evaluation_seconds = time.perf_counter() - evaluation_started
     args.output_dir.mkdir(parents=True, exist_ok=False)
     result_path = args.output_dir / "results.parquet"
     scientific_stage_seconds = {
@@ -384,6 +388,7 @@ def main() -> int:
     )
     scientific_stage_seconds["write"] = time.perf_counter() - write_started
     selected_output: list[dict[str, object]] = []
+    selected_started = time.perf_counter()
     if args.shard_index == 0:
         selected_objective = FastTrainObjective(
             ledger,
@@ -424,6 +429,21 @@ def main() -> int:
             ),
             "utf-8",
         )
+    selected_seconds = time.perf_counter() - selected_started
+    scientific_wall_seconds = time.perf_counter() - scientific_wall_started
+    scientific_wall_stage_seconds = {
+        "initialization": initialization_seconds,
+        "evaluation": evaluation_seconds,
+        "write": scientific_stage_seconds["write"],
+        "selected_verification": selected_seconds,
+    }
+    attributed_seconds = sum(scientific_wall_stage_seconds.values())
+    scientific_attribution_difference_ratio = (
+        abs(scientific_wall_seconds - attributed_seconds)
+        / scientific_wall_seconds
+        if scientific_wall_seconds
+        else 0.0
+    )
     bytes_written = result_path.stat().st_size
     resource_usage = resource_usage_delta(
         resource_started,
@@ -457,6 +477,11 @@ def main() -> int:
                 "processes_per_worker": process_count,
                 "block_size": plan.block_size,
                 "scientific_stage_seconds": scientific_stage_seconds,
+                "scientific_wall_stage_seconds": scientific_wall_stage_seconds,
+                "scientific_wall_seconds": scientific_wall_seconds,
+                "scientific_attribution_difference_ratio": (
+                    scientific_attribution_difference_ratio
+                ),
                 **resource_usage,
                 "validation_opened": False,
                 "locked_opened": False,
