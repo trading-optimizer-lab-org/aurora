@@ -66,7 +66,7 @@ jobs:
           --feature-contract config/sp500_megarun_feature_contract_240.json
           --catalog-dir config/sp500_megarun_strategy_catalog_v1
           --runtime-input-pack "$RUNNER_TEMP/runtime"
-          --selected-config config/sp500_megarun_strategy_catalog_v1/selected_dehb_13.json
+          --selected-config config/sp500_megarun_selected_dehb_13.json
           --shard-index "${{ matrix.shard }}" --total-shards 360
           --output-dir "outputs/shard-${{ matrix.shard }}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
