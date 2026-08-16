@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 
@@ -24,6 +25,9 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "plan.processes_per_worker" in Path(
         "scripts/build_sp500_component_store.py"
     ).read_text("utf-8")
+    assert "score_prepared_lane_candidate" not in Path(
+        "scripts/run_sp500_optimized_recipe_worker.py"
+    ).read_text("utf-8")
     assert "component_store_run_id" in worker
     assert "component_store_run_id" in run
     assert "component_cost_run_id" in run
@@ -34,6 +38,11 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "python -m scripts.plan_sp500_component_schedule" in run
     assert "python -m scripts.audit_sp500_catalog_actions_run" in run
     assert "sp500-catalog-runtime-audit" in run
+    assert "python -m scripts.compile_sp500_catalog_recipes" in run
+    assert "--recipe-dag" in worker
+    assert "verify_recipe_dag_artifacts" in Path(
+        "scripts/run_sp500_optimized_recipe_worker.py"
+    ).read_text("utf-8")
 
     combined = "\n".join(
         Path(path).read_text("utf-8")
@@ -72,6 +81,80 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "python -m scripts.verify_sp500_optimized_run" in verify_only
     assert "if: ${{ always() }}" in verify_only
     assert _RESULT_SCHEMA.names == ["strategy_id", "result_json"]
+
+
+def test_single_pass_recipe_score_is_scientifically_exact() -> None:
+    from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+        scientific_result_sha256,
+    )
+    from aurora.infra.sp500_megarun.dehb_worker import (
+        PreparedLaneCandidate,
+        candidate_fingerprints,
+        score_prepared_lane_candidate,
+    )
+    from scripts.run_sp500_optimized_recipe_worker import _evaluate
+    from scripts.run_sp500_strategy_catalog_shard import (
+        FULL_FIDELITY,
+        FULL_YEARS,
+        merge_weekly_winning_or_positive_metrics,
+        weekly_winning_or_positive_metrics,
+    )
+    from aurora.infra.sp500_megarun.dehb_objective import score_ledger_decisions
+
+    index = pd.bdate_range("1998-01-02", "2010-12-31")
+    ledger = pd.DataFrame(
+        {"long_return": np.where(np.arange(len(index)) % 2, 0.0002, -0.0001)},
+        index=index,
+    )
+    decisions = pd.Series(
+        np.where(np.arange(len(index)) % 7 < 4, 1.0, -1.0),
+        index=index,
+    )
+    configuration = {"scientific_recipe_sha256": "a" * 64}
+    observed, _ = _evaluate(
+        lane_id="unit",
+        configuration=configuration,
+        decisions=decisions,
+        ledger=ledger,
+        search_end="2010-12-31",
+    )
+    strategy_fingerprint, position_fingerprint = candidate_fingerprints(
+        "unit",
+        configuration,
+        decisions,
+    )
+    prepared = PreparedLaneCandidate(
+        lane_id="unit",
+        configuration=configuration,
+        fidelity=FULL_FIDELITY,
+        target_years=FULL_YEARS,
+        decisions=decisions,
+        strategy_fingerprint=strategy_fingerprint,
+        position_fingerprint=position_fingerprint,
+    )
+    expected = dict(
+        score_prepared_lane_candidate(
+            prepared,
+            ledger=ledger,
+            fidelity_years={FULL_FIDELITY: FULL_YEARS},
+            allowed_end="2010-12-31",
+        )
+    )
+    realized = score_ledger_decisions(
+        ledger,
+        decisions,
+        target_years=FULL_YEARS,
+        allowed_end="2010-12-31",
+    )
+    expected["info"] = merge_weekly_winning_or_positive_metrics(
+        expected["info"],
+        weekly_winning_or_positive_metrics(
+            realized.strategy_returns,
+            realized.spy_returns,
+        ),
+    )
+
+    assert scientific_result_sha256(observed) == scientific_result_sha256(expected)
 
 
 def test_equivalence_gate_allows_only_declared_additive_weekly_metrics() -> None:
@@ -489,6 +572,28 @@ def test_recipe_compiler_canonicalizes_commutative_inputs_but_keeps_explanation(
     assert compiled.recipe_count == 2
     assert compiled.recipes[0].dag_sha256 == compiled.recipes[1].dag_sha256
     assert [item.strategy_id for item in compiled.recipes] == ["left", "right"]
+
+
+def test_authoritative_recipe_dag_artifact_preserves_every_catalog_row(
+    tmp_path: Path,
+) -> None:
+    from scripts.compile_sp500_catalog_recipes import (
+        verify_recipe_dag_artifacts,
+        write_recipe_dag_artifacts,
+    )
+
+    catalog = Path("config/sp500_megarun_strategy_catalog_v1/catalog.jsonl")
+    manifest = write_recipe_dag_artifacts(catalog, tmp_path)
+    verified = verify_recipe_dag_artifacts(
+        tmp_path / "recipe_dag.parquet",
+        tmp_path / "recipe_dag_manifest.json",
+    )
+
+    assert manifest["recipe_count"] == 37_258
+    assert verified == manifest
+    assert manifest["unique_dag_count"] <= manifest["recipe_count"]
+    assert manifest["validation_opened"] is False
+    assert manifest["locked_opened"] is False
 
 
 @pytest.mark.parametrize("bit_packed", [False, True])

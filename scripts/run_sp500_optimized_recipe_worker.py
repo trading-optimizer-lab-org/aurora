@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
+import hashlib
 import json
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
@@ -27,10 +29,15 @@ from aurora.infra.sp500_megarun.dehb_campaign_contract import (
     load_and_validate_campaign_contract,
 )
 from aurora.infra.sp500_megarun.dehb_worker import (
-    PreparedLaneCandidate,
     candidate_fingerprints,
     load_train_total_return_ledger,
-    score_prepared_lane_candidate,
+)
+from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+    normalize_scientific_result,
+)
+from aurora.infra.sp500_megarun.dehb_objective import (
+    candidate_rank_key,
+    score_ledger_decisions,
 )
 from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
     verify_numeric_runtime_environment,
@@ -46,6 +53,7 @@ from scripts.run_sp500_strategy_catalog_shard import (
     merge_weekly_winning_or_positive_metrics,
     weekly_winning_or_positive_metrics,
 )
+from scripts.compile_sp500_catalog_recipes import verify_recipe_dag_artifacts
 
 
 _RESULT_SCHEMA = pa.schema(
@@ -87,30 +95,55 @@ def _evaluate(
         configuration,
         decisions,
     )
-    prepared = PreparedLaneCandidate(
-        lane_id=lane_id,
-        configuration=configuration,
-        fidelity=FULL_FIDELITY,
-        target_years=FULL_YEARS,
-        decisions=decisions,
-        strategy_fingerprint=strategy_fingerprint,
-        position_fingerprint=position_fingerprint,
-    )
-    result = dict(
-        score_prepared_lane_candidate(
-            prepared,
-            ledger=ledger,
-            fidelity_years={FULL_FIDELITY: FULL_YEARS},
-            allowed_end=search_end,
-        )
-    )
-    from aurora.infra.sp500_megarun.dehb_objective import score_ledger_decisions
-
     realized = score_ledger_decisions(
         ledger,
         decisions,
         target_years=FULL_YEARS,
         allowed_end=search_end,
+    )
+    score = realized.score
+    archive_key = candidate_rank_key(score)
+    config_sha256 = hashlib.sha256(
+        json.dumps(
+            configuration,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    result = dict(
+        normalize_scientific_result(
+            {
+                "fitness": float(score.dehb_fitness),
+                "cost": float(FULL_FIDELITY),
+                "info": {
+                    "lane_id": lane_id,
+                    "fidelity": FULL_FIDELITY,
+                    "target_years": list(FULL_YEARS),
+                    "config": dict(configuration),
+                    "config_sha256": config_sha256,
+                    "strategy_fingerprint": strategy_fingerprint,
+                    "position_fingerprint": position_fingerprint,
+                    "train_feasible": score.feasible,
+                    "failed_years": list(score.failed_years),
+                    "annual_returns": {
+                        str(year): asdict(row)
+                        for year, row in score.annual_returns.items()
+                    },
+                    "annualized_strategy_return": score.annualized_strategy_return,
+                    "annualized_spy_return": score.annualized_spy_return,
+                    "annualized_alpha": score.annualized_alpha,
+                    "weekly_spy_beat_rate": score.weekly_spy_beat_rate,
+                    "weeks_beating_spy": score.weeks_beating_spy,
+                    "week_count": score.week_count,
+                    "archive_key": list(archive_key),
+                    "objective_runtime_seconds": 0.0,
+                    "full_fidelity": True,
+                    "validation_opened": False,
+                    "locked_opened": False,
+                },
+            }
+        )
     )
     result["info"] = merge_weekly_winning_or_positive_metrics(
         result["info"],
@@ -192,6 +225,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--resolved-contract", type=Path, required=True)
     parser.add_argument("--run-plan", type=Path, required=True)
     parser.add_argument("--resume-work-manifest", type=Path, required=True)
+    parser.add_argument("--recipe-dag", type=Path, required=True)
+    parser.add_argument("--recipe-dag-manifest", type=Path, required=True)
     parser.add_argument("--admission-token", required=True)
     parser.add_argument("--shard-index", type=int, required=True)
     parser.add_argument("--total-shards", type=int, required=True)
@@ -249,6 +284,24 @@ def main() -> int:
         for line in (args.catalog_dir / "catalog.jsonl").read_text("utf-8").splitlines()
         if line
     ]
+    dag_manifest = verify_recipe_dag_artifacts(
+        args.recipe_dag,
+        args.recipe_dag_manifest,
+    )
+    dag_table = pq.read_table(args.recipe_dag)
+    dag_strategy_ids = dag_table.column("strategy_id").to_pylist()
+    dag_science_ids = dag_table.column("scientific_recipe_sha256").to_pylist()
+    dag_index = dict(zip(dag_strategy_ids, dag_science_ids, strict=True))
+    if (
+        int(dag_manifest["recipe_count"]) != len(rows)
+        or len(dag_index) != len(rows)
+        or any(
+            dag_index.get(str(row["strategy_id"]))
+            != str(row["scientific_recipe_sha256"])
+            for row in rows
+        )
+    ):
+        raise SystemExit("RECIPE_DAG_CATALOG_MISMATCH")
     by_strategy_id = {str(row["strategy_id"]): row for row in rows}
     assigned_ids = work_manifest.assign(args.shard_index)
     try:
@@ -345,6 +398,7 @@ def main() -> int:
                 "science_identity_sha256": canonical_sha256(resolved.science),
                 "catalog_manifest_sha256": resolved.science.catalog_manifest_sha256,
                 "work_manifest_sha256": work_manifest.manifest_sha256,
+                "recipe_dag_manifest_sha256": dag_manifest["manifest_sha256"],
                 "evaluation_origin": "physical",
                 "component_manifest_sha256": store.manifest.manifest_sha256,
                 "numeric_runtime_profile_sha256": numeric_runtime["profile_sha256"],

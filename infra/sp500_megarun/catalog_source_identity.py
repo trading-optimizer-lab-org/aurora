@@ -26,6 +26,7 @@ _INFRA_FIXED = (
     ".github/workflows/catalog-optimized-worker.yml",
     "scripts/build_sp500_component_store.py",
     "scripts/audit_sp500_catalog_actions_run.py",
+    "scripts/compile_sp500_catalog_recipes.py",
     "scripts/merge_sp500_component_store.py",
     "scripts/plan_sp500_component_schedule.py",
     "scripts/plan_sp500_optimized_catalog_run.py",

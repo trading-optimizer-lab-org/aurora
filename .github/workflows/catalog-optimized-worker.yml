@@ -58,6 +58,8 @@ jobs:
           --resolved-contract "$RUNNER_TEMP/plan/resolved_contract.json"
           --run-plan "$RUNNER_TEMP/plan/run_plan.json"
           --resume-work-manifest "$RUNNER_TEMP/plan/resume_work_manifest.json"
+          --recipe-dag "$RUNNER_TEMP/plan/recipe_dag.parquet"
+          --recipe-dag-manifest "$RUNNER_TEMP/plan/recipe_dag_manifest.json"
           --admission-token "${{ inputs.admission_token_sha256 }}"
           --shard-index "${{ inputs.shard_index }}" --total-shards "${{ inputs.active_workers }}"
           --output-dir "outputs/shard-${{ inputs.shard_index }}"

@@ -103,6 +103,9 @@ jobs:
             --github-output "$GITHUB_OUTPUT" \
             "${resume_args[@]}" \
             "${benchmark_args[@]}"
+          python -m scripts.compile_sp500_catalog_recipes \
+            --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl \
+            --output-dir outputs/plan
       - if: ${{ steps.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' && inputs.component_cost_run_id == '' }}
         run: exit 1
       - name: Download latest compatible measured component costs
