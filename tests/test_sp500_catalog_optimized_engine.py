@@ -17,6 +17,13 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "python -m scripts.run_sp500_optimized_recipe_worker" in worker
     assert "component_store_run_id" in worker
     assert "component_store_run_id" in run
+    assert "component_cost_run_id" in run
+    assert "python -m scripts.plan_sp500_component_schedule" in run
+    component_worker = Path(
+        ".github/workflows/catalog-component-worker.yml"
+    ).read_text(encoding="utf-8")
+    assert "--component-schedule" in component_worker
+    assert "component_schedule.json" in component_worker
     assert "inputs.component_store_run_id == ''" in run
     resume_gate = (
         "always() && needs.plan.result == 'success' && "
@@ -169,6 +176,46 @@ def test_cost_model_and_affinity_scheduler_are_deterministic() -> None:
         "r3",
     ]
     assert first.tail_ratio <= 1.25
+
+
+def test_component_schedule_uses_measured_costs_and_assigns_each_key_once() -> None:
+    from aurora.infra.sp500_megarun.catalog_cost_model import CatalogCostModelV1
+    from aurora.infra.sp500_megarun.catalog_scheduler import schedule_components
+
+    profiles = {
+        f"F069:{'a' * 64}": {
+            "configuration_sha256": "a" * 64,
+            "duration_samples": [20.0, 22.0, 24.0],
+        },
+        f"F069:{'b' * 64}": {
+            "configuration_sha256": "b" * 64,
+            "duration_samples": [18.0, 20.0, 21.0],
+        },
+        f"F001:{'c' * 64}": {
+            "configuration_sha256": "c" * 64,
+            "duration_samples": [1.0, 1.1, 1.2],
+        },
+        f"F001:{'d' * 64}": {
+            "configuration_sha256": "d" * 64,
+            "duration_samples": [1.0, 1.1, 1.2],
+        },
+    }
+    model = CatalogCostModelV1.from_performance_profiles(
+        profiles,
+        fallback_seconds=1.0,
+    )
+    components = [
+        {"lane_id": "F069" if key in "ab" else "F001", "configuration_sha256": key * 64}
+        for key in "abcd"
+    ]
+
+    schedule = schedule_components(components, model=model, workers=2)
+
+    assigned = [key for shard in schedule.shards for key in shard.component_ids]
+    assert sorted(assigned) == sorted(key * 64 for key in "abcd")
+    assert len(assigned) == len(set(assigned)) == 4
+    assert all(shard.estimated_seconds > 0 for shard in schedule.shards)
+    assert schedule.tail_ratio < 1.2
 
 
 def test_component_store_round_trip_is_exact_and_conflicts_fail(tmp_path: Path) -> None:

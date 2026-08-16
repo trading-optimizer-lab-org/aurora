@@ -54,6 +54,7 @@ jobs:
           --runtime-input-pack "$RUNNER_TEMP/runtime"
           --resolved-contract "$RUNNER_TEMP/plan/resolved_contract.json"
           --run-plan "$RUNNER_TEMP/plan/run_plan.json"
+          --component-schedule "$RUNNER_TEMP/plan/component_schedule.json"
           --admission-token "${{ inputs.admission_token_sha256 }}"
           --component-shard-index "${{ inputs.component_shard_index }}"
           --total-component-shards 60

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import statistics
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 from pydantic import Field
 
@@ -52,6 +53,30 @@ class CatalogCostModelV1(FrozenModel):
             "fallback_seconds": float(fallback_seconds),
         }
         return cls(**identity, model_sha256=canonical_sha256(identity))
+
+    @classmethod
+    def from_performance_profiles(
+        cls,
+        profiles: Mapping[str, Mapping[str, Any]],
+        *,
+        fallback_seconds: float,
+    ) -> CatalogCostModelV1:
+        samples: dict[str, tuple[float, ...]] = {}
+        for profile in profiles.values():
+            component_id = str(profile.get("configuration_sha256", ""))
+            raw_values = profile.get("duration_samples")
+            if (
+                not component_id
+                or isinstance(raw_values, (str, bytes))
+                or not isinstance(raw_values, Sequence)
+            ):
+                raise ValueError("CATALOG_COST_PROFILE_INVALID")
+            values = tuple(float(value) for value in raw_values)
+            previous = samples.get(component_id)
+            if previous is not None and previous != values:
+                raise ValueError("CATALOG_COST_PROFILE_CONFLICT")
+            samples[component_id] = values
+        return cls.from_samples(samples, fallback_seconds=fallback_seconds)
 
     def estimate(self, component_id: str, *, conservative: bool = True) -> float:
         for item in self.components:

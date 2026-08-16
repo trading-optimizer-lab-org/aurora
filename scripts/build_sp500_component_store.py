@@ -14,6 +14,7 @@ from aurora.infra.sp500_megarun.catalog_component_store import ComponentStoreWri
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
+from aurora.infra.sp500_megarun.catalog_scheduler import CatalogComponentScheduleV1
 from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.dehb_campaign_contract import (
     load_and_validate_campaign_contract,
@@ -87,6 +88,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-input-pack", type=Path, required=True)
     parser.add_argument("--resolved-contract", type=Path, required=True)
     parser.add_argument("--run-plan", type=Path, required=True)
+    parser.add_argument("--component-schedule", type=Path, required=True)
     parser.add_argument("--admission-token", required=True)
     parser.add_argument("--component-shard-index", type=int, required=True)
     parser.add_argument("--total-component-shards", type=int, required=True)
@@ -106,7 +108,7 @@ def main() -> int:
     )
     if resolved.contract_sha256 != plan.contract_sha256:
         raise SystemExit("COMPONENT_CONTRACT_PLAN_MISMATCH")
-    if not 0 <= args.component_shard_index < args.total_component_shards <= 120:
+    if not 0 <= args.component_shard_index < args.total_component_shards <= 360:
         raise SystemExit("COMPONENT_SHARD_INVALID")
     campaign = load_and_validate_campaign_contract(args.campaign_contract)
     data_contract = load_and_validate_contract(args.data_contract)
@@ -149,9 +151,26 @@ def main() -> int:
     if not isinstance(selected_rows, list):
         raise SystemExit("COMPONENT_SELECTED_CONFIG_INVALID")
     all_components = collect_unique_components(catalog_rows, selected_rows)
-    assigned = all_components[
-        args.component_shard_index :: args.total_component_shards
+    schedule = CatalogComponentScheduleV1.model_validate_json(
+        args.component_schedule.read_text("utf-8")
+    )
+    if len(schedule.shards) != args.total_component_shards:
+        raise SystemExit("COMPONENT_SCHEDULE_SHARD_COUNT_INVALID")
+    scheduled_ids = [
+        component_id
+        for shard in schedule.shards
+        for component_id in shard.component_ids
     ]
+    all_by_id = {
+        str(component["configuration_sha256"]): component
+        for component in all_components
+    }
+    if len(scheduled_ids) != len(set(scheduled_ids)) or set(scheduled_ids) != set(all_by_id):
+        raise SystemExit("COMPONENT_SCHEDULE_COVERAGE_INVALID")
+    shard = schedule.shards[args.component_shard_index]
+    if shard.shard_index != args.component_shard_index:
+        raise SystemExit("COMPONENT_SCHEDULE_INDEX_INVALID")
+    assigned = tuple(all_by_id[component_id] for component_id in shard.component_ids)
     writer = ComponentStoreWriter(
         args.output_dir,
         data_snapshot_sha256=resolved.science.data_snapshot_sha256,
@@ -175,6 +194,7 @@ def main() -> int:
                 "total_component_shards": args.total_component_shards,
                 "component_count": manifest.component_count,
                 "all_component_count": len(all_components),
+                "component_schedule_sha256": schedule.plan_sha256,
                 "manifest_sha256": manifest.manifest_sha256,
                 "numeric_runtime_profile_sha256": numeric_runtime["profile_sha256"],
                 "validation_opened": False,
