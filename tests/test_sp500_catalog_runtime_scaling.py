@@ -245,6 +245,67 @@ def test_columnar_result_store_is_partitioned_verified_and_streamable(
     assert manifest.locked_opened is False
 
 
+def test_streaming_result_store_resumes_only_committed_ordered_rows(
+    tmp_path: Path,
+) -> None:
+    from aurora.infra.sp500_megarun.catalog_result_store import (
+        CatalogResultStore,
+        CatalogStreamingResultWriter,
+    )
+
+    root = tmp_path / "stream"
+    writer = CatalogStreamingResultWriter(
+        root,
+        contract_sha256="a" * 64,
+        partition_size=2,
+    )
+    for index in range(3):
+        writer.add(
+            {
+                "strategy_id": f"s{index:08d}",
+                "recipe_sha256": f"{index + 1:064x}",
+                "position_sha256": f"{index + 11:064x}",
+                "annualized_return": index / 100,
+                "weekly_positive_rate": 0.5,
+            }
+        )
+    checkpoint = writer.checkpoint()
+    assert checkpoint.row_count == 3
+    assert writer.max_buffered_rows <= 2
+
+    resumed = CatalogStreamingResultWriter(
+        root,
+        contract_sha256="a" * 64,
+        partition_size=2,
+        resume=True,
+    )
+    with pytest.raises(ValueError, match="RESULT_STREAM_ORDER_OR_DUPLICATE_INVALID"):
+        resumed.add(
+            {
+                "strategy_id": "s00000002",
+                "recipe_sha256": "f" * 64,
+                "position_sha256": "e" * 64,
+                "annualized_return": 0.0,
+                "weekly_positive_rate": 0.5,
+            }
+        )
+    for index in range(3, 7):
+        resumed.add(
+            {
+                "strategy_id": f"s{index:08d}",
+                "recipe_sha256": f"{index + 1:064x}",
+                "position_sha256": f"{index + 11:064x}",
+                "annualized_return": index / 100,
+                "weekly_positive_rate": 0.5,
+            }
+        )
+    manifest = resumed.commit()
+    store = CatalogResultStore.open(root)
+    assert manifest.row_count == 7
+    assert len(list(store.iter_rows())) == 7
+    assert resumed.max_buffered_rows <= 2
+
+
 def test_autotuner_selects_fastest_safe_candidate_and_blocks_regression() -> None:
     from aurora.infra.sp500_megarun.catalog_autotune import (
         TuningCandidateV1,

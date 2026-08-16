@@ -42,6 +42,18 @@ class CatalogResultManifestV1(FrozenModel):
     manifest_sha256: Sha256
 
 
+class CatalogResultCheckpointV1(FrozenModel):
+    schema_version: str = "1"
+    contract_sha256: Sha256
+    row_count: int = Field(ge=0)
+    partition_count: int = Field(ge=0)
+    partitions: tuple[ResultPartitionV1, ...]
+    last_strategy_id: str | None
+    validation_opened: bool = False
+    locked_opened: bool = False
+    checkpoint_sha256: Sha256
+
+
 class CatalogResultWriter:
     def __init__(
         self,
@@ -141,9 +153,166 @@ class CatalogResultStore:
                 yield from batch.to_pylist()
 
 
+class CatalogStreamingResultWriter:
+    """Bounded-memory, atomic Parquet writer that resumes committed partitions."""
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        contract_sha256: str,
+        partition_size: int = 65_536,
+        resume: bool = False,
+    ) -> None:
+        if partition_size < 1:
+            raise ValueError("RESULT_PARTITION_SIZE_INVALID")
+        self.root = Path(root)
+        self.contract_sha256 = contract_sha256
+        self.partition_size = partition_size
+        self._buffer: list[dict[str, object]] = []
+        self._partitions: list[ResultPartitionV1] = []
+        self._row_count = 0
+        self._last_strategy_id: str | None = None
+        self.max_buffered_rows = 0
+        if resume:
+            self._restore()
+        else:
+            self.root.mkdir(parents=True, exist_ok=False)
+
+    @staticmethod
+    def _checkpoint_identity(
+        *,
+        contract_sha256: str,
+        row_count: int,
+        partitions: tuple[ResultPartitionV1, ...],
+        last_strategy_id: str | None,
+    ) -> dict[str, object]:
+        return {
+            "schema_version": "1",
+            "contract_sha256": contract_sha256,
+            "row_count": row_count,
+            "partition_count": len(partitions),
+            "partitions": partitions,
+            "last_strategy_id": last_strategy_id,
+            "validation_opened": False,
+            "locked_opened": False,
+        }
+
+    def _restore(self) -> None:
+        try:
+            checkpoint = CatalogResultCheckpointV1.model_validate_json(
+                (self.root / "checkpoint.json").read_text("utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ValueError("RESULT_CHECKPOINT_INVALID") from exc
+        identity = checkpoint.model_dump(
+            mode="python",
+            exclude={"checkpoint_sha256"},
+        )
+        if canonical_sha256(identity) != checkpoint.checkpoint_sha256:
+            raise ValueError("RESULT_CHECKPOINT_HASH_INVALID")
+        if checkpoint.contract_sha256 != self.contract_sha256:
+            raise ValueError("RESULT_CHECKPOINT_CONTRACT_MISMATCH")
+        if (
+            checkpoint.partition_count != len(checkpoint.partitions)
+            or checkpoint.row_count
+            != sum(item.row_count for item in checkpoint.partitions)
+        ):
+            raise ValueError("RESULT_CHECKPOINT_COUNT_INVALID")
+        for item in checkpoint.partitions:
+            if sha256_file(self.root / item.path) != item.sha256:
+                raise ValueError("RESULT_CHECKPOINT_PARTITION_INVALID")
+        self._partitions = list(checkpoint.partitions)
+        self._row_count = checkpoint.row_count
+        self._last_strategy_id = checkpoint.last_strategy_id
+
+    def _write_checkpoint(self) -> CatalogResultCheckpointV1:
+        partitions = tuple(self._partitions)
+        identity = self._checkpoint_identity(
+            contract_sha256=self.contract_sha256,
+            row_count=self._row_count,
+            partitions=partitions,
+            last_strategy_id=self._last_strategy_id,
+        )
+        checkpoint = CatalogResultCheckpointV1(
+            **identity,
+            checkpoint_sha256=canonical_sha256(identity),
+        )
+        target = self.root / "checkpoint.json"
+        temporary = self.root / "checkpoint.json.tmp"
+        temporary.write_text(checkpoint.model_dump_json(indent=2) + "\n", "utf-8")
+        temporary.replace(target)
+        return checkpoint
+
+    def _flush(self) -> None:
+        if not self._buffer:
+            return
+        index = len(self._partitions)
+        path = self.root / f"part-{index:08d}.parquet"
+        temporary = self.root / f"part-{index:08d}.parquet.tmp"
+        pq.write_table(
+            pa.Table.from_pylist(self._buffer, schema=_SCHEMA),
+            temporary,
+            compression="zstd",
+            use_dictionary=True,
+        )
+        temporary.replace(path)
+        self._partitions.append(
+            ResultPartitionV1(
+                path=path.name,
+                sha256=sha256_file(path),
+                row_count=len(self._buffer),
+            )
+        )
+        self._row_count += len(self._buffer)
+        self._buffer.clear()
+        self._write_checkpoint()
+
+    def add(self, row: Mapping[str, object]) -> None:
+        checked = {name: row[name] for name in _SCHEMA.names}
+        strategy_id = str(checked["strategy_id"])
+        if self._last_strategy_id is not None and strategy_id <= self._last_strategy_id:
+            raise ValueError("RESULT_STREAM_ORDER_OR_DUPLICATE_INVALID")
+        self._last_strategy_id = strategy_id
+        self._buffer.append(checked)
+        self.max_buffered_rows = max(self.max_buffered_rows, len(self._buffer))
+        if len(self._buffer) >= self.partition_size:
+            self._flush()
+
+    def checkpoint(self) -> CatalogResultCheckpointV1:
+        self._flush()
+        return self._write_checkpoint()
+
+    def commit(self) -> CatalogResultManifestV1:
+        self._flush()
+        if self._row_count == 0:
+            raise ValueError("RESULT_STORE_EMPTY")
+        partitions = tuple(self._partitions)
+        identity = {
+            "schema_version": "1",
+            "contract_sha256": self.contract_sha256,
+            "row_count": self._row_count,
+            "partition_count": len(partitions),
+            "partitions": partitions,
+            "validation_opened": False,
+            "locked_opened": False,
+        }
+        manifest = CatalogResultManifestV1(
+            **identity,
+            manifest_sha256=canonical_sha256(identity),
+        )
+        target = self.root / "manifest.json"
+        temporary = self.root / "manifest.json.tmp"
+        temporary.write_text(manifest.model_dump_json(indent=2) + "\n", "utf-8")
+        temporary.replace(target)
+        return manifest
+
+
 __all__ = [
     "CatalogResultManifestV1",
+    "CatalogResultCheckpointV1",
     "CatalogResultStore",
+    "CatalogStreamingResultWriter",
     "CatalogResultWriter",
     "ResultPartitionV1",
 ]
