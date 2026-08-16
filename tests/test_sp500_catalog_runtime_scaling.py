@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 
@@ -77,6 +80,114 @@ def test_microshard_checkpoint_resumes_only_pending_units(tmp_path: Path) -> Non
     assert restored.checkpoint_sha256 == checkpoint.checkpoint_sha256
     with pytest.raises(ValueError, match="CHECKPOINT_RESULT_CONFLICT"):
         restored.commit("u1", result_sha256="c" * 64)
+
+
+def _write_resume_partition(
+    root: Path,
+    *,
+    science_identity_sha256: str,
+    catalog_manifest_sha256: str,
+    rows: list[dict[str, str]],
+) -> None:
+    from aurora.infra.github_performance.shard_planner import sha256_file
+
+    root.mkdir(parents=True)
+    path = root / "results.parquet"
+    pq.write_table(pa.Table.from_pylist(rows), path, compression="zstd")
+    (root / "receipt.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "science_identity_sha256": science_identity_sha256,
+                "catalog_manifest_sha256": catalog_manifest_sha256,
+                "result_sha256": sha256_file(path),
+                "validation_opened": False,
+                "locked_opened": False,
+            }
+        ),
+        "utf-8",
+    )
+
+
+def test_resume_index_reuses_only_compatible_results_and_detects_conflict(
+    tmp_path: Path,
+) -> None:
+    from aurora.infra.sp500_megarun.catalog_resume import load_resume_index
+
+    result = {
+        "fitness": 1.0,
+        "cost": 27.0,
+        "info": {
+            "position_fingerprint": "d" * 64,
+            "objective_runtime_seconds": 0.2,
+            "validation_opened": False,
+            "locked_opened": False,
+        },
+    }
+    row = {"strategy_id": "s1", "result_json": json.dumps(result, sort_keys=True)}
+    _write_resume_partition(
+        tmp_path / "first",
+        science_identity_sha256="a" * 64,
+        catalog_manifest_sha256="b" * 64,
+        rows=[row],
+    )
+    index = load_resume_index(
+        [tmp_path / "first"],
+        expected_science_identity_sha256="a" * 64,
+        expected_catalog_manifest_sha256="b" * 64,
+    )
+    assert index.strategy_ids == ("s1",)
+    assert index.physical_result_count == 1
+    assert index.validation_opened is False
+    assert index.locked_opened is False
+
+    with pytest.raises(ValueError, match="RESUME_SOURCE_INCOMPATIBLE"):
+        load_resume_index(
+            [tmp_path / "first"],
+            expected_science_identity_sha256="c" * 64,
+            expected_catalog_manifest_sha256="b" * 64,
+        )
+
+    conflicting = {
+        **result,
+        "info": {**result["info"], "position_fingerprint": "e" * 64},
+    }
+    _write_resume_partition(
+        tmp_path / "second",
+        science_identity_sha256="a" * 64,
+        catalog_manifest_sha256="b" * 64,
+        rows=[
+            {
+                "strategy_id": "s1",
+                "result_json": json.dumps(conflicting, sort_keys=True),
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="RESUME_RESULT_CONFLICT"):
+        load_resume_index(
+            [tmp_path / "first", tmp_path / "second"],
+            expected_science_identity_sha256="a" * 64,
+            expected_catalog_manifest_sha256="b" * 64,
+        )
+
+
+def test_resume_work_manifest_schedules_only_missing_recipes() -> None:
+    from aurora.infra.sp500_megarun.catalog_resume import build_resume_work_manifest
+
+    manifest = build_resume_work_manifest(
+        ("s0", "s1", "s2", "s3", "s4"),
+        cached_strategy_ids=("s1", "s3"),
+        maximum_workers=360,
+    )
+
+    assert manifest.cached_strategy_ids == ("s1", "s3")
+    assert manifest.pending_strategy_ids == ("s0", "s2", "s4")
+    assert manifest.active_workers == 3
+    assert manifest.assign(0) == ("s0",)
+    assert manifest.assign(1) == ("s2",)
+    assert manifest.assign(2) == ("s4",)
+    assert manifest.validation_opened is False
+    assert manifest.locked_opened is False
 
 
 def test_columnar_result_store_is_partitioned_verified_and_streamable(

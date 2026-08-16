@@ -58,9 +58,13 @@ class CatalogRunPlanV1(FrozenModel):
     evidence_sha256: Sha256
     admission_token_sha256: Sha256
     workers: Annotated[int, Field(ge=1, le=360)]
+    active_workers: Annotated[int, Field(ge=0, le=360)]
     processes_per_worker: Annotated[int, Field(ge=1, le=4)]
     block_size: Annotated[int, Field(ge=1)]
     matrices: tuple[tuple[int, ...], ...]
+    work_manifest_sha256: Sha256
+    pending_recipe_count: Annotated[int, Field(ge=0)]
+    cached_recipe_count: Annotated[int, Field(ge=0)]
     expected_physical_component_builds: int
     qualification_only: bool = False
     validation_opened: bool = False
@@ -75,6 +79,23 @@ def _admission_token(
         b"aurora-catalog-admission-v1\0"
         + contract_sha256.encode("ascii")
         + evidence_sha256.encode("ascii")
+    )
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _plan_token(
+    admission_token_sha256: str,
+    work_manifest_sha256: str,
+    *,
+    pending_recipe_count: int,
+    cached_recipe_count: int,
+) -> str:
+    payload = (
+        b"aurora-catalog-work-plan-v1\0"
+        + admission_token_sha256.encode("ascii")
+        + work_manifest_sha256.encode("ascii")
+        + pending_recipe_count.to_bytes(8, "big")
+        + cached_recipe_count.to_bytes(8, "big")
     )
     return hashlib.sha256(payload).hexdigest()
 
@@ -162,6 +183,10 @@ def validate_catalog_entrypoint(workflow_path: Path) -> tuple[str, ...]:
 def build_catalog_run_plan(
     contract: RunOptimizationContractV1,
     evidence: CatalogAdmissionEvidenceV1,
+    *,
+    work_manifest_sha256: str = "0" * 64,
+    pending_recipe_count: int | None = None,
+    cached_recipe_count: int = 0,
 ) -> CatalogRunPlanV1:
     """Freeze one admitted matrix plan without losing or duplicating shards."""
 
@@ -170,7 +195,22 @@ def build_catalog_run_plan(
         raise ValueError(
             "CATALOG_RUN_NOT_ADMITTED:" + ",".join(admission.violations)
         )
-    shard_indices = tuple(range(contract.execution.workers))
+    pending = (
+        contract.workload.canonical_recipes
+        if pending_recipe_count is None
+        else int(pending_recipe_count)
+    )
+    cached = int(cached_recipe_count)
+    if (
+        pending < 0
+        or cached < 0
+        or pending + cached != contract.workload.canonical_recipes
+    ):
+        raise ValueError("CATALOG_WORK_PLAN_COUNTS_INVALID")
+    if len(work_manifest_sha256) != 64:
+        raise ValueError("CATALOG_WORK_MANIFEST_HASH_INVALID")
+    active_workers = min(contract.execution.workers, pending)
+    shard_indices = tuple(range(active_workers))
     matrices = tuple(
         shard_indices[start : start + 120]
         for start in range(0, len(shard_indices), 120)
@@ -178,11 +218,20 @@ def build_catalog_run_plan(
     return CatalogRunPlanV1(
         contract_sha256=admission.contract_sha256,
         evidence_sha256=admission.evidence_sha256,
-        admission_token_sha256=admission.admission_token_sha256,
+        admission_token_sha256=_plan_token(
+            admission.admission_token_sha256,
+            work_manifest_sha256,
+            pending_recipe_count=pending,
+            cached_recipe_count=cached,
+        ),
         workers=contract.execution.workers,
+        active_workers=active_workers,
         processes_per_worker=contract.execution.processes_per_worker,
         block_size=contract.execution.block_size,
         matrices=matrices,
+        work_manifest_sha256=work_manifest_sha256,
+        pending_recipe_count=pending,
+        cached_recipe_count=cached,
         expected_physical_component_builds=(
             admission.expected_physical_component_builds
         ),
@@ -211,9 +260,9 @@ def verify_catalog_worker_admission(
         raise ValueError("CATALOG_ADMISSION_TOKEN_INVALID")
     planned_shards = tuple(shard for matrix in plan.matrices for shard in matrix)
     if (
-        total_shards != plan.workers
+        total_shards != plan.active_workers
         or shard_index not in planned_shards
-        or planned_shards != tuple(range(plan.workers))
+        or planned_shards != tuple(range(plan.active_workers))
     ):
         raise ValueError("CATALOG_PLAN_PARTITION_INVALID")
     if plan.validation_opened or plan.locked_opened:

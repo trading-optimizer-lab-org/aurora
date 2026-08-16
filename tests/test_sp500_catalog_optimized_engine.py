@@ -20,6 +20,10 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "component_store_run_id" in worker
     assert "component_store_run_id" in run
     assert "component_cost_run_id" in run
+    assert "evaluation_cache_run_ids" in run
+    assert "pending_recipe_count" in run
+    assert "resume_work_manifest.json" in worker
+    assert "--resume-root" in run
     assert "python -m scripts.plan_sp500_component_schedule" in run
     component_worker = Path(
         ".github/workflows/catalog-component-worker.yml"

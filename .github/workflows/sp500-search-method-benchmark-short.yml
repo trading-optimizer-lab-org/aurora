@@ -28,6 +28,10 @@ on:
         description: Measured component-cost evidence run
         required: false
         default: "31948898747"
+      evaluation_cache_run_ids:
+        description: Comma-separated compatible optimized runs or checkpoints
+        required: false
+        default: ""
 
 permissions:
   actions: read
@@ -76,6 +80,7 @@ jobs:
       reference_run_id: "31948898747"
       component_store_run_id: ${{ inputs.component_store_run_id }}
       component_cost_run_id: ${{ inputs.component_cost_run_id }}
+      evaluation_cache_run_ids: ${{ inputs.evaluation_cache_run_ids }}
 
   optimized_catalog_verify_only:
     if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_verify_only' }}

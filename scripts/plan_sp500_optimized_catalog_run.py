@@ -15,6 +15,12 @@ from aurora.infra.sp500_megarun.catalog_admission import (
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
+from aurora.infra.sp500_megarun.catalog_resume import (
+    CatalogResumeWorkManifestV1,
+    build_resume_work_manifest,
+    load_resume_index,
+)
+from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.catalog_source_identity import (
     catalog_infrastructure_source_sha256,
     catalog_scientific_source_sha256,
@@ -121,6 +127,7 @@ def write_catalog_run_plan(
     output_dir: Path,
     *,
     github_output: Path | None = None,
+    work_manifest: CatalogResumeWorkManifestV1 | None = None,
 ) -> CatalogRunPlanV1:
     """Write a plan only after the fail-closed admission controller accepts it."""
 
@@ -130,7 +137,23 @@ def write_catalog_run_plan(
     evidence = CatalogAdmissionEvidenceV1.model_validate(
         _read_json_object(evidence_path)
     )
-    plan = build_catalog_run_plan(contract, evidence)
+    plan = build_catalog_run_plan(
+        contract,
+        evidence,
+        work_manifest_sha256=(
+            work_manifest.manifest_sha256 if work_manifest is not None else "0" * 64
+        ),
+        pending_recipe_count=(
+            len(work_manifest.pending_strategy_ids)
+            if work_manifest is not None
+            else None
+        ),
+        cached_recipe_count=(
+            len(work_manifest.cached_strategy_ids)
+            if work_manifest is not None
+            else 0
+        ),
+    )
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=False)
     (output_dir / "resolved_contract.json").write_text(
@@ -145,6 +168,11 @@ def write_catalog_run_plan(
         plan.model_dump_json(indent=2) + "\n",
         "utf-8",
     )
+    if work_manifest is not None:
+        (output_dir / "resume_work_manifest.json").write_text(
+            work_manifest.model_dump_json(indent=2) + "\n",
+            "utf-8",
+        )
     if github_output is not None:
         matrices = list(plan.matrices)
         matrices.extend([tuple()] * (3 - len(matrices)))
@@ -156,6 +184,9 @@ def write_catalog_run_plan(
             f"matrix_c={_matrix_payload(matrices[2])}",
             f"admission_token_sha256={plan.admission_token_sha256}",
             f"workers={plan.workers}",
+            f"active_workers={plan.active_workers}",
+            f"pending_recipe_count={plan.pending_recipe_count}",
+            f"cached_recipe_count={plan.cached_recipe_count}",
             f"processes_per_worker={plan.processes_per_worker}",
             f"block_size={plan.block_size}",
         ]
@@ -172,6 +203,7 @@ def write_repository_catalog_run_plan(
     evidence_path: Path,
     output_dir: Path,
     github_output: Path | None = None,
+    resume_roots: tuple[Path, ...] = (),
 ) -> CatalogRunPlanV1:
     """Resolve the immutable contract from the checkout before admission."""
 
@@ -184,12 +216,29 @@ def write_repository_catalog_run_plan(
     resolved_path = Path(output_dir).parent / "resolved-contract-input.json"
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_path.write_text(contract.model_dump_json(indent=2) + "\n", "utf-8")
+    catalog_rows = [
+        json.loads(line)
+        for line in (Path(catalog_dir) / "catalog.jsonl").read_text("utf-8").splitlines()
+        if line
+    ]
+    science_identity_sha256 = canonical_sha256(contract.science)
+    resume_index = load_resume_index(
+        resume_roots,
+        expected_science_identity_sha256=science_identity_sha256,
+        expected_catalog_manifest_sha256=contract.science.catalog_manifest_sha256,
+    )
+    work_manifest = build_resume_work_manifest(
+        tuple(str(row["strategy_id"]) for row in catalog_rows),
+        cached_strategy_ids=resume_index.strategy_ids,
+        maximum_workers=contract.execution.workers,
+    )
     try:
         return write_catalog_run_plan(
             resolved_path,
             evidence_path,
             output_dir,
             github_output=github_output,
+            work_manifest=work_manifest,
         )
     finally:
         resolved_path.unlink(missing_ok=True)
@@ -206,6 +255,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--resume-root", type=Path, action="append", default=[])
     return parser
 
 
@@ -231,6 +281,7 @@ def main() -> int:
             evidence_path=args.evidence,
             output_dir=args.output_dir,
             github_output=args.github_output,
+            resume_roots=tuple(args.resume_root),
         )
     return 0
 

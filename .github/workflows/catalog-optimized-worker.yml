@@ -7,6 +7,7 @@ on:
       runtime_input_run_id: {required: true, type: string}
       component_store_run_id: {required: true, type: string}
       shard_index: {required: true, type: number}
+      active_workers: {required: true, type: number}
       admission_token_sha256: {required: true, type: string}
 
 permissions: {actions: read, contents: read}
@@ -53,8 +54,9 @@ jobs:
           --component-store "$RUNNER_TEMP/component-store"
           --resolved-contract "$RUNNER_TEMP/plan/resolved_contract.json"
           --run-plan "$RUNNER_TEMP/plan/run_plan.json"
+          --resume-work-manifest "$RUNNER_TEMP/plan/resume_work_manifest.json"
           --admission-token "${{ inputs.admission_token_sha256 }}"
-          --shard-index "${{ inputs.shard_index }}" --total-shards 360
+          --shard-index "${{ inputs.shard_index }}" --total-shards "${{ inputs.active_workers }}"
           --output-dir "outputs/shard-${{ inputs.shard_index }}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

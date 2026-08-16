@@ -11,6 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from aurora.infra.github_performance.shard_planner import sha256_file
+from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.catalog_admission import (
     verify_catalog_worker_admission,
 )
@@ -18,6 +19,7 @@ from aurora.infra.sp500_megarun.catalog_component_store import CatalogComponentS
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
+from aurora.infra.sp500_megarun.catalog_resume import CatalogResumeWorkManifestV1
 from aurora.infra.sp500_megarun.dehb_campaign_contract import (
     load_and_validate_campaign_contract,
 )
@@ -121,6 +123,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--component-store", type=Path, required=True)
     parser.add_argument("--resolved-contract", type=Path, required=True)
     parser.add_argument("--run-plan", type=Path, required=True)
+    parser.add_argument("--resume-work-manifest", type=Path, required=True)
     parser.add_argument("--admission-token", required=True)
     parser.add_argument("--shard-index", type=int, required=True)
     parser.add_argument("--total-shards", type=int, required=True)
@@ -142,6 +145,21 @@ def main() -> int:
     )
     if resolved.contract_sha256 != plan.contract_sha256:
         raise SystemExit("RECIPE_CONTRACT_PLAN_MISMATCH")
+    work_manifest = CatalogResumeWorkManifestV1.model_validate_json(
+        args.resume_work_manifest.read_text("utf-8")
+    )
+    work_identity = work_manifest.model_dump(
+        mode="python",
+        exclude={"manifest_sha256"},
+    )
+    if (
+        canonical_sha256(work_identity) != work_manifest.manifest_sha256
+        or work_manifest.manifest_sha256 != plan.work_manifest_sha256
+        or len(work_manifest.pending_strategy_ids) != plan.pending_recipe_count
+        or len(work_manifest.cached_strategy_ids) != plan.cached_recipe_count
+        or work_manifest.active_workers != plan.active_workers
+    ):
+        raise SystemExit("RECIPE_WORK_MANIFEST_INVALID")
     campaign = load_and_validate_campaign_contract(args.campaign_contract)
     receipt = verify_strategy_catalog_directory(args.catalog_dir)
     if receipt["validation_opened"] or receipt["locked_opened"]:
@@ -163,7 +181,12 @@ def main() -> int:
         for line in (args.catalog_dir / "catalog.jsonl").read_text("utf-8").splitlines()
         if line
     ]
-    assigned = rows[args.shard_index :: args.total_shards]
+    by_strategy_id = {str(row["strategy_id"]): row for row in rows}
+    assigned_ids = work_manifest.assign(args.shard_index)
+    try:
+        assigned = [by_strategy_id[strategy_id] for strategy_id in assigned_ids]
+    except KeyError as exc:
+        raise SystemExit("RECIPE_WORK_MANIFEST_STRATEGY_UNKNOWN") from exc
     output: list[dict[str, object]] = []
     for row in assigned:
         signals = _signals_for_components(
@@ -255,6 +278,10 @@ def main() -> int:
                     bytes_written / len(output) if output else 0.0
                 ),
                 "result_sha256": sha256_file(result_path),
+                "science_identity_sha256": canonical_sha256(resolved.science),
+                "catalog_manifest_sha256": resolved.science.catalog_manifest_sha256,
+                "work_manifest_sha256": work_manifest.manifest_sha256,
+                "evaluation_origin": "physical",
                 "component_manifest_sha256": store.manifest.manifest_sha256,
                 "numeric_runtime_profile_sha256": numeric_runtime["profile_sha256"],
                 "physical_component_builds": 0,

@@ -227,6 +227,41 @@ def test_admitted_plan_covers_every_worker_once() -> None:
     assert plan.locked_opened is False
 
 
+def test_admitted_resume_plan_uses_only_active_pending_workers() -> None:
+    from aurora.infra.sp500_megarun.catalog_admission import (
+        CatalogAdmissionEvidenceV1,
+        build_catalog_run_plan,
+    )
+    from aurora.infra.sp500_megarun.catalog_optimization_contract import (
+        RunOptimizationContractV1,
+    )
+
+    contract = RunOptimizationContractV1.model_validate(_valid_payload())
+    evidence = CatalogAdmissionEvidenceV1(
+        estimated_tail_ratio_p99_p50=1.5,
+        estimated_result_bytes_per_recipe=500,
+        estimated_peak_memory_bytes=8_000_000_000,
+        available_memory_bytes=16_000_000_000,
+        cache_compatible=True,
+        manifest_verified=True,
+        previous_regression_unresolved=False,
+        workflow_uses_optimized_entrypoint=True,
+    )
+    plan = build_catalog_run_plan(
+        contract,
+        evidence,
+        work_manifest_sha256="f" * 64,
+        pending_recipe_count=3,
+        cached_recipe_count=37_255,
+    )
+
+    assert plan.active_workers == 3
+    assert plan.pending_recipe_count == 3
+    assert plan.cached_recipe_count == 37_255
+    assert [shard for matrix in plan.matrices for shard in matrix] == [0, 1, 2]
+    assert plan.work_manifest_sha256 == "f" * 64
+
+
 def test_plan_script_writes_immutable_plan_and_github_matrices(
     tmp_path: Path,
 ) -> None:

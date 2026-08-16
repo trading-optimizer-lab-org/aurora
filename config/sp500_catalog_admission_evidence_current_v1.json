@@ -1,9 +1,9 @@
 {
-  "estimated_tail_ratio_p99_p50": 3.2431372549019606,
-  "estimated_result_bytes_per_recipe": 3430,
-  "estimated_peak_memory_bytes": 2147483648,
+  "estimated_tail_ratio_p99_p50": 1.5146254763,
+  "estimated_result_bytes_per_recipe": 508,
+  "estimated_peak_memory_bytes": 2351243264,
   "available_memory_bytes": 17179869184,
-  "cache_compatible": false,
+  "cache_compatible": true,
   "manifest_verified": true,
   "previous_regression_unresolved": false,
   "workflow_uses_optimized_entrypoint": true
