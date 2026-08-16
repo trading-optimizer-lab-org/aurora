@@ -11,6 +11,7 @@ on:
         options:
           - selected_validation_once
           - f024_inverse_diagnostic
+          - optimized_catalog_qualification
 
 permissions:
   actions: read
@@ -48,3 +49,12 @@ jobs:
     with:
       commit_sha: ${{ github.sha }}
       validation_ack: OPEN_SP500_MEGARUN_VALIDATION_2011_2020_SELECTED_12_ONCE
+
+  optimized_catalog_qualification:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_qualification' }}
+    uses: ./.github/workflows/catalog-optimized-run.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      runtime_input_run_id: "31418682679"
+      admission_evidence_path: config/sp500_catalog_admission_evidence_qualification_v1.json
+      reference_run_id: "31904259109"
