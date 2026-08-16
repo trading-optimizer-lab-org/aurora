@@ -48,6 +48,26 @@ def _matrix_payload(shards: tuple[int, ...]) -> str:
     )
 
 
+def apply_qualification_worker_override(
+    contract: RunOptimizationContractV1,
+    *,
+    workers: int,
+    qualification_only: bool,
+) -> RunOptimizationContractV1:
+    """Create one measured worker-count candidate without weakening production."""
+
+    if not qualification_only:
+        raise ValueError("WORKER_OVERRIDE_REQUIRES_QUALIFICATION")
+    if not 1 <= int(workers) <= 360:
+        raise ValueError("WORKER_OVERRIDE_INVALID")
+    payload = contract.model_dump(mode="python")
+    payload["execution"] = {
+        **payload["execution"],
+        "workers": int(workers),
+    }
+    return RunOptimizationContractV1.model_validate(payload)
+
+
 def build_repository_contract(
     *,
     repo_root: Path,
@@ -204,6 +224,7 @@ def write_repository_catalog_run_plan(
     output_dir: Path,
     github_output: Path | None = None,
     resume_roots: tuple[Path, ...] = (),
+    benchmark_workers: int | None = None,
 ) -> CatalogRunPlanV1:
     """Resolve the immutable contract from the checkout before admission."""
 
@@ -213,6 +234,15 @@ def write_repository_catalog_run_plan(
         campaign_path=campaign_path,
         catalog_dir=catalog_dir,
     )
+    if benchmark_workers is not None:
+        evidence = CatalogAdmissionEvidenceV1.model_validate(
+            _read_json_object(evidence_path)
+        )
+        contract = apply_qualification_worker_override(
+            contract,
+            workers=benchmark_workers,
+            qualification_only=evidence.qualification_only,
+        )
     resolved_path = Path(output_dir).parent / "resolved-contract-input.json"
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_path.write_text(contract.model_dump_json(indent=2) + "\n", "utf-8")
@@ -256,6 +286,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--resume-root", type=Path, action="append", default=[])
+    parser.add_argument("--benchmark-workers", type=int, default=0)
     return parser
 
 
@@ -282,6 +313,9 @@ def main() -> int:
             output_dir=args.output_dir,
             github_output=args.github_output,
             resume_roots=tuple(args.resume_root),
+            benchmark_workers=(
+                args.benchmark_workers if args.benchmark_workers else None
+            ),
         )
     return 0
 

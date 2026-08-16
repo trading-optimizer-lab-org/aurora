@@ -10,6 +10,7 @@ on:
       component_store_run_id: {required: false, type: string, default: ""}
       component_cost_run_id: {required: false, type: string, default: ""}
       evaluation_cache_run_ids: {required: false, type: string, default: ""}
+      benchmark_workers: {required: false, type: number, default: 0}
   workflow_dispatch:
     inputs:
       commit_sha: {description: Exact revision, required: true}
@@ -17,6 +18,7 @@ on:
       component_store_run_id: {description: Compatible prior component-store run, required: false, default: ""}
       component_cost_run_id: {description: Prior measured component-cost evidence, required: false, default: ""}
       evaluation_cache_run_ids: {description: Comma-separated compatible result or checkpoint runs, required: false, default: ""}
+      benchmark_workers: {description: Qualification-only worker candidate; zero uses the promoted policy, required: false, type: number, default: 0}
 
 permissions: {actions: read, contents: read}
 concurrency:
@@ -79,6 +81,10 @@ jobs:
           if [ -n "${{ inputs.evaluation_cache_run_ids }}" ]; then
             resume_args+=(--resume-root "$RUNNER_TEMP/resume")
           fi
+          benchmark_args=()
+          if [ "${{ inputs.benchmark_workers }}" -ne 0 ]; then
+            benchmark_args+=(--benchmark-workers "${{ inputs.benchmark_workers }}")
+          fi
           python scripts/plan_sp500_optimized_catalog_run.py \
             --repo-root . \
             --policy config/sp500_catalog_optimization_policy_v1.json \
@@ -87,7 +93,8 @@ jobs:
             --evidence "${{ inputs.admission_evidence_path || 'config/sp500_catalog_admission_evidence_current_v1.json' }}" \
             --output-dir outputs/plan \
             --github-output "$GITHUB_OUTPUT" \
-            "${resume_args[@]}"
+            "${resume_args[@]}" \
+            "${benchmark_args[@]}"
       - if: ${{ steps.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' && inputs.component_cost_run_id == '' }}
         run: exit 1
       - name: Download latest compatible measured component costs

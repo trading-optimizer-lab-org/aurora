@@ -403,6 +403,47 @@ def test_dynamic_worker_count_is_typed_for_reusable_workflow_calls() -> None:
         )
 
 
+def test_worker_benchmark_override_is_allowed_only_for_qualification() -> None:
+    """A measured worker candidate must never become a production bypass."""
+
+    from aurora.infra.sp500_megarun.catalog_optimization_contract import (
+        RunOptimizationContractV1,
+    )
+    from scripts.plan_sp500_optimized_catalog_run import (
+        apply_qualification_worker_override,
+    )
+
+    contract = RunOptimizationContractV1.model_validate(_valid_payload())
+    selected = apply_qualification_worker_override(
+        contract,
+        workers=60,
+        qualification_only=True,
+    )
+    assert selected.execution.workers == 60
+    assert (
+        selected.execution.processes_per_worker
+        == contract.execution.processes_per_worker
+    )
+    with pytest.raises(ValueError, match="WORKER_OVERRIDE_REQUIRES_QUALIFICATION"):
+        apply_qualification_worker_override(
+            contract,
+            workers=60,
+            qualification_only=False,
+        )
+    with pytest.raises(ValueError, match="WORKER_OVERRIDE_INVALID"):
+        apply_qualification_worker_override(
+            contract,
+            workers=0,
+            qualification_only=True,
+        )
+
+    workflow = (
+        ROOT / ".github/workflows/catalog-optimized-run.yml"
+    ).read_text("utf-8")
+    assert "benchmark_workers:" in workflow
+    assert "--benchmark-workers" in workflow
+
+
 def test_worker_admission_rejects_wrong_token_or_partition(tmp_path: Path) -> None:
     """Every worker must prove it belongs to the frozen admitted plan."""
 
