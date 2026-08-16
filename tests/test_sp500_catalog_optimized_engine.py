@@ -41,6 +41,12 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
         "scripts/run_sp500_optimized_recipe_worker.py"
     ).read_text("utf-8")
     assert "component_store_run_id" in worker
+    assert "continue-on-error: true" in worker
+    assert "if: ${{ always() }}" in worker
+    assert "steps.evaluate.outcome != 'success'" in worker
+    assert "recovery_microshards" in Path(
+        "scripts/run_sp500_optimized_recipe_worker.py"
+    ).read_text("utf-8")
     assert "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d" in worker
     assert "uv pip install --system --require-hashes" in worker
     assert "PYTHONPATH: ${{ github.workspace }}/.." in worker

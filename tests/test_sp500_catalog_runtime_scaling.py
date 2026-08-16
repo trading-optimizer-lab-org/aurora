@@ -98,6 +98,45 @@ def test_microshard_checkpoint_resumes_only_pending_units(tmp_path: Path) -> Non
         restored.commit("u1", result_sha256="c" * 64)
 
 
+def test_failed_recipe_worker_microshards_are_reusable_on_another_runner(
+    tmp_path: Path,
+) -> None:
+    from aurora.infra.sp500_megarun.catalog_resume import load_resume_index
+    from scripts.run_sp500_optimized_recipe_worker import _write_resume_microshard
+
+    science = "a" * 64
+    catalog = "b" * 64
+    rows = [
+        {
+            "strategy_id": f"strategy-{index:03d}",
+            "result_json": json.dumps(
+                {"score": index},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        }
+        for index in range(64)
+    ]
+    _write_resume_microshard(
+        tmp_path / "failed-worker" / "recovery_microshards",
+        ordinal=0,
+        rows=rows,
+        science_identity_sha256=science,
+        catalog_manifest_sha256=catalog,
+    )
+
+    recovered = load_resume_index(
+        (tmp_path / "failed-worker",),
+        expected_science_identity_sha256=science,
+        expected_catalog_manifest_sha256=catalog,
+    )
+    assert recovered.physical_result_count == 64
+    assert recovered.duplicate_result_count == 0
+    assert recovered.strategy_ids == tuple(row["strategy_id"] for row in rows)
+    assert recovered.validation_opened is False
+    assert recovered.locked_opened is False
+
+
 def _write_resume_partition(
     root: Path,
     *,

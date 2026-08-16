@@ -51,7 +51,9 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.component_store_run_id }}
-      - run: >-
+      - id: evaluate
+        continue-on-error: true
+        run: >-
           python -m scripts.run_sp500_optimized_recipe_worker
           --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
           --catalog-dir config/sp500_megarun_strategy_catalog_v1
@@ -66,8 +68,12 @@ jobs:
           --shard-index "${{ inputs.shard_index }}" --total-shards "${{ inputs.active_workers }}"
           --output-dir "outputs/shard-${{ inputs.shard_index }}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ always() }}
         with:
           name: sp500-catalog-shard-${{ inputs.shard_index }}
           path: outputs/shard-${{ inputs.shard_index }}
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
+      - name: Preserve failure after uploading committed microshards
+        if: ${{ steps.evaluate.outcome != 'success' }}
+        run: exit 1

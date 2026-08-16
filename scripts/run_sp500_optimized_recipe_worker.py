@@ -9,6 +9,7 @@ import json
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+import shutil
 import time
 from typing import Any
 
@@ -71,6 +72,47 @@ _PROCESS_STORE: CatalogComponentStore | None = None
 _PROCESS_LEDGER: pd.DataFrame | None = None
 _PROCESS_SEARCH_END: str | None = None
 _PROCESS_OBJECTIVE: FastTrainObjective | None = None
+
+
+def _write_resume_microshard(
+    root: Path,
+    *,
+    ordinal: int,
+    rows: list[dict[str, object]],
+    science_identity_sha256: str,
+    catalog_manifest_sha256: str,
+) -> None:
+    """Commit one immutable recovery unit before the worker can lose it."""
+
+    if not rows:
+        return
+    target = Path(root) / f"part-{ordinal:05d}"
+    target.mkdir(parents=True, exist_ok=False)
+    result_path = target / "results.parquet"
+    temporary_result = target / "results.parquet.tmp"
+    pq.write_table(
+        pa.Table.from_pylist(rows, schema=_RESULT_SCHEMA),
+        temporary_result,
+        compression="zstd",
+        use_dictionary=True,
+    )
+    temporary_result.replace(result_path)
+    receipt = {
+        "schema_version": 1,
+        "partial": True,
+        "strategy_count": len(rows),
+        "result_sha256": sha256_file(result_path),
+        "science_identity_sha256": science_identity_sha256,
+        "catalog_manifest_sha256": catalog_manifest_sha256,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+    temporary_receipt = target / "receipt.json.tmp"
+    temporary_receipt.write_text(
+        json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+        "utf-8",
+    )
+    temporary_receipt.replace(target / "receipt.json")
 
 
 def _signals_for_components(
@@ -345,11 +387,30 @@ def main() -> int:
         campaign.train_snapshot_manifest_sha256,
         campaign.train_spy_sha256,
     )
+    args.output_dir.mkdir(parents=True, exist_ok=False)
+    recovery_root = args.output_dir / "recovery_microshards"
+    recovery_root.mkdir(parents=True, exist_ok=False)
+    recovery_chunk_size = 64
+    science_identity_sha256 = canonical_sha256(resolved.science)
     evaluation_started = time.perf_counter()
     initialization_seconds = evaluation_started - scientific_wall_started
+    output: list[dict[str, object]] = []
+
+    def record(row: dict[str, object]) -> None:
+        output.append(row)
+        if len(output) % recovery_chunk_size == 0:
+            _write_resume_microshard(
+                recovery_root,
+                ordinal=(len(output) // recovery_chunk_size) - 1,
+                rows=output[-recovery_chunk_size:],
+                science_identity_sha256=science_identity_sha256,
+                catalog_manifest_sha256=resolved.science.catalog_manifest_sha256,
+            )
+
     if process_count == 1:
         _initialize_recipe_process(*initializer_args)
-        output = [_evaluate_catalog_row(row) for row in assigned]
+        for row in assigned:
+            record(_evaluate_catalog_row(row))
     else:
         with ProcessPoolExecutor(
             max_workers=process_count,
@@ -357,15 +418,22 @@ def main() -> int:
             initializer=_initialize_recipe_process,
             initargs=initializer_args,
         ) as executor:
-            output = list(
-                executor.map(
-                    _evaluate_catalog_row,
-                    assigned,
-                    chunksize=plan.block_size,
-                )
-            )
+            for row in executor.map(
+                _evaluate_catalog_row,
+                assigned,
+                chunksize=plan.block_size,
+            ):
+                record(row)
+    remainder = len(output) % recovery_chunk_size
+    if remainder:
+        _write_resume_microshard(
+            recovery_root,
+            ordinal=len(output) // recovery_chunk_size,
+            rows=output[-remainder:],
+            science_identity_sha256=science_identity_sha256,
+            catalog_manifest_sha256=resolved.science.catalog_manifest_sha256,
+        )
     evaluation_seconds = time.perf_counter() - evaluation_started
-    args.output_dir.mkdir(parents=True, exist_ok=False)
     result_path = args.output_dir / "results.parquet"
     scientific_stage_seconds = {
         name: sum(
@@ -465,7 +533,7 @@ def main() -> int:
                     bytes_written / len(output) if output else 0.0
                 ),
                 "result_sha256": sha256_file(result_path),
-                "science_identity_sha256": canonical_sha256(resolved.science),
+                "science_identity_sha256": science_identity_sha256,
                 "catalog_manifest_sha256": resolved.science.catalog_manifest_sha256,
                 "work_manifest_sha256": work_manifest.manifest_sha256,
                 "recipe_dag_manifest_sha256": dag_manifest["manifest_sha256"],
@@ -492,6 +560,7 @@ def main() -> int:
         + "\n",
         "utf-8",
     )
+    shutil.rmtree(recovery_root)
     return 0
 
 
