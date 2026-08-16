@@ -7,7 +7,12 @@ import pytest
 
 from aurora.infra.sp500_megarun.dehb_lane_registry import (
     AuthorizedValidationLaneEvaluator,
+    FamilyAdapter,
     TrainLaneEvaluator,
+)
+from aurora.infra.sp500_megarun.feature_engine import (
+    FeatureEngineError,
+    evaluate_price_lane,
 )
 from aurora.infra.sp500_megarun.selected_validation import (
     VALIDATION_ACK,
@@ -237,6 +242,64 @@ def test_authorized_evaluator_accepts_only_validation_bound_baselines(tmp_path):
     loaded = evaluator._baseline_features(["F001"])
 
     assert loaded["F001"]["date"].max() == pd.Timestamp("2011-01-03")
+
+
+def test_engine_boundary_opens_only_inside_authorized_evaluation(tmp_path):
+    train = _write_snapshot(
+        tmp_path / "train_snapshot_1993_2010",
+        partition="train",
+        dates=["2010-12-31"],
+    )
+    validation = _write_snapshot(
+        tmp_path / "validation_snapshot_2011_2020",
+        partition="validation",
+        dates=["2011-01-03", "2020-12-31"],
+    )
+    receipt = build_authorized_validation_snapshot(
+        train,
+        validation,
+        tmp_path / "authorized_validation_snapshot_1993_2020",
+        authorization=VALIDATION_ACK,
+    )
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2010-12-30", "2010-12-31", "2011-01-03"]),
+            "available_at": pd.to_datetime(
+                ["2010-12-30", "2010-12-31", "2011-01-03"]
+            ),
+            "open": [100.0, 101.0, 102.0],
+            "high": [101.0, 102.0, 103.0],
+            "low": [99.0, 100.0, 101.0],
+            "close": [100.5, 101.5, 102.5],
+            "volume": [1000.0, 1100.0, 1200.0],
+        }
+    )
+
+    def builder(_owner):
+        return lambda _lane, _config: evaluate_price_lane(
+            "F001",
+            frame,
+            {"kind": "sma", "normalization": "price_ratio", "threshold": 0.0, "window": 2},
+        )
+
+    evaluator = AuthorizedValidationLaneEvaluator(
+        receipt.snapshot_dir,
+        expected_manifest_sha256=receipt.manifest_sha256,
+        expected_spy_sha256=receipt.spy_sha256,
+        default_configurations={f"F{number:03d}": {} for number in range(1, 241)},
+        authorization=VALIDATION_ACK,
+        adapters=(FamilyAdapter(1, 240, builder),),
+    )
+
+    result = evaluator("F001", {})
+
+    assert result["date"].max() == pd.Timestamp("2011-01-03")
+    with pytest.raises(FeatureEngineError, match="NON_TRAIN"):
+        evaluate_price_lane(
+            "F001",
+            frame,
+            {"kind": "sma", "normalization": "price_ratio", "threshold": 0.0, "window": 2},
+        )
 
 
 def _selection_payload(count: int = 12):

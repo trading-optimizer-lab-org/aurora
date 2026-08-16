@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import importlib
@@ -20,6 +21,30 @@ _TRAIN_END = pd.Timestamp("2010-12-31")
 _AUTHORIZED_VALIDATION_PARTITION = "authorized_validation_snapshot_1993_2020"
 _VALIDATION_END = pd.Timestamp("2020-12-31")
 _ALL_LANES = tuple(f"F{number:03d}" for number in range(1, 241))
+_ENGINE_MODULES = (
+    "feature_engine",
+    "market_feature_engine",
+    "macro_feature_engine",
+    "model_feature_engine",
+    "advanced_feature_engine",
+    "microstructure_feature_engine",
+    "positioning_feature_engine",
+    "tail_macro_feature_engine",
+    "fundamental_feature_engine",
+    "cross_section_feature_engine",
+    "technical_feature_engine",
+    "nonlinear_feature_engine",
+    "predictive_feature_engine",
+    "characteristic_feature_engine",
+    "global_factor_feature_engine",
+    "cross_asset_feature_engine",
+    "rates_credit_feature_engine",
+    "realtime_survey_feature_engine",
+    "financial_accounts_feature_engine",
+    "volatility_positioning_feature_engine",
+    "policy_treasury_feature_engine",
+    "public_context_feature_engine",
+)
 
 
 class LaneRegistryError(ValueError):
@@ -100,6 +125,7 @@ class TrainLaneEvaluator:
         _data_end: pd.Timestamp = _TRAIN_END,
         _validation_opened: bool = False,
         _mountable_by_first_cycle: bool = True,
+        _engine_data_end_override: pd.Timestamp | None = None,
     ) -> None:
         self.snapshot = Path(train_snapshot).resolve()
         if self.snapshot.name != _snapshot_name:
@@ -128,6 +154,7 @@ class TrainLaneEvaluator:
         self._datasets = datasets
         self._data_end = pd.Timestamp(_data_end).normalize()
         self._validation_opened = _validation_opened
+        self._engine_data_end_override = _engine_data_end_override
         self._maximum_date = (
             pd.Timestamp(maximum_date).normalize()
             if maximum_date is not None
@@ -252,6 +279,24 @@ class TrainLaneEvaluator:
             result[lane_id] = feature
         return result
 
+    @contextmanager
+    def _engine_boundary(self):
+        boundary = self._engine_data_end_override
+        if boundary is None:
+            yield
+            return
+        modules = [_module(name) for name in _ENGINE_MODULES]
+        if any(not hasattr(module, "_TRAIN_END") for module in modules):
+            raise LaneRegistryError("ENGINE_BOUNDARY_HOOK_MISSING")
+        original = [module._TRAIN_END for module in modules]
+        try:
+            for module in modules:
+                module._TRAIN_END = boundary
+            yield
+        finally:
+            for module, value in zip(modules, original, strict=True):
+                module._TRAIN_END = value
+
     def __call__(self, lane_id: str, configuration: Mapping[str, Any]) -> pd.DataFrame:
         number = _lane_number(lane_id)
         adapter = next(
@@ -260,12 +305,13 @@ class TrainLaneEvaluator:
         )
         if adapter is None:
             raise LaneRegistryError(f"UNKNOWN_LANE:{lane_id}")
-        key = (adapter.start, adapter.end)
-        evaluator = self._contexts.get(key)
-        if evaluator is None:
-            evaluator = adapter.builder(self)
-            self._contexts[key] = evaluator
-        return evaluator(lane_id, configuration)
+        with self._engine_boundary():
+            key = (adapter.start, adapter.end)
+            evaluator = self._contexts.get(key)
+            if evaluator is None:
+                evaluator = adapter.builder(self)
+                self._contexts[key] = evaluator
+            return evaluator(lane_id, configuration)
 
 
 class AuthorizedValidationLaneEvaluator(TrainLaneEvaluator):
@@ -298,6 +344,7 @@ class AuthorizedValidationLaneEvaluator(TrainLaneEvaluator):
             _data_end=_VALIDATION_END,
             _validation_opened=True,
             _mountable_by_first_cycle=False,
+            _engine_data_end_override=_VALIDATION_END,
         )
 
 
