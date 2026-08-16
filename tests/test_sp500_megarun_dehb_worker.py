@@ -318,6 +318,26 @@ def test_train_lane_registry_covers_all_240_and_builds_one_lazy_context(
     assert built == ["built"]
 
 
+def test_runtime_dataset_dependencies_follow_family_initializers() -> None:
+    from aurora.infra.sp500_megarun.dehb_lane_registry import (
+        runtime_dataset_ids_for_lane,
+        supported_lane_ids,
+    )
+
+    assert all(runtime_dataset_ids_for_lane(lane) for lane in supported_lane_ids())
+    assert runtime_dataset_ids_for_lane("F225") == (
+        "D_CALENDAR",
+        "D_FED_H15_H10",
+        "D_FED_H3_H6_H8_G19_CP",
+        "D_FOMC_PUBLIC",
+        "D_SPY",
+        "D_TIC",
+        "D_TREASURY_AUCTIONS",
+        "D_TREASURY_FISCAL",
+    )
+    assert runtime_dataset_ids_for_lane("F001") == ("D_SPY",)
+
+
 def test_train_lane_registry_rejects_unknown_lane_and_incomplete_adapter_coverage(
     tmp_path: Path,
 ) -> None:

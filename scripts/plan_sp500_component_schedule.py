@@ -14,6 +14,9 @@ from aurora.infra.sp500_megarun.catalog_scheduler import (
 from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
     RUNTIME_FRAGMENT_DATASET_IDS,
 )
+from aurora.infra.sp500_megarun.dehb_lane_registry import (
+    runtime_dataset_ids_for_lane,
+)
 from scripts.build_sp500_component_store import collect_unique_components
 from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 
@@ -43,7 +46,7 @@ def main() -> int:
     components = collect_unique_components(catalog_rows, selected_rows)
     data_contract = load_and_validate_contract(args.data_contract)
     lane_datasets = {
-        lane.lane_id: tuple(sorted(lane.required_datasets))
+        lane.lane_id: tuple(sorted(runtime_dataset_ids_for_lane(lane.lane_id)))
         for lane in data_contract.lanes
     }
     component_ids = {str(item["configuration_sha256"]) for item in components}

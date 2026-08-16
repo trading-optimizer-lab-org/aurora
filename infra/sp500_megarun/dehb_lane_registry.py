@@ -108,6 +108,177 @@ def supported_lane_ids() -> tuple[str, ...]:
     return _ALL_LANES
 
 
+# Runtime dependencies are defined by the family builder, not by the
+# individual lane declaration.  A family is initialized once and that
+# initializer loads the complete panel it may use for every lane in the
+# family.  Keeping this map here makes scheduling and runtime verification
+# use the same source of truth as the evaluator.
+_RUNTIME_DATASETS_BY_FAMILY: tuple[tuple[int, int, tuple[str, ...]], ...] = (
+    (1, 20, ("D_SPY",)),
+    (21, 31, ("D_CFTC", "D_RATES", "D_SPY", "D_VIX", "D_VXO")),
+    (
+        32,
+        50,
+        (
+            "D_CALENDAR",
+            "D_CFTC_LEGACY",
+            "D_FOMC_PUBLIC",
+            "D_FIN_COND",
+            "D_FINRA_MARGIN",
+            "D_FRENCH_FACTORS",
+            "D_FRENCH_INDUSTRIES",
+            "D_FX",
+            "D_GOLD",
+            "D_GOYAL",
+            "D_MACRO_PIT",
+            "D_PHILLY_RT",
+            "D_RATES",
+            "D_SHILLER",
+            "D_SPY",
+            "D_WTI",
+            "D_Z1",
+        ),
+    ),
+    (51, 60, ("D_CALENDAR", "D_SPY")),
+    (61, 80, ("D_CALENDAR", "D_SPY")),
+    (
+        81,
+        90,
+        (
+            "D_CALENDAR",
+            "D_CFTC",
+            "D_CFTC_LEGACY",
+            "D_FINRA_MARGIN",
+            "D_FRENCH_INDUSTRIES",
+            "D_MARGIN",
+            "D_SPY",
+            "D_VIX",
+            "D_VXO",
+            "D_Z1",
+        ),
+    ),
+    (
+        91,
+        100,
+        (
+            "D_CALENDAR",
+            "D_CFTC",
+            "D_FOMC_PUBLIC",
+            "D_MACRO_PIT",
+            "D_RATES",
+            "D_SPY",
+            "D_VIX",
+            "D_VXO",
+        ),
+    ),
+    (
+        101,
+        110,
+        (
+            "D_CALENDAR",
+            "D_CBOE_VOL",
+            "D_CFTC_LEGACY",
+            "D_EPU",
+            "D_FIN_COND",
+            "D_GOLD",
+            "D_GOYAL",
+            "D_MACRO_PIT",
+            "D_PHILLY_RT",
+            "D_RATES",
+            "D_SHILLER",
+            "D_WTI",
+            "D_Z1",
+        ),
+    ),
+    (
+        111,
+        120,
+        (
+            "D_CBOE_VOL",
+            "D_FIN_COND",
+            "D_FRENCH_FACTORS",
+            "D_FRENCH_INDUSTRIES",
+            "D_FX",
+            "D_GOYAL",
+            "D_MACRO_PIT",
+            "D_RATES",
+            "D_SHILLER",
+            "D_SPY",
+        ),
+    ),
+    (121, 130, ("D_SPY",)),
+    (131, 140, ("D_CALENDAR", "D_SPY")),
+    (141, 150, ("D_CALENDAR", "D_SPY", "D_VIX", "D_VXO")),
+    (151, 160, ("D_CALENDAR", "D_FRENCH_US", "D_SPY")),
+    (161, 170, ("D_CALENDAR", "D_FRENCH_GLOBAL", "D_FRENCH_US", "D_SPY")),
+    (
+        171,
+        180,
+        ("D_CALENDAR", "D_FED_H15_H10", "D_SPY", "D_WORLD_BANK_COMMODITIES"),
+    ),
+    (
+        181,
+        190,
+        (
+            "D_CALENDAR",
+            "D_CBOE_VOL",
+            "D_FED_H15_H10",
+            "D_FED_H3_H6_H8_G19_CP",
+            "D_SPF",
+            "D_SPY",
+        ),
+    ),
+    (
+        191,
+        200,
+        ("D_CALENDAR", "D_MACRO_PIT", "D_PHILLY_RT", "D_SLOOS", "D_SPF", "D_SPY"),
+    ),
+    (201, 210, ("D_CALENDAR", "D_SPY", "D_TIC", "D_Z1")),
+    (
+        211,
+        220,
+        ("D_CALENDAR", "D_CBOE_PCR", "D_CBOE_VOL", "D_CFTC_LEGACY", "D_SPY"),
+    ),
+    (
+        221,
+        230,
+        (
+            "D_CALENDAR",
+            "D_FED_H15_H10",
+            "D_FED_H3_H6_H8_G19_CP",
+            "D_FOMC_PUBLIC",
+            "D_SPY",
+            "D_TIC",
+            "D_TREASURY_AUCTIONS",
+            "D_TREASURY_FISCAL",
+        ),
+    ),
+    (
+        231,
+        240,
+        (
+            "D_CALENDAR",
+            "D_FOMC_PUBLIC",
+            "D_NOAA_NY",
+            "D_PHILLY_RT",
+            "D_SPY",
+            "D_TIC",
+            "D_TREASURY_AUCTIONS",
+        ),
+    ),
+)
+
+
+def runtime_dataset_ids_for_lane(lane_id: str) -> tuple[str, ...]:
+    """Return every dataset loaded by the evaluator family for ``lane_id``."""
+
+    number = _lane_number(lane_id)
+    for start, end, dataset_ids in _RUNTIME_DATASETS_BY_FAMILY:
+        if start <= number <= end:
+            return dataset_ids
+    raise LaneRegistryError(f"UNKNOWN_LANE:{lane_id}")
+
+
 def default_lane_configurations(feature_contract: Any) -> dict[str, dict[str, Any]]:
     """Freeze the first audited choice of every F001-F240 parameter space."""
 

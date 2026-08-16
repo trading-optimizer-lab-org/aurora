@@ -10,6 +10,9 @@ from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
     RUNTIME_FRAGMENT_DATASET_IDS,
 )
+from aurora.infra.sp500_megarun.dehb_lane_registry import (
+    runtime_dataset_ids_for_lane,
+)
 from aurora.infra.sp500_megarun.strategy_catalog import configuration_sha256
 
 
@@ -24,7 +27,8 @@ def main() -> int:
     args = parser.parse_args()
     contract = load_and_validate_contract(args.data_contract)
     lane_datasets = {
-        lane.lane_id: set(lane.required_datasets) for lane in contract.lanes
+        lane.lane_id: set(runtime_dataset_ids_for_lane(lane.lane_id))
+        for lane in contract.lanes
     }
     catalog_rows = [
         json.loads(line)
