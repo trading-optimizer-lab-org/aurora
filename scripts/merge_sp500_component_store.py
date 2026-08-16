@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import statistics
 from pathlib import Path
 
 from aurora.infra.github_performance.shard_planner import sha256_file
@@ -17,6 +18,44 @@ from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
     scientific_input_binding_sha256,
     verify_runtime_input_pack,
 )
+
+
+def merge_component_performance(input_root: Path) -> dict[str, object]:
+    profiles: dict[str, dict[str, object]] = {}
+    shard_seconds: list[float] = []
+    for path in sorted(Path(input_root).rglob("component_performance.json")):
+        payload = json.loads(path.read_text("utf-8"))
+        if (
+            payload.get("validation_opened") is not False
+            or payload.get("locked_opened") is not False
+            or not isinstance(payload.get("component_profiles"), dict)
+        ):
+            raise ValueError("COMPONENT_PERFORMANCE_INVALID")
+        shard_seconds.append(float(payload["shard_seconds"]))
+        for key, profile in payload["component_profiles"].items():
+            previous = profiles.get(str(key))
+            if previous is not None and previous != profile:
+                raise ValueError("COMPONENT_PERFORMANCE_CONFLICT")
+            profiles[str(key)] = dict(profile)
+    if not profiles or not shard_seconds:
+        raise ValueError("COMPONENT_PERFORMANCE_MISSING")
+    ordered = sorted(shard_seconds)
+    p50 = float(statistics.median(ordered))
+    p95 = ordered[min(len(ordered) - 1, int(0.95 * len(ordered)))]
+    return {
+        "schema_version": 1,
+        "component_profiles": profiles,
+        "physical_component_builds": len(profiles),
+        "physical_component_seconds": sum(
+            float(row["physical_seconds"]) for row in profiles.values()
+        ),
+        "component_worker_seconds": sum(shard_seconds),
+        "component_worker_p50_seconds": p50,
+        "component_worker_p95_seconds": p95,
+        "component_worker_tail_ratio": p95 / p50 if p50 else 1.0,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -76,6 +115,11 @@ def main() -> int:
     }
     (args.output_dir / "runtime_manifest.json").write_text(
         json.dumps(runtime_identity, indent=2, sort_keys=True) + "\n",
+        "utf-8",
+    )
+    performance = merge_component_performance(args.input_root)
+    (args.output_dir / "component_performance.json").write_text(
+        json.dumps(performance, indent=2, sort_keys=True) + "\n",
         "utf-8",
     )
     return 0

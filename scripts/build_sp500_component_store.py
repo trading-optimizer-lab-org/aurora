@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -177,7 +178,10 @@ def main() -> int:
         evaluator_sha256=resolved.science.evaluator_sha256,
         session_count=len(ledger),
     )
+    component_profiles: dict[str, dict[str, object]] = {}
+    shard_started = time.perf_counter()
     for component in assigned:
+        component_started = time.perf_counter()
         frame = evaluator(component["lane_id"], component["configuration"])
         decisions = feature_frame_to_decisions(
             frame,
@@ -185,7 +189,44 @@ def main() -> int:
         ).reindex(ledger.index)
         values = decisions.fillna(0.0).to_numpy(dtype=np.int8)
         writer.add(component["configuration_sha256"], values)
+        duration = time.perf_counter() - component_started
+        profile_key = (
+            f'{component["lane_id"]}:{component["configuration_sha256"]}'
+        )
+        component_profiles[profile_key] = {
+            "lane_id": component["lane_id"],
+            "configuration_sha256": component["configuration_sha256"],
+            "duration_samples": [duration],
+            "sample_count": 1,
+            "p50_seconds": duration,
+            "p90_seconds": duration,
+            "p95_seconds": duration,
+            "p99_seconds": duration,
+            "physical_seconds": duration,
+        }
+    shard_seconds = time.perf_counter() - shard_started
     manifest = writer.commit()
+    (args.output_dir / "component_performance.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "component_shard_index": args.component_shard_index,
+                "component_profiles": component_profiles,
+                "physical_component_builds": len(component_profiles),
+                "physical_component_seconds": sum(
+                    float(row["physical_seconds"])
+                    for row in component_profiles.values()
+                ),
+                "shard_seconds": shard_seconds,
+                "validation_opened": False,
+                "locked_opened": False,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        "utf-8",
+    )
     (args.output_dir / "receipt.json").write_text(
         json.dumps(
             {
@@ -197,6 +238,7 @@ def main() -> int:
                 "component_schedule_sha256": schedule.plan_sha256,
                 "manifest_sha256": manifest.manifest_sha256,
                 "numeric_runtime_profile_sha256": numeric_runtime["profile_sha256"],
+                "shard_seconds": shard_seconds,
                 "validation_opened": False,
                 "locked_opened": False,
             },

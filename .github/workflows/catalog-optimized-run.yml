@@ -90,22 +90,30 @@ jobs:
             "${resume_args[@]}"
       - if: ${{ steps.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' && inputs.component_cost_run_id == '' }}
         run: exit 1
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - name: Download latest compatible measured component costs
         if: ${{ steps.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' }}
-        with:
-          name: sp500-strategy-catalog-final-results
-          path: ${{ runner.temp }}/cost-source
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.component_cost_run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COST_RUN_ID: ${{ inputs.component_cost_run_id }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/cost-source"
+          if ! gh run download "$COST_RUN_ID" -n sp500-global-component-store -D "$RUNNER_TEMP/cost-source"; then
+            gh run download "$COST_RUN_ID" -n sp500-strategy-catalog-final-results -D "$RUNNER_TEMP/cost-source"
+          fi
       - if: ${{ steps.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' }}
-        run: >-
-          python -m scripts.plan_sp500_component_schedule
-          --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl
-          --selected-config config/sp500_megarun_selected_dehb_13.json
-          --performance-report "$RUNNER_TEMP/cost-source/performance.json"
-          --workers 60
-          --output-dir outputs/plan
+        shell: bash
+        run: |
+          report="$RUNNER_TEMP/cost-source/component_performance.json"
+          if [ ! -f "$report" ]; then
+            report="$RUNNER_TEMP/cost-source/performance.json"
+          fi
+          python -m scripts.plan_sp500_component_schedule \
+            --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl \
+            --selected-config config/sp500_megarun_selected_dehb_13.json \
+            --performance-report "$report" \
+            --workers 60 \
+            --output-dir outputs/plan
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: sp500-catalog-run-plan

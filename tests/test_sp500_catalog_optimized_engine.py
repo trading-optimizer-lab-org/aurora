@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -277,6 +278,50 @@ def test_component_schedule_uses_measured_costs_and_assigns_each_key_once() -> N
     assert len(assigned) == len(set(assigned)) == 4
     assert all(shard.estimated_seconds > 0 for shard in schedule.shards)
     assert schedule.tail_ratio < 1.2
+
+
+def test_component_performance_merge_preserves_every_physical_cost(
+    tmp_path: Path,
+) -> None:
+    from scripts.merge_sp500_component_store import merge_component_performance
+
+    for index, duration in enumerate((1.0, 3.0, 2.0)):
+        root = tmp_path / str(index)
+        root.mkdir()
+        component_id = f"{index + 1:064x}"
+        profile = {
+            "lane_id": f"F{index + 1:03d}",
+            "configuration_sha256": component_id,
+            "duration_samples": [duration],
+            "sample_count": 1,
+            "p50_seconds": duration,
+            "p90_seconds": duration,
+            "p95_seconds": duration,
+            "p99_seconds": duration,
+            "physical_seconds": duration,
+        }
+        (root / "component_performance.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "component_profiles": {
+                        f"F{index + 1:03d}:{component_id}": profile
+                    },
+                    "physical_component_builds": 1,
+                    "physical_component_seconds": duration,
+                    "shard_seconds": duration,
+                    "validation_opened": False,
+                    "locked_opened": False,
+                }
+            ),
+            "utf-8",
+        )
+
+    merged = merge_component_performance(tmp_path)
+    assert merged["physical_component_builds"] == 3
+    assert merged["physical_component_seconds"] == 6.0
+    assert merged["component_worker_p50_seconds"] == 2.0
+    assert merged["component_worker_p95_seconds"] == 3.0
 
 
 def test_catalog_science_identity_excludes_replaceable_run_infrastructure() -> None:
