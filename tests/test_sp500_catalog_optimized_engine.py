@@ -59,12 +59,15 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "python scripts/verify_sp500_optimized_run.py" in run
     assert "  verify_qualification:" not in run
     assert "sp500-catalog-runtime-audit" in run
-    assert "pip install" not in run.split("  audit_runtime:", 1)[1]
+    audit_section = run.split("  audit_runtime:", 1)[1].split(
+        "  update_autotune:", 1
+    )[0]
+    assert "pip install" not in audit_section
     assert "pip install --no-deps -e ." not in run
     assert run.count(
         "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d"
-    ) == 3
-    assert run.count("uv pip install --system --require-hashes") == 3
+    ) == 4
+    assert run.count("uv pip install --system --require-hashes") == 4
     assert "python -m scripts.compile_sp500_catalog_recipes" in run
     assert "--recipe-dag" in worker
     assert "verify_recipe_dag_artifacts" in Path(
@@ -578,6 +581,41 @@ def test_vectorized_temporal_convolution_matches_frozen_python_kernel() -> None:
     observed = _convolution_basis(sequences, filters, dilation=4)
     for actual, reference in zip(observed, expected, strict=True):
         np.testing.assert_array_equal(actual, reference)
+
+
+def test_vectorized_reservoir_states_match_frozen_python_kernel() -> None:
+    from aurora.infra.sp500_megarun.predictive_feature_engine import (
+        _reservoir_states,
+        _reservoir_states_python,
+        _reservoir_weights,
+    )
+
+    generator = np.random.default_rng(149)
+    sequences = generator.normal(size=(41, 24, 7))
+    sequences[5] = np.nan
+    input_weight, recurrent, bias = _reservoir_weights(
+        7,
+        32,
+        kind="reservoir",
+        spectral_radius=0.7,
+        seed=149,
+    )
+    expected = _reservoir_states_python(
+        sequences,
+        input_weight=input_weight,
+        recurrent=recurrent,
+        bias=bias,
+        leak=0.4,
+    )
+    observed = _reservoir_states(
+        sequences,
+        input_weight=input_weight,
+        recurrent=recurrent,
+        bias=bias,
+        leak=0.4,
+    )
+    for actual, reference in zip(observed, expected, strict=True):
+        np.testing.assert_allclose(actual, reference, rtol=1e-13, atol=1e-13)
 
 
 def test_component_store_round_trip_is_exact_and_conflicts_fail(tmp_path: Path) -> None:

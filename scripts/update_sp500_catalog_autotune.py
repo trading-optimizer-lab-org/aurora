@@ -33,6 +33,34 @@ def update_autotune_history(
     previous_best_median_seconds: float | None,
     max_regression_ratio: float,
 ) -> tuple[CatalogPerformanceHistoryV1, CatalogTuningDecisionV1]:
+    history = ingest_verified_observations(
+        history_path=history_path,
+        runtime_audit_paths=runtime_audit_paths,
+        equivalence_paths=equivalence_paths,
+        science_identity_sha256=science_identity_sha256,
+        thermal_state=thermal_state,
+    )
+    decision = select_history_configuration(
+        history,
+        science_identity_sha256=science_identity_sha256,
+        thermal_state=thermal_state,
+        minimum_samples=minimum_samples,
+        previous_best_median_seconds=previous_best_median_seconds,
+        max_regression_ratio=max_regression_ratio,
+    )
+    return history, decision
+
+
+def ingest_verified_observations(
+    *,
+    history_path: Path | None,
+    runtime_audit_paths: tuple[Path, ...],
+    equivalence_paths: tuple[Path, ...],
+    science_identity_sha256: str,
+    thermal_state: ThermalState,
+) -> CatalogPerformanceHistoryV1:
+    """Append verified observations even before a candidate has three samples."""
+
     if not runtime_audit_paths or len(runtime_audit_paths) != len(equivalence_paths):
         raise ValueError("CATALOG_AUTOTUNE_EVIDENCE_COUNT_INVALID")
     history = (
@@ -75,15 +103,7 @@ def update_autotune_history(
                 equivalent=True,
             )
         )
-    decision = select_history_configuration(
-        history,
-        science_identity_sha256=science_identity_sha256,
-        thermal_state=thermal_state,
-        minimum_samples=minimum_samples,
-        previous_best_median_seconds=previous_best_median_seconds,
-        max_regression_ratio=max_regression_ratio,
-    )
-    return history, decision
+    return history
 
 
 def main() -> int:
@@ -102,20 +122,61 @@ def main() -> int:
     parser.add_argument("--max-regression-ratio", type=float, default=0.05)
     parser.add_argument("--output-history", type=Path, required=True)
     parser.add_argument("--output-decision", type=Path, required=True)
+    parser.add_argument("--allow-incomplete", action="store_true")
     args = parser.parse_args()
-    history, decision = update_autotune_history(
-        history_path=args.history,
-        runtime_audit_paths=tuple(args.runtime_audit),
-        equivalence_paths=tuple(args.equivalence),
-        science_identity_sha256=args.science_identity_sha256,
-        thermal_state=args.thermal_state,
-        minimum_samples=args.minimum_samples,
-        previous_best_median_seconds=args.previous_best_median_seconds,
-        max_regression_ratio=args.max_regression_ratio,
-    )
+    if args.allow_incomplete:
+        history = ingest_verified_observations(
+            history_path=args.history,
+            runtime_audit_paths=tuple(args.runtime_audit),
+            equivalence_paths=tuple(args.equivalence),
+            science_identity_sha256=args.science_identity_sha256,
+            thermal_state=args.thermal_state,
+        )
+        try:
+            decision: CatalogTuningDecisionV1 | dict[str, object] = (
+                select_history_configuration(
+                    history,
+                    science_identity_sha256=args.science_identity_sha256,
+                    thermal_state=args.thermal_state,
+                    minimum_samples=args.minimum_samples,
+                    previous_best_median_seconds=args.previous_best_median_seconds,
+                    max_regression_ratio=args.max_regression_ratio,
+                )
+            )
+        except ValueError as exc:
+            if str(exc) != "CATALOG_TUNING_NO_SAFE_EQUIVALENT_CANDIDATE":
+                raise
+            matching_samples = sum(
+                item.science_identity_sha256 == args.science_identity_sha256
+                and item.thermal_state == args.thermal_state
+                for item in history.observations
+            )
+            decision = {
+                "schema_version": "1",
+                "promoted": False,
+                "reason": "INSUFFICIENT_COMPATIBLE_SAMPLES",
+                "matching_samples": matching_samples,
+                "minimum_samples": args.minimum_samples,
+            }
+    else:
+        history, decision = update_autotune_history(
+            history_path=args.history,
+            runtime_audit_paths=tuple(args.runtime_audit),
+            equivalence_paths=tuple(args.equivalence),
+            science_identity_sha256=args.science_identity_sha256,
+            thermal_state=args.thermal_state,
+            minimum_samples=args.minimum_samples,
+            previous_best_median_seconds=args.previous_best_median_seconds,
+            max_regression_ratio=args.max_regression_ratio,
+        )
     history.write(args.output_history)
     args.output_decision.parent.mkdir(parents=True, exist_ok=True)
-    args.output_decision.write_text(decision.model_dump_json(indent=2) + "\n", "utf-8")
+    decision_payload = (
+        decision.model_dump_json(indent=2)
+        if isinstance(decision, CatalogTuningDecisionV1)
+        else json.dumps(decision, indent=2, sort_keys=True)
+    )
+    args.output_decision.write_text(decision_payload + "\n", "utf-8")
     return 0
 
 

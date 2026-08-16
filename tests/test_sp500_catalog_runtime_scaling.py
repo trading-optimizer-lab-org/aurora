@@ -559,6 +559,56 @@ def test_autotune_ingest_rejects_non_equivalent_or_open_boundaries(tmp_path: Pat
             max_regression_ratio=0.05,
         )
 
+
+def test_autotune_history_keeps_first_verified_sample_before_promotion(
+    tmp_path: Path,
+) -> None:
+    from scripts.update_sp500_catalog_autotune import ingest_verified_observations
+
+    audit = tmp_path / "audit.json"
+    audit.write_text(
+        json.dumps(
+            {
+                "run_id": 21,
+                "head_sha": "a" * 40,
+                "thermal_state": "cold",
+                "workers": 60,
+                "component_workers": 120,
+                "component_processes_per_worker": 4,
+                "processes_per_worker": 1,
+                "block_size": 1,
+                "wall_seconds": 278.0,
+                "worker_peak_memory_fraction": 0.04,
+                "validation_opened": False,
+                "locked_opened": False,
+            }
+        ),
+        "utf-8",
+    )
+    equivalence = tmp_path / "equivalence.json"
+    equivalence.write_text(
+        json.dumps(
+            {
+                "equivalent": True,
+                "difference_count": 0,
+                "validation_opened": False,
+                "locked_opened": False,
+            }
+        ),
+        "utf-8",
+    )
+
+    history = ingest_verified_observations(
+        history_path=None,
+        runtime_audit_paths=(audit,),
+        equivalence_paths=(equivalence,),
+        science_identity_sha256="b" * 64,
+        thermal_state="cold",
+    )
+    assert len(history.observations) == 1
+    assert history.observations[0].component_workers == 120
+    assert history.observations[0].component_processes_per_worker == 4
+
 def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> None:
     from aurora.infra.sp500_megarun.catalog_actions_audit import (
         build_actions_runtime_audit,

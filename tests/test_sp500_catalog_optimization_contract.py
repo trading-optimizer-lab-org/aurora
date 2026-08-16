@@ -77,6 +77,65 @@ def test_optimization_contract_is_frozen_and_hash_stable() -> None:
         first.workload.requested_recipes = 1
 
 
+def test_planner_applies_only_three_sample_science_compatible_autotune(
+    tmp_path: Path,
+) -> None:
+    from aurora.infra.github_performance.contracts import canonical_sha256
+    from aurora.infra.sp500_megarun.catalog_autotune import (
+        CatalogBenchmarkObservationV1,
+        CatalogPerformanceHistoryV1,
+    )
+    from aurora.infra.sp500_megarun.catalog_optimization_contract import (
+        RunOptimizationContractV1,
+    )
+    from scripts.plan_sp500_optimized_catalog_run import (
+        apply_compatible_autotune_history,
+    )
+
+    contract = RunOptimizationContractV1.model_validate(_valid_payload())
+    science = canonical_sha256(contract.science)
+    history = CatalogPerformanceHistoryV1.create()
+    for run_id, wall in ((1, 280.0), (2, 276.0), (3, 278.0)):
+        history = history.append(
+            CatalogBenchmarkObservationV1(
+                run_id=run_id,
+                head_sha="d" * 40,
+                science_identity_sha256=science,
+                thermal_state="cold",
+                workers=60,
+                component_workers=120,
+                component_processes_per_worker=4,
+                processes_per_worker=1,
+                block_size=1,
+                wall_seconds=wall,
+                peak_memory_fraction=0.05,
+                equivalent=True,
+            )
+        )
+    path = tmp_path / "history.json"
+    history.write(path)
+
+    tuned, decision = apply_compatible_autotune_history(
+        contract,
+        history_path=path,
+        thermal_state="cold",
+    )
+    assert decision is not None
+    assert tuned.execution.workers == 60
+    assert tuned.execution.component_workers == 120
+    assert tuned.execution.component_processes_per_worker == 4
+    assert tuned.execution.processes_per_worker == 1
+    assert tuned.execution.block_size == 1
+
+    untouched, missing = apply_compatible_autotune_history(
+        contract,
+        history_path=path,
+        thermal_state="component_warm",
+    )
+    assert missing is None
+    assert untouched == contract
+
+
 @pytest.mark.parametrize(
     ("section", "field", "value"),
     [

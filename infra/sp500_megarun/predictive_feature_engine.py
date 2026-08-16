@@ -1340,7 +1340,7 @@ def _reservoir_weights(
     return input_weight, recurrent, bias
 
 
-def _reservoir_states(
+def _reservoir_states_python(
     sequences: np.ndarray,
     *,
     input_weight: np.ndarray,
@@ -1367,6 +1367,57 @@ def _reservoir_states(
             state @ mean_state
             / max(float(np.linalg.norm(state) * np.linalg.norm(mean_state)), _EPSILON)
         )
+    return final, energy, alignment
+
+
+def _reservoir_states(
+    sequences: np.ndarray,
+    *,
+    input_weight: np.ndarray,
+    recurrent: np.ndarray,
+    bias: np.ndarray,
+    leak: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Evaluate independent samples together while preserving time recurrence."""
+
+    sample_count = len(sequences)
+    units = len(bias)
+    final = np.full((sample_count, units), np.nan)
+    energy = np.full(sample_count, np.nan)
+    alignment = np.full(sample_count, np.nan)
+    valid = np.isfinite(sequences).all(axis=(1, 2))
+    valid_sequences = sequences[valid]
+    if not len(valid_sequences):
+        return final, energy, alignment
+    state = np.zeros((len(valid_sequences), units))
+    path = np.empty((len(valid_sequences), sequences.shape[1], units))
+    for step in range(sequences.shape[1]):
+        input_term = np.einsum(
+            "uc,sc->su",
+            input_weight,
+            valid_sequences[:, step, :],
+            optimize=False,
+        )
+        recurrent_term = np.einsum(
+            "uv,sv->su",
+            recurrent,
+            state,
+            optimize=False,
+        )
+        candidate = np.tanh(input_term + recurrent_term + bias)
+        state = (1.0 - leak) * state + leak * candidate
+        path[:, step, :] = state
+    mean_state = np.mean(path, axis=1)
+    state_norm = np.linalg.norm(state, axis=1)
+    mean_norm = np.linalg.norm(mean_state, axis=1)
+    final[valid] = state
+    energy[valid] = state_norm / np.sqrt(units)
+    alignment[valid] = np.einsum(
+        "su,su->s",
+        state,
+        mean_state,
+        optimize=False,
+    ) / np.maximum(state_norm * mean_norm, _EPSILON)
     return final, energy, alignment
 
 

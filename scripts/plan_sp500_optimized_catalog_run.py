@@ -12,6 +12,12 @@ from aurora.infra.sp500_megarun.catalog_admission import (
     CatalogRunPlanV1,
     build_catalog_run_plan,
 )
+from aurora.infra.sp500_megarun.catalog_autotune import (
+    CatalogPerformanceHistoryV1,
+    CatalogTuningDecisionV1,
+    ThermalState,
+    select_history_configuration,
+)
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
@@ -134,6 +140,45 @@ def apply_qualification_component_worker_override(
         "component_workers": int(component_workers),
     }
     return RunOptimizationContractV1.model_validate(payload)
+
+
+def apply_compatible_autotune_history(
+    contract: RunOptimizationContractV1,
+    *,
+    history_path: Path | None,
+    thermal_state: ThermalState,
+) -> tuple[RunOptimizationContractV1, CatalogTuningDecisionV1 | None]:
+    """Apply only a three-sample, science-compatible promoted configuration."""
+
+    if history_path is None or not Path(history_path).is_file():
+        return contract, None
+    history = CatalogPerformanceHistoryV1.load(Path(history_path))
+    try:
+        decision = select_history_configuration(
+            history,
+            science_identity_sha256=canonical_sha256(contract.science),
+            thermal_state=thermal_state,
+            minimum_samples=3,
+            previous_best_median_seconds=None,
+            max_regression_ratio=contract.acceptance.max_performance_regression_ratio,
+            max_memory_fraction=contract.limits.max_memory_fraction,
+        )
+    except ValueError as exc:
+        if str(exc) == "CATALOG_TUNING_NO_SAFE_EQUIVALENT_CANDIDATE":
+            return contract, None
+        raise
+    payload = contract.model_dump(mode="python")
+    payload["execution"] = {
+        **payload["execution"],
+        "workers": decision.workers,
+        "component_workers": decision.component_workers,
+        "component_processes_per_worker": (
+            decision.component_processes_per_worker
+        ),
+        "processes_per_worker": decision.processes_per_worker,
+        "block_size": decision.block_size,
+    }
+    return RunOptimizationContractV1.model_validate(payload), decision
 
 
 def build_repository_contract(
@@ -301,6 +346,8 @@ def write_repository_catalog_run_plan(
     benchmark_processes: int | None = None,
     benchmark_component_processes: int | None = None,
     benchmark_component_workers: int | None = None,
+    autotune_history_path: Path | None = None,
+    thermal_state: ThermalState = "cold",
 ) -> CatalogRunPlanV1:
     """Resolve the immutable contract from the checkout before admission."""
 
@@ -309,6 +356,11 @@ def write_repository_catalog_run_plan(
         policy_path=policy_path,
         campaign_path=campaign_path,
         catalog_dir=catalog_dir,
+    )
+    contract, autotune_decision = apply_compatible_autotune_history(
+        contract,
+        history_path=autotune_history_path,
+        thermal_state=thermal_state,
     )
     if benchmark_workers is not None:
         evidence = CatalogAdmissionEvidenceV1.model_validate(
@@ -366,13 +418,19 @@ def write_repository_catalog_run_plan(
         maximum_workers=contract.execution.workers,
     )
     try:
-        return write_catalog_run_plan(
+        plan = write_catalog_run_plan(
             resolved_path,
             evidence_path,
             output_dir,
             github_output=github_output,
             work_manifest=work_manifest,
         )
+        if autotune_decision is not None:
+            (Path(output_dir) / "autotune_decision.json").write_text(
+                autotune_decision.model_dump_json(indent=2) + "\n",
+                "utf-8",
+            )
+        return plan
     finally:
         resolved_path.unlink(missing_ok=True)
 
@@ -393,6 +451,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--benchmark-processes", type=int, default=0)
     parser.add_argument("--benchmark-component-processes", type=int, default=0)
     parser.add_argument("--benchmark-component-workers", type=int, default=0)
+    parser.add_argument("--autotune-history", type=Path)
+    parser.add_argument(
+        "--thermal-state",
+        choices=("cold", "component_warm", "fully_hot"),
+        default="cold",
+    )
     return parser
 
 
@@ -435,6 +499,8 @@ def main() -> int:
                 if args.benchmark_component_workers
                 else None
             ),
+            autotune_history_path=args.autotune_history,
+            thermal_state=args.thermal_state,
         )
     return 0
 

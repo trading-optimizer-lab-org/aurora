@@ -6,7 +6,7 @@ on:
       commit_sha: {required: true, type: string}
       runtime_input_run_id: {required: true, type: string}
       admission_evidence_path: {required: false, type: string, default: "config/sp500_catalog_admission_evidence_current_v1.json"}
-      reference_run_id: {required: false, type: string, default: ""}
+      reference_run_id: {required: false, type: string, default: "31948898747"}
       component_store_run_id: {required: false, type: string, default: ""}
       component_cost_run_id: {required: false, type: string, default: ""}
       evaluation_cache_run_ids: {required: false, type: string, default: ""}
@@ -18,6 +18,7 @@ on:
     inputs:
       commit_sha: {description: Exact revision, required: true}
       runtime_input_run_id: {description: Immutable train-only runtime pack, required: true, default: "31418682679"}
+      reference_run_id: {description: Frozen scientific oracle run, required: false, default: "31948898747"}
       component_store_run_id: {description: Compatible prior component-store run, required: false, default: ""}
       component_cost_run_id: {description: Prior measured component-cost evidence, required: false, default: ""}
       evaluation_cache_run_ids: {description: Comma-separated compatible result or checkpoint runs, required: false, default: ""}
@@ -70,6 +71,17 @@ jobs:
       - run: >-
           uv pip install --system --require-hashes
           -r requirements/catalog-recipe-worker.lock
+      - name: Restore latest compatible autotune history artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/autotune"
+          artifact_id="$(gh api "repos/${{ github.repository }}/actions/artifacts?name=sp500-catalog-autotune-state&per_page=100" --jq '.artifacts | map(select(.expired == false)) | sort_by(.created_at) | reverse | .[0].id // empty')"
+          if [ -n "$artifact_id" ]; then
+            gh api "repos/${{ github.repository }}/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/autotune/state.zip"
+            unzip -q "$RUNNER_TEMP/autotune/state.zip" -d "$RUNNER_TEMP/autotune/latest"
+          fi
       - name: Download compatible resume sources once for planning
         if: ${{ inputs.evaluation_cache_run_ids != '' }}
         env:
@@ -95,6 +107,14 @@ jobs:
             resume_args+=(--resume-root "$RUNNER_TEMP/resume")
           fi
           benchmark_args=()
+          autotune_args=()
+          thermal_state="cold"
+          if [ -n "${{ inputs.component_store_run_id }}" ]; then
+            thermal_state="component_warm"
+          fi
+          if [ -f "$RUNNER_TEMP/autotune/latest/performance_history.json" ]; then
+            autotune_args+=(--autotune-history "$RUNNER_TEMP/autotune/latest/performance_history.json")
+          fi
           if [ "${{ inputs.benchmark_workers }}" -ne 0 ]; then
             benchmark_args+=(--benchmark-workers "${{ inputs.benchmark_workers }}")
           fi
@@ -115,11 +135,16 @@ jobs:
             --evidence "${{ inputs.admission_evidence_path || 'config/sp500_catalog_admission_evidence_current_v1.json' }}" \
             --output-dir outputs/plan \
             --github-output "$GITHUB_OUTPUT" \
+            --thermal-state "$thermal_state" \
             "${resume_args[@]}" \
+            "${autotune_args[@]}" \
             "${benchmark_args[@]}"
           python -m scripts.compile_sp500_catalog_recipes \
             --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl \
             --output-dir outputs/plan
+          if [ -f "$RUNNER_TEMP/autotune/latest/performance_history.json" ]; then
+            cp "$RUNNER_TEMP/autotune/latest/performance_history.json" outputs/plan/autotune_history_prior.json
+          fi
       - if: ${{ steps.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' && inputs.component_cost_run_id == '' }}
         run: exit 1
       - name: Download latest compatible measured component costs
@@ -404,5 +429,67 @@ jobs:
         with:
           name: sp500-catalog-runtime-audit
           path: outputs/runtime_audit.json
+          if-no-files-found: error
+          retention-days: 90
+
+  update_autotune:
+    needs: [plan, reduce, audit_runtime]
+    if: ${{ always() && needs.plan.result == 'success' && needs.reduce.result == 'success' && needs.audit_runtime.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions: {actions: read, contents: read}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          enable-cache: false
+      - run: >-
+          uv pip install --system --require-hashes
+          -r requirements/catalog-recipe-worker.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-catalog-runtime-audit
+          path: ${{ runner.temp }}/audit
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-catalog-qualification-evidence
+          path: ${{ runner.temp }}/equivalence
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-strategy-catalog-final-results
+          path: ${{ runner.temp }}/final
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-catalog-run-plan
+          path: ${{ runner.temp }}/plan
+      - name: Append verified benchmark and promote only after three samples
+        shell: bash
+        run: |
+          mkdir -p outputs/autotune
+          science_identity="$(python -c 'import json,os; print(json.load(open(os.path.join(os.environ["RUNNER_TEMP"],"final","receipt.json")))["science_identity_sha256"])')"
+          thermal_state="$(python -c 'import json,os; print(json.load(open(os.path.join(os.environ["RUNNER_TEMP"],"audit","runtime_audit.json")))["thermal_state"])')"
+          history_args=()
+          if [ -f "$RUNNER_TEMP/plan/autotune_history_prior.json" ]; then
+            history_args+=(--history "$RUNNER_TEMP/plan/autotune_history_prior.json")
+          fi
+          python -m scripts.update_sp500_catalog_autotune \
+            "${history_args[@]}" \
+            --runtime-audit "$RUNNER_TEMP/audit/runtime_audit.json" \
+            --equivalence "$RUNNER_TEMP/equivalence/equivalence.json" \
+            --science-identity-sha256 "$science_identity" \
+            --thermal-state "$thermal_state" \
+            --minimum-samples 3 \
+            --max-regression-ratio 0.05 \
+            --allow-incomplete \
+            --output-history outputs/autotune/performance_history.json \
+            --output-decision outputs/autotune/decision.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-catalog-autotune-state
+          path: outputs/autotune
           if-no-files-found: error
           retention-days: 90
