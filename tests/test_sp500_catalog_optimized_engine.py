@@ -26,6 +26,8 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "resume_work_manifest.json" in worker
     assert "--resume-root" in run
     assert "python -m scripts.plan_sp500_component_schedule" in run
+    assert "python -m scripts.audit_sp500_catalog_actions_run" in run
+    assert "sp500-catalog-runtime-audit" in run
     component_worker = Path(
         ".github/workflows/catalog-component-worker.yml"
     ).read_text(encoding="utf-8")
@@ -345,6 +347,7 @@ def test_catalog_science_identity_excludes_replaceable_run_infrastructure() -> N
     assert "infra/sp500_megarun/catalog_scheduler.py" not in science
     assert ".github/workflows/catalog-optimized-run.yml" in infrastructure
     assert "scripts/run_sp500_optimized_recipe_worker.py" in infrastructure
+    assert "scripts/audit_sp500_catalog_actions_run.py" in infrastructure
     assert science.isdisjoint(infrastructure)
 
 

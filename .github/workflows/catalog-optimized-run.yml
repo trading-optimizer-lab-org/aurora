@@ -221,7 +221,7 @@ jobs:
 
   evaluate_b:
     needs: [plan, merge_components]
-    if: ${{ always() && needs.plan.result == 'success' && needs.merge_components.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.merge_components.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && fromJSON(needs.plan.outputs.active_workers) > 120 }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -237,7 +237,7 @@ jobs:
 
   evaluate_c:
     needs: [plan, merge_components]
-    if: ${{ always() && needs.plan.result == 'success' && needs.merge_components.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.merge_components.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && fromJSON(needs.plan.outputs.active_workers) > 240 }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -340,5 +340,57 @@ jobs:
         with:
           name: sp500-catalog-qualification-evidence
           path: outputs/equivalence.json
+          if-no-files-found: error
+          retention-days: 90
+
+  audit_runtime:
+    needs: [plan, reduce, verify_qualification]
+    if: ${{ always() && needs.plan.result == 'success' && needs.reduce.result == 'success' && (needs.verify_qualification.result == 'success' || needs.verify_qualification.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions: {actions: read, contents: read}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - run: |
+          python -m pip install --require-hashes -r requirements/catalog-optimized.lock
+          python -m pip install --no-deps -e .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-strategy-catalog-final-results
+          path: ${{ runner.temp }}/final
+      - name: Collect complete Actions metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" > "$RUNNER_TEMP/run.json"
+          gh api --paginate --slurp "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" > "$RUNNER_TEMP/jobs.json"
+          gh api --paginate --slurp "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" > "$RUNNER_TEMP/artifacts.json"
+      - name: Build runtime audit
+        env:
+          PENDING_RECIPES: ${{ needs.plan.outputs.pending_recipe_count }}
+          COMPONENT_STORE_RUN_ID: ${{ inputs.component_store_run_id }}
+        shell: bash
+        run: |
+          thermal_state="cold"
+          if [ "$PENDING_RECIPES" = "0" ]; then
+            thermal_state="fully_hot"
+          elif [ -n "$COMPONENT_STORE_RUN_ID" ]; then
+            thermal_state="component_warm"
+          fi
+          python -m scripts.audit_sp500_catalog_actions_run \
+            --run "$RUNNER_TEMP/run.json" \
+            --jobs "$RUNNER_TEMP/jobs.json" \
+            --artifacts "$RUNNER_TEMP/artifacts.json" \
+            --receipt "$RUNNER_TEMP/final/receipt.json" \
+            --thermal-state "$thermal_state" \
+            --output outputs/runtime_audit.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-catalog-runtime-audit
+          path: outputs/runtime_audit.json
           if-no-files-found: error
           retention-days: 90

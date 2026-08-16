@@ -277,6 +277,90 @@ def test_autotuner_selects_fastest_safe_candidate_and_blocks_regression() -> Non
         )
 
 
+def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> None:
+    from aurora.infra.sp500_megarun.catalog_actions_audit import (
+        build_actions_runtime_audit,
+    )
+
+    jobs = [
+        {
+            "name": "optimized / plan",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-01-01T00:00:00Z",
+            "started_at": "2026-01-01T00:00:02Z",
+            "completed_at": "2026-01-01T00:00:12Z",
+            "steps": [],
+        },
+        {
+            "name": "optimized / evaluate_a (0) / evaluate",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-01-01T00:00:12Z",
+            "started_at": "2026-01-01T00:00:15Z",
+            "completed_at": "2026-01-01T00:00:45Z",
+            "steps": [
+                {
+                    "name": "Run setup",
+                    "started_at": "2026-01-01T00:00:15Z",
+                    "completed_at": "2026-01-01T00:00:20Z",
+                },
+                {
+                    "name": "Run python -m scripts.run_sp500_optimized_recipe_worker",
+                    "started_at": "2026-01-01T00:00:20Z",
+                    "completed_at": "2026-01-01T00:00:40Z",
+                },
+                {
+                    "name": "Run actions/upload-artifact",
+                    "started_at": "2026-01-01T00:00:40Z",
+                    "completed_at": "2026-01-01T00:00:45Z",
+                },
+            ],
+        },
+    ]
+    receipt = {
+        "strategy_count": 120,
+        "physical_recipe_evaluations": 100,
+        "prior_result_cache_hits": 20,
+        "worker_receipt_count": 1,
+        "result_bytes": 48000,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+    report = build_actions_runtime_audit(
+        run={
+            "id": 7,
+            "head_sha": "a" * 40,
+            "run_started_at": "2026-01-01T00:00:00Z",
+        },
+        jobs=jobs,
+        artifacts=[{"name": "first", "size_in_bytes": 1000}],
+        receipt=receipt,
+        thermal_state="component_warm",
+    )
+
+    assert report["wall_seconds"] == 45.0
+    assert report["runner_seconds"] == 40.0
+    assert report["queue_seconds"] == 5.0
+    assert report["setup_seconds_p50"] == 5.0
+    assert report["compute_seconds"] == 20.0
+    assert report["upload_seconds"] == 5.0
+    assert report["strategies_per_wall_minute"] == 160.0
+    assert report["artifact_bytes_uploaded"] == 1000
+    assert report["result_bytes_per_recipe"] == 400.0
+    assert report["validation_opened"] is False
+    assert report["locked_opened"] is False
+
+
+def test_reusable_workflow_skips_empty_matrix_groups_without_blocking_reduce() -> None:
+    workflow = Path(".github/workflows/catalog-optimized-run.yml").read_text("utf-8")
+
+    assert "fromJSON(needs.plan.outputs.active_workers) > 120" in workflow
+    assert "fromJSON(needs.plan.outputs.active_workers) > 240" in workflow
+    assert "needs.evaluate_b.result == 'skipped'" in workflow
+    assert "needs.evaluate_c.result == 'skipped'" in workflow
+
+
 def test_multi_asset_panel_preserves_calendar_and_asset_isolation() -> None:
     from aurora.infra.sp500_megarun.catalog_multi_asset import build_asset_panel
 
