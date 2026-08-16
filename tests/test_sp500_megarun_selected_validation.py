@@ -14,6 +14,10 @@ from aurora.infra.sp500_megarun.feature_engine import (
     FeatureEngineError,
     evaluate_price_lane,
 )
+from aurora.infra.sp500_megarun.feature_input_normalizers import (
+    FeatureInputNormalizerError,
+    normalize_spy_decision_panel,
+)
 from aurora.infra.sp500_megarun.selected_validation import (
     VALIDATION_ACK,
     SelectedValidationError,
@@ -276,10 +280,19 @@ def test_engine_boundary_opens_only_inside_authorized_evaluation(tmp_path):
     )
 
     def builder(_owner):
+        sessions = pd.DatetimeIndex(
+            [*frame["date"], pd.Timestamp("2011-01-04")]
+        )
+        normalized = normalize_spy_decision_panel(frame, sessions=sessions)
         return lambda _lane, _config: evaluate_price_lane(
             "F001",
-            frame,
-            {"kind": "sma", "normalization": "price_ratio", "threshold": 0.0, "window": 2},
+            normalized,
+            {
+                "kind": "sma",
+                "normalization": "price_ratio",
+                "threshold": 0.0,
+                "window": 2,
+            },
         )
 
     evaluator = AuthorizedValidationLaneEvaluator(
@@ -293,12 +306,19 @@ def test_engine_boundary_opens_only_inside_authorized_evaluation(tmp_path):
 
     result = evaluator("F001", {})
 
-    assert result["date"].max() == pd.Timestamp("2011-01-03")
+    assert result["date"].max() == pd.Timestamp("2011-01-04")
     with pytest.raises(FeatureEngineError, match="NON_TRAIN"):
         evaluate_price_lane(
             "F001",
             frame,
             {"kind": "sma", "normalization": "price_ratio", "threshold": 0.0, "window": 2},
+        )
+    with pytest.raises(FeatureInputNormalizerError, match="NON_TRAIN"):
+        normalize_spy_decision_panel(
+            frame,
+            sessions=pd.DatetimeIndex(
+                [*frame["date"], pd.Timestamp("2011-01-04")]
+            ),
         )
 
 
