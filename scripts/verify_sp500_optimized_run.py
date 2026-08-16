@@ -105,27 +105,40 @@ def verify_equivalence(
     expected = _load_results(reference)
     observed = _load_results(optimized)
     differences: list[str] = []
+    affected_strategy_ids: set[str] = set()
+    difference_count = 0
     if set(expected) != set(observed):
         missing = sorted(set(expected) - set(observed))
         extra = sorted(set(observed) - set(expected))
-        differences.extend(
-            [*(f"missing:{item}" for item in missing), *(f"extra:{item}" for item in extra)]
-        )
+        identity_differences = [
+            *(f"missing:{item}" for item in missing),
+            *(f"extra:{item}" for item in extra),
+        ]
+        difference_count += len(identity_differences)
+        differences.extend(identity_differences[:100])
+        affected_strategy_ids.update(missing)
+        affected_strategy_ids.update(extra)
     for strategy_id in sorted(set(expected).intersection(observed)):
+        local_differences: list[str] = []
         _compare(
             expected[strategy_id],
             observed[strategy_id],
             path=strategy_id,
-            differences=differences,
+            differences=local_differences,
         )
-        if len(differences) >= 100:
-            break
+        if local_differences:
+            affected_strategy_ids.add(strategy_id)
+            difference_count += len(local_differences)
+            remaining = max(0, 100 - len(differences))
+            differences.extend(local_differences[:remaining])
     return {
         "schema_version": 1,
-        "equivalent": not differences,
+        "equivalent": difference_count == 0,
         "expected_count": len(expected),
         "observed_count": len(observed),
-        "difference_count": len(differences),
+        "difference_count": difference_count,
+        "affected_strategy_count": len(affected_strategy_ids),
+        "affected_strategy_ids": sorted(affected_strategy_ids),
         "first_differences": differences[:100],
         "absolute_tolerance": 1e-12,
         "relative_tolerance": 1e-10,

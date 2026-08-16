@@ -61,6 +61,42 @@ def test_equivalence_gate_allows_only_declared_additive_weekly_metrics() -> None
     assert unknown == ["strategy.info:extra:unknown_metric"]
 
 
+def test_equivalence_report_counts_every_affected_strategy_but_bounds_details(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    from scripts.verify_sp500_optimized_run import verify_equivalence
+
+    reference = tmp_path / "reference"
+    optimized = tmp_path / "optimized"
+    reference.mkdir()
+    optimized.mkdir()
+    expected_rows = []
+    observed_rows = []
+    for index in range(105):
+        strategy_id = f"s{index:03d}"
+        expected_rows.append(
+            {"strategy_id": strategy_id, "result": {"fitness": float(index)}}
+        )
+        observed_rows.append(
+            {"strategy_id": strategy_id, "result": {"fitness": float(index + 1)}}
+        )
+    (reference / "results.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in expected_rows), "utf-8"
+    )
+    (optimized / "results.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in observed_rows), "utf-8"
+    )
+
+    report = verify_equivalence(optimized, reference)
+
+    assert report["difference_count"] == 105
+    assert report["affected_strategy_count"] == 105
+    assert len(report["affected_strategy_ids"]) == 105
+    assert len(report["first_differences"]) == 100
+
+
 def test_cost_model_and_affinity_scheduler_are_deterministic() -> None:
     from aurora.infra.sp500_megarun.catalog_cost_model import CatalogCostModelV1
     from aurora.infra.sp500_megarun.catalog_scheduler import schedule_recipes
