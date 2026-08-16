@@ -247,11 +247,17 @@ class CatalogStreamingResultWriter:
     def _flush(self) -> None:
         if not self._buffer:
             return
+        table = pa.Table.from_pylist(self._buffer, schema=_SCHEMA)
+        row_count = len(self._buffer)
+        self._buffer.clear()
+        self._write_table(table, row_count=row_count)
+
+    def _write_table(self, table: pa.Table, *, row_count: int) -> None:
         index = len(self._partitions)
         path = self.root / f"part-{index:08d}.parquet"
         temporary = self.root / f"part-{index:08d}.parquet.tmp"
         pq.write_table(
-            pa.Table.from_pylist(self._buffer, schema=_SCHEMA),
+            table,
             temporary,
             compression="zstd",
             use_dictionary=True,
@@ -261,11 +267,10 @@ class CatalogStreamingResultWriter:
             ResultPartitionV1(
                 path=path.name,
                 sha256=sha256_file(path),
-                row_count=len(self._buffer),
+                row_count=row_count,
             )
         )
-        self._row_count += len(self._buffer)
-        self._buffer.clear()
+        self._row_count += row_count
         self._write_checkpoint()
 
     def add(self, row: Mapping[str, object]) -> None:
@@ -278,6 +283,35 @@ class CatalogStreamingResultWriter:
         self.max_buffered_rows = max(self.max_buffered_rows, len(self._buffer))
         if len(self._buffer) >= self.partition_size:
             self._flush()
+
+    def append_table(self, table: pa.Table) -> None:
+        """Append an ordered Arrow batch without materializing Python row dicts."""
+
+        self._flush()
+        try:
+            checked = table.select(_SCHEMA.names).cast(_SCHEMA).combine_chunks()
+        except (KeyError, pa.ArrowInvalid, pa.ArrowNotImplementedError) as exc:
+            raise ValueError("RESULT_STREAM_TABLE_SCHEMA_INVALID") from exc
+        if checked.num_rows == 0:
+            return
+        strategy_ids = checked.column("strategy_id").to_pylist()
+        if any(
+            str(current) >= str(following)
+            for current, following in zip(
+                strategy_ids,
+                strategy_ids[1:],
+            )
+        ):
+            raise ValueError("RESULT_STREAM_ORDER_OR_DUPLICATE_INVALID")
+        first = str(strategy_ids[0])
+        if self._last_strategy_id is not None and first <= self._last_strategy_id:
+            raise ValueError("RESULT_STREAM_ORDER_OR_DUPLICATE_INVALID")
+        for start in range(0, checked.num_rows, self.partition_size):
+            chunk = checked.slice(start, self.partition_size)
+            self._last_strategy_id = str(
+                chunk.column("strategy_id")[chunk.num_rows - 1].as_py()
+            )
+            self._write_table(chunk, row_count=chunk.num_rows)
 
     def checkpoint(self) -> CatalogResultCheckpointV1:
         self._flush()

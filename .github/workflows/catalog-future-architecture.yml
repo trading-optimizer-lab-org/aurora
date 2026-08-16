@@ -9,7 +9,7 @@ permissions: {contents: read}
 jobs:
   qualify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       PYTHONPATH: ${{ github.workspace }}/..
     steps:
@@ -34,9 +34,14 @@ jobs:
         run: >-
           python -m scripts.benchmark_catalog_future_architecture
           --output outputs/catalog_future_architecture.json
+      - name: Benchmark 1M and 10M streamed catalog results with restart
+        run: >-
+          python -m scripts.benchmark_catalog_scale
+          --store-root "$RUNNER_TEMP/catalog-scale-store"
+          --output outputs/catalog_scale_1m_10m.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: catalog-future-architecture-qualification
-          path: outputs/catalog_future_architecture.json
+          path: outputs
           if-no-files-found: error
           retention-days: 90

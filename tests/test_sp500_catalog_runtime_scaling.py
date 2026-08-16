@@ -306,6 +306,67 @@ def test_streaming_result_store_resumes_only_committed_ordered_rows(
     assert resumed.max_buffered_rows <= 2
 
 
+def test_streaming_result_store_appends_arrow_batches_without_row_buffer(
+    tmp_path: Path,
+) -> None:
+    import pyarrow as pa
+
+    from aurora.infra.sp500_megarun.catalog_result_store import (
+        CatalogResultStore,
+        CatalogStreamingResultWriter,
+    )
+
+    writer = CatalogStreamingResultWriter(
+        tmp_path / "arrow-stream",
+        contract_sha256="b" * 64,
+        partition_size=3,
+    )
+    count = 8
+    table = pa.table(
+        {
+            "strategy_id": [f"s{index:08d}" for index in range(count)],
+            "recipe_sha256": [f"{index + 1:064x}" for index in range(count)],
+            "position_sha256": [f"{index + 11:064x}" for index in range(count)],
+            "annualized_return": [index / 100 for index in range(count)],
+            "weekly_positive_rate": [0.5] * count,
+        }
+    )
+    writer.append_table(table.slice(0, 4))
+    resumed = CatalogStreamingResultWriter(
+        tmp_path / "arrow-stream",
+        contract_sha256="b" * 64,
+        partition_size=3,
+        resume=True,
+    )
+    resumed.append_table(table.slice(4))
+    manifest = resumed.commit()
+    assert manifest.row_count == count
+    assert resumed.max_buffered_rows == 0
+    assert len(list(CatalogResultStore.open(tmp_path / "arrow-stream").iter_rows())) == count
+
+
+def test_catalog_scale_benchmark_streams_resumes_and_keeps_boundaries_closed(
+    tmp_path: Path,
+) -> None:
+    from scripts.benchmark_catalog_scale import build_scale_report
+
+    report = build_scale_report(
+        tmp_path / "scale",
+        total_recipes=1000,
+        first_milestone=400,
+        unique_position_count=32,
+        session_count=128,
+        batch_size=100,
+        partition_size=200,
+    )
+    assert report["one_million"]["requested_recipes"] == 400
+    assert report["ten_million"]["requested_recipes"] == 1000
+    assert report["ten_million"]["resume_verified"] is True
+    assert report["ten_million"]["maximum_python_row_buffer"] == 0
+    assert report["validation_opened"] is False
+    assert report["locked_opened"] is False
+
+
 def test_autotuner_selects_fastest_safe_candidate_and_blocks_regression() -> None:
     from aurora.infra.sp500_megarun.catalog_autotune import (
         TuningCandidateV1,
