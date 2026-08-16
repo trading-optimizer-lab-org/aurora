@@ -1392,18 +1392,8 @@ def _reservoir_states(
     state = np.zeros((len(valid_sequences), units))
     path = np.empty((len(valid_sequences), sequences.shape[1], units))
     for step in range(sequences.shape[1]):
-        input_term = np.einsum(
-            "uc,sc->su",
-            input_weight,
-            valid_sequences[:, step, :],
-            optimize=False,
-        )
-        recurrent_term = np.einsum(
-            "uv,sv->su",
-            recurrent,
-            state,
-            optimize=False,
-        )
+        input_term = valid_sequences[:, step, :] @ input_weight.T
+        recurrent_term = state @ recurrent.T
         candidate = np.tanh(input_term + recurrent_term + bias)
         state = (1.0 - leak) * state + leak * candidate
         path[:, step, :] = state
