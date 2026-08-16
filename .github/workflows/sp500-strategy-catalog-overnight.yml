@@ -17,7 +17,6 @@ concurrency:
 
 jobs:
   plan:
-    if: ${{ inputs.runtime_input_run_id != 'selected-validation-12-once' }}
     runs-on: ubuntu-24.04
     outputs:
       matrix_a: ${{ steps.matrix.outputs.matrix_a }}
@@ -190,10 +189,3 @@ jobs:
           path: outputs/final
           if-no-files-found: error
           retention-days: 90
-
-  selected_validation_once:
-    if: ${{ inputs.runtime_input_run_id == 'selected-validation-12-once' }}
-    uses: ./.github/workflows/sp500-selected-validation-12-once.yml
-    with:
-      commit_sha: ${{ inputs.commit_sha }}
-      validation_ack: OPEN_SP500_MEGARUN_VALIDATION_2011_2020_SELECTED_12_ONCE
