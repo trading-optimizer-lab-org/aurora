@@ -737,9 +737,11 @@ def _variance_path_compiled(
                 standardized = residuals[index - lag] / np.sqrt(lag_variance)
                 value += alpha[offset] * (abs(standardized) - expected_absolute)
                 value += gamma[offset] * standardized
+            beta_total = 0.0
             for offset in range(len(beta)):
                 lag = offset + 1
-                value += beta[offset] * log_path[index - lag]
+                beta_total += beta[offset] * log_path[index - lag]
+            value += beta_total
             log_path[index] = min(max(value, -30.0), 30.0)
         return np.exp(log_path)
     for index in range(start, len(residuals)):
@@ -750,9 +752,11 @@ def _variance_path_compiled(
             value += alpha[offset] * shock
             if residuals[index - lag] < 0.0:
                 value += gamma[offset] * shock
+        beta_total = 0.0
         for offset in range(len(beta)):
             lag = offset + 1
-            value += beta[offset] * path[index - lag]
+            beta_total += beta[offset] * path[index - lag]
+        value += beta_total
         path[index] = max(value, _EPSILON)
     return path
 

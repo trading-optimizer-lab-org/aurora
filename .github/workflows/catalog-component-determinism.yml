@@ -76,7 +76,7 @@ jobs:
           --data-contract config/sp500_megarun_free_data_240.json
           --feature-contract config/sp500_megarun_feature_contract_240.json
           --catalog-dir config/sp500_megarun_strategy_catalog_v1
-          --diagnostic-config config/sp500_catalog_equivalence_diagnostic_v1.json
+          --diagnostic-config config/sp500_catalog_component_determinism_v1.json
           --runtime-input-pack "$RUNNER_TEMP/runtime"
           --run-plan "$RUNNER_TEMP/plan/run_plan.json"
           --admission-token "${{ needs.prepare.outputs.admission_token }}"

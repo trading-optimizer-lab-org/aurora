@@ -330,7 +330,10 @@ def test_compiled_volatility_path_matches_frozen_python_kernel(kind: str) -> Non
         expected_absolute=np.sqrt(2.0 / np.pi),
     )
 
-    np.testing.assert_allclose(observed, expected, rtol=1e-13, atol=1e-13)
+    if kind == "egarch":
+        np.testing.assert_array_equal(observed, expected)
+    else:
+        np.testing.assert_allclose(observed, expected, rtol=1e-13, atol=1e-13)
 
 
 def test_component_store_round_trip_is_exact_and_conflicts_fail(tmp_path: Path) -> None:
