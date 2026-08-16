@@ -1,0 +1,227 @@
+name: SP500 Optimized Catalog Run
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+      runtime_input_run_id: {required: true, type: string}
+      admission_evidence_path: {required: false, type: string, default: "config/sp500_catalog_admission_evidence_current_v1.json"}
+      reference_run_id: {required: false, type: string, default: ""}
+  workflow_dispatch:
+    inputs:
+      commit_sha: {description: Exact revision, required: true}
+      runtime_input_run_id: {description: Immutable train-only runtime pack, required: true, default: "31418682679"}
+
+permissions: {actions: read, contents: read}
+concurrency:
+  group: sp500-optimized-catalog-${{ inputs.commit_sha }}
+  cancel-in-progress: false
+
+env:
+  GITHUB_ACTIONS: "true"
+  PYTHONHASHSEED: "0"
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      matrix_a: ${{ steps.plan.outputs.matrix_a }}
+      matrix_b: ${{ steps.plan.outputs.matrix_b }}
+      matrix_c: ${{ steps.plan.outputs.matrix_c }}
+      admission_token_sha256: ${{ steps.plan.outputs.admission_token_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - run: |
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install --no-deps -e .
+      - id: plan
+        run: >-
+          python scripts/plan_sp500_optimized_catalog_run.py
+          --repo-root .
+          --policy config/sp500_catalog_optimization_policy_v1.json
+          --campaign config/sp500_megarun_dehb_campaign_v1.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --evidence "${{ inputs.admission_evidence_path || 'config/sp500_catalog_admission_evidence_current_v1.json' }}"
+          --output-dir outputs/plan
+          --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-catalog-run-plan
+          path: outputs/plan
+          if-no-files-found: error
+          retention-days: 30
+
+  build_components:
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 60
+      matrix:
+        component_shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59]
+    uses: ./.github/workflows/catalog-component-worker.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      component_shard_index: ${{ matrix.component_shard }}
+      admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
+
+  merge_components:
+    needs: [plan, build_components]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - run: |
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install --no-deps -e .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-component-part-*
+          path: ${{ runner.temp }}/component-parts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-catalog-run-plan
+          path: ${{ runner.temp }}/plan
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          path: ${{ runner.temp }}/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
+      - run: >-
+          python scripts/merge_sp500_component_store.py
+          --input-root "$RUNNER_TEMP/component-parts"
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --run-plan "$RUNNER_TEMP/plan/run_plan.json"
+          --admission-token "${{ needs.plan.outputs.admission_token_sha256 }}"
+          --expected-component-count 7281
+          --output-dir outputs/component-store
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-global-component-store
+          path: outputs/component-store
+          if-no-files-found: error
+          retention-days: 30
+
+  evaluate_a:
+    needs: [plan, merge_components]
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    uses: ./.github/workflows/catalog-optimized-worker.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      shard_index: ${{ matrix.shard }}
+      admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
+
+  evaluate_b:
+    needs: [plan, merge_components]
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    uses: ./.github/workflows/catalog-optimized-worker.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      shard_index: ${{ matrix.shard }}
+      admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
+
+  evaluate_c:
+    needs: [plan, merge_components]
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_c) }}
+    uses: ./.github/workflows/catalog-optimized-worker.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      shard_index: ${{ matrix.shard }}
+      admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
+
+  reduce:
+    needs: [plan, evaluate_a, evaluate_b, evaluate_c]
+    if: ${{ always() && needs.evaluate_a.result == 'success' && needs.evaluate_b.result == 'success' && needs.evaluate_c.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - run: |
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install --no-deps -e .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-catalog-shard-*
+          path: ${{ runner.temp }}/shards
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-catalog-run-plan
+          path: ${{ runner.temp }}/plan
+      - run: >-
+          python scripts/reduce_sp500_optimized_catalog_run.py
+          --input-root "$RUNNER_TEMP/shards"
+          --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl
+          --run-plan "$RUNNER_TEMP/plan/run_plan.json"
+          --admission-token "${{ needs.plan.outputs.admission_token_sha256 }}"
+          --output-dir outputs/final
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-strategy-catalog-final-results
+          path: outputs/final
+          if-no-files-found: error
+          retention-days: 90
+
+  verify_qualification:
+    needs: [plan, reduce]
+    if: ${{ inputs.reference_run_id != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - run: |
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install --no-deps -e .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-strategy-catalog-final-results
+          path: ${{ runner.temp }}/optimized
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-strategy-catalog-final-results
+          path: ${{ runner.temp }}/reference
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.reference_run_id }}
+      - run: >-
+          python scripts/verify_sp500_optimized_run.py
+          --optimized "$RUNNER_TEMP/optimized"
+          --reference "$RUNNER_TEMP/reference"
+          --output outputs/equivalence.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-catalog-qualification-evidence
+          path: outputs/equivalence.json
+          if-no-files-found: error
+          retention-days: 90

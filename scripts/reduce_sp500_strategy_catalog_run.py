@@ -4,8 +4,28 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 from pathlib import Path
+
+from aurora.infra.sp500_megarun.catalog_performance import (
+    aggregate_catalog_performance,
+)
+
+
+def reduce_performance_evidence(
+    input_root: Path,
+    output_dir: Path,
+) -> dict[str, object]:
+    """Aggregate every shard profile into one auditable run-level report."""
+
+    roots = sorted({path.parent for path in Path(input_root).rglob("performance.json")})
+    report = aggregate_catalog_performance(roots)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    (output_dir / "performance.json").write_text(payload, "utf-8")
+    return report
 
 
 def main() -> int:
@@ -36,6 +56,10 @@ def main() -> int:
         ),
         "utf-8",
     )
+    performance_report = reduce_performance_evidence(
+        args.input_root,
+        args.output_dir,
+    )
     summary_rows = []
     for row in ordered:
         info = row["result"]["info"]
@@ -44,7 +68,8 @@ def main() -> int:
     with (args.output_dir / "summary.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader(); writer.writerows(summary_rows)
     top = sorted(summary_rows, key=lambda row: (not row["train_feasible"], -float(row["annualized_strategy_return"]), -float(row["weekly_spy_beat_rate"]), row["strategy_id"]))[:10]
-    receipt = {"schema_version": 1, "strategy_count": len(ordered), "selected_strategy_count": len(selected), "feasible_count": sum(bool(row["train_feasible"]) for row in summary_rows), "top_10": top, "validation_opened": False, "locked_opened": False}
+    performance_payload = (args.output_dir / "performance.json").read_bytes()
+    receipt = {"schema_version": 1, "strategy_count": len(ordered), "selected_strategy_count": len(selected), "feasible_count": sum(bool(row["train_feasible"]) for row in summary_rows), "top_10": top, "performance_report_sha256": hashlib.sha256(performance_payload).hexdigest(), "physical_component_builds": performance_report["physical_component_builds"], "unique_physical_components": performance_report["unique_physical_components"], "redundant_component_builds": performance_report["redundant_component_builds"], "redundant_component_build_ratio": performance_report["redundant_component_build_ratio"], "validation_opened": False, "locked_opened": False}
     (args.output_dir / "receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", "utf-8")
     return 0
 

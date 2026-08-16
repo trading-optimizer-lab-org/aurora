@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "optimization_mode": "required",
+  "allow_unoptimized_run": false,
+  "numeric_profile": "cpu-f64-v1",
+  "workload_estimates": {
+    "expected_prior_cache_hits": 0,
+    "estimated_position_equivalences": 4020
+  },
+  "execution": {
+    "scheduler_version": "weighted-lpt-v1",
+    "workers": 360,
+    "processes_per_worker": 1,
+    "block_size": 1,
+    "component_replication_budget": 0,
+    "retry_only_unfinished": true,
+    "checkpoint_interval_seconds": 120
+  },
+  "limits": {
+    "max_result_bytes_per_recipe": 512,
+    "max_expected_tail_ratio_p99_p50": 2.0,
+    "max_redundant_component_build_ratio": 0.01,
+    "max_memory_fraction": 0.7
+  },
+  "acceptance": {
+    "require_reference_equivalence": true,
+    "require_cold_and_hot_benchmarks": true,
+    "require_verified_manifest": true,
+    "max_performance_regression_ratio": 0.05
+  }
+}
