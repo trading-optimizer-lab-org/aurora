@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pyarrow as pa
@@ -51,6 +54,10 @@ _RESULT_SCHEMA = pa.schema(
         ("result_json", pa.string()),
     ]
 )
+
+_PROCESS_STORE: CatalogComponentStore | None = None
+_PROCESS_LEDGER: pd.DataFrame | None = None
+_PROCESS_SEARCH_END: str | None = None
 
 
 def _signals_for_components(
@@ -113,6 +120,67 @@ def _evaluate(
         ),
     )
     return result, position_fingerprint
+
+
+def _initialize_recipe_process(
+    component_store: str,
+    data_snapshot_sha256: str,
+    evaluator_sha256: str,
+    snapshot: str,
+    search_end: str,
+    snapshot_manifest_sha256: str,
+    spy_sha256: str,
+) -> None:
+    """Load immutable mmap and train-only ledger once per persistent process."""
+
+    global _PROCESS_LEDGER, _PROCESS_SEARCH_END, _PROCESS_STORE
+    _PROCESS_STORE = CatalogComponentStore.open(
+        Path(component_store),
+        expected_data_snapshot_sha256=data_snapshot_sha256,
+        expected_evaluator_sha256=evaluator_sha256,
+    )
+    _PROCESS_LEDGER = load_train_total_return_ledger(
+        Path(snapshot),
+        allowed_end=search_end,
+        expected_manifest_sha256=snapshot_manifest_sha256,
+        expected_spy_sha256=spy_sha256,
+    )
+    _PROCESS_SEARCH_END = search_end
+
+
+def _evaluate_catalog_row(row: dict[str, Any]) -> dict[str, object]:
+    if (
+        _PROCESS_STORE is None
+        or _PROCESS_LEDGER is None
+        or _PROCESS_SEARCH_END is None
+    ):
+        raise RuntimeError("RECIPE_PROCESS_NOT_INITIALIZED")
+    signals = _signals_for_components(
+        list(row["components"]),
+        store=_PROCESS_STORE,
+        index=_PROCESS_LEDGER.index,
+    )
+    decisions = compose_signals(signals, dict(row["composition"]))
+    result, position_fingerprint = _evaluate(
+        lane_id=str(row["strategy_id"]),
+        configuration={
+            "scientific_recipe_sha256": row["scientific_recipe_sha256"]
+        },
+        decisions=decisions,
+        ledger=_PROCESS_LEDGER,
+        search_end=_PROCESS_SEARCH_END,
+    )
+    return {
+        "strategy_id": row["strategy_id"],
+        "scientific_recipe_sha256": row["scientific_recipe_sha256"],
+        "strategy_kind": row["strategy_kind"],
+        "position_fingerprint": position_fingerprint,
+        "result_json": json.dumps(
+            result,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    }
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -187,37 +255,33 @@ def main() -> int:
         assigned = [by_strategy_id[strategy_id] for strategy_id in assigned_ids]
     except KeyError as exc:
         raise SystemExit("RECIPE_WORK_MANIFEST_STRATEGY_UNKNOWN") from exc
-    output: list[dict[str, object]] = []
-    for row in assigned:
-        signals = _signals_for_components(
-            row["components"],
-            store=store,
-            index=ledger.index,
-        )
-        decisions = compose_signals(signals, row["composition"])
-        configuration = {
-            "scientific_recipe_sha256": row["scientific_recipe_sha256"]
-        }
-        result, position_fingerprint = _evaluate(
-            lane_id=row["strategy_id"],
-            configuration=configuration,
-            decisions=decisions,
-            ledger=ledger,
-            search_end=campaign.search_end,
-        )
-        output.append(
-            {
-                "strategy_id": row["strategy_id"],
-                "scientific_recipe_sha256": row["scientific_recipe_sha256"],
-                "strategy_kind": row["strategy_kind"],
-                "position_fingerprint": position_fingerprint,
-                "result_json": json.dumps(
-                    result,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-            }
-        )
+    process_count = plan.processes_per_worker
+    initializer_args = (
+        str(args.component_store),
+        resolved.science.data_snapshot_sha256,
+        resolved.science.evaluator_sha256,
+        str(snapshot),
+        campaign.search_end,
+        campaign.train_snapshot_manifest_sha256,
+        campaign.train_spy_sha256,
+    )
+    if process_count == 1:
+        _initialize_recipe_process(*initializer_args)
+        output = [_evaluate_catalog_row(row) for row in assigned]
+    else:
+        with ProcessPoolExecutor(
+            max_workers=process_count,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_initialize_recipe_process,
+            initargs=initializer_args,
+        ) as executor:
+            output = list(
+                executor.map(
+                    _evaluate_catalog_row,
+                    assigned,
+                    chunksize=plan.block_size,
+                )
+            )
     args.output_dir.mkdir(parents=True, exist_ok=False)
     result_path = args.output_dir / "results.parquet"
     pq.write_table(
@@ -286,6 +350,7 @@ def main() -> int:
                 "numeric_runtime_profile_sha256": numeric_runtime["profile_sha256"],
                 "physical_component_builds": 0,
                 "component_cache_hits": sum(len(row["components"]) for row in assigned),
+                "processes_per_worker": process_count,
                 "validation_opened": False,
                 "locked_opened": False,
             },

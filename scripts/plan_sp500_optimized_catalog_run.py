@@ -68,6 +68,26 @@ def apply_qualification_worker_override(
     return RunOptimizationContractV1.model_validate(payload)
 
 
+def apply_qualification_process_override(
+    contract: RunOptimizationContractV1,
+    *,
+    processes_per_worker: int,
+    qualification_only: bool,
+) -> RunOptimizationContractV1:
+    """Create one measured process-count candidate without weakening production."""
+
+    if not qualification_only:
+        raise ValueError("PROCESS_OVERRIDE_REQUIRES_QUALIFICATION")
+    if int(processes_per_worker) not in (1, 2, 4):
+        raise ValueError("PROCESS_OVERRIDE_INVALID")
+    payload = contract.model_dump(mode="python")
+    payload["execution"] = {
+        **payload["execution"],
+        "processes_per_worker": int(processes_per_worker),
+    }
+    return RunOptimizationContractV1.model_validate(payload)
+
+
 def build_repository_contract(
     *,
     repo_root: Path,
@@ -225,6 +245,7 @@ def write_repository_catalog_run_plan(
     github_output: Path | None = None,
     resume_roots: tuple[Path, ...] = (),
     benchmark_workers: int | None = None,
+    benchmark_processes: int | None = None,
 ) -> CatalogRunPlanV1:
     """Resolve the immutable contract from the checkout before admission."""
 
@@ -241,6 +262,15 @@ def write_repository_catalog_run_plan(
         contract = apply_qualification_worker_override(
             contract,
             workers=benchmark_workers,
+            qualification_only=evidence.qualification_only,
+        )
+    if benchmark_processes is not None:
+        evidence = CatalogAdmissionEvidenceV1.model_validate(
+            _read_json_object(evidence_path)
+        )
+        contract = apply_qualification_process_override(
+            contract,
+            processes_per_worker=benchmark_processes,
             qualification_only=evidence.qualification_only,
         )
     resolved_path = Path(output_dir).parent / "resolved-contract-input.json"
@@ -287,6 +317,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--resume-root", type=Path, action="append", default=[])
     parser.add_argument("--benchmark-workers", type=int, default=0)
+    parser.add_argument("--benchmark-processes", type=int, default=0)
     return parser
 
 
@@ -315,6 +346,9 @@ def main() -> int:
             resume_roots=tuple(args.resume_root),
             benchmark_workers=(
                 args.benchmark_workers if args.benchmark_workers else None
+            ),
+            benchmark_processes=(
+                args.benchmark_processes if args.benchmark_processes else None
             ),
         )
     return 0

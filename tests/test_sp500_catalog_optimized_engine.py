@@ -18,6 +18,12 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     )
 
     assert "python -m scripts.run_sp500_optimized_recipe_worker" in worker
+    assert "plan.processes_per_worker" in Path(
+        "scripts/run_sp500_optimized_recipe_worker.py"
+    ).read_text("utf-8")
+    assert "plan.processes_per_worker" in Path(
+        "scripts/build_sp500_component_store.py"
+    ).read_text("utf-8")
     assert "component_store_run_id" in worker
     assert "component_store_run_id" in run
     assert "component_cost_run_id" in run
@@ -28,6 +34,20 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "python -m scripts.plan_sp500_component_schedule" in run
     assert "python -m scripts.audit_sp500_catalog_actions_run" in run
     assert "sp500-catalog-runtime-audit" in run
+
+    combined = "\n".join(
+        Path(path).read_text("utf-8")
+        for path in (
+            ".github/workflows/catalog-optimized-run.yml",
+            ".github/workflows/catalog-optimized-worker.yml",
+            ".github/workflows/catalog-component-worker.yml",
+        )
+    )
+    assert 'cache: ""' not in combined
+    assert combined.count('cache: "pip"') >= 7
+    assert combined.count(
+        'cache-dependency-path: "requirements/catalog-optimized.lock"'
+    ) >= 7
     component_worker = Path(
         ".github/workflows/catalog-component-worker.yml"
     ).read_text(encoding="utf-8")

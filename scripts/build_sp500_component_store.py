@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +44,69 @@ from aurora.infra.sp500_megarun.strategy_catalog import (
     configuration_sha256,
     verify_strategy_catalog_directory,
 )
+
+
+_PROCESS_EVALUATOR: TrainLaneEvaluator | None = None
+_PROCESS_LEDGER_INDEX: Any = None
+_PROCESS_SEARCH_END: str | None = None
+
+
+def _initialize_component_process(
+    snapshot: str,
+    expected_manifest_sha256: str,
+    expected_spy_sha256: str,
+    default_configurations: dict[str, dict[str, Any]],
+    baseline_feature_dirs: dict[str, str],
+    search_end: str,
+) -> None:
+    """Load immutable train inputs once for every persistent worker process."""
+
+    global _PROCESS_EVALUATOR, _PROCESS_LEDGER_INDEX, _PROCESS_SEARCH_END
+    verify_numeric_runtime_environment()
+    snapshot_path = Path(snapshot)
+    ledger = load_train_total_return_ledger(
+        snapshot_path,
+        allowed_end=search_end,
+        expected_manifest_sha256=expected_manifest_sha256,
+        expected_spy_sha256=expected_spy_sha256,
+    )
+    _PROCESS_LEDGER_INDEX = ledger.index
+    _PROCESS_SEARCH_END = search_end
+    _PROCESS_EVALUATOR = TrainLaneEvaluator(
+        snapshot_path,
+        expected_manifest_sha256=expected_manifest_sha256,
+        expected_spy_sha256=expected_spy_sha256,
+        default_configurations=default_configurations,
+        baseline_feature_dirs={
+            name: Path(path) for name, path in baseline_feature_dirs.items()
+        },
+    )
+
+
+def _build_component_task(
+    component: dict[str, Any],
+) -> tuple[str, np.ndarray, float]:
+    if (
+        _PROCESS_EVALUATOR is None
+        or _PROCESS_LEDGER_INDEX is None
+        or _PROCESS_SEARCH_END is None
+    ):
+        raise RuntimeError("COMPONENT_PROCESS_NOT_INITIALIZED")
+    started = time.perf_counter()
+    frame = _PROCESS_EVALUATOR(
+        str(component["lane_id"]),
+        dict(component["configuration"]),
+    )
+    decisions = feature_frame_to_decisions(
+        frame,
+        allowed_end=_PROCESS_SEARCH_END,
+    ).reindex(_PROCESS_LEDGER_INDEX)
+    values = decisions.fillna(0.0).to_numpy(dtype=np.int8)
+    return (
+        str(component["configuration_sha256"]),
+        values,
+        time.perf_counter() - started,
+    )
 
 
 def collect_unique_components(
@@ -133,16 +198,11 @@ def main() -> int:
         expected_manifest_sha256=campaign.train_snapshot_manifest_sha256,
         expected_spy_sha256=campaign.train_spy_sha256,
     )
-    evaluator = TrainLaneEvaluator(
-        snapshot,
-        expected_manifest_sha256=campaign.train_snapshot_manifest_sha256,
-        expected_spy_sha256=campaign.train_spy_sha256,
-        default_configurations=default_lane_configurations(feature_contract),
-        baseline_feature_dirs={
-            name: args.runtime_input_pack / f"baseline_{name}"
-            for name in ("price", "market", "macro")
-        },
-    )
+    default_configurations = default_lane_configurations(feature_contract)
+    baseline_feature_dirs = {
+        name: str(args.runtime_input_pack / f"baseline_{name}")
+        for name in ("price", "market", "macro")
+    }
     catalog_rows = [
         json.loads(line)
         for line in (args.catalog_dir / "catalog.jsonl").read_text("utf-8").splitlines()
@@ -180,16 +240,40 @@ def main() -> int:
     )
     component_profiles: dict[str, dict[str, object]] = {}
     shard_started = time.perf_counter()
-    for component in assigned:
-        component_started = time.perf_counter()
-        frame = evaluator(component["lane_id"], component["configuration"])
-        decisions = feature_frame_to_decisions(
-            frame,
-            allowed_end=campaign.search_end,
-        ).reindex(ledger.index)
-        values = decisions.fillna(0.0).to_numpy(dtype=np.int8)
-        writer.add(component["configuration_sha256"], values)
-        duration = time.perf_counter() - component_started
+    process_count = plan.processes_per_worker
+    initializer_args = (
+        str(snapshot),
+        campaign.train_snapshot_manifest_sha256,
+        campaign.train_spy_sha256,
+        default_configurations,
+        baseline_feature_dirs,
+        campaign.search_end,
+    )
+    if process_count == 1:
+        _initialize_component_process(*initializer_args)
+        built_components = [_build_component_task(component) for component in assigned]
+    else:
+        with ProcessPoolExecutor(
+            max_workers=process_count,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_initialize_component_process,
+            initargs=initializer_args,
+        ) as executor:
+            built_components = list(
+                executor.map(
+                    _build_component_task,
+                    assigned,
+                    chunksize=plan.block_size,
+                )
+            )
+    for component, (component_id, values, duration) in zip(
+        assigned,
+        built_components,
+        strict=True,
+    ):
+        if component_id != component["configuration_sha256"]:
+            raise SystemExit("COMPONENT_PROCESS_ORDER_INVALID")
+        writer.add(component_id, values)
         profile_key = (
             f'{component["lane_id"]}:{component["configuration_sha256"]}'
         )
@@ -213,11 +297,13 @@ def main() -> int:
                 "component_shard_index": args.component_shard_index,
                 "component_profiles": component_profiles,
                 "physical_component_builds": len(component_profiles),
+                "processes_per_worker": process_count,
                 "physical_component_seconds": sum(
                     float(row["physical_seconds"])
                     for row in component_profiles.values()
                 ),
                 "shard_seconds": shard_seconds,
+                "processes_per_worker": process_count,
                 "validation_opened": False,
                 "locked_opened": False,
             },
