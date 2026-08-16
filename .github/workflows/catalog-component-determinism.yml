@@ -1,0 +1,111 @@
+name: SP500 Catalog Component Determinism
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+
+permissions: {actions: read, contents: read}
+
+env:
+  GITHUB_ACTIONS: "true"
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      admission_token: ${{ steps.token.outputs.admission_token }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-catalog-run-plan
+          path: ${{ runner.temp }}/plan
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: "31946252951"
+      - id: token
+        shell: bash
+        run: |
+          token=$(python -c 'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"] + "/plan/run_plan.json"))["admission_token_sha256"])')
+          echo "admission_token=$token" >> "$GITHUB_OUTPUT"
+
+  probe:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      max-parallel: 30
+      matrix:
+        target: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        repeat: [0, 1, 2]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - run: |
+          python -m pip install --require-hashes -r requirements/catalog-optimized.lock
+          python -m pip install --no-deps -e .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-catalog-run-plan
+          path: ${{ runner.temp }}/plan
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: "31946252951"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-31418682679
+          path: ${{ runner.temp }}/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: "31418682679"
+      - run: >-
+          python -m scripts.probe_sp500_component_determinism
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --data-contract config/sp500_megarun_free_data_240.json
+          --feature-contract config/sp500_megarun_feature_contract_240.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --diagnostic-config config/sp500_catalog_equivalence_diagnostic_v1.json
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --run-plan "$RUNNER_TEMP/plan/run_plan.json"
+          --admission-token "${{ needs.prepare.outputs.admission_token }}"
+          --target-index "${{ matrix.target }}"
+          --repeat-index "${{ matrix.repeat }}"
+          --output outputs/receipt.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-component-probe-${{ matrix.target }}-${{ matrix.repeat }}
+          path: outputs/receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+  audit:
+    needs: probe
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-component-probe-*
+          path: ${{ runner.temp }}/probes
+      - run: >-
+          python -m scripts.audit_sp500_component_determinism
+          --input-root "$RUNNER_TEMP/probes"
+          --expected-components 10
+          --expected-repeats 3
+          --output outputs/component_determinism.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-component-determinism-audit
+          path: outputs/component_determinism.json
+          if-no-files-found: error
+          retention-days: 90

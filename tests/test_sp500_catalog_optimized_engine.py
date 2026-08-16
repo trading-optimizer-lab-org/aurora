@@ -114,6 +114,32 @@ def test_targeted_diagnostic_classifies_historical_result_origin() -> None:
     assert report["matches_optimized"] is False
 
 
+def test_component_determinism_audit_groups_repeats_and_detects_conflicts() -> None:
+    from scripts.audit_sp500_component_determinism import summarize_receipts
+
+    stable = {
+        "configuration_sha256": "a" * 64,
+        "lane_id": "F069",
+        "signal_sha256": "b" * 64,
+        "feature_sha256": "c" * 64,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+    changed = {
+        **stable,
+        "signal_sha256": "d" * 64,
+        "feature_sha256": "e" * 64,
+    }
+
+    report = summarize_receipts([stable, dict(stable), changed])
+
+    assert report["component_count"] == 1
+    assert report["repeat_count"] == 3
+    assert report["deterministic"] is False
+    assert report["conflicting_component_count"] == 1
+    assert report["components"][0]["unique_signal_hash_count"] == 2
+
+
 def test_cost_model_and_affinity_scheduler_are_deterministic() -> None:
     from aurora.infra.sp500_megarun.catalog_cost_model import CatalogCostModelV1
     from aurora.infra.sp500_megarun.catalog_scheduler import schedule_recipes

@@ -14,6 +14,7 @@ on:
           - optimized_catalog_qualification
           - optimized_catalog_verify_only
           - optimized_catalog_equivalence_diagnostic
+          - optimized_catalog_component_determinism
       component_store_run_id:
         description: Compatible component store from a prior optimized run
         required: false
@@ -81,5 +82,11 @@ jobs:
   optimized_catalog_equivalence_diagnostic:
     if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_equivalence_diagnostic' }}
     uses: ./.github/workflows/catalog-equivalence-diagnostic.yml
+    with:
+      commit_sha: ${{ github.sha }}
+
+  optimized_catalog_component_determinism:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_component_determinism' }}
+    uses: ./.github/workflows/catalog-component-determinism.yml
     with:
       commit_sha: ${{ github.sha }}
