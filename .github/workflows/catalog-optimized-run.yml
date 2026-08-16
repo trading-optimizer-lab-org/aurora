@@ -209,7 +209,7 @@ jobs:
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       component_store_run_id: ${{ github.run_id }}
       shard_index: ${{ matrix.shard }}
-      active_workers: ${{ needs.plan.outputs.active_workers }}
+      active_workers: ${{ fromJSON(needs.plan.outputs.active_workers) }}
       admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
 
   evaluate_b:
@@ -225,7 +225,7 @@ jobs:
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       component_store_run_id: ${{ github.run_id }}
       shard_index: ${{ matrix.shard }}
-      active_workers: ${{ needs.plan.outputs.active_workers }}
+      active_workers: ${{ fromJSON(needs.plan.outputs.active_workers) }}
       admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
 
   evaluate_c:
@@ -241,7 +241,7 @@ jobs:
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       component_store_run_id: ${{ github.run_id }}
       shard_index: ${{ matrix.shard }}
-      active_workers: ${{ needs.plan.outputs.active_workers }}
+      active_workers: ${{ fromJSON(needs.plan.outputs.active_workers) }}
       admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
 
   reduce:

@@ -389,6 +389,20 @@ def test_repository_workflows_have_one_guarded_public_entrypoint() -> None:
     assert set(jobs["reduce"]["needs"]) == {"plan", *evaluate_jobs}
 
 
+def test_dynamic_worker_count_is_typed_for_reusable_workflow_calls() -> None:
+    """GitHub job outputs are strings and number inputs require fromJSON."""
+
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    workflow = load_github_yaml(
+        ROOT / ".github/workflows/catalog-optimized-run.yml"
+    )
+    for name in ("evaluate_a", "evaluate_b", "evaluate_c"):
+        assert workflow["jobs"][name]["with"]["active_workers"] == (
+            "${{ fromJSON(needs.plan.outputs.active_workers) }}"
+        )
+
+
 def test_worker_admission_rejects_wrong_token_or_partition(tmp_path: Path) -> None:
     """Every worker must prove it belongs to the frozen admitted plan."""
 
