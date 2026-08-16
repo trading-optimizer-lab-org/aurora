@@ -31,6 +31,32 @@ _RESULT_SCHEMA = pa.schema(
 )
 
 
+def _validate_worker_runtime_contract(
+    worker_receipts: tuple[dict[str, object], ...] | list[dict[str, object]],
+    *,
+    expected_processes_per_worker: int,
+    expected_block_size: int,
+    pending_recipe_count: int,
+) -> None:
+    """Validate physical worker topology, including a legitimate hot-cache run."""
+
+    if not worker_receipts:
+        if pending_recipe_count:
+            raise SystemExit("REDUCE_WORKER_RECEIPTS_MISSING")
+        return
+    worker_process_counts = {
+        int(receipt.get("processes_per_worker", 0))
+        for receipt in worker_receipts
+    }
+    worker_block_sizes = {
+        int(receipt.get("block_size", 0)) for receipt in worker_receipts
+    }
+    if worker_process_counts != {expected_processes_per_worker}:
+        raise SystemExit("REDUCE_WORKER_PROCESS_COUNT_MISMATCH")
+    if worker_block_sizes != {expected_block_size}:
+        raise SystemExit("REDUCE_WORKER_BLOCK_SIZE_MISMATCH")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-root", type=Path, required=True)
@@ -218,7 +244,7 @@ def main() -> int:
             float(receipt.get("scientific_attribution_difference_ratio", 1.0))
             for receipt in worker_receipts
         ),
-        default=1.0,
+        default=0.0,
     )
     worker_cpu_seconds = sum(
         float(receipt.get("cpu_seconds", 0.0)) for receipt in worker_receipts
@@ -242,16 +268,12 @@ def main() -> int:
         ),
         default=0.0,
     )
-    worker_process_counts = {
-        int(receipt.get("processes_per_worker", 0)) for receipt in worker_receipts
-    }
-    worker_block_sizes = {
-        int(receipt.get("block_size", 0)) for receipt in worker_receipts
-    }
-    if worker_process_counts != {plan.processes_per_worker}:
-        raise SystemExit("REDUCE_WORKER_PROCESS_COUNT_MISMATCH")
-    if worker_block_sizes != {plan.block_size}:
-        raise SystemExit("REDUCE_WORKER_BLOCK_SIZE_MISMATCH")
+    _validate_worker_runtime_contract(
+        worker_receipts,
+        expected_processes_per_worker=plan.processes_per_worker,
+        expected_block_size=plan.block_size,
+        pending_recipe_count=plan.pending_recipe_count,
+    )
     total_bytes = result_path.stat().st_size
     unique_positions = len(position_fingerprints)
     top = sorted(

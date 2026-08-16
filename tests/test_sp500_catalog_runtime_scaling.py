@@ -9,6 +9,27 @@ import pyarrow.parquet as pq
 import pytest
 
 
+def test_reducer_accepts_no_worker_receipts_only_for_fully_hot_plan() -> None:
+    from scripts.reduce_sp500_optimized_catalog_run import (
+        _validate_worker_runtime_contract,
+    )
+
+    _validate_worker_runtime_contract(
+        (),
+        expected_processes_per_worker=1,
+        expected_block_size=1,
+        pending_recipe_count=0,
+    )
+
+    with pytest.raises(SystemExit, match="REDUCE_WORKER_RECEIPTS_MISSING"):
+        _validate_worker_runtime_contract(
+            (),
+            expected_processes_per_worker=1,
+            expected_block_size=1,
+            pending_recipe_count=1,
+        )
+
+
 def test_persistent_cache_reuses_only_exact_science_and_detects_conflict(
     tmp_path: Path,
 ) -> None:
