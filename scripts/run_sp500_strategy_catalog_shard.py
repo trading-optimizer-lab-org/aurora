@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -18,6 +19,7 @@ from aurora.infra.sp500_megarun.dehb_lane_registry import (
     TrainLaneEvaluator,
     default_lane_configurations,
 )
+from aurora.infra.sp500_megarun.dehb_objective import score_ledger_decisions
 from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
     scientific_input_binding_sha256,
     verify_runtime_input_pack,
@@ -39,6 +41,36 @@ from aurora.infra.sp500_megarun.strategy_catalog import (
 
 FULL_YEARS = tuple(range(1998, 2011))
 FULL_FIDELITY = 27
+
+
+def _compounded_return(values: pd.Series) -> float:
+    return math.expm1(float(np.log1p(values.to_numpy(dtype=float)).sum()))
+
+
+def weekly_winning_or_positive_metrics(
+    strategy_returns: pd.Series,
+    spy_returns: pd.Series,
+) -> dict[str, int | float]:
+    """Count weeks that either make money or beat SPY, without double counting."""
+
+    if strategy_returns.empty or not strategy_returns.index.equals(spy_returns.index):
+        raise ValueError("CATALOG_WEEKLY_RETURN_INDEX_INVALID")
+    weekly = pd.DataFrame({"strategy": strategy_returns, "spy": spy_returns})
+    weekly["week"] = weekly.index.to_period("W-FRI")
+    compounded = weekly.groupby("week", sort=True)[["strategy", "spy"]].agg(
+        _compounded_return
+    )
+    positive = compounded["strategy"] > 0.0
+    beats_spy = compounded["strategy"] > compounded["spy"]
+    winning_or_positive = positive | beats_spy
+    week_count = len(compounded)
+    return {
+        "week_count": week_count,
+        "positive_weeks": int(positive.sum()),
+        "weeks_beating_spy": int(beats_spy.sum()),
+        "winning_or_positive_weeks": int(winning_or_positive.sum()),
+        "weekly_winning_or_positive_rate": float(winning_or_positive.sum() / week_count),
+    }
 
 
 def compose_signals(signals: Sequence[pd.Series], composition: Mapping[str, Any]) -> pd.Series:
@@ -87,6 +119,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-input-pack", type=Path, required=True)
     parser.add_argument("--shard-index", type=int, required=True)
     parser.add_argument("--total-shards", type=int, required=True)
+    parser.add_argument("--selected-config", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser
 
@@ -146,10 +179,86 @@ def main() -> int:
         result = score_prepared_lane_candidate(
             prepared, ledger=ledger, fidelity_years={FULL_FIDELITY: FULL_YEARS}, allowed_end=contract.search_end
         )
+        realized = score_ledger_decisions(
+            ledger,
+            decisions,
+            target_years=FULL_YEARS,
+            allowed_end=contract.search_end,
+        )
+        result = dict(result)
+        result["info"] = {
+            **result["info"],
+            **weekly_winning_or_positive_metrics(
+                realized.strategy_returns,
+                realized.spy_returns,
+            ),
+        }
         output.append({"strategy_id": row["strategy_id"], "scientific_recipe_sha256": row["scientific_recipe_sha256"], "strategy_kind": row["strategy_kind"], "components": row["components"], "composition": row["composition"], "result": result})
     args.output_dir.mkdir(parents=True, exist_ok=False)
     (args.output_dir / "results.jsonl").write_text("".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in output), "utf-8")
-    audit = {"schema_version": 1, "shard_index": args.shard_index, "total_shards": args.total_shards, "strategy_count": len(output), "first_strategy_id": output[0]["strategy_id"] if output else None, "last_strategy_id": output[-1]["strategy_id"] if output else None, "validation_opened": False, "locked_opened": False}
+    selected_output: list[dict[str, Any]] = []
+    if args.selected_config is not None and args.shard_index == 0:
+        selected_rows = json.loads(args.selected_config.read_text("utf-8"))
+        if not isinstance(selected_rows, list) or len(selected_rows) != 13:
+            raise SystemExit("CATALOG_SELECTED_CONFIG_INVALID")
+        for selected in selected_rows:
+            lane_id = str(selected["lane_id"])
+            configuration = dict(selected["configuration"])
+            frame = evaluator(lane_id, configuration)
+            decisions = feature_frame_to_decisions(
+                frame,
+                allowed_end=contract.search_end,
+            ).reindex(decision_index)
+            strategy_fingerprint, position_fingerprint = candidate_fingerprints(
+                lane_id,
+                configuration,
+                decisions,
+            )
+            prepared = PreparedLaneCandidate(
+                lane_id=lane_id,
+                configuration=configuration,
+                fidelity=FULL_FIDELITY,
+                target_years=FULL_YEARS,
+                decisions=decisions,
+                strategy_fingerprint=strategy_fingerprint,
+                position_fingerprint=position_fingerprint,
+            )
+            result = score_prepared_lane_candidate(
+                prepared,
+                ledger=ledger,
+                fidelity_years={FULL_FIDELITY: FULL_YEARS},
+                allowed_end=contract.search_end,
+            )
+            realized = score_ledger_decisions(
+                ledger,
+                decisions,
+                target_years=FULL_YEARS,
+                allowed_end=contract.search_end,
+            )
+            result = dict(result)
+            result["info"] = {
+                **result["info"],
+                **weekly_winning_or_positive_metrics(
+                    realized.strategy_returns,
+                    realized.spy_returns,
+                ),
+            }
+            selected_output.append(
+                {
+                    "source_strategy_key": selected["source_strategy_key"],
+                    "lane_id": lane_id,
+                    "configuration": configuration,
+                    "result": result,
+                }
+            )
+        (args.output_dir / "selected_results.jsonl").write_text(
+            "".join(
+                json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n"
+                for row in selected_output
+            ),
+            "utf-8",
+        )
+    audit = {"schema_version": 1, "shard_index": args.shard_index, "total_shards": args.total_shards, "strategy_count": len(output), "selected_strategy_count": len(selected_output), "first_strategy_id": output[0]["strategy_id"] if output else None, "last_strategy_id": output[-1]["strategy_id"] if output else None, "validation_opened": False, "locked_opened": False}
     (args.output_dir / "receipt.json").write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n", "utf-8")
     return 0
 

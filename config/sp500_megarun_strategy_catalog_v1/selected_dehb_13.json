@@ -1,0 +1,15 @@
+[
+  {"source_strategy_key":"f7cc060b38767ef455e04afab688e4ac334d03dc00ffc08033e828aa7cc8cae0","lane_id":"F150","configuration":{"approved_feature_set":"core_causal_5","experts":2,"gate":"volatility","kind":"attention","lookback":63,"refit":"quarterly","ridge":0.1,"statistic":"direction_probability","temperature":0.25,"window":756}},
+  {"source_strategy_key":"8a765bd3c14de7ca015f5ccb5e8eec76b2fa1ff861b87bcde31c3a083b1b499a","lane_id":"F068","configuration":{"p":3,"q":2,"refit":"weekly","window":504}},
+  {"source_strategy_key":"7e086f313edd61b73e27be134d0e6a94360ba42d15cfcb7068a73b62a704306f","lane_id":"F068","configuration":{"p":3,"q":0,"refit":"monthly","window":252}},
+  {"source_strategy_key":"f15232e08d2666cfc010e2650ba3814e32ee4f184cf1a031f19ddb42a4170ecb","lane_id":"F135","configuration":{"exclusion":40,"neighbors":5,"normalization":"raw","radius":0.5,"statistic":"motif_follow_through","subsequence":40,"window":126}},
+  {"source_strategy_key":"1be966cb0cc8dfcaf4021d47fd6c8ce5ba7b5968681090785029c3596efe2d17","lane_id":"F056","configuration":{"feature_set":"diversified_5","model":"logit","refit":"monthly","ridge":1.0,"threshold":0.5,"window":756}},
+  {"source_strategy_key":"739e9d395bcb427338e861f63ba1e0d8c90bb5dafac43739e7a3ee6fd098a64f","lane_id":"F166","configuration":{"component":"size","direction":"continuation","window":63}},
+  {"source_strategy_key":"fba3c7d991f2fc501729b86109dd1fd816530845b0b81e60a9d69754a64ee37e","lane_id":"F052","configuration":{"base":"reversal","confirmation":2,"gate":"credit","logic":"or"}},
+  {"source_strategy_key":"bcf18ccb4cdf1f1118a6bcd7e537a7d08d3f265404e7c2b572d6cbf406dabb91","lane_id":"F203","configuration":{"change_lag":1,"direction":"continuation","normalization":"rolling_zscore","statistic":"corporate_liquid_share","window":20}},
+  {"source_strategy_key":"12778fecad4df2882f8ead90b1396e2f59c0532833fbafd299a30b5b909b9fa0","lane_id":"F090","configuration":{"statistic":"variance_gap","window":63}},
+  {"source_strategy_key":"208c09fb6b8b9e638313afce6a78acd6c681d2bca5f1db0e56d4d48a1f4fbe43","lane_id":"F087","configuration":{"direction":"continuation","lag":13,"statistic":"gap_change","window":156}},
+  {"source_strategy_key":"83ff991b8480b520d87a8d184f2b238e7dede94a8b6862558bcacfcf1a65b317","lane_id":"F024","configuration":{"direction":"continuation","normalization":"none","statistic":"divergence","window":63}},
+  {"source_strategy_key":"cd8c5a2dbb8ee35af29e44aba5ee5cfb778e185910b8dd68a07094693f9903ea","lane_id":"F223","configuration":{"change_lag":1,"direction":"continuation","normalization":"rolling_zscore","statistic":"days_since_minutes","window":8}},
+  {"source_strategy_key":"e9fb10b851232acded9721ef4638219b2002a1874e8f209c29f8eeec434ce07e","lane_id":"F019","configuration":{"direction":"reversal","normalization":"rolling_percentile","window":252}}
+]
