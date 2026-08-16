@@ -83,7 +83,12 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
         ".github/workflows/catalog-component-worker.yml"
     ).read_text(encoding="utf-8")
     assert "requirements/catalog-optimized.lock" in component_worker
+    assert "uv pip install --system --require-hashes" in component_worker
+    assert "PYTHONPATH: ${{ github.workspace }}/.." in component_worker
+    assert "pip install --no-deps -e ." not in component_worker
     assert "--component-schedule" in component_worker
+    assert "total_component_shards" in component_worker
+    assert "fromJSON(needs.plan.outputs.component_matrix)" in run
     assert "component_schedule.json" in component_worker
     assert "inputs.component_store_run_id == ''" in run
     resume_gate = (

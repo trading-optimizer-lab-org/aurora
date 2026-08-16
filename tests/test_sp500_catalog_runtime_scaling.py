@@ -324,6 +324,7 @@ def test_autotuner_selects_fastest_safe_candidate_and_blocks_regression() -> Non
             ),
             TuningCandidateV1(
                 workers=90,
+                component_workers=120,
                 component_processes_per_worker=4,
                 processes_per_worker=2,
                 block_size=512,
@@ -336,6 +337,7 @@ def test_autotuner_selects_fastest_safe_candidate_and_blocks_regression() -> Non
         max_regression_ratio=0.05,
     )
     assert winner.workers == 90
+    assert winner.component_workers == 120
     assert winner.component_processes_per_worker == 4
     assert winner.promoted is True
 
@@ -382,6 +384,7 @@ def test_autotune_history_is_hash_bound_reproducible_and_requires_three_runs(
                 science_identity_sha256=science,
                 thermal_state="component_warm",
                 workers=60,
+                component_workers=60,
                 component_processes_per_worker=component_processes,
                 processes_per_worker=processes,
                 block_size=256,
@@ -404,6 +407,7 @@ def test_autotune_history_is_hash_bound_reproducible_and_requires_three_runs(
     )
 
     assert decision.workers == 60
+    assert decision.component_workers == 60
     assert decision.component_processes_per_worker == 4
     assert decision.processes_per_worker == 1
     assert decision.median_wall_seconds == 141.0
@@ -541,6 +545,7 @@ def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> 
         "prior_result_cache_hits": 20,
         "worker_receipt_count": 1,
         "workers": 60,
+        "component_workers": 120,
         "component_processes_per_worker": 4,
         "processes_per_worker": 2,
         "block_size": 256,
@@ -588,6 +593,7 @@ def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> 
     assert report["worker_cpu_seconds"] == 18.0
     assert report["worker_peak_memory_fraction"] == 0.2
     assert report["workers"] == 60
+    assert report["component_workers"] == 120
     assert report["component_processes_per_worker"] == 4
     assert report["processes_per_worker"] == 2
     assert report["block_size"] == 256

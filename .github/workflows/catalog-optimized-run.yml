@@ -13,6 +13,7 @@ on:
       benchmark_workers: {required: false, type: number, default: 0}
       benchmark_processes: {required: false, type: number, default: 0}
       benchmark_component_processes: {required: false, type: number, default: 0}
+      benchmark_component_workers: {required: false, type: number, default: 0}
   workflow_dispatch:
     inputs:
       commit_sha: {description: Exact revision, required: true}
@@ -23,6 +24,7 @@ on:
       benchmark_workers: {description: Qualification-only worker candidate; zero uses the promoted policy, required: false, type: number, default: 0}
       benchmark_processes: {description: Qualification-only process candidate; zero uses the promoted policy, required: false, type: number, default: 0}
       benchmark_component_processes: {description: Qualification-only component process candidate; zero uses the promoted policy, required: false, type: number, default: 0}
+      benchmark_component_workers: {description: Qualification-only component worker candidate; zero uses the promoted policy, required: false, type: number, default: 0}
 
 permissions: {actions: read, contents: read}
 concurrency:
@@ -54,6 +56,8 @@ jobs:
       active_workers: ${{ steps.plan.outputs.active_workers }}
       pending_recipe_count: ${{ steps.plan.outputs.pending_recipe_count }}
       cached_recipe_count: ${{ steps.plan.outputs.cached_recipe_count }}
+      component_workers: ${{ steps.plan.outputs.component_workers }}
+      component_matrix: ${{ steps.plan.outputs.component_matrix }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
@@ -100,6 +104,9 @@ jobs:
           if [ "${{ inputs.benchmark_component_processes }}" -ne 0 ]; then
             benchmark_args+=(--benchmark-component-processes "${{ inputs.benchmark_component_processes }}")
           fi
+          if [ "${{ inputs.benchmark_component_workers }}" -ne 0 ]; then
+            benchmark_args+=(--benchmark-component-workers "${{ inputs.benchmark_component_workers }}")
+          fi
           python scripts/plan_sp500_optimized_catalog_run.py \
             --repo-root . \
             --policy config/sp500_catalog_optimization_policy_v1.json \
@@ -137,7 +144,7 @@ jobs:
             --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl \
             --selected-config config/sp500_megarun_selected_dehb_13.json \
             --performance-report "$report" \
-            --workers 60 \
+            --workers "${{ steps.plan.outputs.component_workers }}" \
             --output-dir outputs/plan
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -151,14 +158,14 @@ jobs:
     if: ${{ needs.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' }}
     strategy:
       fail-fast: false
-      max-parallel: 60
-      matrix:
-        component_shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59]
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.plan.outputs.component_matrix) }}
     uses: ./.github/workflows/catalog-component-worker.yml
     with:
       commit_sha: ${{ inputs.commit_sha }}
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       component_shard_index: ${{ matrix.component_shard }}
+      total_component_shards: ${{ fromJSON(needs.plan.outputs.component_workers) }}
       admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
 
   merge_components:

@@ -45,6 +45,10 @@ on:
         description: Qualification-only component process candidate; 0 uses promoted policy
         required: false
         default: "0"
+      benchmark_component_workers:
+        description: Qualification-only component worker candidate; 0 uses promoted policy
+        required: false
+        default: "0"
 
 permissions:
   actions: read
@@ -97,6 +101,7 @@ jobs:
       benchmark_workers: ${{ fromJSON(inputs.benchmark_workers) }}
       benchmark_processes: ${{ fromJSON(inputs.benchmark_processes) }}
       benchmark_component_processes: ${{ fromJSON(inputs.benchmark_component_processes) }}
+      benchmark_component_workers: ${{ fromJSON(inputs.benchmark_component_workers) }}
 
   optimized_catalog_verify_only:
     if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_verify_only' }}

@@ -48,6 +48,14 @@ def _matrix_payload(shards: tuple[int, ...]) -> str:
     )
 
 
+def _component_matrix_payload(worker_count: int) -> str:
+    return json.dumps(
+        {"component_shard": list(range(worker_count))},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
 def apply_qualification_worker_override(
     contract: RunOptimizationContractV1,
     *,
@@ -104,6 +112,26 @@ def apply_qualification_component_process_override(
     payload["execution"] = {
         **payload["execution"],
         "component_processes_per_worker": int(component_processes_per_worker),
+    }
+    return RunOptimizationContractV1.model_validate(payload)
+
+
+def apply_qualification_component_worker_override(
+    contract: RunOptimizationContractV1,
+    *,
+    component_workers: int,
+    qualification_only: bool,
+) -> RunOptimizationContractV1:
+    """Measure component fan-out independently from recipe fan-out."""
+
+    if not qualification_only:
+        raise ValueError("COMPONENT_WORKER_OVERRIDE_REQUIRES_QUALIFICATION")
+    if not 1 <= int(component_workers) <= 120:
+        raise ValueError("COMPONENT_WORKER_OVERRIDE_INVALID")
+    payload = contract.model_dump(mode="python")
+    payload["execution"] = {
+        **payload["execution"],
+        "component_workers": int(component_workers),
     }
     return RunOptimizationContractV1.model_validate(payload)
 
@@ -245,6 +273,9 @@ def write_catalog_run_plan(
             f"admission_token_sha256={plan.admission_token_sha256}",
             f"workers={plan.workers}",
             f"active_workers={plan.active_workers}",
+            f"component_workers={plan.component_workers}",
+            "component_matrix="
+            f"{_component_matrix_payload(plan.component_workers)}",
             f"pending_recipe_count={plan.pending_recipe_count}",
             f"cached_recipe_count={plan.cached_recipe_count}",
             "component_processes_per_worker="
@@ -269,6 +300,7 @@ def write_repository_catalog_run_plan(
     benchmark_workers: int | None = None,
     benchmark_processes: int | None = None,
     benchmark_component_processes: int | None = None,
+    benchmark_component_workers: int | None = None,
 ) -> CatalogRunPlanV1:
     """Resolve the immutable contract from the checkout before admission."""
 
@@ -303,6 +335,15 @@ def write_repository_catalog_run_plan(
         contract = apply_qualification_component_process_override(
             contract,
             component_processes_per_worker=benchmark_component_processes,
+            qualification_only=evidence.qualification_only,
+        )
+    if benchmark_component_workers is not None:
+        evidence = CatalogAdmissionEvidenceV1.model_validate(
+            _read_json_object(evidence_path)
+        )
+        contract = apply_qualification_component_worker_override(
+            contract,
+            component_workers=benchmark_component_workers,
             qualification_only=evidence.qualification_only,
         )
     resolved_path = Path(output_dir).parent / "resolved-contract-input.json"
@@ -351,6 +392,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--benchmark-workers", type=int, default=0)
     parser.add_argument("--benchmark-processes", type=int, default=0)
     parser.add_argument("--benchmark-component-processes", type=int, default=0)
+    parser.add_argument("--benchmark-component-workers", type=int, default=0)
     return parser
 
 
@@ -386,6 +428,11 @@ def main() -> int:
             benchmark_component_processes=(
                 args.benchmark_component_processes
                 if args.benchmark_component_processes
+                else None
+            ),
+            benchmark_component_workers=(
+                args.benchmark_component_workers
+                if args.benchmark_component_workers
                 else None
             ),
         )

@@ -21,6 +21,7 @@ ThermalState = Literal["cold", "component_warm", "fully_hot"]
 
 class TuningCandidateV1(FrozenModel):
     workers: int = Field(ge=1, le=360)
+    component_workers: int = Field(default=60, ge=1, le=120)
     component_processes_per_worker: int = Field(default=1, ge=1, le=4)
     processes_per_worker: int = Field(ge=1, le=4)
     block_size: int = Field(ge=1)
@@ -43,6 +44,7 @@ class TuningCandidateV1(FrozenModel):
 
 class CatalogTuningDecisionV1(FrozenModel):
     workers: int
+    component_workers: int = 60
     component_processes_per_worker: int = 1
     processes_per_worker: int
     block_size: int
@@ -58,6 +60,7 @@ class CatalogBenchmarkObservationV1(FrozenModel):
     science_identity_sha256: Sha256
     thermal_state: ThermalState
     workers: int = Field(ge=1, le=360)
+    component_workers: int = Field(default=60, ge=1, le=120)
     component_processes_per_worker: int = Field(default=1, ge=1, le=4)
     processes_per_worker: int = Field(ge=1, le=4)
     block_size: int = Field(ge=1)
@@ -138,6 +141,7 @@ def select_catalog_configuration(
         key=lambda item: (
             item.median_wall_seconds,
             item.workers,
+            item.component_workers,
             item.component_processes_per_worker,
             item.processes_per_worker,
             item.block_size,
@@ -155,6 +159,7 @@ def select_catalog_configuration(
     )
     return CatalogTuningDecisionV1(
         workers=winner.workers,
+        component_workers=winner.component_workers,
         component_processes_per_worker=(
             winner.component_processes_per_worker
         ),
@@ -179,7 +184,7 @@ def select_history_configuration(
 ) -> CatalogTuningDecisionV1:
     if minimum_samples < 3:
         raise ValueError("CATALOG_AUTOTUNE_MINIMUM_SAMPLES_INVALID")
-    grouped: dict[tuple[int, int, int, int], list[CatalogBenchmarkObservationV1]] = {}
+    grouped: dict[tuple[int, int, int, int, int], list[CatalogBenchmarkObservationV1]] = {}
     for observation in history.observations:
         if (
             observation.science_identity_sha256 != science_identity_sha256
@@ -189,6 +194,7 @@ def select_history_configuration(
         grouped.setdefault(
             (
                 observation.workers,
+                observation.component_workers,
                 observation.component_processes_per_worker,
                 observation.processes_per_worker,
                 observation.block_size,
@@ -198,9 +204,10 @@ def select_history_configuration(
     candidates = [
         TuningCandidateV1(
             workers=key[0],
-            component_processes_per_worker=key[1],
-            processes_per_worker=key[2],
-            block_size=key[3],
+            component_workers=key[1],
+            component_processes_per_worker=key[2],
+            processes_per_worker=key[3],
+            block_size=key[4],
             wall_seconds_samples=tuple(item.wall_seconds for item in observations),
             peak_memory_fraction=max(
                 item.peak_memory_fraction for item in observations

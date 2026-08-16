@@ -97,11 +97,26 @@ def build_actions_runtime_audit(
         "verification": 0.0,
     }
     stage_markers = {
-        "component_build": "scripts.build_sp500_component_store",
-        "component_merge": "scripts.merge_sp500_component_store",
-        "recipe_evaluation": "scripts.run_sp500_optimized_recipe_worker",
-        "reduction": "scripts.reduce_sp500_optimized_catalog_run",
-        "verification": "scripts.verify_sp500_optimized_run",
+        "component_build": (
+            "scripts.build_sp500_component_store",
+            "scripts/build_sp500_component_store.py",
+        ),
+        "component_merge": (
+            "scripts.merge_sp500_component_store",
+            "scripts/merge_sp500_component_store.py",
+        ),
+        "recipe_evaluation": (
+            "scripts.run_sp500_optimized_recipe_worker",
+            "scripts/run_sp500_optimized_recipe_worker.py",
+        ),
+        "reduction": (
+            "scripts.reduce_sp500_optimized_catalog_run",
+            "scripts/reduce_sp500_optimized_catalog_run.py",
+        ),
+        "verification": (
+            "scripts.verify_sp500_optimized_run",
+            "scripts/verify_sp500_optimized_run.py",
+        ),
     }
     for job in completed:
         steps = job.get("steps", ())
@@ -136,12 +151,12 @@ def build_actions_runtime_audit(
             _duration(step["started_at"], step["completed_at"])
             for step in compute_steps
         )
-        for stage, marker in stage_markers.items():
+        for stage, markers in stage_markers.items():
             action_stage_seconds[stage] += sum(
                 _duration(step["started_at"], step["completed_at"])
                 for step in steps
                 if isinstance(step, Mapping)
-                and marker in str(step.get("name", ""))
+                and any(marker in str(step.get("name", "")) for marker in markers)
                 and step.get("started_at")
                 and step.get("completed_at")
             )
@@ -209,6 +224,7 @@ def build_actions_runtime_audit(
         "prior_result_cache_hits": int(receipt.get("prior_result_cache_hits", 0)),
         "worker_receipt_count": int(receipt.get("worker_receipt_count", 0)),
         "workers": int(receipt.get("workers", 0)),
+        "component_workers": int(receipt.get("component_workers", 0)),
         "component_processes_per_worker": int(
             receipt.get("component_processes_per_worker", 0)
         ),

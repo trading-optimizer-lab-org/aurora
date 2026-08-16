@@ -64,6 +64,7 @@ def update_autotune_history(
                 science_identity_sha256=science_identity_sha256,
                 thermal_state=thermal_state,
                 workers=int(audit["workers"]),
+                component_workers=int(audit.get("component_workers", 60)),
                 component_processes_per_worker=int(
                     audit.get("component_processes_per_worker", 1)
                 ),
