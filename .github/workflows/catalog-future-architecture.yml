@@ -2,12 +2,12 @@ name: Catalog Future Architecture Qualification
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions: {contents: read}
 
 jobs:
   qualify:
-    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

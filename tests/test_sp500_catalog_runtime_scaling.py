@@ -293,6 +293,142 @@ def test_autotuner_selects_fastest_safe_candidate_and_blocks_regression() -> Non
         )
 
 
+def test_autotune_history_is_hash_bound_reproducible_and_requires_three_runs(
+    tmp_path: Path,
+) -> None:
+    from aurora.infra.sp500_megarun.catalog_autotune import (
+        CatalogBenchmarkObservationV1,
+        CatalogPerformanceHistoryV1,
+        select_history_configuration,
+    )
+
+    science = "a" * 64
+    history = CatalogPerformanceHistoryV1.create()
+    for run_id, processes, wall in (
+        (1, 1, 142.0),
+        (2, 1, 140.0),
+        (3, 1, 141.0),
+        (4, 2, 165.0),
+        (5, 2, 160.0),
+        (6, 2, 162.0),
+    ):
+        history = history.append(
+            CatalogBenchmarkObservationV1(
+                run_id=run_id,
+                head_sha="b" * 40,
+                science_identity_sha256=science,
+                thermal_state="component_warm",
+                workers=60,
+                processes_per_worker=processes,
+                block_size=256,
+                wall_seconds=wall,
+                peak_memory_fraction=0.05,
+                equivalent=True,
+            )
+        )
+
+    path = tmp_path / "history.json"
+    history.write(path)
+    restored = CatalogPerformanceHistoryV1.load(path)
+    decision = select_history_configuration(
+        restored,
+        science_identity_sha256=science,
+        thermal_state="component_warm",
+        minimum_samples=3,
+        previous_best_median_seconds=145.0,
+        max_regression_ratio=0.05,
+    )
+
+    assert decision.workers == 60
+    assert decision.processes_per_worker == 1
+    assert decision.median_wall_seconds == 141.0
+    assert decision.sample_count == 3
+    assert decision.promoted is True
+
+    with pytest.raises(ValueError, match="CATALOG_AUTOTUNE_RUN_CONFLICT"):
+        restored.append(
+            CatalogBenchmarkObservationV1(
+                run_id=1,
+                head_sha="c" * 40,
+                science_identity_sha256=science,
+                thermal_state="component_warm",
+                workers=60,
+                processes_per_worker=4,
+                block_size=256,
+                wall_seconds=1.0,
+                peak_memory_fraction=0.05,
+                equivalent=True,
+            )
+        )
+
+
+def test_autotune_ingest_rejects_non_equivalent_or_open_boundaries(tmp_path: Path) -> None:
+    from scripts.update_sp500_catalog_autotune import update_autotune_history
+
+    audits: list[Path] = []
+    equivalences: list[Path] = []
+    for run_id, wall in ((11, 140.0), (12, 142.0), (13, 141.0)):
+        audit = tmp_path / f"audit-{run_id}.json"
+        audit.write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "head_sha": "d" * 40,
+                    "thermal_state": "component_warm",
+                    "workers": 60,
+                    "processes_per_worker": 1,
+                    "block_size": 256,
+                    "wall_seconds": wall,
+                    "worker_peak_memory_fraction": 0.04,
+                    "validation_opened": False,
+                    "locked_opened": False,
+                }
+            ),
+            "utf-8",
+        )
+        equivalence = tmp_path / f"equivalence-{run_id}.json"
+        equivalence.write_text(
+            json.dumps(
+                {
+                    "equivalent": True,
+                    "difference_count": 0,
+                    "validation_opened": False,
+                    "locked_opened": False,
+                }
+            ),
+            "utf-8",
+        )
+        audits.append(audit)
+        equivalences.append(equivalence)
+
+    history, decision = update_autotune_history(
+        history_path=None,
+        runtime_audit_paths=tuple(audits),
+        equivalence_paths=tuple(equivalences),
+        science_identity_sha256="e" * 64,
+        thermal_state="component_warm",
+        minimum_samples=3,
+        previous_best_median_seconds=145.0,
+        max_regression_ratio=0.05,
+    )
+    assert len(history.observations) == 3
+    assert decision.median_wall_seconds == 141.0
+
+    payload = json.loads(equivalences[0].read_text("utf-8"))
+    payload["locked_opened"] = True
+    equivalences[0].write_text(json.dumps(payload), "utf-8")
+    with pytest.raises(ValueError, match="CATALOG_AUTOTUNE_EQUIVALENCE_INVALID"):
+        update_autotune_history(
+            history_path=None,
+            runtime_audit_paths=tuple(audits),
+            equivalence_paths=tuple(equivalences),
+            science_identity_sha256="e" * 64,
+            thermal_state="component_warm",
+            minimum_samples=3,
+            previous_best_median_seconds=145.0,
+            max_regression_ratio=0.05,
+        )
+
 def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> None:
     from aurora.infra.sp500_megarun.catalog_actions_audit import (
         build_actions_runtime_audit,
@@ -339,6 +475,9 @@ def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> 
         "physical_recipe_evaluations": 100,
         "prior_result_cache_hits": 20,
         "worker_receipt_count": 1,
+        "workers": 60,
+        "processes_per_worker": 2,
+        "block_size": 256,
         "result_bytes": 48000,
         "scientific_stage_seconds": {
             "component_load": 2.0,
@@ -380,6 +519,9 @@ def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> 
     assert report["accounting_difference_ratio"] <= 0.02
     assert report["worker_cpu_seconds"] == 18.0
     assert report["worker_peak_memory_fraction"] == 0.2
+    assert report["workers"] == 60
+    assert report["processes_per_worker"] == 2
+    assert report["block_size"] == 256
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False
 
@@ -512,8 +654,13 @@ def test_future_architecture_qualification_is_github_only_and_bounded() -> None:
     )
 
     assert "workflow_dispatch:" in workflow
-    assert "refs/heads/codex/sp500-search-method-benchmark-short" in workflow
+    assert "workflow_call:" in workflow
     assert "requirements/catalog-recipe-worker.lock" in workflow
+    entrypoint = Path(
+        ".github/workflows/sp500-search-method-benchmark-short.yml"
+    ).read_text("utf-8")
+    assert "optimized_catalog_future_architecture" in entrypoint
+    assert "uses: ./.github/workflows/catalog-future-architecture.yml" in entrypoint
     assert "100, 256" in script
     assert "128, 1000" in script
     assert '"validation_opened": False' in script

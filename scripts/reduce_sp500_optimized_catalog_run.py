@@ -221,6 +221,16 @@ def main() -> int:
         ),
         default=0.0,
     )
+    worker_process_counts = {
+        int(receipt.get("processes_per_worker", 0)) for receipt in worker_receipts
+    }
+    worker_block_sizes = {
+        int(receipt.get("block_size", 0)) for receipt in worker_receipts
+    }
+    if worker_process_counts != {plan.processes_per_worker}:
+        raise SystemExit("REDUCE_WORKER_PROCESS_COUNT_MISMATCH")
+    if worker_block_sizes != {plan.block_size}:
+        raise SystemExit("REDUCE_WORKER_BLOCK_SIZE_MISMATCH")
     total_bytes = result_path.stat().st_size
     unique_positions = len(
         {
@@ -248,6 +258,9 @@ def main() -> int:
         "result_bytes_per_recipe": total_bytes / len(ordered),
         "result_sha256": sha256_file(result_path),
         "worker_receipt_count": len(worker_receipts),
+        "workers": plan.active_workers,
+        "processes_per_worker": plan.processes_per_worker,
+        "block_size": plan.block_size,
         "scientific_stage_seconds": scientific_stage_seconds,
         "worker_cpu_seconds": worker_cpu_seconds,
         "worker_peak_memory_bytes": worker_peak_memory_bytes,

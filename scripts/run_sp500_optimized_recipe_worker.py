@@ -455,6 +455,7 @@ def main() -> int:
                 "physical_component_builds": 0,
                 "component_cache_hits": sum(len(row["components"]) for row in assigned),
                 "processes_per_worker": process_count,
+                "block_size": plan.block_size,
                 "scientific_stage_seconds": scientific_stage_seconds,
                 **resource_usage,
                 "validation_opened": False,
