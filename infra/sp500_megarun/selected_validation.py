@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 import json
+import math
 from pathlib import Path
-from typing import Any, Mapping
+import re
+from typing import Any, Mapping, Sequence
 
+import numpy as np
 import pandas as pd
+
+from aurora.infra.sp500_megarun.dehb_objective import (
+    ObjectiveContractError,
+    score_realized_returns,
+)
 
 
 VALIDATION_ACK = "OPEN_SP500_MEGARUN_VALIDATION_2011_2020_SELECTED_12_ONCE"
@@ -33,6 +41,28 @@ class ValidationSnapshotReceipt:
     locked_opened: bool = False
 
 
+@dataclass(frozen=True)
+class SelectedStrategy:
+    selection_order: int
+    name: str
+    source_kind: str
+    source_id: str
+    components: tuple[Mapping[str, Any], ...]
+    composition: Mapping[str, Any]
+    train_metrics: Mapping[str, float]
+    recipe_sha256: str
+
+
+@dataclass(frozen=True)
+class SelectionManifest:
+    selection_id: str
+    source_train_run_id: int
+    validation_opened: bool
+    locked_opened: bool
+    strategies: tuple[SelectedStrategy, ...]
+    sha256: str
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     try:
@@ -42,6 +72,210 @@ def _sha256_file(path: Path) -> str:
     except OSError as exc:
         raise SelectedValidationError(f"SNAPSHOT_FILE_READ_FAILED:{path.name}") from exc
     return digest.hexdigest()
+
+
+def _canonical_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _recipe_sha256(
+    components: Sequence[Mapping[str, Any]],
+    composition: Mapping[str, Any],
+) -> str:
+    return hashlib.sha256(
+        _canonical_bytes(
+            {
+                "components": [dict(component) for component in components],
+                "composition": dict(composition),
+            }
+        )
+    ).hexdigest()
+
+
+def validate_selection_manifest(
+    payload: Mapping[str, Any],
+) -> tuple[SelectedStrategy, ...]:
+    """Validate the exact pre-validation selection without opening data."""
+
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("selection_id") != "sp500-selected-12-before-validation-v1"
+        or payload.get("source_train_run_id") != 31932275712
+        or payload.get("validation_start") != "2011-01-01"
+        or payload.get("validation_end") != "2020-12-31"
+        or payload.get("locked_start") != "2021-01-01"
+        or payload.get("validation_opened") is not False
+        or payload.get("locked_opened") is not False
+    ):
+        raise SelectedValidationError("SELECTION_CONTRACT_INVALID")
+    raw_strategies = payload.get("strategies")
+    if not isinstance(raw_strategies, list) or len(raw_strategies) != 12:
+        raise SelectedValidationError("SELECTION_STRATEGY_COUNT_INVALID")
+    selected: list[SelectedStrategy] = []
+    recipe_hashes: set[str] = set()
+    source_ids: set[str] = set()
+    allowed_compositions = {"identity", "and", "gate", "override", "vote", "weighted_score"}
+    for expected_order, raw in enumerate(raw_strategies, start=1):
+        if not isinstance(raw, Mapping) or raw.get("selection_order") != expected_order:
+            raise SelectedValidationError("SELECTION_ORDER_INVALID")
+        name = str(raw.get("name", "")).strip()
+        source_kind = str(raw.get("source_kind", ""))
+        source_id = str(raw.get("source_id", ""))
+        train_metrics = raw.get("train_metrics")
+        components = raw.get("components")
+        composition = raw.get("composition")
+        if (
+            not name
+            or source_kind not in {"catalog", "dehb"}
+            or not source_id
+            or source_id in source_ids
+            or not isinstance(train_metrics, Mapping)
+            or not isinstance(components, list)
+            or not components
+            or len(components) > 5
+            or not isinstance(composition, Mapping)
+        ):
+            raise SelectedValidationError("SELECTION_STRATEGY_INVALID")
+        normalized_components = []
+        for component in components:
+            if not isinstance(component, Mapping):
+                raise SelectedValidationError("SELECTION_COMPONENT_INVALID")
+            lane_id = str(component.get("lane_id", ""))
+            configuration = component.get("configuration")
+            if not re.fullmatch(r"F(?:00[1-9]|0[1-9][0-9]|1[0-9]{2}|2[0-3][0-9]|240)", lane_id):
+                raise SelectedValidationError("SELECTION_LANE_INVALID")
+            if not isinstance(configuration, Mapping):
+                raise SelectedValidationError("SELECTION_CONFIGURATION_INVALID")
+            _canonical_bytes(configuration)
+            normalized_components.append(
+                {"lane_id": lane_id, "configuration": dict(configuration)}
+            )
+        kind = str(composition.get("kind", ""))
+        if kind not in allowed_compositions:
+            raise SelectedValidationError("SELECTION_COMPOSITION_INVALID")
+        if (kind == "identity") != (len(normalized_components) == 1):
+            raise SelectedValidationError("SELECTION_COMPOSITION_ARITY_INVALID")
+        required_metrics = {
+            "annualized_strategy_return",
+            "annualized_alpha",
+            "weekly_winning_or_positive_rate",
+        }
+        if set(train_metrics) != required_metrics:
+            raise SelectedValidationError("SELECTION_TRAIN_METRICS_INVALID")
+        normalized_metrics = {key: float(train_metrics[key]) for key in required_metrics}
+        if not all(math.isfinite(value) for value in normalized_metrics.values()):
+            raise SelectedValidationError("SELECTION_TRAIN_METRICS_INVALID")
+        recipe_hash = _recipe_sha256(normalized_components, composition)
+        if recipe_hash in recipe_hashes:
+            raise SelectedValidationError("SELECTION_STRATEGY_DUPLICATE")
+        recipe_hashes.add(recipe_hash)
+        source_ids.add(source_id)
+        selected.append(
+            SelectedStrategy(
+                selection_order=expected_order,
+                name=name,
+                source_kind=source_kind,
+                source_id=source_id,
+                components=tuple(normalized_components),
+                composition=dict(composition),
+                train_metrics=normalized_metrics,
+                recipe_sha256=recipe_hash,
+            )
+        )
+    return tuple(selected)
+
+
+def load_selection_manifest(path: Path) -> SelectionManifest:
+    target = Path(path)
+    try:
+        payload = json.loads(target.read_text("utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SelectedValidationError("SELECTION_MANIFEST_INVALID") from exc
+    if not isinstance(payload, Mapping):
+        raise SelectedValidationError("SELECTION_MANIFEST_INVALID")
+    strategies = validate_selection_manifest(payload)
+    return SelectionManifest(
+        selection_id=str(payload["selection_id"]),
+        source_train_run_id=int(payload["source_train_run_id"]),
+        validation_opened=bool(payload["validation_opened"]),
+        locked_opened=bool(payload["locked_opened"]),
+        strategies=strategies,
+        sha256=_sha256_file(target),
+    )
+
+
+def _compounded_return(values: pd.Series) -> float:
+    return math.expm1(float(np.log1p(values.to_numpy(dtype=float)).sum()))
+
+
+def score_validation_returns(
+    strategy_returns: pd.Series,
+    spy_returns: pd.Series,
+) -> Mapping[str, Any]:
+    """Score one unchanged recipe exclusively on validation years."""
+
+    if strategy_returns.empty or not strategy_returns.index.equals(spy_returns.index):
+        raise SelectedValidationError("VALIDATION_RETURN_INDEX_INVALID")
+    dates = pd.DatetimeIndex(pd.to_datetime(strategy_returns.index)).normalize()
+    if dates.has_duplicates or not dates.is_monotonic_increasing:
+        raise SelectedValidationError("VALIDATION_RETURN_INDEX_INVALID")
+    if dates.max() >= LOCKED_START:
+        raise SelectedValidationError("VALIDATION_LOCKED_DATE_FORBIDDEN")
+    if dates.min() < VALIDATION_START or dates.max() > VALIDATION_END:
+        raise SelectedValidationError("VALIDATION_DATE_OUTSIDE_WINDOW")
+    try:
+        score = score_realized_returns(
+            strategy_returns,
+            spy_returns,
+            target_years=tuple(range(2011, 2021)),
+        )
+    except ObjectiveContractError as exc:
+        raise SelectedValidationError(f"VALIDATION_SCORE_INVALID:{exc}") from exc
+    weekly = pd.DataFrame({"strategy": strategy_returns, "spy": spy_returns})
+    weekly["week"] = dates.to_period("W-FRI")
+    compounded = weekly.groupby("week", sort=True)[["strategy", "spy"]].agg(
+        _compounded_return
+    )
+    positive_weeks = compounded["strategy"] > 0.0
+    beating_weeks = compounded["strategy"] > compounded["spy"]
+    union_weeks = positive_weeks | beating_weeks
+    annual = {str(year): asdict(row) for year, row in score.annual_returns.items()}
+    down_returns = [
+        row.strategy_return
+        for row in score.annual_returns.values()
+        if row.spy_return < 0.0
+    ]
+    return {
+        "annualized_strategy_return": score.annualized_strategy_return,
+        "annualized_spy_return": score.annualized_spy_return,
+        "annualized_alpha": score.annualized_alpha,
+        "week_count": len(compounded),
+        "positive_weeks": int(positive_weeks.sum()),
+        "weeks_beating_spy": int(beating_weeks.sum()),
+        "winning_or_positive_weeks": int(union_weeks.sum()),
+        "weekly_positive_rate": float(positive_weeks.mean()),
+        "weekly_spy_beat_rate": float(beating_weeks.mean()),
+        "weekly_winning_or_positive_rate": float(union_weeks.mean()),
+        "positive_years": sum(row.strategy_return > 0.0 for row in score.annual_returns.values()),
+        "years_beating_spy": sum(row.active_return > 0.0 for row in score.annual_returns.values()),
+        "years_passing_both": sum(row.passed for row in score.annual_returns.values()),
+        "total_years": 10,
+        "worst_annual_return": min(row.strategy_return for row in score.annual_returns.values()),
+        "worst_annual_alpha": min(row.active_return for row in score.annual_returns.values()),
+        "average_return_when_spy_falls": (
+            float(sum(down_returns) / len(down_returns)) if down_returns else None
+        ),
+        "annual_returns": annual,
+        "validation_start": VALIDATION_START.date().isoformat(),
+        "validation_end": VALIDATION_END.date().isoformat(),
+        "validation_opened": True,
+        "locked_opened": False,
+    }
 
 
 def _load_manifest(path: Path, *, expected_partition: str) -> Mapping[str, Any]:
@@ -183,6 +417,11 @@ __all__ = [
     "VALIDATION_END",
     "VALIDATION_START",
     "SelectedValidationError",
+    "SelectedStrategy",
+    "SelectionManifest",
     "ValidationSnapshotReceipt",
     "build_authorized_validation_snapshot",
+    "load_selection_manifest",
+    "score_validation_returns",
+    "validate_selection_manifest",
 ]
