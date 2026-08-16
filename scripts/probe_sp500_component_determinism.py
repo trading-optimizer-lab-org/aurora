@@ -24,6 +24,10 @@ from aurora.infra.sp500_megarun.dehb_lane_registry import (
     TrainLaneEvaluator,
     default_lane_configurations,
 )
+from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
+    numeric_runtime_profile_sha256,
+    verify_numeric_runtime_environment,
+)
 from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
     scientific_input_binding_sha256,
     verify_runtime_input_pack,
@@ -88,6 +92,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    numeric_runtime = verify_numeric_runtime_environment()
     verify_catalog_plan_token(
         args.run_plan,
         admission_token_sha256=args.admission_token,
@@ -213,6 +218,9 @@ def main() -> int:
         "scipy_version": scipy.__version__,
         "openblas_coretype": os.environ.get("OPENBLAS_CORETYPE"),
         "numpy_disabled_cpu_features": os.environ.get("NPY_DISABLE_CPU_FEATURES"),
+        "python_hash_seed": os.environ.get("PYTHONHASHSEED"),
+        "numeric_runtime_profile_sha256": numeric_runtime_profile_sha256(),
+        "numeric_runtime_verified": numeric_runtime["passed"],
         "train_end": "2010-12-31",
         "validation_opened": False,
         "locked_opened": False,
