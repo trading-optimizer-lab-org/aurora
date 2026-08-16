@@ -97,6 +97,23 @@ def test_equivalence_report_counts_every_affected_strategy_but_bounds_details(
     assert len(report["first_differences"]) == 100
 
 
+def test_targeted_diagnostic_classifies_historical_result_origin() -> None:
+    from scripts.diagnose_sp500_catalog_equivalence import classify_result
+
+    reference = {"fitness": 1.0, "info": {"week_count": 679}}
+    optimized = {"fitness": 2.0, "info": {"week_count": 679}}
+    historical = {"fitness": 1.0, "info": {"week_count": 679}}
+
+    report = classify_result(
+        historical=historical,
+        optimized=optimized,
+        reference=reference,
+    )
+
+    assert report["matches_reference"] is True
+    assert report["matches_optimized"] is False
+
+
 def test_cost_model_and_affinity_scheduler_are_deterministic() -> None:
     from aurora.infra.sp500_megarun.catalog_cost_model import CatalogCostModelV1
     from aurora.infra.sp500_megarun.catalog_scheduler import schedule_recipes
