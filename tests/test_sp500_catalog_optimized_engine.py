@@ -561,6 +561,22 @@ def test_compiled_volatility_path_matches_frozen_python_kernel(kind: str) -> Non
         np.testing.assert_allclose(observed, expected, rtol=1e-13, atol=1e-13)
 
 
+def test_vectorized_temporal_convolution_matches_frozen_python_kernel() -> None:
+    from aurora.infra.sp500_megarun.predictive_feature_engine import (
+        _convolution_basis,
+        _convolution_basis_python,
+    )
+
+    generator = np.random.default_rng(148)
+    sequences = generator.normal(size=(37, 63, 5))
+    sequences[3] = np.nan
+    filters = generator.normal(size=(4, 5, 3))
+    expected = _convolution_basis_python(sequences, filters, dilation=4)
+    observed = _convolution_basis(sequences, filters, dilation=4)
+    for actual, reference in zip(observed, expected, strict=True):
+        np.testing.assert_array_equal(actual, reference)
+
+
 def test_component_store_round_trip_is_exact_and_conflicts_fail(tmp_path: Path) -> None:
     from aurora.infra.sp500_megarun.catalog_component_store import (
         CatalogComponentStore,

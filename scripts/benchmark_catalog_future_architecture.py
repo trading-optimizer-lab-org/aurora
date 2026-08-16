@@ -136,6 +136,7 @@ def build_report() -> dict[str, object]:
             _multi_asset_case(100, 256),
         ],
         "cross_sectional_point_in_time": _cross_sectional_case(128, 1000),
+        "cross_sectional_scale_5000": _cross_sectional_case(128, 5000),
         "vector_engine": _vector_case(512, 4096),
         "validation_opened": False,
         "locked_opened": False,

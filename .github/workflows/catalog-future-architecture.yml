@@ -30,7 +30,7 @@ jobs:
           tests/test_sp500_catalog_runtime_scaling.py
           -k "multi_asset or cross_sectional"
           -q
-      - name: Benchmark 10/100 assets and 1000-asset PIT universe
+      - name: Benchmark 10/100 assets and 1000/5000-asset PIT universes
         run: >-
           python -m scripts.benchmark_catalog_future_architecture
           --output outputs/catalog_future_architecture.json

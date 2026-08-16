@@ -1122,7 +1122,7 @@ def _temporal_sequences(
     return output
 
 
-def _convolution_basis(
+def _convolution_basis_python(
     sequences: np.ndarray,
     filters: np.ndarray,
     *,
@@ -1149,6 +1149,48 @@ def _convolution_basis(
             np.mean(np.abs(activation[-1]))
             / max(float(np.mean(np.abs(activation))), _EPSILON)
         )
+    return pooled, endpoint, concentration
+
+
+def _convolution_basis(
+    sequences: np.ndarray,
+    filters: np.ndarray,
+    *,
+    dilation: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Exact sample-parallel form of the frozen temporal convolution."""
+
+    count, sequence, _ = sequences.shape
+    kernel = filters.shape[2]
+    start = (kernel - 1) * dilation
+    pooled = np.full((count, len(filters)), np.nan)
+    endpoint = np.full_like(pooled, np.nan)
+    concentration = np.full(count, np.nan)
+    valid = np.isfinite(sequences).all(axis=(1, 2))
+    if not bool(valid.any()):
+        return pooled, endpoint, concentration
+    selected = sequences[valid]
+    activations = []
+    for position in range(start, sequence):
+        indices = position - np.arange(kernel) * dilation
+        windows = selected[:, indices, :].transpose(0, 2, 1)
+        activations.append(
+            np.tanh(
+                np.sum(
+                    filters[None, :, :, :] * windows[:, None, :, :],
+                    axis=(2, 3),
+                )
+            )
+        )
+    activation = np.stack(activations, axis=1)
+    valid_pooled = activation.mean(axis=1)
+    valid_endpoint = activation[:, -1, :]
+    pooled[valid] = valid_pooled
+    endpoint[valid] = valid_endpoint
+    concentration[valid] = np.mean(np.abs(valid_endpoint), axis=1) / np.maximum(
+        np.mean(np.abs(activation), axis=(1, 2)),
+        _EPSILON,
+    )
     return pooled, endpoint, concentration
 
 
