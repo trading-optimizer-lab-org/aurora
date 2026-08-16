@@ -86,6 +86,25 @@ def weekly_winning_or_positive_metrics(
     }
 
 
+_ADDITIVE_WEEKLY_METRICS = (
+    "positive_weeks",
+    "winning_or_positive_weeks",
+    "weekly_winning_or_positive_rate",
+)
+
+
+def merge_weekly_winning_or_positive_metrics(
+    objective_info: Mapping[str, Any],
+    calendar_metrics: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Add the new weekly metrics without changing frozen objective fields."""
+
+    merged = dict(objective_info)
+    for key in _ADDITIVE_WEEKLY_METRICS:
+        merged[key] = calendar_metrics[key]
+    return merged
+
+
 def compose_signals(signals: Sequence[pd.Series], composition: Mapping[str, Any]) -> pd.Series:
     """Apply the catalog's exact {-1,0,+1} composition semantics."""
 
@@ -304,10 +323,9 @@ def main() -> int:
                     realized.spy_returns,
                 ),
             )
-            result["info"] = {
-                **result["info"],
-                **weekly_metrics,
-            }
+            result["info"] = merge_weekly_winning_or_positive_metrics(
+                result["info"], weekly_metrics
+            )
             output.append({"strategy_id": row["strategy_id"], "scientific_recipe_sha256": row["scientific_recipe_sha256"], "strategy_kind": row["strategy_kind"], "components": row["components"], "composition": row["composition"], "result": result})
             evaluation_span.add_units(1)
     args.output_dir.mkdir(parents=True, exist_ok=False)
@@ -356,13 +374,13 @@ def main() -> int:
                 allowed_end=contract.search_end,
             )
             result = dict(result)
-            result["info"] = {
-                **result["info"],
-                **weekly_winning_or_positive_metrics(
+            result["info"] = merge_weekly_winning_or_positive_metrics(
+                result["info"],
+                weekly_winning_or_positive_metrics(
                     realized.strategy_returns,
                     realized.spy_returns,
                 ),
-            }
+            )
             selected_output.append(
                 {
                     "source_strategy_key": selected["source_strategy_key"],

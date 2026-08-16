@@ -11,6 +11,15 @@ from typing import Any
 import pyarrow.parquet as pq
 
 
+_ALLOWED_ADDITIVE_INFO_FIELDS = frozenset(
+    {
+        "positive_weeks",
+        "winning_or_positive_weeks",
+        "weekly_winning_or_positive_rate",
+    }
+)
+
+
 def _load_results(root: Path) -> dict[str, dict[str, Any]]:
     parquet_path = root if root.suffix == ".parquet" else root / "results.parquet"
     if parquet_path.is_file():
@@ -38,8 +47,19 @@ def _compare(
     if path.endswith(".objective_runtime_seconds"):
         return
     if isinstance(expected, dict) and isinstance(observed, dict):
-        if set(expected) != set(observed):
-            differences.append(f"{path}:keys")
+        expected_keys = set(expected)
+        observed_keys = set(observed)
+        missing = expected_keys - observed_keys
+        extra = observed_keys - expected_keys
+        allowed_extra = (
+            _ALLOWED_ADDITIVE_INFO_FIELDS if path.endswith(".info") else frozenset()
+        )
+        if missing:
+            differences.append(f"{path}:missing:{','.join(sorted(missing))}")
+            return
+        unexpected = extra - allowed_extra
+        if unexpected:
+            differences.append(f"{path}:extra:{','.join(sorted(unexpected))}")
             return
         for key in sorted(expected):
             _compare(

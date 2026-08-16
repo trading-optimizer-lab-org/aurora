@@ -35,6 +35,7 @@ from scripts.run_sp500_strategy_catalog_shard import (
     FULL_FIDELITY,
     FULL_YEARS,
     compose_signals,
+    merge_weekly_winning_or_positive_metrics,
     weekly_winning_or_positive_metrics,
 )
 
@@ -102,13 +103,13 @@ def _evaluate(
         target_years=FULL_YEARS,
         allowed_end=search_end,
     )
-    result["info"] = {
-        **result["info"],
-        **weekly_winning_or_positive_metrics(
+    result["info"] = merge_weekly_winning_or_positive_metrics(
+        result["info"],
+        weekly_winning_or_positive_metrics(
             realized.strategy_returns,
             realized.spy_returns,
         ),
-    }
+    )
     return result, position_fingerprint
 
 

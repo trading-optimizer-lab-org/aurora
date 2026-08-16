@@ -5,6 +5,7 @@ from aurora.infra.sp500_megarun.catalog_performance import (
 )
 from scripts.run_sp500_strategy_catalog_shard import (
     compose_signals,
+    merge_weekly_winning_or_positive_metrics,
     weekly_winning_or_positive_metrics,
 )
 
@@ -33,6 +34,25 @@ def test_weekly_winning_or_positive_counts_union_without_double_counting():
         "winning_or_positive_weeks": 2,
         "weekly_winning_or_positive_rate": 2 / 3,
     }
+
+
+def test_additive_weekly_metrics_never_overwrite_frozen_objective_fields():
+    original = {"week_count": 679, "weeks_beating_spy": 131, "fitness": -1.0}
+    calendar = {
+        "week_count": 935,
+        "positive_weeks": 500,
+        "weeks_beating_spy": 135,
+        "winning_or_positive_weeks": 520,
+        "weekly_winning_or_positive_rate": 520 / 935,
+    }
+
+    merged = merge_weekly_winning_or_positive_metrics(original, calendar)
+
+    assert merged["week_count"] == 679
+    assert merged["weeks_beating_spy"] == 131
+    assert merged["positive_weeks"] == 500
+    assert merged["winning_or_positive_weeks"] == 520
+    assert merged["weekly_winning_or_positive_rate"] == 520 / 935
 
 
 def test_component_resolution_profiles_one_physical_build_and_one_cache_hit():

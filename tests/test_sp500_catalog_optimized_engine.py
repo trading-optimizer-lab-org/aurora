@@ -37,6 +37,30 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "if: ${{ always() }}" in verify_only
 
 
+def test_equivalence_gate_allows_only_declared_additive_weekly_metrics() -> None:
+    from scripts.verify_sp500_optimized_run import _compare
+
+    expected = {"week_count": 679, "weeks_beating_spy": 131}
+    observed = {
+        **expected,
+        "positive_weeks": 500,
+        "winning_or_positive_weeks": 520,
+        "weekly_winning_or_positive_rate": 520 / 935,
+    }
+    differences: list[str] = []
+    _compare(expected, observed, path="strategy.info", differences=differences)
+    assert differences == []
+
+    observed["week_count"] = 935
+    _compare(expected, observed, path="strategy.info", differences=differences)
+    assert differences == ["strategy.info.week_count"]
+
+    observed["unknown_metric"] = 1
+    unknown: list[str] = []
+    _compare(expected, observed, path="strategy.info", differences=unknown)
+    assert unknown == ["strategy.info:extra:unknown_metric"]
+
+
 def test_cost_model_and_affinity_scheduler_are_deterministic() -> None:
     from aurora.infra.sp500_megarun.catalog_cost_model import CatalogCostModelV1
     from aurora.infra.sp500_megarun.catalog_scheduler import schedule_recipes
