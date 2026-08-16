@@ -5,6 +5,7 @@ on:
     inputs:
       commit_sha: {required: true, type: string}
       runtime_input_run_id: {required: true, type: string}
+      component_store_run_id: {required: true, type: string}
       shard_index: {required: true, type: number}
       admission_token_sha256: {required: true, type: string}
 
@@ -36,8 +37,11 @@ jobs:
         with:
           name: sp500-global-component-store
           path: ${{ runner.temp }}/component-store
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.component_store_run_id }}
       - run: >-
-          python scripts/run_sp500_optimized_recipe_worker.py
+          python -m scripts.run_sp500_optimized_recipe_worker
           --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
           --catalog-dir config/sp500_megarun_strategy_catalog_v1
           --selected-config config/sp500_megarun_selected_dehb_13.json

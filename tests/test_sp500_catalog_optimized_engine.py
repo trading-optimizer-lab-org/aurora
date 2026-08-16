@@ -6,6 +6,20 @@ import numpy as np
 import pytest
 
 
+def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> None:
+    worker = Path(".github/workflows/catalog-optimized-worker.yml").read_text(
+        encoding="utf-8"
+    )
+    run = Path(".github/workflows/catalog-optimized-run.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "python -m scripts.run_sp500_optimized_recipe_worker" in worker
+    assert "component_store_run_id" in worker
+    assert "component_store_run_id" in run
+    assert "inputs.component_store_run_id == ''" in run
+
+
 def test_cost_model_and_affinity_scheduler_are_deterministic() -> None:
     from aurora.infra.sp500_megarun.catalog_cost_model import CatalogCostModelV1
     from aurora.infra.sp500_megarun.catalog_scheduler import schedule_recipes
