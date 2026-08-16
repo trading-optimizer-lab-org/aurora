@@ -944,6 +944,25 @@ def test_cross_sectional_sparse_engine_scales_to_one_thousand_assets() -> None:
     assert portfolio.locked_opened is False
 
 
+def test_multi_asset_catalog_scale_streams_every_recipe_asset_pair() -> None:
+    from scripts.benchmark_catalog_future_architecture import (
+        _multi_asset_catalog_scale_case,
+    )
+
+    report = _multi_asset_catalog_scale_case(
+        3,
+        recipe_count=17,
+        session_count=32,
+        block_size=8,
+    )
+
+    assert report["requested_recipe_asset_evaluations"] == 51
+    assert report["complete_metric_count"] == 51
+    assert report["shared_calendar_builds"] == 1
+    assert report["asset_specific_work_units"] == 3
+    assert report["maximum_block_bytes"] < 32 * 1024 * 1024
+
+
 def test_future_architecture_qualification_is_github_only_and_bounded() -> None:
     workflow = Path(".github/workflows/catalog-future-architecture.yml").read_text(
         "utf-8"
@@ -961,6 +980,8 @@ def test_future_architecture_qualification_is_github_only_and_bounded() -> None:
     assert "optimized_catalog_future_architecture" in entrypoint
     assert "uses: ./.github/workflows/catalog-future-architecture.yml" in entrypoint
     assert "100, 256" in script
+    assert "37_258" in script
+    assert '"requested_recipe_asset_evaluations"' in script
     assert "128, 1000" in script
     assert "128, 5000" in script
     assert "512, 4096" in script

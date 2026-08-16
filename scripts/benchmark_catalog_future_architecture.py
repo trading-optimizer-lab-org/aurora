@@ -56,6 +56,90 @@ def _multi_asset_case(asset_count: int, session_count: int) -> dict[str, int | f
     }
 
 
+def _multi_asset_catalog_scale_case(
+    asset_count: int,
+    *,
+    recipe_count: int = 37_258,
+    session_count: int = 256,
+    block_size: int = 256,
+) -> dict[str, int | float]:
+    """Exercise every recipe-asset pair without materialising the full cube."""
+
+    assets = {
+        f"A{asset_index:04d}": {
+            session: float(100 + asset_index + np.sin(session / 7 + asset_index))
+            for session in range(session_count)
+            if (session + asset_index) % 19 != 0
+        }
+        for asset_index in range(asset_count)
+    }
+    started = time.perf_counter()
+    panel = build_asset_panel(assets)
+    evaluated = evaluate_multi_asset_panel(panel, lookback=5)
+    values = np.asarray(panel.values, dtype=np.float64)
+    valid_pairs = panel.valid_mask[:, 1:] & panel.valid_mask[:, :-1]
+    asset_returns = np.zeros((asset_count, session_count - 1), dtype=np.float64)
+    np.divide(
+        values[:, 1:] - values[:, :-1],
+        values[:, :-1],
+        out=asset_returns,
+        where=valid_pairs,
+    )
+    sessions = np.arange(session_count, dtype=np.int64)[None, None, :]
+    checksum = 0.0
+    completed = 0
+    maximum_block_bytes = 0
+    for start in range(0, recipe_count, block_size):
+        stop = min(start + block_size, recipe_count)
+        ordinals = np.arange(start, stop, dtype=np.int64)[:, None, None]
+        source = np.where(
+            (ordinals & 1) == 0,
+            evaluated.independent_signals[None, :, :],
+            evaluated.cross_asset_signals[None, :, :],
+        )
+        direction = np.where((ordinals & 2) == 0, 1, -1).astype(np.int8)
+        periods = 2 + (ordinals % 13)
+        gate = ((sessions + ordinals) % periods) != 0
+        decisions = np.where(gate, source * direction, 0).astype(np.int8)
+        scores = np.einsum(
+            "bas,as->ba",
+            decisions[:, :, :-1],
+            asset_returns,
+            optimize=True,
+        )
+        checksum += float(scores.sum())
+        completed += int(scores.size)
+        maximum_block_bytes = max(
+            maximum_block_bytes,
+            int(source.nbytes + gate.nbytes + decisions.nbytes + scores.nbytes),
+        )
+    elapsed = time.perf_counter() - started
+    expected = recipe_count * asset_count
+    if (
+        completed != expected
+        or evaluated.shared_calendar_builds != 1
+        or evaluated.asset_specific_work_units != asset_count
+        or maximum_block_bytes >= 32 * 1024 * 1024
+        or not np.isfinite(checksum)
+        or evaluated.validation_opened
+        or evaluated.locked_opened
+    ):
+        raise ValueError("MULTI_ASSET_CATALOG_SCALE_CONTRACT_FAILED")
+    return {
+        "asset_count": asset_count,
+        "recipe_count": recipe_count,
+        "requested_recipe_asset_evaluations": expected,
+        "complete_metric_count": completed,
+        "shared_calendar_builds": evaluated.shared_calendar_builds,
+        "asset_specific_work_units": evaluated.asset_specific_work_units,
+        "block_size": block_size,
+        "maximum_block_bytes": maximum_block_bytes,
+        "checksum": checksum,
+        "wall_seconds": elapsed,
+        "recipe_asset_evaluations_per_second": expected / elapsed,
+    }
+
+
 def _cross_sectional_case(date_count: int, asset_count: int) -> dict[str, int | float]:
     dates = np.arange(date_count, dtype=np.float64)[:, None]
     assets = np.arange(asset_count, dtype=np.float64)[None, :]
@@ -173,6 +257,10 @@ def build_report() -> dict[str, object]:
         "multi_asset": [
             _multi_asset_case(10, 256),
             _multi_asset_case(100, 256),
+        ],
+        "multi_asset_catalog_scale": [
+            _multi_asset_catalog_scale_case(10),
+            _multi_asset_catalog_scale_case(100),
         ],
         "cross_sectional_point_in_time": _cross_sectional_case(128, 1000),
         "cross_sectional_scale_5000": _cross_sectional_case(128, 5000),
