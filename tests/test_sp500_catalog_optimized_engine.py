@@ -28,6 +28,9 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "score_prepared_lane_candidate" not in Path(
         "scripts/run_sp500_optimized_recipe_worker.py"
     ).read_text("utf-8")
+    assert "scientific_stage_seconds" in Path(
+        "scripts/run_sp500_optimized_recipe_worker.py"
+    ).read_text("utf-8")
     assert "component_store_run_id" in worker
     assert "component_store_run_id" in run
     assert "component_cost_run_id" in run

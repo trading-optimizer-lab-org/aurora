@@ -18,6 +18,10 @@ from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
 from aurora.infra.sp500_megarun.catalog_scheduler import CatalogComponentScheduleV1
+from aurora.infra.sp500_megarun.catalog_resources import (
+    ResourceUsageSnapshot,
+    resource_usage_delta,
+)
 from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 from aurora.infra.sp500_megarun.dehb_campaign_contract import (
     load_and_validate_campaign_contract,
@@ -164,6 +168,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    resource_started = ResourceUsageSnapshot.capture()
     numeric_runtime = verify_numeric_runtime_environment()
     plan = verify_catalog_plan_token(
         args.run_plan,
@@ -290,6 +295,10 @@ def main() -> int:
         }
     shard_seconds = time.perf_counter() - shard_started
     manifest = writer.commit()
+    resource_usage = resource_usage_delta(
+        resource_started,
+        ResourceUsageSnapshot.capture(),
+    )
     (args.output_dir / "component_performance.json").write_text(
         json.dumps(
             {
@@ -303,7 +312,9 @@ def main() -> int:
                     for row in component_profiles.values()
                 ),
                 "shard_seconds": shard_seconds,
+                **resource_usage,
                 "processes_per_worker": process_count,
+                **resource_usage,
                 "validation_opened": False,
                 "locked_opened": False,
             },

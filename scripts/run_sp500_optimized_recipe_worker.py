@@ -9,6 +9,7 @@ import json
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+import time
 from typing import Any
 
 import pandas as pd
@@ -25,6 +26,10 @@ from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
 from aurora.infra.sp500_megarun.catalog_resume import CatalogResumeWorkManifestV1
+from aurora.infra.sp500_megarun.catalog_resources import (
+    ResourceUsageSnapshot,
+    resource_usage_delta,
+)
 from aurora.infra.sp500_megarun.dehb_campaign_contract import (
     load_and_validate_campaign_contract,
 )
@@ -188,12 +193,17 @@ def _evaluate_catalog_row(row: dict[str, Any]) -> dict[str, object]:
         or _PROCESS_SEARCH_END is None
     ):
         raise RuntimeError("RECIPE_PROCESS_NOT_INITIALIZED")
+    started = time.perf_counter()
     signals = _signals_for_components(
         list(row["components"]),
         store=_PROCESS_STORE,
         index=_PROCESS_LEDGER.index,
     )
+    component_load_seconds = time.perf_counter() - started
+    started = time.perf_counter()
     decisions = compose_signals(signals, dict(row["composition"]))
+    composition_seconds = time.perf_counter() - started
+    started = time.perf_counter()
     result, position_fingerprint = _evaluate(
         lane_id=str(row["strategy_id"]),
         configuration={
@@ -203,16 +213,26 @@ def _evaluate_catalog_row(row: dict[str, Any]) -> dict[str, object]:
         ledger=_PROCESS_LEDGER,
         search_end=_PROCESS_SEARCH_END,
     )
+    objective_seconds = time.perf_counter() - started
+    started = time.perf_counter()
+    result_json = json.dumps(
+        result,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    serialization_seconds = time.perf_counter() - started
     return {
         "strategy_id": row["strategy_id"],
         "scientific_recipe_sha256": row["scientific_recipe_sha256"],
         "strategy_kind": row["strategy_kind"],
         "position_fingerprint": position_fingerprint,
-        "result_json": json.dumps(
-            result,
-            sort_keys=True,
-            separators=(",", ":"),
-        ),
+        "result_json": result_json,
+        "_stage_seconds": {
+            "component_load": component_load_seconds,
+            "composition": composition_seconds,
+            "objective": objective_seconds,
+            "serialization": serialization_seconds,
+        },
     }
 
 
@@ -236,6 +256,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    resource_started = ResourceUsageSnapshot.capture()
     numeric_runtime = verify_numeric_runtime_environment()
     plan = verify_catalog_worker_admission(
         args.run_plan,
@@ -337,12 +358,26 @@ def main() -> int:
             )
     args.output_dir.mkdir(parents=True, exist_ok=False)
     result_path = args.output_dir / "results.parquet"
+    scientific_stage_seconds = {
+        name: sum(
+            float(row["_stage_seconds"][name])
+            for row in output
+        )
+        for name in (
+            "component_load",
+            "composition",
+            "objective",
+            "serialization",
+        )
+    }
+    write_started = time.perf_counter()
     pq.write_table(
         pa.Table.from_pylist(output, schema=_RESULT_SCHEMA),
         result_path,
         compression="zstd",
         use_dictionary=True,
     )
+    scientific_stage_seconds["write"] = time.perf_counter() - write_started
     selected_output: list[dict[str, object]] = []
     if args.shard_index == 0:
         selected_rows = json.loads(args.selected_config.read_text("utf-8"))
@@ -379,6 +414,10 @@ def main() -> int:
             "utf-8",
         )
     bytes_written = result_path.stat().st_size
+    resource_usage = resource_usage_delta(
+        resource_started,
+        ResourceUsageSnapshot.capture(),
+    )
     (args.output_dir / "receipt.json").write_text(
         json.dumps(
             {
@@ -405,6 +444,8 @@ def main() -> int:
                 "physical_component_builds": 0,
                 "component_cache_hits": sum(len(row["components"]) for row in assigned),
                 "processes_per_worker": process_count,
+                "scientific_stage_seconds": scientific_stage_seconds,
+                **resource_usage,
                 "validation_opened": False,
                 "locked_opened": False,
             },

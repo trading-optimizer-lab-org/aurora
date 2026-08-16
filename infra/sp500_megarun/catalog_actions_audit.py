@@ -9,9 +9,9 @@ from datetime import datetime
 
 _COMPUTE_STEP_MARKERS = (
     "scripts.run_sp500_optimized_recipe_worker",
-    "build_sp500_component_store.py",
+    "scripts.build_sp500_component_store",
     "scripts.merge_sp500_component_store",
-    "reduce_sp500_optimized_catalog_run.py",
+    "scripts.reduce_sp500_optimized_catalog_run",
     "scripts.verify_sp500_optimized_run",
 )
 
@@ -88,10 +88,18 @@ def build_actions_runtime_audit(
     setup_samples: list[float] = []
     compute_seconds = 0.0
     upload_seconds = 0.0
+    step_seconds = 0.0
     for job in completed:
         steps = job.get("steps", ())
         if not isinstance(steps, Sequence):
             continue
+        step_seconds += sum(
+            _duration(step["started_at"], step["completed_at"])
+            for step in steps
+            if isinstance(step, Mapping)
+            and step.get("started_at")
+            and step.get("completed_at")
+        )
         compute_steps = [
             step
             for step in steps
@@ -128,6 +136,16 @@ def build_actions_runtime_audit(
         raise ValueError("CATALOG_ACTIONS_STRATEGY_COUNT_INVALID")
     result_bytes = int(receipt.get("result_bytes", 0))
     artifact_bytes = sum(int(item.get("size_in_bytes", 0)) for item in artifacts)
+    unattributed_runner_seconds = max(0.0, runner_seconds - step_seconds)
+    accounted_runner_seconds = step_seconds + unattributed_runner_seconds
+    accounting_difference_ratio = (
+        abs(runner_seconds - accounted_runner_seconds) / runner_seconds
+        if runner_seconds
+        else 0.0
+    )
+    scientific_stage_seconds = receipt.get("scientific_stage_seconds", {})
+    if not isinstance(scientific_stage_seconds, Mapping):
+        raise ValueError("CATALOG_ACTIONS_SCIENTIFIC_STAGES_INVALID")
     return {
         "schema_version": 1,
         "run_id": int(run["id"]),
@@ -141,6 +159,24 @@ def build_actions_runtime_audit(
         "setup_seconds_p95": _nearest_rank(setup_samples, 0.95),
         "compute_seconds": compute_seconds,
         "upload_seconds": upload_seconds,
+        "step_seconds": step_seconds,
+        "unattributed_runner_seconds": unattributed_runner_seconds,
+        "accounted_runner_seconds": accounted_runner_seconds,
+        "accounting_difference_ratio": accounting_difference_ratio,
+        "scientific_stage_seconds": {
+            str(name): float(value)
+            for name, value in scientific_stage_seconds.items()
+        },
+        "worker_cpu_seconds": float(receipt.get("worker_cpu_seconds", 0.0)),
+        "worker_peak_memory_bytes": int(
+            receipt.get("worker_peak_memory_bytes", 0)
+        ),
+        "worker_available_memory_bytes": int(
+            receipt.get("worker_available_memory_bytes", 0)
+        ),
+        "worker_peak_memory_fraction": float(
+            receipt.get("worker_peak_memory_fraction", 0.0)
+        ),
         "requested_recipes": strategy_count,
         "new_complete_recipe_ids": int(
             receipt.get("physical_recipe_evaluations", strategy_count)

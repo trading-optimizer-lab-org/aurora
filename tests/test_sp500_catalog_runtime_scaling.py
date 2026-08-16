@@ -64,6 +64,22 @@ def test_adaptive_process_topology_requires_speed_and_safe_memory() -> None:
     assert fallback.processes == 1
 
 
+def test_resource_usage_receipt_reports_cpu_memory_and_capacity() -> None:
+    from aurora.infra.sp500_megarun.catalog_resources import (
+        ResourceUsageSnapshot,
+        resource_usage_delta,
+    )
+
+    started = ResourceUsageSnapshot.capture()
+    _ = sum(index * index for index in range(10_000))
+    usage = resource_usage_delta(started, ResourceUsageSnapshot.capture())
+
+    assert usage["cpu_seconds"] >= 0.0
+    assert usage["peak_memory_bytes"] >= 1
+    assert usage["available_memory_bytes"] >= usage["peak_memory_bytes"]
+    assert 0.0 < usage["peak_memory_fraction"] <= 1.0
+
+
 def test_microshard_checkpoint_resumes_only_pending_units(tmp_path: Path) -> None:
     from aurora.infra.sp500_megarun.catalog_checkpoint import CatalogCheckpoint
 
@@ -324,6 +340,17 @@ def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> 
         "prior_result_cache_hits": 20,
         "worker_receipt_count": 1,
         "result_bytes": 48000,
+        "scientific_stage_seconds": {
+            "component_load": 2.0,
+            "composition": 3.0,
+            "objective": 12.0,
+            "serialization": 1.0,
+            "write": 2.0,
+        },
+        "worker_cpu_seconds": 18.0,
+        "worker_peak_memory_bytes": 2_000,
+        "worker_available_memory_bytes": 10_000,
+        "worker_peak_memory_fraction": 0.2,
         "validation_opened": False,
         "locked_opened": False,
     }
@@ -348,6 +375,11 @@ def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> 
     assert report["strategies_per_wall_minute"] == 160.0
     assert report["artifact_bytes_uploaded"] == 1000
     assert report["result_bytes_per_recipe"] == 400.0
+    assert report["scientific_stage_seconds"]["objective"] == 12.0
+    assert report["accounted_runner_seconds"] == report["runner_seconds"]
+    assert report["accounting_difference_ratio"] <= 0.02
+    assert report["worker_cpu_seconds"] == 18.0
+    assert report["worker_peak_memory_fraction"] == 0.2
     assert report["validation_opened"] is False
     assert report["locked_opened"] is False
 

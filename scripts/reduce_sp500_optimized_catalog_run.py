@@ -186,6 +186,41 @@ def main() -> int:
         for path in sorted(args.input_root.rglob("receipt.json"))
         if "component" not in path.as_posix().lower()
     ]
+    scientific_stage_seconds = {
+        name: sum(
+            float(receipt.get("scientific_stage_seconds", {}).get(name, 0.0))
+            for receipt in worker_receipts
+        )
+        for name in (
+            "component_load",
+            "composition",
+            "objective",
+            "serialization",
+            "write",
+        )
+    }
+    worker_cpu_seconds = sum(
+        float(receipt.get("cpu_seconds", 0.0)) for receipt in worker_receipts
+    )
+    worker_peak_memory_bytes = max(
+        (int(receipt.get("peak_memory_bytes", 0)) for receipt in worker_receipts),
+        default=0,
+    )
+    worker_available_memory_bytes = min(
+        (
+            int(receipt.get("available_memory_bytes", 0))
+            for receipt in worker_receipts
+            if int(receipt.get("available_memory_bytes", 0)) > 0
+        ),
+        default=0,
+    )
+    worker_peak_memory_fraction = max(
+        (
+            float(receipt.get("peak_memory_fraction", 0.0))
+            for receipt in worker_receipts
+        ),
+        default=0.0,
+    )
     total_bytes = result_path.stat().st_size
     unique_positions = len(
         {
@@ -213,6 +248,11 @@ def main() -> int:
         "result_bytes_per_recipe": total_bytes / len(ordered),
         "result_sha256": sha256_file(result_path),
         "worker_receipt_count": len(worker_receipts),
+        "scientific_stage_seconds": scientific_stage_seconds,
+        "worker_cpu_seconds": worker_cpu_seconds,
+        "worker_peak_memory_bytes": worker_peak_memory_bytes,
+        "worker_available_memory_bytes": worker_available_memory_bytes,
+        "worker_peak_memory_fraction": worker_peak_memory_fraction,
         "science_identity_sha256": science_identity_sha256,
         "catalog_manifest_sha256": resolved.science.catalog_manifest_sha256,
         "work_manifest_sha256": work_manifest.manifest_sha256,
