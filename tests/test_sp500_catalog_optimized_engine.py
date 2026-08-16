@@ -18,6 +18,11 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "component_store_run_id" in worker
     assert "component_store_run_id" in run
     assert "inputs.component_store_run_id == ''" in run
+    resume_gate = (
+        "always() && needs.plan.result == 'success' && "
+        "needs.merge_components.result == 'success'"
+    )
+    assert run.count(resume_gate) == 3
 
 
 def test_cost_model_and_affinity_scheduler_are_deterministic() -> None:

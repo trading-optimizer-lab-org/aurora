@@ -138,6 +138,7 @@ jobs:
 
   evaluate_a:
     needs: [plan, merge_components]
+    if: ${{ always() && needs.plan.result == 'success' && needs.merge_components.result == 'success' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -152,6 +153,7 @@ jobs:
 
   evaluate_b:
     needs: [plan, merge_components]
+    if: ${{ always() && needs.plan.result == 'success' && needs.merge_components.result == 'success' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -166,6 +168,7 @@ jobs:
 
   evaluate_c:
     needs: [plan, merge_components]
+    if: ${{ always() && needs.plan.result == 'success' && needs.merge_components.result == 'success' }}
     strategy:
       fail-fast: false
       max-parallel: 120
