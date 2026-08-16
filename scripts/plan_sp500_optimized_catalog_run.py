@@ -15,6 +15,10 @@ from aurora.infra.sp500_megarun.catalog_admission import (
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
+from aurora.infra.sp500_megarun.catalog_source_identity import (
+    catalog_infrastructure_source_sha256,
+    catalog_scientific_source_sha256,
+)
 from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
     numeric_runtime_profile_sha256,
 )
@@ -36,29 +40,6 @@ def _matrix_payload(shards: tuple[int, ...]) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
-
-
-def _scientific_source_sha256(repo_root: Path) -> str:
-    """Conservatively bind the evaluator to every SP500 engine source file."""
-
-    repo_root = Path(repo_root).resolve()
-    paths = sorted((repo_root / "infra/sp500_megarun").glob("*.py"))
-    paths.extend(
-        [
-            repo_root / "scripts/build_sp500_component_store.py",
-            repo_root / "scripts/run_sp500_optimized_recipe_worker.py",
-            repo_root / "scripts/run_sp500_strategy_catalog_shard.py",
-        ]
-    )
-    digest = hashlib.sha256(b"aurora-sp500-catalog-evaluator-v1\0")
-    for path in sorted(paths):
-        relative = path.relative_to(repo_root).as_posix().encode("utf-8")
-        digest.update(len(relative).to_bytes(4, "big"))
-        digest.update(relative)
-        payload = path.read_bytes()
-        digest.update(len(payload).to_bytes(8, "big"))
-        digest.update(payload)
-    return digest.hexdigest()
 
 
 def build_repository_contract(
@@ -103,8 +84,9 @@ def build_repository_contract(
         "schema_version": policy["schema_version"],
         "optimization_mode": policy["optimization_mode"],
         "allow_unoptimized_run": policy["allow_unoptimized_run"],
+        "infrastructure_sha256": catalog_infrastructure_source_sha256(repo_root),
         "science": {
-            "evaluator_sha256": _scientific_source_sha256(repo_root),
+            "evaluator_sha256": catalog_scientific_source_sha256(repo_root),
             "data_snapshot_sha256": scientific_inputs[
                 "train_snapshot_manifest_sha256"
             ],

@@ -14,6 +14,7 @@ def _valid_payload() -> dict[str, object]:
         "schema_version": "1",
         "optimization_mode": "required",
         "allow_unoptimized_run": False,
+        "infrastructure_sha256": "f" * 64,
         "science": {
             "evaluator_sha256": "a" * 64,
             "data_snapshot_sha256": "b" * 64,
@@ -293,6 +294,7 @@ def test_repository_contract_is_derived_from_authoritative_artifacts() -> None:
     assert contract.science.validation_opened is False
     assert contract.science.locked_opened is False
     assert len(contract.science.evaluator_sha256) == 64
+    assert len(contract.infrastructure_sha256) == 64
     assert len(contract.science.data_snapshot_sha256) == 64
     assert len(contract.science.catalog_manifest_sha256) == 64
     from aurora.infra.sp500_megarun.dehb_numeric_runtime import (

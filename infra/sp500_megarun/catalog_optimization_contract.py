@@ -80,6 +80,7 @@ class RunOptimizationContractV1(FrozenModel):
     schema_version: Literal["1"]
     optimization_mode: Literal["required"]
     allow_unoptimized_run: Literal[False]
+    infrastructure_sha256: Sha256
     science: CatalogScienceIdentityV1
     workload: CatalogWorkloadV1
     execution: CatalogExecutionV1

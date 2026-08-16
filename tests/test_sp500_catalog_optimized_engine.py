@@ -272,6 +272,30 @@ def test_component_schedule_uses_measured_costs_and_assigns_each_key_once() -> N
     assert schedule.tail_ratio < 1.2
 
 
+def test_catalog_science_identity_excludes_replaceable_run_infrastructure() -> None:
+    from aurora.infra.sp500_megarun.catalog_source_identity import (
+        catalog_infrastructure_source_paths,
+        catalog_scientific_source_paths,
+    )
+
+    root = Path.cwd().resolve()
+    science = {
+        path.relative_to(root).as_posix()
+        for path in catalog_scientific_source_paths(root)
+    }
+    infrastructure = {
+        path.relative_to(root).as_posix()
+        for path in catalog_infrastructure_source_paths(root)
+    }
+
+    assert "infra/sp500_megarun/advanced_feature_engine.py" in science
+    assert "infra/sp500_megarun/dehb_objective.py" in science
+    assert "infra/sp500_megarun/catalog_scheduler.py" not in science
+    assert ".github/workflows/catalog-optimized-run.yml" in infrastructure
+    assert "scripts/run_sp500_optimized_recipe_worker.py" in infrastructure
+    assert science.isdisjoint(infrastructure)
+
+
 def test_component_store_round_trip_is_exact_and_conflicts_fail(tmp_path: Path) -> None:
     from aurora.infra.sp500_megarun.catalog_component_store import (
         CatalogComponentStore,
