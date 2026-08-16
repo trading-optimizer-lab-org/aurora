@@ -263,6 +263,7 @@ def test_autotuner_selects_fastest_safe_candidate_and_blocks_regression() -> Non
             ),
             TuningCandidateV1(
                 workers=90,
+                component_processes_per_worker=4,
                 processes_per_worker=2,
                 block_size=512,
                 wall_seconds_samples=(70.0, 72.0, 71.0),
@@ -274,6 +275,7 @@ def test_autotuner_selects_fastest_safe_candidate_and_blocks_regression() -> Non
         max_regression_ratio=0.05,
     )
     assert winner.workers == 90
+    assert winner.component_processes_per_worker == 4
     assert winner.promoted is True
 
     with pytest.raises(ValueError, match="CATALOG_PERFORMANCE_REGRESSION"):
@@ -304,13 +306,13 @@ def test_autotune_history_is_hash_bound_reproducible_and_requires_three_runs(
 
     science = "a" * 64
     history = CatalogPerformanceHistoryV1.create()
-    for run_id, processes, wall in (
-        (1, 1, 142.0),
-        (2, 1, 140.0),
-        (3, 1, 141.0),
-        (4, 2, 165.0),
-        (5, 2, 160.0),
-        (6, 2, 162.0),
+    for run_id, component_processes, processes, wall in (
+        (1, 4, 1, 142.0),
+        (2, 4, 1, 140.0),
+        (3, 4, 1, 141.0),
+        (4, 1, 2, 165.0),
+        (5, 1, 2, 160.0),
+        (6, 1, 2, 162.0),
     ):
         history = history.append(
             CatalogBenchmarkObservationV1(
@@ -319,6 +321,7 @@ def test_autotune_history_is_hash_bound_reproducible_and_requires_three_runs(
                 science_identity_sha256=science,
                 thermal_state="component_warm",
                 workers=60,
+                component_processes_per_worker=component_processes,
                 processes_per_worker=processes,
                 block_size=256,
                 wall_seconds=wall,
@@ -340,6 +343,7 @@ def test_autotune_history_is_hash_bound_reproducible_and_requires_three_runs(
     )
 
     assert decision.workers == 60
+    assert decision.component_processes_per_worker == 4
     assert decision.processes_per_worker == 1
     assert decision.median_wall_seconds == 141.0
     assert decision.sample_count == 3
