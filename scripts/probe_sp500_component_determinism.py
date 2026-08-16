@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import time
 from pathlib import Path
@@ -210,6 +211,8 @@ def main() -> int:
         "platform": platform.platform(),
         "numpy_version": np.__version__,
         "scipy_version": scipy.__version__,
+        "openblas_coretype": os.environ.get("OPENBLAS_CORETYPE"),
+        "numpy_disabled_cpu_features": os.environ.get("NPY_DISABLE_CPU_FEATURES"),
         "train_end": "2010-12-31",
         "validation_opened": False,
         "locked_opened": False,
