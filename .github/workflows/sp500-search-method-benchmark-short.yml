@@ -12,8 +12,13 @@ on:
           - selected_validation_once
           - f024_inverse_diagnostic
           - optimized_catalog_qualification
+          - optimized_catalog_verify_only
       component_store_run_id:
         description: Compatible component store from a prior optimized run
+        required: false
+        default: ""
+      optimized_result_run_id:
+        description: Completed optimized result run to verify without recomputing
         required: false
         default: ""
 
@@ -63,3 +68,11 @@ jobs:
       admission_evidence_path: config/sp500_catalog_admission_evidence_qualification_v1.json
       reference_run_id: "31904259109"
       component_store_run_id: ${{ inputs.component_store_run_id }}
+
+  optimized_catalog_verify_only:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_verify_only' }}
+    uses: ./.github/workflows/catalog-optimized-verify-only.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      optimized_result_run_id: ${{ inputs.optimized_result_run_id }}
+      reference_run_id: "31904259109"

@@ -23,6 +23,17 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
         "needs.merge_components.result == 'success'"
     )
     assert run.count(resume_gate) == 3
+    assert (
+        "always() && inputs.reference_run_id != '' && "
+        "needs.plan.result == 'success' && needs.reduce.result == 'success'"
+        in run
+    )
+
+    verify_only = Path(
+        ".github/workflows/catalog-optimized-verify-only.yml"
+    ).read_text(encoding="utf-8")
+    assert "optimized_result_run_id" in verify_only
+    assert "python -m scripts.verify_sp500_optimized_run" in verify_only
 
 
 def test_cost_model_and_affinity_scheduler_are_deterministic() -> None:
