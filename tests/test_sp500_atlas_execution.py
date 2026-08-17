@@ -64,6 +64,38 @@ def test_worker_cli_maps_argparse_names_to_worker_api(monkeypatch: pytest.Monkey
     }
 
 
+def test_reducer_cli_maps_argparse_names_to_reducer_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    import scripts.reduce_sp500_atlas_run as reducer
+
+    captured: dict[str, object] = {}
+
+    def fake_reduce_atlas_run(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(reducer, "reduce_atlas_run", fake_reduce_atlas_run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "reduce_sp500_atlas_run.py",
+            "--plan",
+            "plan.json",
+            "--partitions-root",
+            "partitions",
+            "--output-dir",
+            "output",
+        ],
+    )
+
+    assert reducer.main() == 0
+    assert captured == {
+        "plan_path": Path("plan.json"),
+        "partitions_root": Path("partitions"),
+        "output_dir": Path("output"),
+    }
+
+
 def _evidence() -> tuple[dict[str, object], dict[str, object]]:
     catalog = {
         "catalog_id": "sp500-atlas-1",

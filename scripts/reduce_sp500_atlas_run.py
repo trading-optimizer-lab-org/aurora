@@ -151,7 +151,20 @@ def main() -> int:
     parser.add_argument("--partitions-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    print(json.dumps(reduce_atlas_run(**vars(args)), indent=2, sort_keys=True))
+    # Keep argparse's ``--plan`` spelling separate from the reducer API's
+    # explicit ``plan_path`` parameter.  Passing ``vars(args)`` directly would
+    # make the final join fail only after every worker had finished.
+    print(
+        json.dumps(
+            reduce_atlas_run(
+                plan_path=args.plan,
+                partitions_root=args.partitions_root,
+                output_dir=args.output_dir,
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 
