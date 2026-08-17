@@ -14,7 +14,8 @@ def _text() -> str:
 
 def test_workflow_uses_exact_commit_and_static_shards() -> None:
     text = _text()
-    assert "ref: ${{ inputs.commit_sha }}" in text
+    assert "ref: ${{ github.sha }}" in text
+    assert 'run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in text
     assert "run_sp500_atlas_worker.py" in text
     assert "reduce_sp500_atlas_run.py" in text
     assert text.count("max-parallel: 120") == 3
@@ -57,3 +58,16 @@ def test_freeze_manifest_binds_exact_plan_and_keeps_launch_closed() -> None:
     assert freeze["execution_authorized"] is False
     assert freeze["launch_authorized"] is False
     assert freeze["required_launch_authorization"] == "AUTHORIZE_SP500_ATLAS_FULL_RUN"
+
+
+def test_atlas_workflows_do_not_checkout_or_execute_untrusted_commit_inputs() -> None:
+    calibration = (ROOT / ".github/workflows/sp500-atlas-calibration.yml").read_text(
+        encoding="utf-8"
+    )
+    run = _text()
+    assert "ref: ${{ inputs.commit_sha }}" not in calibration
+    assert "ref: ${{ inputs.commit_sha }}" not in run
+    assert 'ref: ${{ github.sha }}' in calibration
+    assert 'ref: ${{ github.sha }}' in run
+    assert 'run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in calibration
+    assert 'run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in run

@@ -74,6 +74,12 @@ env:
   OPENBLAS_CORETYPE: "NEHALEM"
   NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
   PYTHONPATH: ${{ github.workspace }}/..
+  ATLAS_REQUESTED_COMMIT_SHA: ${{ inputs.commit_sha }}
+  ATLAS_RUNTIME_INPUT_RUN_ID: ${{ inputs.runtime_input_run_id }}
+  ATLAS_CALIBRATION_RUN_ID: ${{ inputs.calibration_run_id }}
+  ATLAS_TARGET_END_ISO: ${{ inputs.target_end_iso }}
+  ATLAS_RECIPE_COUNT: ${{ inputs.recipe_count }}
+  ATLAS_TOTAL_SHARDS: ${{ inputs.total_shards }}
 
 jobs:
   preflight:
@@ -87,12 +93,15 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ inputs.commit_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"
       - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - name: Verify requested commit is the workflow commit
+        shell: bash
+        run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"
       - name: Build and verify the compact catalog
         shell: bash
         run: |
@@ -100,7 +109,7 @@ jobs:
             --data-contract config/sp500_megarun_free_data_240.json \
             --feature-contract config/sp500_megarun_feature_contract_240.json \
             --output-dir outputs/atlas \
-            --target-end-iso "${{ inputs.target_end_iso }}"
+            --target-end-iso "$ATLAS_TARGET_END_ISO"
           python scripts/verify_sp500_atlas_catalog.py \
             --catalog-dir outputs/atlas \
             --data-contract config/sp500_megarun_free_data_240.json \
@@ -110,9 +119,9 @@ jobs:
         shell: bash
         run: |
           receipt="config/sp500_atlas_1/calibration_receipt_32039572017.json"
-          test "${{ inputs.calibration_run_id }}" = "32039572017"
+          test "$ATLAS_CALIBRATION_RUN_ID" = "32039572017"
           test -f "$receipt"
-          implementation_sha="${{ inputs.commit_sha }}"
+          implementation_sha="$ATLAS_REQUESTED_COMMIT_SHA"
           if [ "${{ inputs.run_mode }}" = "full" ]; then
             test -f config/sp500_atlas_1/freeze_manifest_v1.json
             implementation_sha="$(python -c 'import json; print(json.load(open("config/sp500_atlas_1/freeze_manifest_v1.json", encoding="utf-8"))["scientific_implementation_commit_sha"])')"
@@ -122,10 +131,10 @@ jobs:
             --catalog-dir outputs/atlas \
             --calibration-receipt "$receipt" \
             --output-dir outputs/plan \
-            --target-end-iso "${{ inputs.target_end_iso }}" \
+            --target-end-iso "$ATLAS_TARGET_END_ISO" \
             --implementation-commit-sha "$implementation_sha" \
-            --recipe-count "${{ inputs.recipe_count }}" \
-            --total-shards "${{ inputs.total_shards }}"
+            --recipe-count "$ATLAS_RECIPE_COUNT" \
+            --total-shards "$ATLAS_TOTAL_SHARDS"
           python - <<'PY'
           import json, os
           plan = json.load(open("outputs/plan/atlas_run_plan.json", encoding="utf-8"))
@@ -142,7 +151,7 @@ jobs:
               out.write(f"plan_sha256={plan['plan_sha256']}\n")
           PY
         env:
-          EXPECTED_RECIPE_COUNT: ${{ inputs.recipe_count }}
+          EXPECTED_RECIPE_COUNT: ${{ env.ATLAS_RECIPE_COUNT }}
       - name: Require explicit authorization and the frozen full plan
         if: ${{ inputs.run_mode == 'full' }}
         shell: bash
@@ -188,7 +197,7 @@ jobs:
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with: {python-version: "3.11"}
       - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
