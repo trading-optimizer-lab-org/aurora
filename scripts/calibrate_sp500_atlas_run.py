@@ -49,7 +49,12 @@ from aurora.infra.sp500_megarun.dehb_worker import (
 from aurora.infra.sp500_megarun.feature_contract import (
     load_and_validate_feature_contract,
 )
-from scripts.run_sp500_strategy_catalog_shard import compose_signals
+try:
+    from scripts.run_sp500_strategy_catalog_shard import compose_signals
+except ModuleNotFoundError:
+    # Direct ``python scripts/...`` execution puts ``scripts`` rather than the
+    # repository root on sys.path in GitHub Actions.
+    from run_sp500_strategy_catalog_shard import compose_signals
 
 
 _TRAIN_YEARS = tuple(range(1998, 2011))
