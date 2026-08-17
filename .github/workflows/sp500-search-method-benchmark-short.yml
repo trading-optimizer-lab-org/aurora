@@ -18,6 +18,7 @@ on:
           - optimized_catalog_reference_oracle
           - optimized_catalog_future_architecture
           - atlas_calibration_20m
+          - atlas_full
       component_store_run_id:
         description: Compatible component store from a prior optimized run
         required: false
@@ -74,6 +75,10 @@ on:
         description: Planning target for the Atlas calibration
         required: false
         default: "2026-08-20T07:31:00+02:00"
+      atlas_launch_authorization:
+        description: Exact authorization token required only for the full Atlas run
+        required: false
+        default: ""
 
 permissions:
   actions: read
@@ -184,3 +189,16 @@ jobs:
       target_end_iso: ${{ inputs.atlas_target_end_iso }}
       recipe_count: 64
       total_shards: 4
+
+  atlas_full:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'atlas_full' }}
+    uses: ./.github/workflows/sp500-atlas-run.yml
+    with:
+      run_mode: full
+      commit_sha: ${{ github.sha }}
+      runtime_input_run_id: "31418682679"
+      calibration_run_id: "32039572017"
+      target_end_iso: ${{ inputs.atlas_target_end_iso }}
+      recipe_count: 18816734
+      total_shards: 360
+      launch_authorization: ${{ inputs.atlas_launch_authorization }}

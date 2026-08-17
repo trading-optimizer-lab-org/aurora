@@ -38,6 +38,11 @@ on:
         required: true
         default: "4"
         type: number
+      launch_authorization:
+        description: "Required only for full: AUTHORIZE_SP500_ATLAS_FULL_RUN"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       run_mode: {required: true, type: string}
@@ -47,6 +52,7 @@ on:
       target_end_iso: {required: true, type: string}
       recipe_count: {required: true, type: number}
       total_shards: {required: true, type: number}
+      launch_authorization: {required: false, type: string}
 
 permissions:
   actions: read
@@ -106,12 +112,18 @@ jobs:
           receipt="config/sp500_atlas_1/calibration_receipt_32039572017.json"
           test "${{ inputs.calibration_run_id }}" = "32039572017"
           test -f "$receipt"
+          implementation_sha="${{ inputs.commit_sha }}"
+          if [ "${{ inputs.run_mode }}" = "full" ]; then
+            test -f config/sp500_atlas_1/freeze_manifest_v1.json
+            implementation_sha="$(python -c 'import json; print(json.load(open("config/sp500_atlas_1/freeze_manifest_v1.json", encoding="utf-8"))["scientific_implementation_commit_sha"])')"
+          fi
+          export ATLAS_IMPLEMENTATION_COMMIT_SHA="$implementation_sha"
           python scripts/plan_sp500_atlas_run.py \
             --catalog-dir outputs/atlas \
             --calibration-receipt "$receipt" \
             --output-dir outputs/plan \
             --target-end-iso "${{ inputs.target_end_iso }}" \
-            --implementation-commit-sha "${{ inputs.commit_sha }}" \
+            --implementation-commit-sha "$implementation_sha" \
             --recipe-count "${{ inputs.recipe_count }}" \
             --total-shards "${{ inputs.total_shards }}"
           python - <<'PY'
@@ -120,6 +132,7 @@ jobs:
           matrices = json.load(open("outputs/plan/atlas_worker_matrices.json", encoding="utf-8"))
           assert plan["validation_opened"] is False
           assert plan["locked_opened"] is False
+          assert plan["implementation_commit_sha"] == os.environ["ATLAS_IMPLEMENTATION_COMMIT_SHA"]
           assert plan["requested_recipe_count"] == int(os.environ["EXPECTED_RECIPE_COUNT"])
           for name, value in matrices.items():
               print(f"{name}={json.dumps(value, separators=(',', ':'))}")
@@ -130,6 +143,30 @@ jobs:
           PY
         env:
           EXPECTED_RECIPE_COUNT: ${{ inputs.recipe_count }}
+      - name: Require explicit authorization and the frozen full plan
+        if: ${{ inputs.run_mode == 'full' }}
+        shell: bash
+        env:
+          LAUNCH_AUTHORIZATION: ${{ inputs.launch_authorization }}
+        run: |
+          set -euo pipefail
+          test "$LAUNCH_AUTHORIZATION" = "AUTHORIZE_SP500_ATLAS_FULL_RUN"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          freeze = json.loads(Path("config/sp500_atlas_1/freeze_manifest_v1.json").read_text(encoding="utf-8"))
+          plan = json.loads(Path("outputs/plan/atlas_run_plan.json").read_text(encoding="utf-8"))
+          assert freeze["launch_authorized"] is False
+          assert freeze["validation_opened"] is False
+          assert freeze["locked_opened"] is False
+          assert freeze["frozen_plan_sha256"] == plan["plan_sha256"]
+          assert freeze["scientific_implementation_commit_sha"] == plan["implementation_commit_sha"]
+          assert freeze["requested_recipe_count"] == plan["requested_recipe_count"] == 18816734
+          assert freeze["total_shards"] == plan["total_shards"] == 360
+          assert plan["target_end_iso"] == "2026-08-20T07:31:00+02:00"
+          print("ATLAS_FROZEN_FULL_PLAN_ACCEPTED")
+          PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: sp500-atlas-preflight

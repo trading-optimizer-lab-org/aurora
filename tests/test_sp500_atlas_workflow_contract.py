@@ -21,6 +21,8 @@ def test_workflow_uses_exact_commit_and_static_shards() -> None:
     assert "recipe_count" in text
     assert "total_shards" in text
     assert "smoke_serial" in text
+    assert "launch_authorization" in text
+    assert "ATLAS_FROZEN_FULL_PLAN_ACCEPTED" in text
 
 
 def test_workflow_has_bounded_retries_and_no_dynamic_claim_loop() -> None:
