@@ -231,7 +231,26 @@ def main() -> int:
     parser.add_argument("--shard-index", type=int, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    print(json.dumps(run_worker(**vars(args)), indent=2, sort_keys=True))
+    # Keep the CLI names independent from the Python API names.  In
+    # particular, argparse exposes ``--plan`` while the function deliberately
+    # calls it ``plan_path``.  Passing ``vars(args)`` directly would therefore
+    # fail only when the real worker starts, after all preflight checks passed.
+    print(
+        json.dumps(
+            run_worker(
+                plan_path=args.plan,
+                catalog_dir=args.catalog_dir,
+                runtime_input_pack=args.runtime_input_pack,
+                campaign_contract_path=args.campaign_contract,
+                data_contract_path=args.data_contract,
+                feature_contract_path=args.feature_contract,
+                shard_index=args.shard_index,
+                output_dir=args.output_dir,
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 

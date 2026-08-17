@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,53 @@ from aurora.infra.sp500_megarun.atlas_execution_contract import (
     write_plan,
 )
 from scripts.reduce_sp500_atlas_run import reduce_atlas_run
+
+
+def test_worker_cli_maps_argparse_names_to_worker_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    import scripts.run_sp500_atlas_worker as worker
+
+    captured: dict[str, object] = {}
+
+    def fake_run_worker(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(worker, "run_worker", fake_run_worker)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_sp500_atlas_worker.py",
+            "--plan",
+            "plan.json",
+            "--catalog-dir",
+            "catalog",
+            "--runtime-input-pack",
+            "runtime",
+            "--campaign-contract",
+            "campaign.json",
+            "--data-contract",
+            "data.json",
+            "--feature-contract",
+            "feature.json",
+            "--shard-index",
+            "3",
+            "--output-dir",
+            "output",
+        ],
+    )
+
+    assert worker.main() == 0
+    assert captured == {
+        "plan_path": Path("plan.json"),
+        "catalog_dir": Path("catalog"),
+        "runtime_input_pack": Path("runtime"),
+        "campaign_contract_path": Path("campaign.json"),
+        "data_contract_path": Path("data.json"),
+        "feature_contract_path": Path("feature.json"),
+        "shard_index": 3,
+        "output_dir": Path("output"),
+    }
 
 
 def _evidence() -> tuple[dict[str, object], dict[str, object]]:
