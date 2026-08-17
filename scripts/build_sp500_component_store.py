@@ -14,6 +14,9 @@ import numpy as np
 
 from aurora.infra.sp500_megarun.catalog_admission import verify_catalog_plan_token
 from aurora.infra.sp500_megarun.catalog_component_store import ComponentStoreWriter
+from aurora.infra.sp500_megarun.catalog_component_inventory import (
+    collect_unique_components,
+)
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
@@ -45,10 +48,7 @@ from aurora.infra.sp500_megarun.dehb_worker import (
 from aurora.infra.sp500_megarun.feature_contract import (
     load_and_validate_feature_contract,
 )
-from aurora.infra.sp500_megarun.strategy_catalog import (
-    configuration_sha256,
-    verify_strategy_catalog_directory,
-)
+from aurora.infra.sp500_megarun.strategy_catalog import verify_strategy_catalog_directory
 
 
 _PROCESS_EVALUATOR: TrainLaneEvaluator | None = None
@@ -112,41 +112,6 @@ def _build_component_task(
         values,
         time.perf_counter() - started,
     )
-
-
-def collect_unique_components(
-    catalog_rows: list[dict[str, Any]],
-    selected_rows: list[dict[str, Any]],
-) -> tuple[dict[str, Any], ...]:
-    """Return every exact component once, including separately selected rows."""
-
-    components: dict[str, dict[str, Any]] = {}
-    for row in catalog_rows:
-        for component in row["components"]:
-            key = str(component["configuration_sha256"])
-            previous = components.get(key)
-            checked = {
-                "lane_id": str(component["lane_id"]),
-                "configuration": dict(component["configuration"]),
-                "configuration_sha256": key,
-            }
-            if previous is not None and previous != checked:
-                raise ValueError("COMPONENT_DEFINITION_CONFLICT")
-            components[key] = checked
-    for row in selected_rows:
-        lane_id = str(row["lane_id"])
-        configuration = dict(row["configuration"])
-        key = configuration_sha256(lane_id, configuration)
-        checked = {
-            "lane_id": lane_id,
-            "configuration": configuration,
-            "configuration_sha256": key,
-        }
-        previous = components.get(key)
-        if previous is not None and previous != checked:
-            raise ValueError("COMPONENT_DEFINITION_CONFLICT")
-        components[key] = checked
-    return tuple(components[key] for key in sorted(components))
 
 
 def _parser() -> argparse.ArgumentParser:

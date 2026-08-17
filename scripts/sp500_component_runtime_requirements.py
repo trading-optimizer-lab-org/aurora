@@ -13,7 +13,9 @@ from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
 from aurora.infra.sp500_megarun.dehb_lane_registry import (
     runtime_dataset_ids_for_lane,
 )
-from aurora.infra.sp500_megarun.strategy_catalog import configuration_sha256
+from aurora.infra.sp500_megarun.catalog_component_inventory import (
+    collect_unique_components,
+)
 
 
 def main() -> int:
@@ -36,16 +38,10 @@ def main() -> int:
         if line
     ]
     selected_rows = json.loads(args.selected_config.read_text("utf-8"))
-    components: dict[str, str] = {}
-    for row in catalog_rows:
-        for component in row["components"]:
-            components[str(component["configuration_sha256"])] = str(
-                component["lane_id"]
-            )
-    for row in selected_rows:
-        lane_id = str(row["lane_id"])
-        # Selected configurations are not necessarily present in the catalog.
-        components[configuration_sha256(lane_id, dict(row["configuration"]))] = lane_id
+    components = {
+        str(component["configuration_sha256"]): str(component["lane_id"])
+        for component in collect_unique_components(catalog_rows, selected_rows)
+    }
     schedule = json.loads(args.component_schedule.read_text("utf-8"))
     shards = schedule.get("shards")
     if not isinstance(shards, list) or not 0 <= args.shard_index < len(shards):

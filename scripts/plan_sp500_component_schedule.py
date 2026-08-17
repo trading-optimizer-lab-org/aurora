@@ -17,7 +17,9 @@ from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
 from aurora.infra.sp500_megarun.dehb_lane_registry import (
     runtime_dataset_ids_for_lane,
 )
-from scripts.build_sp500_component_store import collect_unique_components
+from aurora.infra.sp500_megarun.catalog_component_inventory import (
+    collect_unique_components,
+)
 from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 
 

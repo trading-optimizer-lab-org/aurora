@@ -385,7 +385,7 @@ def test_repository_contract_is_derived_from_authoritative_artifacts() -> None:
 
     assert contract.workload.requested_recipes == 37_258
     assert contract.workload.canonical_recipes == 37_258
-    assert contract.workload.unique_components == 7_274
+    assert contract.workload.unique_components == 7_281
     assert contract.science.train_end == "2010-12-31"
     assert contract.science.validation_opened is False
     assert contract.science.locked_opened is False

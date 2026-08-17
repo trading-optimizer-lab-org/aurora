@@ -21,6 +21,9 @@ from aurora.infra.sp500_megarun.catalog_autotune import (
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
+from aurora.infra.sp500_megarun.catalog_component_inventory import (
+    collect_unique_components,
+)
 from aurora.infra.sp500_megarun.catalog_resume import (
     CatalogResumeWorkManifestV1,
     build_resume_work_manifest,
@@ -187,6 +190,7 @@ def build_repository_contract(
     policy_path: Path,
     campaign_path: Path,
     catalog_dir: Path,
+    selected_config_path: Path | None = None,
 ) -> RunOptimizationContractV1:
     """Resolve all scientific identities and counts from authoritative files."""
 
@@ -204,14 +208,18 @@ def build_repository_contract(
         for line in catalog_path.read_text("utf-8").splitlines()
         if line
     ]
+    selected_path = (
+        Path(selected_config_path)
+        if selected_config_path is not None
+        else repo_root / "config/sp500_megarun_selected_dehb_13.json"
+    )
+    selected_payload = json.loads(selected_path.read_text("utf-8"))
+    if not isinstance(selected_payload, list):
+        raise ValueError("CATALOG_SELECTED_CONFIG_INVALID")
     canonical_recipes = len(
         {str(row["scientific_recipe_sha256"]) for row in catalog_rows}
     )
-    unique_components = {
-        str(component["configuration_sha256"])
-        for row in catalog_rows
-        for component in row["components"]
-    }
+    unique_components = collect_unique_components(catalog_rows, selected_payload)
     estimates = policy.get("workload_estimates")
     if not isinstance(estimates, dict):
         raise ValueError("CATALOG_WORKLOAD_ESTIMATES_INVALID")
@@ -338,6 +346,7 @@ def write_repository_catalog_run_plan(
     policy_path: Path,
     campaign_path: Path,
     catalog_dir: Path,
+    selected_config_path: Path | None = None,
     evidence_path: Path,
     output_dir: Path,
     github_output: Path | None = None,
@@ -356,6 +365,7 @@ def write_repository_catalog_run_plan(
         policy_path=policy_path,
         campaign_path=campaign_path,
         catalog_dir=catalog_dir,
+        selected_config_path=selected_config_path,
     )
     contract, autotune_decision = apply_compatible_autotune_history(
         contract,
@@ -443,6 +453,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", type=Path)
     parser.add_argument("--campaign", type=Path)
     parser.add_argument("--catalog-dir", type=Path)
+    parser.add_argument("--selected-config", type=Path)
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--github-output", type=Path)
@@ -479,6 +490,7 @@ def main() -> int:
             policy_path=args.policy,
             campaign_path=args.campaign,
             catalog_dir=args.catalog_dir,
+            selected_config_path=args.selected_config,
             evidence_path=args.evidence,
             output_dir=args.output_dir,
             github_output=args.github_output,

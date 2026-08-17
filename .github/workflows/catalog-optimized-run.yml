@@ -132,6 +132,7 @@ jobs:
             --policy config/sp500_catalog_optimization_policy_v1.json \
             --campaign config/sp500_megarun_dehb_campaign_v1.json \
             --catalog-dir config/sp500_megarun_strategy_catalog_v1 \
+            --selected-config config/sp500_megarun_selected_dehb_13.json \
             --evidence "${{ inputs.admission_evidence_path || 'config/sp500_catalog_admission_evidence_current_v1.json' }}" \
             --output-dir outputs/plan \
             --github-output "$GITHUB_OUTPUT" \
