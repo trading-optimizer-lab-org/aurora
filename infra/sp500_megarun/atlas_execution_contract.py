@@ -147,6 +147,8 @@ def build_run_plan(
         raise ValueError("ATLAS_PLAN_CALIBRATION_BOUNDARY_OPEN")
 
     canonical_count = int(catalog_manifest["counts"]["canonical_recipe_count"])
+    if calibration_receipt.get("catalog_sha256") != catalog_manifest.get("manifest_sha256"):
+        raise ValueError("ATLAS_PLAN_CALIBRATION_CATALOG_MISMATCH")
     selected_count = int(
         calibration_receipt["target_recipe_count_with_margin"]
         if recipe_count is None

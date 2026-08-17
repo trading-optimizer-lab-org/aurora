@@ -87,13 +87,6 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-atlas-calibration-${{ inputs.calibration_run_id }}
-          path: ${{ runner.temp }}/calibration
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.calibration_run_id }}
       - name: Build and verify the compact catalog
         shell: bash
         run: |
@@ -110,8 +103,9 @@ jobs:
         name: Create exact static plan
         shell: bash
         run: |
-          receipt="$(find "$RUNNER_TEMP/calibration" -name calibration_receipt.json -print -quit)"
-          test -n "$receipt"
+          receipt="config/sp500_atlas_1/calibration_receipt_32039572017.json"
+          test "${{ inputs.calibration_run_id }}" = "32039572017"
+          test -f "$receipt"
           python scripts/plan_sp500_atlas_run.py \
             --catalog-dir outputs/atlas \
             --calibration-receipt "$receipt" \
