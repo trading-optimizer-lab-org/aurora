@@ -180,8 +180,9 @@ jobs:
           retention-days: 30
 
   prepare_runtime_fragments:
-    needs: plan
-    if: ${{ needs.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' }}
+    # This is independent of catalog planning. Running it in parallel removes
+    # its 50-second preparation cost from the cold-run critical path.
+    if: ${{ inputs.component_store_run_id == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
