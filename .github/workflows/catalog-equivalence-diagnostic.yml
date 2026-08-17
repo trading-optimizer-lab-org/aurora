@@ -43,6 +43,7 @@ jobs:
             --catalog-dir config/sp500_megarun_strategy_catalog_v1 \
             --selected-config config/sp500_megarun_selected_dehb_13.json \
             --evidence config/sp500_catalog_admission_evidence_qualification_v1.json \
+            --benchmark-workers 360 \
             --output-dir outputs/plan
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
