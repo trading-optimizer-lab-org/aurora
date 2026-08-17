@@ -161,6 +161,9 @@ jobs:
           assert freeze["validation_opened"] is False
           assert freeze["locked_opened"] is False
           assert freeze["frozen_plan_sha256"] == plan["plan_sha256"]
+          assert freeze["catalog_manifest_sha256"] == plan["catalog_manifest_sha256"]
+          assert freeze["catalog_space_sha256"] == plan["catalog_space_sha256"]
+          assert freeze["calibration_receipt_sha256"] == plan["calibration_receipt_sha256"]
           assert freeze["scientific_implementation_commit_sha"] == plan["implementation_commit_sha"]
           assert freeze["requested_recipe_count"] == plan["requested_recipe_count"] == 18816734
           assert freeze["total_shards"] == plan["total_shards"] == 360
