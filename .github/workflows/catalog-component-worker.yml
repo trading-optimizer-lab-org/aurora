@@ -74,9 +74,12 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --name "sp500-runtime-fragment-$dataset_id" \
               --dir "$fragment_dir"
-            fragment_file="$fragment_dir/train_snapshot_1993_2010/$dataset_id.parquet"
-            test -f "$fragment_file"
-            cp -- "$fragment_file" \
+            mapfile -t fragment_files < <(
+              find "$fragment_dir" -type f \
+                -path "*/train_snapshot_1993_2010/$dataset_id.parquet"
+            )
+            test "${#fragment_files[@]}" -eq 1
+            cp -- "${fragment_files[0]}" \
               "$RUNNER_TEMP/runtime/train_snapshot_1993_2010/$dataset_id.parquet"
           done < "$RUNNER_TEMP/required-datasets.txt"
       - run: >-
