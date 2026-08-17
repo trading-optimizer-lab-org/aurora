@@ -17,6 +17,7 @@ on:
           - optimized_catalog_component_determinism
           - optimized_catalog_reference_oracle
           - optimized_catalog_future_architecture
+          - atlas_calibration_20m
       component_store_run_id:
         description: Compatible component store from a prior optimized run
         required: false
@@ -65,6 +66,14 @@ on:
         description: Reference result run compared by the equivalence diagnostic
         required: false
         default: ""
+      atlas_runtime_input_run_id:
+        description: Train-only runtime artifact used by the Atlas calibration
+        required: false
+        default: "31418682679"
+      atlas_target_end_iso:
+        description: Planning target for the Atlas calibration
+        required: false
+        default: "2026-08-20T07:31:00+02:00"
 
 permissions:
   actions: read
@@ -152,3 +161,11 @@ jobs:
   optimized_catalog_future_architecture:
     if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_future_architecture' }}
     uses: ./.github/workflows/catalog-future-architecture.yml
+
+  atlas_calibration_20m:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'atlas_calibration_20m' }}
+    uses: ./.github/workflows/sp500-atlas-calibration.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      runtime_input_run_id: ${{ inputs.atlas_runtime_input_run_id }}
+      target_end_iso: ${{ inputs.atlas_target_end_iso }}

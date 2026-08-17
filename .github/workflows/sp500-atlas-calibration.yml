@@ -17,6 +17,18 @@ on:
         required: true
         default: "2026-08-20T07:31:00+02:00"
         type: string
+  workflow_call:
+    inputs:
+      commit_sha:
+        required: true
+        type: string
+      runtime_input_run_id:
+        required: true
+        type: string
+      target_end_iso:
+        required: false
+        type: string
+        default: "2026-08-20T07:31:00+02:00"
 
 permissions:
   actions: read
