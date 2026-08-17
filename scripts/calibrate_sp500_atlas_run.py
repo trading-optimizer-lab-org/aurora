@@ -257,7 +257,16 @@ def main() -> int:
     parser.add_argument("--target-end-iso", required=True)
     parser.add_argument("--safety-fraction", type=float, default=_SAFETY_FRACTION)
     args = parser.parse_args()
-    receipt = calibrate(**vars(args))
+    receipt = calibrate(
+        campaign_contract_path=args.campaign_contract,
+        data_contract_path=args.data_contract,
+        feature_contract_path=args.feature_contract,
+        runtime_input_pack=args.runtime_input_pack,
+        catalog_dir=args.catalog_dir,
+        output_dir=args.output_dir,
+        target_end_iso=args.target_end_iso,
+        safety_fraction=args.safety_fraction,
+    )
     print(receipt.model_dump_json(indent=2))
     return 0
 
