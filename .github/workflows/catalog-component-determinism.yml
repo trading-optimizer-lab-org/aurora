@@ -25,17 +25,33 @@ jobs:
     outputs:
       admission_token: ${{ steps.token.outputs.admission_token }}
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
-          name: sp500-catalog-run-plan
-          path: ${{ runner.temp }}/plan
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: "31946252951"
+          python-version: "3.11"
+          cache: ""
+      - run: |
+          python -m pip install --require-hashes -r requirements/catalog-optimized.lock
+          python -m pip install --no-deps -e .
+          python scripts/plan_sp500_optimized_catalog_run.py \
+            --repo-root . \
+            --policy config/sp500_catalog_optimization_policy_v1.json \
+            --campaign config/sp500_megarun_dehb_campaign_v1.json \
+            --catalog-dir config/sp500_megarun_strategy_catalog_v1 \
+            --selected-config config/sp500_megarun_selected_dehb_13.json \
+            --evidence config/sp500_catalog_admission_evidence_qualification_v1.json \
+            --output-dir outputs/plan
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-catalog-component-determinism-plan
+          path: outputs/plan
+          if-no-files-found: error
+          retention-days: 30
       - id: token
         shell: bash
         run: |
-          token=$(python -c 'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"] + "/plan/run_plan.json"))["admission_token_sha256"])')
+          token=$(python -c 'import json; print(json.load(open("outputs/plan/run_plan.json"))["admission_token_sha256"])')
           echo "admission_token=$token" >> "$GITHUB_OUTPUT"
 
   probe:
@@ -58,11 +74,8 @@ jobs:
           python -m pip install --no-deps -e .
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: sp500-catalog-run-plan
+          name: sp500-catalog-component-determinism-plan
           path: ${{ runner.temp }}/plan
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: "31946252951"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: sp500-megarun-dehb-runtime-inputs-31418682679

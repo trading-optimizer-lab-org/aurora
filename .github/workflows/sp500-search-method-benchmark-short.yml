@@ -53,6 +53,18 @@ on:
         description: Qualification-only component worker candidate; 0 uses promoted policy
         required: false
         default: "0"
+      diagnostic_runtime_input_run_id:
+        description: Train-only runtime artifact used by the equivalence diagnostic
+        required: false
+        default: ""
+      diagnostic_optimized_result_run_id:
+        description: Optimized result run compared by the equivalence diagnostic
+        required: false
+        default: ""
+      diagnostic_reference_result_run_id:
+        description: Reference result run compared by the equivalence diagnostic
+        required: false
+        default: ""
 
 permissions:
   actions: read
@@ -120,6 +132,9 @@ jobs:
     uses: ./.github/workflows/catalog-equivalence-diagnostic.yml
     with:
       commit_sha: ${{ github.sha }}
+      runtime_input_run_id: ${{ inputs.diagnostic_runtime_input_run_id }}
+      optimized_result_run_id: ${{ inputs.diagnostic_optimized_result_run_id }}
+      reference_result_run_id: ${{ inputs.diagnostic_reference_result_run_id }}
 
   optimized_catalog_component_determinism:
     if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_component_determinism' }}
