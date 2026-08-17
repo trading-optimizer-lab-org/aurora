@@ -66,14 +66,23 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/runtime-fragments"
           mkdir -p "$RUNNER_TEMP/runtime/train_snapshot_1993_2010"
+          fragment_names=()
           while IFS= read -r dataset_id; do
             [ -n "$dataset_id" ] || continue
-            fragment_dir="$RUNNER_TEMP/runtime-fragments/$dataset_id"
-            mkdir -p "$fragment_dir"
+            fragment_names+=(
+              --name
+              "sp500-runtime-fragment-$dataset_id"
+            )
+          done < "$RUNNER_TEMP/required-datasets.txt"
+          if [ "${#fragment_names[@]}" -gt 0 ]; then
             gh run download "$RUNTIME_FRAGMENT_RUN_ID" \
               --repo "$GITHUB_REPOSITORY" \
-              --name "sp500-runtime-fragment-$dataset_id" \
-              --dir "$fragment_dir"
+              --dir "$RUNNER_TEMP/runtime-fragments" \
+              "${fragment_names[@]}"
+          fi
+          while IFS= read -r dataset_id; do
+            [ -n "$dataset_id" ] || continue
+            fragment_dir="$RUNNER_TEMP/runtime-fragments/sp500-runtime-fragment-$dataset_id"
             mapfile -t fragment_files < <(
               find "$fragment_dir" -type f \
                 -path "*/train_snapshot_1993_2010/$dataset_id.parquet"
