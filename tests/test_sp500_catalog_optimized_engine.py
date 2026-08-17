@@ -105,6 +105,8 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert 'runtime-fragments/sp500-runtime-fragment-$dataset_id' in component_worker
     assert 'gh run download "$RUNTIME_FRAGMENT_RUN_ID"' in component_worker
     assert 'fragment_names+=(\n              --name' in component_worker
+    assert "missing_ids=(\"${required_dataset_ids[@]}\")" in component_worker
+    assert "sleep $((attempt * 2))" in component_worker
     assert 'runtime/train_snapshot_1993_2010/$dataset_id.parquet' in component_worker
     assert "inputs.component_store_run_id == ''" in run
     resume_gate = (

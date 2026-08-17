@@ -66,20 +66,60 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/runtime-fragments"
           mkdir -p "$RUNNER_TEMP/runtime/train_snapshot_1993_2010"
+          required_dataset_ids=()
           fragment_names=()
           while IFS= read -r dataset_id; do
             [ -n "$dataset_id" ] || continue
+            required_dataset_ids+=("$dataset_id")
             fragment_names+=(
               --name
               "sp500-runtime-fragment-$dataset_id"
             )
           done < "$RUNNER_TEMP/required-datasets.txt"
           if [ "${#fragment_names[@]}" -gt 0 ]; then
-            gh run download "$RUNTIME_FRAGMENT_RUN_ID" \
+            if ! gh run download "$RUNTIME_FRAGMENT_RUN_ID" \
               --repo "$GITHUB_REPOSITORY" \
               --dir "$RUNNER_TEMP/runtime-fragments" \
-              "${fragment_names[@]}"
+              "${fragment_names[@]}"; then
+              :
+            fi
           fi
+          missing_ids=("${required_dataset_ids[@]}")
+          attempt=1
+          while [ "${#missing_ids[@]}" -gt 0 ] && [ "$attempt" -le 4 ]; do
+            next_missing_ids=()
+            for dataset_id in "${missing_ids[@]}"; do
+              fragment_dir="$RUNNER_TEMP/runtime-fragments/sp500-runtime-fragment-$dataset_id"
+              fragment_files=()
+              if [ -d "$fragment_dir" ]; then
+                mapfile -t fragment_files < <(
+                  find "$fragment_dir" -type f \
+                    -path "*/train_snapshot_1993_2010/$dataset_id.parquet"
+                )
+              fi
+              if [ "${#fragment_files[@]}" -ne 1 ]; then
+                next_missing_ids+=("$dataset_id")
+              fi
+            done
+            missing_ids=("${next_missing_ids[@]}")
+            [ "${#missing_ids[@]}" -eq 0 ] && break
+            sleep $((attempt * 2))
+            retry_names=()
+            for dataset_id in "${missing_ids[@]}"; do
+              retry_names+=(
+                --name
+                "sp500-runtime-fragment-$dataset_id"
+              )
+            done
+            if ! gh run download "$RUNTIME_FRAGMENT_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --dir "$RUNNER_TEMP/runtime-fragments" \
+              "${retry_names[@]}"; then
+              :
+            fi
+            attempt=$((attempt + 1))
+          done
+          test "${#missing_ids[@]}" -eq 0
           while IFS= read -r dataset_id; do
             [ -n "$dataset_id" ] || continue
             fragment_dir="$RUNNER_TEMP/runtime-fragments/sp500-runtime-fragment-$dataset_id"
