@@ -226,6 +226,17 @@ def test_optimization_contract_rejects_boundary_or_bypass(
         RunOptimizationContractV1.model_validate(payload)
 
 
+def test_reduction_step_is_named_for_runtime_attribution() -> None:
+    workflow = (
+        ROOT / ".github/workflows/catalog-optimized-run.yml"
+    ).read_text("utf-8")
+
+    assert (
+        "Reduce catalog results (scripts/reduce_sp500_optimized_catalog_run.py)"
+        in workflow
+    )
+
+
 def test_admission_issues_token_only_for_a_fully_optimized_run() -> None:
     """A plan with unresolved regression or excess memory must not start."""
 

@@ -439,7 +439,8 @@ jobs:
               gh run download "$run_id" -p 'sp500-catalog-shard-*' -D "$RUNNER_TEMP/resume/$run_id/shards"
             fi
           done
-      - shell: bash
+      - name: Reduce catalog results (scripts/reduce_sp500_optimized_catalog_run.py)
+        shell: bash
         run: |
           resume_args=()
           if [ -n "${{ inputs.evaluation_cache_run_ids }}" ]; then
