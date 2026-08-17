@@ -163,9 +163,24 @@ jobs:
     uses: ./.github/workflows/catalog-future-architecture.yml
 
   atlas_calibration_20m:
-    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'atlas_calibration_20m' }}
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'atlas_calibration_20m' && inputs.atlas_runtime_input_run_id != 'ATLAS_SMOKE' }}
     uses: ./.github/workflows/sp500-atlas-calibration.yml
     with:
       commit_sha: ${{ github.sha }}
       runtime_input_run_id: ${{ inputs.atlas_runtime_input_run_id }}
       target_end_iso: ${{ inputs.atlas_target_end_iso }}
+
+  # The existing dispatch input is used as a stable entry point because a new
+  # workflow file cannot be manually dispatched until it exists on the default
+  # branch. ATLAS_SMOKE is a literal sentinel and cannot launch the full run.
+  atlas_smoke:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'atlas_calibration_20m' && inputs.atlas_runtime_input_run_id == 'ATLAS_SMOKE' }}
+    uses: ./.github/workflows/sp500-atlas-run.yml
+    with:
+      run_mode: smoke
+      commit_sha: ${{ github.sha }}
+      runtime_input_run_id: "31418682679"
+      calibration_run_id: "32039572017"
+      target_end_iso: ${{ inputs.atlas_target_end_iso }}
+      recipe_count: 64
+      total_shards: 4
