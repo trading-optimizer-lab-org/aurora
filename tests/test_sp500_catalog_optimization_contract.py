@@ -136,6 +136,67 @@ def test_planner_applies_only_three_sample_science_compatible_autotune(
     assert untouched == contract
 
 
+def test_planner_rolls_back_to_the_fastest_verified_configuration(
+    tmp_path: Path,
+) -> None:
+    """A slower later candidate must never replace the verified winner."""
+
+    from aurora.infra.github_performance.contracts import canonical_sha256
+    from aurora.infra.sp500_megarun.catalog_autotune import (
+        CatalogBenchmarkObservationV1,
+        CatalogPerformanceHistoryV1,
+    )
+    from aurora.infra.sp500_megarun.catalog_optimization_contract import (
+        RunOptimizationContractV1,
+    )
+    from scripts.plan_sp500_optimized_catalog_run import (
+        apply_compatible_autotune_history,
+    )
+
+    contract = RunOptimizationContractV1.model_validate(_valid_payload())
+    science = canonical_sha256(contract.science)
+    history = CatalogPerformanceHistoryV1.create()
+    observations = (
+        (1, 140.0, 1, 4),
+        (2, 142.0, 1, 4),
+        (3, 141.0, 1, 4),
+        (4, 190.0, 2, 1),
+        (5, 188.0, 2, 1),
+        (6, 191.0, 2, 1),
+    )
+    for run_id, wall, processes, component_processes in observations:
+        history = history.append(
+            CatalogBenchmarkObservationV1(
+                run_id=run_id,
+                head_sha="e" * 40,
+                science_identity_sha256=science,
+                thermal_state="cold",
+                workers=60,
+                component_workers=120,
+                component_processes_per_worker=component_processes,
+                processes_per_worker=processes,
+                block_size=1,
+                wall_seconds=wall,
+                peak_memory_fraction=0.05,
+                equivalent=True,
+            )
+        )
+    path = tmp_path / "history.json"
+    history.write(path)
+
+    restored, decision = apply_compatible_autotune_history(
+        contract,
+        history_path=path,
+        thermal_state="cold",
+    )
+
+    assert decision is not None
+    assert decision.promoted is True
+    assert decision.median_wall_seconds == 141.0
+    assert restored.execution.processes_per_worker == 1
+    assert restored.execution.component_processes_per_worker == 4
+
+
 @pytest.mark.parametrize(
     ("section", "field", "value"),
     [
