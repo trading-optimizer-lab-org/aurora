@@ -264,21 +264,26 @@ jobs:
     if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'smoke' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with: {python-version: "3.11"}
       - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with: {name: sp500-atlas-preflight, path: "${{ runner.temp }}/preflight"}
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
-          path: ${{ runner.temp }}/runtime
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Download smoke inputs with the preinstalled GitHub CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name sp500-atlas-preflight \
+            --dir "$RUNNER_TEMP/preflight"
+          gh run download "${{ inputs.runtime_input_run_id }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}" \
+            --dir "$RUNNER_TEMP/runtime"
       - name: Evaluate all smoke blocks and reduce them
         shell: bash
         run: |
