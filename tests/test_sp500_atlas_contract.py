@@ -90,7 +90,15 @@ def _contract(**changes: object) -> AtlasRunContractV1:
     payload = {
         "schema_version": "1",
         "mode": "atlas_static",
-        "science": {"identity": HASH},
+        "science": {
+            "evaluator_sha256": HASH,
+            "data_snapshot_sha256": HASH,
+            "catalog_manifest_sha256": HASH,
+            "train_end": "2010-12-31",
+            "validation_opened": False,
+            "locked_opened": False,
+            "numeric_profile": "atlas-test",
+        },
         "atlas": atlas,
         "optimization": _optimization(),
     }
@@ -104,7 +112,15 @@ def test_contract_is_train_only_and_hash_bound() -> None:
     assert contract.atlas.locked_opened is False
     assert len(contract.contract_sha256) == 64
     changed = _contract(
-        science={"identity": "b" * 64},
+        science={
+            "evaluator_sha256": "b" * 64,
+            "data_snapshot_sha256": HASH,
+            "catalog_manifest_sha256": HASH,
+            "train_end": "2010-12-31",
+            "validation_opened": False,
+            "locked_opened": False,
+            "numeric_profile": "atlas-test",
+        },
     )
     assert changed.contract_sha256 != contract.contract_sha256
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Subagents and forks are prohibited for this project, so execution is inline in the authoritative worktree.
 
-**Goal:** Implement and launch a finite, train-only SP500 catalog campaign that uses static shards, exact future-valid deduplication, a five-minute calibration, the three approved objectives, balanced robustness filters, and complete result preservation without DEHB coordination.
+**Goal:** Implement and launch a finite, train-only SP500 catalog campaign that uses static shards, exact future-valid deduplication, a twenty-minute calibration, the three approved objectives, balanced robustness filters, and complete result preservation without DEHB coordination.
 
 **Architecture:** Reuse the verified catalog optimizer, component store, recipe compiler, scheduler, cache, vector engine, resume manifests and result reducer. Add an Atlas run contract around those modules, a short calibration workflow, a deterministic family-admission manifest, Pareto ranking for weeks/months/annual joint success, and a fail-closed static workflow. The first campaign is `SP500_ATLAS_1`; higher-order combinations remain for a later catalogue selected only after the first campaign is reviewed.
 
@@ -19,7 +19,7 @@
 - The three primary objectives are positive-week percentage, positive-month percentage, and years simultaneously positive and above SPY.
 - Sharpe, drawdown, costs and annualized return are descriptive only and cannot rank the Pareto frontier.
 - Every declared recipe must be completed or the run is incomplete.
-- The five-minute calibration is a hard wall-clock limit.
+- The twenty-minute calibration is a hard wall-clock limit.
 - The target finish is approximately `2026-08-20T07:31:00+02:00`; it is not a cutoff that permits incomplete results.
 - All heavy scientific work runs in GitHub Actions; local work is limited to inspection, editing and tests.
 
@@ -47,10 +47,10 @@
 - Create `infra/sp500_megarun/catalog_atlas_objective.py`: exact weekly/monthly/annual-joint objective metrics and Pareto comparison.
 - Create `infra/sp500_megarun/catalog_atlas_robustness.py`: balanced train-only robustness classification.
 - Create `infra/sp500_megarun/catalog_family_admission.py`: deterministic new-family admission and duplicate classification.
-- Create `infra/sp500_megarun/catalog_calibration.py`: five-minute stratified sample and break-even calculation.
+- Create `infra/sp500_megarun/catalog_calibration.py`: twenty-minute stratified sample and break-even calculation.
 - Create `scripts/build_sp500_atlas_catalog.py`: build `ATLAS_1` from the current contract plus admitted new families.
 - Create `scripts/audit_sp500_atlas_families.py`: classify candidate family definitions before catalog construction.
-- Create `scripts/calibrate_sp500_atlas_run.py`: bounded five-minute calibration entrypoint.
+- Create `scripts/calibrate_sp500_atlas_run.py`: bounded twenty-minute calibration entrypoint.
 - Create `scripts/reduce_sp500_atlas_run.py`: Atlas reduction, Pareto frontier and robustness report.
 - Create `.github/workflows/sp500-atlas-calibration.yml`: hard-capped calibration workflow.
 - Create `.github/workflows/sp500-atlas-run.yml`: static Atlas workflow with no DEHB coordinator.
@@ -191,7 +191,7 @@ def build_atlas_catalog(
 - [ ] Run tests and generate a fixture manifest containing the existing 240-family inventory with zero unverified additions.
 - [ ] Commit `feat: build deterministic Atlas catalog admission`.
 
-## Task 4: Implement the five-minute calibration and break-even policy
+## Task 4: Implement the twenty-minute calibration and break-even policy
 
 **Files:**
 - Create: `infra/sp500_megarun/catalog_calibration.py`
@@ -207,7 +207,7 @@ class CalibrationReceiptV1(FrozenModel):
     started_at_iso: str
     stopped_at_iso: str
     wall_seconds: float
-    hard_limit_seconds: Literal[300.0]
+    hard_limit_seconds: Literal[1200.0]
     timed_out_cleanly: bool
     physical_recipe_count: int
     cache_hit_count: int
@@ -230,12 +230,12 @@ def choose_atlas_mode(
 ) -> Literal["cold", "component_warm"]: ...
 ```
 
-- [ ] Write tests that a calibration receipt cannot exceed 300 seconds, cannot use post-2010 rows, and selects every family/composition/inverse class before repeating a class.
+- [ ] Write tests that a calibration receipt cannot exceed 1200 seconds, cannot use post-2010 rows, and selects every family/composition/inverse class before repeating a class.
 - [ ] Write a test proving the break-even decision includes preparation time rather than comparing only warm evaluation time.
-- [ ] Implement monotonic deadline handling with a five-minute wall-clock stop and atomic receipt write.
+- [ ] Implement monotonic deadline handling with a twenty-minute wall-clock stop and atomic receipt write.
 - [ ] Implement target calculation `floor(available_minutes * measured_rate * 0.80)`.
 - [ ] Implement the calibration CLI using the existing worker primitives and a deterministic stratified sample.
-- [ ] Run the calibration unit tests and commit `feat: add five-minute Atlas calibration`.
+- [ ] Run the calibration unit tests and commit `feat: add twenty-minute Atlas calibration`.
 
 ## Task 5: Add static Atlas planning and result verification
 
@@ -275,17 +275,17 @@ def reduce_atlas_partitions(
 - [ ] Keep every original result even when its frontier/robustness status is rejected.
 - [ ] Run focused tests and commit `feat: reduce Atlas objectives and robustness`.
 
-## Task 6: Create the five-minute calibration workflow
+## Task 6: Create the twenty-minute calibration workflow
 
 **Files:**
 - Create: `.github/workflows/sp500-atlas-calibration.yml`
 - Test: `tests/test_sp500_atlas_workflow_contract.py`
 
-- [ ] Write workflow-contract tests asserting checkout uses the supplied immutable commit, runtime inputs are train-only, the job timeout is five minutes plus fixed setup allowance, no validation/locked environment is present, and no DEHB job is called.
+- [ ] Write workflow-contract tests asserting checkout uses the supplied immutable commit, runtime inputs are train-only, the job timeout is twenty minutes plus fixed setup allowance, no validation/locked environment is present, and no DEHB job is called.
 - [ ] Add `workflow_dispatch` inputs for exact commit, runtime pack, catalog manifest and optional component-store run.
 - [ ] Add a `preflight` job that validates the Atlas contract and catalog hashes.
-- [ ] Add a bounded calibration job whose scientific sample is stopped by an in-process monotonic deadline of exactly 300 seconds; setup and artifact upload are outside the scientific receipt and have a fixed workflow allowance.
-- [ ] Upload the receipt even when the scientific sample reaches its five-minute deadline cleanly.
+- [ ] Add a bounded calibration job whose scientific sample is stopped by an in-process monotonic deadline of exactly 1200 seconds; setup and artifact upload are outside the scientific receipt and have a fixed workflow allowance.
+- [ ] Upload the receipt even when the scientific sample reaches its twenty-minute deadline cleanly.
 - [ ] Add an explicit fail-closed step when the receipt is missing, protected boundaries are false, or the catalog hash differs.
 - [ ] Run YAML and workflow tests and commit `ci: add bounded Atlas calibration workflow`.
 

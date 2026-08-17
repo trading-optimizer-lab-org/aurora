@@ -13,6 +13,7 @@ from aurora.infra.github_performance.contracts import (
     canonical_sha256,
 )
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
+    CatalogScienceIdentityV1,
     RunOptimizationContractV1,
 )
 
@@ -54,7 +55,7 @@ class AtlasRunContractV1(FrozenModel):
 
     schema_version: Literal["1"]
     mode: Literal["atlas_static"]
-    science: object
+    science: CatalogScienceIdentityV1
     atlas: AtlasCatalogSpecV1
     optimization: RunOptimizationContractV1
 

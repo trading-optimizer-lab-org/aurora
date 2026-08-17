@@ -151,9 +151,9 @@ Reglas:
 
 La cifra de `component-warm` nunca se presentará como ahorro real sin incluir el coste previo de preparar el almacén.
 
-## 8. Calibración de cinco minutos
+## 8. Calibración de veinte minutos
 
-Antes de congelar el tamaño del catálogo se ejecutará una calibración con un límite estricto de cinco minutos de tiempo real.
+Antes de congelar el tamaño del catálogo se ejecutará una calibración con un límite estricto de veinte minutos de tiempo real.
 
 La calibración será una muestra determinista y estratificada que incluya:
 
@@ -164,7 +164,7 @@ La calibración será una muestra determinista y estratificada que incluya:
 - evaluación, almacenamiento y unión parcial;
 - reintento controlado de un bloque pequeño.
 
-La muestra no se escogerá por rendimiento. Al alcanzar cinco minutos se detendrá limpiamente, conservará lo medido y no se considerará un fallo.
+La muestra no se escogerá por rendimiento. Al alcanzar veinte minutos se detendrá limpiamente, conservará lo medido y no se considerará un fallo.
 
 Registrará:
 
@@ -201,7 +201,7 @@ Con los benchmarks existentes, la capacidad teórica para ese intervalo es:
 | Frío | 8.280 recetas/min | 33,87 millones | 27,10 millones |
 | Componentes preparados | 20.509 recetas/min | 83,91 millones | 67,12 millones |
 
-Estas cifras son una referencia del catálogo actual, no una promesa para familias nuevas. La cifra definitiva se calculará después de la calibración de cinco minutos.
+Estas cifras son una referencia del catálogo actual, no una promesa para familias nuevas. La cifra definitiva se calculará después de la calibración de veinte minutos.
 
 No se añadirán duplicados artificiales para ocupar el tiempo disponible.
 
@@ -212,7 +212,7 @@ Antes del run completo:
 1. Generar el catálogo dos veces y exigir igualdad byte a byte.
 2. Verificar contrato, datos, código, hashes y límites.
 3. Certificar las equivalencias formales.
-4. Ejecutar la calibración de cinco minutos.
+4. Ejecutar la calibración de veinte minutos.
 5. Elegir frío o preparado según el punto de equilibrio.
 6. Congelar catálogo, componentes, plan de reparto y entorno.
 7. Ejecutar un smoke pequeño de preparación, evaluación, almacenamiento y unión.
@@ -311,7 +311,7 @@ El diseño solo se considera listo para implementación cuando se demuestre:
 2. cobertura completa de las recetas declaradas;
 3. deduplicación exclusivamente formal;
 4. componentes verificables y compatibles;
-5. calibración de cinco minutos o menos;
+5. calibración de veinte minutos o menos;
 6. decisión explícita de frío frente a preparado;
 7. bloques independientes y reanudables;
 8. reintentos limitados;
