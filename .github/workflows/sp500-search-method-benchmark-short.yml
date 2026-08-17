@@ -29,6 +29,10 @@ on:
         description: Measured component-cost evidence run
         required: false
         default: "31948898747"
+      admission_evidence_path:
+        description: Evidence file used by the optimized catalog admission gate
+        required: false
+        default: config/sp500_catalog_admission_evidence_qualification_v1.json
       evaluation_cache_run_ids:
         description: Comma-separated compatible optimized runs or checkpoints
         required: false
@@ -93,7 +97,7 @@ jobs:
     with:
       commit_sha: ${{ github.sha }}
       runtime_input_run_id: "31418682679"
-      admission_evidence_path: config/sp500_catalog_admission_evidence_qualification_v1.json
+      admission_evidence_path: ${{ inputs.admission_evidence_path }}
       reference_run_id: "31948898747"
       component_store_run_id: ${{ inputs.component_store_run_id }}
       component_cost_run_id: ${{ inputs.component_cost_run_id }}
