@@ -139,7 +139,7 @@ jobs:
 
   evaluate_a:
     needs: preflight
-    if: ${{ always() && needs.preflight.result == 'success' }}
+    if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -189,7 +189,7 @@ jobs:
 
   evaluate_b:
     needs: preflight
-    if: ${{ always() && needs.preflight.result == 'success' }}
+    if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -225,7 +225,7 @@ jobs:
 
   evaluate_c:
     needs: preflight
-    if: ${{ always() && needs.preflight.result == 'success' }}
+    if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -259,9 +259,57 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with: {name: "sp500-atlas-shard-${{ matrix.shard }}", path: "${{ runner.temp }}/shard", if-no-files-found: error, retention-days: 30}
 
+  smoke_serial:
+    needs: preflight
+    if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'smoke' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with: {name: sp500-atlas-preflight, path: "${{ runner.temp }}/preflight"}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          path: ${{ runner.temp }}/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Evaluate all smoke blocks and reduce them
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/shards"
+          mkdir -p "$RUNNER_TEMP/shards"
+          for shard in 0 1 2 3; do
+            python scripts/run_sp500_atlas_worker.py \
+              --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
+              --catalog-dir "$RUNNER_TEMP/preflight/atlas" \
+              --runtime-input-pack "$RUNNER_TEMP/runtime" \
+              --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+              --data-contract config/sp500_megarun_free_data_240.json \
+              --feature-contract config/sp500_megarun_feature_contract_240.json \
+              --shard-index "$shard" \
+              --output-dir "$RUNNER_TEMP/shards/shard-$shard"
+          done
+          python scripts/reduce_sp500_atlas_run.py \
+            --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
+            --partitions-root "$RUNNER_TEMP/shards" \
+            --output-dir outputs/final
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-smoke-final-results
+          path: outputs/final
+          if-no-files-found: error
+          retention-days: 30
+
   reduce:
     needs: [preflight, evaluate_a, evaluate_b, evaluate_c]
-    if: ${{ always() && needs.preflight.result == 'success' }}
+    if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:

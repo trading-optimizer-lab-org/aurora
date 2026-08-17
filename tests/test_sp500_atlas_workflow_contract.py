@@ -20,6 +20,7 @@ def test_workflow_uses_exact_commit_and_static_shards() -> None:
     assert text.count("fail-fast: false") == 3
     assert "recipe_count" in text
     assert "total_shards" in text
+    assert "smoke_serial" in text
 
 
 def test_workflow_has_bounded_retries_and_no_dynamic_claim_loop() -> None:
@@ -38,4 +39,4 @@ def test_workflow_preserves_train_only_boundaries_and_final_failure_gate() -> No
     assert "validation_opened" in text
     assert "locked_opened" in text
     assert "Require complete shard set and preserve all rows" in text
-    assert "if: ${{ always() && needs.preflight.result == 'success' }}" in text
+    assert "if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}" in text
