@@ -139,14 +139,12 @@ def _worker_result(
     wave: int = 0,
     fingerprint: str | None = None,
     replicate_override: int | None = None,
+    payload_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from aurora.infra.sp500_megarun.dehb_campaign_runtime import build_job_payload
 
-    payload = build_job_payload(
-        campaign,
-        job_index=job_index,
-        wave=wave,
-        restart_ordinal=wave,
+    payload = payload_override or build_job_payload(
+        campaign, job_index=job_index, wave=wave, restart_ordinal=wave
     )
     islands = []
     for assignment in payload["islands"]:
@@ -162,6 +160,11 @@ def _worker_result(
                 "status": "completed",
                 "evaluations": 640,
                 "full_fidelity_evaluations": 3,
+                "physical_evaluations": 200,
+                "full_fidelity_physical_evaluations": 2,
+                "cache_hits": 440,
+                "determinism_audit_passed": True,
+                "determinism_audit_physical_evaluations": 2,
                 "checkpoint_sha256": "a" * 64,
                 "champion": None
                 if fingerprint is None
@@ -179,6 +182,7 @@ def _worker_result(
     return {
         "schema_version": 1,
         "campaign_contract_sha256": campaign.sha256,
+        "job_payload": payload,
         "job_payload_sha256": payload["payload_sha256"],
         "job_id": payload["job_id"],
         "job_index": payload["job_index"],
@@ -187,6 +191,54 @@ def _worker_result(
         "locked_opened": False,
         "islands": islands,
     }
+
+
+def test_controller_validates_exact_embedded_resumed_wave_payload(campaign) -> None:
+    from aurora.infra.sp500_megarun.dehb_campaign_runtime import (
+        build_job_payload,
+        build_shard_matrices,
+        controller_decision,
+    )
+
+    initial = build_job_payload(campaign, job_index=0, wave=0, restart_ordinal=0)
+    resumed_island = str(initial["islands"][0]["island_id"])
+    resumed = build_job_payload(
+        campaign,
+        job_index=0,
+        wave=1,
+        restart_ordinal=1,
+        island_restart_ordinals={resumed_island: 0},
+        resume_island_ids={resumed_island},
+    )
+    matrices = build_shard_matrices(
+        campaign,
+        wave=1,
+        restart_ordinal=1,
+        island_restart_ordinals={resumed_island: 0},
+        resume_island_ids={resumed_island},
+    )
+    planned = {
+        int(payload["job_index"]): payload
+        for shard in "ABC"
+        for payload in matrices[shard]["include"]
+    }
+    result = _worker_result(
+        campaign,
+        job_index=0,
+        wave=1,
+        payload_override=dict(resumed),
+    )
+
+    decision = controller_decision(
+        campaign,
+        [result],
+        wave=1,
+        planned_job_payloads=planned,
+    )
+
+    assert decision["action"] == "retry_jobs"
+    assert decision["retry_job_indices"] == list(range(1, 360))
+    assert result["job_payload_sha256"] == resumed["payload_sha256"]
 
 
 def test_controller_retries_missing_or_failed_jobs(campaign) -> None:
@@ -203,9 +255,7 @@ def test_controller_retries_missing_or_failed_jobs(campaign) -> None:
 def test_controller_opens_diverse_next_wave_instead_of_no_strategy(campaign) -> None:
     from aurora.infra.sp500_megarun.dehb_campaign_runtime import controller_decision
 
-    results = [
-        _worker_result(campaign, job_index=index, wave=4) for index in range(360)
-    ]
+    results = [_worker_result(campaign, job_index=index, wave=4) for index in range(360)]
     decision = controller_decision(campaign, results, wave=4)
 
     assert decision["action"] == "dispatch_next_wave"
@@ -222,6 +272,7 @@ def test_controller_resumes_sliced_population_but_restarts_plateaued_ones(campai
     plateaued_island = str(results[0]["islands"][1]["island_id"])
     results[0]["islands"][0]["status"] = "paused_at_runner_slice"
     results[0]["islands"][0]["full_fidelity_evaluations"] = 0
+    results[0]["islands"][0]["full_fidelity_physical_evaluations"] = 0
     decision = controller_decision(campaign, results, wave=0)
 
     assert decision["action"] == "dispatch_next_wave"

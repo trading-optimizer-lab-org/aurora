@@ -2,6 +2,83 @@ name: SP500 Search Method Benchmark Short
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Execution mode
+        required: true
+        default: selected_validation_once
+        type: choice
+        options:
+          - selected_validation_once
+          - f024_inverse_diagnostic
+          - optimized_catalog_qualification
+          - optimized_catalog_verify_only
+          - optimized_catalog_equivalence_diagnostic
+          - optimized_catalog_component_determinism
+          - optimized_catalog_reference_oracle
+          - optimized_catalog_future_architecture
+          - atlas_calibration_20m
+          - atlas_full
+      component_store_run_id:
+        description: Compatible component store from a prior optimized run
+        required: false
+        default: ""
+      optimized_result_run_id:
+        description: Completed optimized result run to verify without recomputing
+        required: false
+        default: ""
+      component_cost_run_id:
+        description: Measured component-cost evidence run
+        required: false
+        default: "31948898747"
+      admission_evidence_path:
+        description: Evidence file used by the optimized catalog admission gate
+        required: false
+        default: config/sp500_catalog_admission_evidence_qualification_v1.json
+      evaluation_cache_run_ids:
+        description: Comma-separated compatible optimized runs or checkpoints
+        required: false
+        default: ""
+      benchmark_workers:
+        description: Qualification-only worker candidate; 0 uses promoted policy
+        required: false
+        default: "0"
+      benchmark_processes:
+        description: Qualification-only process candidate; 0 uses promoted policy
+        required: false
+        default: "0"
+      benchmark_component_processes:
+        description: Qualification-only component process candidate; 0 uses promoted policy
+        required: false
+        default: "0"
+      benchmark_component_workers:
+        description: Qualification-only component worker candidate; 0 uses promoted policy
+        required: false
+        default: "0"
+      diagnostic_runtime_input_run_id:
+        description: Train-only runtime artifact used by the equivalence diagnostic
+        required: false
+        default: ""
+      diagnostic_optimized_result_run_id:
+        description: Optimized result run compared by the equivalence diagnostic
+        required: false
+        default: ""
+      diagnostic_reference_result_run_id:
+        description: Reference result run compared by the equivalence diagnostic
+        required: false
+        default: ""
+      atlas_runtime_input_run_id:
+        description: Train-only runtime artifact used by the Atlas calibration
+        required: false
+        default: "31418682679"
+      atlas_target_end_iso:
+        description: Planning target for the Atlas calibration
+        required: false
+        default: "2026-08-20T07:31:00+02:00"
+      atlas_launch_authorization:
+        description: Exact authorization token required only for the full Atlas run
+        required: false
+        default: ""
 
 permissions:
   actions: read
@@ -9,6 +86,7 @@ permissions:
 
 jobs:
   framework_contract:
+    if: ${{ github.ref != 'refs/heads/codex/sp500-search-method-benchmark-short' }}
     uses: ./.github/workflows/_aurora-future-run-v3.yml
     with:
       spec_path: config/github_performance_reference.yaml
@@ -18,8 +96,109 @@ jobs:
       forced_job_count: 1
 
   expanded:
+    if: ${{ github.ref != 'refs/heads/codex/sp500-search-method-benchmark-short' }}
     needs: framework_contract
     uses: ./.github/workflows/sp500-search-method-benchmark-expanded.yml
     permissions:
       actions: read
       contents: read
+
+  selected_validation_once:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'selected_validation_once' }}
+    uses: ./.github/workflows/sp500-selected-validation-12-once.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      validation_ack: OPEN_SP500_MEGARUN_VALIDATION_2011_2020_SELECTED_12_ONCE
+
+  f024_inverse_diagnostic:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'f024_inverse_diagnostic' }}
+    uses: ./.github/workflows/sp500-f024-inverse-diagnostic.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      validation_ack: OPEN_SP500_MEGARUN_VALIDATION_2011_2020_SELECTED_12_ONCE
+
+  optimized_catalog_qualification:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_qualification' }}
+    uses: ./.github/workflows/catalog-optimized-run.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      runtime_input_run_id: "31418682679"
+      admission_evidence_path: ${{ inputs.admission_evidence_path }}
+      reference_run_id: "31948898747"
+      component_store_run_id: ${{ inputs.component_store_run_id }}
+      component_cost_run_id: ${{ inputs.component_cost_run_id }}
+      evaluation_cache_run_ids: ${{ inputs.evaluation_cache_run_ids }}
+      benchmark_workers: ${{ fromJSON(inputs.benchmark_workers) }}
+      benchmark_processes: ${{ fromJSON(inputs.benchmark_processes) }}
+      benchmark_component_processes: ${{ fromJSON(inputs.benchmark_component_processes) }}
+      benchmark_component_workers: ${{ fromJSON(inputs.benchmark_component_workers) }}
+
+  optimized_catalog_verify_only:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_verify_only' }}
+    uses: ./.github/workflows/catalog-optimized-verify-only.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      optimized_result_run_id: ${{ inputs.optimized_result_run_id }}
+      reference_run_id: "31948898747"
+
+  optimized_catalog_equivalence_diagnostic:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_equivalence_diagnostic' }}
+    uses: ./.github/workflows/catalog-equivalence-diagnostic.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      runtime_input_run_id: ${{ inputs.diagnostic_runtime_input_run_id }}
+      optimized_result_run_id: ${{ inputs.diagnostic_optimized_result_run_id }}
+      reference_result_run_id: ${{ inputs.diagnostic_reference_result_run_id }}
+
+  optimized_catalog_component_determinism:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_component_determinism' }}
+    uses: ./.github/workflows/catalog-component-determinism.yml
+    with:
+      commit_sha: ${{ github.sha }}
+
+  optimized_catalog_reference_oracle:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_reference_oracle' }}
+    uses: ./.github/workflows/catalog-reference-oracle.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      runtime_input_run_id: "31418682679"
+
+  optimized_catalog_future_architecture:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'optimized_catalog_future_architecture' }}
+    uses: ./.github/workflows/catalog-future-architecture.yml
+
+  atlas_calibration_20m:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'atlas_calibration_20m' && inputs.atlas_runtime_input_run_id != 'ATLAS_SMOKE' }}
+    uses: ./.github/workflows/sp500-atlas-calibration.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      runtime_input_run_id: ${{ inputs.atlas_runtime_input_run_id }}
+      target_end_iso: ${{ inputs.atlas_target_end_iso }}
+
+  # The existing dispatch input is used as a stable entry point because a new
+  # workflow file cannot be manually dispatched until it exists on the default
+  # branch. ATLAS_SMOKE is a literal sentinel and cannot launch the full run.
+  atlas_smoke:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'atlas_calibration_20m' && inputs.atlas_runtime_input_run_id == 'ATLAS_SMOKE' }}
+    uses: ./.github/workflows/sp500-atlas-run.yml
+    with:
+      run_mode: smoke
+      commit_sha: ${{ github.sha }}
+      runtime_input_run_id: "31418682679"
+      calibration_run_id: "32039572017"
+      target_end_iso: ${{ inputs.atlas_target_end_iso }}
+      recipe_count: 64
+      total_shards: 4
+
+  atlas_full:
+    if: ${{ github.ref == 'refs/heads/codex/sp500-search-method-benchmark-short' && inputs.mode == 'atlas_full' }}
+    uses: ./.github/workflows/sp500-atlas-run.yml
+    with:
+      run_mode: full
+      commit_sha: ${{ github.sha }}
+      runtime_input_run_id: "31418682679"
+      calibration_run_id: "32039572017"
+      target_end_iso: ${{ inputs.atlas_target_end_iso }}
+      recipe_count: 18816734
+      total_shards: 360
+      launch_authorization: ${{ inputs.atlas_launch_authorization }}

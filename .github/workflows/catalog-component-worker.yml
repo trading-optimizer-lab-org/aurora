@@ -1,0 +1,138 @@
+name: SP500 Global Component Worker
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+      runtime_input_run_id: {required: true, type: string}
+      runtime_fragment_run_id: {required: true, type: string}
+      component_shard_index: {required: true, type: number}
+      total_component_shards: {required: true, type: number}
+      admission_token_sha256: {required: true, type: string}
+
+permissions: {actions: read, contents: read}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONHASHSEED: "0"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
+      BLIS_NUM_THREADS: "1"
+      OPENBLAS_CORETYPE: "NEHALEM"
+      NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
+      PYTHONPATH: ${{ github.workspace }}/..
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          enable-cache: false
+      - run: >-
+          uv pip install --system --require-hashes
+          -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-catalog-run-plan
+          path: ${{ runner.temp }}/plan
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-runtime-fragment-core
+          path: ${{ runner.temp }}/runtime
+      - name: Determine datasets required by this shard
+        shell: bash
+        run: >-
+          python -m scripts.sp500_component_runtime_requirements
+          --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl
+          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --data-contract config/sp500_megarun_free_data_240.json
+          --component-schedule "$RUNNER_TEMP/plan/component_schedule.json"
+          --shard-index "${{ inputs.component_shard_index }}"
+          --output "$RUNNER_TEMP/required-datasets.txt"
+      - name: Download only required dataset fragments
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNTIME_FRAGMENT_RUN_ID: ${{ inputs.runtime_fragment_run_id }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/runtime-fragments"
+          mkdir -p "$RUNNER_TEMP/runtime/train_snapshot_1993_2010"
+          required_dataset_ids=()
+          while IFS= read -r dataset_id; do
+            [ -n "$dataset_id" ] || continue
+            required_dataset_ids+=("$dataset_id")
+          done < "$RUNNER_TEMP/required-datasets.txt"
+
+          download_one_fragment() {
+            local dataset_id="$1"
+            local fragment_dir="$RUNNER_TEMP/runtime-fragments/$dataset_id"
+            local attempt=1
+            while [ "$attempt" -le 4 ]; do
+              rm -rf "$fragment_dir"
+              mkdir -p "$fragment_dir"
+              if gh run download "$RUNTIME_FRAGMENT_RUN_ID" \
+                --repo "$GITHUB_REPOSITORY" \
+                --name "sp500-runtime-fragment-$dataset_id" \
+                --dir "$fragment_dir"; then
+                fragment_files=()
+                mapfile -t fragment_files < <(
+                  find "$fragment_dir" -type f \
+                    -path "*/train_snapshot_1993_2010/$dataset_id.parquet"
+                )
+                if [ "${#fragment_files[@]}" -eq 1 ]; then
+                  return 0
+                fi
+              fi
+              sleep $((attempt * 2))
+              attempt=$((attempt + 1))
+            done
+            echo "RUNTIME_FRAGMENT_DOWNLOAD_FAILED:$dataset_id" >&2
+            return 1
+          }
+          export -f download_one_fragment
+          if [ "${#required_dataset_ids[@]}" -gt 0 ]; then
+            printf '%s\n' "${required_dataset_ids[@]}" |
+              xargs -r -n 1 -P 4 bash -c 'download_one_fragment "$1"' _
+          fi
+          while IFS= read -r dataset_id; do
+            [ -n "$dataset_id" ] || continue
+            fragment_dir="$RUNNER_TEMP/runtime-fragments/$dataset_id"
+            mapfile -t fragment_files < <(
+              find "$fragment_dir" -type f \
+                -path "*/train_snapshot_1993_2010/$dataset_id.parquet"
+            )
+            test "${#fragment_files[@]}" -eq 1
+            cp -- "${fragment_files[0]}" \
+              "$RUNNER_TEMP/runtime/train_snapshot_1993_2010/$dataset_id.parquet"
+          done < "$RUNNER_TEMP/required-datasets.txt"
+      - run: >-
+          python scripts/build_sp500_component_store.py
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --data-contract config/sp500_megarun_free_data_240.json
+          --feature-contract config/sp500_megarun_feature_contract_240.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --runtime-source-run-id "${{ inputs.runtime_fragment_run_id }}"
+          --resolved-contract "$RUNNER_TEMP/plan/resolved_contract.json"
+          --run-plan "$RUNNER_TEMP/plan/run_plan.json"
+          --component-schedule "$RUNNER_TEMP/plan/component_schedule.json"
+          --admission-token "${{ inputs.admission_token_sha256 }}"
+          --component-shard-index "${{ inputs.component_shard_index }}"
+          --total-component-shards "${{ inputs.total_component_shards }}"
+          --output-dir "outputs/component-${{ inputs.component_shard_index }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-component-part-${{ inputs.component_shard_index }}
+          path: outputs/component-${{ inputs.component_shard_index }}
+          if-no-files-found: error
+          retention-days: 7

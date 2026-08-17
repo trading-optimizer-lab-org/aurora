@@ -1,0 +1,11 @@
+{
+  "locked_opened": false,
+  "manifest_sha256": "30a272718727267b502728463425cc71582ff59fa2195305d54af854ffb73f85",
+  "normalization": "remove_objective_runtime_seconds_exact_json_v1",
+  "numeric_runtime_profile_sha256": "93c4cee81ef4991bcf60235c5d169788c90c2300c4dd7186a9d2e1c20451047c",
+  "reference_run_id": "31948898747",
+  "schema_version": 1,
+  "scientific_results_sha256": "0c83b5a6957c0f85f37d88c8e7c0af46cb5d1d97f5f990cbd1bcf00de34573ac",
+  "strategy_count": 37258,
+  "validation_opened": false
+}

@@ -10,9 +10,7 @@ import pytest
 
 def _engine_api():
     try:
-        return importlib.import_module(
-            "aurora.infra.sp500_megarun.advanced_feature_engine"
-        )
+        return importlib.import_module("aurora.infra.sp500_megarun.advanced_feature_engine")
     except ModuleNotFoundError as exc:  # pragma: no cover - removed by implementation
         pytest.fail(f"advanced feature engine is missing: {exc}")
 
@@ -100,9 +98,7 @@ def test_f061_f070_produce_finite_train_only_values(lane_id: str) -> None:
 
     assert result["value"].notna().any(), lane_id
     valid = result["value"].notna()
-    assert result.loc[valid, "observed_at"].le(
-        result.loc[valid, "available_at"]
-    ).all()
+    assert result.loc[valid, "observed_at"].le(result.loc[valid, "available_at"]).all()
     assert result["date"].max() <= pd.Timestamp("2010-12-31")
 
 
@@ -117,9 +113,7 @@ def test_f061_f070_are_stable_when_future_rows_are_appended(lane_id: str) -> Non
     after = api.evaluate_advanced_lane(lane_id, spy, _parameters(lane_id))
     after = after.loc[after["date"].le(cutoff)]
 
-    pd.testing.assert_frame_equal(
-        before.reset_index(drop=True), after.reset_index(drop=True)
-    )
+    pd.testing.assert_frame_equal(before.reset_index(drop=True), after.reset_index(drop=True))
 
 
 @pytest.mark.parametrize("kind", ["kama", "vidya", "frama"])
@@ -248,6 +242,19 @@ def test_f067_quantile_words_emit_a_bounded_expected_rank() -> None:
     finite = result["value"].dropna()
     assert not finite.empty
     assert finite.between(-1.0, 1.0).all()
+
+
+@pytest.mark.parametrize("lane_id", ["F067", "F069"])
+def test_previously_conflicting_lanes_repeat_exactly(lane_id: str) -> None:
+    api = _engine_api()
+    inputs = _spy_inputs(220)
+    parameters = _parameters(lane_id)
+    parameters["window"] = 80
+
+    first = api.evaluate_advanced_lane(lane_id, inputs.copy(), parameters)
+    second = api.evaluate_advanced_lane(lane_id, inputs.copy(), parameters)
+
+    pd.testing.assert_frame_equal(first, second, check_exact=True)
 
 
 @pytest.mark.parametrize("q", [0, 1, 2])

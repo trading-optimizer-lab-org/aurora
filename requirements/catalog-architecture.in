@@ -1,0 +1,2 @@
+-r catalog-recipe-worker.in
+pytest==9.0.3

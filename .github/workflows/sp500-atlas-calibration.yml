@@ -1,0 +1,106 @@
+name: SP500 Atlas 20 Minute Calibration
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Exact immutable implementation commit
+        required: true
+        type: string
+      runtime_input_run_id:
+        description: Verified train-only runtime input pack run
+        required: true
+        default: "31418682679"
+        type: string
+      target_end_iso:
+        description: Europe/Madrid planning target
+        required: true
+        default: "2026-08-20T07:31:00+02:00"
+        type: string
+  workflow_call:
+    inputs:
+      commit_sha:
+        required: true
+        type: string
+      runtime_input_run_id:
+        required: true
+        type: string
+      target_end_iso:
+        required: false
+        type: string
+        default: "2026-08-20T07:31:00+02:00"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ATLAS_REQUESTED_COMMIT_SHA: ${{ inputs.commit_sha }}
+      ATLAS_RUNTIME_INPUT_RUN_ID: ${{ inputs.runtime_input_run_id }}
+      ATLAS_TARGET_END_ISO: ${{ inputs.target_end_iso }}
+      GITHUB_ACTIONS: "true"
+      PYTHONHASHSEED: "0"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
+      BLIS_NUM_THREADS: "1"
+      OPENBLAS_CORETYPE: "NEHALEM"
+      NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
+      PYTHONPATH: ${{ github.workspace }}/..
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          enable-cache: false
+      - run: >-
+          uv pip install --system --require-hashes
+          -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ env.ATLAS_RUNTIME_INPUT_RUN_ID }}
+          path: ${{ runner.temp }}/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.ATLAS_RUNTIME_INPUT_RUN_ID }}
+      - name: Verify requested commit is the workflow commit
+        shell: bash
+        run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"
+      - name: Build compact Atlas catalog
+        run: >-
+          python scripts/build_sp500_atlas_catalog.py
+          --data-contract config/sp500_megarun_free_data_240.json
+          --feature-contract config/sp500_megarun_feature_contract_240.json
+          --output-dir outputs/atlas
+          --target-end-iso "$ATLAS_TARGET_END_ISO"
+      - name: Run exactly bounded train-only calibration
+        run: >-
+          python scripts/calibrate_sp500_atlas_run.py
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --data-contract config/sp500_megarun_free_data_240.json
+          --feature-contract config/sp500_megarun_feature_contract_240.json
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --catalog-dir outputs/atlas
+          --output-dir outputs/calibration
+          --target-end-iso "$ATLAS_TARGET_END_ISO"
+      - name: Fail closed on receipt or protected boundary
+        shell: bash
+        run: >-
+          python -c "import json; p=json.load(open('outputs/calibration/calibration_receipt.json')); assert p['hard_limit_seconds']==1200.0 and p['validation_opened'] is False and p['locked_opened'] is False and p['physical_recipe_count']>=0"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-calibration-${{ github.run_id }}
+          path: outputs
+          if-no-files-found: error
+          retention-days: 30

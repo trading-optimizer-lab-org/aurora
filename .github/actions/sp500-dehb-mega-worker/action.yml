@@ -15,6 +15,9 @@ inputs:
   checkpoint-run-ids:
     required: false
     default: "0"
+  evaluation-cache-run-ids:
+    required: false
+    default: ""
   github-token:
     required: true
 
@@ -82,12 +85,43 @@ runs:
           fi
         done
         test "$found" = true
+    - name: Download only prior artifacts for both lanes and all replicas
+      id: evaluation_cache
+      if: inputs.evaluation-cache-run-ids != ''
+      shell: bash
+      env:
+        EVALUATION_CACHE_RUN_IDS: ${{ inputs.evaluation-cache-run-ids }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        mapfile -t peer_jobs < <(
+          python scripts/list_sp500_megarun_dehb_cache_peer_jobs.py \
+            --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+            --job-payload job_payload.json
+        )
+        test "${#peer_jobs[@]}" -eq 3
+        IFS=',' read -ra run_ids <<< "$EVALUATION_CACHE_RUN_IDS"
+        downloads=0
+        for run_id in "${run_ids[@]}"; do
+          [[ "$run_id" =~ ^[1-9][0-9]*$ ]] || exit 1
+          for peer_job in "${peer_jobs[@]}"; do
+            target="$RUNNER_TEMP/evaluation_cache/run-$run_id/worker-$peer_job"
+            mkdir -p "$target"
+            if gh run download "$run_id" \
+              --name "sp500-dehb-worker-$peer_job" \
+              --dir "$target"; then
+              downloads=$((downloads + 1))
+            fi
+          done
+        done
+        test "$downloads" -gt 0
+        printf 'available=true\n' >> "$GITHUB_OUTPUT"
     - name: Run two official DEHB islands sequentially with four slots
       if: steps.payload.outputs.resume_required != 'true'
       shell: bash
       run: |
         set -euo pipefail
-        python scripts/run_sp500_megarun_dehb_job.py \
+        args=( \
           --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
           --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json" \
           --expected-code-commit-sha "${{ inputs.commit-sha }}" \
@@ -96,12 +130,17 @@ runs:
           --job-payload job_payload.json \
           --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs" \
           --output-dir outputs/worker
+        )
+        if [[ -d "$RUNNER_TEMP/evaluation_cache" ]]; then
+          args+=(--evaluation-cache-root "$RUNNER_TEMP/evaluation_cache")
+        fi
+        python scripts/run_sp500_megarun_dehb_job.py "${args[@]}"
     - name: Resume two-island job from verified prior artifact
       if: steps.payload.outputs.resume_required == 'true'
       shell: bash
       run: |
         set -euo pipefail
-        python scripts/run_sp500_megarun_dehb_job.py \
+        args=( \
           --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
           --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json" \
           --expected-code-commit-sha "${{ inputs.commit-sha }}" \
@@ -111,6 +150,11 @@ runs:
           --runtime-input-pack "$RUNNER_TEMP/dehb_runtime_inputs" \
           --previous-worker-dir "$RUNNER_TEMP/previous_worker" \
           --output-dir outputs/worker
+        )
+        if [[ -d "$RUNNER_TEMP/evaluation_cache" ]]; then
+          args+=(--evaluation-cache-root "$RUNNER_TEMP/evaluation_cache")
+        fi
+        python scripts/run_sp500_megarun_dehb_job.py "${args[@]}"
     - name: Upload worker result and two island bundles
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

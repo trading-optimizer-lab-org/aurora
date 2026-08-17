@@ -2,17 +2,202 @@ name: SP500 Megarun Official DEHB Infrastructure Smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Verification mode
+        type: choice
+        required: true
+        default: official
+        options:
+          - official
+          - continuous_postgres
+          - continuous_probe
+          - continuous_allocate
+          - continuous_migrate
+          - continuous_emergency_migrate
+          - continuous_compact
+          - continuous_recover
+          - continuous_segment
+          - continuous_start
+          - continuous_continue
+          - strategy_catalog_overnight
+      commit_sha:
+        description: Exact revision for any continuous mode
+        required: false
+      campaign_id:
+        description: Immutable continuous campaign identifier
+        required: false
+      runtime_input_run_id:
+        description: Immutable train-only runtime input run
+        required: false
+      launch_contract_run_id:
+        description: Exact run containing the launch contract
+        required: false
+      bootstrap_run_id:
+        description: Initial continuous run containing the bootstrap receipt
+        required: false
+      history_run_id:
+        description: Completed run containing cumulative verified train-only history
+        required: false
+      pool_generation:
+        description: Six-digit continuous pool generation
+        required: false
+        default: "000000"
+      source_run_id:
+        description: Completed continuous run stopped before a database clone
+        required: false
+      allocation_public_key_b64:
+        description: One-time RSA public key for encrypted reserve credentials
+        required: false
+      allocation_runner:
+        description: GitHub runner used to allocate an independent reserve project
+        type: choice
+        required: false
+        default: ubuntu-24.04
+        options:
+          - ubuntu-24.04
+          - macos-15-intel
+      migration_source:
+        description: Source coordinator database secret used for a stopped clone
+        type: choice
+        required: false
+        default: current
+        options:
+          - current
+          - next
+          - previous
+      migration_target:
+        description: Inactive coordinator database slot receiving the verified clone
+        type: choice
+        required: false
+        default: next
+        options:
+          - current
+          - next
+      database_slot:
+        description: Coordinator database slot used by continuous execution
+        type: choice
+        required: false
+        default: current
+        options:
+          - current
+          - next
+          - previous
 
 permissions:
-  actions: read
+  actions: write
   contents: read
 
 concurrency:
-  group: sp500-megarun-official-dehb-smoke-${{ github.ref }}
+  group: >-
+    sp500-megarun-official-dehb-smoke-${{ github.ref }}-${{
+      inputs.mode == 'continuous_allocate' && 'allocation' ||
+      inputs.mode == 'continuous_probe' && 'probe' || 'main'
+    }}
   cancel-in-progress: false
 
 jobs:
+  strategy_catalog_overnight:
+    if: ${{ inputs.mode == 'strategy_catalog_overnight' }}
+    uses: ./.github/workflows/sp500-strategy-catalog-overnight.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+
+  continuous_probe:
+    if: ${{ inputs.mode == 'continuous_probe' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GITHUB_ACTIONS: "true"
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
+      SP500_DEHB_CAMPAIGN_ID: ${{ inputs.campaign_id }}
+    steps:
+      - name: Set up probe Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install read-only probe runtime
+        run: python -m pip install "psycopg[binary]>=3.2,<4"
+      - name: Probe live database without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p outputs/sp500_dehb_database_probe
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          import psycopg
+
+          campaign_id = os.environ["SP500_DEHB_CAMPAIGN_ID"]
+          with psycopg.connect(
+              os.environ["SP500_DEHB_COORDINATOR_DATABASE_URL"],
+              autocommit=True,
+          ) as connection:
+              with connection.cursor() as cursor:
+                  cursor.execute("SET default_transaction_read_only = on")
+                  cursor.execute(
+                      """
+                      SELECT
+                          pg_database_size(current_database()),
+                          c.state,
+                          c.validation_opened,
+                          c.locked_opened,
+                          (SELECT count(*) FROM evaluations e
+                           WHERE e.campaign_id = c.campaign_id),
+                          (SELECT count(*) FROM strategy_evaluations s
+                           WHERE s.campaign_id = c.campaign_id),
+                          (SELECT count(*) FROM results r
+                           WHERE r.campaign_id = c.campaign_id),
+                          (SELECT count(*) FROM island_batches b
+                           WHERE b.campaign_id = c.campaign_id
+                             AND b.status = 'applied'),
+                          (SELECT count(*) FROM island_batches b
+                           WHERE b.campaign_id = c.campaign_id
+                             AND b.status = 'open'),
+                          (SELECT count(*) FROM worker_sessions w
+                           WHERE w.campaign_id = c.campaign_id
+                             AND w.state <> 'closed')
+                      FROM campaigns c
+                      WHERE c.campaign_id = %s
+                      """,
+                      (campaign_id,),
+                  )
+                  row = cursor.fetchone()
+          if row is None:
+              raise RuntimeError("CONTINUOUS_PROBE_CAMPAIGN_NOT_FOUND")
+          payload = {
+              "campaign_id": campaign_id,
+              "database_size_bytes": int(row[0]),
+              "state": str(row[1]),
+              "validation_opened": bool(row[2]),
+              "locked_opened": bool(row[3]),
+              "evaluations": int(row[4]),
+              "strategies": int(row[5]),
+              "results": int(row[6]),
+              "applied_batches": int(row[7]),
+              "open_batches": int(row[8]),
+              "active_worker_sessions": int(row[9]),
+          }
+          if payload["validation_opened"] or payload["locked_opened"]:
+              raise RuntimeError("CONTINUOUS_PROBE_BOUNDARY_OPEN")
+          output = Path("outputs/sp500_dehb_database_probe/probe.json")
+          output.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+      - name: Upload non-sensitive probe evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-database-probe
+          path: outputs/sp500_dehb_database_probe/probe.json
+          if-no-files-found: error
+          retention-days: 7
+
   framework_contract:
+    if: ${{ inputs.mode == 'official' }}
     uses: ./.github/workflows/_aurora-future-run-v3.yml
     with:
       spec_path: config/github_performance_reference.yaml
@@ -22,6 +207,7 @@ jobs:
       forced_job_count: 1
 
   official_dehb_smoke:
+    if: ${{ inputs.mode == 'official' }}
     needs: framework_contract
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -32,6 +218,10 @@ jobs:
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       NUMEXPR_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
+      BLIS_NUM_THREADS: "1"
+      OPENBLAS_CORETYPE: "NEHALEM"
+      NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
       PYTHONPATH: ${{ github.workspace }}/..
     steps:
       - name: Check out the exact infrastructure revision
@@ -44,17 +234,26 @@ jobs:
         with:
           python-version: "3.11"
           cache: ""
-      - name: Install only the hash-locked official DEHB runtime
+      - name: Install hash-locked DEHB runtime and isolated test dependencies
         run: |
           set -euo pipefail
           python -m pip install --require-hashes -r requirements/dehb-official.lock
-          python -m pip install "pytest==9.0.3"
+          python -m pip install \
+            "pytest==9.0.3" \
+            "pydantic==2.13.4" \
+            "jsonschema==4.26.0"
           python -m pip check
       - name: Verify adapter and GitHub-only fail-closed gates
         run: |
           python -m pytest \
             tests/test_sp500_megarun_dehb_configspace.py \
             tests/test_sp500_megarun_dehb_official_smoke.py \
+            tests/test_sp500_megarun_dehb_evaluation_cache.py \
+            tests/test_sp500_megarun_dehb_cache_savings_audit.py \
+            tests/test_sp500_megarun_dehb_island_runner.py \
+            tests/test_sp500_megarun_dehb_job_runner.py \
+            tests/test_sp500_megarun_dehb_campaign_runtime.py \
+            tests/test_sp500_megarun_dehb_workflows.py \
             tests/test_sp500_megarun_feature_engine_price.py \
             tests/test_sp500_megarun_feature_contract.py \
             tests/test_sp500_megarun_data_contract.py \
@@ -80,3 +279,777 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 90
+
+  continuous_postgres:
+    if: ${{ inputs.mode == 'continuous_postgres' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: aurora
+          POSTGRES_PASSWORD: continuous-test-only
+          POSTGRES_DB: aurora
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aurora -d aurora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SP500_DEHB_TEST_DATABASE_URL: postgresql://aurora:continuous-test-only@127.0.0.1:5432/aurora
+      PYTHONPATH: ${{ github.workspace }}/..
+    steps:
+      - name: Check out exact continuous revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Verify exact continuous revision
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.commit_sha }}"
+      - name: Set up isolated Python 3.11
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install focused PostgreSQL test runtime
+        run: |
+          python -m pip install "psycopg[binary,pool]>=3.2,<4" pytest numpy pandas pyarrow \
+            "pydantic==2.13.4" "jsonschema==4.26.0" PyYAML
+          python -m pip install --no-deps -e .
+      - name: Verify continuous unit and PostgreSQL contracts
+        run: >-
+          python -m pytest
+          tests/test_sp500_megarun_dehb_continuous_models.py
+          tests/test_sp500_megarun_dehb_continuous_schema.py
+          tests/test_sp500_megarun_dehb_continuous_store.py
+          tests/test_sp500_megarun_dehb_continuous_island.py
+          tests/test_sp500_megarun_dehb_continuous_coordinator.py
+          tests/test_sp500_megarun_dehb_continuous_worker.py
+          tests/test_sp500_megarun_dehb_continuous_archive.py
+          tests/test_sp500_megarun_dehb_continuous_bootstrap.py
+          tests/test_sp500_megarun_dehb_continuous_reducer.py
+          tests/test_sp500_megarun_dehb_continuous_supervisor.py
+          tests/test_sp500_megarun_dehb_continuous_robustness.py
+          tests/test_sp500_megarun_dehb_continuous_revision.py
+          tests/test_sp500_megarun_dehb_workflows.py
+          tests/integration/test_sp500_megarun_dehb_continuous_postgres.py
+          -q
+
+  continuous_allocate:
+    if: ${{ inputs.mode == 'continuous_allocate' }}
+    runs-on: ${{ inputs.allocation_runner }}
+    timeout-minutes: 10
+    steps:
+      - name: Allocate and encrypt one accountless reserve database
+        shell: bash
+        env:
+          ALLOCATION_PUBLIC_KEY_B64: ${{ inputs.allocation_public_key_b64 }}
+          AURORA_DEHB_NEON_ALLOCATION_REF: aurora-sp500-dehb-reserve
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$ALLOCATION_PUBLIC_KEY_B64"
+          output="$RUNNER_TEMP/sp500-dehb-reserve"
+          mkdir -p "$output"
+          curl \
+            --silent \
+            --show-error \
+            --fail-with-body \
+            --request POST \
+            --header "Accept: application/json" \
+            --header "Content-Type: application/json" \
+            --header "User-Agent: Aurora-DEHB-Coordinator-Migration/1.0" \
+            --data "{\"ref\":\"$AURORA_DEHB_NEON_ALLOCATION_REF\"}" \
+            --output "$RUNNER_TEMP/allocation.json" \
+            https://neon.new/api/v1/database
+          connection_string="$(jq -er '.connection_string' "$RUNNER_TEMP/allocation.json")"
+          claim_url="$(jq -er '.claim_url' "$RUNNER_TEMP/allocation.json")"
+          echo "::add-mask::$connection_string"
+          echo "::add-mask::$claim_url"
+          printf '%s' "$ALLOCATION_PUBLIC_KEY_B64" | base64 --decode \
+            > "$RUNNER_TEMP/allocation-public.pem"
+          printf '%s' "$connection_string" > "$RUNNER_TEMP/connection-string.txt"
+          printf '%s' "$claim_url" > "$RUNNER_TEMP/claim-url.txt"
+          openssl pkeyutl -encrypt \
+            -pubin \
+            -inkey "$RUNNER_TEMP/allocation-public.pem" \
+            -in "$RUNNER_TEMP/connection-string.txt" \
+            -out "$output/connection-string.enc" \
+            -pkeyopt rsa_padding_mode:oaep \
+            -pkeyopt rsa_oaep_md:sha256 \
+            -pkeyopt rsa_mgf1_md:sha256
+          openssl pkeyutl -encrypt \
+            -pubin \
+            -inkey "$RUNNER_TEMP/allocation-public.pem" \
+            -in "$RUNNER_TEMP/claim-url.txt" \
+            -out "$output/claim-url.enc" \
+            -pkeyopt rsa_padding_mode:oaep \
+            -pkeyopt rsa_oaep_md:sha256 \
+            -pkeyopt rsa_mgf1_md:sha256
+          jq '{id,status,created_at,expires_at}' "$RUNNER_TEMP/allocation.json" \
+            > "$output/metadata.json"
+          rm -f \
+            "$RUNNER_TEMP/allocation.json" \
+            "$RUNNER_TEMP/allocation-public.pem" \
+            "$RUNNER_TEMP/connection-string.txt" \
+            "$RUNNER_TEMP/claim-url.txt"
+      - name: Upload encrypted reserve credentials
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-encrypted-reserve-${{ github.run_id }}
+          path: ${{ runner.temp }}/sp500-dehb-reserve
+          if-no-files-found: error
+          retention-days: 1
+
+  continuous_migrate:
+    if: ${{ inputs.mode == 'continuous_migrate' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.migration_source == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.migration_source == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT: ${{ inputs.migration_target == 'current' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT }}
+    steps:
+      - name: Check out exact migration revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Fail unless the source campaign run is stopped
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ inputs.source_run_id }}"
+          test "$(gh run view '${{ inputs.source_run_id }}' --json status --jq .status)" = "completed"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+          test "$SP500_DEHB_COORDINATOR_DATABASE_URL" != "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+          echo "SP500_DEHB_SOURCE_RUN_COMPLETED=true" >> "$GITHUB_ENV"
+      - name: Prove the source database has no live writers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "psycopg[binary]>=3.2,<4"
+          python -m pip install --no-deps -e .
+          python scripts/close_sp500_dehb_database_run_sessions.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --github-run-id "${{ inputs.source_run_id }}" \
+            --terminate-stopped-run-backends \
+            --rebuild-open-batches
+          python scripts/assert_sp500_dehb_database_quiescent.py \
+            --campaign-id "${{ inputs.campaign_id }}"
+      - name: Clone the stopped PostgreSQL database exactly
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sp500-dehb-clone"
+          docker run --rm \
+            -e SP500_DEHB_COORDINATOR_DATABASE_URL \
+            -v "$RUNNER_TEMP/sp500-dehb-clone:/clone" \
+            postgres:17.10-alpine \
+            pg_dump \
+              --dbname="$SP500_DEHB_COORDINATOR_DATABASE_URL" \
+              --format=custom \
+              --file=/clone/coordinator.dump \
+              --no-owner \
+              --no-privileges \
+              --serializable-deferrable
+          docker run --rm \
+            -e SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT \
+            -v "$RUNNER_TEMP/sp500-dehb-clone:/clone" \
+            postgres:17.10-alpine \
+            pg_restore \
+              --dbname="$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT" \
+              --clean \
+              --if-exists \
+              --no-owner \
+              --no-privileges \
+              --exit-on-error \
+              --single-transaction \
+              /clone/coordinator.dump
+      - name: Verify every campaign row and closed boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/verify_sp500_dehb_database_clone.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --output outputs/sp500_dehb_database_clone/verification.json
+      - name: Compact the verified stopped clone
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/compact_sp500_dehb_database_clone.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --output outputs/sp500_dehb_database_clone/compaction.json
+      - name: Upload non-sensitive clone verification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-database-clone-verification
+          path: outputs/sp500_dehb_database_clone/verification.json
+          if-no-files-found: error
+          retention-days: 30
+
+  continuous_emergency_migrate:
+    if: ${{ inputs.mode == 'continuous_emergency_migrate' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.migration_source == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.migration_source == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT: ${{ inputs.migration_target == 'current' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT }}
+    steps:
+      - name: Check out exact emergency migration revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Fail unless the source campaign run is stopped
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ inputs.source_run_id }}"
+          test "$(gh run view '${{ inputs.source_run_id }}' --json status --jq .status)" = "completed"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+          test "$SP500_DEHB_COORDINATOR_DATABASE_URL" != "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+          echo "SP500_DEHB_SOURCE_RUN_COMPLETED=true" >> "$GITHUB_ENV"
+      - name: Install emergency migration runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "psycopg[binary]>=3.2,<4"
+          python -m pip install --no-deps -e .
+      - name: Disconnect stopped source without writing its full tables
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+
+          import psycopg
+
+          database_url = os.environ["SP500_DEHB_COORDINATOR_DATABASE_URL"]
+          with psycopg.connect(database_url, autocommit=True) as connection:
+              terminated = connection.execute(
+                  """
+                  SELECT count(*) FILTER (WHERE pg_terminate_backend(pid))
+                  FROM pg_stat_activity
+                  WHERE datname = current_database()
+                    AND pid <> pg_backend_pid()
+                    AND backend_type = 'client backend'
+                  """
+              ).fetchone()[0]
+          with psycopg.connect(database_url) as connection:
+              remaining = connection.execute(
+                  """
+                  SELECT count(*) FROM pg_stat_activity
+                  WHERE datname = current_database()
+                    AND pid <> pg_backend_pid()
+                    AND backend_type = 'client backend'
+                  """
+              ).fetchone()[0]
+          if int(remaining) != 0:
+              raise RuntimeError("EMERGENCY_MIGRATION_SOURCE_BACKENDS_REMAIN")
+          print(json.dumps({"terminated_backends": int(terminated), "remaining": 0}))
+          PY
+      - name: Clone the read-only stopped database exactly
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sp500-dehb-emergency-clone"
+          docker run --rm \
+            -e SP500_DEHB_COORDINATOR_DATABASE_URL \
+            -v "$RUNNER_TEMP/sp500-dehb-emergency-clone:/clone" \
+            postgres:17.10-alpine \
+            pg_dump \
+              --dbname="$SP500_DEHB_COORDINATOR_DATABASE_URL" \
+              --format=custom \
+              --file=/clone/coordinator.dump \
+              --no-owner \
+              --no-privileges \
+              --serializable-deferrable
+          docker run --rm \
+            -e SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT \
+            -v "$RUNNER_TEMP/sp500-dehb-emergency-clone:/clone" \
+            postgres:17.10-alpine \
+            pg_restore \
+              --dbname="$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT" \
+              --clean \
+              --if-exists \
+              --no-owner \
+              --no-privileges \
+              --exit-on-error \
+              --single-transaction \
+              /clone/coordinator.dump
+      - name: Verify the untouched clone before target recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p outputs/sp500_dehb_emergency_clone
+          python scripts/verify_sp500_dehb_database_clone.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --output outputs/sp500_dehb_emergency_clone/verification.json
+      - name: Recover sessions and batches on the roomy target
+        shell: bash
+        run: |
+          set -euo pipefail
+          SP500_DEHB_COORDINATOR_DATABASE_URL="$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT" \
+            python scripts/close_sp500_dehb_database_run_sessions.py \
+              --campaign-id "${{ inputs.campaign_id }}" \
+              --github-run-id "${{ inputs.source_run_id }}" \
+              --terminate-stopped-run-backends \
+              --rebuild-open-batches \
+              > outputs/sp500_dehb_emergency_clone/recovery.json
+          SP500_DEHB_COORDINATOR_DATABASE_URL="$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT" \
+            python scripts/assert_sp500_dehb_database_quiescent.py \
+              --campaign-id "${{ inputs.campaign_id }}"
+          cat outputs/sp500_dehb_emergency_clone/recovery.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(
+              Path("outputs/sp500_dehb_emergency_clone/recovery.json").read_text()
+          )
+          assert report["physical_result_count"] > 0
+          assert report["conflict_count"] == 0
+          assert report["open_batch_count"] == 0
+          assert report["validation_opened"] is False
+          assert report["locked_opened"] is False
+          assert report["database_size_bytes"] < 100_000_000
+          PY
+      - name: Upload emergency clone evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-emergency-clone-evidence
+          path: outputs/sp500_dehb_emergency_clone
+          if-no-files-found: error
+          retention-days: 30
+
+  continuous_segment:
+    if: ${{ inputs.mode == 'continuous_segment' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.migration_source == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.migration_source == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT: ${{ inputs.migration_target == 'current' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT }}
+    steps:
+      - name: Check out exact segmentation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify stopped source and distinct empty target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ inputs.source_run_id }}"
+          test "$(gh run view '${{ inputs.source_run_id }}' --json status --jq .status)" = "completed"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+          test "$SP500_DEHB_COORDINATOR_DATABASE_URL" != "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+      - name: Install archive and segmentation runtime
+        run: |
+          python -m pip install "psycopg[binary,pool]>=3.2,<4"
+          python -m pip install --no-deps -e .
+      - name: Download prior cumulative history
+        if: ${{ inputs.history_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-dehb-continuous-history
+          path: ${{ runner.temp }}/prior_history
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.history_run_id }}
+      - name: Build cumulative immutable train-only history
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p outputs/sp500_dehb_history
+          prior_args=()
+          if [[ -n "${{ inputs.history_run_id }}" ]]; then
+            prior_args=(
+              --prior-database "$RUNNER_TEMP/prior_history/history.sqlite"
+              --prior-manifest "$RUNNER_TEMP/prior_history/history.manifest.json"
+            )
+          fi
+          python scripts/build_sp500_dehb_historical_archive.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --output-database outputs/sp500_dehb_history/history.sqlite \
+            --output-manifest outputs/sp500_dehb_history/history.manifest.json \
+            --output-receipt outputs/sp500_dehb_history/archive-receipt.json \
+            "${prior_args[@]}"
+      - name: Copy only live search state to fresh target
+        run: >-
+          python scripts/segment_sp500_dehb_continuous_state.py
+          --campaign-id "${{ inputs.campaign_id }}"
+          --output outputs/sp500_dehb_history/segment-receipt.json
+      - name: Verify segmented state and closed boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '.evaluation_count > 0 and .strategy_count > 0 and .result_row_count > 0 and .validation_opened == false and .locked_opened == false' \
+            outputs/sp500_dehb_history/archive-receipt.json >/dev/null
+          jq -e '.copied_state_rows.campaigns == 1 and .copied_state_rows.islands == 720 and .target_database_size_bytes < 30000000 and .validation_opened == false and .locked_opened == false' \
+            outputs/sp500_dehb_history/segment-receipt.json >/dev/null
+      - name: Upload cumulative verified history and segmentation evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-continuous-history
+          path: outputs/sp500_dehb_history
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+  continuous_compact:
+    if: ${{ inputs.mode == 'continuous_compact' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
+    steps:
+      - name: Check out exact compaction revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Fail unless the source campaign run is stopped
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ inputs.source_run_id }}"
+          test "$(gh run view '${{ inputs.source_run_id }}' --json status --jq .status)" = "completed"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT"
+          echo "SP500_DEHB_SOURCE_RUN_COMPLETED=true" >> "$GITHUB_ENV"
+      - name: Compact deterministic payloads and checkpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "psycopg[binary]>=3.2,<4"
+          python -m pip install --no-deps -e .
+          mkdir -p outputs/sp500_dehb_database_compaction
+          python scripts/compact_sp500_dehb_database_clone.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --output outputs/sp500_dehb_database_compaction/compaction.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(
+              Path("outputs/sp500_dehb_database_compaction/compaction.json").read_text()
+          )
+          assert report["conflict_count"] == 0
+          assert report["validation_opened"] is False
+          assert report["locked_opened"] is False
+          assert report["after_bytes"] < 100_000_000
+          PY
+      - name: Upload database compaction evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-database-compaction
+          path: outputs/sp500_dehb_database_compaction/compaction.json
+          if-no-files-found: error
+          retention-days: 30
+
+  continuous_recover:
+    if: ${{ inputs.mode == 'continuous_recover' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT_DIRECT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS_DIRECT || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_DIRECT }}
+    steps:
+      - name: Check out exact recovery revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Fail unless the source run is stopped
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ inputs.source_run_id }}"
+          test "$(gh run view '${{ inputs.source_run_id }}' --json status --jq .status)" = "completed"
+          test -n "$SP500_DEHB_COORDINATOR_DATABASE_URL"
+          echo "SP500_DEHB_SOURCE_RUN_COMPLETED=true" >> "$GITHUB_ENV"
+      - name: Normalize Neon direct endpoint for backend recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from urllib.parse import urlsplit, urlunsplit
+
+          database_url = os.environ["SP500_DEHB_COORDINATOR_DATABASE_URL"]
+          parsed = urlsplit(database_url)
+          hostname = parsed.hostname or ""
+          if "-pooler." in hostname:
+              if not hostname.endswith(".neon.tech"):
+                  raise RuntimeError("RECOVERY_UNKNOWN_POOLED_DATABASE_HOST")
+              direct_hostname = hostname.replace("-pooler.", ".", 1)
+              direct_netloc = parsed.netloc.replace(hostname, direct_hostname, 1)
+              database_url = urlunsplit(parsed._replace(netloc=direct_netloc))
+          print(f"::add-mask::{database_url}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(
+                  "SP500_DEHB_COORDINATOR_DATABASE_URL=" + database_url + "\n"
+              )
+          PY
+      - name: Reclaim stopped-session pages before recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "psycopg[binary]>=3.2,<4"
+          python - <<'PY'
+          import json
+          import os
+
+          import psycopg
+
+          database_url = os.environ["SP500_DEHB_COORDINATOR_DATABASE_URL"]
+          campaign_id = "${{ inputs.campaign_id }}"
+          with psycopg.connect(database_url) as connection:
+              boundary = connection.execute(
+                  """
+                  SELECT validation_opened, locked_opened
+                  FROM campaigns WHERE campaign_id = %s
+                  """,
+                  (campaign_id,),
+              ).fetchone()
+              if boundary is None or bool(boundary[0]) or bool(boundary[1]):
+                  raise RuntimeError("RECOVERY_RECLAIM_BOUNDARY_OPENED")
+              deleted_leases = connection.execute(
+                  """
+                  DELETE FROM worker_slot_leases leases
+                  USING worker_sessions sessions
+                  WHERE leases.worker_session_id = sessions.worker_session_id
+                    AND sessions.campaign_id = %s
+                    AND sessions.state = 'closed'
+                  """,
+                  (campaign_id,),
+              ).rowcount
+              deleted_sessions = connection.execute(
+                  """
+                  DELETE FROM worker_sessions
+                  WHERE campaign_id = %s AND state = 'closed'
+                  """,
+                  (campaign_id,),
+              ).rowcount
+          with psycopg.connect(database_url, autocommit=True) as connection:
+              connection.execute("VACUUM (ANALYZE) worker_sessions")
+              database_size = int(
+                  connection.execute(
+                      "SELECT pg_database_size(current_database())"
+                  ).fetchone()[0]
+              )
+          print(
+              json.dumps(
+                  {
+                      "deleted_closed_session_leases": int(deleted_leases),
+                      "deleted_closed_sessions": int(deleted_sessions),
+                      "database_size_bytes": database_size,
+                      "validation_opened": False,
+                      "locked_opened": False,
+                  },
+                  sort_keys=True,
+              )
+          )
+          PY
+      - name: Recover stopped sessions and rebuild unapplied batches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "psycopg[binary]>=3.2,<4"
+          python -m pip install --no-deps -e .
+          mkdir -p outputs/sp500_dehb_database_recovery
+          recovered=false
+          for attempt in $(seq 1 30); do
+            if python scripts/close_sp500_dehb_database_run_sessions.py \
+              --campaign-id "${{ inputs.campaign_id }}" \
+              --github-run-id "${{ inputs.source_run_id }}" \
+              --terminate-stopped-run-backends \
+              --rebuild-open-batches \
+              > outputs/sp500_dehb_database_recovery/recovery.json; then
+              recovered=true
+              break
+            fi
+            sleep 5
+          done
+          test "$recovered" = true
+          cat outputs/sp500_dehb_database_recovery/recovery.json
+          python scripts/assert_sp500_dehb_database_quiescent.py \
+            --campaign-id "${{ inputs.campaign_id }}"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(
+              Path("outputs/sp500_dehb_database_recovery/recovery.json").read_text()
+          )
+          assert report["physical_result_count"] > 0
+          assert report["conflict_count"] == 0
+          assert report["open_batch_count"] == 0
+          assert report["validation_opened"] is False
+          assert report["locked_opened"] is False
+          PY
+      - name: Upload non-sensitive recovery evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-database-recovery
+          path: outputs/sp500_dehb_database_recovery/recovery.json
+          if-no-files-found: error
+          retention-days: 30
+
+  continuous_bootstrap:
+    if: ${{ inputs.mode == 'continuous_start' }}
+    uses: ./.github/workflows/sp500-dehb-continuous-bootstrap-v2.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      campaign_id: ${{ inputs.campaign_id }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      launch_contract_run_id: ${{ inputs.launch_contract_run_id }}
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+
+  continuous_coordinator:
+    needs: continuous_bootstrap
+    if: >-
+      ${{ always() &&
+          (inputs.mode == 'continuous_start' || inputs.mode == 'continuous_continue') &&
+          (inputs.mode == 'continuous_continue' || needs.continuous_bootstrap.result == 'success') }}
+    uses: ./.github/workflows/sp500-dehb-continuous-coordinator-v2.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      campaign_id: ${{ inputs.campaign_id }}
+      bootstrap_run_id: ${{ inputs.mode == 'continuous_start' && github.run_id || inputs.bootstrap_run_id }}
+      lifetime_minutes: "300"
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+
+  continuous_pool:
+    needs: continuous_bootstrap
+    if: >-
+      ${{ always() &&
+          (inputs.mode == 'continuous_start' || inputs.mode == 'continuous_continue') &&
+          (inputs.mode == 'continuous_continue' || needs.continuous_bootstrap.result == 'success') }}
+    uses: ./.github/workflows/sp500-dehb-continuous-worker-pool-v2.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      campaign_id: ${{ inputs.campaign_id }}
+      pool_generation: pool-${{ inputs.pool_generation }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      bootstrap_run_id: ${{ inputs.mode == 'continuous_start' && github.run_id || inputs.bootstrap_run_id }}
+      history_run_id: ${{ inputs.history_run_id }}
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+
+  continuous_reducer:
+    needs: continuous_bootstrap
+    if: >-
+      ${{ always() &&
+          (inputs.mode == 'continuous_start' || inputs.mode == 'continuous_continue') &&
+          (inputs.mode == 'continuous_continue' || needs.continuous_bootstrap.result == 'success') }}
+    uses: ./.github/workflows/sp500-dehb-continuous-reducer-v2.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      campaign_id: ${{ inputs.campaign_id }}
+      cutoff_sequence: latest
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      bootstrap_run_id: ${{ inputs.mode == 'continuous_start' && github.run_id || inputs.bootstrap_run_id }}
+      history_run_id: ${{ inputs.history_run_id }}
+      delay_minutes: "5"
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+
+  continuous_continue:
+    needs:
+      - continuous_bootstrap
+      - continuous_coordinator
+      - continuous_pool
+      - continuous_reducer
+    if: >-
+      ${{ always() &&
+          (inputs.mode == 'continuous_start' || inputs.mode == 'continuous_continue') &&
+          (inputs.mode == 'continuous_continue' || needs.continuous_bootstrap.result == 'success') &&
+          needs.continuous_coordinator.result == 'success' &&
+          needs.continuous_pool.result == 'success' &&
+          needs.continuous_reducer.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GITHUB_ACTIONS: "true"
+      GH_TOKEN: ${{ github.token }}
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ inputs.database_slot == 'next' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_NEXT || inputs.database_slot == 'previous' && secrets.SP500_DEHB_COORDINATOR_DATABASE_URL_PREVIOUS || secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+    steps:
+      - name: Check out current infrastructure revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify frozen scientific revision
+        run: >-
+          python scripts/verify_sp500_dehb_scientific_revision.py
+          --scientific-commit "${{ inputs.commit_sha }}"
+      - name: Set up supervisor runtime
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install supervisor dependencies
+        run: |
+          python -m pip install "psycopg[binary,pool]>=3.2,<4"
+          python -m pip install --no-deps -e .
+      - name: Audit campaign and continue only when safe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/audit_sp500_dehb_continuous_campaign.py \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --pool-generation "pool-${{ inputs.pool_generation }}" \
+            --output "$RUNNER_TEMP/continuous-decision.json"
+          action="$(jq -r '.action' "$RUNNER_TEMP/continuous-decision.json")"
+          case "$action" in
+            healthy|dispatch_next_generation|recover_coordinator)
+              generation="${{ inputs.pool_generation }}"
+              [[ "$generation" =~ ^[0-9]{6}$ ]]
+              next_generation="$(printf '%06d' "$((10#$generation + 1))")"
+              bootstrap_run_id="${{ inputs.bootstrap_run_id }}"
+              if [[ "${{ inputs.mode }}" == "continuous_start" ]]; then
+                bootstrap_run_id="${{ github.run_id }}"
+              fi
+              gh workflow run sp500-megarun-dehb-official-smoke.yml \
+                --ref "${{ github.ref_name }}" \
+                -f mode=continuous_continue \
+                -f commit_sha="${{ inputs.commit_sha }}" \
+                -f campaign_id="${{ inputs.campaign_id }}" \
+                -f runtime_input_run_id="${{ inputs.runtime_input_run_id }}" \
+                -f bootstrap_run_id="$bootstrap_run_id" \
+                -f history_run_id="${{ inputs.history_run_id }}" \
+                -f database_slot="${{ inputs.database_slot }}" \
+                -f pool_generation="$next_generation"
+              ;;
+            drain)
+              echo "Campaign frozen; no further worker generation will be dispatched."
+              ;;
+            halt_conflict|halt_boundary)
+              echo "Fail-closed campaign halt: $action" >&2
+              exit 1
+              ;;
+            *)
+              echo "Unknown supervisor action: $action" >&2
+              exit 1
+              ;;
+          esac

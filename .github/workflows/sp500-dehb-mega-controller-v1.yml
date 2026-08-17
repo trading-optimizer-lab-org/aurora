@@ -32,6 +32,10 @@ on:
         description: Comma-separated runs holding prior-wave island checkpoints
         required: false
         default: ""
+      evaluation_cache_run_ids:
+        description: Comma-separated verified prior attempts and waves used only as evaluation cache
+        required: false
+        default: ""
       auto_continue:
         description: Dispatch retry or next wave automatically
         required: true
@@ -217,6 +221,10 @@ jobs:
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       NUMEXPR_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
+      BLIS_NUM_THREADS: "1"
+      OPENBLAS_CORETYPE: "NEHALEM"
+      NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
     steps:
       - name: Check out exact campaign revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -233,6 +241,7 @@ jobs:
           runtime-input-run-id: ${{ inputs.runtime_input_run_id }}
           launch-contract-run-id: ${{ github.run_id }}
           checkpoint-run-ids: ${{ inputs.checkpoint_run_ids }}
+          evaluation-cache-run-ids: ${{ inputs.evaluation_cache_run_ids }}
           github-token: ${{ github.token }}
 
 
@@ -252,6 +261,10 @@ jobs:
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       NUMEXPR_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
+      BLIS_NUM_THREADS: "1"
+      OPENBLAS_CORETYPE: "NEHALEM"
+      NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
     steps:
       - name: Check out exact campaign revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -268,6 +281,7 @@ jobs:
           runtime-input-run-id: ${{ inputs.runtime_input_run_id }}
           launch-contract-run-id: ${{ github.run_id }}
           checkpoint-run-ids: ${{ inputs.checkpoint_run_ids }}
+          evaluation-cache-run-ids: ${{ inputs.evaluation_cache_run_ids }}
           github-token: ${{ github.token }}
 
 
@@ -287,6 +301,10 @@ jobs:
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       NUMEXPR_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
+      BLIS_NUM_THREADS: "1"
+      OPENBLAS_CORETYPE: "NEHALEM"
+      NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
     steps:
       - name: Check out exact campaign revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -303,6 +321,7 @@ jobs:
           runtime-input-run-id: ${{ inputs.runtime_input_run_id }}
           launch-contract-run-id: ${{ github.run_id }}
           checkpoint-run-ids: ${{ inputs.checkpoint_run_ids }}
+          evaluation-cache-run-ids: ${{ inputs.evaluation_cache_run_ids }}
           github-token: ${{ github.token }}
 
 
@@ -342,6 +361,11 @@ jobs:
         with:
           name: sp500-dehb-launch-contract
           path: ${{ runner.temp }}/dehb_launch
+      - name: Download exact wave plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-dehb-wave-plan
+          path: ${{ runner.temp }}/dehb_wave_plan
       - name: Download complete worker artifacts across retries
         run: |
           set -euo pipefail
@@ -407,6 +431,7 @@ jobs:
             --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json" \
             --expected-code-commit-sha "${{ inputs.commit_sha }}" \
             --wave "${{ inputs.wave }}" \
+            --wave-plan "$RUNNER_TEMP/dehb_wave_plan" \
             --global-robustness outputs/global_reduce/global_robustness.json \
             --output outputs/controller/controller_decision.json \
             --github-output "$GITHUB_OUTPUT"
@@ -419,6 +444,7 @@ jobs:
             --launch-contract "$RUNNER_TEMP/dehb_launch/launch_contract.json" \
             --expected-code-commit-sha "${{ inputs.commit_sha }}" \
             --wave "${{ inputs.wave }}" \
+            --wave-plan "$RUNNER_TEMP/dehb_wave_plan" \
             --output outputs/controller/controller_decision.json \
             --github-output "$GITHUB_OUTPUT"
       - name: Fail closed if global reduction failed with complete evidence
@@ -434,7 +460,9 @@ jobs:
           RESTART_COMPLETE: ${{ steps.controller_complete.outputs.next_restart_ordinal }}
           RESTART_RETRY: ${{ steps.controller_retry.outputs.next_restart_ordinal }}
         run: |
-          python -c "import os,pathlib; o=pathlib.Path(os.environ['GITHUB_OUTPUT']); f=o.open('a',encoding='utf-8'); [f.write(k+'='+(os.environ[a] or os.environ[b])+'\n') for k,a,b in [('action','ACTION_COMPLETE','ACTION_RETRY'),('next_wave','WAVE_COMPLETE','WAVE_RETRY'),('next_restart_ordinal','RESTART_COMPLETE','RESTART_RETRY')]; f.close()"
+          printf 'action=%s\n' "${ACTION_COMPLETE:-$ACTION_RETRY}" >> "$GITHUB_OUTPUT"
+          printf 'next_wave=%s\n' "${WAVE_COMPLETE:-$WAVE_RETRY}" >> "$GITHUB_OUTPUT"
+          printf 'next_restart_ordinal=%s\n' "${RESTART_COMPLETE:-$RESTART_RETRY}" >> "$GITHUB_OUTPUT"
       - name: Upload controller decision
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -454,19 +482,42 @@ jobs:
 
   continue:
     needs: reduce
-    if: inputs.auto_continue && (needs.reduce.outputs.action == 'retry_jobs' || needs.reduce.outputs.action == 'dispatch_next_wave')
+    if: always() && inputs.auto_continue && needs.reduce.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Dispatch exact retry or next scientific wave
+      - name: Read controller decision artifact
+        id: decision
         shell: bash
         run: |
           set -euo pipefail
-          action="${{ needs.reduce.outputs.action }}"
+          decision_dir="$RUNNER_TEMP/controller_decision"
+          mkdir -p "$decision_dir"
+          gh run download "${{ github.run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name sp500-dehb-controller-decision \
+            --dir "$decision_dir"
+          action="$(python - "$decision_dir/controller_decision.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              print(json.load(handle)["action"])
+          PY
+          )"
+          printf 'action=%s\n' "$action" >> "$GITHUB_OUTPUT"
+      - name: Dispatch exact retry or next scientific wave
+        if: steps.decision.outputs.action == 'retry_jobs' || steps.decision.outputs.action == 'dispatch_next_wave'
+        shell: bash
+        run: |
+          set -euo pipefail
+          action="${{ steps.decision.outputs.action }}"
           evidence_ids="${{ inputs.evidence_run_ids }}"
           checkpoint_ids="${{ inputs.checkpoint_run_ids }}"
+          cache_ids="${{ inputs.evaluation_cache_run_ids }}"
+          cache_ids="${cache_ids:+$cache_ids,}${{ github.run_id }}"
           if [[ "$action" == "retry_jobs" ]]; then
             next_wave="${{ inputs.wave }}"
             next_restart="${{ inputs.restart_ordinal }}"
@@ -478,6 +529,7 @@ jobs:
             evidence_ids=""
           fi
           gh workflow run sp500-dehb-mega-controller-v1.yml \
+            --repo "${{ github.repository }}" \
             --ref "${{ github.ref_name }}" \
             -f commit_sha="${{ inputs.commit_sha }}" \
             -f wave="$next_wave" \
@@ -487,5 +539,6 @@ jobs:
             -f prior_decision_run_id="${{ github.run_id }}" \
             -f evidence_run_ids="$evidence_ids" \
             -f checkpoint_run_ids="$checkpoint_ids" \
+            -f evaluation_cache_run_ids="$cache_ids" \
             -f auto_continue=true \
             -f launch_only=false

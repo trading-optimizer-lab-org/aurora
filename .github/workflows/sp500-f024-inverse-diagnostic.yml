@@ -1,0 +1,120 @@
+name: SP500 F024 Inverse Diagnostic
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+      validation_ack: {required: true, type: string}
+
+permissions: {actions: read, contents: read}
+concurrency:
+  group: sp500-f024-inverse-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GITHUB_ACTIONS: "true"
+      SCIENTIFIC_COMMIT_SHA: ${{ inputs.commit_sha }}
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    steps:
+      - name: Enforce explicit diagnostic authorization
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATION_ACK: ${{ inputs.validation_ack }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='OPEN_SP500_MEGARUN_VALIDATION_2011_2020_SELECTED_12_ONCE'
+          test "$VALIDATION_ACK" = "$expected"
+          [[ '${{ inputs.commit_sha }}' =~ ^[0-9a-f]{40}$ ]]
+          prior=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts?name=sp500-f024-inverse-diagnostic-once&per_page=1" \
+            --jq '.total_count')
+          test "$prior" = "0"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Verify exact revision
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = '${{ inputs.commit_sha }}'
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+
+      - name: Install frozen scientific runtime
+        run: |
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install --no-deps -e .
+
+      - name: Download immutable training runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-31418682679
+          path: ${{ runner.temp }}/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: "31418682679"
+
+      - name: Download closed validation snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-VALIDATION-CLOSED-2011-2020-F001-F240-31418658411
+          path: ${{ runner.temp }}/validation_snapshot_2011_2020
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: "31418658411"
+
+      - name: Evaluate exact inverted F024 diagnostic
+        run: >-
+          python scripts/run_sp500_selected_validation_12.py
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --data-contract config/sp500_megarun_free_data_240.json
+          --feature-contract config/sp500_megarun_feature_contract_240.json
+          --selection-manifest config/sp500_megarun_selected_validation_12.json
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --validation-snapshot "$RUNNER_TEMP/validation_snapshot_2011_2020"
+          --working-dir "$RUNNER_TEMP/f024-inverse-diagnostic-work"
+          --output-dir outputs/sp500-f024-inverse-diagnostic
+          --authorization "${{ inputs.validation_ack }}"
+          --f024-inverse-diagnostic
+
+      - name: Verify diagnostic evidence and locked boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("outputs/sp500-f024-inverse-diagnostic")
+          receipt = json.loads((root / "validation_receipt.json").read_text("utf-8"))
+          rows = [json.loads(line) for line in (root / "validation_results.jsonl").read_text("utf-8").splitlines()]
+          assert receipt["strategy_count"] == 1
+          assert receipt["git_commit"] == "${{ inputs.commit_sha }}"
+          assert receipt["maximum_date"] == "2020-12-31"
+          assert receipt["validation_informed"] is True
+          assert receipt["independent_validation"] is False
+          assert receipt["locked_opened"] is False
+          assert len(rows) == 1
+          row = rows[0]
+          assert row["components"] == [{"lane_id": "F024", "configuration": {"direction": "reversal", "normalization": "none", "statistic": "divergence", "window": 63}}]
+          assert row["validation_informed"] is True
+          assert row["independent_validation"] is False
+          assert row["locked_opened"] is False
+          assert list(row["validation_metrics"]["annual_returns"]) == [str(year) for year in range(2011, 2021)]
+          PY
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-f024-inverse-diagnostic-once
+          path: outputs/sp500-f024-inverse-diagnostic
+          if-no-files-found: error
+          retention-days: 90

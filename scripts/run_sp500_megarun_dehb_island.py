@@ -16,6 +16,15 @@ from aurora.infra.sp500_megarun.dehb_campaign_contract import (
 from aurora.infra.sp500_megarun.dehb_island_runner import (
     run_official_dehb_island,
 )
+from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+    scientific_evaluator_binding_sha256,
+)
+from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
+    capture_numeric_runtime_report,
+)
+from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
+    scientific_input_binding_sha256,
+)
 from aurora.infra.sp500_megarun.feature_contract import (
     load_and_validate_feature_contract,
 )
@@ -67,11 +76,10 @@ def main() -> int:
 
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise IslandCliError("GITHUB_ACTIONS_REQUIRED_FOR_REAL_DEHB_ISLAND")
+    numeric_runtime = capture_numeric_runtime_report()
     campaign = load_and_validate_campaign_contract(args.campaign_contract)
     data_contract = load_and_validate_contract(args.data_contract)
-    feature_contract = load_and_validate_feature_contract(
-        args.feature_contract, data_contract
-    )
+    feature_contract = load_and_validate_feature_contract(args.feature_contract, data_contract)
     payload = _load_payload(args.job_payload)
     if payload.get("campaign_contract_sha256") != campaign.sha256:
         raise IslandCliError("JOB_CAMPAIGN_SHA256_MISMATCH")
@@ -114,6 +122,13 @@ def main() -> int:
         output_dir=args.output_dir,
         prior_bundle=args.prior_bundle,
         slice_seconds=args.slice_seconds,
+        scientific_evaluator_sha256=scientific_evaluator_binding_sha256(
+            code_commit_sha=os.environ["GITHUB_SHA"],
+            campaign_contract_sha256=campaign.sha256,
+            runtime_scientific_input_binding_sha256=(scientific_input_binding_sha256(campaign)),
+            numeric_runtime_profile_sha256=str(numeric_runtime["profile_sha256"]),
+        ),
+        source_run_id=int(os.environ["GITHUB_RUN_ID"]),
     )
     print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0

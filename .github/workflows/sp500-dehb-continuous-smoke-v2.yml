@@ -1,0 +1,66 @@
+name: SP500 Continuous DEHB Smoke v2
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Exact revision to verify
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sp500-continuous-dehb-smoke-v2-${{ inputs.commit_sha }}
+  cancel-in-progress: false
+
+jobs:
+  postgres_contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: aurora
+          POSTGRES_PASSWORD: continuous-test-only
+          POSTGRES_DB: aurora
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aurora -d aurora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SP500_DEHB_TEST_DATABASE_URL: postgresql://aurora:continuous-test-only@127.0.0.1:5432/aurora
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Verify exact revision
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.commit_sha }}"
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+      - name: Install focused test runtime
+        run: |
+          python -m pip install "psycopg[binary,pool]>=3.2,<4" pytest numpy pandas pyarrow
+          python -m pip install --no-deps -e .
+      - name: Verify unit and PostgreSQL concurrency contracts
+        run: >-
+          python -m pytest
+          tests/test_sp500_megarun_dehb_continuous_models.py
+          tests/test_sp500_megarun_dehb_continuous_schema.py
+          tests/test_sp500_megarun_dehb_continuous_store.py
+          tests/test_sp500_megarun_dehb_continuous_island.py
+          tests/test_sp500_megarun_dehb_continuous_coordinator.py
+          tests/test_sp500_megarun_dehb_continuous_worker.py
+          tests/test_sp500_megarun_dehb_continuous_bootstrap.py
+          tests/integration/test_sp500_megarun_dehb_continuous_postgres.py
+          -q

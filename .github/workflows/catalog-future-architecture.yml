@@ -1,0 +1,47 @@
+name: Catalog Future Architecture Qualification
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions: {contents: read}
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: ${{ github.workspace }}/..
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          enable-cache: false
+      - run: >-
+          uv pip install --system --require-hashes
+          -r requirements/catalog-architecture.lock
+      - name: Verify multi-asset and point-in-time contracts
+        run: >-
+          python -m pytest
+          tests/test_sp500_catalog_runtime_scaling.py
+          -k "multi_asset or cross_sectional"
+          -q
+      - name: Benchmark 10/100 assets and 1000/5000-asset PIT universes
+        run: >-
+          python -m scripts.benchmark_catalog_future_architecture
+          --output outputs/catalog_future_architecture.json
+      - name: Benchmark 1M and 10M streamed catalog results with restart
+        run: >-
+          python -m scripts.benchmark_catalog_scale
+          --store-root "$RUNNER_TEMP/catalog-scale-store"
+          --output outputs/catalog_scale_1m_10m.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-future-architecture-qualification
+          path: outputs
+          if-no-files-found: error
+          retention-days: 90

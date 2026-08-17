@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "selection_id": "sp500-selected-12-before-validation-v1",
+  "source_train_run_id": 31932275712,
+  "validation_start": "2011-01-01",
+  "validation_end": "2020-12-31",
+  "locked_start": "2021-01-01",
+  "validation_opened": false,
+  "locked_opened": false,
+  "strategies": [
+    {
+      "selection_order": 1,
+      "name": "F011 reversión de precio + F067 patrón ordinal",
+      "source_kind": "catalog",
+      "source_id": "SCV1-5374f43d56dbe3025ef539fa6e72ccafdbfbff36c7e5c860537509e0b4663c86",
+      "components": [
+        {"lane_id": "F011", "configuration": {"direction": "reversal", "normalization": "rolling_percentile", "window": 10}},
+        {"lane_id": "F067", "configuration": {"bins": 3, "order": 2, "smoothing": 0.5, "window": 63}}
+      ],
+      "composition": {"kind": "and"},
+      "train_metrics": {"annualized_strategy_return": 0.194069217426, "annualized_alpha": 0.156640524672, "weekly_winning_or_positive_rate": 0.6053475935828877}
+    },
+    {
+      "selection_order": 2,
+      "name": "F150 atención causal",
+      "source_kind": "dehb",
+      "source_id": "f7cc060b38767ef455e04afab688e4ac334d03dc00ffc08033e828aa7cc8cae0",
+      "components": [
+        {"lane_id": "F150", "configuration": {"approved_feature_set": "core_causal_5", "experts": 2, "gate": "volatility", "kind": "attention", "lookback": 63, "refit": "quarterly", "ridge": 0.1, "statistic": "direction_probability", "temperature": 0.25, "window": 756}}
+      ],
+      "composition": {"kind": "identity"},
+      "train_metrics": {"annualized_strategy_return": 0.180555475647, "annualized_alpha": 0.143126782894, "weekly_winning_or_positive_rate": 0.5967914438502674}
+    },
+    {
+      "selection_order": 3,
+      "name": "F068 AR(3) mensual",
+      "source_kind": "dehb",
+      "source_id": "7e086f313edd61b73e27be134d0e6a94360ba42d15cfcb7068a73b62a704306f",
+      "components": [
+        {"lane_id": "F068", "configuration": {"p": 3, "q": 0, "refit": "monthly", "window": 252}}
+      ],
+      "composition": {"kind": "identity"},
+      "train_metrics": {"annualized_strategy_return": 0.166686054842, "annualized_alpha": 0.129257362089, "weekly_winning_or_positive_rate": 0.6299465240641712}
+    },
+    {
+      "selection_order": 4,
+      "name": "F056 regresión logística con 5 señales",
+      "source_kind": "dehb",
+      "source_id": "1be966cb0cc8dfcaf4021d47fd6c8ce5ba7b5968681090785029c3596efe2d17",
+      "components": [
+        {"lane_id": "F056", "configuration": {"feature_set": "diversified_5", "model": "logit", "refit": "monthly", "ridge": 1.0, "threshold": 0.5, "window": 756}}
+      ],
+      "composition": {"kind": "identity"},
+      "train_metrics": {"annualized_strategy_return": 0.164097389227, "annualized_alpha": 0.126668696474, "weekly_winning_or_positive_rate": 0.6032085561497326}
+    },
+    {
+      "selection_order": 5,
+      "name": "F015 riesgo bajista + F208 crecimiento de activos de brokers",
+      "source_kind": "catalog",
+      "source_id": "SCV1-5b085b04f850056c0c9fcea556adc15bb4e7d045cef206ab5a4b66a4f890b505",
+      "components": [
+        {"lane_id": "F015", "configuration": {"kind": "downside", "statistic": "change", "window": 63}},
+        {"lane_id": "F208", "configuration": {"change_lag": 4, "direction": "continuation", "normalization": "change", "statistic": "broker_assets_growth", "window": 4}}
+      ],
+      "composition": {"kind": "weighted_score", "weights": [1.0, -0.5]},
+      "train_metrics": {"annualized_strategy_return": 0.160624615407, "annualized_alpha": 0.123195922653, "weekly_winning_or_positive_rate": 0.6064171122994653}
+    },
+    {
+      "selection_order": 6,
+      "name": "F052 reversión con filtro de crédito",
+      "source_kind": "dehb",
+      "source_id": "fba3c7d991f2fc501729b86109dd1fd816530845b0b81e60a9d69754a64ee37e",
+      "components": [
+        {"lane_id": "F052", "configuration": {"base": "reversal", "confirmation": 2, "gate": "credit", "logic": "or"}}
+      ],
+      "composition": {"kind": "identity"},
+      "train_metrics": {"annualized_strategy_return": 0.153369401931, "annualized_alpha": 0.115940709178, "weekly_winning_or_positive_rate": 0.6267379679144385}
+    },
+    {
+      "selection_order": 7,
+      "name": "F203 liquidez corporativa",
+      "source_kind": "dehb",
+      "source_id": "bcf18ccb4cdf1f1118a6bcd7e537a7d08d3f265404e7c2b572d6cbf406dabb91",
+      "components": [
+        {"lane_id": "F203", "configuration": {"change_lag": 1, "direction": "continuation", "normalization": "rolling_zscore", "statistic": "corporate_liquid_share", "window": 20}}
+      ],
+      "composition": {"kind": "identity"},
+      "train_metrics": {"annualized_strategy_return": 0.149636921278, "annualized_alpha": 0.112208228525, "weekly_winning_or_positive_rate": 0.5850267379679145}
+    },
+    {
+      "selection_order": 8,
+      "name": "F087 posicionamiento CFTC",
+      "source_kind": "dehb",
+      "source_id": "208c09fb6b8b9e638313afce6a78acd6c681d2bca5f1db0e56d4d48a1f4fbe43",
+      "components": [
+        {"lane_id": "F087", "configuration": {"direction": "continuation", "lag": 13, "statistic": "gap_change", "window": 156}}
+      ],
+      "composition": {"kind": "identity"},
+      "train_metrics": {"annualized_strategy_return": 0.140308623332, "annualized_alpha": 0.102879930579, "weekly_winning_or_positive_rate": 0.5721925133689839}
+    },
+    {
+      "selection_order": 9,
+      "name": "F020 estado de volumen + F024 divergencia VXO/VIX",
+      "source_kind": "catalog",
+      "source_id": "SCV1-2c3c4eb9e51f3b67bbec5db0bd6301702e7105c88ed47b48af128bed45b2e6e3",
+      "components": [
+        {"lane_id": "F020", "configuration": {"direction": "continuation", "normalization": "none", "window": 5}},
+        {"lane_id": "F024", "configuration": {"direction": "continuation", "normalization": "none", "statistic": "divergence", "window": 252}}
+      ],
+      "composition": {"base_component_index": 0, "kind": "override", "priority_component_index": 1},
+      "train_metrics": {"annualized_strategy_return": 0.129350153893, "annualized_alpha": 0.0919214611394, "weekly_winning_or_positive_rate": 0.6427807486631016}
+    },
+    {
+      "selection_order": 10,
+      "name": "F024 divergencia VXO/VIX",
+      "source_kind": "dehb",
+      "source_id": "83ff991b8480b520d87a8d184f2b238e7dede94a8b6862558bcacfcf1a65b317",
+      "components": [
+        {"lane_id": "F024", "configuration": {"direction": "continuation", "normalization": "none", "statistic": "divergence", "window": 63}}
+      ],
+      "composition": {"kind": "identity"},
+      "train_metrics": {"annualized_strategy_return": 0.117545927829, "annualized_alpha": 0.0801172350759, "weekly_winning_or_positive_rate": 0.6385026737967915}
+    },
+    {
+      "selection_order": 11,
+      "name": "F052 reversión con filtro de liquidez",
+      "source_kind": "catalog",
+      "source_id": "SCV1-95690f63a66ad72ccd0295f6a18934faab4d6d28f835f2b5bdc740b6d0d2ff15",
+      "components": [
+        {"lane_id": "F052", "configuration": {"base": "reversal", "confirmation": 1, "gate": "liquidity", "logic": "or"}}
+      ],
+      "composition": {"kind": "identity"},
+      "train_metrics": {"annualized_strategy_return": 0.115118126755, "annualized_alpha": 0.0776894340012, "weekly_winning_or_positive_rate": 0.6417112299465241}
+    },
+    {
+      "selection_order": 12,
+      "name": "F013 tendencia normalizada + F100 tipo de interés real",
+      "source_kind": "catalog",
+      "source_id": "SCV1-78e7e3625584ead64aa3063bfa0dca3bd9d4d0166efd202757507ab67b9a35a2",
+      "components": [
+        {"lane_id": "F013", "configuration": {"direction": "continuation", "normalization": "rolling_z", "window": 126}},
+        {"lane_id": "F100", "configuration": {"inflation_target": 2.0, "normalization_window": 8, "statistic": "real_rate"}}
+      ],
+      "composition": {"base_component_index": 0, "kind": "override", "priority_component_index": 1},
+      "train_metrics": {"annualized_strategy_return": 0.094035732266, "annualized_alpha": 0.0566070395127, "weekly_winning_or_positive_rate": 0.6267379679144385}
+    }
+  ]
+}

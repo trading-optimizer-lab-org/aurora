@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
@@ -1122,7 +1123,7 @@ def _temporal_sequences(
     return output
 
 
-def _convolution_basis(
+def _convolution_basis_python(
     sequences: np.ndarray,
     filters: np.ndarray,
     *,
@@ -1149,6 +1150,48 @@ def _convolution_basis(
             np.mean(np.abs(activation[-1]))
             / max(float(np.mean(np.abs(activation))), _EPSILON)
         )
+    return pooled, endpoint, concentration
+
+
+def _convolution_basis(
+    sequences: np.ndarray,
+    filters: np.ndarray,
+    *,
+    dilation: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Exact sample-parallel form of the frozen temporal convolution."""
+
+    count, sequence, _ = sequences.shape
+    kernel = filters.shape[2]
+    start = (kernel - 1) * dilation
+    pooled = np.full((count, len(filters)), np.nan)
+    endpoint = np.full_like(pooled, np.nan)
+    concentration = np.full(count, np.nan)
+    valid = np.isfinite(sequences).all(axis=(1, 2))
+    if not bool(valid.any()):
+        return pooled, endpoint, concentration
+    selected = sequences[valid]
+    activations = []
+    for position in range(start, sequence):
+        indices = position - np.arange(kernel) * dilation
+        windows = selected[:, indices, :].transpose(0, 2, 1)
+        activations.append(
+            np.tanh(
+                np.sum(
+                    filters[None, :, :, :] * windows[:, None, :, :],
+                    axis=(2, 3),
+                )
+            )
+        )
+    activation = np.stack(activations, axis=1)
+    valid_pooled = activation.mean(axis=1)
+    valid_endpoint = activation[:, -1, :]
+    pooled[valid] = valid_pooled
+    endpoint[valid] = valid_endpoint
+    concentration[valid] = np.mean(np.abs(valid_endpoint), axis=1) / np.maximum(
+        np.mean(np.abs(activation), axis=(1, 2)),
+        _EPSILON,
+    )
     return pooled, endpoint, concentration
 
 
@@ -1217,7 +1260,44 @@ def _rolling_sequence_model(
     fit: Callable[[np.ndarray, np.ndarray], Any],
     predict: Callable[[Any, np.ndarray], Mapping[str, float]],
     statistic: str,
+    parallel_refits: bool = False,
 ) -> pd.Series:
+    if parallel_refits:
+        refit_indices = [window]
+        refit_indices.extend(
+            index
+            for index in range(window + 1, len(market))
+            if _refit_due(market["date"], index, cadence, True)
+        )
+        minimum = max(30, window - sequences.shape[1])
+
+        def training_slice(index: int) -> tuple[np.ndarray, np.ndarray] | None:
+            start = max(0, index - window)
+            train_x = sequences[start:index]
+            train_y = target[start:index]
+            valid = np.isfinite(train_x).all(axis=(1, 2)) & np.isfinite(train_y)
+            if int(valid.sum()) < minimum:
+                return None
+            return train_x[valid], train_y[valid]
+
+        slices = [training_slice(index) for index in refit_indices]
+        if all(item is not None for item in slices):
+            checked_slices = [item for item in slices if item is not None]
+            with ThreadPoolExecutor(max_workers=min(4, len(checked_slices))) as executor:
+                models = list(executor.map(lambda item: fit(*item), checked_slices))
+            output = np.full(len(market), np.nan)
+            ends = [*refit_indices[1:], len(market)]
+            for model, start, end in zip(models, refit_indices, ends, strict=True):
+                for index in range(start, end):
+                    if not np.isfinite(sequences[index]).all():
+                        continue
+                    statistics = predict(model, sequences[index])
+                    if statistic not in statistics:
+                        raise PredictiveFeatureEngineError(
+                            f"UNKNOWN_MODEL_STATISTIC:{statistic}"
+                        )
+                    output[index] = statistics[statistic]
+            return pd.Series(output, index=market.index)
     output = np.full(len(market), np.nan)
     model: Any = None
     for index in range(len(market)):
@@ -1298,7 +1378,7 @@ def _reservoir_weights(
     return input_weight, recurrent, bias
 
 
-def _reservoir_states(
+def _reservoir_states_python(
     sequences: np.ndarray,
     *,
     input_weight: np.ndarray,
@@ -1328,6 +1408,74 @@ def _reservoir_states(
     return final, energy, alignment
 
 
+def _reservoir_states(
+    sequences: np.ndarray,
+    *,
+    input_weight: np.ndarray,
+    recurrent: np.ndarray,
+    bias: np.ndarray,
+    leak: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Evaluate independent samples together while preserving time recurrence."""
+
+    sample_count = len(sequences)
+    units = len(bias)
+    final = np.full((sample_count, units), np.nan)
+    energy = np.full(sample_count, np.nan)
+    alignment = np.full(sample_count, np.nan)
+    valid = np.isfinite(sequences).all(axis=(1, 2))
+    valid_sequences = sequences[valid]
+    if not len(valid_sequences):
+        return final, energy, alignment
+    state = np.zeros((len(valid_sequences), units))
+    path = np.empty((len(valid_sequences), sequences.shape[1], units))
+    for step in range(sequences.shape[1]):
+        input_term = valid_sequences[:, step, :] @ input_weight.T
+        recurrent_term = state @ recurrent.T
+        candidate = np.tanh(input_term + recurrent_term + bias)
+        state = (1.0 - leak) * state + leak * candidate
+        path[:, step, :] = state
+    mean_state = np.mean(path, axis=1)
+    state_norm = np.linalg.norm(state, axis=1)
+    mean_norm = np.linalg.norm(mean_state, axis=1)
+    final[valid] = state
+    energy[valid] = state_norm / np.sqrt(units)
+    alignment[valid] = np.einsum(
+        "su,su->s",
+        state,
+        mean_state,
+        optimize=False,
+    ) / np.maximum(state_norm * mean_norm, _EPSILON)
+    return final, energy, alignment
+
+
+def _reservoir_final_states(
+    sequences: np.ndarray,
+    *,
+    input_weight: np.ndarray,
+    recurrent: np.ndarray,
+    bias: np.ndarray,
+    leak: float,
+) -> np.ndarray:
+    """Fit-only reservoir path without discarded energy/alignment allocations."""
+
+    final = np.full((len(sequences), len(bias)), np.nan)
+    valid = np.isfinite(sequences).all(axis=(1, 2))
+    valid_sequences = sequences[valid]
+    if not len(valid_sequences):
+        return final
+    state = np.zeros((len(valid_sequences), len(bias)))
+    for step in range(sequences.shape[1]):
+        candidate = np.tanh(
+            valid_sequences[:, step, :] @ input_weight.T
+            + state @ recurrent.T
+            + bias
+        )
+        state = (1.0 - leak) * state + leak * candidate
+    final[valid] = state
+    return final
+
+
 def _fit_reservoir(
     sequences: np.ndarray,
     y: np.ndarray,
@@ -1351,7 +1499,7 @@ def _fit_reservoir(
         spectral_radius=spectral_radius,
         seed=seed,
     )
-    states, _, _ = _reservoir_states(
+    states = _reservoir_final_states(
         standardized,
         input_weight=input_weight,
         recurrent=recurrent,
@@ -1431,6 +1579,7 @@ def _f149(
         ),
         predict=_reservoir_statistics,
         statistic=str(parameters.get("statistic", "state_energy")),
+        parallel_refits=True,
     )
 
 

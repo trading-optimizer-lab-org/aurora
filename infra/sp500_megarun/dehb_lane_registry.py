@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import importlib
@@ -17,7 +18,56 @@ ContextBuilder = Callable[["TrainLaneEvaluator"], LaneEvaluator]
 
 _TRAIN_PARTITION = "train_snapshot_1993_2010"
 _TRAIN_END = pd.Timestamp("2010-12-31")
+_AUTHORIZED_VALIDATION_PARTITION = "authorized_validation_snapshot_1993_2020"
+_VALIDATION_END = pd.Timestamp("2020-12-31")
 _ALL_LANES = tuple(f"F{number:03d}" for number in range(1, 241))
+_ENGINE_MODULES = (
+    "feature_input_normalizers",
+    "feature_engine",
+    "feature_smoke",
+    "market_feature_engine",
+    "market_feature_smoke",
+    "macro_feature_engine",
+    "macro_feature_smoke",
+    "model_feature_engine",
+    "model_feature_smoke",
+    "advanced_feature_engine",
+    "advanced_feature_smoke",
+    "microstructure_feature_engine",
+    "microstructure_feature_smoke",
+    "positioning_feature_engine",
+    "positioning_feature_smoke",
+    "tail_macro_feature_engine",
+    "tail_macro_feature_smoke",
+    "fundamental_feature_engine",
+    "fundamental_feature_smoke",
+    "cross_section_feature_engine",
+    "cross_section_feature_smoke",
+    "technical_feature_engine",
+    "technical_feature_smoke",
+    "nonlinear_feature_engine",
+    "nonlinear_feature_smoke",
+    "predictive_feature_engine",
+    "predictive_feature_smoke",
+    "characteristic_feature_engine",
+    "characteristic_feature_smoke",
+    "global_factor_feature_engine",
+    "global_factor_feature_smoke",
+    "cross_asset_feature_engine",
+    "cross_asset_feature_smoke",
+    "rates_credit_feature_engine",
+    "rates_credit_feature_smoke",
+    "realtime_survey_feature_engine",
+    "realtime_survey_feature_smoke",
+    "financial_accounts_feature_engine",
+    "financial_accounts_feature_smoke",
+    "volatility_positioning_feature_engine",
+    "volatility_positioning_feature_smoke",
+    "policy_treasury_feature_engine",
+    "policy_treasury_feature_smoke",
+    "public_context_feature_engine",
+    "public_context_feature_smoke",
+)
 
 
 class LaneRegistryError(ValueError):
@@ -58,6 +108,177 @@ def supported_lane_ids() -> tuple[str, ...]:
     return _ALL_LANES
 
 
+# Runtime dependencies are defined by the family builder, not by the
+# individual lane declaration.  A family is initialized once and that
+# initializer loads the complete panel it may use for every lane in the
+# family.  Keeping this map here makes scheduling and runtime verification
+# use the same source of truth as the evaluator.
+_RUNTIME_DATASETS_BY_FAMILY: tuple[tuple[int, int, tuple[str, ...]], ...] = (
+    (1, 20, ("D_SPY",)),
+    (21, 31, ("D_CFTC", "D_RATES", "D_SPY", "D_VIX", "D_VXO")),
+    (
+        32,
+        50,
+        (
+            "D_CALENDAR",
+            "D_CFTC_LEGACY",
+            "D_FOMC_PUBLIC",
+            "D_FIN_COND",
+            "D_FINRA_MARGIN",
+            "D_FRENCH_FACTORS",
+            "D_FRENCH_INDUSTRIES",
+            "D_FX",
+            "D_GOLD",
+            "D_GOYAL",
+            "D_MACRO_PIT",
+            "D_PHILLY_RT",
+            "D_RATES",
+            "D_SHILLER",
+            "D_SPY",
+            "D_WTI",
+            "D_Z1",
+        ),
+    ),
+    (51, 60, ("D_CALENDAR", "D_SPY")),
+    (61, 80, ("D_CALENDAR", "D_SPY")),
+    (
+        81,
+        90,
+        (
+            "D_CALENDAR",
+            "D_CFTC",
+            "D_CFTC_LEGACY",
+            "D_FINRA_MARGIN",
+            "D_FRENCH_INDUSTRIES",
+            "D_MARGIN",
+            "D_SPY",
+            "D_VIX",
+            "D_VXO",
+            "D_Z1",
+        ),
+    ),
+    (
+        91,
+        100,
+        (
+            "D_CALENDAR",
+            "D_CFTC",
+            "D_FOMC_PUBLIC",
+            "D_MACRO_PIT",
+            "D_RATES",
+            "D_SPY",
+            "D_VIX",
+            "D_VXO",
+        ),
+    ),
+    (
+        101,
+        110,
+        (
+            "D_CALENDAR",
+            "D_CBOE_VOL",
+            "D_CFTC_LEGACY",
+            "D_EPU",
+            "D_FIN_COND",
+            "D_GOLD",
+            "D_GOYAL",
+            "D_MACRO_PIT",
+            "D_PHILLY_RT",
+            "D_RATES",
+            "D_SHILLER",
+            "D_WTI",
+            "D_Z1",
+        ),
+    ),
+    (
+        111,
+        120,
+        (
+            "D_CBOE_VOL",
+            "D_FIN_COND",
+            "D_FRENCH_FACTORS",
+            "D_FRENCH_INDUSTRIES",
+            "D_FX",
+            "D_GOYAL",
+            "D_MACRO_PIT",
+            "D_RATES",
+            "D_SHILLER",
+            "D_SPY",
+        ),
+    ),
+    (121, 130, ("D_SPY",)),
+    (131, 140, ("D_CALENDAR", "D_SPY")),
+    (141, 150, ("D_CALENDAR", "D_SPY", "D_VIX", "D_VXO")),
+    (151, 160, ("D_CALENDAR", "D_FRENCH_US", "D_SPY")),
+    (161, 170, ("D_CALENDAR", "D_FRENCH_GLOBAL", "D_FRENCH_US", "D_SPY")),
+    (
+        171,
+        180,
+        ("D_CALENDAR", "D_FED_H15_H10", "D_SPY", "D_WORLD_BANK_COMMODITIES"),
+    ),
+    (
+        181,
+        190,
+        (
+            "D_CALENDAR",
+            "D_CBOE_VOL",
+            "D_FED_H15_H10",
+            "D_FED_H3_H6_H8_G19_CP",
+            "D_SPF",
+            "D_SPY",
+        ),
+    ),
+    (
+        191,
+        200,
+        ("D_CALENDAR", "D_MACRO_PIT", "D_PHILLY_RT", "D_SLOOS", "D_SPF", "D_SPY"),
+    ),
+    (201, 210, ("D_CALENDAR", "D_SPY", "D_TIC", "D_Z1")),
+    (
+        211,
+        220,
+        ("D_CALENDAR", "D_CBOE_PCR", "D_CBOE_VOL", "D_CFTC_LEGACY", "D_SPY"),
+    ),
+    (
+        221,
+        230,
+        (
+            "D_CALENDAR",
+            "D_FED_H15_H10",
+            "D_FED_H3_H6_H8_G19_CP",
+            "D_FOMC_PUBLIC",
+            "D_SPY",
+            "D_TIC",
+            "D_TREASURY_AUCTIONS",
+            "D_TREASURY_FISCAL",
+        ),
+    ),
+    (
+        231,
+        240,
+        (
+            "D_CALENDAR",
+            "D_FOMC_PUBLIC",
+            "D_NOAA_NY",
+            "D_PHILLY_RT",
+            "D_SPY",
+            "D_TIC",
+            "D_TREASURY_AUCTIONS",
+        ),
+    ),
+)
+
+
+def runtime_dataset_ids_for_lane(lane_id: str) -> tuple[str, ...]:
+    """Return every dataset loaded by the evaluator family for ``lane_id``."""
+
+    number = _lane_number(lane_id)
+    for start, end, dataset_ids in _RUNTIME_DATASETS_BY_FAMILY:
+        if start <= number <= end:
+            return dataset_ids
+    raise LaneRegistryError(f"UNKNOWN_LANE:{lane_id}")
+
+
 def default_lane_configurations(feature_contract: Any) -> dict[str, dict[str, Any]]:
     """Freeze the first audited choice of every F001-F240 parameter space."""
 
@@ -93,9 +314,15 @@ class TrainLaneEvaluator:
         baseline_feature_dirs: Mapping[str, Path] | None = None,
         adapters: Sequence[FamilyAdapter] | None = None,
         maximum_date: str | pd.Timestamp | None = None,
+        _snapshot_name: str = _TRAIN_PARTITION,
+        _manifest_partition: str = "train",
+        _data_end: pd.Timestamp = _TRAIN_END,
+        _validation_opened: bool = False,
+        _mountable_by_first_cycle: bool = True,
+        _engine_data_end_override: pd.Timestamp | None = None,
     ) -> None:
         self.snapshot = Path(train_snapshot).resolve()
-        if self.snapshot.name != _TRAIN_PARTITION:
+        if self.snapshot.name != _snapshot_name:
             raise LaneRegistryError("TRAIN_SNAPSHOT_PARTITION_REQUIRED")
         manifest_path = self.snapshot / "snapshot_manifest.json"
         if _sha256_file(manifest_path) != expected_manifest_sha256:
@@ -105,10 +332,11 @@ class TrainLaneEvaluator:
         except (OSError, json.JSONDecodeError) as exc:
             raise LaneRegistryError("TRAIN_MANIFEST_INVALID") from exc
         if (
-            manifest.get("partition") != "train"
-            or manifest.get("validation_opened") is not False
+            manifest.get("partition") != _manifest_partition
+            or manifest.get("validation_opened") is not _validation_opened
             or manifest.get("locked_opened") is not False
-            or manifest.get("mountable_by_first_cycle") is not True
+            or manifest.get("mountable_by_first_cycle")
+            is not _mountable_by_first_cycle
         ):
             raise LaneRegistryError("TRAIN_SNAPSHOT_BOUNDARY_OPEN")
         datasets = manifest.get("datasets")
@@ -118,12 +346,15 @@ class TrainLaneEvaluator:
         if not isinstance(spy_row, Mapping) or spy_row.get("sha256") != expected_spy_sha256:
             raise LaneRegistryError("TRAIN_SPY_MANIFEST_SHA256_MISMATCH")
         self._datasets = datasets
+        self._data_end = pd.Timestamp(_data_end).normalize()
+        self._validation_opened = _validation_opened
+        self._engine_data_end_override = _engine_data_end_override
         self._maximum_date = (
             pd.Timestamp(maximum_date).normalize()
             if maximum_date is not None
             else None
         )
-        if self._maximum_date is not None and self._maximum_date > _TRAIN_END:
+        if self._maximum_date is not None and self._maximum_date > self._data_end:
             raise LaneRegistryError("PREFIX_DATE_AFTER_TRAIN_END")
         self._default_configurations = {
             str(lane): dict(configuration)
@@ -164,7 +395,7 @@ class TrainLaneEvaluator:
         if "date" not in frame or frame.empty:
             raise LaneRegistryError(f"EMPTY_TRAIN_DATASET:{dataset_id}")
         dates = pd.to_datetime(frame["date"], errors="coerce").dt.normalize()
-        if dates.isna().any() or dates.gt(_TRAIN_END).any():
+        if dates.isna().any() or dates.gt(self._data_end).any():
             raise LaneRegistryError(f"NON_TRAIN_DATASET_ROW:{dataset_id}")
         if self._maximum_date is not None:
             frame = frame.loc[dates.le(self._maximum_date)].copy()
@@ -179,7 +410,7 @@ class TrainLaneEvaluator:
     def _sessions(self, dataset_id: str = "D_SPY") -> pd.DatetimeIndex:
         dates = pd.to_datetime(self._read(dataset_id)["date"], errors="raise")
         sessions = pd.DatetimeIndex(dates).normalize().unique().sort_values()
-        return sessions[sessions <= _TRAIN_END]
+        return sessions[sessions <= self._data_end]
 
     def _default(self, lane_id: str) -> Mapping[str, Any]:
         return self._default_configurations[lane_id]
@@ -212,7 +443,7 @@ class TrainLaneEvaluator:
                     )
                 if (
                     value.get("ready") is not True
-                    or value.get("validation_opened") is not False
+                    or value.get("validation_opened") is not self._validation_opened
                     or value.get("locked_opened") is not False
                     or not isinstance(value.get("artifacts"), Mapping)
                 ):
@@ -242,6 +473,24 @@ class TrainLaneEvaluator:
             result[lane_id] = feature
         return result
 
+    @contextmanager
+    def _engine_boundary(self):
+        boundary = self._engine_data_end_override
+        if boundary is None:
+            yield
+            return
+        modules = [_module(name) for name in _ENGINE_MODULES]
+        if any(not hasattr(module, "_TRAIN_END") for module in modules):
+            raise LaneRegistryError("ENGINE_BOUNDARY_HOOK_MISSING")
+        original = [module._TRAIN_END for module in modules]
+        try:
+            for module in modules:
+                module._TRAIN_END = boundary
+            yield
+        finally:
+            for module, value in zip(modules, original, strict=True):
+                module._TRAIN_END = value
+
     def __call__(self, lane_id: str, configuration: Mapping[str, Any]) -> pd.DataFrame:
         number = _lane_number(lane_id)
         adapter = next(
@@ -250,12 +499,47 @@ class TrainLaneEvaluator:
         )
         if adapter is None:
             raise LaneRegistryError(f"UNKNOWN_LANE:{lane_id}")
-        key = (adapter.start, adapter.end)
-        evaluator = self._contexts.get(key)
-        if evaluator is None:
-            evaluator = adapter.builder(self)
-            self._contexts[key] = evaluator
-        return evaluator(lane_id, configuration)
+        with self._engine_boundary():
+            key = (adapter.start, adapter.end)
+            evaluator = self._contexts.get(key)
+            if evaluator is None:
+                evaluator = adapter.builder(self)
+                self._contexts[key] = evaluator
+            return evaluator(lane_id, configuration)
+
+
+class AuthorizedValidationLaneEvaluator(TrainLaneEvaluator):
+    """Mount the explicitly authorized 1993-2020 warm-up snapshot."""
+
+    def __init__(
+        self,
+        validation_snapshot: Path,
+        *,
+        expected_manifest_sha256: str,
+        expected_spy_sha256: str,
+        default_configurations: Mapping[str, Mapping[str, Any]],
+        authorization: str,
+        baseline_feature_dirs: Mapping[str, Path] | None = None,
+        adapters: Sequence[FamilyAdapter] | None = None,
+    ) -> None:
+        from aurora.infra.sp500_megarun.selected_validation import VALIDATION_ACK
+
+        if authorization != VALIDATION_ACK:
+            raise LaneRegistryError("VALIDATION_AUTHORIZATION_INVALID")
+        super().__init__(
+            validation_snapshot,
+            expected_manifest_sha256=expected_manifest_sha256,
+            expected_spy_sha256=expected_spy_sha256,
+            default_configurations=default_configurations,
+            baseline_feature_dirs=baseline_feature_dirs,
+            adapters=adapters,
+            _snapshot_name=_AUTHORIZED_VALIDATION_PARTITION,
+            _manifest_partition="authorized_validation",
+            _data_end=_VALIDATION_END,
+            _validation_opened=True,
+            _mountable_by_first_cycle=False,
+            _engine_data_end_override=_VALIDATION_END,
+        )
 
 
 def _price(owner: TrainLaneEvaluator) -> LaneEvaluator:
@@ -612,6 +896,7 @@ def _default_adapters() -> tuple[FamilyAdapter, ...]:
 
 __all__ = [
     "FamilyAdapter",
+    "AuthorizedValidationLaneEvaluator",
     "LaneEvaluator",
     "LaneRegistryError",
     "TrainLaneEvaluator",

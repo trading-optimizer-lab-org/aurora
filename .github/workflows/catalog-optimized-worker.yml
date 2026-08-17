@@ -1,0 +1,79 @@
+name: SP500 Optimized Recipe Worker
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+      runtime_input_run_id: {required: true, type: string}
+      component_store_run_id: {required: true, type: string}
+      shard_index: {required: true, type: number}
+      active_workers: {required: true, type: number}
+      admission_token_sha256: {required: true, type: string}
+
+permissions: {actions: read, contents: read}
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONHASHSEED: "0"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
+      BLIS_NUM_THREADS: "1"
+      OPENBLAS_CORETYPE: "NEHALEM"
+      NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
+      PYTHONPATH: ${{ github.workspace }}/..
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          enable-cache: false
+      - run: >-
+          uv pip install --system --require-hashes
+          -r requirements/catalog-recipe-worker.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-catalog-run-plan
+          path: ${{ runner.temp }}/plan
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-global-component-store
+          path: ${{ runner.temp }}/component-store
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.component_store_run_id }}
+      - id: evaluate
+        continue-on-error: true
+        run: >-
+          python -m scripts.run_sp500_optimized_recipe_worker
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --component-store "$RUNNER_TEMP/component-store"
+          --resolved-contract "$RUNNER_TEMP/plan/resolved_contract.json"
+          --run-plan "$RUNNER_TEMP/plan/run_plan.json"
+          --resume-work-manifest "$RUNNER_TEMP/plan/resume_work_manifest.json"
+          --recipe-dag "$RUNNER_TEMP/plan/recipe_dag.parquet"
+          --recipe-dag-manifest "$RUNNER_TEMP/plan/recipe_dag_manifest.json"
+          --admission-token "${{ inputs.admission_token_sha256 }}"
+          --shard-index "${{ inputs.shard_index }}" --total-shards "${{ inputs.active_workers }}"
+          --output-dir "outputs/shard-${{ inputs.shard_index }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ always() }}
+        with:
+          name: sp500-catalog-shard-${{ inputs.shard_index }}
+          path: outputs/shard-${{ inputs.shard_index }}
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Preserve failure after uploading committed microshards
+        if: ${{ steps.evaluate.outcome != 'success' }}
+        run: exit 1

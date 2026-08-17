@@ -13,12 +13,13 @@ import math
 from pathlib import Path
 import shutil
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 import pandas as pd
 
 
 Objective = Callable[[Any, float], Mapping[str, Any]]
+EvaluationKeyBuilder = Callable[[Mapping[str, Any]], Any]
 
 
 class IslandRunnerError(ValueError):
@@ -35,6 +36,10 @@ class IslandSliceResult:
     seconds_since_improvement: float
     invalid_config_rejections: int
     best_archive_key: tuple[float, ...] | None
+    physical_evaluations: int
+    full_fidelity_physical_evaluations: int
+    cache_hits: int
+    cache_hits_by_origin: Mapping[str, int]
     trials: tuple[Mapping[str, Any], ...]
 
 
@@ -76,10 +81,101 @@ def _validated_result(result: Mapping[str, Any]) -> tuple[float, float, Mapping[
 
 def _is_configspace_forbidden_value(exc: Exception) -> bool:
     error_type = type(exc)
-    return (
-        error_type.__name__ == "ForbiddenValueError"
-        and error_type.__module__.startswith("ConfigSpace")
+    return error_type.__name__ == "ForbiddenValueError" and error_type.__module__.startswith(
+        "ConfigSpace"
     )
+
+
+def _resume_safe_dehb_class(base_class: type[Any]) -> type[Any]:
+    """Replay one native checkpoint with the runner's original batch semantics.
+
+    DEHB 0.1.2 assumes one ask immediately followed by one tell while replaying.
+    This runner asks four jobs before telling their results. It also leaves
+    repository ID gaps when ConfigSpace rejects a generated vector. During
+    replay the converted configuration is only a temporary container and is
+    replaced by the checkpoint's exact vector, so a valid placeholder preserves
+    DEHB's state transitions without evaluating or accepting a forbidden point.
+    """
+
+    class ResumeSafeDEHB(base_class):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.resume_forbidden_rejections = 0
+            self._checkpoint_replay_buffer: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
+            self._replaying_checkpoint = bool(kwargs.get("resume", False))
+            try:
+                super().__init__(*args, **kwargs)
+                if self._checkpoint_replay_buffer:
+                    raise IslandRunnerError("OFFICIAL_DEHB_CHECKPOINT_NOT_AT_FOUR_JOB_BOUNDARY")
+            finally:
+                self._replaying_checkpoint = False
+
+        def _load_checkpoint(self, run_dir: str) -> Any:
+            original_converters: list[tuple[Any, Callable[..., Any]]] = []
+            for subpopulation in self.de.values():
+                original = subpopulation.vector_to_configspace
+
+                def replay_converter(
+                    vector: Any,
+                    *,
+                    original_converter: Callable[..., Any] = original,
+                ) -> Any:
+                    try:
+                        return original_converter(vector)
+                    except Exception as exc:
+                        if not _is_configspace_forbidden_value(exc):
+                            raise
+                        self.resume_forbidden_rejections += 1
+                        if self.resume_forbidden_rejections > 10_000:
+                            raise IslandRunnerError(
+                                "OFFICIAL_DEHB_RESUME_FORBIDDEN_REJECTION_LIMIT"
+                            ) from exc
+                        return self.cs.get_default_configuration()
+
+                original_converters.append((subpopulation, original))
+                subpopulation.vector_to_configspace = replay_converter
+
+            try:
+                return super()._load_checkpoint(run_dir)
+            finally:
+                for subpopulation, original in original_converters:
+                    subpopulation.vector_to_configspace = original
+
+        def tell(
+            self,
+            job_info: Mapping[str, Any],
+            result: Mapping[str, Any],
+            replay: bool = False,
+        ) -> None:
+            if not replay or not self._replaying_checkpoint:
+                return super().tell(job_info, result, replay=replay)
+
+            self._checkpoint_replay_buffer.append((job_info, result))
+            if len(self._checkpoint_replay_buffer) < 4:
+                return None
+
+            replay_batch = self._checkpoint_replay_buffer
+            self._checkpoint_replay_buffer = []
+            containers = []
+            for _ in replay_batch:
+                containers.append(super().ask(n_configs=1))
+            for container, (historical_job, historical_result) in zip(
+                containers, replay_batch, strict=True
+            ):
+                historical_id = int(historical_job["config_id"])
+                while len(self.config_repository.configs) <= historical_id:
+                    self.config_repository.announce_config(
+                        historical_job["config"], historical_job["fidelity"]
+                    )
+                container["fidelity"] = historical_job["fidelity"]
+                container["config"] = historical_job["config"]
+                container["config_id"] = historical_id
+                self.config_repository.configs[historical_id].config = historical_job["config"]
+                super().tell(container, historical_result, replay=False)
+            return None
+
+    ResumeSafeDEHB.__name__ = f"ResumeSafe{base_class.__name__}"
+    ResumeSafeDEHB.__qualname__ = ResumeSafeDEHB.__name__
+    return ResumeSafeDEHB
 
 
 def _ask_valid_batch(
@@ -108,9 +204,7 @@ def _ask_valid_batch(
                 raise
             rejected += 1
             if rejected > rejection_limit:
-                raise IslandRunnerError(
-                    "OFFICIAL_DEHB_FORBIDDEN_REJECTION_LIMIT"
-                ) from exc
+                raise IslandRunnerError("OFFICIAL_DEHB_FORBIDDEN_REJECTION_LIMIT") from exc
             continue
         if not isinstance(job, Mapping):
             raise IslandRunnerError("OFFICIAL_DEHB_ASK_JOB_NOT_MAPPING")
@@ -134,6 +228,15 @@ def run_ask_tell_slice(
     initial_seconds_since_improvement: float = 0.0,
     initial_invalid_config_rejections: int = 0,
     initial_best_archive_key: tuple[float, ...] | None = None,
+    initial_physical_evaluations: int = 0,
+    initial_full_fidelity_physical_evaluations: int = 0,
+    initial_cache_hits: int = 0,
+    initial_cache_hits_by_origin: Mapping[str, int] | None = None,
+    initial_evaluation_cache: Mapping[str, Mapping[str, Any]] | None = None,
+    evaluation_key: EvaluationKeyBuilder | None = None,
+    source_run_id: int = 0,
+    source_wave: int = 0,
+    source_island_id: str = "",
     max_invalid_config_rejections_per_slice: int = 10_000,
     clock: Callable[[], float] = time.monotonic,
     executor_factory: Any = ProcessPoolExecutor,
@@ -148,15 +251,24 @@ def run_ask_tell_slice(
         raise IslandRunnerError("INVALID_PLATEAU_EVALUATION_THRESHOLDS")
     if plateau_seconds_without_improvement <= 0.0:
         raise IslandRunnerError("INVALID_PLATEAU_SECONDS")
-    if min(
-        initial_evaluations,
-        initial_full_fidelity_evaluations,
-        initial_completed_since_improvement,
-        initial_invalid_config_rejections,
-    ) < 0 or initial_seconds_since_improvement < 0.0:
+    if (
+        min(
+            initial_evaluations,
+            initial_full_fidelity_evaluations,
+            initial_completed_since_improvement,
+            initial_invalid_config_rejections,
+            initial_physical_evaluations,
+            initial_full_fidelity_physical_evaluations,
+            initial_cache_hits,
+        )
+        < 0
+        or initial_seconds_since_improvement < 0.0
+    ):
         raise IslandRunnerError("INVALID_INITIAL_SLICE_STATE")
     if max_invalid_config_rejections_per_slice < 1:
         raise IslandRunnerError("INVALID_FORBIDDEN_REJECTION_LIMIT")
+    if source_run_id < 0 or source_wave < 0:
+        raise IslandRunnerError("INVALID_EVALUATION_SOURCE")
 
     started = clock()
     last_improvement = started - initial_seconds_since_improvement
@@ -165,6 +277,35 @@ def run_ask_tell_slice(
     evaluations = initial_evaluations
     full_fidelity_evaluations = initial_full_fidelity_evaluations
     invalid_config_rejections = initial_invalid_config_rejections
+    physical_evaluations = initial_physical_evaluations
+    full_fidelity_physical_evaluations = initial_full_fidelity_physical_evaluations
+    cache_hits = initial_cache_hits
+    cache_hits_by_origin = {
+        "batch_cache": 0,
+        "island_cache": 0,
+        "prior_wave_cache": 0,
+        **{str(key): int(value) for key, value in (initial_cache_hits_by_origin or {}).items()},
+    }
+    evaluation_cache: dict[str, dict[str, Any]] = {}
+    for key_sha256, value in (initial_evaluation_cache or {}).items():
+        if not isinstance(value, Mapping) or not isinstance(value.get("result"), Mapping):
+            raise IslandRunnerError("INITIAL_EVALUATION_CACHE_ENTRY_INVALID")
+        from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+            scientific_result_sha256,
+        )
+
+        verified_result_sha256 = scientific_result_sha256(value["result"])
+        if value.get("result_sha256") != verified_result_sha256:
+            raise IslandRunnerError("INITIAL_EVALUATION_CACHE_RESULT_MISMATCH")
+        evaluation_cache[str(key_sha256)] = {
+            "result": dict(value["result"]),
+            "result_sha256": verified_result_sha256,
+            "origin": str(value.get("origin", "prior_wave_cache")),
+            "source_run_id": value.get("source_run_id"),
+            "source_wave": value.get("source_wave"),
+            "source_island_id": value.get("source_island_id"),
+            "source_evaluation": value.get("source_evaluation"),
+        }
     slice_invalid_config_rejections = 0
     trials: list[Mapping[str, Any]] = []
     status = "paused_at_runner_slice"
@@ -178,21 +319,83 @@ def run_ask_tell_slice(
                 optimizer,
                 n_configs=n_workers,
                 rejection_limit=(
-                    max_invalid_config_rejections_per_slice
-                    - slice_invalid_config_rejections
+                    max_invalid_config_rejections_per_slice - slice_invalid_config_rejections
                 ),
             )
             slice_invalid_config_rejections += rejected
             invalid_config_rejections += rejected
-            futures = [
-                executor.submit(objective, job["config"], float(job["fidelity"]))
-                for job in jobs
-            ]
-            for job, future in zip(jobs, futures, strict=True):
-                raw_result = future.result()
+            key_sha256s: list[str | None] = []
+            scheduled_origins: list[str] = []
+            pending: dict[str, Any] = {}
+            futures: list[Any | None] = []
+            for job in jobs:
+                key_sha256: str | None = None
+                if evaluation_key is not None:
+                    built = evaluation_key(job)
+                    key_sha256 = str(getattr(built, "sha256", built))
+                    if len(key_sha256) != 64 or any(
+                        character not in "0123456789abcdef" for character in key_sha256
+                    ):
+                        raise IslandRunnerError("EVALUATION_CACHE_KEY_INVALID")
+                key_sha256s.append(key_sha256)
+                if key_sha256 is not None and key_sha256 in evaluation_cache:
+                    futures.append(None)
+                    scheduled_origins.append(str(evaluation_cache[key_sha256]["origin"]))
+                    continue
+                if key_sha256 is not None and key_sha256 in pending:
+                    futures.append(None)
+                    scheduled_origins.append("batch_cache")
+                    continue
+                future = executor.submit(objective, job["config"], float(job["fidelity"]))
+                futures.append(future)
+                scheduled_origins.append("physical")
+                if key_sha256 is not None:
+                    pending[key_sha256] = future
+
+            for job, key_sha256, future, evaluation_origin in zip(
+                jobs, key_sha256s, futures, scheduled_origins, strict=True
+            ):
+                source: Mapping[str, Any] = {}
+                if evaluation_origin in {"island_cache", "prior_wave_cache"}:
+                    if key_sha256 is None:  # pragma: no cover - construction invariant
+                        raise IslandRunnerError("EVALUATION_CACHE_KEY_MISSING")
+                    cached = evaluation_cache[key_sha256]
+                    raw_result = cached["result"]
+                    source = cached
+                elif evaluation_origin == "batch_cache" and key_sha256 is not None:
+                    raw_result = pending[key_sha256].result()
+                    source = evaluation_cache.get(key_sha256, {})
+                else:
+                    if future is None:  # pragma: no cover - guarded by branches above
+                        raise IslandRunnerError("EVALUATION_FUTURE_MISSING")
+                    raw_result = future.result()
                 if not isinstance(raw_result, Mapping):
                     raise IslandRunnerError("OFFICIAL_DEHB_RESULT_NOT_MAPPING")
                 fitness, cost, info = _validated_result(raw_result)
+                if evaluation_origin == "physical":
+                    physical_evaluations += 1
+                    if int(float(job["fidelity"])) == full_fidelity:
+                        full_fidelity_physical_evaluations += 1
+                    if key_sha256 is not None:
+                        from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+                            scientific_result_sha256,
+                        )
+
+                        evaluation_cache[key_sha256] = {
+                            "result": dict(raw_result),
+                            "result_sha256": scientific_result_sha256(raw_result),
+                            "origin": "island_cache",
+                            "source_run_id": source_run_id,
+                            "source_wave": source_wave,
+                            "source_island_id": source_island_id,
+                            "source_evaluation": evaluations + 1,
+                        }
+                        source = evaluation_cache[key_sha256]
+                else:
+                    cache_hits += 1
+                    cache_hits_by_origin[evaluation_origin] = (
+                        cache_hits_by_origin.get(evaluation_origin, 0) + 1
+                    )
                 optimizer.tell(job, raw_result)
                 fidelity = int(float(job["fidelity"]))
                 evaluations += 1
@@ -218,15 +421,23 @@ def run_ask_tell_slice(
                         "fitness": fitness,
                         "cost": cost,
                         "info": dict(info),
+                        "cache_key_sha256": key_sha256,
+                        "evaluation_origin": evaluation_origin,
+                        "cache_result_sha256": (
+                            evaluation_cache[key_sha256]["result_sha256"]
+                            if key_sha256 is not None
+                            else None
+                        ),
+                        "cache_source_run_id": source.get("source_run_id"),
+                        "cache_source_wave": source.get("source_wave"),
+                        "cache_source_island_id": source.get("source_island_id"),
+                        "cache_source_evaluation": source.get("source_evaluation"),
                     }
                 )
 
             now = clock()
             if evaluations >= plateau_minimum_completed:
-                if (
-                    completed_since_improvement
-                    >= plateau_completed_without_improvement
-                ):
+                if completed_since_improvement >= plateau_completed_without_improvement:
                     status = "completed"
                     stop_reason = "plateau_completed_evaluations"
                     break
@@ -246,6 +457,12 @@ def run_ask_tell_slice(
         seconds_since_improvement=max(0.0, clock() - last_improvement),
         invalid_config_rejections=invalid_config_rejections,
         best_archive_key=best_archive_key,
+        physical_evaluations=physical_evaluations,
+        full_fidelity_physical_evaluations=full_fidelity_physical_evaluations,
+        cache_hits=cache_hits,
+        cache_hits_by_origin={
+            key: value for key, value in sorted(cache_hits_by_origin.items()) if value > 0
+        },
         trials=tuple(trials),
     )
 
@@ -292,20 +509,14 @@ def _candidate_rows(search: IslandSliceResult) -> list[dict[str, Any]]:
                 "config_id": int(trial["config_id"]),
                 "fidelity": int(trial["fidelity"]),
                 "fitness": float(trial["fitness"]),
-                "configuration_json": _canonical_bytes(
-                    trial["configuration"]
-                ).decode("utf-8"),
+                "configuration_json": _canonical_bytes(trial["configuration"]).decode("utf-8"),
                 "strategy_fingerprint": str(info.get("strategy_fingerprint", "")),
                 "position_fingerprint": str(info.get("position_fingerprint", "")),
                 "train_feasible": bool(info.get("train_feasible", False)),
-                "annualized_strategy_return": info.get(
-                    "annualized_strategy_return"
-                ),
+                "annualized_strategy_return": info.get("annualized_strategy_return"),
                 "weekly_spy_beat_rate": info.get("weekly_spy_beat_rate"),
                 "annualized_alpha": info.get("annualized_alpha"),
-                "archive_key_json": _canonical_bytes(
-                    info.get("archive_key", [])
-                ).decode("utf-8"),
+                "archive_key_json": _canonical_bytes(info.get("archive_key", [])).decode("utf-8"),
                 "info_json": _canonical_bytes(dict(info)).decode("utf-8"),
             }
         )
@@ -325,13 +536,11 @@ def _pareto_rows(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
             (
                 metric(other, "annualized_strategy_return")
                 >= metric(row, "annualized_strategy_return")
-                and metric(other, "weekly_spy_beat_rate")
-                >= metric(row, "weekly_spy_beat_rate")
+                and metric(other, "weekly_spy_beat_rate") >= metric(row, "weekly_spy_beat_rate")
                 and (
                     metric(other, "annualized_strategy_return")
                     > metric(row, "annualized_strategy_return")
-                    or metric(other, "weekly_spy_beat_rate")
-                    > metric(row, "weekly_spy_beat_rate")
+                    or metric(other, "weekly_spy_beat_rate") > metric(row, "weekly_spy_beat_rate")
                 )
             )
             for other in feasible
@@ -396,6 +605,9 @@ def write_island_bundle(
     robustness_reviewer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
     prior_bundle: Path | None = None,
     launch_contract_sha256: str | None = None,
+    scientific_evaluator_sha256: str | None = None,
+    source_run_id: int = 0,
+    determinism_audit: Mapping[str, Any] | None = None,
     maximum_bundle_bytes: int = 12 * 1024 * 1024,
 ) -> Mapping[str, Any]:
     """Write one self-verifying island bundle around DEHB's native checkpoint."""
@@ -433,12 +645,12 @@ def write_island_bundle(
             "status": search.status,
             "stop_reason": search.stop_reason,
             "evaluations": search.evaluations,
+            "physical_evaluations": search.physical_evaluations,
+            "cache_hits": search.cache_hits,
             "invalid_config_rejections": search.invalid_config_rejections,
         },
     )
-    ledger_receipt = verify_event_ledger(
-        event_path, campaign_sha256=contract.sha256
-    )
+    ledger_receipt = verify_event_ledger(event_path, campaign_sha256=contract.sha256)
     envelope = build_checkpoint_envelope(
         contract,
         island_id=str(assignment["island_id"]),
@@ -454,37 +666,124 @@ def write_island_bundle(
     trial_rows = [
         {
             "evaluation": int(trial["evaluation"]),
+            "run_id": int(source_run_id),
+            "wave": int(wave),
+            "island_id": str(assignment["island_id"]),
             "config_id": int(trial["config_id"]),
             "fidelity": int(trial["fidelity"]),
             "fitness": float(trial["fitness"]),
             "cost": float(trial["cost"]),
-            "configuration_json": _canonical_bytes(
-                trial["configuration"]
-            ).decode("utf-8"),
+            "configuration_json": _canonical_bytes(trial["configuration"]).decode("utf-8"),
             "info_json": _canonical_bytes(trial["info"]).decode("utf-8"),
+            "cache_key_sha256": trial.get("cache_key_sha256"),
+            "evaluation_origin": str(trial.get("evaluation_origin", "physical")),
+            "cache_result_sha256": trial.get("cache_result_sha256"),
+            "cache_source_run_id": trial.get("cache_source_run_id"),
+            "cache_source_wave": trial.get("cache_source_wave"),
+            "cache_source_island_id": trial.get("cache_source_island_id"),
+            "cache_source_evaluation": trial.get("cache_source_evaluation"),
+            "physical_runtime_seconds": (
+                float(trial["info"].get("objective_runtime_seconds", 0.0))
+                if trial.get("evaluation_origin", "physical") == "physical"
+                else 0.0
+            ),
         }
         for trial in search.trials
     ]
     trial_frame = pd.DataFrame(
         trial_rows,
         columns=(
-            "evaluation", "config_id", "fidelity", "fitness", "cost",
-            "configuration_json", "info_json",
+            "evaluation",
+            "run_id",
+            "wave",
+            "island_id",
+            "config_id",
+            "fidelity",
+            "fitness",
+            "cost",
+            "configuration_json",
+            "info_json",
+            "cache_key_sha256",
+            "evaluation_origin",
+            "cache_result_sha256",
+            "cache_source_run_id",
+            "cache_source_wave",
+            "cache_source_island_id",
+            "cache_source_evaluation",
+            "physical_runtime_seconds",
         ),
     )
     if prior is not None:
+        prior_trial_frame = pd.read_parquet(prior / "trial_ledger.parquet")
+        missing_cache_columns = set(trial_frame.columns) - set(prior_trial_frame.columns)
+        if missing_cache_columns:
+            raise IslandRunnerError("PRIOR_ISLAND_CACHE_CONTRACT_MISSING")
         trial_frame = pd.concat(
-            [pd.read_parquet(prior / "trial_ledger.parquet"), trial_frame],
+            [prior_trial_frame, trial_frame],
             ignore_index=True,
         )
     trial_frame.to_parquet(root / "trial_ledger.parquet", index=False)
+    cache_index: list[dict[str, Any]] = []
+    for row in trial_frame.to_dict(orient="records"):
+        if row.get("evaluation_origin") != "physical":
+            continue
+        key_sha256 = row.get("cache_key_sha256")
+        result_sha256 = row.get("cache_result_sha256")
+        if not isinstance(key_sha256, str) or not isinstance(result_sha256, str):
+            continue
+        cache_index.append(
+            {
+                "cache_key_sha256": key_sha256,
+                "result_sha256": result_sha256,
+                "source_run_id": int(row["cache_source_run_id"]),
+                "source_wave": int(row["cache_source_wave"]),
+                "source_island_id": str(row["cache_source_island_id"]),
+                "source_evaluation": int(row["cache_source_evaluation"]),
+            }
+        )
+    cache_index.sort(key=lambda row: row["cache_key_sha256"])
+    cache_manifest = {
+        "schema_version": 1,
+        "enabled": scientific_evaluator_sha256 is not None,
+        "campaign_contract_sha256": contract.sha256,
+        "scientific_evaluator_sha256": scientific_evaluator_sha256,
+        "train_snapshot_manifest_sha256": (contract.train_snapshot_manifest_sha256),
+        "source_run_id": int(source_run_id),
+        "source_wave": int(wave),
+        "source_island_id": str(assignment["island_id"]),
+        "lane_id": str(assignment["lane_id"]),
+        "entry_count": len(cache_index),
+        "entry_index_sha256": hashlib.sha256(_canonical_bytes(cache_index)).hexdigest(),
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+    cache_manifest["cache_manifest_sha256"] = hashlib.sha256(
+        _canonical_bytes(cache_manifest)
+    ).hexdigest()
+    _write_json(root / "evaluation_cache_manifest.json", cache_manifest)
+    if determinism_audit is None or determinism_audit.get("passed") is not True:
+        raise IslandRunnerError("DETERMINISM_AUDIT_REQUIRED")
+    if (
+        determinism_audit.get("validation_opened") is not False
+        or determinism_audit.get("locked_opened") is not False
+    ):
+        raise IslandRunnerError("DETERMINISM_AUDIT_BOUNDARY_OPEN")
+    _write_json(root / "determinism_audit.json", dict(determinism_audit))
     candidates = _candidate_rows(search)
     candidate_columns = (
-        "evaluation", "config_id", "fidelity", "fitness",
-        "configuration_json", "strategy_fingerprint", "position_fingerprint",
+        "evaluation",
+        "config_id",
+        "fidelity",
+        "fitness",
+        "configuration_json",
+        "strategy_fingerprint",
+        "position_fingerprint",
         "train_feasible",
-        "annualized_strategy_return", "weekly_spy_beat_rate",
-        "annualized_alpha", "archive_key_json", "info_json",
+        "annualized_strategy_return",
+        "weekly_spy_beat_rate",
+        "annualized_alpha",
+        "archive_key_json",
+        "info_json",
     )
     candidate_frame = pd.DataFrame(candidates, columns=candidate_columns)
     if prior is not None:
@@ -495,13 +794,9 @@ def write_island_bundle(
             ],
             ignore_index=True,
         )
-    candidate_frame.to_parquet(
-        root / "full_fidelity_candidates.parquet", index=False
-    )
+    candidate_frame.to_parquet(root / "full_fidelity_candidates.parquet", index=False)
     cumulative_candidates = candidate_frame.to_dict(orient="records")
-    pd.DataFrame(
-        _pareto_rows(cumulative_candidates), columns=candidate_columns
-    ).to_parquet(
+    pd.DataFrame(_pareto_rows(cumulative_candidates), columns=candidate_columns).to_parquet(
         root / "pareto_front.parquet", index=False
     )
     annual_frame = pd.DataFrame(_annual_rows(search))
@@ -512,19 +807,42 @@ def write_island_bundle(
         )
     annual_frame.to_parquet(root / "annual_metrics.parquet", index=False)
     previous_failures = (
-        (prior / "failure_ledger.jsonl").read_text("utf-8")
-        if prior is not None
-        else ""
+        (prior / "failure_ledger.jsonl").read_text("utf-8") if prior is not None else ""
     )
-    (root / "failure_ledger.jsonl").write_text(
-        previous_failures, encoding="utf-8"
-    )
+    (root / "failure_ledger.jsonl").write_text(previous_failures, encoding="utf-8")
     runtime_audit = {
         "schema_version": 1,
         "status": search.status,
         "stop_reason": search.stop_reason,
         "evaluations": search.evaluations,
         "full_fidelity_evaluations": search.full_fidelity_evaluations,
+        "physical_evaluations": search.physical_evaluations,
+        "full_fidelity_physical_evaluations": (search.full_fidelity_physical_evaluations),
+        "cache_hits": search.cache_hits,
+        "cache_hits_by_origin": dict(search.cache_hits_by_origin),
+        "full_fidelity_cache_hits": (
+            search.full_fidelity_evaluations - search.full_fidelity_physical_evaluations
+        ),
+        "physical_runtime_seconds": float(trial_frame["physical_runtime_seconds"].sum()),
+        "estimated_runtime_seconds_saved": float(
+            sum(
+                float(json.loads(str(row["info_json"])).get("objective_runtime_seconds", 0.0))
+                for row in trial_frame.to_dict(orient="records")
+                if row.get("evaluation_origin") != "physical"
+            )
+        ),
+        "unique_strategies": len(
+            {
+                str(json.loads(str(value)).get("strategy_fingerprint", ""))
+                for value in trial_frame["info_json"]
+                if str(json.loads(str(value)).get("strategy_fingerprint", ""))
+            }
+        ),
+        "cache_conflicts": 0,
+        "determinism_audit_passed": True,
+        "determinism_audit_physical_evaluations": int(
+            determinism_audit["independent_process_evaluations"]
+        ),
         "completed_since_improvement": search.completed_since_improvement,
         "seconds_since_improvement": search.seconds_since_improvement,
         "invalid_config_rejections": search.invalid_config_rejections,
@@ -565,9 +883,7 @@ def write_island_bundle(
         champion = {
             **dict(best["info"]),
             "configuration": dict(best["configuration"]),
-            "candidate_local_robustness_passed": (
-                review.get("candidate_local_passed") is True
-            ),
+            "candidate_local_robustness_passed": (review.get("candidate_local_passed") is True),
             "robustness_passed": review.get("passed") is True,
             "robustness": review,
         }
@@ -584,12 +900,28 @@ def write_island_bundle(
         "stop_reason": search.stop_reason,
         "evaluations": search.evaluations,
         "full_fidelity_evaluations": search.full_fidelity_evaluations,
+        "physical_evaluations": search.physical_evaluations,
+        "full_fidelity_physical_evaluations": (search.full_fidelity_physical_evaluations),
+        "cache_hits": search.cache_hits,
+        "cache_hits_by_origin": dict(search.cache_hits_by_origin),
+        "full_fidelity_cache_hits": (
+            search.full_fidelity_evaluations - search.full_fidelity_physical_evaluations
+        ),
+        "estimated_runtime_seconds_saved": runtime_audit["estimated_runtime_seconds_saved"],
+        "cache_conflicts": 0,
+        "unique_strategies": runtime_audit["unique_strategies"],
+        "determinism_audit_passed": True,
+        "determinism_audit_physical_evaluations": int(
+            determinism_audit["independent_process_evaluations"]
+        ),
         "invalid_config_rejections": search.invalid_config_rejections,
         "checkpoint_sha256": envelope["checkpoint_envelope_sha256"],
         "official_dehb_native_checkpoint": True,
         "native_checkpoint_sha256": native_receipt["aggregate_sha256"],
         "champion": champion,
         "train_partition": contract.train_partition,
+        "source_run_id": int(source_run_id),
+        "scientific_evaluator_sha256": scientific_evaluator_sha256,
         "validation_opened": False,
         "locked_opened": False,
     }
@@ -598,22 +930,15 @@ def write_island_bundle(
     _write_json(root / "island_manifest.json", manifest)
 
     files = sorted(
-        path
-        for path in root.rglob("*")
-        if path.is_file() and path.name != "checksums.sha256"
+        path for path in root.rglob("*") if path.is_file() and path.name != "checksums.sha256"
     )
     total_bytes = sum(path.stat().st_size for path in files)
     if total_bytes > maximum_bundle_bytes:
-        raise IslandRunnerError(
-            f"ISLAND_BUNDLE_TOO_LARGE:{total_bytes}:{maximum_bundle_bytes}"
-        )
+        raise IslandRunnerError(f"ISLAND_BUNDLE_TOO_LARGE:{total_bytes}:{maximum_bundle_bytes}")
     checksum_lines = [
-        f"{_sha256_file(path)}  {path.relative_to(root).as_posix()}"
-        for path in files
+        f"{_sha256_file(path)}  {path.relative_to(root).as_posix()}" for path in files
     ]
-    (root / "checksums.sha256").write_text(
-        "\n".join(checksum_lines) + "\n", encoding="utf-8"
-    )
+    (root / "checksums.sha256").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
     return manifest
 
 
@@ -644,9 +969,7 @@ def verify_island_bundle(
             raise IslandRunnerError(f"BUNDLE_CHECKSUM_MISMATCH:{relative}")
     try:
         manifest = json.loads((bundle / "island_manifest.json").read_text("utf-8"))
-        envelope = json.loads(
-            (bundle / "checkpoint_envelope.json").read_text("utf-8")
-        )
+        envelope = json.loads((bundle / "checkpoint_envelope.json").read_text("utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise IslandRunnerError("BUNDLE_MANIFEST_INVALID") from exc
     if (
@@ -659,8 +982,7 @@ def verify_island_bundle(
     if manifest.get("locked_opened") is not False:
         raise IslandRunnerError("BUNDLE_OPENED_LOCKED")
     if expected_launch_contract_sha256 is not None and (
-        manifest.get("launch_contract_sha256")
-        != expected_launch_contract_sha256
+        manifest.get("launch_contract_sha256") != expected_launch_contract_sha256
     ):
         raise IslandRunnerError("BUNDLE_LAUNCH_CONTRACT_MISMATCH")
     from aurora.infra.sp500_megarun.dehb_campaign_runtime import (
@@ -682,6 +1004,150 @@ def verify_island_bundle(
     }
 
 
+def load_verified_evaluation_cache(
+    contract: Any,
+    *,
+    bundle_sources: Sequence[tuple[Path, int, str]],
+    lane_id: str,
+    scientific_evaluator_sha256: str,
+    expected_launch_contract_sha256: str | None,
+) -> Mapping[str, Mapping[str, Any]]:
+    """Load physical results for one lane from fully verified island bundles."""
+
+    from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+        EvaluationCacheEntryV1,
+        EvaluationCacheKeyV1,
+        EvaluationCacheRegistry,
+    )
+
+    registry = EvaluationCacheRegistry()
+    entry_origins: dict[str, str] = {}
+    for raw_bundle, expected_run_id, cache_origin in bundle_sources:
+        if cache_origin not in {"island_cache", "prior_wave_cache"}:
+            raise IslandRunnerError("CACHE_SOURCE_ORIGIN_INVALID")
+        bundle = Path(raw_bundle).resolve()
+        try:
+            island_manifest = json.loads((bundle / "island_manifest.json").read_text("utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise IslandRunnerError("CACHE_BUNDLE_MANIFEST_INVALID") from exc
+        if str(island_manifest.get("lane_id")) != lane_id:
+            continue
+        island_id = str(island_manifest.get("island_id", ""))
+        verify_island_bundle(
+            contract,
+            bundle,
+            expected_island_id=island_id,
+            expected_launch_contract_sha256=expected_launch_contract_sha256,
+        )
+        try:
+            cache_manifest = json.loads(
+                (bundle / "evaluation_cache_manifest.json").read_text("utf-8")
+            )
+            trial_frame = pd.read_parquet(bundle / "trial_ledger.parquet")
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            raise IslandRunnerError("CACHE_ARTIFACT_INVALID") from exc
+        expected_fields = {
+            "schema_version": 1,
+            "enabled": True,
+            "campaign_contract_sha256": contract.sha256,
+            "scientific_evaluator_sha256": scientific_evaluator_sha256,
+            "train_snapshot_manifest_sha256": (contract.train_snapshot_manifest_sha256),
+            "source_run_id": int(expected_run_id),
+            "lane_id": lane_id,
+            "validation_opened": False,
+            "locked_opened": False,
+        }
+        for field, expected in expected_fields.items():
+            if cache_manifest.get(field) != expected:
+                raise IslandRunnerError(f"CACHE_MANIFEST_MISMATCH:{field}")
+        cache_manifest_preimage = {
+            key: value for key, value in cache_manifest.items() if key != "cache_manifest_sha256"
+        }
+        if (
+            cache_manifest.get("cache_manifest_sha256")
+            != hashlib.sha256(_canonical_bytes(cache_manifest_preimage)).hexdigest()
+        ):
+            raise IslandRunnerError("CACHE_MANIFEST_SHA256_MISMATCH")
+        required_columns = {
+            "evaluation",
+            "fidelity",
+            "fitness",
+            "cost",
+            "configuration_json",
+            "info_json",
+            "cache_key_sha256",
+            "cache_result_sha256",
+            "evaluation_origin",
+            "cache_source_run_id",
+            "cache_source_wave",
+            "cache_source_island_id",
+            "cache_source_evaluation",
+        }
+        if not required_columns <= set(trial_frame.columns):
+            raise IslandRunnerError("CACHE_LEDGER_COLUMNS_MISSING")
+        cache_index: list[dict[str, Any]] = []
+        for row in trial_frame.to_dict(orient="records"):
+            if row["evaluation_origin"] != "physical":
+                continue
+            configuration = json.loads(str(row["configuration_json"]))
+            info = json.loads(str(row["info_json"]))
+            key = EvaluationCacheKeyV1.build(
+                scientific_evaluator_sha256=scientific_evaluator_sha256,
+                train_snapshot_manifest_sha256=(contract.train_snapshot_manifest_sha256),
+                lane_id=lane_id,
+                configuration=configuration,
+                fidelity=int(row["fidelity"]),
+            )
+            if row["cache_key_sha256"] != key.sha256:
+                raise IslandRunnerError("CACHE_LEDGER_KEY_MISMATCH")
+            result = {
+                "fitness": float(row["fitness"]),
+                "cost": float(row["cost"]),
+                "info": info,
+            }
+            entry = EvaluationCacheEntryV1.build(
+                key=key,
+                result=result,
+                source_run_id=int(row["cache_source_run_id"]),
+                source_wave=int(row["cache_source_wave"]),
+                source_island_id=str(row["cache_source_island_id"]),
+                source_evaluation=int(row["cache_source_evaluation"]),
+            )
+            if row["cache_result_sha256"] != entry.result_sha256:
+                raise IslandRunnerError("CACHE_LEDGER_RESULT_MISMATCH")
+            registered = registry.add(entry)
+            entry_origins.setdefault(registered.key.sha256, cache_origin)
+            cache_index.append(
+                {
+                    "cache_key_sha256": key.sha256,
+                    "result_sha256": entry.result_sha256,
+                    "source_run_id": entry.source_run_id,
+                    "source_wave": entry.source_wave,
+                    "source_island_id": entry.source_island_id,
+                    "source_evaluation": entry.source_evaluation,
+                }
+            )
+        cache_index.sort(key=lambda row: row["cache_key_sha256"])
+        if (
+            cache_manifest.get("entry_count") != len(cache_index)
+            or cache_manifest.get("entry_index_sha256")
+            != hashlib.sha256(_canonical_bytes(cache_index)).hexdigest()
+        ):
+            raise IslandRunnerError("CACHE_MANIFEST_INDEX_MISMATCH")
+    return {
+        entry.key.sha256: {
+            "result": dict(entry.result),
+            "result_sha256": entry.result_sha256,
+            "source_run_id": entry.source_run_id,
+            "source_wave": entry.source_wave,
+            "source_island_id": entry.source_island_id,
+            "source_evaluation": entry.source_evaluation,
+            "origin": entry_origins[entry.key.sha256],
+        }
+        for entry in registry.entries()
+    }
+
+
 def run_official_dehb_island(
     contract: Any,
     feature_contract: Any,
@@ -697,6 +1163,9 @@ def run_official_dehb_island(
     dehb_module: Any | None = None,
     executor_factory: Any = ProcessPoolExecutor,
     launch_contract_sha256: str | None = None,
+    scientific_evaluator_sha256: str | None = None,
+    source_run_id: int = 0,
+    evaluation_cache_bundles: Sequence[tuple[Path, int, str]] = (),
 ) -> Mapping[str, Any]:
     """Run one exact island using official DEHB 0.1.2 and its native resume state."""
 
@@ -707,6 +1176,10 @@ def run_official_dehb_island(
     if int(assignment.get("n_workers", -1)) != 4:
         raise IslandRunnerError("ISLAND_ASSIGNMENT_WORKER_COUNT_MISMATCH")
     lane_id = str(assignment["lane_id"])
+    if scientific_evaluator_sha256 is None:
+        raise IslandRunnerError("SCIENTIFIC_EVALUATOR_SHA256_REQUIRED")
+    if int(source_run_id) < 1:
+        raise IslandRunnerError("SOURCE_RUN_ID_REQUIRED")
     root = Path(output_dir).resolve()
     native = root / "native_checkpoint"
     if root.exists() and any(root.iterdir()):
@@ -728,9 +1201,7 @@ def run_official_dehb_island(
             raise IslandRunnerError("PRIOR_NATIVE_CHECKPOINT_MISSING")
         shutil.copytree(prior_native, native)
         try:
-            initial = json.loads(
-                (prior / "runtime_audit.json").read_text("utf-8")
-            )
+            initial = json.loads((prior / "runtime_audit.json").read_text("utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise IslandRunnerError("PRIOR_RUNTIME_AUDIT_INVALID") from exc
     else:
@@ -746,8 +1217,7 @@ def run_official_dehb_island(
 
     default_configurations = default_lane_configurations(feature_contract)
     fidelity_years = {
-        int(spec.budget): tuple(int(year) for year in spec.years)
-        for spec in contract.fidelities
+        int(spec.budget): tuple(int(year) for year in spec.years) for spec in contract.fidelities
     }
     objective = partial(
         evaluate_physical_lane_candidate,
@@ -757,16 +1227,56 @@ def run_official_dehb_island(
         expected_spy_sha256=contract.train_spy_sha256,
         default_configurations=default_configurations,
         baseline_feature_dirs={
-            name: str(Path(path).resolve())
-            for name, path in baseline_feature_dirs.items()
+            name: str(Path(path).resolve()) for name, path in baseline_feature_dirs.items()
         },
         fidelity_years=fidelity_years,
         allowed_end=contract.search_end,
     )
+    from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+        EvaluationCacheKeyV1,
+    )
+
+    def evaluation_key(job: Mapping[str, Any]) -> EvaluationCacheKeyV1:
+        return EvaluationCacheKeyV1.build(
+            scientific_evaluator_sha256=scientific_evaluator_sha256,
+            train_snapshot_manifest_sha256=(contract.train_snapshot_manifest_sha256),
+            lane_id=lane_id,
+            configuration=_configuration_dict(job["config"]),
+            fidelity=job["fidelity"],
+        )
+
     lane_space = build_lane_configspace(
         feature_contract,
         lane_id,
         seed=int(assignment["restart_seed"]),
+    )
+    from aurora.infra.sp500_megarun.dehb_evaluation_cache import (
+        audit_multiprocess_determinism,
+    )
+
+    determinism_audit = audit_multiprocess_determinism(
+        objective,
+        lane_id=lane_id,
+        configuration=_configuration_dict(lane_space.configspace.get_default_configuration()),
+        fidelity=max(fidelity_years),
+        executor_factory=executor_factory,
+    )
+    cache_sources = list(evaluation_cache_bundles)
+    if prior_bundle is not None:
+        prior_source_run_id = int(
+            json.loads((Path(prior_bundle) / "island_manifest.json").read_text("utf-8")).get(
+                "source_run_id", -1
+            )
+        )
+        if prior_source_run_id < 1:
+            raise IslandRunnerError("PRIOR_ISLAND_SOURCE_RUN_ID_INVALID")
+        cache_sources.append((Path(prior_bundle), prior_source_run_id, "island_cache"))
+    initial_evaluation_cache = load_verified_evaluation_cache(
+        contract,
+        bundle_sources=tuple(cache_sources),
+        lane_id=lane_id,
+        scientific_evaluator_sha256=scientific_evaluator_sha256,
+        expected_launch_contract_sha256=launch_contract_sha256,
     )
     if robustness_reviewer is None:
         from aurora.infra.sp500_megarun.dehb_robustness import (
@@ -779,14 +1289,14 @@ def run_official_dehb_island(
             lane_id=lane_id,
             train_snapshot=Path(train_snapshot).resolve(),
             baseline_feature_dirs={
-                name: Path(path).resolve()
-                for name, path in baseline_feature_dirs.items()
+                name: Path(path).resolve() for name, path in baseline_feature_dirs.items()
             },
             lane_configspace=lane_space,
             seed=int(assignment["restart_seed"]),
         )
     module = dehb_module or importlib.import_module("dehb")
-    optimizer = module.DEHB(
+    optimizer_class = _resume_safe_dehb_class(module.DEHB) if resume else module.DEHB
+    optimizer = optimizer_class(
         cs=lane_space.configspace,
         f=objective,
         min_fidelity=min(fidelity_years),
@@ -807,30 +1317,27 @@ def run_official_dehb_island(
             n_workers=4,
             full_fidelity=max(fidelity_years),
             slice_seconds=float(
-                slice_seconds
-                if slice_seconds is not None
-                else contract.island_slice_minutes * 60
+                slice_seconds if slice_seconds is not None else contract.island_slice_minutes * 60
             ),
             plateau_minimum_completed=contract.plateau_minimum_completed,
-            plateau_completed_without_improvement=(
-                contract.plateau_completed_without_improvement
-            ),
-            plateau_seconds_without_improvement=(
-                contract.plateau_minutes_without_improvement * 60
-            ),
+            plateau_completed_without_improvement=(contract.plateau_completed_without_improvement),
+            plateau_seconds_without_improvement=(contract.plateau_minutes_without_improvement * 60),
             initial_evaluations=int(initial.get("evaluations", 0)),
-            initial_full_fidelity_evaluations=int(
-                initial.get("full_fidelity_evaluations", 0)
+            initial_full_fidelity_evaluations=int(initial.get("full_fidelity_evaluations", 0)),
+            initial_completed_since_improvement=int(initial.get("completed_since_improvement", 0)),
+            initial_seconds_since_improvement=float(initial.get("seconds_since_improvement", 0.0)),
+            initial_invalid_config_rejections=int(initial.get("invalid_config_rejections", 0)),
+            initial_physical_evaluations=int(initial.get("physical_evaluations", 0)),
+            initial_full_fidelity_physical_evaluations=int(
+                initial.get("full_fidelity_physical_evaluations", 0)
             ),
-            initial_completed_since_improvement=int(
-                initial.get("completed_since_improvement", 0)
-            ),
-            initial_seconds_since_improvement=float(
-                initial.get("seconds_since_improvement", 0.0)
-            ),
-            initial_invalid_config_rejections=int(
-                initial.get("invalid_config_rejections", 0)
-            ),
+            initial_cache_hits=int(initial.get("cache_hits", 0)),
+            initial_cache_hits_by_origin=initial.get("cache_hits_by_origin", {}),
+            initial_evaluation_cache=initial_evaluation_cache,
+            evaluation_key=evaluation_key,
+            source_run_id=int(source_run_id),
+            source_wave=int(wave),
+            source_island_id=str(assignment["island_id"]),
             initial_best_archive_key=tuple(float(value) for value in prior_best)
             if isinstance(prior_best, list)
             else None,
@@ -867,6 +1374,9 @@ def run_official_dehb_island(
         robustness_reviewer=robustness_reviewer,
         prior_bundle=prior_bundle,
         launch_contract_sha256=launch_contract_sha256,
+        scientific_evaluator_sha256=scientific_evaluator_sha256,
+        source_run_id=source_run_id,
+        determinism_audit=determinism_audit,
     )
 
 
@@ -874,6 +1384,7 @@ __all__ = [
     "IslandRunnerError",
     "IslandSliceResult",
     "Objective",
+    "load_verified_evaluation_cache",
     "run_ask_tell_slice",
     "run_official_dehb_island",
     "verify_island_bundle",

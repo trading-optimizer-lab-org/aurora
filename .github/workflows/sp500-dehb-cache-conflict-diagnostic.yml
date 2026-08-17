@@ -1,0 +1,78 @@
+name: SP500 DEHB Cache Conflict Diagnostic
+
+on:
+  push:
+    branches:
+      - codex/sp500-search-method-benchmark-short
+    paths:
+      - .github/workflows/sp500-dehb-cache-conflict-diagnostic.yml
+      - infra/sp500_megarun/dehb_global_merge.py
+      - scripts/diagnose_sp500_megarun_dehb_cache_conflicts.py
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Completed DEHB controller run containing worker artifacts
+        required: true
+        type: string
+      cache_key_sha256:
+        description: Optional conflicting cache key to inspect
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GITHUB_ACTIONS: "true"
+      PYTHONUTF8: "1"
+      SOURCE_RUN_ID: ${{ inputs.source_run_id || '31736846293' }}
+      CACHE_KEY_SHA256: ${{ inputs.cache_key_sha256 || '' }}
+    steps:
+      - name: Check out exact diagnostic revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Restore bounded diagnostic runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Download worker evidence from exact source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "$SOURCE_RUN_ID" \
+            --pattern "sp500-dehb-worker-*" \
+            --dir "$RUNNER_TEMP/workers"
+      - name: Diagnose cache conflicts without strategy evaluation
+        run: |
+          set -euo pipefail
+          args=(
+            --worker-root "$RUNNER_TEMP/workers"
+            --output outputs/cache-conflict-diagnostic/report.json
+          )
+          if [[ -n "$CACHE_KEY_SHA256" ]]; then
+            args+=(--cache-key-sha256 "$CACHE_KEY_SHA256")
+          fi
+          python scripts/diagnose_sp500_megarun_dehb_cache_conflicts.py "${args[@]}"
+      - name: Upload diagnostic evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-dehb-cache-conflict-diagnostic-${{ env.SOURCE_RUN_ID }}-${{ github.run_id }}
+          path: outputs/cache-conflict-diagnostic
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,21 @@
+name: SP500 Catalog Optimization Qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha: {description: Exact candidate revision, required: true}
+      runtime_input_run_id: {description: Immutable train-only runtime pack, required: true, default: "31418682679"}
+      reference_run_id: {description: Frozen deterministic reference catalog run, required: true, default: "31948898747"}
+      component_cost_run_id: {description: Compatible measured component-cost run, required: true, default: "31948898747"}
+
+permissions: {actions: read, contents: read}
+
+jobs:
+  qualify:
+    uses: ./.github/workflows/catalog-optimized-run.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      admission_evidence_path: config/sp500_catalog_admission_evidence_qualification_v1.json
+      reference_run_id: ${{ inputs.reference_run_id }}
+      component_cost_run_id: ${{ inputs.component_cost_run_id }}

@@ -1,0 +1,32 @@
+name: SP500 Strategy Catalog Overnight 360
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+      runtime_input_run_id: {required: true, type: string}
+      component_store_run_id: {required: false, type: string, default: ""}
+      component_cost_run_id: {required: false, type: string, default: "31948898747"}
+      evaluation_cache_run_ids: {required: false, type: string, default: ""}
+      benchmark_workers: {required: false, type: number, default: 0}
+  workflow_dispatch:
+    inputs:
+      commit_sha: {description: Exact revision, required: true}
+      runtime_input_run_id: {description: Immutable train-only runtime pack, required: true, default: "31418682679"}
+      component_store_run_id: {description: Compatible component-store run, required: false, default: ""}
+      component_cost_run_id: {description: Measured component-cost run, required: false, default: "31948898747"}
+      evaluation_cache_run_ids: {description: Compatible result or checkpoint runs, required: false, default: ""}
+      benchmark_workers: {description: Qualification-only worker candidate; zero uses promoted policy, required: false, type: number, default: 0}
+
+permissions: {actions: read, contents: read}
+
+jobs:
+  optimized:
+    uses: ./.github/workflows/catalog-optimized-run.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      component_store_run_id: ${{ inputs.component_store_run_id }}
+      component_cost_run_id: ${{ inputs.component_cost_run_id }}
+      evaluation_cache_run_ids: ${{ inputs.evaluation_cache_run_ids }}
+      benchmark_workers: ${{ inputs.benchmark_workers }}

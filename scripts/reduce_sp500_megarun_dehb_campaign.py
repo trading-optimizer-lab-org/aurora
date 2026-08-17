@@ -31,6 +31,28 @@ def _load_results(root: Path) -> list[Mapping[str, Any]]:
     return results
 
 
+def _load_planned_job_payloads(root: Path) -> dict[int, Mapping[str, Any]]:
+    payloads: dict[int, Mapping[str, Any]] = {}
+    for shard in "ABC":
+        path = root / f"matrix_{shard}.json"
+        value = json.loads(path.read_text("utf-8"))
+        rows = value.get("include") if isinstance(value, Mapping) else None
+        if not isinstance(rows, list):
+            raise ValueError(f"WAVE_PLAN_MATRIX_INVALID:{shard}")
+        for payload in rows:
+            if not isinstance(payload, Mapping):
+                raise ValueError("WAVE_PLAN_PAYLOAD_INVALID")
+            if str(payload.get("job_id", "")).startswith("SKIP-"):
+                continue
+            job_index = int(payload.get("job_index", -1))
+            if job_index in payloads:
+                raise ValueError(f"WAVE_PLAN_DUPLICATE_JOB:{job_index}")
+            payloads[job_index] = payload
+    if not payloads:
+        raise ValueError("WAVE_PLAN_HAS_NO_JOBS")
+    return payloads
+
+
 def _write_github_outputs(path: Path, decision: Mapping[str, Any]) -> None:
     with path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(f"action={decision['action']}\n")
@@ -63,6 +85,7 @@ def main() -> int:
     parser.add_argument("--launch-contract", type=Path, required=True)
     parser.add_argument("--expected-code-commit-sha", required=True)
     parser.add_argument("--wave", type=int, required=True)
+    parser.add_argument("--wave-plan", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--global-robustness", type=Path)
@@ -86,6 +109,7 @@ def main() -> int:
         results,
         wave=args.wave,
         launch_contract_sha256=launch.sha256,
+        planned_job_payloads=_load_planned_job_payloads(args.wave_plan),
         global_robustness=global_robustness,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)

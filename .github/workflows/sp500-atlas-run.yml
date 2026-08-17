@@ -1,0 +1,393 @@
+name: SP500 Atlas Static Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_mode:
+        description: "smoke or full; full requires the user's separate launch authorization"
+        required: true
+        default: smoke
+        type: choice
+        options: [smoke, full]
+      commit_sha:
+        description: "Exact immutable implementation commit"
+        required: true
+        type: string
+      runtime_input_run_id:
+        description: "Verified train-only runtime input pack run"
+        required: true
+        default: "31418682679"
+        type: string
+      calibration_run_id:
+        description: "Verified 20-minute calibration run"
+        required: true
+        default: "32039572017"
+        type: string
+      target_end_iso:
+        description: "Planning target in Europe/Madrid"
+        required: true
+        default: "2026-08-20T07:31:00+02:00"
+        type: string
+      recipe_count:
+        description: "Exact finite tranche; 64 for smoke, calibrated value for full"
+        required: true
+        default: "64"
+        type: number
+      total_shards:
+        description: "Static shard count; 4 for smoke, 360 for full"
+        required: true
+        default: "4"
+        type: number
+      launch_authorization:
+        description: "Required only for full: AUTHORIZE_SP500_ATLAS_FULL_RUN"
+        required: false
+        default: ""
+        type: string
+  workflow_call:
+    inputs:
+      run_mode: {required: true, type: string}
+      commit_sha: {required: true, type: string}
+      runtime_input_run_id: {required: true, type: string}
+      calibration_run_id: {required: true, type: string}
+      target_end_iso: {required: true, type: string}
+      recipe_count: {required: true, type: number}
+      total_shards: {required: true, type: number}
+      launch_authorization: {required: false, type: string}
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: sp500-atlas-${{ inputs.commit_sha }}-${{ inputs.run_mode }}
+  cancel-in-progress: false
+
+env:
+  GITHUB_ACTIONS: "true"
+  PYTHONHASHSEED: "0"
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+  VECLIB_MAXIMUM_THREADS: "1"
+  BLIS_NUM_THREADS: "1"
+  OPENBLAS_CORETYPE: "NEHALEM"
+  NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
+  PYTHONPATH: ${{ github.workspace }}/..
+  ATLAS_REQUESTED_COMMIT_SHA: ${{ inputs.commit_sha }}
+  ATLAS_RUNTIME_INPUT_RUN_ID: ${{ inputs.runtime_input_run_id }}
+  ATLAS_CALIBRATION_RUN_ID: ${{ inputs.calibration_run_id }}
+  ATLAS_TARGET_END_ISO: ${{ inputs.target_end_iso }}
+  ATLAS_RECIPE_COUNT: ${{ inputs.recipe_count }}
+  ATLAS_TOTAL_SHARDS: ${{ inputs.total_shards }}
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      matrix_a: ${{ steps.plan.outputs.matrix_a }}
+      matrix_b: ${{ steps.plan.outputs.matrix_b }}
+      matrix_c: ${{ steps.plan.outputs.matrix_c }}
+      plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - name: Verify requested commit is the workflow commit
+        shell: bash
+        run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"
+      - name: Build and verify the compact catalog
+        shell: bash
+        run: |
+          python scripts/build_sp500_atlas_catalog.py \
+            --data-contract config/sp500_megarun_free_data_240.json \
+            --feature-contract config/sp500_megarun_feature_contract_240.json \
+            --output-dir outputs/atlas \
+            --target-end-iso "$ATLAS_TARGET_END_ISO"
+          python scripts/verify_sp500_atlas_catalog.py \
+            --catalog-dir outputs/atlas \
+            --data-contract config/sp500_megarun_free_data_240.json \
+            --feature-contract config/sp500_megarun_feature_contract_240.json
+      - id: plan
+        name: Create exact static plan
+        shell: bash
+        run: |
+          receipt="config/sp500_atlas_1/calibration_receipt_32039572017.json"
+          test "$ATLAS_CALIBRATION_RUN_ID" = "32039572017"
+          test -f "$receipt"
+          implementation_sha="$ATLAS_REQUESTED_COMMIT_SHA"
+          if [ "${{ inputs.run_mode }}" = "full" ]; then
+            test -f config/sp500_atlas_1/freeze_manifest_v1.json
+            implementation_sha="$(python -c 'import json; print(json.load(open("config/sp500_atlas_1/freeze_manifest_v1.json", encoding="utf-8"))["scientific_implementation_commit_sha"])')"
+          fi
+          export ATLAS_IMPLEMENTATION_COMMIT_SHA="$implementation_sha"
+          python scripts/plan_sp500_atlas_run.py \
+            --catalog-dir outputs/atlas \
+            --calibration-receipt "$receipt" \
+            --output-dir outputs/plan \
+            --target-end-iso "$ATLAS_TARGET_END_ISO" \
+            --implementation-commit-sha "$implementation_sha" \
+            --recipe-count "$ATLAS_RECIPE_COUNT" \
+            --total-shards "$ATLAS_TOTAL_SHARDS"
+          python - <<'PY'
+          import json, os
+          plan = json.load(open("outputs/plan/atlas_run_plan.json", encoding="utf-8"))
+          matrices = json.load(open("outputs/plan/atlas_worker_matrices.json", encoding="utf-8"))
+          assert plan["validation_opened"] is False
+          assert plan["locked_opened"] is False
+          assert plan["implementation_commit_sha"] == os.environ["ATLAS_IMPLEMENTATION_COMMIT_SHA"]
+          assert plan["requested_recipe_count"] == int(os.environ["EXPECTED_RECIPE_COUNT"])
+          for name, value in matrices.items():
+              print(f"{name}={json.dumps(value, separators=(',', ':'))}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              for name, value in matrices.items():
+                  out.write(f"{name}={json.dumps(value, separators=(',', ':'))}\n")
+              out.write(f"plan_sha256={plan['plan_sha256']}\n")
+          PY
+        env:
+          EXPECTED_RECIPE_COUNT: ${{ env.ATLAS_RECIPE_COUNT }}
+      - name: Require explicit authorization and the frozen full plan
+        if: ${{ inputs.run_mode == 'full' }}
+        shell: bash
+        env:
+          LAUNCH_AUTHORIZATION: ${{ inputs.launch_authorization }}
+        run: |
+          set -euo pipefail
+          test "$LAUNCH_AUTHORIZATION" = "AUTHORIZE_SP500_ATLAS_FULL_RUN"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          freeze = json.loads(Path("config/sp500_atlas_1/freeze_manifest_v1.json").read_text(encoding="utf-8"))
+          plan = json.loads(Path("outputs/plan/atlas_run_plan.json").read_text(encoding="utf-8"))
+          assert freeze["launch_authorized"] is False
+          assert freeze["validation_opened"] is False
+          assert freeze["locked_opened"] is False
+          assert freeze["frozen_plan_sha256"] == plan["plan_sha256"]
+          assert freeze["catalog_manifest_sha256"] == plan["catalog_manifest_sha256"]
+          assert freeze["catalog_space_sha256"] == plan["catalog_space_sha256"]
+          assert freeze["calibration_receipt_sha256"] == plan["calibration_receipt_sha256"]
+          assert freeze["scientific_implementation_commit_sha"] == plan["implementation_commit_sha"]
+          assert freeze["requested_recipe_count"] == plan["requested_recipe_count"] == 18816734
+          assert freeze["total_shards"] == plan["total_shards"] == 360
+          assert plan["target_end_iso"] == "2026-08-20T07:31:00+02:00"
+          print("ATLAS_FROZEN_FULL_PLAN_ACCEPTED")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-preflight
+          path: outputs
+          if-no-files-found: error
+          retention-days: 30
+
+  evaluate_a:
+    needs: preflight
+    if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.preflight.outputs.matrix_a) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with: {name: sp500-atlas-preflight, path: "${{ runner.temp }}/preflight"}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          path: ${{ runner.temp }}/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Evaluate fixed shard with bounded retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            rm -rf "$RUNNER_TEMP/shard"
+            if python scripts/run_sp500_atlas_worker.py \
+              --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
+              --catalog-dir "$RUNNER_TEMP/preflight/atlas" \
+              --runtime-input-pack "$RUNNER_TEMP/runtime" \
+              --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+              --data-contract config/sp500_megarun_free_data_240.json \
+              --feature-contract config/sp500_megarun_feature_contract_240.json \
+              --shard-index "${{ matrix.shard }}" \
+              --output-dir "$RUNNER_TEMP/shard"; then
+              break
+            fi
+            test "$attempt" -lt 3
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/shard
+          if-no-files-found: error
+          retention-days: 30
+
+  evaluate_b:
+    needs: preflight
+    if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.preflight.outputs.matrix_b) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with: {name: sp500-atlas-preflight, path: "${{ runner.temp }}/preflight"}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          path: ${{ runner.temp }}/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Evaluate fixed shard with bounded retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            rm -rf "$RUNNER_TEMP/shard"
+            if python scripts/run_sp500_atlas_worker.py --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" --catalog-dir "$RUNNER_TEMP/preflight/atlas" --runtime-input-pack "$RUNNER_TEMP/runtime" --campaign-contract config/sp500_megarun_dehb_campaign_v1.json --data-contract config/sp500_megarun_free_data_240.json --feature-contract config/sp500_megarun_feature_contract_240.json --shard-index "${{ matrix.shard }}" --output-dir "$RUNNER_TEMP/shard"; then break; fi
+            test "$attempt" -lt 3
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with: {name: "sp500-atlas-shard-${{ matrix.shard }}", path: "${{ runner.temp }}/shard", if-no-files-found: error, retention-days: 30}
+
+  evaluate_c:
+    needs: preflight
+    if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.preflight.outputs.matrix_c) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with: {name: sp500-atlas-preflight, path: "${{ runner.temp }}/preflight"}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          path: ${{ runner.temp }}/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Evaluate fixed shard with bounded retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            rm -rf "$RUNNER_TEMP/shard"
+            if python scripts/run_sp500_atlas_worker.py --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" --catalog-dir "$RUNNER_TEMP/preflight/atlas" --runtime-input-pack "$RUNNER_TEMP/runtime" --campaign-contract config/sp500_megarun_dehb_campaign_v1.json --data-contract config/sp500_megarun_free_data_240.json --feature-contract config/sp500_megarun_feature_contract_240.json --shard-index "${{ matrix.shard }}" --output-dir "$RUNNER_TEMP/shard"; then break; fi
+            test "$attempt" -lt 3
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with: {name: "sp500-atlas-shard-${{ matrix.shard }}", path: "${{ runner.temp }}/shard", if-no-files-found: error, retention-days: 30}
+
+  smoke_serial:
+    needs: preflight
+    if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'smoke' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - name: Download smoke inputs with the preinstalled GitHub CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name sp500-atlas-preflight \
+            --dir "$RUNNER_TEMP/preflight"
+          gh run download "${{ inputs.runtime_input_run_id }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}" \
+            --dir "$RUNNER_TEMP/runtime"
+      - name: Evaluate all smoke blocks and reduce them
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/shards"
+          mkdir -p "$RUNNER_TEMP/shards"
+          for shard in 0 1 2 3; do
+            python scripts/run_sp500_atlas_worker.py \
+              --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
+              --catalog-dir "$RUNNER_TEMP/preflight/atlas" \
+              --runtime-input-pack "$RUNNER_TEMP/runtime" \
+              --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+              --data-contract config/sp500_megarun_free_data_240.json \
+              --feature-contract config/sp500_megarun_feature_contract_240.json \
+              --shard-index "$shard" \
+              --output-dir "$RUNNER_TEMP/shards/shard-$shard"
+          done
+          python scripts/reduce_sp500_atlas_run.py \
+            --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
+            --partitions-root "$RUNNER_TEMP/shards" \
+            --output-dir outputs/final
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-smoke-final-results
+          path: outputs/final
+          if-no-files-found: error
+          retention-days: 30
+
+  reduce:
+    needs: [preflight, evaluate_a, evaluate_b, evaluate_c]
+    if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with: {name: sp500-atlas-preflight, path: "${{ runner.temp }}/preflight"}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-atlas-shard-*
+          path: ${{ runner.temp }}/shards
+          merge-multiple: false
+      - name: Require complete shard set and preserve all rows
+        run: >-
+          python scripts/reduce_sp500_atlas_run.py
+          --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json"
+          --partitions-root "$RUNNER_TEMP/shards"
+          --output-dir outputs/final
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-final-results
+          path: outputs/final
+          if-no-files-found: error
+          retention-days: 90

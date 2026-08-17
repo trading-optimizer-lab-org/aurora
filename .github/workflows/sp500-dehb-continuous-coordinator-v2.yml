@@ -1,0 +1,117 @@
+name: SP500 Continuous DEHB Coordinator v2
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+      campaign_id: {required: true, type: string}
+      bootstrap_run_id: {required: true, type: string}
+      lifetime_minutes: {required: true, type: string, default: "300"}
+    secrets:
+      SP500_DEHB_COORDINATOR_DATABASE_URL: {required: true}
+  workflow_dispatch:
+    inputs:
+      commit_sha: {required: true}
+      campaign_id: {required: true}
+      bootstrap_run_id: {required: true}
+      lifetime_minutes: {required: true, default: "300"}
+
+permissions: {actions: read, contents: read}
+concurrency:
+  group: sp500-continuous-coordinator-${{ inputs.campaign_id }}
+  cancel-in-progress: false
+
+jobs:
+  coordinator:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        lifetime_ordinal: [0, 1]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      GITHUB_ACTIONS: "true"
+      SP500_DEHB_COORDINATOR_DATABASE_URL: ${{ secrets.SP500_DEHB_COORDINATOR_DATABASE_URL }}
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
+      BLIS_NUM_THREADS: "1"
+      OPENBLAS_CORETYPE: "NEHALEM"
+      NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
+    steps:
+      - name: Check out current infrastructure revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", fetch-depth: 0, persist-credentials: false}
+      - name: Verify frozen scientific revision
+        run: >-
+          python scripts/verify_sp500_dehb_scientific_revision.py
+          --scientific-commit "${{ inputs.commit_sha }}"
+      - name: Set up runtime
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - name: Install frozen coordinator runtime
+        run: |
+          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install "psycopg[binary,pool]>=3.2,<4"
+          python -m pip install --no-deps -e .
+      - name: Download exact bootstrap receipt and launch contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-dehb-continuous-bootstrap
+          path: ${{ runner.temp }}/dehb_bootstrap
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.bootstrap_run_id }}
+      - name: Wait for recovered open batches
+        env:
+          CAMPAIGN_ID: ${{ inputs.campaign_id }}
+        run: |
+          python - <<'PY'
+          import os
+          import time
+
+          import psycopg
+
+          deadline = time.monotonic() + 1800
+          while time.monotonic() < deadline:
+              with psycopg.connect(
+                  os.environ["SP500_DEHB_COORDINATOR_DATABASE_URL"]
+              ) as connection:
+                  incomplete = int(
+                      connection.execute(
+                          """
+                          SELECT count(*) FROM (
+                            SELECT b.island_id, b.batch_sequence
+                            FROM island_batches b
+                            LEFT JOIN proposals p
+                              ON p.campaign_id = b.campaign_id
+                              AND p.island_id = b.island_id
+                              AND p.batch_sequence = b.batch_sequence
+                            WHERE b.campaign_id = %s AND b.status = 'open'
+                            GROUP BY b.island_id, b.batch_sequence
+                            HAVING count(p.proposal_id) <> 4
+                          ) AS partial_batches
+                          """,
+                          (os.environ["CAMPAIGN_ID"],),
+                      ).fetchone()[0]
+                  )
+              if incomplete == 0:
+                  print("recovered open batches are complete")
+                  break
+              time.sleep(5)
+          else:
+              raise RuntimeError("CONTINUOUS_OPEN_BATCHES_STILL_INCOMPLETE")
+          PY
+      - name: Run leased coordinator
+        run: >-
+          python scripts/run_sp500_dehb_continuous_coordinator.py
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --feature-contract config/sp500_megarun_feature_contract_240.json
+          --data-contract config/sp500_megarun_free_data_240.json
+          --launch-contract "$RUNNER_TEMP/dehb_bootstrap/launch_contract.json"
+          --campaign-id "${{ inputs.campaign_id }}"
+          --work-root "$RUNNER_TEMP/coordinator-${{ matrix.lifetime_ordinal }}"
+          --lifetime-minutes "${{ inputs.lifetime_minutes }}"

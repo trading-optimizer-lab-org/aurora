@@ -1,0 +1,111 @@
+name: SP500 Catalog Deterministic Reference Oracle
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha: {required: true, type: string}
+      runtime_input_run_id: {required: true, type: string}
+
+permissions: {actions: read, contents: read}
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix_a: ${{ steps.plan.outputs.matrix_a }}
+      matrix_b: ${{ steps.plan.outputs.matrix_b }}
+      matrix_c: ${{ steps.plan.outputs.matrix_c }}
+      admission_token_sha256: ${{ steps.plan.outputs.admission_token_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - run: |
+          python -m pip install --require-hashes -r requirements/catalog-optimized.lock
+          python -m pip install --no-deps -e .
+      - id: plan
+        run: >-
+          python scripts/plan_sp500_optimized_catalog_run.py
+          --repo-root .
+          --policy config/sp500_catalog_optimization_policy_v1.json
+          --campaign config/sp500_megarun_dehb_campaign_v1.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --evidence config/sp500_catalog_admission_evidence_qualification_v1.json
+          --output-dir outputs/plan
+          --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-catalog-run-plan
+          path: outputs/plan
+          if-no-files-found: error
+          retention-days: 30
+
+  evaluate_a:
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    uses: ./.github/workflows/catalog-reference-worker.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      shard_index: ${{ matrix.shard }}
+      admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
+
+  evaluate_b:
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    uses: ./.github/workflows/catalog-reference-worker.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      shard_index: ${{ matrix.shard }}
+      admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
+
+  evaluate_c:
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_c) }}
+    uses: ./.github/workflows/catalog-reference-worker.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
+      shard_index: ${{ matrix.shard }}
+      admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
+
+  reduce:
+    needs: [plan, evaluate_a, evaluate_b, evaluate_c]
+    if: ${{ always() && needs.evaluate_a.result == 'success' && needs.evaluate_b.result == 'success' && needs.evaluate_c.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11", cache: ""}
+      - run: |
+          python -m pip install --require-hashes -r requirements/catalog-optimized.lock
+          python -m pip install --no-deps -e .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-catalog-reference-shard-*
+          path: ${{ runner.temp }}/shards
+      - run: >-
+          python scripts/reduce_sp500_strategy_catalog_run.py
+          --input-root "$RUNNER_TEMP/shards"
+          --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl
+          --output-dir outputs/final
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-strategy-catalog-final-results
+          path: outputs/final
+          if-no-files-found: error
+          retention-days: 90

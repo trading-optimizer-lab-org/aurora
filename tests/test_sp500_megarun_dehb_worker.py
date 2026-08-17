@@ -46,6 +46,23 @@ def test_feature_values_become_exact_long_short_decisions_with_carry_on_zero() -
     assert decisions.index.equals(pd.DatetimeIndex(frame["date"]))
 
 
+def test_feature_values_inside_numeric_noise_band_carry_state() -> None:
+    from aurora.infra.sp500_megarun.dehb_worker import feature_frame_to_decisions
+
+    frame = pd.DataFrame(
+        {
+            "date": pd.bdate_range("2000-01-03", periods=6),
+            "available_at": pd.bdate_range("2000-01-03", periods=6),
+            "value": [1e-13, -1e-13, 1e-12, -1e-12, 1.01e-12, -1.01e-12],
+        }
+    )
+
+    decisions = feature_frame_to_decisions(frame, allowed_end="2010-12-31")
+
+    assert decisions.iloc[:4].isna().all()
+    assert decisions.iloc[4:].tolist() == [1.0, -1.0]
+
+
 def test_candidate_objective_uses_only_fidelity_years_and_returns_exact_archive_key() -> None:
     from aurora.infra.sp500_megarun.dehb_worker import evaluate_lane_candidate
 
@@ -72,6 +89,70 @@ def test_candidate_objective_uses_only_fidelity_years_and_returns_exact_archive_
     assert len(result["info"]["position_fingerprint"]) == 64
     assert result["info"]["validation_opened"] is False
     assert result["info"]["locked_opened"] is False
+
+
+def test_prepare_then_score_is_exactly_equivalent_to_combined_evaluation() -> None:
+    from aurora.infra.sp500_megarun.dehb_worker import (
+        evaluate_lane_candidate,
+        prepare_lane_candidate,
+        score_prepared_lane_candidate,
+    )
+
+    ledger = _ledger()
+    ledger["long_return"] = -0.0002
+    feature_evaluator = lambda _lane, _config: _feature(-np.ones(len(ledger)))
+    arguments = {
+        "config": {"window": 20},
+        "fidelity": 1,
+        "lane_id": "F001",
+        "ledger": ledger,
+        "feature_evaluator": feature_evaluator,
+        "fidelity_years": {1: (2000,), 3: (2000, 2001)},
+        "allowed_end": "2010-12-31",
+    }
+
+    combined = evaluate_lane_candidate(**arguments)
+    prepared = prepare_lane_candidate(
+        config=arguments["config"],
+        fidelity=arguments["fidelity"],
+        lane_id=arguments["lane_id"],
+        feature_evaluator=feature_evaluator,
+        fidelity_years=arguments["fidelity_years"],
+        allowed_end=arguments["allowed_end"],
+    )
+    split = score_prepared_lane_candidate(
+        prepared,
+        ledger=ledger,
+        fidelity_years=arguments["fidelity_years"],
+        allowed_end=arguments["allowed_end"],
+    )
+
+    combined["info"].pop("objective_runtime_seconds")
+    split["info"].pop("objective_runtime_seconds")
+    assert split == combined
+    assert prepared.position_fingerprint == combined["info"]["position_fingerprint"]
+
+
+def test_candidate_result_is_stable_at_twelve_significant_digits() -> None:
+    from aurora.infra.sp500_megarun.dehb_worker import evaluate_lane_candidate
+
+    ledger = _ledger()
+    ledger["long_return"] = -0.0002
+    result = evaluate_lane_candidate(
+        config={"threshold": 0.10000000000000002},
+        fidelity=1,
+        lane_id="F001",
+        ledger=ledger,
+        feature_evaluator=lambda _lane, _config: _feature(-np.ones(len(ledger))),
+        fidelity_years={1: (2000,)},
+        allowed_end="2010-12-31",
+    )
+
+    assert result["fitness"] == float(f"{result['fitness']:.12g}")
+    assert result["info"]["annualized_strategy_return"] == float(
+        f"{result['info']['annualized_strategy_return']:.12g}"
+    )
+    assert result["info"]["objective_runtime_seconds"] >= 0.0
 
 
 def test_candidate_objective_rejects_future_availability_and_unknown_fidelity() -> None:
@@ -235,6 +316,26 @@ def test_train_lane_registry_covers_all_240_and_builds_one_lazy_context(
     assert registry("F001", {"value": 1})["lane"].iloc[0] == "F001"
     assert registry("F240", {"value": -1})["value"].iloc[0] == -1.0
     assert built == ["built"]
+
+
+def test_runtime_dataset_dependencies_follow_family_initializers() -> None:
+    from aurora.infra.sp500_megarun.dehb_lane_registry import (
+        runtime_dataset_ids_for_lane,
+        supported_lane_ids,
+    )
+
+    assert all(runtime_dataset_ids_for_lane(lane) for lane in supported_lane_ids())
+    assert runtime_dataset_ids_for_lane("F225") == (
+        "D_CALENDAR",
+        "D_FED_H15_H10",
+        "D_FED_H3_H6_H8_G19_CP",
+        "D_FOMC_PUBLIC",
+        "D_SPY",
+        "D_TIC",
+        "D_TREASURY_AUCTIONS",
+        "D_TREASURY_FISCAL",
+    )
+    assert runtime_dataset_ids_for_lane("F001") == ("D_SPY",)
 
 
 def test_train_lane_registry_rejects_unknown_lane_and_incomplete_adapter_coverage(
