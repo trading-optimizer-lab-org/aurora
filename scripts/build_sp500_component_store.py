@@ -29,6 +29,7 @@ from aurora.infra.sp500_megarun.dehb_campaign_contract import (
 from aurora.infra.sp500_megarun.dehb_lane_registry import (
     TrainLaneEvaluator,
     default_lane_configurations,
+    runtime_dataset_ids_for_lane,
 )
 from aurora.infra.sp500_megarun.dehb_numeric_runtime import (
     verify_numeric_runtime_environment,
@@ -235,9 +236,7 @@ def main() -> int:
     required_datasets = {
         dataset_id
         for component in assigned
-        for lane in data_contract.lanes
-        if lane.lane_id == str(component["lane_id"])
-        for dataset_id in lane.required_datasets
+        for dataset_id in runtime_dataset_ids_for_lane(str(component["lane_id"]))
     }
     runtime_fragment = verify_runtime_input_fragments(
         args.runtime_input_pack,
