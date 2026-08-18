@@ -6,6 +6,7 @@ import json
 
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/sp500-atlas-run.yml"
+POSTRUN_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-postrun.yml"
 
 
 def _text() -> str:
@@ -73,3 +74,13 @@ def test_atlas_workflows_do_not_checkout_or_execute_untrusted_commit_inputs() ->
     assert 'ref: ${{ github.sha }}' in run
     assert 'run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in calibration
     assert 'run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in run
+
+
+def test_postrun_workflow_is_train_only_and_publishes_robustness_audit() -> None:
+    text = POSTRUN_WORKFLOW.read_text(encoding="utf-8")
+    assert "run_sp500_atlas_robustness.py" in text
+    assert "report_sp500_atlas_multiple_testing.py" in text
+    assert "create_sp500_atlas_final_audit.py" in text
+    assert "validation_opened" in text
+    assert "locked_opened" in text
+    assert "sp500-atlas-postrun-results" in text
