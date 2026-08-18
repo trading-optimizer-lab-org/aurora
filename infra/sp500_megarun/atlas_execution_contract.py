@@ -167,6 +167,8 @@ def build_run_plan(
         raise ValueError("ATLAS_PLAN_CATALOG_ALREADY_AUTHORIZED")
     if calibration_receipt.get("hard_limit_seconds") != 1200.0:
         raise ValueError("ATLAS_PLAN_CALIBRATION_LIMIT_INVALID")
+    if calibration_receipt.get("recommended_mode") != "cold":
+        raise ValueError("ATLAS_PLAN_CALIBRATION_MODE_INVALID")
     if calibration_receipt.get("validation_opened") is not False or calibration_receipt.get(
         "locked_opened"
     ) is not False:

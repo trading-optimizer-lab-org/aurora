@@ -136,11 +136,23 @@ def reduce_atlas_run(
     plan = load_plan(Path(plan_path))
     receipts = _receipt_paths(Path(partitions_root))
     by_index: dict[int, Path] = {}
+    redundant_shard_receipt_count = 0
     for receipt_path in receipts:
         receipt = json.loads(receipt_path.read_text("utf-8"))
         index = int(receipt.get("shard_index", -1))
         if index in by_index:
-            raise ValueError("ATLAS_REDUCER_DUPLICATE_SHARD_RECEIPT")
+            prior = json.loads(by_index[index].read_text("utf-8"))
+            comparable = (
+                prior.get("plan_sha256") == receipt.get("plan_sha256")
+                and prior.get("catalog_manifest_sha256") == receipt.get("catalog_manifest_sha256")
+                and prior.get("start_ordinal") == receipt.get("start_ordinal")
+                and prior.get("stop_ordinal") == receipt.get("stop_ordinal")
+                and prior.get("result_sha256") == receipt.get("result_sha256")
+            )
+            if not comparable:
+                raise ValueError("ATLAS_REDUCER_CONFLICTING_DUPLICATE_SHARD_RECEIPT")
+            redundant_shard_receipt_count += 1
+            continue
         by_index[index] = receipt_path
     if set(by_index) != set(range(plan.total_shards)):
         missing = sorted(set(range(plan.total_shards)) - set(by_index))
@@ -223,7 +235,12 @@ def reduce_atlas_run(
     reserve_rows.sort(key=lambda row: str(row["strategy_id"]))
     reserve_rows = reserve_rows[:reserve_limit]
     _write_parquet(output / "reserve_strategies.parquet", reserve_rows)
-    (output / "fragile_reserve.parquet").write_bytes((output / "reserve_strategies.parquet").read_bytes())
+    # Robustness has not run yet.  Keep the required artifact explicit but
+    # empty instead of labelling the reserve as fragile before perturbations.
+    _write_parquet(
+        output / "fragile_reserve.parquet",
+        [],
+    )
 
     metrics = [
         {"positive_weeks": w, "positive_months": m, "joint_positive_above_spy_years": y}
@@ -250,6 +267,7 @@ def reduce_atlas_run(
         "missing_ordinals": 0,
         "duplicate_ordinals": 0,
         "conflicts": 0,
+        "redundant_shard_receipt_count": redundant_shard_receipt_count,
         "validation_opened": False,
         "locked_opened": False,
     }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -265,6 +283,7 @@ def reduce_atlas_run(
         "pareto_recipe_count": len(frontier_rows),
         "pareto_cell_count": len(frontier_cells),
         "reserve_recipe_count": len(reserve_rows),
+        "redundant_shard_receipt_count": redundant_shard_receipt_count,
         "results_sha256": _sha256_file(results_path),
         "frontier_sha256": _sha256_file(frontier_path),
         "validation_opened": False,

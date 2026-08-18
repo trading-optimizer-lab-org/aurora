@@ -7,6 +7,7 @@ fixed in the signed plan, which makes retries and final coverage checks simple.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -161,6 +162,7 @@ def run_worker(
     objective = FastTrainObjective(ledger, target_years=tuple(range(1998, 2011)), allowed_end=campaign.search_end)
     component_cache: dict[str, pd.Series] = {}
     rows: list[dict[str, object]] = []
+    started_at_iso = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
     for ordinal in range(shard.start_ordinal, shard.stop_ordinal):
         raw_ordinal = plan.selected_raw_ordinal(ordinal)
@@ -217,6 +219,8 @@ def run_worker(
         "result_sha256": result_sha256,
         "component_cache_count": len(component_cache),
         "elapsed_seconds": time.perf_counter() - started,
+        "started_at_iso": started_at_iso,
+        "finished_at_iso": datetime.now(timezone.utc).isoformat(),
         "validation_opened": False,
         "locked_opened": False,
     }

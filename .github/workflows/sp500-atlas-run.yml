@@ -155,6 +155,22 @@ jobs:
                   out.write(f"{name}={json.dumps(value, separators=(',', ':'))}\n")
               out.write(f"plan_sha256={plan['plan_sha256']}\n")
           PY
+          python scripts/plan_sp500_atlas_segments.py \
+            --plan outputs/plan/atlas_run_plan.json \
+            --output outputs/plan/atlas_segment_manifest.json \
+            --max-shards-per-segment 120
+          python scripts/plan_sp500_atlas_pilot.py \
+            --plan outputs/plan/atlas_run_plan.json \
+            --output outputs/plan/atlas_pilot_manifest.json \
+            --shard-count 60
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for name in ("atlas_segment_manifest.json", "atlas_pilot_manifest.json"):
+              payload = json.loads(Path("outputs/plan", name).read_text(encoding="utf-8"))
+              assert payload["validation_opened"] is False
+              assert payload["locked_opened"] is False
+          PY
         env:
           EXPECTED_RECIPE_COUNT: ${{ env.ATLAS_RECIPE_COUNT }}
       - name: Require explicit authorization and the frozen full plan

@@ -12,6 +12,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import time
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -86,9 +87,12 @@ def calibrate(
     output_dir: Path,
     target_end_iso: str,
     safety_fraction: float = _SAFETY_FRACTION,
+    cache_mode: Literal["cold", "component_warm"] = "component_warm",
 ) -> AtlasCalibrationReceiptV1:
     """Measure representative component and recipe throughput for 20 minutes."""
 
+    if cache_mode not in {"cold", "component_warm"}:
+        raise ValueError("ATLAS_CALIBRATION_CACHE_MODE_INVALID")
     numeric_runtime = verify_numeric_runtime_environment()
     campaign = load_and_validate_campaign_contract(Path(campaign_contract_path))
     data_contract = load_and_validate_contract(Path(data_contract_path))
@@ -148,6 +152,7 @@ def calibrate(
     result_path = output_dir / "calibration_sample.jsonl"
     component_cache: dict[str, pd.Series] = {}
     physical_component_seconds = 0.0
+    physical_component_count = 0
     recipe_count = 0
     cache_hit_count = 0
     started_at = datetime.now(_MADRID)
@@ -164,7 +169,11 @@ def calibrate(
             signals = []
             for component_id in recipe["components"]:
                 component = component_by_hash[str(component_id)]
-                signal = component_cache.get(component.configuration_sha256)
+                signal = (
+                    component_cache.get(component.configuration_sha256)
+                    if cache_mode == "component_warm"
+                    else None
+                )
                 if signal is None:
                     component_started = time.monotonic()
                     frame = evaluator(component.lane_id, component.configuration)
@@ -172,7 +181,9 @@ def calibrate(
                         frame,
                         allowed_end=campaign.search_end,
                     ).reindex(ledger.index)
-                    component_cache[component.configuration_sha256] = signal
+                    physical_component_count += 1
+                    if cache_mode == "component_warm":
+                        component_cache[component.configuration_sha256] = signal
                     physical_component_seconds += time.monotonic() - component_started
                 else:
                     cache_hit_count += 1
@@ -221,12 +232,12 @@ def calibrate(
         timed_out_cleanly=timed_out_cleanly,
         physical_recipe_count=recipe_count,
         cache_hit_count=cache_hit_count,
-        physical_component_count=len(component_cache),
+        physical_component_count=physical_component_count,
         physical_component_seconds=physical_component_seconds,
         recipe_seconds=max(0.0, wall_seconds - physical_component_seconds),
         result_store_seconds=result_store_seconds,
         recipes_per_minute=rate,
-        recommended_mode="component_warm",
+        recommended_mode=cache_mode,
         available_minutes_to_target=available,
         safety_fraction=safety_fraction,
         target_recipe_count_with_margin=target_recipe_count(
@@ -256,6 +267,7 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--target-end-iso", required=True)
     parser.add_argument("--safety-fraction", type=float, default=_SAFETY_FRACTION)
+    parser.add_argument("--cache-mode", choices=("cold", "component_warm"), default="component_warm")
     args = parser.parse_args()
     receipt = calibrate(
         campaign_contract_path=args.campaign_contract,
@@ -265,6 +277,7 @@ def main() -> int:
         catalog_dir=args.catalog_dir,
         output_dir=args.output_dir,
         target_end_iso=args.target_end_iso,
+        cache_mode=args.cache_mode,
         safety_fraction=args.safety_fraction,
     )
     print(receipt.model_dump_json(indent=2))

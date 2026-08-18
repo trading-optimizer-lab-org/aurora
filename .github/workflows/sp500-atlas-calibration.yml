@@ -17,6 +17,12 @@ on:
         required: true
         default: "2026-08-20T07:31:00+02:00"
         type: string
+      cache_mode:
+        description: "Measured component cache mode; cold is required for conservative sizing"
+        required: true
+        default: cold
+        type: choice
+        options: [cold, component_warm]
   workflow_call:
     inputs:
       commit_sha:
@@ -29,6 +35,10 @@ on:
         required: false
         type: string
         default: "2026-08-20T07:31:00+02:00"
+      cache_mode:
+        required: false
+        type: string
+        default: cold
 
 permissions:
   actions: read
@@ -42,6 +52,7 @@ jobs:
       ATLAS_REQUESTED_COMMIT_SHA: ${{ inputs.commit_sha }}
       ATLAS_RUNTIME_INPUT_RUN_ID: ${{ inputs.runtime_input_run_id }}
       ATLAS_TARGET_END_ISO: ${{ inputs.target_end_iso }}
+      ATLAS_CACHE_MODE: ${{ inputs.cache_mode }}
       GITHUB_ACTIONS: "true"
       PYTHONHASHSEED: "0"
       OMP_NUM_THREADS: "1"
@@ -94,10 +105,11 @@ jobs:
           --catalog-dir outputs/atlas
           --output-dir outputs/calibration
           --target-end-iso "$ATLAS_TARGET_END_ISO"
+          --cache-mode "$ATLAS_CACHE_MODE"
       - name: Fail closed on receipt or protected boundary
         shell: bash
         run: >-
-          python -c "import json; p=json.load(open('outputs/calibration/calibration_receipt.json')); assert p['hard_limit_seconds']==1200.0 and p['validation_opened'] is False and p['locked_opened'] is False and p['physical_recipe_count']>=0"
+          python -c "import json; p=json.load(open('outputs/calibration/calibration_receipt.json')); assert p['hard_limit_seconds']==1200.0 and p['validation_opened'] is False and p['locked_opened'] is False and p['physical_recipe_count']>=0 and p['recommended_mode']==__import__('os').environ['ATLAS_CACHE_MODE']"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: sp500-atlas-calibration-${{ github.run_id }}

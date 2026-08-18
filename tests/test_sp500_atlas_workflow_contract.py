@@ -7,6 +7,9 @@ import json
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/sp500-atlas-run.yml"
 POSTRUN_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-postrun.yml"
+SEGMENT_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-segment.yml"
+CONTROLLER_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-controller.yml"
+PILOT_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-pilot.yml"
 
 
 def _text() -> str:
@@ -84,3 +87,24 @@ def test_postrun_workflow_is_train_only_and_publishes_robustness_audit() -> None
     assert "validation_opened" in text
     assert "locked_opened" in text
     assert "sp500-atlas-postrun-results" in text
+
+
+def test_segment_controller_and_pilot_workflows_are_recoverable_and_train_only() -> None:
+    segment = SEGMENT_WORKFLOW.read_text(encoding="utf-8")
+    controller = CONTROLLER_WORKFLOW.read_text(encoding="utf-8")
+    controller_script = (ROOT / "scripts/run_sp500_atlas_controller.py").read_text(encoding="utf-8")
+    pilot = PILOT_WORKFLOW.read_text(encoding="utf-8")
+    pilot_script = (ROOT / "scripts/summarize_sp500_atlas_pilot.py").read_text(encoding="utf-8")
+    assert "atlas_segment_manifest.json" in segment
+    assert "verify_sp500_atlas_segment.py" in segment
+    assert "max-parallel: 120" in segment
+    assert "for attempt in 1 2 3" not in segment
+    assert "actions: write" in controller
+    assert "run_sp500_atlas_controller.py" in controller
+    assert "sp500-atlas-segment.yml" in controller_script
+    assert "reduce_sp500_atlas_run.py" in controller_script
+    assert "validation_opened" in controller and "locked_opened" in controller
+    assert "atlas_pilot_manifest.json" in pilot
+    assert "run_sp500_atlas_pilot_faults.py" in pilot
+    assert "effective_concurrency" in pilot_script
+    assert "validation_opened" in pilot and "locked_opened" in pilot

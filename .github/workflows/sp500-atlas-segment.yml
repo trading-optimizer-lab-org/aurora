@@ -1,0 +1,195 @@
+name: SP500 Atlas Reusable Segment
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Exact immutable implementation commit
+        required: true
+        type: string
+      preflight_run_id:
+        description: Run containing the frozen train-only preflight artifact
+        required: true
+        type: string
+      runtime_input_run_id:
+        description: Verified train-only runtime input pack run
+        required: true
+        type: string
+      segment_index:
+        description: Frozen segment index from atlas_segment_manifest.json
+        required: true
+        type: number
+      controller_run_id:
+        description: Parent controller run identity
+        required: true
+        type: string
+      attempt:
+        description: Separate attempt number for this segment
+        required: true
+        default: "1"
+        type: number
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  GITHUB_ACTIONS: "true"
+  PYTHONHASHSEED: "0"
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+  VECLIB_MAXIMUM_THREADS: "1"
+  BLIS_NUM_THREADS: "1"
+  PYTHONPATH: ${{ github.workspace }}/..
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      shards: ${{ steps.segment.outputs.shards }}
+      plan_sha256: ${{ steps.segment.outputs.plan_sha256 }}
+      segment_manifest_sha256: ${{ steps.segment.outputs.segment_manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - name: Verify exact commit
+        shell: bash
+        env:
+          REQUESTED_COMMIT: ${{ inputs.commit_sha }}
+        run: test "$REQUESTED_COMMIT" = "$GITHUB_SHA"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-preflight
+          path: ${{ runner.temp }}/preflight
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.preflight_run_id }}
+      - id: segment
+        name: Validate frozen segment and emit shard matrix
+        shell: bash
+        env:
+          SEGMENT_INDEX: ${{ inputs.segment_index }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from aurora.infra.sp500_megarun.atlas_execution_contract import load_plan
+          from aurora.infra.sp500_megarun.atlas_segments import load_segment_manifest
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "preflight"
+          plan_path = root / "plan" / "atlas_run_plan.json"
+          manifest_path = root / "plan" / "atlas_segment_manifest.json"
+          plan = load_plan(plan_path)
+          manifest = load_segment_manifest(manifest_path.read_text(encoding="utf-8"), plan=plan)
+          index = int(os.environ["SEGMENT_INDEX"])
+          segment = manifest["segments"][index]
+          assert segment["validation_opened"] is False
+          assert segment["locked_opened"] is False
+          out = Path(os.environ["GITHUB_OUTPUT"])
+          with out.open("a", encoding="utf-8") as handle:
+              handle.write("shards=" + json.dumps(segment["shard_indices"], separators=(",", ":")) + "\n")
+              handle.write("plan_sha256=" + plan.plan_sha256 + "\n")
+              handle.write("segment_manifest_sha256=" + manifest["manifest_sha256"] + "\n")
+          PY
+
+  evaluate:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix:
+        shard: ${{ fromJSON(needs.prepare.outputs.shards) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-preflight
+          path: ${{ runner.temp }}/preflight
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.preflight_run_id }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          path: ${{ runner.temp }}/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Evaluate one immutable shard
+        shell: bash
+        run: >-
+          python scripts/run_sp500_atlas_worker.py
+          --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json"
+          --catalog-dir "$RUNNER_TEMP/preflight/atlas"
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --data-contract config/sp500_megarun_free_data_240.json
+          --feature-contract config/sp500_megarun_feature_contract_240.json
+          --shard-index "${{ matrix.shard }}"
+          --output-dir "$RUNNER_TEMP/shard-${{ matrix.shard }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-segment-shard-${{ inputs.controller_run_id }}-${{ inputs.segment_index }}-${{ inputs.attempt }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/shard-${{ matrix.shard }}
+          if-no-files-found: error
+          retention-days: 30
+
+  finalize:
+    needs: [prepare, evaluate]
+    if: ${{ needs.prepare.result == 'success' && needs.evaluate.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-preflight
+          path: ${{ runner.temp }}/preflight
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.preflight_run_id }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-atlas-segment-shard-${{ inputs.controller_run_id }}-${{ inputs.segment_index }}-${{ inputs.attempt }}-*
+          path: ${{ runner.temp }}/partitions
+          merge-multiple: false
+      - name: Verify and publish complete segment
+        shell: bash
+        env:
+          SEGMENT_INDEX: ${{ inputs.segment_index }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/verified/partitions"
+          python scripts/verify_sp500_atlas_segment.py \
+            --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
+            --segment-manifest "$RUNNER_TEMP/preflight/plan/atlas_segment_manifest.json" \
+            --segment-index "$SEGMENT_INDEX" \
+            --partitions-root "$RUNNER_TEMP/partitions" \
+            --output-dir "$RUNNER_TEMP/verified/receipt"
+          cp -R "$RUNNER_TEMP/partitions"/. "$RUNNER_TEMP/verified/partitions/"
+          cp "$RUNNER_TEMP/preflight/plan/atlas_segment_manifest.json" "$RUNNER_TEMP/verified/segment_manifest.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-segment-result-${{ inputs.controller_run_id }}-${{ inputs.segment_index }}-${{ inputs.attempt }}
+          path: ${{ runner.temp }}/verified
+          if-no-files-found: error
+          retention-days: 90

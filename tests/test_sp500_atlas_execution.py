@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -113,6 +114,7 @@ def _evidence() -> tuple[dict[str, object], dict[str, object]]:
         "hard_limit_seconds": 1200.0,
         "target_recipe_count_with_margin": 8,
         "recipes_per_minute": 10.0,
+        "recommended_mode": "cold",
         "available_minutes_to_target": 100.0,
         "safety_fraction": 0.8,
         "validation_opened": False,
@@ -155,6 +157,20 @@ def test_plan_round_trip_and_hash(tmp_path: Path) -> None:
     assert load_plan(path).plan_sha256 == plan.plan_sha256
     assert sum(row.expected_recipe_count for row in plan.shards) == 8
     assert plan.matrix_groups() == ((0, 3), (1,), (2,))
+
+
+def test_plan_rejects_warm_calibration_for_conservative_sizing() -> None:
+    catalog, receipt = _evidence()
+    receipt["recommended_mode"] = "component_warm"
+    with pytest.raises(ValueError, match="ATLAS_PLAN_CALIBRATION_MODE_INVALID"):
+        build_run_plan(
+            catalog_manifest=catalog,
+            calibration_receipt=receipt,
+            target_end_iso="2026-08-20T07:31:00+02:00",
+            implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+            total_shards=4,
+            selection=_selection(),
+        )
 
 
 def test_plan_binds_stratified_selection_instead_of_a_prefix(tmp_path: Path) -> None:
@@ -285,3 +301,31 @@ def test_reducer_rejects_missing_shard(tmp_path: Path) -> None:
         _write_shard(shards, plan, index)
     with pytest.raises(ValueError, match="SHARD_COVERAGE_INVALID"):
         reduce_atlas_run(plan_path=plan_path, partitions_root=shards, output_dir=tmp_path / "out")
+
+
+def test_reducer_accepts_identical_duplicate_receipt_and_records_redundancy(tmp_path: Path) -> None:
+    catalog, receipt = _evidence()
+    plan = build_run_plan(
+        catalog_manifest=catalog,
+        calibration_receipt=receipt,
+        target_end_iso="2026-08-20T07:31:00+02:00",
+        implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+        total_shards=4,
+        selection=_selection(),
+    )
+    plan_path = tmp_path / "plan.json"
+    write_plan(plan_path, plan)
+    shards = tmp_path / "shards"
+    shards.mkdir()
+    for index in range(4):
+        _write_shard(shards, plan, index)
+    shutil.copytree(shards / "shard-0", shards / "duplicate-shard-0")
+
+    summary = reduce_atlas_run(
+        plan_path=plan_path,
+        partitions_root=shards,
+        output_dir=tmp_path / "out",
+    )
+
+    assert summary["verified_recipe_count"] == 8
+    assert summary["redundant_shard_receipt_count"] == 1
