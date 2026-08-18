@@ -21,7 +21,7 @@ on:
       calibration_run_id:
         description: "Verified 20-minute calibration run"
         required: true
-        default: "32039572017"
+        default: "32061399368"
         type: string
       target_end_iso:
         description: "Planning target in Europe/Madrid"
@@ -118,8 +118,8 @@ jobs:
         name: Create exact static plan
         shell: bash
         run: |
-          receipt="config/sp500_atlas_1/calibration_receipt_32039572017.json"
-          test "$ATLAS_CALIBRATION_RUN_ID" = "32039572017"
+          receipt="config/sp500_atlas_1/calibration_receipt_32061399368.json"
+          test "$ATLAS_CALIBRATION_RUN_ID" = "32061399368"
           test -f "$receipt"
           implementation_sha="$ATLAS_REQUESTED_COMMIT_SHA"
           if [ "${{ inputs.run_mode }}" = "full" ]; then
@@ -174,7 +174,7 @@ jobs:
           assert freeze["catalog_space_sha256"] == plan["catalog_space_sha256"]
           assert freeze["calibration_receipt_sha256"] == plan["calibration_receipt_sha256"]
           assert freeze["scientific_implementation_commit_sha"] == plan["implementation_commit_sha"]
-          assert freeze["requested_recipe_count"] == plan["requested_recipe_count"] == 18816734
+          assert freeze["requested_recipe_count"] == plan["requested_recipe_count"] == 12079704
           assert freeze["total_shards"] == plan["total_shards"] == 360
           assert plan["target_end_iso"] == "2026-08-20T07:31:00+02:00"
           print("ATLAS_FROZEN_FULL_PLAN_ACCEPTED")
