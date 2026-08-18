@@ -85,6 +85,11 @@ def test_freeze_manifest_binds_exact_plan_and_keeps_launch_closed() -> None:
     assert freeze["launch_authorized"] is True
     assert freeze["calibration_run_id"] == "32137133180"
     assert freeze["planning_rate_recipes_per_minute"] == 107.55
+    assert freeze["pilot_verify_run_id"] == "32152459079"
+    assert freeze["pilot_verified_recipe_count"] == 34985
+    assert freeze["pilot_verified_shard_count"] == 60
+    assert freeze["pilot_validation_opened"] is False
+    assert freeze["pilot_locked_opened"] is False
     assert freeze["required_launch_authorization"] == "AUTHORIZE_SP500_ATLAS_FULL_RUN"
 
 
