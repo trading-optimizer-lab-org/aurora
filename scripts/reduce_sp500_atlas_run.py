@@ -1,16 +1,17 @@
-"""Verify and join every static Atlas shard without hiding missing results."""
+"""Stream-verify Atlas shards, preserve every row, and reduce exact cells."""
 
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterable
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterable
+
+import pandas as pd
 
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.atlas_execution_contract import load_plan
-from aurora.infra.sp500_megarun.catalog_atlas_objective import pareto_frontier
 
 
 def _sha256_file(path: Path) -> str:
@@ -57,6 +58,75 @@ def _read_rows(path: Path) -> Iterable[dict[str, object]]:
             yield row
 
 
+def _cell(row: dict[str, object]) -> tuple[int, int, int]:
+    return (
+        int(row["positive_weeks"]),
+        int(row["positive_months"]),
+        int(row["joint_positive_above_spy_years"]),
+    )
+
+
+def _pareto_cells(cells: Iterable[tuple[int, int, int]]) -> set[tuple[int, int, int]]:
+    """Find non-dominated integer cells with a Fenwick prefix maximum."""
+
+    unique = sorted(set(cells), key=lambda value: (-value[0], -value[1], -value[2]))
+    months = sorted({value[1] for value in unique}, reverse=True)
+    month_rank = {value: index + 1 for index, value in enumerate(months)}
+    tree: list[int | None] = [None] * (len(months) + 1)
+
+    def query(index: int) -> int | None:
+        best: int | None = None
+        while index:
+            value = tree[index]
+            if value is not None and (best is None or value > best):
+                best = value
+            index -= index & -index
+        return best
+
+    def update(index: int, value: int) -> None:
+        while index < len(tree):
+            if tree[index] is None or value > tree[index]:
+                tree[index] = value
+            index += index & -index
+
+    frontier: set[tuple[int, int, int]] = set()
+    for week, month, year in unique:
+        rank = month_rank[month]
+        best_year = query(rank)
+        if best_year is None or best_year < year:
+            frontier.add((week, month, year))
+        update(rank, year)
+    return frontier
+
+
+def _compact_row(row: dict[str, object]) -> dict[str, object]:
+    return {
+        "ordinal": int(row["ordinal"]),
+        "strategy_id": str(row["strategy_id"]),
+        "scientific_recipe_sha256": str(row["scientific_recipe_sha256"]),
+        "raw_ordinal": int(row.get("raw_ordinal", row["ordinal"])),
+        "positive_weeks": int(row["positive_weeks"]),
+        "total_weeks": int(row["total_weeks"]),
+        "positive_months": int(row["positive_months"]),
+        "total_months": int(row["total_months"]),
+        "joint_positive_above_spy_years": int(row["joint_positive_above_spy_years"]),
+        "total_years": int(row["total_years"]),
+        "positive_week_fraction": float(row["positive_week_fraction"]),
+        "positive_month_fraction": float(row["positive_month_fraction"]),
+        "joint_positive_above_spy_fraction": float(row["joint_positive_above_spy_fraction"]),
+        "annualized_strategy_return": float(row["annualized_strategy_return"]),
+        "annualized_alpha": float(row["annualized_alpha"]),
+        "weeks_beating_spy": int(row["weeks_beating_spy"]),
+        "week_count": int(row["week_count"]),
+        "components_json": json.dumps(row.get("components", []), sort_keys=True),
+        "composition_json": json.dumps(row.get("composition", {}), sort_keys=True),
+    }
+
+
+def _write_parquet(path: Path, rows: list[dict[str, object]]) -> None:
+    pd.DataFrame(rows).to_parquet(path, index=False)
+
+
 def reduce_atlas_run(
     *,
     plan_path: Path,
@@ -77,65 +147,124 @@ def reduce_atlas_run(
         extra = sorted(set(by_index) - set(range(plan.total_shards)))
         raise ValueError(f"ATLAS_REDUCER_SHARD_COVERAGE_INVALID:missing={missing[:5]}:extra={extra[:5]}")
 
-    rows: list[dict[str, object]] = []
-    seen: set[int] = set()
-    for shard in plan.shards:
-        receipt_path = by_index[shard.shard_index]
-        receipt = json.loads(receipt_path.read_text("utf-8"))
-        expected = {
-            "plan_sha256": plan.plan_sha256,
-            "catalog_manifest_sha256": plan.catalog_manifest_sha256,
-            "shard_index": shard.shard_index,
-            "start_ordinal": shard.start_ordinal,
-            "stop_ordinal": shard.stop_ordinal,
-            "expected_recipe_count": shard.expected_recipe_count,
-            "actual_recipe_count": shard.expected_recipe_count,
-            "validation_opened": False,
-            "locked_opened": False,
-        }
-        for key, value in expected.items():
-            if receipt.get(key) != value:
-                raise ValueError(f"ATLAS_REDUCER_RECEIPT_MISMATCH:{shard.shard_index}:{key}")
-        result_path = _find_result_path(receipt_path)
-        if _sha256_file(result_path) != receipt.get("result_sha256"):
-            raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard.shard_index}")
-        shard_rows: list[dict[str, object]] = []
-        for row in _read_rows(result_path):
-            ordinal = _verify_row(row, plan_sha256=plan.plan_sha256, shard_index=shard.shard_index)
-            if ordinal < shard.start_ordinal or ordinal >= shard.stop_ordinal:
-                raise ValueError(f"ATLAS_REDUCER_ORDINAL_OUT_OF_SHARD:{ordinal}")
-            if ordinal in seen:
-                raise ValueError(f"ATLAS_REDUCER_DUPLICATE_ORDINAL:{ordinal}")
-            seen.add(ordinal)
-            shard_rows.append(row)
-        if len(shard_rows) != shard.expected_recipe_count:
-            raise ValueError(f"ATLAS_REDUCER_ROW_COUNT_INVALID:{shard.shard_index}")
-        rows.extend(shard_rows)
-
-    if len(rows) != plan.requested_recipe_count or seen != set(range(plan.ordinal_start, plan.ordinal_stop)):
-        raise ValueError("ATLAS_REDUCER_GLOBAL_COVERAGE_INVALID")
-    rows.sort(key=lambda row: int(row["ordinal"]))
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=False)
     results_path = output / "results.jsonl"
-    with results_path.open("x", encoding="utf-8", newline="\n") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n")
-    frontier = pareto_frontier(rows)
+    seen: set[int] = set()
+    cells: set[tuple[int, int, int]] = set()
+    row_count = 0
+    with results_path.open("x", encoding="utf-8", newline="\n") as result_handle:
+        for shard in plan.shards:
+            receipt_path = by_index[shard.shard_index]
+            receipt = json.loads(receipt_path.read_text("utf-8"))
+            expected = {
+                "plan_sha256": plan.plan_sha256,
+                "catalog_manifest_sha256": plan.catalog_manifest_sha256,
+                "shard_index": shard.shard_index,
+                "start_ordinal": shard.start_ordinal,
+                "stop_ordinal": shard.stop_ordinal,
+                "expected_recipe_count": shard.expected_recipe_count,
+                "actual_recipe_count": shard.expected_recipe_count,
+                "validation_opened": False,
+                "locked_opened": False,
+            }
+            for key, value in expected.items():
+                if receipt.get(key) != value:
+                    raise ValueError(f"ATLAS_REDUCER_RECEIPT_MISMATCH:{shard.shard_index}:{key}")
+            result_path = _find_result_path(receipt_path)
+            if _sha256_file(result_path) != receipt.get("result_sha256"):
+                raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard.shard_index}")
+            shard_count = 0
+            for row in _read_rows(result_path):
+                ordinal = _verify_row(row, plan_sha256=plan.plan_sha256, shard_index=shard.shard_index)
+                if ordinal < shard.start_ordinal or ordinal >= shard.stop_ordinal:
+                    raise ValueError(f"ATLAS_REDUCER_ORDINAL_OUT_OF_SHARD:{ordinal}")
+                if ordinal in seen:
+                    raise ValueError(f"ATLAS_REDUCER_DUPLICATE_ORDINAL:{ordinal}")
+                seen.add(ordinal)
+                cells.add(_cell(row))
+                result_handle.write(json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n")
+                row_count += 1
+                shard_count += 1
+            if shard_count != shard.expected_recipe_count:
+                raise ValueError(f"ATLAS_REDUCER_ROW_COUNT_INVALID:{shard.shard_index}")
+
+    if row_count != plan.requested_recipe_count or seen != set(range(plan.ordinal_start, plan.ordinal_stop)):
+        raise ValueError("ATLAS_REDUCER_GLOBAL_COVERAGE_INVALID")
+    frontier_cells = _pareto_cells(cells)
+    frontier_rows: list[dict[str, object]] = []
     frontier_path = output / "pareto_frontier.jsonl"
-    frontier_path.write_text(
-        "".join(json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n" for row in frontier),
-        encoding="utf-8",
-    )
+    with frontier_path.open("x", encoding="utf-8", newline="\n") as frontier_handle:
+        for row in _read_rows(results_path):
+            compact = _compact_row(row)
+            if _cell(row) in frontier_cells:
+                frontier_rows.append(compact)
+                frontier_handle.write(json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n")
+    frontier_rows.sort(key=lambda row: str(row["strategy_id"]))
+    _write_parquet(output / "pareto_cells.parquet", [
+        {"positive_weeks": w, "positive_months": m, "joint_positive_above_spy_years": y}
+        for w, m, y in sorted(frontier_cells, reverse=True)
+    ])
+    _write_parquet(output / "pareto_strategies.parquet", frontier_rows)
+
+    reserve_limit = 50_000
+    reserve_rows: list[dict[str, object]] = []
+    for row in _read_rows(results_path):
+        cell = _cell(row)
+        if cell in frontier_cells:
+            continue
+        near = any(
+            all(front[i] >= cell[i] for i in range(3))
+            and max(front[i] - cell[i] for i in range(3)) <= 1
+            for front in frontier_cells
+        )
+        if near:
+            reserve_rows.append(_compact_row(row))
+    reserve_rows.sort(key=lambda row: str(row["strategy_id"]))
+    reserve_rows = reserve_rows[:reserve_limit]
+    _write_parquet(output / "reserve_strategies.parquet", reserve_rows)
+    (output / "fragile_reserve.parquet").write_bytes((output / "reserve_strategies.parquet").read_bytes())
+
+    metrics = [
+        {"positive_weeks": w, "positive_months": m, "joint_positive_above_spy_years": y}
+        for w, m, y in sorted(cells, reverse=True)
+    ]
+    _write_parquet(output / "descriptive_metrics.parquet", metrics)
+    dataset = output / "all_results_dataset"
+    dataset.mkdir()
+    dataset_manifest = {
+        "schema_version": 1,
+        "results_path": "../results.jsonl",
+        "results_sha256": _sha256_file(results_path),
+        "row_count": row_count,
+        "streaming": True,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+    (dataset / "manifest.json").write_text(json.dumps(dataset_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (output / "all_results_manifest.json").write_text(json.dumps(dataset_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (output / "coverage_report.json").write_text(json.dumps({
+        "requested_recipe_count": plan.requested_recipe_count,
+        "verified_recipe_count": row_count,
+        "verified_shard_count": len(by_index),
+        "missing_ordinals": 0,
+        "duplicate_ordinals": 0,
+        "conflicts": 0,
+        "validation_opened": False,
+        "locked_opened": False,
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     summary = {
         "schema_version": 1,
         "accepted": True,
         "plan_sha256": plan.plan_sha256,
         "catalog_manifest_sha256": plan.catalog_manifest_sha256,
+        "selection_sha256": plan.selection_sha256,
         "requested_recipe_count": plan.requested_recipe_count,
-        "verified_recipe_count": len(rows),
+        "verified_recipe_count": row_count,
         "verified_shard_count": len(by_index),
-        "pareto_recipe_count": len(frontier),
+        "pareto_recipe_count": len(frontier_rows),
+        "pareto_cell_count": len(frontier_cells),
+        "reserve_recipe_count": len(reserve_rows),
         "results_sha256": _sha256_file(results_path),
         "frontier_sha256": _sha256_file(frontier_path),
         "validation_opened": False,
@@ -151,20 +280,7 @@ def main() -> int:
     parser.add_argument("--partitions-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    # Keep argparse's ``--plan`` spelling separate from the reducer API's
-    # explicit ``plan_path`` parameter.  Passing ``vars(args)`` directly would
-    # make the final join fail only after every worker had finished.
-    print(
-        json.dumps(
-            reduce_atlas_run(
-                plan_path=args.plan,
-                partitions_root=args.partitions_root,
-                output_dir=args.output_dir,
-            ),
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    print(json.dumps(reduce_atlas_run(plan_path=args.plan, partitions_root=args.partitions_root, output_dir=args.output_dir), indent=2, sort_keys=True))
     return 0
 
 
