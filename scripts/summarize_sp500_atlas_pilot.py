@@ -143,7 +143,17 @@ def main() -> int:
     parser.add_argument("--fault-receipt", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    print(json.dumps(summarize_pilot(**vars(args)), indent=2, sort_keys=True))
+    print(json.dumps(
+        summarize_pilot(
+            plan_path=args.plan,
+            pilot_manifest_path=args.pilot_manifest,
+            partitions_root=args.partitions_root,
+            fault_receipt_path=args.fault_receipt,
+            output_path=args.output,
+        ),
+        indent=2,
+        sort_keys=True,
+    ))
     return 0
 
 
