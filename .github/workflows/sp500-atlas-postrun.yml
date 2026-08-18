@@ -1,0 +1,130 @@
+name: SP500 Atlas Postrun Robustness and Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Completed SP500 Atlas static run"
+        required: true
+        type: string
+      commit_sha:
+        description: "Exact immutable postrun implementation commit"
+        required: true
+        type: string
+      runtime_input_run_id:
+        description: "Verified train-only runtime input pack"
+        required: true
+        default: "31418682679"
+        type: string
+  workflow_call:
+    inputs:
+      source_run_id: {required: true, type: string}
+      commit_sha: {required: true, type: string}
+      runtime_input_run_id: {required: true, type: string}
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  GITHUB_ACTIONS: "true"
+  PYTHONHASHSEED: "0"
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+  PYTHONPATH: ${{ github.workspace }}/..
+
+jobs:
+  postrun:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - name: Verify requested commit is this workflow commit
+        shell: bash
+        env:
+          REQUESTED_COMMIT: ${{ inputs.commit_sha }}
+        run: test "$REQUESTED_COMMIT" = "$GITHUB_SHA"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-final-results
+          path: ${{ runner.temp }}/final
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-preflight
+          path: ${{ runner.temp }}/preflight
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          path: ${{ runner.temp }}/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Verify train-only final inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          plan = json.loads(Path("${{ runner.temp }}/preflight/plan/atlas_run_plan.json").read_text(encoding="utf-8"))
+          reduction = json.loads(Path("${{ runner.temp }}/final/reduction_receipt.json").read_text(encoding="utf-8"))
+          assert plan["train_end"] == "2010-12-31"
+          assert plan["validation_opened"] is False
+          assert plan["locked_opened"] is False
+          assert reduction["plan_sha256"] == plan["plan_sha256"]
+          assert reduction["validation_opened"] is False
+          assert reduction["locked_opened"] is False
+          PY
+      - name: Run frozen train-only robustness campaign
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/run_sp500_atlas_robustness.py \
+            --final-results "${{ runner.temp }}/final" \
+            --plan "${{ runner.temp }}/preflight/plan/atlas_run_plan.json" \
+            --catalog-dir "${{ runner.temp }}/preflight/atlas" \
+            --runtime-input-pack "${{ runner.temp }}/runtime" \
+            --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+            --data-contract config/sp500_megarun_free_data_240.json \
+            --feature-contract config/sp500_megarun_feature_contract_240.json \
+            --policy config/sp500_atlas_1/robustness_policy_v1.json \
+            --output-dir outputs/robustness
+      - name: Run train-only multiple-testing diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/report_sp500_atlas_multiple_testing.py \
+            --results "${{ runner.temp }}/final/results.jsonl" \
+            --catalog-manifest "${{ runner.temp }}/preflight/atlas/manifest.json" \
+            --reduction-receipt "${{ runner.temp }}/final/reduction_receipt.json" \
+            --robustness-receipt outputs/robustness/robustness_receipt.json \
+            --output-dir outputs/multiple-testing
+      - name: Create final train-only audit
+        shell: bash
+        run: |
+          python scripts/create_sp500_atlas_final_audit.py \
+            --preflight "${{ runner.temp }}/preflight" \
+            --final-results "${{ runner.temp }}/final" \
+            --robustness outputs/robustness \
+            --multiple-testing outputs/multiple-testing \
+            --output outputs/SP500_ATLAS_1_FINAL_EXECUTION_AUDIT.md \
+            --run-id "${{ inputs.source_run_id }}" \
+            --commit-sha "$GITHUB_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-postrun-results-${{ inputs.source_run_id }}
+          path: outputs
+          if-no-files-found: error
+          retention-days: 90

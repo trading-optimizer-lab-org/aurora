@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "policy_id": "sp500-atlas-1-train-robustness-v1",
+  "train_end": "2010-12-31",
+  "max_pareto_candidates": 10000,
+  "candidate_order": "strategy_id_ascending",
+  "reserve_limit": 50000,
+  "red_loss_points": 5,
+  "perturbations": [
+    {"kind": "decision_delay", "days": 1, "name": "decision_delay_1d"},
+    {"kind": "decision_delay", "days": 2, "name": "decision_delay_2d"},
+    {"kind": "neighbor_parameter", "direction": "lower", "name": "parameter_neighbor_lower"},
+    {"kind": "neighbor_parameter", "direction": "upper", "name": "parameter_neighbor_upper"},
+    {"kind": "leave_one_year_out", "name": "leave_one_year_out"},
+    {"kind": "subperiod", "end": "1998-12-31", "name": "train_early_1993_1998", "start": "1993-01-01"},
+    {"kind": "subperiod", "end": "2004-12-31", "name": "train_middle_1999_2004", "start": "1999-01-01"},
+    {"kind": "subperiod", "end": "2010-12-31", "name": "train_late_2005_2010", "start": "2005-01-01"},
+    {"kind": "boundary_shift", "end": "2010-12-31", "name": "boundary_start_plus_one_year", "start": "1994-01-01"},
+    {"kind": "boundary_shift", "end": "2009-12-31", "name": "boundary_end_minus_one_year", "start": "1993-01-01"},
+    {"kind": "fixed_gap", "end": "2000-01-07", "name": "realistic_gap_2000_w01", "start": "2000-01-03"},
+    {"kind": "fixed_gap", "end": "2008-09-19", "name": "realistic_gap_2008_w38", "start": "2008-09-15"},
+    {"kind": "remove_best_periods", "count": 2, "name": "remove_two_best_train_years"},
+    {"kind": "ablation_each_component", "name": "ablation_each_component"}
+  ],
+  "validation_opened": false,
+  "locked_opened": false
+}
