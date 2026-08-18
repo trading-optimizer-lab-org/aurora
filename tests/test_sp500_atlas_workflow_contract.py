@@ -23,7 +23,7 @@ def test_workflow_uses_exact_commit_and_static_shards() -> None:
     assert "run_sp500_atlas_worker.py" in text
     assert "reduce_sp500_atlas_run.py" in text
     assert text.count("max-parallel: 120") == 3
-    assert text.count("fail-fast: false") == 3
+    assert text.count("fail-fast: false") == 4
     assert "recipe_count" in text
     assert "total_shards" in text
     assert "smoke_serial" in text
@@ -58,6 +58,16 @@ def test_smoke_does_not_require_a_sixty_shard_pilot_manifest() -> None:
     text = _text()
     assert 'if [ "${{ inputs.run_mode }}" != "smoke" ]; then' in text
     assert 'names = ["atlas_segment_manifest.json"]' in text
+
+
+def test_atlas_run_contains_authorized_sixty_shard_pilot_path() -> None:
+    text = _text()
+    assert "options: [smoke, plan, pilot, full]" in text
+    assert "AUTHORIZE_SP500_ATLAS_PILOT" in text
+    assert "pilot_evaluate:" in text
+    assert "max-parallel: 60" in text
+    assert "pilot_summarize:" in text
+    assert "run_sp500_atlas_pilot_faults.py" in text
 
 
 def test_freeze_manifest_binds_exact_plan_and_keeps_launch_closed() -> None:

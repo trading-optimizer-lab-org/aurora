@@ -8,7 +8,7 @@ on:
         required: true
         default: smoke
         type: choice
-        options: [smoke, plan, full]
+        options: [smoke, plan, pilot, full]
       commit_sha:
         description: "Exact immutable implementation commit"
         required: true
@@ -89,6 +89,7 @@ jobs:
       matrix_a: ${{ steps.plan.outputs.matrix_a }}
       matrix_b: ${{ steps.plan.outputs.matrix_b }}
       matrix_c: ${{ steps.plan.outputs.matrix_c }}
+      pilot_shards: ${{ steps.plan.outputs.pilot_shards }}
       plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
     env:
       GH_TOKEN: ${{ github.token }}
@@ -185,16 +186,29 @@ jobs:
               assert payload["validation_opened"] is False
               assert payload["locked_opened"] is False
           PY
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          pilot_path = Path("outputs/plan/atlas_pilot_manifest.json")
+          pilot = json.loads(pilot_path.read_text(encoding="utf-8")) if pilot_path.is_file() else None
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write("pilot_shards=" + json.dumps((pilot or {}).get("shard_indices", []), separators=(",", ":")) + "\n")
+          PY
         env:
           EXPECTED_RECIPE_COUNT: ${{ env.ATLAS_RECIPE_COUNT }}
-      - name: Require explicit authorization and the frozen full plan
-        if: ${{ inputs.run_mode == 'full' }}
+      - name: Require explicit authorization and the frozen campaign plan
+        if: ${{ inputs.run_mode == 'pilot' || inputs.run_mode == 'full' }}
         shell: bash
         env:
           LAUNCH_AUTHORIZATION: ${{ inputs.launch_authorization }}
         run: |
           set -euo pipefail
-          test "$LAUNCH_AUTHORIZATION" = "AUTHORIZE_SP500_ATLAS_FULL_RUN"
+          if [ "${{ inputs.run_mode }}" = "full" ]; then
+            test "$LAUNCH_AUTHORIZATION" = "AUTHORIZE_SP500_ATLAS_FULL_RUN"
+          else
+            test "$LAUNCH_AUTHORIZATION" = "AUTHORIZE_SP500_ATLAS_PILOT"
+          fi
           python - <<'PY'
           import json
           from pathlib import Path
@@ -216,6 +230,7 @@ jobs:
           assert plan["target_end_iso"] == "2026-08-20T07:31:00+02:00"
           print("ATLAS_FROZEN_FULL_PLAN_ACCEPTED")
           PY
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: sp500-atlas-preflight
@@ -223,6 +238,108 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  pilot_evaluate:
+    needs: preflight
+    if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'pilot' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 60
+      matrix:
+        shard: ${{ fromJSON(needs.preflight.outputs.pilot_shards) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with: {name: sp500-atlas-preflight, path: "${{ runner.temp }}/preflight"}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
+          path: ${{ runner.temp }}/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runtime_input_run_id }}
+      - name: Evaluate fixed pilot shard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/run_sp500_atlas_worker.py \
+            --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
+            --catalog-dir "$RUNNER_TEMP/preflight/atlas" \
+            --runtime-input-pack "$RUNNER_TEMP/runtime" \
+            --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+            --data-contract config/sp500_megarun_free_data_240.json \
+            --feature-contract config/sp500_megarun_feature_contract_240.json \
+            --shard-index "${{ matrix.shard }}" \
+            --output-dir "$RUNNER_TEMP/shard-${{ matrix.shard }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-pilot-shard-${{ github.run_id }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/shard-${{ matrix.shard }}
+          if-no-files-found: error
+          retention-days: 30
+
+  pilot_fault_fixtures:
+    needs: preflight
+    if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'pilot' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - run: python scripts/run_sp500_atlas_pilot_faults.py --output fault_receipt.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-pilot-faults-${{ github.run_id }}
+          path: fault_receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+  pilot_summarize:
+    needs: [preflight, pilot_evaluate, pilot_fault_fixtures]
+    if: ${{ always() && needs.preflight.result == 'success' && needs.pilot_evaluate.result == 'success' && needs.pilot_fault_fixtures.result == 'success' && inputs.run_mode == 'pilot' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with: {name: sp500-atlas-preflight, path: "${{ runner.temp }}/preflight"}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-atlas-pilot-shard-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/partitions
+          merge-multiple: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-pilot-faults-${{ github.run_id }}
+          path: ${{ runner.temp }}/faults
+      - name: Verify pilot coverage and effective concurrency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/summarize_sp500_atlas_pilot.py \
+            --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
+            --pilot-manifest "$RUNNER_TEMP/preflight/plan/atlas_pilot_manifest.json" \
+            --partitions-root "$RUNNER_TEMP/partitions" \
+            --fault-receipt "$RUNNER_TEMP/faults/fault_receipt.json" \
+            --output outputs/pilot_receipt.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-pilot-results-${{ github.run_id }}
+          path: outputs
+          if-no-files-found: error
+          retention-days: 90
   evaluate_a:
     needs: preflight
     if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}
