@@ -168,14 +168,19 @@ jobs:
             --plan outputs/plan/atlas_run_plan.json \
             --output outputs/plan/atlas_segment_manifest.json \
             --max-shards-per-segment 120
-          python scripts/plan_sp500_atlas_pilot.py \
-            --plan outputs/plan/atlas_run_plan.json \
-            --output outputs/plan/atlas_pilot_manifest.json \
-            --shard-count 60
+          if [ "${{ inputs.run_mode }}" != "smoke" ]; then
+            python scripts/plan_sp500_atlas_pilot.py \
+              --plan outputs/plan/atlas_run_plan.json \
+              --output outputs/plan/atlas_pilot_manifest.json \
+              --shard-count 60
+          fi
           python - <<'PY'
           import json
           from pathlib import Path
-          for name in ("atlas_segment_manifest.json", "atlas_pilot_manifest.json"):
+          names = ["atlas_segment_manifest.json"]
+          if "${{ inputs.run_mode }}" != "smoke":
+              names.append("atlas_pilot_manifest.json")
+          for name in names:
               payload = json.loads(Path("outputs/plan", name).read_text(encoding="utf-8"))
               assert payload["validation_opened"] is False
               assert payload["locked_opened"] is False

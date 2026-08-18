@@ -54,6 +54,12 @@ def test_workflow_preserves_train_only_boundaries_and_final_failure_gate() -> No
     assert "if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}" in text
 
 
+def test_smoke_does_not_require_a_sixty_shard_pilot_manifest() -> None:
+    text = _text()
+    assert 'if [ "${{ inputs.run_mode }}" != "smoke" ]; then' in text
+    assert 'names = ["atlas_segment_manifest.json"]' in text
+
+
 def test_freeze_manifest_binds_exact_plan_and_keeps_launch_closed() -> None:
     freeze = json.loads(
         (ROOT / "config/sp500_atlas_1/freeze_manifest_v1.json").read_text(encoding="utf-8")
