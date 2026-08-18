@@ -14,6 +14,7 @@ from aurora.infra.sp500_megarun.atlas_execution_contract import (
     partition_ordinals,
     write_plan,
 )
+from aurora.infra.sp500_megarun.atlas_campaign_selection import build_campaign_selection
 from scripts.reduce_sp500_atlas_run import reduce_atlas_run
 
 
@@ -120,6 +121,20 @@ def _evidence() -> tuple[dict[str, object], dict[str, object]]:
     return catalog, receipt
 
 
+def _selection() -> dict[str, object]:
+    return build_campaign_selection(
+        {
+            "canonical_recipe_count": 100,
+            "ranges": [
+                {"range_id": "a", "start_ordinal": 0, "stop_ordinal": 50},
+                {"range_id": "b", "start_ordinal": 50, "stop_ordinal": 100},
+            ],
+        },
+        requested_recipe_count=8,
+        seed=20260818,
+    )
+
+
 def test_partition_is_contiguous_and_exact() -> None:
     ranges = partition_ordinals(recipe_count=17, total_shards=4)
     assert ranges == ((0, 5), (5, 9), (9, 13), (13, 17))
@@ -133,12 +148,41 @@ def test_plan_round_trip_and_hash(tmp_path: Path) -> None:
         target_end_iso="2026-08-20T07:31:00+02:00",
         implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
         total_shards=4,
+        selection=_selection(),
     )
     path = tmp_path / "plan.json"
     write_plan(path, plan)
     assert load_plan(path).plan_sha256 == plan.plan_sha256
     assert sum(row.expected_recipe_count for row in plan.shards) == 8
     assert plan.matrix_groups() == ((0, 3), (1,), (2,))
+
+
+def test_plan_binds_stratified_selection_instead_of_a_prefix(tmp_path: Path) -> None:
+    catalog, receipt = _evidence()
+    selection = build_campaign_selection(
+        {
+            "canonical_recipe_count": 100,
+            "ranges": [
+                {"range_id": "a", "start_ordinal": 0, "stop_ordinal": 50},
+                {"range_id": "b", "start_ordinal": 50, "stop_ordinal": 100},
+            ],
+        },
+        requested_recipe_count=8,
+        seed=20260818,
+    )
+    plan = build_run_plan(
+        catalog_manifest=catalog,
+        calibration_receipt=receipt,
+        target_end_iso="2026-08-20T07:31:00+02:00",
+        implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+        total_shards=4,
+        selection=selection,
+    )
+    path = tmp_path / "plan.json"
+    write_plan(path, plan)
+    loaded = load_plan(path)
+    assert loaded.selection_sha256 == selection["selection_sha256"]
+    assert loaded.selection_ranges
 
 
 def _write_shard(root: Path, plan, index: int) -> None:
@@ -203,6 +247,7 @@ def test_reducer_requires_every_shard_and_preserves_all_rows(tmp_path: Path) -> 
         target_end_iso="2026-08-20T07:31:00+02:00",
         implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
         total_shards=4,
+        selection=_selection(),
     )
     plan_path = tmp_path / "plan.json"
     write_plan(plan_path, plan)
@@ -226,6 +271,7 @@ def test_reducer_rejects_missing_shard(tmp_path: Path) -> None:
         target_end_iso="2026-08-20T07:31:00+02:00",
         implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
         total_shards=4,
+        selection=_selection(),
     )
     plan_path = tmp_path / "plan.json"
     write_plan(plan_path, plan)

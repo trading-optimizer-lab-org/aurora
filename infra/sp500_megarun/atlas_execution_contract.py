@@ -1,8 +1,9 @@
 """Immutable planning contracts for a finite, static Atlas campaign.
 
-The complete Atlas space is represented by ordinal ranges.  A run evaluates a
-finite prefix of that space, split into contiguous, disjoint shard ranges.
-This module contains no market-data loading and is safe to use in preflight.
+The complete Atlas space is represented by ordinal ranges.  A campaign selects
+a deterministic, stratified finite tranche from that space and splits the
+campaign ordinals into contiguous, disjoint shard ranges.  This module
+contains no market-data loading and is safe to use in preflight.
 """
 
 from __future__ import annotations
@@ -10,11 +11,12 @@ from __future__ import annotations
 from datetime import datetime
 import json
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal, Mapping, Sequence
 
 from pydantic import Field
 
 from aurora.infra.github_performance.contracts import FrozenModel, Sha256, canonical_sha256
+from aurora.infra.sp500_megarun.atlas_campaign_selection import selected_raw_ordinal
 
 
 class AtlasShardPlanV1(FrozenModel):
@@ -25,6 +27,19 @@ class AtlasShardPlanV1(FrozenModel):
     stop_ordinal: int = Field(gt=0)
     expected_recipe_count: int = Field(gt=0)
     shard_sha256: Sha256
+
+
+class AtlasSelectionRangePlanV1(FrozenModel):
+    """One deterministic quota and permutation inside one canonical range."""
+
+    range_id: str = Field(min_length=1)
+    raw_start: int = Field(ge=0)
+    raw_stop: int = Field(gt=0)
+    campaign_start: int = Field(ge=0)
+    campaign_stop: int = Field(gt=0)
+    quota: int = Field(gt=0)
+    offset: int = Field(ge=0)
+    step: int = Field(ge=0)
 
 
 class AtlasRunPlanV1(FrozenModel):
@@ -48,6 +63,10 @@ class AtlasRunPlanV1(FrozenModel):
     ordinal_stop: int = Field(gt=0)
     total_shards: int = Field(gt=0)
     shards: tuple[AtlasShardPlanV1, ...]
+    selection_version: Literal["1"]
+    selection_seed: int
+    selection_sha256: Sha256
+    selection_ranges: tuple[AtlasSelectionRangePlanV1, ...]
     validation_opened: Literal[False]
     locked_opened: Literal[False]
 
@@ -60,6 +79,12 @@ class AtlasRunPlanV1(FrozenModel):
             if shard.shard_index == shard_index:
                 return shard
         raise KeyError(f"ATLAS_SHARD_UNKNOWN:{shard_index}")
+
+    def selected_raw_ordinal(self, campaign_ordinal: int) -> int:
+        return selected_raw_ordinal(
+            {"ranges": [item.model_dump(mode="json") for item in self.selection_ranges]},
+            campaign_ordinal,
+        )
 
     def matrix_groups(self, group_count: int = 3) -> tuple[tuple[int, ...], ...]:
         """Return static groups that stay below GitHub's matrix-size limit."""
@@ -129,6 +154,7 @@ def build_run_plan(
     implementation_commit_sha: str,
     total_shards: int,
     recipe_count: int | None = None,
+    selection: Mapping[str, object] | None = None,
 ) -> AtlasRunPlanV1:
     """Build and validate one exact finite plan from immutable evidence."""
 
@@ -149,11 +175,31 @@ def build_run_plan(
     canonical_count = int(catalog_manifest["counts"]["canonical_recipe_count"])
     if calibration_receipt.get("catalog_sha256") != catalog_manifest.get("manifest_sha256"):
         raise ValueError("ATLAS_PLAN_CALIBRATION_CATALOG_MISMATCH")
+    if selection is None:
+        raise ValueError("ATLAS_PLAN_SELECTION_REQUIRED")
     selected_count = int(
         calibration_receipt["target_recipe_count_with_margin"]
         if recipe_count is None
         else recipe_count
     )
+    if int(selection.get("requested_recipe_count", -1)) != selected_count:
+        raise ValueError("ATLAS_PLAN_SELECTION_COUNT_MISMATCH")
+    if int(selection.get("canonical_recipe_count", -1)) != canonical_count:
+        raise ValueError("ATLAS_PLAN_SELECTION_CANONICAL_COUNT_MISMATCH")
+    selection_ranges = tuple(
+        AtlasSelectionRangePlanV1.model_validate(item)
+        for item in selection.get("ranges", [])
+        if isinstance(item, Mapping)
+    )
+    if not selection_ranges or sum(item.quota for item in selection_ranges) != selected_count:
+        raise ValueError("ATLAS_PLAN_SELECTION_COVERAGE_INVALID")
+    selection_identity = {
+        key: value
+        for key, value in selection.items()
+        if key != "selection_sha256"
+    }
+    if str(selection.get("selection_sha256")) != canonical_sha256(selection_identity):
+        raise ValueError("ATLAS_PLAN_SELECTION_HASH_INVALID")
     if selected_count <= 0 or selected_count > canonical_count:
         raise ValueError("ATLAS_PLAN_RECIPE_COUNT_OUT_OF_RANGE")
     ranges = partition_ordinals(recipe_count=selected_count, total_shards=total_shards)
@@ -188,6 +234,9 @@ def build_run_plan(
         "ordinal_start": 0,
         "ordinal_stop": selected_count,
         "total_shards": total_shards,
+        "selection_version": str(selection.get("schema_version", "")),
+        "selection_seed": int(selection.get("seed", -1)),
+        "selection_sha256": str(selection["selection_sha256"]),
         "validation_opened": False,
         "locked_opened": False,
     }
@@ -208,7 +257,7 @@ def build_run_plan(
         )
         for index, (start, stop) in enumerate(ranges)
     )
-    return AtlasRunPlanV1(shards=shards, **identity)
+    return AtlasRunPlanV1(selection_ranges=selection_ranges, shards=shards, **identity)
 
 
 def plan_payload(plan: AtlasRunPlanV1) -> dict[str, object]:
@@ -242,12 +291,25 @@ def load_plan(path: Path) -> AtlasRunPlanV1:
         cursor = shard.stop_ordinal
     if cursor != plan.ordinal_stop or plan.ordinal_stop - plan.ordinal_start != plan.requested_recipe_count:
         raise ValueError("ATLAS_PLAN_COVERAGE_INVALID")
+    if sum(item.quota for item in plan.selection_ranges) != plan.requested_recipe_count:
+        raise ValueError("ATLAS_PLAN_SELECTION_COVERAGE_INVALID")
+    selection_identity = {
+        "schema_version": plan.selection_version,
+        "selection_domain": "AURORA-SP500-ATLAS-CAMPAIGN-SELECTION-V1",
+        "seed": plan.selection_seed,
+        "requested_recipe_count": plan.requested_recipe_count,
+        "canonical_recipe_count": plan.canonical_recipe_count,
+        "ranges": [item.model_dump(mode="json") for item in plan.selection_ranges],
+    }
+    if canonical_sha256(selection_identity) != plan.selection_sha256:
+        raise ValueError("ATLAS_PLAN_SELECTION_HASH_INVALID")
     return plan
 
 
 __all__ = [
     "AtlasRunPlanV1",
     "AtlasShardPlanV1",
+    "AtlasSelectionRangePlanV1",
     "build_run_plan",
     "load_plan",
     "partition_ordinals",

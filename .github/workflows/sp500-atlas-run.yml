@@ -134,15 +134,20 @@ jobs:
             --target-end-iso "$ATLAS_TARGET_END_ISO" \
             --implementation-commit-sha "$implementation_sha" \
             --recipe-count "$ATLAS_RECIPE_COUNT" \
-            --total-shards "$ATLAS_TOTAL_SHARDS"
+            --total-shards "$ATLAS_TOTAL_SHARDS" \
+            --selection-seed 20260818
           python - <<'PY'
           import json, os
+          from pathlib import Path
           plan = json.load(open("outputs/plan/atlas_run_plan.json", encoding="utf-8"))
           matrices = json.load(open("outputs/plan/atlas_worker_matrices.json", encoding="utf-8"))
           assert plan["validation_opened"] is False
           assert plan["locked_opened"] is False
           assert plan["implementation_commit_sha"] == os.environ["ATLAS_IMPLEMENTATION_COMMIT_SHA"]
           assert plan["requested_recipe_count"] == int(os.environ["EXPECTED_RECIPE_COUNT"])
+          assert plan["selection_sha256"]
+          assert plan["selection_seed"] == 20260818
+          assert Path("outputs/plan/atlas_campaign_selection.json").is_file()
           for name, value in matrices.items():
               print(f"{name}={json.dumps(value, separators=(',', ':'))}")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
@@ -174,6 +179,8 @@ jobs:
           assert freeze["catalog_space_sha256"] == plan["catalog_space_sha256"]
           assert freeze["calibration_receipt_sha256"] == plan["calibration_receipt_sha256"]
           assert freeze["scientific_implementation_commit_sha"] == plan["implementation_commit_sha"]
+          assert freeze["selection_sha256"] == plan["selection_sha256"]
+          assert freeze["selection_seed"] == plan["selection_seed"]
           assert freeze["requested_recipe_count"] == plan["requested_recipe_count"] == 12079704
           assert freeze["total_shards"] == plan["total_shards"] == 360
           assert plan["target_end_iso"] == "2026-08-20T07:31:00+02:00"

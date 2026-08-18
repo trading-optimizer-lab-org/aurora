@@ -25,6 +25,8 @@ def test_workflow_uses_exact_commit_and_static_shards() -> None:
     assert "smoke_serial" in text
     assert "launch_authorization" in text
     assert "ATLAS_FROZEN_FULL_PLAN_ACCEPTED" in text
+    assert "atlas_campaign_selection.json" in text
+    assert "selection_sha256" in text
 
 
 def test_workflow_has_bounded_retries_and_no_dynamic_claim_loop() -> None:
