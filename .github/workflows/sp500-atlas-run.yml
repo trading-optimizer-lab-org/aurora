@@ -131,7 +131,7 @@ jobs:
           test -n "$receipt"
           export ATLAS_CALIBRATION_RECEIPT_PATH="$receipt"
           implementation_sha="$ATLAS_REQUESTED_COMMIT_SHA"
-          if [ "${{ inputs.run_mode }}" = "full" ] || [ "${{ inputs.run_mode }}" = "plan" ]; then
+          if [ -f config/sp500_atlas_1/freeze_manifest_v1.json ]; then
             test -f config/sp500_atlas_1/freeze_manifest_v1.json
             implementation_sha="$(python -c 'import json; print(json.load(open("config/sp500_atlas_1/freeze_manifest_v1.json", encoding="utf-8"))["scientific_implementation_commit_sha"])')"
           fi
