@@ -74,11 +74,14 @@ jobs:
           root = Path("${{ runner.temp }}/preflight")
           plan = load_plan(root / "plan" / "atlas_run_plan.json")
           manifest = load_segment_manifest((root / "plan" / "atlas_segment_manifest.json").read_text(encoding="utf-8"), plan=plan)
+          freeze = json.loads(Path("config/sp500_atlas_1/freeze_manifest_v1.json").read_text(encoding="utf-8"))
           assert plan.train_end == "2010-12-31"
           assert plan.validation_opened is False
           assert plan.locked_opened is False
           assert manifest["validation_opened"] is False
           assert manifest["locked_opened"] is False
+          assert freeze["launch_authorized"] is True
+          assert freeze["frozen_plan_sha256"] == plan.plan_sha256
           print(json.dumps({"plan_sha256": plan.plan_sha256, "segment_manifest_sha256": manifest["manifest_sha256"]}, sort_keys=True))
           PY
       - name: Dispatch and supervise all segments

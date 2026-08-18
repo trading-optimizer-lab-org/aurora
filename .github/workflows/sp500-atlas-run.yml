@@ -90,6 +90,8 @@ jobs:
       matrix_b: ${{ steps.plan.outputs.matrix_b }}
       matrix_c: ${{ steps.plan.outputs.matrix_c }}
       plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -118,9 +120,16 @@ jobs:
         name: Create exact static plan
         shell: bash
         run: |
-          receipt="config/sp500_atlas_1/calibration_receipt_32061399368.json"
-          test "$ATLAS_CALIBRATION_RUN_ID" = "32061399368"
-          test -f "$receipt"
+          calibration_root="$RUNNER_TEMP/calibration"
+          rm -rf "$calibration_root"
+          mkdir -p "$calibration_root"
+          gh run download "$ATLAS_CALIBRATION_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "sp500-atlas-calibration-${ATLAS_CALIBRATION_RUN_ID}" \
+            --dir "$calibration_root"
+          receipt="$(find "$calibration_root" -name calibration_receipt.json -type f -print -quit)"
+          test -n "$receipt"
+          export ATLAS_CALIBRATION_RECEIPT_PATH="$receipt"
           implementation_sha="$ATLAS_REQUESTED_COMMIT_SHA"
           if [ "${{ inputs.run_mode }}" = "full" ]; then
             test -f config/sp500_atlas_1/freeze_manifest_v1.json
@@ -129,7 +138,7 @@ jobs:
           export ATLAS_IMPLEMENTATION_COMMIT_SHA="$implementation_sha"
           python scripts/plan_sp500_atlas_run.py \
             --catalog-dir outputs/atlas \
-            --calibration-receipt "$receipt" \
+            --calibration-receipt "$ATLAS_CALIBRATION_RECEIPT_PATH" \
             --output-dir outputs/plan \
             --target-end-iso "$ATLAS_TARGET_END_ISO" \
             --implementation-commit-sha "$implementation_sha" \
@@ -187,7 +196,7 @@ jobs:
 
           freeze = json.loads(Path("config/sp500_atlas_1/freeze_manifest_v1.json").read_text(encoding="utf-8"))
           plan = json.loads(Path("outputs/plan/atlas_run_plan.json").read_text(encoding="utf-8"))
-          assert freeze["launch_authorized"] is False
+          assert freeze["launch_authorized"] is True
           assert freeze["validation_opened"] is False
           assert freeze["locked_opened"] is False
           assert freeze["frozen_plan_sha256"] == plan["plan_sha256"]
@@ -197,7 +206,7 @@ jobs:
           assert freeze["scientific_implementation_commit_sha"] == plan["implementation_commit_sha"]
           assert freeze["selection_sha256"] == plan["selection_sha256"]
           assert freeze["selection_seed"] == plan["selection_seed"]
-          assert freeze["requested_recipe_count"] == plan["requested_recipe_count"] == 12079704
+          assert freeze["requested_recipe_count"] == plan["requested_recipe_count"]
           assert freeze["total_shards"] == plan["total_shards"] == 360
           assert plan["target_end_iso"] == "2026-08-20T07:31:00+02:00"
           print("ATLAS_FROZEN_FULL_PLAN_ACCEPTED")

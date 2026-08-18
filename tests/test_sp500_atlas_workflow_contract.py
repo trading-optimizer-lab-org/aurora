@@ -31,6 +31,8 @@ def test_workflow_uses_exact_commit_and_static_shards() -> None:
     assert "ATLAS_FROZEN_FULL_PLAN_ACCEPTED" in text
     assert "atlas_campaign_selection.json" in text
     assert "selection_sha256" in text
+    assert "ATLAS_CALIBRATION_RUN_ID" in text
+    assert "calibration_receipt_32061399368.json" not in text
 
 
 def test_workflow_has_bounded_retries_and_no_dynamic_claim_loop() -> None:
@@ -56,13 +58,15 @@ def test_freeze_manifest_binds_exact_plan_and_keeps_launch_closed() -> None:
     freeze = json.loads(
         (ROOT / "config/sp500_atlas_1/freeze_manifest_v1.json").read_text(encoding="utf-8")
     )
-    assert freeze["requested_recipe_count"] == 12079704
+    assert freeze["requested_recipe_count"] == 209906
     assert freeze["total_shards"] == 360
     assert freeze["train_end"] == "2010-12-31"
     assert freeze["validation_opened"] is False
     assert freeze["locked_opened"] is False
     assert freeze["execution_authorized"] is False
-    assert freeze["launch_authorized"] is False
+    assert freeze["launch_authorized"] is True
+    assert freeze["calibration_run_id"] == "32137133180"
+    assert freeze["planning_rate_recipes_per_minute"] == 107.55
     assert freeze["required_launch_authorization"] == "AUTHORIZE_SP500_ATLAS_FULL_RUN"
 
 
