@@ -4,23 +4,33 @@ on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: "Completed SP500 Atlas static run"
+        description: Completed controller run
         required: true
         type: string
       commit_sha:
-        description: "Exact immutable postrun implementation commit"
+        description: Exact immutable postrun implementation commit
         required: true
         type: string
       runtime_input_run_id:
-        description: "Verified train-only runtime input pack"
+        description: Verified train-only runtime input pack
         required: true
         default: "31418682679"
+        type: string
+      preflight_run_id:
+        description: Run containing the frozen train-only preflight artifact
+        required: true
+        type: string
+      source_artifact:
+        description: Controller artifact containing its final results directory
+        required: true
         type: string
   workflow_call:
     inputs:
       source_run_id: {required: true, type: string}
       commit_sha: {required: true, type: string}
       runtime_input_run_id: {required: true, type: string}
+      preflight_run_id: {required: true, type: string}
+      source_artifact: {required: true, type: string}
 
 permissions:
   actions: read
@@ -34,11 +44,14 @@ env:
   MKL_NUM_THREADS: "1"
   NUMEXPR_NUM_THREADS: "1"
   PYTHONPATH: ${{ github.workspace }}/..
+  ROBUSTNESS_SLICE_SIZE: "100"
 
 jobs:
-  postrun:
+  prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 60
+    outputs:
+      slices: ${{ steps.slices.outputs.slices }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: {ref: "${{ github.sha }}", persist-credentials: false}
@@ -52,8 +65,8 @@ jobs:
         run: test "$REQUESTED_COMMIT" = "$GITHUB_SHA"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: sp500-atlas-final-results
-          path: ${{ runner.temp }}/final
+          name: ${{ inputs.source_artifact }}
+          path: ${{ runner.temp }}/controller
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.source_run_id }}
@@ -63,7 +76,78 @@ jobs:
           path: ${{ runner.temp }}/preflight
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
+          run-id: ${{ inputs.preflight_run_id }}
+      - name: Freeze robustness candidate order
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/controller/final/reduction_receipt.json"
+          mkdir -p outputs/robustness-plan
+          python scripts/plan_sp500_atlas_robustness.py \
+            --final-results "$RUNNER_TEMP/controller/final" \
+            --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
+            --policy config/sp500_atlas_1/robustness_policy_v1.json \
+            --output outputs/robustness-plan/robustness_manifest.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path("outputs/robustness-plan/robustness_manifest.json").read_text(encoding="utf-8"))
+          assert manifest["validation_opened"] is False
+          assert manifest["locked_opened"] is False
+          PY
+      - id: slices
+        name: Create fixed re-runnable robustness slices
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          manifest = json.loads(Path("outputs/robustness-plan/robustness_manifest.json").read_text(encoding="utf-8"))
+          size = int(os.environ["ROBUSTNESS_SLICE_SIZE"])
+          count = len(manifest["candidate_strategy_ids"])
+          slices = [{"start": start, "stop": min(start + size, count)} for start in range(0, count, size)]
+          assert slices or count == 0
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
+              handle.write("slices=" + json.dumps(slices, separators=(",", ":")) + "\n")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-robustness-plan-${{ github.run_id }}
+          path: outputs/robustness-plan
+          if-no-files-found: error
+          retention-days: 90
+
+  robustness:
+    needs: prepare
+    if: ${{ needs.prepare.result == 'success' && needs.prepare.outputs.slices != '[]' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix:
+        slice: ${{ fromJSON(needs.prepare.outputs.slices) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.source_artifact }}
+          path: ${{ runner.temp }}/controller
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
           run-id: ${{ inputs.source_run_id }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-preflight
+          path: ${{ runner.temp }}/preflight
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.preflight_run_id }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
@@ -71,52 +155,87 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.runtime_input_run_id }}
-      - name: Verify train-only final inputs
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-robustness-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/robustness-plan
+      - name: Run one frozen train-only robustness slice
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          plan = json.loads(Path("${{ runner.temp }}/preflight/plan/atlas_run_plan.json").read_text(encoding="utf-8"))
-          reduction = json.loads(Path("${{ runner.temp }}/final/reduction_receipt.json").read_text(encoding="utf-8"))
-          assert plan["train_end"] == "2010-12-31"
-          assert plan["validation_opened"] is False
-          assert plan["locked_opened"] is False
-          assert reduction["plan_sha256"] == plan["plan_sha256"]
-          assert reduction["validation_opened"] is False
-          assert reduction["locked_opened"] is False
-          PY
-      - name: Run frozen train-only robustness campaign
-        shell: bash
-        run: |
-          set -euo pipefail
+          mkdir -p outputs/robustness
           python scripts/run_sp500_atlas_robustness.py \
-            --final-results "${{ runner.temp }}/final" \
-            --plan "${{ runner.temp }}/preflight/plan/atlas_run_plan.json" \
-            --catalog-dir "${{ runner.temp }}/preflight/atlas" \
-            --runtime-input-pack "${{ runner.temp }}/runtime" \
+            --final-results "$RUNNER_TEMP/controller/final" \
+            --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
+            --catalog-dir "$RUNNER_TEMP/preflight/atlas" \
+            --runtime-input-pack "$RUNNER_TEMP/runtime" \
             --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
             --data-contract config/sp500_megarun_free_data_240.json \
             --feature-contract config/sp500_megarun_feature_contract_240.json \
             --policy config/sp500_atlas_1/robustness_policy_v1.json \
+            --robustness-manifest "$RUNNER_TEMP/robustness-plan/robustness_manifest.json" \
+            --candidate-start "${{ matrix.slice.start }}" \
+            --candidate-stop "${{ matrix.slice.stop }}" \
             --output-dir outputs/robustness
-      - name: Run train-only multiple-testing diagnostic
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-robustness-part-${{ github.run_id }}-${{ matrix.slice.start }}-${{ matrix.slice.stop }}
+          path: outputs/robustness
+          if-no-files-found: error
+          retention-days: 90
+
+  finalize:
+    needs: [prepare, robustness]
+    if: ${{ needs.prepare.result == 'success' && (needs.robustness.result == 'success' || needs.prepare.outputs.slices == '[]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.source_artifact }}
+          path: ${{ runner.temp }}/controller
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-preflight
+          path: ${{ runner.temp }}/preflight
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.preflight_run_id }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-robustness-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/robustness-plan
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-atlas-robustness-part-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/robustness-parts
+          merge-multiple: false
+      - name: Merge robustness and create final diagnostics
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p outputs
+          python scripts/merge_sp500_atlas_robustness.py \
+            --manifest "$RUNNER_TEMP/robustness-plan/robustness_manifest.json" \
+            --parts-root "$RUNNER_TEMP/robustness-parts" \
+            --output-dir outputs/robustness
           python scripts/report_sp500_atlas_multiple_testing.py \
-            --results "${{ runner.temp }}/final/results.jsonl" \
-            --catalog-manifest "${{ runner.temp }}/preflight/atlas/manifest.json" \
-            --reduction-receipt "${{ runner.temp }}/final/reduction_receipt.json" \
+            --results "$RUNNER_TEMP/controller/final/results.jsonl" \
+            --catalog-manifest "$RUNNER_TEMP/preflight/atlas/manifest.json" \
+            --reduction-receipt "$RUNNER_TEMP/controller/final/reduction_receipt.json" \
             --robustness-receipt outputs/robustness/robustness_receipt.json \
             --output-dir outputs/multiple-testing
-      - name: Create final train-only audit
-        shell: bash
-        run: |
           python scripts/create_sp500_atlas_final_audit.py \
-            --preflight "${{ runner.temp }}/preflight" \
-            --final-results "${{ runner.temp }}/final" \
+            --preflight "$RUNNER_TEMP/preflight" \
+            --final-results "$RUNNER_TEMP/controller/final" \
             --robustness outputs/robustness \
             --multiple-testing outputs/multiple-testing \
             --output outputs/SP500_ATLAS_1_FINAL_EXECUTION_AUDIT.md \

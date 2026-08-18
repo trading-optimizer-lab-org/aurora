@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from aurora.infra.sp500_megarun.catalog_atlas_robustness import classify_atlas_robustness
-from scripts.run_sp500_atlas_robustness import build_robustness_manifest
+from scripts.run_sp500_atlas_robustness import (
+    build_robustness_manifest,
+    slice_robustness_candidates,
+)
+from scripts.merge_sp500_atlas_robustness import validate_part_bounds
 
 
 def _base() -> dict[str, object]:
@@ -65,3 +69,23 @@ def test_robustness_manifest_freezes_candidates_and_perturbations() -> None:
     assert manifest["validation_opened"] is False
     assert manifest["locked_opened"] is False
     assert len(manifest["robustness_sha256"]) == 64
+
+
+def test_robustness_candidate_slice_is_disjoint_and_hash_bound() -> None:
+    manifest = {
+        "candidate_strategy_ids": ["a", "b", "c", "d"],
+        "robustness_sha256": "r" * 64,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+    rows = [{"strategy_id": value} for value in manifest["candidate_strategy_ids"]]
+    selected, bounds = slice_robustness_candidates(manifest, rows, 1, 3)
+    assert [row["strategy_id"] for row in selected] == ["b", "c"]
+    assert bounds == {"candidate_start": 1, "candidate_stop": 3}
+
+
+def test_robustness_merge_requires_exact_disjoint_candidate_coverage() -> None:
+    assert validate_part_bounds(
+        [{"candidate_start": 0, "candidate_stop": 2}, {"candidate_start": 2, "candidate_stop": 4}],
+        total_candidates=4,
+    ) == [(0, 2), (2, 4)]

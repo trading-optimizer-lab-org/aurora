@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       run_mode:
-        description: "smoke or full; full requires the user's separate launch authorization"
+        description: "smoke, plan, or controller-owned full run"
         required: true
         default: smoke
         type: choice
-        options: [smoke, full]
+        options: [smoke, plan, full]
       commit_sha:
         description: "Exact immutable implementation commit"
         required: true

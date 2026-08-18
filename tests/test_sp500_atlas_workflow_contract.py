@@ -87,6 +87,11 @@ def test_postrun_workflow_is_train_only_and_publishes_robustness_audit() -> None
     assert "validation_opened" in text
     assert "locked_opened" in text
     assert "sp500-atlas-postrun-results" in text
+    assert "plan_sp500_atlas_robustness.py" in text
+    assert "merge_sp500_atlas_robustness.py" in text
+    assert "max-parallel: 120" in text
+    assert "candidate-start" in text
+    assert "candidate-stop" in text
 
 
 def test_segment_controller_and_pilot_workflows_are_recoverable_and_train_only() -> None:
