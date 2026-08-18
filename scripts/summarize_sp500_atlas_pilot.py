@@ -53,6 +53,8 @@ def summarize_pilot(
     output_path: Path,
 ) -> dict[str, Any]:
     plan = load_plan(plan_path)
+    plan_sha256 = plan.plan_sha256
+    catalog_manifest_sha256 = plan.catalog_manifest_sha256
     pilot = load_pilot_manifest(pilot_manifest_path.read_text("utf-8"), plan=plan)
     expected_indices = {int(value) for value in pilot["shard_indices"]}
     receipt_by_index: dict[int, Path] = {}
@@ -78,8 +80,8 @@ def summarize_pilot(
         receipt_path = receipt_by_index[index]
         receipt = json.loads(receipt_path.read_text("utf-8"))
         for key, value in {
-            "plan_sha256": plan.plan_sha256,
-            "catalog_manifest_sha256": plan.catalog_manifest_sha256,
+            "plan_sha256": plan_sha256,
+            "catalog_manifest_sha256": catalog_manifest_sha256,
             "shard_index": index,
             "start_ordinal": shard.start_ordinal,
             "stop_ordinal": shard.stop_ordinal,
@@ -95,7 +97,7 @@ def summarize_pilot(
             raise ValueError("ATLAS_PILOT_RESULT_HASH_INVALID")
         seen = 0
         for row in _read_rows(results):
-            ordinal = _verify_row(row, plan_sha256=plan.plan_sha256, shard_index=index)
+            ordinal = _verify_row(row, plan_sha256=plan_sha256, shard_index=index)
             if ordinal < shard.start_ordinal or ordinal >= shard.stop_ordinal:
                 raise ValueError("ATLAS_PILOT_ORDINAL_INVALID")
             seen += 1
@@ -120,7 +122,7 @@ def summarize_pilot(
     receipt = {
         "schema_version": 1,
         "accepted": True,
-        "plan_sha256": plan.plan_sha256,
+        "plan_sha256": plan_sha256,
         "pilot_manifest_sha256": pilot["manifest_sha256"],
         "shard_count": len(expected_indices),
         "expected_recipe_count": pilot["expected_recipe_count"],

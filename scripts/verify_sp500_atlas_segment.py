@@ -67,6 +67,8 @@ def verify_segment(
     plan_object: AtlasRunPlanV1 | None = None,
 ) -> dict[str, Any]:
     plan = plan_object or load_plan(Path(plan_path))
+    plan_sha256 = plan.plan_sha256
+    catalog_manifest_sha256 = plan.catalog_manifest_sha256
     manifest = load_segment_manifest(Path(segment_manifest_path).read_text("utf-8"), plan=plan)
     segments = manifest["segments"]
     if segment_index < 0 or segment_index >= len(segments):
@@ -105,8 +107,8 @@ def verify_segment(
         receipt_path = receipt_by_index[shard_index]
         receipt = json.loads(receipt_path.read_text("utf-8"))
         expected = {
-            "plan_sha256": plan.plan_sha256,
-            "catalog_manifest_sha256": plan.catalog_manifest_sha256,
+            "plan_sha256": plan_sha256,
+            "catalog_manifest_sha256": catalog_manifest_sha256,
             "shard_index": shard_index,
             "start_ordinal": shard.start_ordinal,
             "stop_ordinal": shard.stop_ordinal,
@@ -126,7 +128,7 @@ def verify_segment(
         worker_seconds += float(receipt.get("elapsed_seconds", 0.0))
         shard_rows = 0
         for row in _read_rows(result_path):
-            ordinal = _verify_row(row, plan_sha256=plan.plan_sha256, shard_index=shard_index)
+            ordinal = _verify_row(row, plan_sha256=plan_sha256, shard_index=shard_index)
             if ordinal < shard.start_ordinal or ordinal >= shard.stop_ordinal:
                 raise ValueError("ATLAS_SEGMENT_ORDINAL_OUT_OF_RANGE")
             if ordinal in seen_ordinals:
@@ -141,7 +143,7 @@ def verify_segment(
         "schema_version": 1,
         "segment_id": segment["segment_id"],
         "segment_index": segment_index,
-        "plan_sha256": plan.plan_sha256,
+        "plan_sha256": plan_sha256,
         "segment_manifest_sha256": manifest["manifest_sha256"],
         "shard_indices": sorted(expected_indices),
         "expected_recipe_count": int(segment["expected_recipe_count"]),
