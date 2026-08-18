@@ -127,6 +127,8 @@ def test_segment_controller_and_pilot_workflows_are_recoverable_and_train_only()
     assert "actions: write" in controller
     assert "run_sp500_atlas_controller.py" in controller
     assert "sp500-atlas-segment.yml" in controller_script
+    assert "dispatch-ref" in controller_script
+    assert "--dispatch-ref \"$GITHUB_REF_NAME\"" in controller
     assert "reduce_sp500_atlas_run.py" in controller_script
     assert "validation_opened" in controller and "locked_opened" in controller
     assert "atlas_pilot_manifest.json" in pilot

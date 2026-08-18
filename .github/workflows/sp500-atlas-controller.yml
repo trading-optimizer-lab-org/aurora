@@ -93,6 +93,7 @@ jobs:
           python scripts/run_sp500_atlas_controller.py
           --repository "$GITHUB_REPOSITORY"
           --commit-sha "${{ inputs.commit_sha }}"
+          --dispatch-ref "$GITHUB_REF_NAME"
           --preflight-run-id "${{ inputs.preflight_run_id }}"
           --runtime-input-run-id "${{ inputs.runtime_input_run_id }}"
           --controller-run-id "$GITHUB_RUN_ID"

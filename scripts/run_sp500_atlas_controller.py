@@ -43,9 +43,10 @@ def _dispatch(
     *,
     repository: str,
     commit_sha: str,
+    dispatch_ref: str,
     values: dict[str, str],
 ) -> None:
-    args = ["gh", "workflow", "run", "sp500-atlas-segment.yml", "--repo", repository, "--ref", commit_sha]
+    args = ["gh", "workflow", "run", "sp500-atlas-segment.yml", "--repo", repository, "--ref", dispatch_ref]
     for key, value in values.items():
         args.extend(["-f", f"{key}={value}"])
     _command(args)
@@ -110,6 +111,7 @@ def run_controller(
     *,
     repository: str,
     commit_sha: str,
+    dispatch_ref: str,
     preflight_run_id: str,
     runtime_input_run_id: str,
     controller_run_id: str,
@@ -157,7 +159,7 @@ def run_controller(
                 attempt=attempts[index],
             )
             before = datetime.now(timezone.utc)
-            _dispatch(repository=repository, commit_sha=commit_sha, values=values)
+            _dispatch(repository=repository, commit_sha=commit_sha, dispatch_ref=dispatch_ref, values=values)
             run_id = _find_run_id(
                 repository=repository,
                 commit_sha=commit_sha,
@@ -222,6 +224,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repository", required=True)
     parser.add_argument("--commit-sha", required=True)
+    parser.add_argument("--dispatch-ref", required=True)
     parser.add_argument("--preflight-run-id", required=True)
     parser.add_argument("--runtime-input-run-id", required=True)
     parser.add_argument("--controller-run-id", required=True)
