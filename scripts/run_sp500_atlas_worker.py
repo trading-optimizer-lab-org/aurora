@@ -64,6 +64,7 @@ def _result_row(
     metrics = atlas_metrics
     payload: dict[str, object] = {
         "ordinal": int(recipe["ordinal"]),
+        "raw_ordinal": int(recipe["raw_ordinal"]),
         "strategy_id": str(recipe["strategy_id"]),
         "scientific_recipe_sha256": str(recipe["scientific_recipe_sha256"]),
         "strategy_kind": str(recipe["strategy_kind"]),
@@ -162,7 +163,10 @@ def run_worker(
     rows: list[dict[str, object]] = []
     started = time.perf_counter()
     for ordinal in range(shard.start_ordinal, shard.stop_ordinal):
-        recipe = recipe_for_ordinal(space, components, ordinal)
+        raw_ordinal = plan.selected_raw_ordinal(ordinal)
+        recipe = recipe_for_ordinal(space, components, raw_ordinal)
+        recipe["ordinal"] = ordinal
+        recipe["raw_ordinal"] = raw_ordinal
         signals: list[pd.Series] = []
         for component_id in recipe["components"]:
             component = component_by_id[str(component_id)]
