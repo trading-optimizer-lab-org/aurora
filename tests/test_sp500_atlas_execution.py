@@ -261,6 +261,10 @@ def test_reducer_requires_every_shard_and_preserves_all_rows(tmp_path: Path) -> 
     assert len(output.joinpath("results.jsonl").read_text("utf-8").splitlines()) == 8
     assert summary["validation_opened"] is False
     assert summary["locked_opened"] is False
+    assert output.joinpath("all_results_manifest.json").is_file()
+    assert output.joinpath("coverage_report.json").is_file()
+    assert output.joinpath("pareto_cells.parquet").is_file()
+    assert output.joinpath("pareto_strategies.parquet").is_file()
 
 
 def test_reducer_rejects_missing_shard(tmp_path: Path) -> None:
