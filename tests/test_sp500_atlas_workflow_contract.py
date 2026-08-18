@@ -50,7 +50,7 @@ def test_freeze_manifest_binds_exact_plan_and_keeps_launch_closed() -> None:
     freeze = json.loads(
         (ROOT / "config/sp500_atlas_1/freeze_manifest_v1.json").read_text(encoding="utf-8")
     )
-    assert freeze["requested_recipe_count"] == 18816734
+    assert freeze["requested_recipe_count"] == 12079704
     assert freeze["total_shards"] == 360
     assert freeze["train_end"] == "2010-12-31"
     assert freeze["validation_opened"] is False

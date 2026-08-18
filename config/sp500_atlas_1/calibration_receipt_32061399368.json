@@ -1,0 +1,22 @@
+{
+  "schema_version": "1",
+  "catalog_sha256": "09068cf0b0ff716075bdd693dbdfbdcf3779c7cb326a92aca11d9ab22b577f08",
+  "started_at_iso": "2026-08-17T21:39:22.776530+02:00",
+  "stopped_at_iso": "2026-08-17T21:59:22.786864+02:00",
+  "wall_seconds": 1200.0,
+  "hard_limit_seconds": 1200.0,
+  "timed_out_cleanly": true,
+  "physical_recipe_count": 87493,
+  "cache_hit_count": 174266,
+  "physical_component_count": 240,
+  "physical_component_seconds": 161.10399678300024,
+  "recipe_seconds": 1038.8960032169998,
+  "result_store_seconds": 1200.010310584,
+  "recipes_per_minute": 4374.65,
+  "recommended_mode": "component_warm",
+  "available_minutes_to_target": 3451.6202189333335,
+  "safety_fraction": 0.8,
+  "target_recipe_count_with_margin": 12079704,
+  "validation_opened": false,
+  "locked_opened": false
+}
