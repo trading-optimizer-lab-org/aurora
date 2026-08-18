@@ -11,7 +11,10 @@ from typing import Any, Iterable
 
 from aurora.infra.sp500_megarun.atlas_execution_contract import load_plan
 from aurora.infra.sp500_megarun.atlas_pilot import load_pilot_manifest
-from scripts.verify_sp500_atlas_segment import _read_rows, _verify_row
+try:
+    from scripts.verify_sp500_atlas_segment import _read_rows, _verify_row
+except ModuleNotFoundError:
+    from verify_sp500_atlas_segment import _read_rows, _verify_row
 
 
 def summarize_worker_intervals(

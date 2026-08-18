@@ -62,11 +62,13 @@ def test_smoke_does_not_require_a_sixty_shard_pilot_manifest() -> None:
 
 def test_atlas_run_contains_authorized_sixty_shard_pilot_path() -> None:
     text = _text()
-    assert "options: [smoke, plan, pilot, full]" in text
+    assert "options: [smoke, plan, pilot, pilot_verify, full]" in text
     assert "AUTHORIZE_SP500_ATLAS_PILOT" in text
     assert "pilot_evaluate:" in text
     assert "max-parallel: 60" in text
     assert "pilot_summarize:" in text
+    assert "pilot_verify:" in text
+    assert "pilot_source_run_id" in text
     assert "run_sp500_atlas_pilot_faults.py" in text
 
 
