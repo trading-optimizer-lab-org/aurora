@@ -30,10 +30,10 @@
   "calibration_receipt_sha256": "c15b0939a753ace1fb87541b32953673ec1ed17690f25b5bafe6d25120d87703",
   "runtime_input_run_id": "31418682679",
   "frozen_plan_sha256": "2975a786b026c13a8a2bc8a46dc41823dc429cc652bb4c5de4cc88d5aba8d162",
-  "smoke_run_id": "32045466033",
+  "smoke_run_id": "32125541001",
   "smoke_verified_recipe_count": 64,
   "smoke_verified_shard_count": 4,
-  "smoke_results_sha256": "20f1117242f3a561755c7dd56d2b75107be5473b6f2301e43e1982989e25425c",
+  "smoke_results_sha256": "faf832d25040b245400b6947df28c11e083a9454dbbb35fe50ede0c14afa6697",
   "required_launch_authorization": "AUTHORIZE_SP500_ATLAS_FULL_RUN",
   "launch_authorization_scope": "This token is required only for the full train-only Atlas run; it does not open validation or locked data."
 }
