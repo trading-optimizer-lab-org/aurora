@@ -111,7 +111,12 @@ jobs:
       - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
       - name: Verify requested commit is the workflow commit
         shell: bash
-        run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"
+        env:
+          WORKFLOW_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$ATLAS_REQUESTED_COMMIT_SHA" = "$WORKFLOW_COMMIT_SHA"
+          test "$(git rev-parse HEAD)" = "$WORKFLOW_COMMIT_SHA"
       - name: Build and verify the compact catalog
         shell: bash
         run: |
@@ -412,11 +417,13 @@ jobs:
         shell: bash
         env:
           REQUESTED_COMMIT: ${{ inputs.commit_sha }}
+          WORKFLOW_COMMIT_SHA: ${{ github.sha }}
           RECOVERY_AUTHORIZATION: ${{ inputs.launch_authorization }}
           SOURCE_RUN_ID: ${{ inputs.pilot_source_run_id }}
         run: |
           set -euo pipefail
-          test "$REQUESTED_COMMIT" = "$GITHUB_SHA"
+          test "$REQUESTED_COMMIT" = "$WORKFLOW_COMMIT_SHA"
+          test "$(git rev-parse HEAD)" = "$WORKFLOW_COMMIT_SHA"
           test "$RECOVERY_AUTHORIZATION" = "RECOVER_EXISTING_ATLAS_ARTIFACTS"
           [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c

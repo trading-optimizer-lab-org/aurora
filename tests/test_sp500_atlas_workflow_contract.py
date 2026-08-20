@@ -19,7 +19,7 @@ def _text() -> str:
 def test_workflow_uses_exact_commit_and_static_shards() -> None:
     text = _text()
     assert "ref: ${{ github.sha }}" in text
-    assert 'run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in text
+    assert 'test "$ATLAS_REQUESTED_COMMIT_SHA" = "$WORKFLOW_COMMIT_SHA"' in text
     assert "run_sp500_atlas_worker.py" in text
     assert "reduce_sp500_atlas_run.py" in text
     assert text.count("max-parallel: 120") == 3
@@ -102,8 +102,8 @@ def test_atlas_workflows_do_not_checkout_or_execute_untrusted_commit_inputs() ->
     assert "ref: ${{ inputs.commit_sha }}" not in run
     assert 'ref: ${{ github.sha }}' in calibration
     assert 'ref: ${{ github.sha }}' in run
-    assert 'run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in calibration
-    assert 'run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in run
+    assert 'test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in calibration
+    assert 'test "$REQUESTED_COMMIT" = "$WORKFLOW_COMMIT_SHA"' in run
 
 
 def test_postrun_workflow_is_train_only_and_publishes_robustness_audit() -> None:
