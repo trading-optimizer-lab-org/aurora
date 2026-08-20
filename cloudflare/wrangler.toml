@@ -1,0 +1,24 @@
+name = "aurora-runs-dashboard"
+main = "src/index.ts"
+compatibility_date = "2026-08-20"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+
+[vars]
+REPO_OWNER = "trading-optimizer-lab-org"
+REPO_NAME = "aurora"
+ARCHIVE_QUOTA_BYTES = "7516192768"
+APP_VERSION = "0.1.0"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "aurora-dashboard"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "ARCHIVE"
+bucket_name = "aurora-dashboard-archive"
