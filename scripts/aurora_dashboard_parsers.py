@@ -6,6 +6,7 @@ guesses a metric unit, research phase, baseline, or validation state.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import re
@@ -14,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
 
-PARSER_VERSION = "1.1.0"
+PARSER_VERSION = "1.2.0"
 _TEXT_EXTENSIONS = {".csv", ".json", ".jsonl", ".md", ".markdown", ".txt", ".html", ".htm"}
 _METRIC_KEYS = {
     "calmar",
@@ -229,7 +230,10 @@ def _make_metric(
     numeric = _number(value)
     value_text = None if numeric is not None else (str(value) if value is not None else None)
     passed = _bool(value) if metric_key in {"passed", "overall_passed"} else _bool(metadata.get("passed"))
-    result_id = f"{context.run_id}:{context.artifact_id}:{metric_key}:{index}"
+    source_namespace = hashlib.sha256(
+        f"{context.artifact_name}\x00{source_path}".encode("utf-8")
+    ).hexdigest()[:16]
+    result_id = f"{context.run_id}:{context.artifact_id}:{metric_key}:{source_namespace}:{index}"
     return NormalizedMetric(
         result_id=result_id,
         run_id=context.run_id,

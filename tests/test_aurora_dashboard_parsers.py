@@ -34,7 +34,22 @@ def test_json_metrics_keep_explicit_semantics_and_provenance() -> None:
     assert calmar.unit == "ratio"
     assert calmar.phase == "validation"
     assert calmar.baseline == "SPY"
-    assert calmar.result_id == "123:456:calmar:0"
+    assert calmar.result_id.startswith("123:456:calmar:")
+
+
+def test_result_ids_are_distinct_for_files_in_the_same_artifact() -> None:
+    train = parse_artifact(
+        "train.csv",
+        b"sharpe\n1.0\n",
+        ParserContext(3, 4, "Literature Strategy Backtest", "train.csv"),
+    )
+    validation = parse_artifact(
+        "validation.csv",
+        b"sharpe\n1.0\n",
+        ParserContext(3, 4, "Literature Strategy Backtest", "validation.csv"),
+    )
+
+    assert train.metrics[0].result_id != validation.metrics[0].result_id
 
 
 def test_csv_metrics_are_read_without_inventing_units() -> None:

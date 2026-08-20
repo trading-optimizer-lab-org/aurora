@@ -203,6 +203,16 @@ export async function ingestBatch(env: Env, value: unknown): Promise<Record<stri
       ON CONFLICT(artifact_id) DO UPDATE SET run_id=excluded.run_id, name=excluded.name, size_bytes=excluded.size_bytes, created_at=excluded.created_at, expires_at=excluded.expires_at, expired=excluded.expired, archive_state=excluded.archive_state, archive_key=excluded.archive_key, content_type=excluded.content_type, parser_status=excluded.parser_status, source_url=excluded.source_url, captured_at=excluded.captured_at`)
       .bind(id, integer(artifact.run_id), text(artifact.name, `artifact-${id}`), integer(artifact.size_bytes), text(artifact.created_at, batch.captured_at), nullableText(artifact.expires_at), booleanInt(artifact.expired) || 0, stateValue, stored?.key || nullableText(artifact.archive_key), nullableText(artifact.content_type), text(artifact.parser_status, "unclassified"), text(artifact.source_url), text(artifact.captured_at, batch.captured_at)));
   }
+  const parsedArtifactIds = new Set(
+    batch.results
+      .map((result) => integer(result.artifact_id))
+      .filter((artifactId) => artifactId > 0),
+  );
+  for (const artifactId of parsedArtifactIds) {
+    // A parser batch can be capped. Replace the previous projection for the
+    // artifact so reingestion cannot leave stale or colliding metric rows.
+    statements.push(env.DB.prepare("DELETE FROM results WHERE artifact_id = ?").bind(artifactId));
+  }
   for (const result of batch.results) {
     statements.push(env.DB.prepare(`INSERT INTO results (result_id, run_id, artifact_id, result_kind, parser_key, parser_version, status, metric_key, metric_value, value_text, unit, phase, period_start, period_end, baseline, cost_model, candidate_id, passed, source_path, evidence_json, captured_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
