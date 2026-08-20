@@ -80,6 +80,13 @@ export interface Job {
   steps: JobStep[];
 }
 
+export interface JobLogs {
+  schema_version: 1;
+  job_id: number;
+  content: string;
+  content_type: string;
+}
+
 export interface Artifact {
   artifact_id: number;
   run_id: number;
@@ -175,6 +182,7 @@ export interface DashboardApi {
   getOverview(): Promise<Overview>;
   getRuns(filters?: Record<string, string | number | null>): Promise<Page<Run>>;
   getRunDetail(runId: number): Promise<RunDetail>;
+  getJobLogs(jobId: number): Promise<JobLogs>;
   getResults(filters?: Record<string, string | number | null>): Promise<Page<ResultMetric>>;
   getArtifacts(filters?: Record<string, string | number | null>): Promise<Page<Artifact>>;
   getWorkflows(): Promise<Page<Workflow>>;

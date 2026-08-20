@@ -1,5 +1,5 @@
 import { demoArtifacts, demoHealth, demoOverview, demoResults, demoRunDetail, demoRuns, demoWorkflows } from "./fixtures";
-import type { DashboardApi, Health, Overview, Page, ResultMetric, Run, RunDetail, Artifact, Workflow } from "./types";
+import type { DashboardApi, Health, JobLogs, Overview, Page, ResultMetric, Run, RunDetail, Artifact, Workflow } from "./types";
 
 function dashboardPrefix(): string {
   if (typeof window === "undefined") return "";
@@ -69,6 +69,7 @@ export class DashboardClient implements DashboardApi {
       return { ...demoRuns, items } as T;
     }
     if (path.startsWith("runs/")) return demoRunDetail as T;
+    if (path.startsWith("jobs/") && path.endsWith("/logs")) return { schema_version: 1, job_id: Number(path.split("/")[1]), content: "[demo] Los logs reales se cargan desde GitHub a través del Worker.\n", content_type: "text/plain" } as T;
     if (path === "results") return demoResults as T;
     if (path === "artifacts") return demoArtifacts as T;
     if (path === "workflows") return demoWorkflows as T;
@@ -78,6 +79,7 @@ export class DashboardClient implements DashboardApi {
   getOverview(): Promise<Overview> { return this.get<Overview>("overview"); }
   getRuns(filters?: Record<string, string | number | null>): Promise<Page<Run>> { return this.get<Page<Run>>("runs", filters); }
   getRunDetail(runId: number): Promise<RunDetail> { return this.get<RunDetail>(`runs/${runId}`); }
+  getJobLogs(jobId: number): Promise<JobLogs> { return this.get<JobLogs>(`jobs/${jobId}/logs`); }
   getResults(filters?: Record<string, string | number | null>): Promise<Page<ResultMetric>> { return this.get<Page<ResultMetric>>("results", filters); }
   getArtifacts(filters?: Record<string, string | number | null>): Promise<Page<Artifact>> {
     return this.get<Page<Artifact>>("artifacts", { source: "github", ...filters });

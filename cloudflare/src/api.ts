@@ -1,5 +1,5 @@
 import { authorizeSync } from "./auth";
-import { queryArtifacts, queryHealth, queryOverview, queryResults, queryRunDetail, queryRuns, querySyncState, queryWorkflows } from "./db";
+import { queryArtifacts, queryHealth, queryJob, queryJobLogs, queryOverview, queryResults, queryRunDetail, queryRuns, querySyncState, queryWorkflows } from "./db";
 import type { Env } from "./env";
 import { ingestBatch, recordSyncError } from "./sync";
 
@@ -20,7 +20,7 @@ async function read<T>(producer: () => Promise<T>): Promise<Response> {
     return json(await producer());
   } catch (exc) {
     const message = exc instanceof Error ? exc.message : "service unavailable";
-    if (message === "run not found") return error(message, 404);
+    if (["run not found", "job not found", "job logs not found"].includes(message)) return error(message, 404);
     return message.startsWith("invalid ") ? error(message, 400) : error("service unavailable", 503);
   }
 }
@@ -39,6 +39,14 @@ export async function handleApi(request: Request, env: Env, apiPath: string): Pr
       if (!detail) throw new Error("run not found");
       return detail;
     });
+  }
+  if (apiPath.startsWith("/api/jobs/") && request.method === "GET") {
+    const suffix = apiPath.slice("/api/jobs/".length);
+    const [rawId, action] = suffix.split("/");
+    const id = Number(rawId);
+    if (!Number.isSafeInteger(id) || id <= 0 || (action && action !== "logs")) return error("invalid job id", 400);
+    if (action === "logs") return read(() => queryJobLogs(env, id));
+    return read(() => queryJob(env, id));
   }
   if (apiPath === "/api/artifacts" && request.method === "GET") return read(() => queryArtifacts(env, url.searchParams));
   if (apiPath === "/api/results" && request.method === "GET") return read(() => queryResults(env, url.searchParams));

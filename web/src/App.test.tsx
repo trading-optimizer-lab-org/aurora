@@ -8,6 +8,7 @@ const demoApi: DashboardApi = {
   getOverview: async () => demoOverview,
   getRuns: async () => demoRuns,
   getRunDetail: async () => demoRunDetail,
+  getJobLogs: async (jobId) => ({ schema_version: 1, job_id: jobId, content: "demo logs", content_type: "text/plain" }),
   getResults: async () => demoResults,
   getArtifacts: async () => demoArtifacts,
   getWorkflows: async () => demoWorkflows,
@@ -56,5 +57,23 @@ describe("Aurora dashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: /Cargar más ejecuciones/ }));
     await waitFor(() => expect(getRuns).toHaveBeenCalledTimes(1));
     expect(getRuns.mock.calls[0][0]).toMatchObject({ cursor: "cursor-2", limit: 50 });
+  });
+
+  it("carga los logs desde el detalle de un run", async () => {
+    const getJobLogs = vi.fn(async (jobId: number) => ({
+      schema_version: 1 as const,
+      job_id: jobId,
+      content: "linea de log del job",
+      content_type: "text/plain",
+    }));
+    const logsApi: DashboardApi = { ...demoApi, getJobLogs };
+    window.location.hash = "#run/32337129192";
+
+    render(<App client={logsApi} />);
+
+    expect(await screen.findByRole("heading", { name: "SP500 Atlas Static Run" })).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Ver logs" })[0]);
+    expect(await screen.findByText("linea de log del job")).toBeInTheDocument();
+    expect(getJobLogs).toHaveBeenCalledWith(901);
   });
 });

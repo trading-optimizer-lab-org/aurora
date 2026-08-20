@@ -37,6 +37,14 @@ const worker: ExportedHandler<Env> = {
     const url = new URL(request.url);
     const auth = authorizePath(url.pathname, env.DASHBOARD_LINK_SECRET);
     if (!auth.ok || !auth.suffix) return new Response("Not found", { status: 404 });
+    if (auth.suffix === "/" && !url.pathname.endsWith("/")) {
+      const location = new URL(request.url);
+      location.pathname += "/";
+      const headers = responseHeaders();
+      headers.set("Location", location.toString());
+      headers.set("Cache-Control", "no-store");
+      return new Response(null, { status: 308, headers });
+    }
     if (auth.suffix.startsWith("/archive/") || auth.suffix.startsWith("/api/archive/")) return serveArchive(request, env, auth.suffix);
     if (auth.suffix.startsWith("/api/") || auth.suffix.startsWith("/internal/")) {
       return handleApi(request, env, auth.suffix);

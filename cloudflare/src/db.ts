@@ -112,6 +112,36 @@ async function githubArtifactPage(env: Env, page: number, perPage: number) {
   };
 }
 
+async function githubRunJobs(env: Env, runId: number): Promise<Row[]> {
+  const jobs: Row[] = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const response = await fetch(`https://api.github.com/repos/${env.REPO_OWNER}/${env.REPO_NAME}/actions/runs/${runId}/jobs?per_page=100&page=${page}`, {
+      headers: githubHeaders(env),
+    });
+    if (!response.ok) throw new Error(`GitHub jobs ${response.status}`);
+    const payload = await response.json() as { jobs?: unknown };
+    const batch = Array.isArray(payload.jobs) ? payload.jobs as Row[] : [];
+    jobs.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return jobs;
+}
+
+async function githubRunArtifacts(env: Env, runId: number): Promise<Row[]> {
+  const artifacts: Row[] = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const response = await fetch(`https://api.github.com/repos/${env.REPO_OWNER}/${env.REPO_NAME}/actions/runs/${runId}/artifacts?per_page=100&page=${page}`, {
+      headers: githubHeaders(env),
+    });
+    if (!response.ok) throw new Error(`GitHub run artifacts ${response.status}`);
+    const payload = await response.json() as { artifacts?: unknown };
+    const batch = Array.isArray(payload.artifacts) ? payload.artifacts as Row[] : [];
+    artifacts.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return artifacts;
+}
+
 async function githubArtifactTotal(env: Env): Promise<number | null> {
   if (!env.GITHUB_ACTIONS_TOKEN) return null;
   try {
@@ -217,6 +247,45 @@ function toArtifact(row: Row): Artifact {
     parser_status: String(row.parser_status || "unclassified") as Artifact["parser_status"],
     source_url: String(row.source_url || ""),
   };
+}
+
+function toGitHubJob(payload: Row): Job {
+  const steps = Array.isArray(payload.steps) ? payload.steps : [];
+  return toJob({
+    job_id: payload.id,
+    run_id: payload.run_id,
+    name: payload.name,
+    status: payload.status,
+    conclusion: payload.conclusion,
+    started_at: payload.started_at,
+    completed_at: payload.completed_at,
+    runner_name: payload.runner_name,
+    html_url: payload.html_url,
+    steps_json: JSON.stringify(steps),
+  });
+}
+
+function toGitHubArtifact(env: Env, payload: Row, stored?: Row): Artifact {
+  const artifactId = numberValue(payload.id);
+  const workflowRun = payload.workflow_run && typeof payload.workflow_run === "object" ? payload.workflow_run as Row : {};
+  const runId = numberValue(workflowRun.id || payload.run_id);
+  const expired = Boolean(payload.expired);
+  const publicSource = `https://github.com/${env.REPO_OWNER}/${env.REPO_NAME}/actions/runs/${runId}/artifacts/${artifactId}`;
+  const storedSource = String(stored?.source_url || "");
+  return toArtifact({
+    artifact_id: artifactId,
+    run_id: runId,
+    name: payload.name,
+    size_bytes: payload.size_in_bytes,
+    created_at: payload.created_at,
+    expires_at: payload.expires_at,
+    expired: expired ? 1 : 0,
+    archive_state: stored?.archive_state || (expired ? "expired" : "indexed"),
+    archive_key: stored?.archive_key,
+    content_type: stored?.content_type,
+    parser_status: stored?.parser_status || "unclassified",
+    source_url: storedSource.startsWith("https://github.com/") ? storedSource : publicSource,
+  });
 }
 
 function toResult(row: Row): ResultMetric {
@@ -344,13 +413,45 @@ export async function queryOverview(env: Env) {
 export async function queryRunDetail(env: Env, runId: number): Promise<RunDetail | null> {
   const run = await env.DB.prepare("SELECT * FROM runs WHERE run_id = ?").bind(runId).first<Row>();
   if (!run) return null;
-  const [jobs, artifacts, results, sync] = await Promise.all([
+  const [jobRows, artifactRows, resultRows, sync] = await Promise.all([
     env.DB.prepare("SELECT * FROM jobs WHERE run_id = ? ORDER BY started_at ASC, job_id ASC").bind(runId).all<Row>(),
     env.DB.prepare("SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at DESC, artifact_id DESC").bind(runId).all<Row>(),
     env.DB.prepare("SELECT * FROM results WHERE run_id = ? ORDER BY captured_at DESC, result_id ASC").bind(runId).all<Row>(),
     env.DB.prepare("SELECT last_success_at FROM sync_state WHERE key = 'default'").first<Row>(),
   ]);
-  return { schema_version: 1, stale: syncIsStale(sync), run: toRun(run), jobs: rows(jobs).map(toJob), artifacts: rows(artifacts).map(toArtifact), results: rows(results).map(toResult) };
+  let jobs = rows(jobRows).map(toJob);
+  let artifacts = rows(artifactRows).map(toArtifact);
+  if (env.GITHUB_ACTIONS_TOKEN) {
+    const [remoteJobs, remoteArtifacts] = await Promise.allSettled([githubRunJobs(env, runId), githubRunArtifacts(env, runId)]);
+    if (remoteJobs.status === "fulfilled") jobs = remoteJobs.value.map(toGitHubJob);
+    if (remoteArtifacts.status === "fulfilled") {
+      const persisted = new Map(rows(artifactRows).map((row) => [numberValue(row.artifact_id), row]));
+      artifacts = remoteArtifacts.value.map((payload) => toGitHubArtifact(env, payload, persisted.get(numberValue(payload.id))));
+    }
+  }
+  return { schema_version: 1, stale: syncIsStale(sync), run: toRun(run), jobs, artifacts, results: rows(resultRows).map(toResult) };
+}
+
+export async function queryJob(env: Env, jobId: number) {
+  const [row, sync] = await Promise.all([
+    env.DB.prepare("SELECT * FROM jobs WHERE job_id = ?").bind(jobId).first<Row>(),
+    env.DB.prepare("SELECT last_success_at FROM sync_state WHERE key = 'default'").first<Row>(),
+  ]);
+  if (row) return { schema_version: 1 as const, stale: syncIsStale(sync), job: toJob(row) };
+  if (!env.GITHUB_ACTIONS_TOKEN) throw new Error("job not found");
+  const response = await fetch(`https://api.github.com/repos/${env.REPO_OWNER}/${env.REPO_NAME}/actions/jobs/${jobId}`, { headers: githubHeaders(env) });
+  if (!response.ok) throw new Error(response.status === 404 ? "job not found" : `GitHub job ${response.status}`);
+  const payload = await response.json() as Row;
+  return { schema_version: 1 as const, stale: syncIsStale(sync), job: toGitHubJob(payload) };
+}
+
+export async function queryJobLogs(env: Env, jobId: number) {
+  if (!env.GITHUB_ACTIONS_TOKEN) throw new Error("GitHub logs unavailable");
+  const response = await fetch(`https://api.github.com/repos/${env.REPO_OWNER}/${env.REPO_NAME}/actions/jobs/${jobId}/logs`, {
+    headers: { ...githubHeaders(env), Accept: "application/vnd.github.raw+json" },
+  });
+  if (!response.ok) throw new Error(response.status === 404 ? "job logs not found" : `GitHub job logs ${response.status}`);
+  return { schema_version: 1 as const, job_id: jobId, content: await response.text(), content_type: response.headers.get("Content-Type") || "text/plain; charset=utf-8" };
 }
 
 export async function queryWorkflows(env: Env) {
@@ -402,29 +503,7 @@ export async function queryGitHubArtifacts(env: Env, params: URLSearchParams) {
     ? await env.DB.prepare(`SELECT artifact_id, archive_state, archive_key, content_type, parser_status, source_url FROM artifacts WHERE artifact_id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all<Row>()
     : { results: [] } as unknown as D1Result<Row>;
   const persisted = new Map(rows(saved).map((row) => [numberValue(row.artifact_id), row]));
-  const items = github.artifacts.map((payload) => {
-    const artifactId = numberValue(payload.id);
-    const workflowRun = payload.workflow_run && typeof payload.workflow_run === "object" ? payload.workflow_run as Row : {};
-    const runId = numberValue(workflowRun.id || payload.run_id);
-    const stored = persisted.get(artifactId);
-    const expired = Boolean(payload.expired);
-    const publicSource = `https://github.com/${env.REPO_OWNER}/${env.REPO_NAME}/actions/runs/${runId}/artifacts/${artifactId}`;
-    const storedSource = String(stored?.source_url || "");
-    return toArtifact({
-      artifact_id: artifactId,
-      run_id: runId,
-      name: payload.name,
-      size_bytes: payload.size_in_bytes,
-      created_at: payload.created_at,
-      expires_at: payload.expires_at,
-      expired: expired ? 1 : 0,
-      archive_state: stored?.archive_state || (expired ? "expired" : "indexed"),
-      archive_key: stored?.archive_key,
-      content_type: stored?.content_type,
-      parser_status: stored?.parser_status || "unclassified",
-      source_url: storedSource.startsWith("https://github.com/") ? storedSource : publicSource,
-    });
-  });
+  const items = github.artifacts.map((payload) => toGitHubArtifact(env, payload, persisted.get(numberValue(payload.id))));
   return {
     schema_version: 1 as const,
     items,

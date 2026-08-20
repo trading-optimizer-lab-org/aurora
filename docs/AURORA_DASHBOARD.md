@@ -15,6 +15,10 @@ backtests.
 - No hay controles para lanzar, cancelar, repetir ni modificar workflows.
 - Se indexan también CI, tests, seguridad, documentación y workflows que no
   sean de backtest.
+- La pestaña de artefactos consulta el inventario completo de GitHub bajo
+  demanda y cruza los registros persistidos con el archivo local.
+- El detalle de cada run muestra jobs, pasos, logs bajo demanda, artefactos,
+  resultados reconocidos y enlaces de procedencia.
 
 La ausencia de login no convierte el enlace en público: cualquiera que lo
 obtenga podrá leer el panel. Si se comparte, hay que rotarlo cambiando
@@ -103,12 +107,13 @@ permisos `contents: read` y `actions: read`.
 
 ## Sincronización
 
-`.github/workflows/aurora-dashboard-sync.yml` se ejecuta cada 15 minutos y
-también se puede lanzar manualmente. Cada ejecución indexa una página de
-hasta 100 runs; el campo `page` del disparo manual permite continuar un
-backfill histórico. El primer lanzamiento recomendado es con `page=1` y
-archivo activado; después se pueden lanzar las páginas 2, 3, etc. Los
-registros son idempotentes por los IDs estables de GitHub.
+En producción, el Cron Trigger del Worker se ejecuta cada 15 minutos para
+refrescar la cola reciente sin exponer credenciales. El workflow
+`.github/workflows/aurora-dashboard-sync.yml` también se puede lanzar
+manualmente cuando está habilitado en la rama de despliegue. Cada ejecución
+indexa una página de hasta 100 runs; el campo `page` permite continuar un
+backfill histórico. Los registros son idempotentes por los IDs estables de
+GitHub.
 
 El sincronizador usa reintentos acotados, no ejecuta backtests locales y no
 realiza ninguna operación de escritura sobre GitHub. Cada ejecución mantiene
@@ -144,32 +149,28 @@ npm --prefix web run test:run
 npm --prefix web run build
 npm --prefix cloudflare run typecheck
 npm --prefix cloudflare run test:run
-& "C:/Python314/python.exe" -m pytest tests/test_aurora_dashboard_parsers.py tests/test_aurora_dashboard_archive.py tests/test_aurora_dashboard_sync.py tests/test_aurora_dashboard_workflows.py -q
+& "C:/Python314/python.exe" -m pytest tests/test_aurora_dashboard_parsers.py tests/test_aurora_dashboard_archive.py tests/test_aurora_dashboard_workflows.py tests/test_aurora_dashboard_sync.py tests/test_dashboard.py -q
 npx --yes wrangler deploy --dry-run --config cloudflare/wrangler.toml
 ```
 
 El despliegue no se considera publicado hasta que la URL real responda a
 `/s/<secreto>/api/health` y el panel muestre una sincronización correcta.
 
-## Verificación realizada el 20/08/2026
+## Verificación de producción realizada el 20/08/2026
 
-La comprobación de solo lectura contra GitHub devolvió 19.756 runs, 203
-workflows y 359.009 artefactos. En la muestra había un run activo
-32353395637 (SP500 Atlas Static Run), un fallo de lint 32353313158 y un run
-Atlas completado correctamente 32152459079. Estos números son una fotografía
-de ese momento y cambiarán con nuevas ejecuciones.
+La URL publicada respondió correctamente después de desplegar el Worker:
 
-También se verificó que:
+- el enlace con y sin barra final carga el HTML y redirige de forma segura a la
+  variante canónica;
+- CSS y JavaScript se sirven dentro de `/s/<secreto>/assets/` y responden 200;
+- `/api/health` responde `ok=true` y `stale=false`;
+- el índice real mostró 19.766 runs, 203 workflows, 2 activos y 359.009
+  artefactos; estas cifras cambian con nuevas ejecuciones;
+- el detalle de un run fallido devolvió sus jobs, `/api/jobs/:id` devolvió el
+  job y `/api/jobs/:id/logs` devolvió logs reales sin enviar el token al cliente;
+- el inventario de artefactos pagina con cursores sin duplicar registros;
+- el archivo CSV archivado respondió 200 desde R2;
+- las suites actuales pasan: 6 tests de interfaz, 7 del Worker y 27 tests
+  Python del dashboard, con un test Python omitido por condición del entorno.
 
-- el sincronizador en modo dry-run procesa los 203 workflows y un run real sin
-  errores, sin escribir en GitHub ni en Cloudflare;
-- pasan los tests de parsers, cuota, sincronización y workflows, además de
-  los tests de navegación de la interfaz;
-- la web compila y Wrangler en modo dry-run valida los cinco ficheros
-  estáticos y los bindings D1/R2/Assets;
-- Wrangler indica que esta máquina no está autenticada en Cloudflare.
-
-Por ese último punto todavía no existe un enlace público emitido desde esta
-sesión. El bloqueo es únicamente la autenticación inicial de Cloudflare y la
-creación de D1/R2; el workflow y los comandos de despliegue quedan preparados
-para completarlo sin cambiar el código.
+El secreto del enlace no se guarda en este documento ni en el repositorio.
