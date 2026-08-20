@@ -35,7 +35,20 @@ except ModuleNotFoundError:
 GITHUB_API_VERSION = "2022-11-28"
 DEFAULT_OWNER = "trading-optimizer-lab-org"
 DEFAULT_REPO = "aurora"
+MAX_RESULTS_PER_BATCH = 450
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+class _GitHubRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Do not forward GitHub API credentials to signed artifact storage URLs."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None:
+            redirected.headers.pop("Authorization", None)
+            redirected.headers.pop("authorization", None)
+            redirected.headers["Accept"] = "application/octet-stream"
+        return redirected
 
 
 class GitHubApiError(RuntimeError):
@@ -129,7 +142,15 @@ class GitHubClient:
         self.repo = repo
         self.base_url = base_url.rstrip("/")
 
-    def _request(self, path: str, *, params: dict[str, Any] | None = None, accept: str = "application/vnd.github+json", raw: bool = False) -> Any:
+    def _request(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        accept: str = "application/vnd.github+json",
+        raw: bool = False,
+        opener: urllib.request.OpenerDirector | None = None,
+    ) -> Any:
         query = urllib.parse.urlencode({key: value for key, value in (params or {}).items() if value is not None})
         url = f"{self.base_url}{path}{'?' + query if query else ''}"
         headers = {
@@ -142,7 +163,8 @@ class GitHubClient:
         request = urllib.request.Request(url, headers=headers, method="GET")
         for attempt in range(4):
             try:
-                with urllib.request.urlopen(request, timeout=45) as response:
+                open_request = opener.open if opener is not None else urllib.request.urlopen
+                with open_request(request, timeout=45) as response:
                     payload = response.read()
                 return payload if raw else json.loads(payload.decode("utf-8"))
             except urllib.error.HTTPError as exc:
@@ -178,7 +200,12 @@ class GitHubClient:
         parsed = urllib.parse.urlparse(archive_url)
         if parsed.scheme not in {"https"} or parsed.netloc not in {"api.github.com", "github.com"}:
             raise GitHubApiError("refusing artifact URL outside github.com")
-        return self._request(parsed.path, accept="application/zip", raw=True)
+        return self._request(
+            parsed.path,
+            accept="application/vnd.github+json",
+            raw=True,
+            opener=urllib.request.build_opener(_GitHubRedirectHandler),
+        )
 
 
 def normalize_workflow(payload: dict[str, Any], captured_at: str | None = None) -> dict[str, Any]:
@@ -283,6 +310,7 @@ def _archive_entries(
     context_workflow: str,
     used_bytes: int,
     quota_bytes: int,
+    max_results: int = MAX_RESULTS_PER_BATCH,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, list[str]]:
     """Download one GitHub ZIP only when explicitly requested and inspect it."""
     archives: list[dict[str, Any]] = []
@@ -312,7 +340,8 @@ def _archive_entries(
                     })
                     used_bytes += len(payload)
                     report = parse_artifact(name, payload, ParserContext(int(artifact["run_id"]), int(artifact["artifact_id"]), context_workflow, name))
-                    results.extend(metric.to_dict() for metric in report.metrics)
+                    remaining = max(0, max_results - len(results))
+                    results.extend(metric.to_dict() for metric in report.metrics[:remaining])
                 else:
                     rejected_states.append(decision.state)
                 if len(archives) >= 20:
@@ -390,7 +419,14 @@ def build_batch(
         artifacts.extend(run_artifacts)
         if archive:
             for artifact in run_artifacts:
-                prepared, parsed, used_bytes, errors = _archive_entries(client, artifact, run["workflow_name"], used_bytes, quota_bytes)
+                prepared, parsed, used_bytes, errors = _archive_entries(
+                    client,
+                    artifact,
+                    run["workflow_name"],
+                    used_bytes,
+                    quota_bytes,
+                    max_results=max(0, MAX_RESULTS_PER_BATCH - len(results)),
+                )
                 archives.extend(prepared)
                 results.extend(parsed)
                 report.errors.extend(errors)

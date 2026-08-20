@@ -49,6 +49,21 @@ def test_csv_metrics_are_read_without_inventing_units() -> None:
     assert all(metric.unit is None for metric in report.metrics)
 
 
+def test_prefixed_backtest_metrics_keep_the_full_explicit_column_name() -> None:
+    report = parse_artifact(
+        "validation_report.csv",
+        b"candidate_id,train_1x_sharpe,validation_1x_calmar,validation_trades_per_month\nabc,1.2,0.8,3\n",
+        ParserContext(3, 4, "Literature Strategy Backtest", "validation_report.csv"),
+    )
+
+    assert {metric.metric_key for metric in report.metrics} == {
+        "train_1x_sharpe",
+        "validation_1x_calmar",
+        "validation_trades_per_month",
+    }
+    assert all(metric.unit is None for metric in report.metrics)
+
+
 def test_text_and_unknown_files_remain_visible_without_fake_results() -> None:
     text_report = parse_artifact("report.md", b"calmar: 1.1\nstatus: done", _context("report.md"))
     binary_report = parse_artifact("matrix.parquet", b"PAR1\x00\x01", _context("matrix.parquet"))

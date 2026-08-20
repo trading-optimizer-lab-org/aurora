@@ -14,27 +14,34 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
 
-PARSER_VERSION = "1.0.0"
+PARSER_VERSION = "1.1.0"
 _TEXT_EXTENSIONS = {".csv", ".json", ".jsonl", ".md", ".markdown", ".txt", ".html", ".htm"}
 _METRIC_KEYS = {
     "calmar",
     "cagr",
     "cagr_pct",
+    "final_nav",
     "sharpe",
     "sortino",
     "max_drawdown",
     "max_drawdown_pct",
     "mdd",
+    "observations",
     "win_rate",
     "accuracy",
     "n_trades",
     "trades",
+    "trades_per_month",
+    "profit_factor",
+    "score",
     "overall_passed",
     "passed",
     "p_value",
     "pvalue",
     "correlation",
     "coverage",
+    "positive_months_pct",
+    "positive_years_pct",
 }
 _KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_. -]{0,80}$")
 
@@ -175,7 +182,14 @@ def _key_name(key: Any) -> str | None:
     if not isinstance(key, str) or not _KEY_RE.match(key):
         return None
     normalized = key.strip().lower().replace(" ", "_").replace("-", "_")
-    return normalized if normalized in _METRIC_KEYS else None
+    if normalized in _METRIC_KEYS:
+        return normalized
+    # Backtest exports commonly qualify a metric with its phase, sizing or
+    # selection context (for example validation_1x_sharpe). Keep the complete
+    # column name so the dashboard never loses that explicit distinction.
+    if any(normalized.endswith(f"_{metric}") for metric in _METRIC_KEYS):
+        return normalized
+    return None
 
 
 def _context_value(payload: dict[str, Any], *keys: str) -> str | None:
