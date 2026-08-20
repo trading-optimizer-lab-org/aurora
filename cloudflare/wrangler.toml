@@ -15,8 +15,8 @@ APP_VERSION = "0.1.0"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "aurora-dashboard"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_name = "aurora-runs-dashboard"
+database_id = "6b5585e5-f1af-42dc-bb20-1b2415aa9bd1"
 migrations_dir = "migrations"
 
 [[r2_buckets]]

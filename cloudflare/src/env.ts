@@ -1,7 +1,7 @@
 import type { D1Database, Fetcher, R2Bucket } from "@cloudflare/workers-types";
 
 export interface Env {
-  ASSETS: Fetcher;
+  ASSETS?: Fetcher;
   DB: D1Database;
   ARCHIVE: R2Bucket;
   DASHBOARD_LINK_SECRET: string;

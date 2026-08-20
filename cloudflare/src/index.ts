@@ -1,5 +1,6 @@
 import { authorizePath } from "./auth";
 import { handleApi, responseHeaders } from "./api";
+import { decodeEmbeddedAsset, EMBEDDED_ASSETS } from "./embedded_assets";
 import type { Env } from "./env";
 
 async function serveArchive(request: Request, env: Env, suffix: string): Promise<Response> {
@@ -20,6 +21,16 @@ async function serveArchive(request: Request, env: Env, suffix: string): Promise
   return new Response(object.body, { headers });
 }
 
+function serveEmbeddedAsset(suffix: string): Response {
+  const requestedPath = suffix === "/" ? "/index.html" : suffix;
+  const asset = EMBEDDED_ASSETS[requestedPath] ?? (requestedPath.includes(".") ? undefined : EMBEDDED_ASSETS["/index.html"]);
+  if (!asset) return new Response("Not found", { status: 404 });
+  const headers = new Headers(responseHeaders());
+  headers.set("Content-Type", asset.contentType);
+  headers.set("Cache-Control", "no-store");
+  return new Response(decodeEmbeddedAsset(asset), { headers });
+}
+
 const worker: ExportedHandler<Env> = {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -32,6 +43,7 @@ const worker: ExportedHandler<Env> = {
 
     const assetUrl = new URL(request.url);
     assetUrl.pathname = auth.suffix === "/" ? "/" : auth.suffix;
+    if (!env.ASSETS) return serveEmbeddedAsset(auth.suffix);
     const assetResponse = await env.ASSETS.fetch(new Request(assetUrl, request));
     const headers = new Headers(assetResponse.headers);
     for (const [key, value] of responseHeaders()) headers.set(key, value);
