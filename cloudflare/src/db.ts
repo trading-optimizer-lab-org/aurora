@@ -363,3 +363,22 @@ export async function queryHealth(env: Env, version: string) {
   const overview = await queryOverview(env);
   return { schema_version: 1 as const, ok: true, version, generated_at: overview.generated_at, stale: overview.stale, sync: overview.sync, archive: overview.archive };
 }
+
+export async function querySyncState(env: Env) {
+  const row = await env.DB.prepare("SELECT cursor_json, last_started_at, last_success_at, last_error, updated_at FROM sync_state WHERE key = 'default'").first<Row>();
+  let cursor: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(String(row?.cursor_json || "{}"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) cursor = parsed as Record<string, unknown>;
+  } catch {
+    cursor = {};
+  }
+  return {
+    schema_version: 1 as const,
+    cursor,
+    last_started_at: nullableString(row?.last_started_at),
+    last_success_at: nullableString(row?.last_success_at),
+    last_error: nullableString(row?.last_error),
+    updated_at: nullableString(row?.updated_at),
+  };
+}

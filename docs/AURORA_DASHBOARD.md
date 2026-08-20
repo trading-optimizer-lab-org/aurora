@@ -111,8 +111,11 @@ archivo activado; después se pueden lanzar las páginas 2, 3, etc. Los
 registros son idempotentes por los IDs estables de GitHub.
 
 El sincronizador usa reintentos acotados, no ejecuta backtests locales y no
-realiza ninguna operación de escritura sobre GitHub. Si GitHub falla, el
-panel conserva los datos anteriores y muestra el estado desactualizado.
+realiza ninguna operación de escritura sobre GitHub. Cada ejecución mantiene
+la página actual y avanza también un checkpoint histórico, por lo que el
+backfill progresa automáticamente sin dejar de actualizar la primera página.
+Si GitHub falla, el panel conserva los datos anteriores y muestra el estado
+desactualizado junto con el último error registrado.
 
 Para probar sin red ni escritura:
 

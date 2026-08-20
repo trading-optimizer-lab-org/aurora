@@ -439,6 +439,34 @@ def post_batch(url: str, token: str, batch: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError(f"dashboard ingestion {exc.code}: {body[:300]}") from exc
 
 
+def post_sync_error(url: str, token: str, error: str, cursor: SyncCursor | None = None) -> dict[str, Any]:
+    payload = {
+        "schema_version": 1,
+        "captured_at": _now(),
+        "cursor": cursor.to_dict() if cursor else None,
+        "error": error[:2_000],
+    }
+    request = urllib.request.Request(
+        url.rstrip("/") + "/internal/sync/error",
+        data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}", "User-Agent": "aurora-dashboard-sync/1.0"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def get_sync_state(url: str, token: str) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url.rstrip("/") + "/internal/sync/state",
+        headers={"Accept": "application/json", "Authorization": f"Bearer {token}", "User-Agent": "aurora-dashboard-sync/1.0"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
 def _fixture_batch(path: str) -> dict[str, Any]:
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
@@ -453,6 +481,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo", default=os.getenv("AURORA_DASHBOARD_REPO", DEFAULT_REPO))
     parser.add_argument("--token", default=os.getenv("GITHUB_TOKEN"))
     parser.add_argument("--page", type=int, default=1)
+    parser.add_argument("--auto-page", action="store_true", help="use the Worker checkpoint for the next historical page")
     parser.add_argument("--per-page", type=int, choices=(10, 25, 50, 100), default=100)
     parser.add_argument("--max-runs", type=int, default=None)
     parser.add_argument("--archive", action="store_true")
@@ -471,15 +500,35 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"fixture": args.fixture, "runs": len(batch.get("runs", [])), "artifacts": len(batch.get("artifacts", []))}, indent=2))
         return 0
     client = GitHubClient(args.token, args.owner, args.repo)
-    batch, report = build_batch(client, args.page, args.per_page, archive=args.archive, quota_bytes=args.quota_bytes, max_runs=args.max_runs)
-    if args.dry_run or not args.dashboard_url:
-        print(json.dumps({"report": report.to_dict(), "batch_counts": {key: len(batch.get(key, [])) for key in ("workflows", "runs", "jobs", "artifacts", "results", "archives")}}, indent=2))
+    page = args.page
+    try:
+        if args.auto_page:
+            if not args.dashboard_url or not args.sync_token:
+                raise SystemExit("--auto-page requires --dashboard-url and --sync-token")
+            state = get_sync_state(args.dashboard_url, args.sync_token)
+            cursor = state.get("cursor") if isinstance(state.get("cursor"), dict) else {}
+            page = int(cursor.get("page") or 2)
+            page = page if page > 0 else 1
+        batch, report = build_batch(client, page, args.per_page, archive=args.archive, quota_bytes=args.quota_bytes, max_runs=args.max_runs)
+        if args.dry_run or not args.dashboard_url:
+            print(json.dumps({"report": report.to_dict(), "batch_counts": {key: len(batch.get(key, [])) for key in ("workflows", "runs", "jobs", "artifacts", "results", "archives")}}, indent=2))
+            return 0
+        if not args.sync_token:
+            raise SystemExit("--sync-token or AURORA_DASHBOARD_SYNC_TOKEN is required for writes")
+        response = post_batch(args.dashboard_url, args.sync_token, batch)
+        print(json.dumps({"report": report.to_dict(), "ingestion": response}, indent=2))
         return 0
-    if not args.sync_token:
-        raise SystemExit("--sync-token or AURORA_DASHBOARD_SYNC_TOKEN is required for writes")
-    response = post_batch(args.dashboard_url, args.sync_token, batch)
-    print(json.dumps({"report": report.to_dict(), "ingestion": response}, indent=2))
-    return 0
+    except SystemExit:
+        raise
+    except (GitHubApiError, RuntimeError, OSError, ValueError, urllib.error.URLError) as exc:
+        message = str(exc)
+        if args.dashboard_url and args.sync_token:
+            try:
+                post_sync_error(args.dashboard_url, args.sync_token, message, SyncCursor(page=page))
+            except Exception:
+                print("No se pudo registrar el error en el dashboard.", file=sys.stderr)
+        print(json.dumps({"ok": False, "error": message}), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

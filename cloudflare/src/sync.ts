@@ -25,6 +25,13 @@ export interface SyncBatch {
   archives: SyncArchive[];
 }
 
+export interface SyncError {
+  schema_version: 1;
+  captured_at: string;
+  cursor?: UnknownRecord | null;
+  error: string;
+}
+
 function text(value: unknown, fallback = ""): string {
   return value === null || value === undefined ? fallback : String(value);
 }
@@ -82,6 +89,24 @@ function assertBatch(value: unknown): SyncBatch {
   return body as unknown as SyncBatch;
 }
 
+function assertSyncError(value: unknown): SyncError {
+  if (!value || typeof value !== "object") throw new Error("sync error body must be an object");
+  const body = value as UnknownRecord;
+  if (body.schema_version !== 1) throw new Error("unsupported sync error schema");
+  if (typeof body.error !== "string" || !body.error.trim()) throw new Error("sync error message is required");
+  if (body.error.length > 2_000) throw new Error("sync error message too long");
+  return body as unknown as SyncError;
+}
+
+export async function recordSyncError(env: Env, value: unknown): Promise<Record<string, unknown>> {
+  const body = assertSyncError(value);
+  const capturedAt = typeof body.captured_at === "string" && body.captured_at ? body.captured_at : new Date().toISOString();
+  await env.DB.prepare("INSERT INTO sync_state (key, cursor_json, last_started_at, last_success_at, last_error, runs_seen, jobs_seen, artifacts_seen, results_seen, r2_bytes_used, quota_bytes, updated_at) VALUES ('default', ?, ?, NULL, ?, 0, 0, 0, 0, 0, ?, ?) ON CONFLICT(key) DO UPDATE SET cursor_json=excluded.cursor_json, last_started_at=excluded.last_started_at, last_error=excluded.last_error, updated_at=excluded.updated_at")
+    .bind(jsonText(body.cursor || {}, {}), capturedAt, body.error.trim(), archiveQuotaBytes(env), capturedAt)
+    .run();
+  return { schema_version: 1, ok: false, last_error: body.error.trim(), captured_at: capturedAt };
+}
+
 async function executeInChunks(env: Env, statements: D1PreparedStatement[]): Promise<void> {
   for (let offset = 0; offset < statements.length; offset += 100) {
     await env.DB.batch(statements.slice(offset, offset + 100));
@@ -93,6 +118,18 @@ export async function ingestBatch(env: Env, value: unknown): Promise<Record<stri
   const state = await env.DB.prepare("SELECT * FROM sync_state WHERE key = 'default'").first<UnknownRecord>();
   let usedBytes = integer(state?.r2_bytes_used);
   const quotaBytes = integer(state?.quota_bytes, archiveQuotaBytes(env));
+  let storedCursor: UnknownRecord = {};
+  try {
+    const parsed = JSON.parse(String(state?.cursor_json || "{}"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) storedCursor = parsed as UnknownRecord;
+  } catch {
+    storedCursor = {};
+  }
+  const storedPage = integer(storedCursor.page);
+  const batchPage = integer(batch.cursor?.page, 1);
+  const checkpoint = batchPage === 1 && storedPage > 1
+    ? storedCursor
+    : (batch.next_cursor || { page: 1 });
   const archiveStates = new Map<number, { state: string; key: string | null }>();
   const markArchive = (archive: SyncArchive, stateValue: string, key: string | null = null) => {
     const idMatch = archive.key.match(/\/artifacts\/(\d+)\//);
@@ -175,7 +212,7 @@ export async function ingestBatch(env: Env, value: unknown): Promise<Record<stri
   statements.push(env.DB.prepare(`INSERT INTO sync_state (key, cursor_json, last_started_at, last_success_at, last_error, runs_seen, jobs_seen, artifacts_seen, results_seen, r2_bytes_used, quota_bytes, updated_at)
     VALUES ('default', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET cursor_json=excluded.cursor_json, last_started_at=excluded.last_started_at, last_success_at=excluded.last_success_at, last_error=NULL, runs_seen=sync_state.runs_seen + excluded.runs_seen, jobs_seen=sync_state.jobs_seen + excluded.jobs_seen, artifacts_seen=sync_state.artifacts_seen + excluded.artifacts_seen, results_seen=sync_state.results_seen + excluded.results_seen, r2_bytes_used=excluded.r2_bytes_used, quota_bytes=excluded.quota_bytes, updated_at=excluded.updated_at`)
-    .bind(jsonText(batch.next_cursor || batch.cursor, {}), text(batch.captured_at), text(batch.captured_at), batch.runs.length, batch.jobs.length, batch.artifacts.length, batch.results.length, usedBytes, quotaBytes, text(batch.captured_at)));
+    .bind(jsonText(checkpoint, {}), text(batch.captured_at), text(batch.captured_at), batch.runs.length, batch.jobs.length, batch.artifacts.length, batch.results.length, usedBytes, quotaBytes, text(batch.captured_at)));
 
   for (const workflow of batch.workflows) {
     statements.push(env.DB.prepare("UPDATE workflows SET run_count = (SELECT COUNT(*) FROM runs WHERE workflow_id = ?), success_count = (SELECT COUNT(*) FROM runs WHERE workflow_id = ? AND conclusion = 'success'), failure_count = (SELECT COUNT(*) FROM runs WHERE workflow_id = ? AND conclusion IN ('failure', 'timed_out')) WHERE workflow_id = ?")
@@ -202,4 +239,4 @@ export async function ingestBatch(env: Env, value: unknown): Promise<Record<stri
   };
 }
 
-export { assertBatch };
+export { assertBatch, assertSyncError };

@@ -12,7 +12,7 @@ function dashboardPrefix(): string {
 export function archiveUrl(key: string): string {
   const prefix = dashboardPrefix();
   const encodedKey = key.split("/").map((part) => encodeURIComponent(part)).join("/");
-  return prefix + "/archive/" + encodedKey;
+  return prefix + "/api/archive/" + encodedKey;
 }
 
 function demoMode(): boolean {

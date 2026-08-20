@@ -1,7 +1,7 @@
 import { authorizeSync } from "./auth";
-import { queryArtifacts, queryHealth, queryOverview, queryResults, queryRunDetail, queryRuns, queryWorkflows } from "./db";
+import { queryArtifacts, queryHealth, queryOverview, queryResults, queryRunDetail, queryRuns, querySyncState, queryWorkflows } from "./db";
 import type { Env } from "./env";
-import { ingestBatch } from "./sync";
+import { ingestBatch, recordSyncError } from "./sync";
 
 function json(data: unknown, status = 200, extra: HeadersInit = {}): Response {
   const headers = new Headers(extra);
@@ -42,6 +42,10 @@ export async function handleApi(request: Request, env: Env, apiPath: string): Pr
   }
   if (apiPath === "/api/artifacts" && request.method === "GET") return read(() => queryArtifacts(env, url.searchParams));
   if (apiPath === "/api/results" && request.method === "GET") return read(() => queryResults(env, url.searchParams));
+  if (apiPath === "/internal/sync/state" && request.method === "GET") {
+    if (!authorizeSync(request, env.DASHBOARD_SYNC_TOKEN)) return error("not found", 404);
+    return read(() => querySyncState(env));
+  }
   if (apiPath === "/internal/sync/batch" && request.method === "POST") {
     if (!authorizeSync(request, env.DASHBOARD_SYNC_TOKEN)) return error("not found", 404);
     try {
@@ -51,6 +55,17 @@ export async function handleApi(request: Request, env: Env, apiPath: string): Pr
       return json(await ingestBatch(env, body));
     } catch (exc) {
       return error(exc instanceof Error ? exc.message : "invalid sync batch", 400);
+    }
+  }
+  if (apiPath === "/internal/sync/error" && request.method === "POST") {
+    if (!authorizeSync(request, env.DASHBOARD_SYNC_TOKEN)) return error("not found", 404);
+    try {
+      const contentLength = Number(request.headers.get("Content-Length") || 0);
+      if (contentLength > 100_000) return error("sync error body too large", 413);
+      const body = await request.json();
+      return json(await recordSyncError(env, body));
+    } catch (exc) {
+      return error(exc instanceof Error ? exc.message : "invalid sync error", 400);
     }
   }
   if (apiPath.startsWith("/internal/")) return error("not found", 404);

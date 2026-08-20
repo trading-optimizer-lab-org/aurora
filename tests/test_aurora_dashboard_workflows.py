@@ -26,6 +26,7 @@ def test_sync_workflow_is_scheduled_manual_and_read_only() -> None:
     assert workflow["jobs"]["sync"]["permissions"] == {"contents": "read", "actions": "read"}
     assert "AURORA_DASHBOARD_URL" in text
     assert "AURORA_DASHBOARD_SYNC_TOKEN" in text
+    assert "--auto-page" in text
 
 
 def test_deploy_workflow_validates_before_deploying() -> None:
@@ -44,4 +45,3 @@ def test_dashboard_workflows_have_no_workflow_write_commands() -> None:
         assert "gh workflow run" not in lowered
         assert "gh run cancel" not in lowered
         assert "gh run rerun" not in lowered
-

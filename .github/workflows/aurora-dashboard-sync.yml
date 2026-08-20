@@ -42,7 +42,7 @@ jobs:
           AURORA_DASHBOARD_URL: ${{ secrets.AURORA_DASHBOARD_URL }}
           AURORA_DASHBOARD_SYNC_TOKEN: ${{ secrets.AURORA_DASHBOARD_SYNC_TOKEN }}
           DASHBOARD_PAGE: ${{ inputs.page || '1' }}
-          DASHBOARD_ARCHIVE: ${{ inputs.archive || 'true' }}
+          DASHBOARD_ARCHIVE: ${{ github.event_name == 'schedule' || inputs.archive }}
         run: |
           set -euo pipefail
           if [ -z "${AURORA_DASHBOARD_URL}" ] || [ -z "${AURORA_DASHBOARD_SYNC_TOKEN}" ]; then
@@ -55,3 +55,16 @@ jobs:
           fi
           python scripts/aurora_dashboard_sync.py "${args[@]}"
 
+      - name: Index next historical page
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AURORA_DASHBOARD_URL: ${{ secrets.AURORA_DASHBOARD_URL }}
+          AURORA_DASHBOARD_SYNC_TOKEN: ${{ secrets.AURORA_DASHBOARD_SYNC_TOKEN }}
+          DASHBOARD_ARCHIVE: ${{ github.event_name == 'schedule' || inputs.archive }}
+        run: |
+          set -euo pipefail
+          args=(--auto-page --per-page 100)
+          if [ "${DASHBOARD_ARCHIVE}" = "true" ]; then
+            args+=(--archive)
+          fi
+          python scripts/aurora_dashboard_sync.py "${args[@]}"

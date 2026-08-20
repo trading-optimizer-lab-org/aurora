@@ -36,7 +36,7 @@ export function Layout({ view, onNavigate, overview, children, isDemo }: LayoutP
     </aside>
     <main className="main-content">
       <header className="topbar"><div className="mobile-brand"><span className="brand-orbit" /><strong>AURORA</strong></div><div className="topbar-meta"><span className={`live-indicator ${overview?.totals.active_runs ? "is-live" : ""}`}><i /> {overview?.totals.active_runs ? `${overview.totals.active_runs} activo${overview.totals.active_runs === 1 ? "" : "s"}` : "Sin activos"}</span><span className="topbar-separator" /><span className="sync-time">Actualizado {overview?.sync.last_success_at ? formatDate(overview.sync.last_success_at) : "—"}</span>{isDemo && <span className="demo-badge">DEMO LOCAL</span>}</div></header>
-      <div className="page-wrap">{children}</div>
+      <div className="page-wrap">{overview?.stale && view !== "overview" && <div className="notice notice-warning global-stale"><span className="notice-mark">!</span><div><strong>Datos potencialmente desactualizados</strong><span>{overview.sync.last_error || "La última sincronización está fuera de la ventana esperada."}</span></div></div>}{children}</div>
     </main>
   </div>;
 }
