@@ -79,7 +79,9 @@ export class DashboardClient implements DashboardApi {
   getRuns(filters?: Record<string, string | number | null>): Promise<Page<Run>> { return this.get<Page<Run>>("runs", filters); }
   getRunDetail(runId: number): Promise<RunDetail> { return this.get<RunDetail>(`runs/${runId}`); }
   getResults(filters?: Record<string, string | number | null>): Promise<Page<ResultMetric>> { return this.get<Page<ResultMetric>>("results", filters); }
-  getArtifacts(filters?: Record<string, string | number | null>): Promise<Page<Artifact>> { return this.get<Page<Artifact>>("artifacts", filters); }
+  getArtifacts(filters?: Record<string, string | number | null>): Promise<Page<Artifact>> {
+    return this.get<Page<Artifact>>("artifacts", { source: "github", ...filters });
+  }
   getWorkflows(): Promise<Page<Workflow>> { return this.get<Page<Workflow>>("workflows"); }
   getHealth(): Promise<Health> { return this.get<Health>("health"); }
 }

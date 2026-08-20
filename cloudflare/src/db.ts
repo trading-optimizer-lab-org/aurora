@@ -70,6 +70,58 @@ function syncIsStale(sync: Row | null): boolean {
   return !Number.isFinite(timestamp) || Date.now() - timestamp > 45 * 60 * 1000;
 }
 
+function githubHeaders(env: Env): HeadersInit {
+  return {
+    Accept: "application/vnd.github+json",
+    Authorization: `Bearer ${env.GITHUB_ACTIONS_TOKEN}`,
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "aurora-dashboard-worker/1.0",
+  };
+}
+
+function encodeGitHubArtifactCursor(page: number): string {
+  return btoa(JSON.stringify({ source: "github", page }))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function decodeGitHubArtifactCursor(cursor: string | null): number {
+  if (!cursor) return 1;
+  try {
+    const normalized = cursor.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    const decoded = JSON.parse(atob(padded));
+    const page = Number(decoded?.page);
+    if (decoded?.source !== "github" || !Number.isSafeInteger(page) || page < 1) throw new Error("invalid cursor");
+    return page;
+  } catch {
+    throw new Error("invalid cursor");
+  }
+}
+
+async function githubArtifactPage(env: Env, page: number, perPage: number) {
+  const response = await fetch(`https://api.github.com/repos/${env.REPO_OWNER}/${env.REPO_NAME}/actions/artifacts?per_page=${perPage}&page=${page}`, {
+    headers: githubHeaders(env),
+  });
+  if (!response.ok) throw new Error(`GitHub artifacts ${response.status}`);
+  const payload = await response.json() as { total_count?: unknown; artifacts?: unknown };
+  return {
+    totalCount: numberValue(payload.total_count),
+    artifacts: Array.isArray(payload.artifacts) ? payload.artifacts as Row[] : [],
+  };
+}
+
+async function githubArtifactTotal(env: Env): Promise<number | null> {
+  if (!env.GITHUB_ACTIONS_TOKEN) return null;
+  try {
+    const page = await githubArtifactPage(env, 1, 1);
+    return page.totalCount;
+  } catch {
+    return null;
+  }
+}
+
 export function encodeCursor(updatedAt: string, runId: number): string {
   return btoa(JSON.stringify({ updated_at: updatedAt, run_id: runId }))
     .replace(/\+/g, "-")
@@ -257,6 +309,7 @@ export async function queryOverview(env: Env) {
     COALESCE(SUM(CASE WHEN archive_state = 'error' THEN 1 ELSE 0 END), 0) AS error_files
     FROM artifacts`).first<Row>();
   const sync = await env.DB.prepare("SELECT * FROM sync_state WHERE key = 'default'").first<Row>();
+  const artifactTotal = await githubArtifactTotal(env);
   const quota = numberValue(sync?.quota_bytes, 7516192768);
   const stale = syncIsStale(sync);
   return {
@@ -269,7 +322,7 @@ export async function queryOverview(env: Env) {
       workflows: numberValue(totals?.workflows),
       runs: numberValue(totals?.runs),
       active_runs: numberValue(totals?.active_runs),
-      artifacts: numberValue(totals?.artifacts),
+      artifacts: artifactTotal ?? numberValue(totals?.artifacts),
       parsed_results: numberValue(totals?.parsed_results),
     },
     conclusions: rows(conclusions).map((row) => ({ label: String(row.label), count: numberValue(row.count) })),
@@ -308,7 +361,7 @@ export async function queryWorkflows(env: Env) {
   return { schema_version: 1 as const, items: rows(result).map(toWorkflow), next_cursor: null, stale: syncIsStale(sync) };
 }
 
-export async function queryArtifacts(env: Env, params: URLSearchParams) {
+async function queryLocalArtifacts(env: Env, params: URLSearchParams) {
   const limit = pageLimit(params, 25);
   const cursor = decodeCursor(params.get("cursor"));
   const conditions: string[] = [];
@@ -334,6 +387,56 @@ export async function queryArtifacts(env: Env, params: URLSearchParams) {
   const items = found.slice(0, limit).map(toArtifact);
   const last = items[items.length - 1];
   return { schema_version: 1 as const, items, next_cursor: found.length > limit && last ? encodeCursor(last.created_at, last.artifact_id) : null, stale: syncIsStale(sync) };
+}
+
+export async function queryGitHubArtifacts(env: Env, params: URLSearchParams) {
+  if (!env.GITHUB_ACTIONS_TOKEN) return queryLocalArtifacts(env, params);
+  const limit = pageLimit(params, 25);
+  const page = decodeGitHubArtifactCursor(params.get("cursor"));
+  const [github, sync] = await Promise.all([
+    githubArtifactPage(env, page, limit),
+    env.DB.prepare("SELECT last_success_at FROM sync_state WHERE key = 'default'").first<Row>(),
+  ]);
+  const ids = github.artifacts.map((artifact) => numberValue(artifact.id)).filter((id) => id > 0);
+  const saved = ids.length
+    ? await env.DB.prepare(`SELECT artifact_id, archive_state, archive_key, content_type, parser_status, source_url FROM artifacts WHERE artifact_id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all<Row>()
+    : { results: [] } as unknown as D1Result<Row>;
+  const persisted = new Map(rows(saved).map((row) => [numberValue(row.artifact_id), row]));
+  const items = github.artifacts.map((payload) => {
+    const artifactId = numberValue(payload.id);
+    const workflowRun = payload.workflow_run && typeof payload.workflow_run === "object" ? payload.workflow_run as Row : {};
+    const runId = numberValue(workflowRun.id || payload.run_id);
+    const stored = persisted.get(artifactId);
+    const expired = Boolean(payload.expired);
+    const publicSource = `https://github.com/${env.REPO_OWNER}/${env.REPO_NAME}/actions/runs/${runId}/artifacts/${artifactId}`;
+    const storedSource = String(stored?.source_url || "");
+    return toArtifact({
+      artifact_id: artifactId,
+      run_id: runId,
+      name: payload.name,
+      size_bytes: payload.size_in_bytes,
+      created_at: payload.created_at,
+      expires_at: payload.expires_at,
+      expired: expired ? 1 : 0,
+      archive_state: stored?.archive_state || (expired ? "expired" : "indexed"),
+      archive_key: stored?.archive_key,
+      content_type: stored?.content_type,
+      parser_status: stored?.parser_status || "unclassified",
+      source_url: storedSource.startsWith("https://github.com/") ? storedSource : publicSource,
+    });
+  });
+  return {
+    schema_version: 1 as const,
+    items,
+    next_cursor: page * limit < github.totalCount ? encodeGitHubArtifactCursor(page + 1) : null,
+    stale: syncIsStale(sync),
+    total_count: github.totalCount,
+    source: "github" as const,
+  };
+}
+
+export async function queryArtifacts(env: Env, params: URLSearchParams) {
+  return params.get("source") === "github" ? queryGitHubArtifacts(env, params) : queryLocalArtifacts(env, params);
 }
 
 export async function queryResults(env: Env, params: URLSearchParams) {

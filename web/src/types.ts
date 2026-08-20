@@ -15,6 +15,7 @@ export interface Page<T> {
   items: T[];
   next_cursor: string | null;
   stale: boolean;
+  total_count?: number;
 }
 
 export interface Workflow {
