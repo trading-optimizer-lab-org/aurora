@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, routeFromHash } from "./App";
 import { demoArtifacts, demoHealth, demoOverview, demoResults, demoRunDetail, demoRuns, demoWorkflows } from "./fixtures";
 import type { DashboardApi } from "./types";
@@ -40,5 +40,21 @@ describe("Aurora dashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Abrir run 32337129192" }));
     expect(await screen.findByRole("heading", { name: "SP500 Atlas Static Run" })).toBeInTheDocument();
     expect(screen.getByText("Solo lectura")).toBeInTheDocument();
+  });
+
+  it("permite cargar la siguiente página del histórico", async () => {
+    const getRuns = vi.fn(async (filters?: Record<string, string | number | null>) => filters?.cursor
+      ? { ...demoRuns, items: [{ ...demoRuns.items[0], run_id: 999999999 }], next_cursor: null }
+      : { ...demoRuns, next_cursor: "cursor-2" });
+    const pagedApi: DashboardApi = { ...demoApi, getRuns };
+    window.location.hash = "#runs";
+
+    render(<App client={pagedApi} />);
+
+    expect(await screen.findByRole("heading", { name: "Todos los runs" })).toBeInTheDocument();
+    getRuns.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /Cargar más ejecuciones/ }));
+    await waitFor(() => expect(getRuns).toHaveBeenCalledTimes(1));
+    expect(getRuns.mock.calls[0][0]).toMatchObject({ cursor: "cursor-2", limit: 50 });
   });
 });

@@ -57,6 +57,9 @@ export function App({ client = dashboardClient }: AppProps) {
   const [runSearch, setRunSearch] = useState("");
   const [runStatus, setRunStatus] = useState("all");
   const [runFilters, setRunFilters] = useState({ q: "", status: "" });
+  const [runsLoadingMore, setRunsLoadingMore] = useState(false);
+  const [resultsLoadingMore, setResultsLoadingMore] = useState(false);
+  const [artifactsLoadingMore, setArtifactsLoadingMore] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const isDemo = import.meta.env.VITE_DEMO_MODE === "true";
 
@@ -149,6 +152,45 @@ export function App({ client = dashboardClient }: AppProps) {
     setRunFilters({ q: runSearch.trim(), status: runStatus === "all" ? "" : runStatus });
   };
 
+  const loadMoreRuns = useCallback(async () => {
+    if (!runsPage?.next_cursor || runsLoadingMore) return;
+    setRunsLoadingMore(true);
+    try {
+      const next = await client.getRuns({ q: runFilters.q, status: runFilters.status, limit: 50, cursor: runsPage.next_cursor });
+      setRunsPage((current) => current ? { ...next, items: [...current.items, ...next.items] } : next);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : "Error desconocido");
+    } finally {
+      setRunsLoadingMore(false);
+    }
+  }, [client, runFilters, runsLoadingMore, runsPage]);
+
+  const loadMoreResults = useCallback(async () => {
+    if (!resultsPage?.next_cursor || resultsLoadingMore) return;
+    setResultsLoadingMore(true);
+    try {
+      const next = await client.getResults({ limit: 100, cursor: resultsPage.next_cursor });
+      setResultsPage((current) => current ? { ...next, items: [...current.items, ...next.items] } : next);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : "Error desconocido");
+    } finally {
+      setResultsLoadingMore(false);
+    }
+  }, [client, resultsLoadingMore, resultsPage]);
+
+  const loadMoreArtifacts = useCallback(async () => {
+    if (!artifactsPage?.next_cursor || artifactsLoadingMore) return;
+    setArtifactsLoadingMore(true);
+    try {
+      const next = await client.getArtifacts({ limit: 100, cursor: artifactsPage.next_cursor });
+      setArtifactsPage((current) => current ? { ...next, items: [...current.items, ...next.items] } : next);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : "Error desconocido");
+    } finally {
+      setArtifactsLoadingMore(false);
+    }
+  }, [artifactsLoadingMore, artifactsPage, client]);
+
   const archivePercent = overview ? Math.min(100, Math.round((overview.archive.used_bytes / Math.max(1, overview.archive.quota_bytes)) * 100)) : 0;
   const archiveDetail = overview ? `${formatBytes(overview.archive.used_bytes)} de ${formatBytes(overview.archive.quota_bytes)} reservados` : "Sin datos de archivo";
 
@@ -170,9 +212,9 @@ export function App({ client = dashboardClient }: AppProps) {
     if (route.view === "overview") return renderOverview();
     if (pageLoading && !runsPage && !resultsPage && !artifactsPage && !workflowsPage && !detail) return <LoadingState />;
     if (pageError) return <ErrorState detail={pageError} onRetry={reload} />;
-    if (route.view === "runs") return <div className="section-page"><div className="section-heading"><div><span className="eyebrow">RUN REGISTRY</span><h1>Todos los runs</h1><p>Histórico completo de ejecuciones, desde CI hasta investigación y validación.</p></div><form className="filter-row" onSubmit={submitRunFilters}><input aria-label="Buscar run" placeholder="Buscar workflow, rama o actor..." value={runSearch} onChange={(event) => setRunSearch(event.target.value)} /><select aria-label="Filtrar estado" value={runStatus} onChange={(event) => setRunStatus(event.target.value)}><option value="all">Todos los estados</option><option value="in_progress">En curso</option><option value="completed">Completados</option><option value="success">Correctos</option><option value="failure">Fallidos</option></select><button className="button button-primary" type="submit">Filtrar</button></form></div><RunTable page={runsPage} onOpen={openRun} /></div>;
-    if (route.view === "results") return <ResultsView page={resultsPage} />;
-    if (route.view === "artifacts") return <ArtifactsView page={artifactsPage} />;
+    if (route.view === "runs") return <div className="section-page"><div className="section-heading"><div><span className="eyebrow">RUN REGISTRY</span><h1>Todos los runs</h1><p>Histórico completo de ejecuciones, desde CI hasta investigación y validación.</p></div><form className="filter-row" onSubmit={submitRunFilters}><input aria-label="Buscar run" placeholder="Buscar workflow, rama o actor..." value={runSearch} onChange={(event) => setRunSearch(event.target.value)} /><select aria-label="Filtrar estado" value={runStatus} onChange={(event) => setRunStatus(event.target.value)}><option value="all">Todos los estados</option><option value="in_progress">En curso</option><option value="completed">Completados</option><option value="success">Correctos</option><option value="failure">Fallidos</option></select><button className="button button-primary" type="submit">Filtrar</button></form></div><RunTable page={runsPage} onOpen={openRun} onLoadMore={loadMoreRuns} loadingMore={runsLoadingMore} /></div>;
+    if (route.view === "results") return <ResultsView page={resultsPage} onLoadMore={loadMoreResults} loadingMore={resultsLoadingMore} />;
+    if (route.view === "artifacts") return <ArtifactsView page={artifactsPage} onLoadMore={loadMoreArtifacts} loadingMore={artifactsLoadingMore} />;
     if (route.view === "workflows") return <WorkflowsView page={workflowsPage} />;
     if (route.view === "detail" && detail) return <RunDetailView detail={detail} onBack={() => navigate("runs")} />;
     return <LoadingState />;
@@ -180,4 +222,3 @@ export function App({ client = dashboardClient }: AppProps) {
 
   return <Layout view={navView} onNavigate={navigate} overview={overview} isDemo={isDemo}>{renderPage()}</Layout>;
 }
-
