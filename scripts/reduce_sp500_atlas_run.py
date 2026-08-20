@@ -108,9 +108,49 @@ def _read_rows_with_arrow_raw_lines(
     if file_digest is not None:
         file_digest.update(raw_bytes)
     raw_lines = [line for line in raw_bytes.splitlines(keepends=True) if line.strip()]
+    recovery_schema = pa.schema(
+        [
+            pa.field("plan_sha256", pa.string()),
+            pa.field("shard_index", pa.int64()),
+            pa.field("validation_opened", pa.bool_()),
+            pa.field("locked_opened", pa.bool_()),
+            pa.field("result_sha256", pa.string()),
+            pa.field("ordinal", pa.int64()),
+            pa.field("positive_weeks", pa.int64()),
+            pa.field("positive_months", pa.int64()),
+            pa.field("joint_positive_above_spy_years", pa.int64()),
+            pa.field("strategy_id", pa.string()),
+            pa.field("scientific_recipe_sha256", pa.string()),
+            pa.field("raw_ordinal", pa.int64()),
+            pa.field("total_weeks", pa.int64()),
+            pa.field("total_months", pa.int64()),
+            pa.field("total_years", pa.int64()),
+            pa.field("positive_week_fraction", pa.float64()),
+            pa.field("positive_month_fraction", pa.float64()),
+            pa.field("joint_positive_above_spy_fraction", pa.float64()),
+            pa.field("annualized_strategy_return", pa.float64()),
+            pa.field("annualized_alpha", pa.float64()),
+            pa.field("weeks_beating_spy", pa.int64()),
+            pa.field("week_count", pa.int64()),
+            pa.field("components", pa.list_(pa.string())),
+            pa.field(
+                "composition",
+                pa.struct(
+                    [
+                        pa.field("direction", pa.int64()),
+                        pa.field("kind", pa.string()),
+                    ]
+                ),
+            ),
+        ]
+    )
     table = pajson.read_json(
         pa.BufferReader(raw_bytes),
         read_options=pajson.ReadOptions(use_threads=True),
+        parse_options=pajson.ParseOptions(
+            explicit_schema=recovery_schema,
+            unexpected_field_behavior="ignore",
+        ),
     )
     rows = table.to_pylist()
     if len(rows) != len(raw_lines):
@@ -182,11 +222,12 @@ def _is_near_frontier(
 
 
 def _compact_row(row: dict[str, object]) -> dict[str, object]:
+    raw_ordinal = row.get("raw_ordinal")
     return {
         "ordinal": int(row["ordinal"]),
         "strategy_id": str(row["strategy_id"]),
         "scientific_recipe_sha256": str(row["scientific_recipe_sha256"]),
-        "raw_ordinal": int(row.get("raw_ordinal", row["ordinal"])),
+        "raw_ordinal": int(row["ordinal"] if raw_ordinal is None else raw_ordinal),
         "positive_weeks": int(row["positive_weeks"]),
         "total_weeks": int(row["total_weeks"]),
         "positive_months": int(row["positive_months"]),
