@@ -309,7 +309,7 @@ def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
     import scripts.reduce_sp500_atlas_run as reducer
 
     original_sha256_file = reducer._sha256_file
-    original_reader = reducer._read_rows_with_arrow_raw_lines
+    original_reader = reducer._read_rows_with_recovery_raw_lines
     reader_paths: list[Path] = []
 
     def track_reader(path: Path, **kwargs: object) -> object:
@@ -322,7 +322,7 @@ def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
         return original_sha256_file(path)
 
     monkeypatch.setattr("scripts.reduce_sp500_atlas_run._sha256_file", fail_if_source_rehashed)
-    monkeypatch.setattr(reducer, "_read_rows_with_arrow_raw_lines", track_reader)
+    monkeypatch.setattr(reducer, "_read_rows_with_recovery_raw_lines", track_reader)
     summary = reduce_atlas_run(
         plan_path=plan_path,
         partitions_root=shards,
@@ -338,6 +338,56 @@ def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
         for index in range(4)
     )
     assert (tmp_path / "out" / "results.jsonl").read_bytes() == expected_results
+
+
+def test_recovery_decoder_skips_large_nested_annual_rows() -> None:
+    import scripts.reduce_sp500_atlas_run as reducer
+
+    row = {
+        "annual_rows": [
+            {
+                "strategy_return": -0.1,
+                "spy_return": 0.2,
+                "year": 2000,
+                "nested": {"text": "escaped \\\"value\\\""},
+            }
+        ],
+        "plan_sha256": "p" * 64,
+        "shard_index": 2,
+        "validation_opened": False,
+        "locked_opened": False,
+        "result_sha256": "r" * 64,
+        "ordinal": 7,
+        "strategy_id": "strategy-7",
+        "scientific_recipe_sha256": "s" * 64,
+        "raw_ordinal": None,
+        "positive_weeks": 10,
+        "positive_months": 8,
+        "joint_positive_above_spy_years": 3,
+        "total_weeks": 12,
+        "total_months": 12,
+        "total_years": 4,
+        "positive_week_fraction": 0.8,
+        "positive_month_fraction": 0.7,
+        "joint_positive_above_spy_fraction": 0.6,
+        "annualized_strategy_return": 0.2,
+        "annualized_alpha": 0.1,
+        "weeks_beating_spy": 9,
+        "week_count": 12,
+        "components": ["signal-a"],
+        "composition": {"direction": 1, "kind": "single"},
+        "evaluation_origin": "physical",
+        "position_sha256": "x" * 64,
+        "strategy_kind": "catalog",
+    }
+    raw_line = json.dumps(row, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+
+    decoded = reducer._decode_recovery_row(raw_line, 1)
+
+    assert decoded == {key: value for key, value in row.items() if key in reducer._RECOVERY_ROW_FIELDS}
+    assert "annual_rows" not in decoded
+    assert decoded["components"] == ["signal-a"]
+    assert decoded["composition"] == {"direction": 1, "kind": "single"}
 
 
 def test_reducer_near_frontier_checks_exact_unit_cube() -> None:

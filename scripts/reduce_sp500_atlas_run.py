@@ -12,8 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import pyarrow as pa
-import pyarrow.json as pajson
 
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.atlas_execution_contract import load_plan
@@ -91,74 +89,159 @@ def _read_rows_with_raw_lines(
             yield row, raw_line
 
 
-def _read_rows_with_arrow_raw_lines(
+_RECOVERY_ROW_FIELDS = frozenset(
+    {
+        "plan_sha256",
+        "shard_index",
+        "validation_opened",
+        "locked_opened",
+        "result_sha256",
+        "ordinal",
+        "positive_weeks",
+        "positive_months",
+        "joint_positive_above_spy_years",
+        "strategy_id",
+        "scientific_recipe_sha256",
+        "raw_ordinal",
+        "total_weeks",
+        "total_months",
+        "total_years",
+        "positive_week_fraction",
+        "positive_month_fraction",
+        "joint_positive_above_spy_fraction",
+        "annualized_strategy_return",
+        "annualized_alpha",
+        "weeks_beating_spy",
+        "week_count",
+        "components",
+        "composition",
+    }
+)
+
+
+def _skip_json_string(data: bytes, position: int) -> int:
+    if position >= len(data) or data[position] != ord('"'):
+        raise ValueError("ATLAS_REDUCER_JSON_STRING_REQUIRED")
+    position += 1
+    while position < len(data):
+        value = data[position]
+        if value == ord("\\"):
+            position += 2
+            continue
+        if value == ord('"'):
+            return position + 1
+        position += 1
+    raise ValueError("ATLAS_REDUCER_JSON_STRING_UNTERMINATED")
+
+
+def _skip_json_value(data: bytes, position: int) -> int:
+    while position < len(data) and data[position] in b" \t\r\n":
+        position += 1
+    if position >= len(data):
+        raise ValueError("ATLAS_REDUCER_JSON_VALUE_MISSING")
+    value = data[position]
+    if value == ord('"'):
+        return _skip_json_string(data, position)
+    if value in (ord("{"), ord("[")):
+        closing = ord("}") if value == ord("{") else ord("]")
+        position += 1
+        while True:
+            while position < len(data) and data[position] in b" \t\r\n":
+                position += 1
+            if position >= len(data):
+                raise ValueError("ATLAS_REDUCER_JSON_CONTAINER_UNTERMINATED")
+            if data[position] == closing:
+                return position + 1
+            if value == ord("{"):
+                position = _skip_json_string(data, position)
+                while position < len(data) and data[position] in b" \t\r\n":
+                    position += 1
+                if position >= len(data) or data[position] != ord(":"):
+                    raise ValueError("ATLAS_REDUCER_JSON_OBJECT_COLON_REQUIRED")
+                position += 1
+            position = _skip_json_value(data, position)
+            while position < len(data) and data[position] in b" \t\r\n":
+                position += 1
+            if position >= len(data):
+                raise ValueError("ATLAS_REDUCER_JSON_CONTAINER_UNTERMINATED")
+            if data[position] == ord(","):
+                position += 1
+                continue
+            if data[position] == closing:
+                return position + 1
+            raise ValueError("ATLAS_REDUCER_JSON_SEPARATOR_INVALID")
+    start = position
+    while position < len(data) and data[position] not in b",]} \t\r\n":
+        position += 1
+    if position == start:
+        raise ValueError("ATLAS_REDUCER_JSON_SCALAR_MISSING")
+    return position
+
+
+def _decode_recovery_row(raw_line: bytes, line_number: int) -> dict[str, object]:
+    """Decode only the fields needed by recovery, skipping annual_rows bytes.
+
+    Recovery is already bound to each worker file hash.  Parsing the large
+    ``annual_rows`` value with a general JSON decoder was the dominant cost on
+    the GitHub runner, so this scanner validates the top-level JSON structure
+    and decodes only the small scalar/compact fields used by the reducer.
+    """
+
+    data = raw_line.strip()
+    if not data or data[0] != ord("{"):
+        raise ValueError(f"ATLAS_REDUCER_ROW_OBJECT_REQUIRED:{line_number}")
+    position = 1
+    row: dict[str, object] = {}
+    keys: set[str] = set()
+    while True:
+        while position < len(data) and data[position] in b" \t\r\n":
+            position += 1
+        if position >= len(data):
+            raise ValueError(f"ATLAS_REDUCER_JSON_OBJECT_UNTERMINATED:{line_number}")
+        if data[position] == ord("}"):
+            if position + 1 != len(data):
+                raise ValueError(f"ATLAS_REDUCER_JSON_TRAILING_DATA:{line_number}")
+            return row
+        key_start = position
+        position = _skip_json_string(data, position)
+        key = json.loads(data[key_start:position])
+        if not isinstance(key, str):
+            raise ValueError(f"ATLAS_REDUCER_JSON_KEY_INVALID:{line_number}")
+        if key in keys:
+            raise ValueError(f"ATLAS_REDUCER_JSON_DUPLICATE_KEY:{line_number}:{key}")
+        keys.add(key)
+        while position < len(data) and data[position] in b" \t\r\n":
+            position += 1
+        if position >= len(data) or data[position] != ord(":"):
+            raise ValueError(f"ATLAS_REDUCER_JSON_OBJECT_COLON_REQUIRED:{line_number}")
+        position += 1
+        value_start = position
+        position = _skip_json_value(data, position)
+        if key in _RECOVERY_ROW_FIELDS:
+            row[key] = json.loads(data[value_start:position])
+        while position < len(data) and data[position] in b" \t\r\n":
+            position += 1
+        if position >= len(data) or data[position] == ord("}"):
+            if position >= len(data) or position + 1 != len(data):
+                raise ValueError(f"ATLAS_REDUCER_JSON_TRAILING_DATA:{line_number}")
+            return row
+        if data[position] != ord(","):
+            raise ValueError(f"ATLAS_REDUCER_JSON_SEPARATOR_INVALID:{line_number}")
+        position += 1
+
+
+def _read_rows_with_recovery_raw_lines(
     path: Path,
     *,
     file_digest: Any | None = None,
 ) -> Iterable[tuple[dict[str, object], bytes]]:
-    """Decode a recovery shard with Arrow while preserving its raw lines.
-
-    Worker result files are already bound to an immutable artifact hash.  The
-    recovery path therefore needs the raw bytes for exact preservation and a
-    structural decode for coverage/metric checks, but it does not need Python's
-    per-line JSON decoder.  Arrow performs that decode in native code.
-    """
-
-    raw_bytes = Path(path).read_bytes()
-    if file_digest is not None:
-        file_digest.update(raw_bytes)
-    raw_lines = [line for line in raw_bytes.splitlines(keepends=True) if line.strip()]
-    recovery_schema = pa.schema(
-        [
-            pa.field("plan_sha256", pa.string()),
-            pa.field("shard_index", pa.int64()),
-            pa.field("validation_opened", pa.bool_()),
-            pa.field("locked_opened", pa.bool_()),
-            pa.field("result_sha256", pa.string()),
-            pa.field("ordinal", pa.int64()),
-            pa.field("positive_weeks", pa.int64()),
-            pa.field("positive_months", pa.int64()),
-            pa.field("joint_positive_above_spy_years", pa.int64()),
-            pa.field("strategy_id", pa.string()),
-            pa.field("scientific_recipe_sha256", pa.string()),
-            pa.field("raw_ordinal", pa.int64()),
-            pa.field("total_weeks", pa.int64()),
-            pa.field("total_months", pa.int64()),
-            pa.field("total_years", pa.int64()),
-            pa.field("positive_week_fraction", pa.float64()),
-            pa.field("positive_month_fraction", pa.float64()),
-            pa.field("joint_positive_above_spy_fraction", pa.float64()),
-            pa.field("annualized_strategy_return", pa.float64()),
-            pa.field("annualized_alpha", pa.float64()),
-            pa.field("weeks_beating_spy", pa.int64()),
-            pa.field("week_count", pa.int64()),
-            pa.field("components", pa.list_(pa.string())),
-            pa.field(
-                "composition",
-                pa.struct(
-                    [
-                        pa.field("direction", pa.int64()),
-                        pa.field("kind", pa.string()),
-                    ]
-                ),
-            ),
-        ]
-    )
-    table = pajson.read_json(
-        pa.BufferReader(raw_bytes),
-        read_options=pajson.ReadOptions(use_threads=True),
-        parse_options=pajson.ParseOptions(
-            explicit_schema=recovery_schema,
-            unexpected_field_behavior="ignore",
-        ),
-    )
-    rows = table.to_pylist()
-    if len(rows) != len(raw_lines):
-        raise ValueError("ATLAS_REDUCER_ARROW_ROW_COUNT_INVALID")
-    for line_number, (row, raw_line) in enumerate(zip(rows, raw_lines), start=1):
-        if not isinstance(row, dict):
-            raise ValueError(f"ATLAS_REDUCER_ROW_OBJECT_REQUIRED:{line_number}")
-        yield row, raw_line
+    with Path(path).open("rb") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            if file_digest is not None:
+                file_digest.update(raw_line)
+            if not raw_line.strip():
+                continue
+            yield _decode_recovery_row(raw_line, line_number), raw_line
 
 
 def _cell(row: dict[str, object]) -> tuple[int, int, int]:
@@ -338,7 +421,7 @@ def reduce_atlas_run(
             raw_rows = (
                 _read_rows(result_path)
                 if verify_row_hashes
-                else _read_rows_with_arrow_raw_lines(result_path, file_digest=file_digest)
+                else _read_rows_with_recovery_raw_lines(result_path, file_digest=file_digest)
             )
             for item in raw_rows:
                 if verify_row_hashes:
