@@ -1,0 +1,5 @@
+# Copy to cloudflare/.dev.vars for local Wrangler development.
+# Never commit the real file.
+DASHBOARD_LINK_SECRET=replace-with-a-long-random-secret
+DASHBOARD_SYNC_TOKEN=replace-with-a-separate-long-random-token
+

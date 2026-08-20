@@ -1,0 +1,57 @@
+name: Aurora dashboard sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      page:
+        description: "Página de runs de GitHub que se va a indexar"
+        required: false
+        default: "1"
+        type: string
+      archive:
+        description: "Archivar informes legibles dentro de la cuota R2"
+        required: false
+        default: true
+        type: boolean
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Index GitHub Actions runs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AURORA_DASHBOARD_URL: ${{ secrets.AURORA_DASHBOARD_URL }}
+          AURORA_DASHBOARD_SYNC_TOKEN: ${{ secrets.AURORA_DASHBOARD_SYNC_TOKEN }}
+          DASHBOARD_PAGE: ${{ inputs.page || '1' }}
+          DASHBOARD_ARCHIVE: ${{ inputs.archive || 'true' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AURORA_DASHBOARD_URL}" ] || [ -z "${AURORA_DASHBOARD_SYNC_TOKEN}" ]; then
+            echo "Faltan AURORA_DASHBOARD_URL o AURORA_DASHBOARD_SYNC_TOKEN" >&2
+            exit 1
+          fi
+          args=(--page "${DASHBOARD_PAGE}" --per-page 100)
+          if [ "${DASHBOARD_ARCHIVE}" = "true" ]; then
+            args+=(--archive)
+          fi
+          python scripts/aurora_dashboard_sync.py "${args[@]}"
+
