@@ -460,13 +460,16 @@ jobs:
           }, sort_keys=True))
           PY
       - name: Reduce existing shard artifacts without re-evaluation
+        env:
+          ATLAS_RECOVERY_FAST_PATH: "1"
         shell: bash
         run: |
           set -euo pipefail
           python scripts/reduce_sp500_atlas_run.py \
             --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
             --partitions-root "$RUNNER_TEMP/shards" \
-            --output-dir outputs/final
+            --output-dir outputs/final \
+            --artifact-file-hash-only
       - name: Verify recovered reduction receipt
         shell: bash
         run: |
@@ -489,6 +492,9 @@ jobs:
           assert receipt["plan_sha256"] == plan.plan_sha256
           assert receipt["verified_recipe_count"] == plan.requested_recipe_count
           assert receipt["verified_shard_count"] == plan.total_shards
+          assert receipt["row_hash_verification_mode"] == "artifact_file_hash_bound"
+          assert receipt["row_hashes_recomputed"] is False
+          assert receipt["result_file_hashes_verified"] is True
           assert receipt["validation_opened"] is False
           assert receipt["locked_opened"] is False
           print(json.dumps(receipt, sort_keys=True))

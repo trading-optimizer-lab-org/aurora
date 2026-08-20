@@ -283,6 +283,40 @@ def test_reducer_requires_every_shard_and_preserves_all_rows(tmp_path: Path) -> 
     assert output.joinpath("pareto_strategies.parquet").is_file()
 
 
+def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog, receipt = _evidence()
+    plan = build_run_plan(
+        catalog_manifest=catalog,
+        calibration_receipt=receipt,
+        target_end_iso="2026-08-20T07:31:00+02:00",
+        implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+        total_shards=4,
+        selection=_selection(),
+    )
+    plan_path = tmp_path / "plan.json"
+    write_plan(plan_path, plan)
+    shards = tmp_path / "shards"
+    shards.mkdir()
+    for index in range(4):
+        _write_shard(shards, plan, index)
+
+    def fail_if_rehashed(*args: object, **kwargs: object) -> str:
+        raise AssertionError("artifact recovery must not rehash every row")
+
+    monkeypatch.setattr("scripts.reduce_sp500_atlas_run.canonical_sha256", fail_if_rehashed)
+    summary = reduce_atlas_run(
+        plan_path=plan_path,
+        partitions_root=shards,
+        output_dir=tmp_path / "out",
+        verify_row_hashes=False,
+    )
+
+    assert summary["verified_recipe_count"] == 8
+    assert summary["row_hash_verification_mode"] == "artifact_file_hash_bound"
+
+
 def test_reducer_near_frontier_checks_exact_unit_cube() -> None:
     import scripts.reduce_sp500_atlas_run as reducer
 

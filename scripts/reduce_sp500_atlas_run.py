@@ -7,6 +7,7 @@ from collections.abc import Iterable
 import hashlib
 from itertools import product
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -34,7 +35,13 @@ def _find_result_path(receipt_path: Path) -> Path:
     return path
 
 
-def _verify_row(row: dict[str, object], *, plan_sha256: str, shard_index: int) -> int:
+def _verify_row(
+    row: dict[str, object],
+    *,
+    plan_sha256: str,
+    shard_index: int,
+    verify_result_hash: bool = True,
+) -> int:
     if row.get("plan_sha256") != plan_sha256:
         raise ValueError("ATLAS_REDUCER_ROW_PLAN_MISMATCH")
     if int(row.get("shard_index", -1)) != shard_index:
@@ -42,9 +49,14 @@ def _verify_row(row: dict[str, object], *, plan_sha256: str, shard_index: int) -
     if row.get("validation_opened") is not False or row.get("locked_opened") is not False:
         raise ValueError("ATLAS_REDUCER_ROW_BOUNDARY_OPEN")
     supplied = row.get("result_sha256")
-    identity = {key: value for key, value in row.items() if key != "result_sha256"}
-    if supplied != canonical_sha256(identity):
+    if not isinstance(supplied, str) or len(supplied) != 64 or any(
+        character not in "0123456789abcdef" for character in supplied
+    ):
         raise ValueError("ATLAS_REDUCER_ROW_HASH_INVALID")
+    if verify_result_hash:
+        identity = {key: value for key, value in row.items() if key != "result_sha256"}
+        if supplied != canonical_sha256(identity):
+            raise ValueError("ATLAS_REDUCER_ROW_HASH_INVALID")
     return int(row["ordinal"])
 
 
@@ -152,6 +164,7 @@ def reduce_atlas_run(
     plan_path: Path,
     partitions_root: Path,
     output_dir: Path,
+    verify_row_hashes: bool = True,
 ) -> dict[str, object]:
     plan = load_plan(Path(plan_path))
     print(
@@ -220,7 +233,12 @@ def reduce_atlas_run(
                 raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard.shard_index}")
             shard_count = 0
             for row in _read_rows(result_path):
-                ordinal = _verify_row(row, plan_sha256=plan.plan_sha256, shard_index=shard.shard_index)
+                ordinal = _verify_row(
+                    row,
+                    plan_sha256=plan.plan_sha256,
+                    shard_index=shard.shard_index,
+                    verify_result_hash=verify_row_hashes,
+                )
                 if ordinal < shard.start_ordinal or ordinal >= shard.stop_ordinal:
                     raise ValueError(f"ATLAS_REDUCER_ORDINAL_OUT_OF_SHARD:{ordinal}")
                 if ordinal in seen:
@@ -325,6 +343,11 @@ def reduce_atlas_run(
         "results_sha256": _sha256_file(results_path),
         "row_count": row_count,
         "streaming": True,
+        "row_hash_verification_mode": (
+            "canonical_row_hash" if verify_row_hashes else "artifact_file_hash_bound"
+        ),
+        "row_hashes_recomputed": verify_row_hashes,
+        "result_file_hashes_verified": True,
         "validation_opened": False,
         "locked_opened": False,
     }
@@ -356,6 +379,11 @@ def reduce_atlas_run(
         "redundant_shard_receipt_count": redundant_shard_receipt_count,
         "results_sha256": _sha256_file(results_path),
         "frontier_sha256": _sha256_file(frontier_path),
+        "row_hash_verification_mode": (
+            "canonical_row_hash" if verify_row_hashes else "artifact_file_hash_bound"
+        ),
+        "row_hashes_recomputed": verify_row_hashes,
+        "result_file_hashes_verified": True,
         "validation_opened": False,
         "locked_opened": False,
     }
@@ -368,8 +396,22 @@ def main() -> int:
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--partitions-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--artifact-file-hash-only",
+        action="store_true",
+        help="Recovery-only mode: bind rows to verified result-file hashes.",
+    )
     args = parser.parse_args()
-    print(json.dumps(reduce_atlas_run(plan_path=args.plan, partitions_root=args.partitions_root, output_dir=args.output_dir), indent=2, sort_keys=True))
+    if args.artifact_file_hash_only and os.environ.get("ATLAS_RECOVERY_FAST_PATH") != "1":
+        parser.error("--artifact-file-hash-only requires ATLAS_RECOVERY_FAST_PATH=1")
+    reducer_kwargs: dict[str, object] = {
+        "plan_path": args.plan,
+        "partitions_root": args.partitions_root,
+        "output_dir": args.output_dir,
+    }
+    if args.artifact_file_hash_only:
+        reducer_kwargs["verify_row_hashes"] = False
+    print(json.dumps(reduce_atlas_run(**reducer_kwargs), indent=2, sort_keys=True))
     return 0
 
 

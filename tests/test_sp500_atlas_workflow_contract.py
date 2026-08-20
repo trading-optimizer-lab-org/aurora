@@ -151,6 +151,9 @@ def test_existing_run_recovery_reuses_artifacts_without_evaluating_again() -> No
     assert "sp500-atlas-preflight" in text
     assert "reduce_sp500_atlas_run.py" in text
     assert "RECOVER_EXISTING_ATLAS_ARTIFACTS" in text
+    assert "ATLAS_RECOVERY_FAST_PATH" in text
+    assert "--artifact-file-hash-only" in text
+    assert 'row_hash_verification_mode"] == "artifact_file_hash_bound"' in text
     assert 'plan.train_end == "2010-12-31"' in text
     assert "validation_opened" in text
     assert "locked_opened" in text
