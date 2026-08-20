@@ -19,6 +19,12 @@ backtests.
   demanda y cruza los registros persistidos con el archivo local.
 - El detalle de cada run muestra jobs, pasos, logs bajo demanda, artefactos,
   resultados reconocidos y enlaces de procedencia.
+- La portada está pensada para lectura rápida: muestra qué está en marcha,
+  el historial y los resultados sin exigir conocer GitHub Actions.
+- Cada run expone `completion_at`: hora real para ejecuciones terminadas y
+  hora estimada para ejecuciones activas. La estimación usa la duración media
+  de al menos tres ejecuciones terminadas del mismo workflow; si no existe,
+  usa la media histórica general y lo indica en pantalla.
 
 La ausencia de login no convierte el enlace en público: cualquiera que lo
 obtenga podrá leer el panel. Si se comparte, hay que rotarlo cambiando

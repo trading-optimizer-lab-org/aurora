@@ -33,11 +33,11 @@ describe("Aurora dashboard", () => {
   it("muestra el resumen y permite abrir el histórico y el detalle de un run", async () => {
     render(<App client={demoApi} />);
 
-    expect(await screen.findByRole("heading", { name: "Aurora research control" })).toBeInTheDocument();
-    expect(screen.getAllByText("Runs activos").length).toBeGreaterThanOrEqual(1);
+    expect(await screen.findByRole("heading", { name: "Estado de Aurora" })).toBeInTheDocument();
+    expect(screen.getAllByText("Ejecuciones en marcha").length).toBeGreaterThanOrEqual(1);
 
-    fireEvent.click(screen.getByRole("button", { name: /Todos los runs/ }));
-    expect(await screen.findByRole("heading", { name: "Todos los runs" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Ver historial/ }));
+    expect(await screen.findByRole("heading", { name: "Historial de ejecuciones" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Abrir run 32337129192" }));
     expect(await screen.findByRole("heading", { name: "SP500 Atlas Static Run" })).toBeInTheDocument();
     expect(screen.getByText("Solo lectura")).toBeInTheDocument();
@@ -52,7 +52,7 @@ describe("Aurora dashboard", () => {
 
     render(<App client={pagedApi} />);
 
-    expect(await screen.findByRole("heading", { name: "Todos los runs" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Historial de ejecuciones" })).toBeInTheDocument();
     getRuns.mockClear();
     fireEvent.click(screen.getByRole("button", { name: /Cargar más ejecuciones/ }));
     await waitFor(() => expect(getRuns).toHaveBeenCalledTimes(1));
@@ -72,7 +72,7 @@ describe("Aurora dashboard", () => {
     render(<App client={logsApi} />);
 
     expect(await screen.findByRole("heading", { name: "SP500 Atlas Static Run" })).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "Ver logs" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Ver registro" })[0]);
     expect(await screen.findByText("linea de log del job")).toBeInTheDocument();
     expect(getJobLogs).toHaveBeenCalledWith(901);
   });

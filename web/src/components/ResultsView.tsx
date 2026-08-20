@@ -13,7 +13,7 @@ export function ResultsView({ page, onLoadMore, loadingMore = false }: { page: P
 
   return <div className="section-page">
     <div className="section-heading">
-      <div><span className="eyebrow">RESULTS REGISTRY</span><h1>Backtests y resultados</h1><p>Métricas normalizadas con fase, unidad, periodo, baseline, coste, candidato y procedencia visible. No se comparan métricas con contratos incompatibles.</p></div>
+      <div><span className="eyebrow">BACKTESTS</span><h1>Resultados de los backtests</h1><p>Aquí aparecen las métricas que Aurora ha podido interpretar. Cada resultado conserva su periodo, unidad, coste y archivo de origen.</p></div>
       <div className="filter-row"><select aria-label="Filtrar por fase" value={phase} onChange={(event) => setPhase(event.target.value)}>{phases.map((item) => <option key={item} value={item}>{item === "all" ? "Todas las fases" : item}</option>)}</select><select aria-label="Filtrar por métrica" value={metric} onChange={(event) => setMetric(event.target.value)}>{metrics.map((item) => <option key={item} value={item}>{item === "all" ? "Todas las métricas" : item}</option>)}</select></div>
     </div>
     {filtered.length ? <div className="results-grid">{filtered.map((item) => <ResultCard key={item.result_id} item={item} />)}</div> : <EmptyState title="No hay resultados" detail="No hay métricas que coincidan con los filtros actuales." />}

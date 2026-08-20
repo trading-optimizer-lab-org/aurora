@@ -9,10 +9,8 @@ import { ResultsView } from "./components/ResultsView";
 import { ArtifactsView } from "./components/ArtifactsView";
 import { WorkflowsView } from "./components/WorkflowsView";
 import { RunDetailView } from "./components/RunDetail";
-import { ConclusionBars, RunSparkline } from "./components/Charts";
-import { EmptyState } from "./components/EmptyState";
 import { ErrorState } from "./components/ErrorState";
-import { formatBytes, formatCompact, formatDate, relativeTime } from "./format";
+import { formatCompact, formatDate, relativeTime } from "./format";
 
 export interface AppProps {
   client?: DashboardApi;
@@ -191,20 +189,19 @@ export function App({ client = dashboardClient }: AppProps) {
     }
   }, [artifactsLoadingMore, artifactsPage, client]);
 
-  const archivePercent = overview ? Math.min(100, Math.round((overview.archive.used_bytes / Math.max(1, overview.archive.quota_bytes)) * 100)) : 0;
-  const archiveDetail = overview ? `${formatBytes(overview.archive.used_bytes)} de ${formatBytes(overview.archive.quota_bytes)} reservados` : "Sin datos de archivo";
-
   const renderOverview = () => {
     if (!overview) {
       if (overviewError) return <ErrorState detail={overviewError} onRetry={reload} />;
       return <LoadingState label="Conectando con Aurora" />;
     }
     return <div className="dashboard-page">
-      <div className="hero-heading"><div><span className="eyebrow">OPERATIONS OVERVIEW</span><h1>Aurora research control</h1><p>Runs, backtests y artefactos de GitHub Actions en una vista única, con su estado y procedencia.</p></div><div className="hero-meta"><span className="hero-meta-label">ÚLTIMA SINCRONIZACIÓN</span><strong>{overview.sync.last_success_at ? relativeTime(overview.sync.last_success_at) : "sin sincronizar"}</strong><span>{overview.generated_at ? formatDate(overview.generated_at) : "—"}</span></div></div>
+      <div className="hero-heading"><div><span className="eyebrow">RESUMEN</span><h1>Estado de Aurora</h1><p>Aquí puedes ver qué ejecuciones están en marcha, cuándo terminarán y qué resultados han dejado.</p></div><div className="hero-meta"><span className="hero-meta-label">DATOS ACTUALIZADOS</span><strong>{overview.sync.last_success_at ? relativeTime(overview.sync.last_success_at) : "sin sincronizar"}</strong><span>{overview.generated_at ? formatDate(overview.generated_at) : "—"}</span></div></div>
       {(overview.stale || overview.sync.last_error) && <div className="notice notice-warning"><span className="notice-mark">!</span><div><strong>Datos potencialmente desactualizados</strong><span>{overview.sync.last_error || "La última sincronización no ha terminado correctamente."}</span></div></div>}
-      <div className="metric-grid"><MetricCard label="Runs activos" value={formatCompact(overview.totals.active_runs)} detail="actualizados automáticamente" tone="cyan" icon="↗" /><MetricCard label="Runs indexados" value={formatCompact(overview.totals.runs)} detail={`${formatCompact(overview.totals.workflows)} workflows`} tone="violet" icon="◈" /><MetricCard label="Artefactos" value={formatCompact(overview.totals.artifacts)} detail="inventario GitHub" tone="violet" icon="□" /><MetricCard label="Resultados" value={formatCompact(overview.totals.parsed_results)} detail="métricas interpretadas" tone="green" icon="∿" /><MetricCard label="Archivo" value={`${archivePercent}%`} detail={archiveDetail} tone="orange" icon="▣" /></div>
-      <div className="dashboard-grid dashboard-grid-top"><section className="panel active-panel"><div className="panel-heading"><div><span className="eyebrow">LIVE QUEUE</span><h2>Runs activos</h2></div><button className="text-button" onClick={() => navigate("runs")}>Ver todos →</button></div><RunTable page={activePage} onOpen={openRun} compact /></section><section className="panel chart-panel"><div className="panel-heading"><div><span className="eyebrow">OUTCOME MIX</span><h2>Conclusiones</h2></div><span className="panel-note">histórico indexado</span></div>{overview.conclusions.length ? <ConclusionBars values={overview.conclusions} /> : <EmptyState title="Sin conclusiones" detail="Aún no hay resultados históricos para representar." />}</section></div>
-      <div className="dashboard-grid dashboard-grid-bottom"><section className="panel recent-panel"><div className="panel-heading"><div><span className="eyebrow">RECENT ACTIVITY</span><h2>Actividad reciente</h2></div><button className="text-button" onClick={() => navigate("runs")}>Abrir histórico →</button></div><RunTable page={recentPage} onOpen={openRun} /></section><section className="panel latency-panel"><div className="panel-heading"><div><span className="eyebrow">RUNTIME SIGNAL</span><h2>Duración de runs</h2></div><span className="panel-note">últimos {overview.recent_runs.length}</span></div><RunSparkline runs={overview.recent_runs} /><div className="chart-foot"><span>Más rápido</span><span>Más lento</span></div></section></div>
+      <div className="simple-guide"><strong>Cómo usarlo</strong><span>1. Mira las ejecuciones en marcha.</span><span>2. Abre una para ver sus pasos.</span><span>3. En “Backtests” encontrarás sus métricas.</span></div>
+      <div className="metric-grid metric-grid-simple"><MetricCard label="En marcha" value={formatCompact(overview.totals.active_runs)} detail="se actualizan automáticamente" tone="cyan" icon="↗" /><MetricCard label="Ejecuciones" value={formatCompact(overview.totals.runs)} detail={`${formatCompact(overview.totals.workflows)} procesos de GitHub`} tone="violet" icon="◈" /><MetricCard label="Resultados" value={formatCompact(overview.totals.parsed_results)} detail="métricas de backtests" tone="green" icon="∿" /></div>
+      <div className="dashboard-stack"><section className="panel active-panel"><div className="panel-heading"><div><span className="eyebrow">AHORA</span><h2>Ejecuciones en marcha</h2><p className="panel-description">La fecha de finalización es una estimación basada en ejecuciones anteriores del mismo proceso.</p></div><button className="text-button" onClick={() => navigate("runs")}>Ver historial →</button></div><RunTable page={activePage} onOpen={openRun} compact /></section>
+      <section className="panel recent-panel"><div className="panel-heading"><div><span className="eyebrow">ÚLTIMAS</span><h2>Últimas ejecuciones</h2></div><button className="text-button" onClick={() => navigate("runs")}>Ver todas →</button></div><RunTable page={recentPage} onOpen={openRun} compact /></section></div>
+      <p className="dashboard-footnote">También puedes consultar el inventario completo de artefactos ({formatCompact(overview.totals.artifacts)}) y los procesos de GitHub desde el menú.</p>
     </div>;
   };
 
@@ -212,7 +209,7 @@ export function App({ client = dashboardClient }: AppProps) {
     if (route.view === "overview") return renderOverview();
     if (pageLoading && !runsPage && !resultsPage && !artifactsPage && !workflowsPage && !detail) return <LoadingState />;
     if (pageError) return <ErrorState detail={pageError} onRetry={reload} />;
-    if (route.view === "runs") return <div className="section-page"><div className="section-heading"><div><span className="eyebrow">RUN REGISTRY</span><h1>Todos los runs</h1><p>Histórico completo de ejecuciones, desde CI hasta investigación y validación.</p></div><form className="filter-row" onSubmit={submitRunFilters}><input aria-label="Buscar run" placeholder="Buscar workflow, rama o actor..." value={runSearch} onChange={(event) => setRunSearch(event.target.value)} /><select aria-label="Filtrar estado" value={runStatus} onChange={(event) => setRunStatus(event.target.value)}><option value="all">Todos los estados</option><option value="in_progress">En curso</option><option value="completed">Completados</option><option value="success">Correctos</option><option value="failure">Fallidos</option></select><button className="button button-primary" type="submit">Filtrar</button></form></div><RunTable page={runsPage} onOpen={openRun} onLoadMore={loadMoreRuns} loadingMore={runsLoadingMore} /></div>;
+    if (route.view === "runs") return <div className="section-page"><div className="section-heading"><div><span className="eyebrow">EJECUCIONES</span><h1>Historial de ejecuciones</h1><p>Una fila es una ejecución de GitHub. “Finalización” muestra la hora real o la hora estimada si todavía está en marcha.</p></div><form className="filter-row" onSubmit={submitRunFilters}><input aria-label="Buscar ejecución" placeholder="Buscar por nombre, rama o persona..." value={runSearch} onChange={(event) => setRunSearch(event.target.value)} /><select aria-label="Filtrar estado" value={runStatus} onChange={(event) => setRunStatus(event.target.value)}><option value="all">Todos los estados</option><option value="in_progress">En curso</option><option value="completed">Completados</option><option value="success">Correctos</option><option value="failure">Fallidos</option></select><button className="button button-primary" type="submit">Buscar</button></form></div><RunTable page={runsPage} onOpen={openRun} onLoadMore={loadMoreRuns} loadingMore={runsLoadingMore} /></div>;
     if (route.view === "results") return <ResultsView page={resultsPage} onLoadMore={loadMoreResults} loadingMore={resultsLoadingMore} />;
     if (route.view === "artifacts") return <ArtifactsView page={artifactsPage} onLoadMore={loadMoreArtifacts} loadingMore={artifactsLoadingMore} />;
     if (route.view === "workflows") return <WorkflowsView page={workflowsPage} />;

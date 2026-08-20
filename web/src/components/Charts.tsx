@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Job, JobLogs, Run } from "../types";
-import { formatDuration, statusTone } from "../format";
+import { formatDuration, statusLabel, statusTone } from "../format";
 
 export function ConclusionBars({ values }: { values: { label: string; count: number }[] }) {
   const max = Math.max(...values.map((value) => value.count), 1);
@@ -64,9 +64,9 @@ function JobLogViewer({ jobId, onLoadLogs }: { jobId: number; onLoadLogs: (jobId
     }
   };
 
-  return <div className="job-log-viewer"><button className="text-button job-log-toggle" type="button" onClick={() => void toggle()} aria-expanded={open}>{open ? "Ocultar logs" : "Ver logs"}</button>{open ? <div className="job-log-body">{loading ? <span className="muted">Cargando logs…</span> : error ? <span className="log-error">{error}</span> : <pre className="job-log-content">{content}</pre>}</div> : null}</div>;
+  return <div className="job-log-viewer"><button className="text-button job-log-toggle" type="button" onClick={() => void toggle()} aria-expanded={open}>{open ? "Ocultar registro" : "Ver registro"}</button>{open ? <div className="job-log-body">{loading ? <span className="muted">Cargando registro…</span> : error ? <span className="log-error">{error}</span> : <pre className="job-log-content">{content}</pre>}</div> : null}</div>;
 }
 
 function StatusLabel({ status }: { status: string | null }) {
-  return <span className={"timeline-status status-text-" + statusTone(status)}>{status || "—"}</span>;
+  return <span className={"timeline-status status-text-" + statusTone(status)}>{statusLabel(status)}</span>;
 }

@@ -9,6 +9,8 @@ export type ArchiveState =
   | "error";
 
 export type ParserStatus = "specialized" | "generic" | "unclassified" | "error";
+export type CompletionType = "actual" | "estimated" | "unknown";
+export type CompletionBasis = "workflow" | "global" | "actual" | "none";
 
 export interface Page<T> {
   schema_version: 1;
@@ -51,6 +53,9 @@ export interface Run {
   started_at: string | null;
   completed_at: string | null;
   duration_seconds: number | null;
+  completion_at: string | null;
+  completion_type: CompletionType;
+  completion_basis: CompletionBasis;
   html_url: string;
   parser_status: ParserStatus;
   artifact_count: number;

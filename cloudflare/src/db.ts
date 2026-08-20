@@ -159,7 +159,58 @@ export function encodeCursor(updatedAt: string, runId: number): string {
     .replace(/=+$/g, "");
 }
 
-function toRun(row: Row): Run {
+interface DurationEstimate {
+  seconds: number;
+  samples: number;
+}
+
+interface DurationEstimates {
+  byWorkflow: Map<number, DurationEstimate>;
+  global: DurationEstimate | null;
+}
+
+async function getDurationEstimates(env: Env): Promise<DurationEstimates> {
+  const [workflowRows, globalRow] = await Promise.all([
+    env.DB.prepare("SELECT workflow_id, AVG(duration_seconds) AS average_seconds, COUNT(*) AS sample_count FROM runs WHERE status = 'completed' AND duration_seconds > 0 GROUP BY workflow_id").all<Row>(),
+    env.DB.prepare("SELECT AVG(duration_seconds) AS average_seconds, COUNT(*) AS sample_count FROM runs WHERE status = 'completed' AND duration_seconds > 0").first<Row>(),
+  ]);
+  const toEstimate = (row: Row): DurationEstimate | null => {
+    const seconds = Math.round(numberValue(row.average_seconds));
+    const samples = numberValue(row.sample_count);
+    return seconds > 0 && samples > 0 ? { seconds: Math.max(60, seconds), samples } : null;
+  };
+  const byWorkflow = new Map<number, DurationEstimate>();
+  for (const row of rows(workflowRows)) {
+    const estimate = toEstimate(row);
+    if (estimate) byWorkflow.set(numberValue(row.workflow_id), estimate);
+  }
+  return { byWorkflow, global: toEstimate(globalRow || {}) };
+}
+
+function completionFor(row: Row, estimates: DurationEstimates, now = Date.now()): Pick<Run, "completion_at" | "completion_type" | "completion_basis"> {
+  const completedAt = nullableString(row.completed_at);
+  if (completedAt) return { completion_at: completedAt, completion_type: "actual", completion_basis: "actual" };
+
+  const workflowEstimate = estimates.byWorkflow.get(numberValue(row.workflow_id));
+  const selected = workflowEstimate && workflowEstimate.samples >= 3
+    ? { estimate: workflowEstimate, basis: "workflow" as const }
+    : estimates.global
+      ? { estimate: estimates.global, basis: "global" as const }
+      : null;
+  if (!selected) return { completion_at: null, completion_type: "unknown", completion_basis: "none" };
+
+  const status = String(row.status || "");
+  const startedAt = nullableString(row.started_at);
+  const baseTimestamp = status === "in_progress" && startedAt ? Date.parse(startedAt) : now;
+  if (!Number.isFinite(baseTimestamp)) return { completion_at: null, completion_type: "unknown", completion_basis: "none" };
+  return {
+    completion_at: new Date(baseTimestamp + selected.estimate.seconds * 1000).toISOString(),
+    completion_type: "estimated",
+    completion_basis: selected.basis,
+  };
+}
+
+function toRun(row: Row, estimates: DurationEstimates, now = Date.now()): Run {
   return {
     run_id: numberValue(row.run_id),
     workflow_id: numberValue(row.workflow_id),
@@ -178,6 +229,7 @@ function toRun(row: Row): Run {
     started_at: nullableString(row.started_at),
     completed_at: nullableString(row.completed_at),
     duration_seconds: nullableNumber(row.duration_seconds),
+    ...completionFor(row, estimates, now),
     html_url: String(row.html_url || ""),
     parser_status: (String(row.parser_status || "unclassified") as Run["parser_status"]),
     artifact_count: numberValue(row.artifact_count),
@@ -348,15 +400,17 @@ export async function queryRuns(env: Env, params: URLSearchParams) {
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const [result, sync] = await Promise.all([
+  const [result, sync, estimates] = await Promise.all([
     env.DB.prepare("SELECT * FROM runs " + where + " ORDER BY updated_at DESC, run_id DESC LIMIT ?")
       .bind(...bindings, requested + 1)
       .all<Row>(),
     env.DB.prepare("SELECT last_success_at FROM sync_state WHERE key = 'default'").first<Row>(),
+    getDurationEstimates(env),
   ]);
   const found = rows(result);
   const hasMore = found.length > requested;
-  const items = found.slice(0, requested).map(toRun);
+  const now = Date.now();
+  const items = found.slice(0, requested).map((row) => toRun(row, estimates, now));
   const last = items[items.length - 1];
   return { schema_version: 1 as const, items, next_cursor: hasMore && last ? encodeCursor(last.updated_at, last.run_id) : null, stale: syncIsStale(sync) };
 }
@@ -378,6 +432,7 @@ export async function queryOverview(env: Env) {
     COALESCE(SUM(CASE WHEN archive_state = 'error' THEN 1 ELSE 0 END), 0) AS error_files
     FROM artifacts`).first<Row>();
   const sync = await env.DB.prepare("SELECT * FROM sync_state WHERE key = 'default'").first<Row>();
+  const estimates = await getDurationEstimates(env);
   const artifactTotal = await githubArtifactTotal(env);
   const quota = numberValue(sync?.quota_bytes, 7516192768);
   const stale = syncIsStale(sync);
@@ -385,8 +440,8 @@ export async function queryOverview(env: Env) {
     schema_version: 1 as const,
     stale,
     generated_at: new Date().toISOString(),
-    active_runs: rows(active).map(toRun),
-    recent_runs: rows(recent).map(toRun),
+    active_runs: rows(active).map((row) => toRun(row, estimates)),
+    recent_runs: rows(recent).map((row) => toRun(row, estimates)),
     totals: {
       workflows: numberValue(totals?.workflows),
       runs: numberValue(totals?.runs),
@@ -413,11 +468,12 @@ export async function queryOverview(env: Env) {
 export async function queryRunDetail(env: Env, runId: number): Promise<RunDetail | null> {
   const run = await env.DB.prepare("SELECT * FROM runs WHERE run_id = ?").bind(runId).first<Row>();
   if (!run) return null;
-  const [jobRows, artifactRows, resultRows, sync] = await Promise.all([
+  const [jobRows, artifactRows, resultRows, sync, estimates] = await Promise.all([
     env.DB.prepare("SELECT * FROM jobs WHERE run_id = ? ORDER BY started_at ASC, job_id ASC").bind(runId).all<Row>(),
     env.DB.prepare("SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at DESC, artifact_id DESC").bind(runId).all<Row>(),
     env.DB.prepare("SELECT * FROM results WHERE run_id = ? ORDER BY captured_at DESC, result_id ASC").bind(runId).all<Row>(),
     env.DB.prepare("SELECT last_success_at FROM sync_state WHERE key = 'default'").first<Row>(),
+    getDurationEstimates(env),
   ]);
   let jobs = rows(jobRows).map(toJob);
   let artifacts = rows(artifactRows).map(toArtifact);
@@ -429,7 +485,7 @@ export async function queryRunDetail(env: Env, runId: number): Promise<RunDetail
       artifacts = remoteArtifacts.value.map((payload) => toGitHubArtifact(env, payload, persisted.get(numberValue(payload.id))));
     }
   }
-  return { schema_version: 1, stale: syncIsStale(sync), run: toRun(run), jobs, artifacts, results: rows(resultRows).map(toResult) };
+  return { schema_version: 1, stale: syncIsStale(sync), run: toRun(run, estimates), jobs, artifacts, results: rows(resultRows).map(toResult) };
 }
 
 export async function queryJob(env: Env, jobId: number) {
