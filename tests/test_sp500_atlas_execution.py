@@ -309,6 +309,12 @@ def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
     import scripts.reduce_sp500_atlas_run as reducer
 
     original_sha256_file = reducer._sha256_file
+    original_reader = reducer._read_rows_with_raw_lines
+    reader_paths: list[Path] = []
+
+    def track_reader(path: Path, **kwargs: object) -> object:
+        reader_paths.append(path)
+        return original_reader(path, **kwargs)
 
     def fail_if_source_rehashed(path: Path, *args: object, **kwargs: object) -> str:
         if path.parent.name.startswith("shard-"):
@@ -316,6 +322,7 @@ def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
         return original_sha256_file(path)
 
     monkeypatch.setattr("scripts.reduce_sp500_atlas_run._sha256_file", fail_if_source_rehashed)
+    monkeypatch.setattr(reducer, "_read_rows_with_raw_lines", track_reader)
     summary = reduce_atlas_run(
         plan_path=plan_path,
         partitions_root=shards,
@@ -325,6 +332,7 @@ def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
 
     assert summary["verified_recipe_count"] == 8
     assert summary["row_hash_verification_mode"] == "artifact_file_hash_bound"
+    assert reader_paths and all(path.parent.name.startswith("shard-") for path in reader_paths)
     expected_results = b"".join(
         (shards / f"shard-{index}" / "results.jsonl").read_bytes()
         for index in range(4)

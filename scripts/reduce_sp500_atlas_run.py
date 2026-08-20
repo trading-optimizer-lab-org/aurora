@@ -228,6 +228,13 @@ def reduce_atlas_run(
     seen: set[int] = set()
     cells: set[tuple[int, int, int]] = set()
     row_count = 0
+    # Recovery mode already binds every source file to the immutable worker
+    # receipt.  Keep the decoded rows in memory while that single source pass
+    # runs so the frontier/reserve pass does not parse the complete dataset a
+    # second time.  The normal path deliberately keeps its existing streaming
+    # behaviour and row-hash verification.
+    cached_rows: list[dict[str, object]] | None = [] if not verify_row_hashes else None
+    results_digest = hashlib.sha256() if not verify_row_hashes else None
     if verify_row_hashes:
         result_handle = results_path.open("x", encoding="utf-8", newline="\n")
     else:
@@ -284,6 +291,10 @@ def reduce_atlas_run(
                     )
                 else:
                     result_handle.write(raw_line)
+                    if results_digest is not None:
+                        results_digest.update(raw_line)
+                    if cached_rows is not None:
+                        cached_rows.append(row)
                 row_count += 1
                 shard_count += 1
             if file_digest is not None and file_digest.hexdigest() != receipt.get("result_sha256"):
@@ -336,19 +347,19 @@ def reduce_atlas_run(
         frontier_rows_source = ((row, None) for row in _read_rows(results_path))
     else:
         frontier_handle = frontier_path.open("xb")
-        frontier_rows_source = _read_rows_with_raw_lines(results_path)
+        assert cached_rows is not None
+        frontier_rows_source = ((row, None) for row in cached_rows)
     with frontier_handle:
         for row, raw_line in frontier_rows_source:
             compact = _compact_row(row)
             cell = _cell(row)
             if cell in frontier_cells:
                 frontier_rows.append(compact)
-                if raw_line is None:
-                    frontier_handle.write(
-                        json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
-                    )
+                payload = json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+                if raw_line is None and verify_row_hashes:
+                    frontier_handle.write(payload + "\n")
                 else:
-                    frontier_handle.write(raw_line)
+                    frontier_handle.write(payload.encode("utf-8") + b"\n")
             elif _is_near_frontier(cell, frontier_cells):
                 # This pass already has every row decoded after the exact
                 # frontier cells are known.  Collect the reserve here so the
@@ -388,10 +399,15 @@ def reduce_atlas_run(
     _write_parquet(output / "descriptive_metrics.parquet", metrics)
     dataset = output / "all_results_dataset"
     dataset.mkdir()
+    if verify_row_hashes:
+        results_sha256 = _sha256_file(results_path)
+    else:
+        assert results_digest is not None
+        results_sha256 = results_digest.hexdigest()
     dataset_manifest = {
         "schema_version": 1,
         "results_path": "../results.jsonl",
-        "results_sha256": _sha256_file(results_path),
+        "results_sha256": results_sha256,
         "row_count": row_count,
         "streaming": True,
         "row_hash_verification_mode": (
@@ -428,7 +444,7 @@ def reduce_atlas_run(
         "pareto_cell_count": len(frontier_cells),
         "reserve_recipe_count": len(reserve_rows),
         "redundant_shard_receipt_count": redundant_shard_receipt_count,
-        "results_sha256": _sha256_file(results_path),
+        "results_sha256": results_sha256,
         "frontier_sha256": _sha256_file(frontier_path),
         "row_hash_verification_mode": (
             "canonical_row_hash" if verify_row_hashes else "artifact_file_hash_bound"
