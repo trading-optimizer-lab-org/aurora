@@ -314,6 +314,8 @@ def reduce_atlas_run(
         flush=True,
     )
     frontier_rows: list[dict[str, object]] = []
+    reserve_limit = 50_000
+    reserve_rows: list[dict[str, object]] = []
     frontier_path = output / "pareto_frontier.jsonl"
     if verify_row_hashes:
         frontier_handle = frontier_path.open("x", encoding="utf-8", newline="\n")
@@ -324,7 +326,8 @@ def reduce_atlas_run(
     with frontier_handle:
         for row, raw_line in frontier_rows_source:
             compact = _compact_row(row)
-            if _cell(row) in frontier_cells:
+            cell = _cell(row)
+            if cell in frontier_cells:
                 frontier_rows.append(compact)
                 if raw_line is None:
                     frontier_handle.write(
@@ -332,6 +335,11 @@ def reduce_atlas_run(
                     )
                 else:
                     frontier_handle.write(raw_line)
+            elif _is_near_frontier(cell, frontier_cells):
+                # This pass already has every row decoded after the exact
+                # frontier cells are known.  Collect the reserve here so the
+                # recovery path does not parse all results a third time.
+                reserve_rows.append(compact)
     frontier_rows.sort(key=lambda row: str(row["strategy_id"]))
     _write_parquet(output / "pareto_cells.parquet", [
         {"positive_weeks": w, "positive_months": m, "joint_positive_above_spy_years": y}
@@ -339,19 +347,6 @@ def reduce_atlas_run(
     ])
     _write_parquet(output / "pareto_strategies.parquet", frontier_rows)
 
-    reserve_limit = 50_000
-    reserve_rows: list[dict[str, object]] = []
-    reserve_rows_source = (
-        ((row, None) for row in _read_rows(results_path))
-        if verify_row_hashes
-        else _read_rows_with_raw_lines(results_path)
-    )
-    for row, _raw_line in reserve_rows_source:
-        cell = _cell(row)
-        if cell in frontier_cells:
-            continue
-        if _is_near_frontier(cell, frontier_cells):
-            reserve_rows.append(_compact_row(row))
     reserve_rows.sort(key=lambda row: str(row["strategy_id"]))
     reserve_rows = reserve_rows[:reserve_limit]
     print(
