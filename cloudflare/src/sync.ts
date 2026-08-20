@@ -71,6 +71,91 @@ function decodeBase64(value: string): Uint8Array {
   return bytes;
 }
 
+function parserStatus(workflowName: string): string {
+  const lower = workflowName.toLowerCase();
+  return ["atlas", "swr", "spy", "btc", "paper", "literature", "openap"].some((key) => lower.includes(key))
+    ? "specialized"
+    : "generic";
+}
+
+function actorName(value: unknown): string {
+  if (value && typeof value === "object") {
+    const actor = value as UnknownRecord;
+    return text(actor.login || actor.name, "unknown");
+  }
+  return text(value, "unknown");
+}
+
+function durationSeconds(start: string | null, end: string | null): number | null {
+  if (!start || !end) return null;
+  const seconds = (Date.parse(end) - Date.parse(start)) / 1000;
+  return Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : null;
+}
+
+function normalizeScheduledRun(value: UnknownRecord, capturedAt: string): UnknownRecord {
+  const runId = integer(value.id);
+  const workflowName = text(value.name || value.display_title, "Unknown workflow");
+  const status = text(value.status, "unknown");
+  const startedAt = text(value.run_started_at || value.created_at, capturedAt);
+  const completedAt = status === "completed" ? nullableText(value.updated_at) : null;
+  return {
+    run_id: runId,
+    workflow_id: integer(value.workflow_id),
+    workflow_name: workflowName,
+    name: text(value.display_title || value.name, workflowName),
+    status,
+    conclusion: nullableText(value.conclusion),
+    event: text(value.event, "unknown"),
+    branch: text(value.head_branch, "unknown"),
+    commit_sha: text(value.head_sha),
+    actor: actorName(value.actor),
+    run_number: integer(value.run_number),
+    run_attempt: integer(value.run_attempt, 1),
+    created_at: text(value.created_at, capturedAt),
+    updated_at: text(value.updated_at, capturedAt),
+    started_at: startedAt,
+    completed_at: completedAt,
+    duration_seconds: durationSeconds(startedAt, completedAt),
+    html_url: text(value.html_url),
+    parser_status: parserStatus(workflowName),
+    artifact_count: 0,
+    result_count: 0,
+    raw_manifest_key: `runs/${runId}/manifest.json`,
+    captured_at: capturedAt,
+  };
+}
+
+export function buildScheduledBatch(payload: unknown, capturedAt = new Date().toISOString()) {
+  const root = payload && typeof payload === "object" ? payload as UnknownRecord : {};
+  const rawRuns = Array.isArray(root.workflow_runs) ? root.workflow_runs : [];
+  return {
+    schema_version: 1 as const,
+    captured_at: capturedAt,
+    cursor: { page: 1 },
+    next_cursor: null,
+    workflows: [],
+    runs: rawRuns.filter((run): run is UnknownRecord => Boolean(run && typeof run === "object")).map((run) => normalizeScheduledRun(run, capturedAt)),
+    jobs: [],
+    artifacts: [],
+    results: [],
+    archives: [],
+  };
+}
+
+export async function scheduledSync(env: Env): Promise<Record<string, unknown>> {
+  if (!env.GITHUB_ACTIONS_TOKEN) return { schema_version: 1, ok: false, skipped: true, reason: "missing GitHub token" };
+  const response = await fetch(`https://api.github.com/repos/${env.REPO_OWNER}/${env.REPO_NAME}/actions/runs?per_page=25`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${env.GITHUB_ACTIONS_TOKEN}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "aurora-dashboard-worker/1.0",
+    },
+  });
+  if (!response.ok) throw new Error(`GitHub scheduled sync ${response.status}`);
+  return ingestBatch(env, buildScheduledBatch(await response.json()));
+}
+
 function assertBatch(value: unknown): SyncBatch {
   if (!value || typeof value !== "object") throw new Error("sync body must be an object");
   const body = value as UnknownRecord;

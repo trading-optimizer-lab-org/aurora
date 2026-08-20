@@ -6,6 +6,7 @@ export interface Env {
   ARCHIVE: R2Bucket;
   DASHBOARD_LINK_SECRET: string;
   DASHBOARD_SYNC_TOKEN?: string;
+  GITHUB_ACTIONS_TOKEN?: string;
   REPO_OWNER: string;
   REPO_NAME: string;
   ARCHIVE_QUOTA_BYTES: string;

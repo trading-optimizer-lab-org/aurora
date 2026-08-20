@@ -1,6 +1,7 @@
 import { authorizePath } from "./auth";
 import { handleApi, responseHeaders } from "./api";
 import { decodeEmbeddedAsset, EMBEDDED_ASSETS } from "./embedded_assets";
+import { scheduledSync } from "./sync";
 import type { Env } from "./env";
 
 async function serveArchive(request: Request, env: Env, suffix: string): Promise<Response> {
@@ -48,6 +49,9 @@ const worker: ExportedHandler<Env> = {
     const headers = new Headers(assetResponse.headers);
     for (const [key, value] of responseHeaders()) headers.set(key, value);
     return new Response(assetResponse.body, { status: assetResponse.status, headers });
+  },
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(scheduledSync(env).catch((error) => console.error("Aurora dashboard scheduled sync failed", error)));
   },
 };
 

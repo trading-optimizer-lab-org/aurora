@@ -13,6 +13,9 @@ REPO_NAME = "aurora"
 ARCHIVE_QUOTA_BYTES = "7516192768"
 APP_VERSION = "0.1.0"
 
+[triggers]
+crons = ["*/15 * * * *"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "aurora-runs-dashboard"
