@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Iterable
 import hashlib
+from itertools import product
 import json
 from pathlib import Path
 
@@ -99,6 +100,25 @@ def _pareto_cells(cells: Iterable[tuple[int, int, int]]) -> set[tuple[int, int, 
     return frontier
 
 
+def _is_near_frontier(
+    cell: tuple[int, int, int],
+    frontier_cells: set[tuple[int, int, int]],
+) -> bool:
+    """Return whether ``cell`` is within one unit of a frontier cell.
+
+    The previous implementation scanned every frontier cell for every
+    non-frontier result.  Because the reserve rule requires each coordinate
+    difference to be either 0 or 1, only the eight cells in the 3D unit cube
+    above ``cell`` can match.  Checking those exact candidates preserves the
+    rule while making the work independent of frontier size.
+    """
+
+    return any(
+        tuple(cell[index] + delta[index] for index in range(3)) in frontier_cells
+        for delta in product((0, 1), repeat=3)
+    )
+
+
 def _compact_row(row: dict[str, object]) -> dict[str, object]:
     return {
         "ordinal": int(row["ordinal"]),
@@ -134,6 +154,18 @@ def reduce_atlas_run(
     output_dir: Path,
 ) -> dict[str, object]:
     plan = load_plan(Path(plan_path))
+    print(
+        json.dumps(
+            {
+                "event": "ATLAS_REDUCER_START",
+                "plan_sha256": plan.plan_sha256,
+                "expected_recipe_count": plan.requested_recipe_count,
+                "expected_shard_count": plan.total_shards,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     receipts = _receipt_paths(Path(partitions_root))
     by_index: dict[int, Path] = {}
     redundant_shard_receipt_count = 0
@@ -200,10 +232,43 @@ def reduce_atlas_run(
                 shard_count += 1
             if shard_count != shard.expected_recipe_count:
                 raise ValueError(f"ATLAS_REDUCER_ROW_COUNT_INVALID:{shard.shard_index}")
+            print(
+                json.dumps(
+                    {
+                        "event": "ATLAS_REDUCER_SHARD_VERIFIED",
+                        "shard_index": shard.shard_index,
+                        "verified_recipe_count": row_count,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
 
     if row_count != plan.requested_recipe_count or seen != set(range(plan.ordinal_start, plan.ordinal_stop)):
         raise ValueError("ATLAS_REDUCER_GLOBAL_COVERAGE_INVALID")
+    print(
+        json.dumps(
+            {
+                "event": "ATLAS_REDUCER_COVERAGE_VERIFIED",
+                "verified_recipe_count": row_count,
+                "verified_shard_count": len(by_index),
+                "unique_metric_cells": len(cells),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     frontier_cells = _pareto_cells(cells)
+    print(
+        json.dumps(
+            {
+                "event": "ATLAS_REDUCER_PARETO_COMPUTED",
+                "pareto_cell_count": len(frontier_cells),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     frontier_rows: list[dict[str, object]] = []
     frontier_path = output / "pareto_frontier.jsonl"
     with frontier_path.open("x", encoding="utf-8", newline="\n") as frontier_handle:
@@ -225,15 +290,20 @@ def reduce_atlas_run(
         cell = _cell(row)
         if cell in frontier_cells:
             continue
-        near = any(
-            all(front[i] >= cell[i] for i in range(3))
-            and max(front[i] - cell[i] for i in range(3)) <= 1
-            for front in frontier_cells
-        )
-        if near:
+        if _is_near_frontier(cell, frontier_cells):
             reserve_rows.append(_compact_row(row))
     reserve_rows.sort(key=lambda row: str(row["strategy_id"]))
     reserve_rows = reserve_rows[:reserve_limit]
+    print(
+        json.dumps(
+            {
+                "event": "ATLAS_REDUCER_RESERVE_COMPUTED",
+                "reserve_recipe_count": len(reserve_rows),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     _write_parquet(output / "reserve_strategies.parquet", reserve_rows)
     # Robustness has not run yet.  Keep the required artifact explicit but
     # empty instead of labelling the reserve as fragile before perturbations.

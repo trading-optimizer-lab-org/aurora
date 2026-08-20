@@ -283,6 +283,28 @@ def test_reducer_requires_every_shard_and_preserves_all_rows(tmp_path: Path) -> 
     assert output.joinpath("pareto_strategies.parquet").is_file()
 
 
+def test_reducer_near_frontier_checks_exact_unit_cube() -> None:
+    import scripts.reduce_sp500_atlas_run as reducer
+
+    frontier = {(10, 20, 3), (12, 18, 4), (20, 20, 8)}
+    cells = {
+        (9, 19, 2),   # close to (10, 20, 3)
+        (10, 20, 2),  # close to (10, 20, 3)
+        (11, 18, 3),  # close to (12, 18, 4)
+        (8, 19, 2),   # week difference is two: not close
+        (10, 19, 1),  # year difference is two: not close
+        (19, 20, 6),  # year difference is two: not close
+    }
+
+    for cell in cells:
+        expected = any(
+            all(front[index] >= cell[index] for index in range(3))
+            and max(front[index] - cell[index] for index in range(3)) <= 1
+            for front in frontier
+        )
+        assert reducer._is_near_frontier(cell, frontier) is expected
+
+
 def test_reducer_rejects_missing_shard(tmp_path: Path) -> None:
     catalog, receipt = _evidence()
     plan = build_run_plan(
