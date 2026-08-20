@@ -24,8 +24,12 @@ from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Any
 
-from scripts.aurora_dashboard_archive import archive_decision
-from scripts.aurora_dashboard_parsers import ParserContext, parse_artifact
+try:
+    from scripts.aurora_dashboard_archive import archive_decision
+    from scripts.aurora_dashboard_parsers import ParserContext, parse_artifact
+except ModuleNotFoundError:
+    from aurora_dashboard_archive import archive_decision
+    from aurora_dashboard_parsers import ParserContext, parse_artifact
 
 
 GITHUB_API_VERSION = "2022-11-28"
@@ -284,6 +288,7 @@ def _archive_entries(
     archives: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
     errors: list[str] = []
+    rejected_states: list[str] = []
     if not artifact.get("archive_download_url"):
         return archives, results, used_bytes, errors
     try:
@@ -308,10 +313,24 @@ def _archive_entries(
                     used_bytes += len(payload)
                     report = parse_artifact(name, payload, ParserContext(int(artifact["run_id"]), int(artifact["artifact_id"]), context_workflow, name))
                     results.extend(metric.to_dict() for metric in report.metrics)
+                else:
+                    rejected_states.append(decision.state)
                 if len(archives) >= 20:
                     break
     except (GitHubApiError, zipfile.BadZipFile, OSError) as exc:
         errors.append(f"artifact {artifact.get('artifact_id')}: {exc}")
+    if archives:
+        artifact["archive_state"] = "archived"
+        artifact["archive_key"] = archives[0]["key"]
+        artifact["parser_status"] = "specialized" if results else "generic"
+    elif errors:
+        artifact["archive_state"] = "error"
+    elif "quota_blocked" in rejected_states:
+        artifact["archive_state"] = "quota_blocked"
+    elif rejected_states:
+        artifact["archive_state"] = rejected_states[0]
+    else:
+        artifact["archive_state"] = "source_only"
     return archives, results, used_bytes, errors
 
 
@@ -332,9 +351,13 @@ def build_batch(
     report = SyncReport(page=page, runs_seen=len(run_payloads))
     workflows: dict[int, dict[str, Any]] = {}
     if page == 1:
-        for payload in client.list_workflows(page=1, per_page=100):
-            workflow = normalize_workflow(payload, captured_at)
-            workflows[workflow["workflow_id"]] = workflow
+        for workflow_page in range(1, 11):
+            workflow_payloads = client.list_workflows(page=workflow_page, per_page=100)
+            for payload in workflow_payloads:
+                workflow = normalize_workflow(payload, captured_at)
+                workflows[workflow["workflow_id"]] = workflow
+            if len(workflow_payloads) < 100:
+                break
     runs: list[dict[str, Any]] = []
     jobs: list[dict[str, Any]] = []
     artifacts: list[dict[str, Any]] = []

@@ -73,6 +73,12 @@ function assertBatch(value: unknown): SyncBatch {
     if (!Array.isArray(body[key])) throw new Error(`${key} must be an array`);
     if ((body[key] as unknown[]).length > 500) throw new Error(`${key} batch too large`);
   }
+  let encodedArchiveBytes = 0;
+  for (const item of body.archives as UnknownRecord[]) {
+    if (typeof item.content_base64 !== "string" || item.content_base64.length > 12 * 1024 * 1024) throw new Error("archive payload too large");
+    encodedArchiveBytes += item.content_base64.length;
+  }
+  if (encodedArchiveBytes > 32 * 1024 * 1024) throw new Error("archive batch too large");
   return body as unknown as SyncBatch;
 }
 
@@ -88,24 +94,46 @@ export async function ingestBatch(env: Env, value: unknown): Promise<Record<stri
   let usedBytes = integer(state?.r2_bytes_used);
   const quotaBytes = integer(state?.quota_bytes, archiveQuotaBytes(env));
   const archiveStates = new Map<number, { state: string; key: string | null }>();
+  const markArchive = (archive: SyncArchive, stateValue: string, key: string | null = null) => {
+    const idMatch = archive.key.match(/\/artifacts\/(\d+)\//);
+    if (idMatch) archiveStates.set(Number(idMatch[1]), { state: stateValue, key });
+  };
   let archivedFiles = 0;
   let quotaBlockedFiles = 0;
   let archiveErrors = 0;
 
   for (const archive of batch.archives) {
-    const size = integer(archive.size_bytes);
-    if (!archive.key || size < 0 || size > 8 * 1024 * 1024 || usedBytes + size > quotaBytes) {
-      quotaBlockedFiles += 1;
+    if (!archive.key) {
+      archiveErrors += 1;
+      continue;
+    }
+    if (archive.size_bytes < 0) {
+      markArchive(archive, "error");
+      archiveErrors += 1;
       continue;
     }
     try {
       const bytes = decodeBase64(archive.content_base64);
+      if (bytes.byteLength > 8 * 1024 * 1024) {
+        markArchive(archive, "source_only");
+        continue;
+      }
+      if (usedBytes + bytes.byteLength > quotaBytes) {
+        markArchive(archive, "quota_blocked");
+        quotaBlockedFiles += 1;
+        continue;
+      }
+      const existing = await env.ARCHIVE.head(archive.key);
+      if (existing) {
+        markArchive(archive, "archived", archive.key);
+        continue;
+      }
       await env.ARCHIVE.put(archive.key, bytes, { httpMetadata: { contentType: archive.content_type || "application/octet-stream" } });
       usedBytes += bytes.byteLength;
       archivedFiles += 1;
-      const idMatch = archive.key.match(/\/artifacts\/(\d+)\//);
-      if (idMatch) archiveStates.set(Number(idMatch[1]), { state: "archived", key: archive.key });
+      markArchive(archive, "archived", archive.key);
     } catch {
+      markArchive(archive, "error");
       archiveErrors += 1;
     }
   }
@@ -149,6 +177,14 @@ export async function ingestBatch(env: Env, value: unknown): Promise<Record<stri
     ON CONFLICT(key) DO UPDATE SET cursor_json=excluded.cursor_json, last_started_at=excluded.last_started_at, last_success_at=excluded.last_success_at, last_error=NULL, runs_seen=sync_state.runs_seen + excluded.runs_seen, jobs_seen=sync_state.jobs_seen + excluded.jobs_seen, artifacts_seen=sync_state.artifacts_seen + excluded.artifacts_seen, results_seen=sync_state.results_seen + excluded.results_seen, r2_bytes_used=excluded.r2_bytes_used, quota_bytes=excluded.quota_bytes, updated_at=excluded.updated_at`)
     .bind(jsonText(batch.next_cursor || batch.cursor, {}), text(batch.captured_at), text(batch.captured_at), batch.runs.length, batch.jobs.length, batch.artifacts.length, batch.results.length, usedBytes, quotaBytes, text(batch.captured_at)));
 
+  for (const workflow of batch.workflows) {
+    statements.push(env.DB.prepare("UPDATE workflows SET run_count = (SELECT COUNT(*) FROM runs WHERE workflow_id = ?), success_count = (SELECT COUNT(*) FROM runs WHERE workflow_id = ? AND conclusion = 'success'), failure_count = (SELECT COUNT(*) FROM runs WHERE workflow_id = ? AND conclusion IN ('failure', 'timed_out')) WHERE workflow_id = ?")
+      .bind(integer(workflow.workflow_id), integer(workflow.workflow_id), integer(workflow.workflow_id), integer(workflow.workflow_id)));
+  }
+  for (const run of batch.runs) {
+    statements.push(env.DB.prepare("UPDATE runs SET artifact_count = (SELECT COUNT(*) FROM artifacts WHERE run_id = ?), result_count = (SELECT COUNT(*) FROM results WHERE run_id = ?) WHERE run_id = ?")
+      .bind(integer(run.run_id), integer(run.run_id), integer(run.run_id)));
+  }
   await executeInChunks(env, statements);
   return {
     schema_version: 1,

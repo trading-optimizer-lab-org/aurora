@@ -6,7 +6,7 @@ from pathlib import PurePosixPath
 
 
 DEFAULT_QUOTA_BYTES = 7_516_192_768
-MAX_SINGLE_ARCHIVE_BYTES = 50 * 1024 * 1024
+MAX_SINGLE_ARCHIVE_BYTES = 8 * 1024 * 1024
 READABLE_EXTENSIONS = {".csv", ".json", ".jsonl", ".md", ".markdown", ".txt", ".html", ".htm", ".xml", ".yaml", ".yml"}
 
 

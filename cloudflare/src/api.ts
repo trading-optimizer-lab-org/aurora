@@ -15,23 +15,38 @@ function error(message: string, status: number): Response {
   return json({ schema_version: 1, error: message }, status);
 }
 
+async function read<T>(producer: () => Promise<T>): Promise<Response> {
+  try {
+    return json(await producer());
+  } catch (exc) {
+    const message = exc instanceof Error ? exc.message : "service unavailable";
+    if (message === "run not found") return error(message, 404);
+    return message.startsWith("invalid ") ? error(message, 400) : error("service unavailable", 503);
+  }
+}
+
 export async function handleApi(request: Request, env: Env, apiPath: string): Promise<Response> {
   const url = new URL(request.url);
-  if (apiPath === "/api/health" && request.method === "GET") return json(await queryHealth(env, env.APP_VERSION));
-  if (apiPath === "/api/overview" && request.method === "GET") return json(await queryOverview(env));
-  if (apiPath === "/api/workflows" && request.method === "GET") return json(await queryWorkflows(env));
-  if (apiPath === "/api/runs" && request.method === "GET") return json(await queryRuns(env, url.searchParams));
+  if (apiPath === "/api/health" && request.method === "GET") return read(() => queryHealth(env, env.APP_VERSION));
+  if (apiPath === "/api/overview" && request.method === "GET") return read(() => queryOverview(env));
+  if (apiPath === "/api/workflows" && request.method === "GET") return read(() => queryWorkflows(env));
+  if (apiPath === "/api/runs" && request.method === "GET") return read(() => queryRuns(env, url.searchParams));
   if (apiPath.startsWith("/api/runs/") && request.method === "GET") {
     const id = Number(apiPath.slice("/api/runs/".length));
     if (!Number.isSafeInteger(id) || id <= 0) return error("invalid run id", 400);
-    const detail = await queryRunDetail(env, id);
-    return detail ? json(detail) : error("run not found", 404);
+    return read(async () => {
+      const detail = await queryRunDetail(env, id);
+      if (!detail) throw new Error("run not found");
+      return detail;
+    });
   }
-  if (apiPath === "/api/artifacts" && request.method === "GET") return json(await queryArtifacts(env, url.searchParams));
-  if (apiPath === "/api/results" && request.method === "GET") return json(await queryResults(env, url.searchParams));
+  if (apiPath === "/api/artifacts" && request.method === "GET") return read(() => queryArtifacts(env, url.searchParams));
+  if (apiPath === "/api/results" && request.method === "GET") return read(() => queryResults(env, url.searchParams));
   if (apiPath === "/internal/sync/batch" && request.method === "POST") {
     if (!authorizeSync(request, env.DASHBOARD_SYNC_TOKEN)) return error("not found", 404);
     try {
+      const contentLength = Number(request.headers.get("Content-Length") || 0);
+      if (contentLength > 40 * 1024 * 1024) return error("sync body too large", 413);
       const body = await request.json();
       return json(await ingestBatch(env, body));
     } catch (exc) {

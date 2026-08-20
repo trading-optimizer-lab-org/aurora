@@ -25,12 +25,49 @@ function nullableString(value: unknown): string | null {
 function decodeCursor(cursor: string | null): { updated_at: string; run_id: number } | null {
   if (!cursor) return null;
   try {
-    const decoded = JSON.parse(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")));
-    if (typeof decoded.updated_at !== "string" || !Number.isFinite(Number(decoded.run_id))) return null;
+    const normalized = cursor.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    const decoded = JSON.parse(atob(padded));
+    if (typeof decoded.updated_at !== "string" || !Number.isSafeInteger(Number(decoded.run_id))) throw new Error("invalid cursor");
     return { updated_at: decoded.updated_at, run_id: Number(decoded.run_id) };
   } catch {
-    return null;
+    throw new Error("invalid cursor");
   }
+}
+
+function decodeResultCursor(cursor: string | null): { captured_at: string; result_id: string } | null {
+  if (!cursor) return null;
+  try {
+    const normalized = cursor.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    const decoded = JSON.parse(atob(padded));
+    if (typeof decoded.captured_at !== "string" || typeof decoded.result_id !== "string" || !decoded.result_id) throw new Error("invalid cursor");
+    return { captured_at: decoded.captured_at, result_id: decoded.result_id };
+  } catch {
+    throw new Error("invalid cursor");
+  }
+}
+
+function encodeResultCursor(capturedAt: string, resultId: string): string {
+  return btoa(JSON.stringify({ captured_at: capturedAt, result_id: resultId }))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function pageLimit(params: URLSearchParams, fallback: number): number {
+  const raw = params.get("limit");
+  if (raw === null || raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > 100) throw new Error("invalid limit");
+  return value;
+}
+
+function syncIsStale(sync: Row | null): boolean {
+  const lastSuccess = sync?.last_success_at;
+  if (!lastSuccess) return true;
+  const timestamp = Date.parse(String(lastSuccess));
+  return !Number.isFinite(timestamp) || Date.now() - timestamp > 45 * 60 * 1000;
 }
 
 export function encodeCursor(updatedAt: string, runId: number): string {
@@ -164,15 +201,23 @@ function toResult(row: Row): ResultMetric {
 }
 
 export async function queryRuns(env: Env, params: URLSearchParams) {
-  const requested = Math.max(1, Math.min(100, Number(params.get("limit") || 25)));
+  const requested = pageLimit(params, 25);
   const cursor = decodeCursor(params.get("cursor"));
   const conditions: string[] = [];
   const bindings: unknown[] = [];
   const add = (condition: string, ...values: unknown[]) => { conditions.push(condition); bindings.push(...values); };
 
-  if (params.get("status")) add("status = ?", params.get("status"));
+  const status = params.get("status");
+  if (status) {
+    const conclusionStatuses = new Set(["success", "failure", "cancelled", "skipped", "neutral", "timed_out", "action_required"]);
+    add(conclusionStatuses.has(status) ? "conclusion = ?" : "status = ?", status);
+  }
   if (params.get("conclusion")) add("conclusion = ?", params.get("conclusion"));
-  if (params.get("workflow_id")) add("workflow_id = ?", Number(params.get("workflow_id")));
+  if (params.get("workflow_id")) {
+    const workflowId = Number(params.get("workflow_id"));
+    if (!Number.isSafeInteger(workflowId) || workflowId <= 0) throw new Error("invalid workflow_id");
+    add("workflow_id = ?", workflowId);
+  }
   if (params.get("branch")) add("branch = ?", params.get("branch"));
   if (params.get("event")) add("event = ?", params.get("event"));
   if (params.get("q")) add("(name LIKE ? OR workflow_name LIKE ? OR branch LIKE ?)", `%${params.get("q")}%`, `%${params.get("q")}%`, `%${params.get("q")}%`);
@@ -182,14 +227,17 @@ export async function queryRuns(env: Env, params: URLSearchParams) {
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const result = await env.DB.prepare(`SELECT * FROM runs ${where} ORDER BY updated_at DESC, run_id DESC LIMIT ?`)
-    .bind(...bindings, requested + 1)
-    .all<Row>();
+  const [result, sync] = await Promise.all([
+    env.DB.prepare("SELECT * FROM runs " + where + " ORDER BY updated_at DESC, run_id DESC LIMIT ?")
+      .bind(...bindings, requested + 1)
+      .all<Row>(),
+    env.DB.prepare("SELECT last_success_at FROM sync_state WHERE key = 'default'").first<Row>(),
+  ]);
   const found = rows(result);
   const hasMore = found.length > requested;
   const items = found.slice(0, requested).map(toRun);
   const last = items[items.length - 1];
-  return { schema_version: 1 as const, items, next_cursor: hasMore && last ? encodeCursor(last.updated_at, last.run_id) : null, stale: false };
+  return { schema_version: 1 as const, items, next_cursor: hasMore && last ? encodeCursor(last.updated_at, last.run_id) : null, stale: syncIsStale(sync) };
 }
 
 export async function queryOverview(env: Env) {
@@ -210,9 +258,10 @@ export async function queryOverview(env: Env) {
     FROM artifacts`).first<Row>();
   const sync = await env.DB.prepare("SELECT * FROM sync_state WHERE key = 'default'").first<Row>();
   const quota = numberValue(sync?.quota_bytes, 7516192768);
+  const stale = syncIsStale(sync);
   return {
     schema_version: 1 as const,
-    stale: false,
+    stale,
     generated_at: new Date().toISOString(),
     active_runs: rows(active).map(toRun),
     recent_runs: rows(recent).map(toRun),
@@ -225,7 +274,7 @@ export async function queryOverview(env: Env) {
     },
     conclusions: rows(conclusions).map((row) => ({ label: String(row.label), count: numberValue(row.count) })),
     archive: {
-      used_bytes: numberValue(archive?.used_bytes),
+      used_bytes: numberValue(sync?.r2_bytes_used, numberValue(archive?.used_bytes)),
       quota_bytes: quota,
       archived_files: numberValue(archive?.archived_files),
       source_only_files: numberValue(archive?.source_only_files),
@@ -242,43 +291,72 @@ export async function queryOverview(env: Env) {
 export async function queryRunDetail(env: Env, runId: number): Promise<RunDetail | null> {
   const run = await env.DB.prepare("SELECT * FROM runs WHERE run_id = ?").bind(runId).first<Row>();
   if (!run) return null;
-  const [jobs, artifacts, results] = await Promise.all([
+  const [jobs, artifacts, results, sync] = await Promise.all([
     env.DB.prepare("SELECT * FROM jobs WHERE run_id = ? ORDER BY started_at ASC, job_id ASC").bind(runId).all<Row>(),
     env.DB.prepare("SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at DESC, artifact_id DESC").bind(runId).all<Row>(),
     env.DB.prepare("SELECT * FROM results WHERE run_id = ? ORDER BY captured_at DESC, result_id ASC").bind(runId).all<Row>(),
+    env.DB.prepare("SELECT last_success_at FROM sync_state WHERE key = 'default'").first<Row>(),
   ]);
-  return { schema_version: 1, stale: false, run: toRun(run), jobs: rows(jobs).map(toJob), artifacts: rows(artifacts).map(toArtifact), results: rows(results).map(toResult) };
+  return { schema_version: 1, stale: syncIsStale(sync), run: toRun(run), jobs: rows(jobs).map(toJob), artifacts: rows(artifacts).map(toArtifact), results: rows(results).map(toResult) };
 }
 
 export async function queryWorkflows(env: Env) {
-  const result = await env.DB.prepare("SELECT * FROM workflows ORDER BY last_seen_at DESC, name ASC").all<Row>();
-  return { schema_version: 1 as const, items: rows(result).map(toWorkflow), next_cursor: null, stale: false };
+  const [result, sync] = await Promise.all([
+    env.DB.prepare("SELECT * FROM workflows ORDER BY last_seen_at DESC, name ASC").all<Row>(),
+    env.DB.prepare("SELECT last_success_at FROM sync_state WHERE key = 'default'").first<Row>(),
+  ]);
+  return { schema_version: 1 as const, items: rows(result).map(toWorkflow), next_cursor: null, stale: syncIsStale(sync) };
 }
 
 export async function queryArtifacts(env: Env, params: URLSearchParams) {
-  const limit = Math.max(1, Math.min(100, Number(params.get("limit") || 25)));
+  const limit = pageLimit(params, 25);
+  const cursor = decodeCursor(params.get("cursor"));
   const conditions: string[] = [];
   const bindings: unknown[] = [];
   if (params.get("archive_state")) { conditions.push("archive_state = ?"); bindings.push(params.get("archive_state")); }
-  if (params.get("run_id")) { conditions.push("run_id = ?"); bindings.push(Number(params.get("run_id"))); }
-  if (params.get("q")) { conditions.push("name LIKE ?"); bindings.push(`%${params.get("q")} %`.replace(" %", "%")); }
+  if (params.get("run_id")) {
+    const runId = Number(params.get("run_id"));
+    if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error("invalid run_id");
+    conditions.push("run_id = ?");
+    bindings.push(runId);
+  }
+  if (params.get("q")) { conditions.push("name LIKE ?"); bindings.push("%" + params.get("q") + "%"); }
+  if (cursor) {
+    conditions.push("(created_at < ? OR (created_at = ? AND artifact_id < ?))");
+    bindings.push(cursor.updated_at, cursor.updated_at, cursor.run_id);
+  }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const result = await env.DB.prepare(`SELECT * FROM artifacts ${where} ORDER BY created_at DESC, artifact_id DESC LIMIT ?`).bind(...bindings, limit + 1).all<Row>();
+  const [result, sync] = await Promise.all([
+    env.DB.prepare("SELECT * FROM artifacts " + where + " ORDER BY created_at DESC, artifact_id DESC LIMIT ?").bind(...bindings, limit + 1).all<Row>(),
+    env.DB.prepare("SELECT last_success_at FROM sync_state WHERE key = 'default'").first<Row>(),
+  ]);
   const found = rows(result);
-  return { schema_version: 1 as const, items: found.slice(0, limit).map(toArtifact), next_cursor: found.length > limit ? String(found[limit - 1]?.artifact_id || "") : null, stale: false };
+  const items = found.slice(0, limit).map(toArtifact);
+  const last = items[items.length - 1];
+  return { schema_version: 1 as const, items, next_cursor: found.length > limit && last ? encodeCursor(last.created_at, last.artifact_id) : null, stale: syncIsStale(sync) };
 }
 
 export async function queryResults(env: Env, params: URLSearchParams) {
-  const limit = Math.max(1, Math.min(100, Number(params.get("limit") || 50)));
+  const limit = pageLimit(params, 50);
+  const cursor = decodeResultCursor(params.get("cursor"));
   const conditions: string[] = [];
   const bindings: unknown[] = [];
   for (const key of ["metric_key", "phase", "parser_key", "result_kind", "status"]) {
     if (params.get(key)) { conditions.push(`${key} = ?`); bindings.push(params.get(key)); }
   }
+  if (cursor) {
+    conditions.push("(captured_at < ? OR (captured_at = ? AND result_id > ?))");
+    bindings.push(cursor.captured_at, cursor.captured_at, cursor.result_id);
+  }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const result = await env.DB.prepare(`SELECT * FROM results ${where} ORDER BY captured_at DESC, result_id ASC LIMIT ?`).bind(...bindings, limit + 1).all<Row>();
+  const [result, sync] = await Promise.all([
+    env.DB.prepare("SELECT * FROM results " + where + " ORDER BY captured_at DESC, result_id ASC LIMIT ?").bind(...bindings, limit + 1).all<Row>(),
+    env.DB.prepare("SELECT last_success_at FROM sync_state WHERE key = 'default'").first<Row>(),
+  ]);
   const found = rows(result);
-  return { schema_version: 1 as const, items: found.slice(0, limit).map(toResult), next_cursor: found.length > limit ? String(found[limit - 1]?.result_id || "") : null, stale: false };
+  const items = found.slice(0, limit).map(toResult);
+  const last = items[items.length - 1];
+  return { schema_version: 1 as const, items, next_cursor: found.length > limit && last ? encodeResultCursor(last.captured_at, last.result_id) : null, stale: syncIsStale(sync) };
 }
 
 export async function queryHealth(env: Env, version: string) {
