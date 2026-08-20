@@ -1,0 +1,8 @@
+import type { Page, Workflow } from "../types";
+import { formatDate, formatCompact } from "../format";
+import { EmptyState } from "./EmptyState";
+
+export function WorkflowsView({ page }: { page: Page<Workflow> | null }) {
+  if (!page || !page.items.length) return <div className="section-page"><div className="section-heading"><div><span className="eyebrow">WORKFLOW CATALOG</span><h1>Workflows</h1></div></div><EmptyState title="No hay workflows indexados" detail="El sincronizador aún no ha cargado el catálogo." /></div>;
+  return <div className="section-page"><div className="section-heading"><div><span className="eyebrow">WORKFLOW CATALOG</span><h1>Workflows</h1><p>Todos los pipelines, incluidos CI, tests, seguridad y documentación.</p></div><div className="catalog-total"><strong>{page.items.length}</strong><span>en esta página</span></div></div><div className="workflow-grid">{page.items.map((workflow) => { const rate = workflow.run_count ? Math.round((workflow.success_count / workflow.run_count) * 100) : 0; return <article className="workflow-card" key={workflow.workflow_id}><div className="workflow-card-head"><span className={`workflow-status ${workflow.state}`} /><span>{workflow.parser_key}</span><span className="workflow-id">#{workflow.workflow_id}</span></div><h2>{workflow.name}</h2><code>{workflow.path || "ruta aún no capturada"}</code><div className="workflow-stats"><div><strong>{formatCompact(workflow.run_count)}</strong><span>runs</span></div><div><strong>{rate}%</strong><span>éxito</span></div><div><strong>{workflow.failure_count}</strong><span>fallos</span></div></div><div className="workflow-foot"><span>{workflow.parser_status}</span><span>{formatDate(workflow.last_seen_at, false)}</span></div></article>; })}</div></div>;
+}

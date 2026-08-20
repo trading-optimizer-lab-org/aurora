@@ -1,0 +1,14 @@
+import { useMemo, useState } from "react";
+import type { Page, ResultMetric } from "../types";
+import { formatDate, metricValue } from "../format";
+import { EmptyState } from "./EmptyState";
+
+export function ResultsView({ page }: { page: Page<ResultMetric> | null }) {
+  const [phase, setPhase] = useState("all");
+  const [metric, setMetric] = useState("all");
+  const items = page?.items || [];
+  const phases = useMemo(() => ["all", ...Array.from(new Set(items.map((item) => item.phase).filter(Boolean) as string[]))], [items]);
+  const metrics = useMemo(() => ["all", ...Array.from(new Set(items.map((item) => item.metric_key)))], [items]);
+  const filtered = items.filter((item) => (phase === "all" || item.phase === phase) && (metric === "all" || item.metric_key === metric));
+  return <div className="section-page"><div className="section-heading"><div><span className="eyebrow">RESULTS REGISTRY</span><h1>Backtests y resultados</h1><p>Métricas normalizadas con fase, unidad y procedencia visible.</p></div><div className="filter-row"><select aria-label="Filtrar por fase" value={phase} onChange={(event) => setPhase(event.target.value)}>{phases.map((item) => <option key={item} value={item}>{item === "all" ? "Todas las fases" : item}</option>)}</select><select aria-label="Filtrar por métrica" value={metric} onChange={(event) => setMetric(event.target.value)}>{metrics.map((item) => <option key={item} value={item}>{item === "all" ? "Todas las métricas" : item}</option>)}</select></div></div>{filtered.length ? <div className="results-grid">{filtered.map((item) => <article className="result-card" key={item.result_id}><div className="result-card-top"><span className="result-kind">{item.result_kind}</span><span className={item.passed === true ? "pass-mark" : item.passed === false ? "fail-mark" : "neutral-mark"}>{item.passed === true ? "PASS" : item.passed === false ? "FAIL" : "—"}</span></div><div className="result-metric-name">{item.metric_key}</div><div className="result-value">{metricValue(item)} <small>{item.unit || "sin unidad"}</small></div><div className="result-context"><span>{item.phase || "fase no indicada"}</span><span>{item.baseline || "sin baseline"}</span><span>run {item.run_id}</span></div><div className="result-source">{item.parser_key} v{item.parser_version} · {formatDate(item.captured_at)}</div></article>)}</div> : <EmptyState title="No hay resultados" detail="No hay métricas que coincidan con los filtros actuales." />}</div>;
+}
