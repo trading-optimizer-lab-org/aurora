@@ -71,6 +71,17 @@ def _read_rows(path: Path) -> Iterable[dict[str, object]]:
             yield row
 
 
+def _read_rows_with_raw_lines(path: Path) -> Iterable[tuple[dict[str, object], bytes]]:
+    with Path(path).open("rb") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            if not raw_line.strip():
+                continue
+            row = json.loads(raw_line)
+            if not isinstance(row, dict):
+                raise ValueError(f"ATLAS_REDUCER_ROW_OBJECT_REQUIRED:{line_number}")
+            yield row, raw_line
+
+
 def _cell(row: dict[str, object]) -> tuple[int, int, int]:
     return (
         int(row["positive_weeks"]),
@@ -210,7 +221,11 @@ def reduce_atlas_run(
     seen: set[int] = set()
     cells: set[tuple[int, int, int]] = set()
     row_count = 0
-    with results_path.open("x", encoding="utf-8", newline="\n") as result_handle:
+    if verify_row_hashes:
+        result_handle = results_path.open("x", encoding="utf-8", newline="\n")
+    else:
+        result_handle = results_path.open("xb")
+    with result_handle:
         for shard in plan.shards:
             receipt_path = by_index[shard.shard_index]
             receipt = json.loads(receipt_path.read_text("utf-8"))
@@ -232,7 +247,13 @@ def reduce_atlas_run(
             if _sha256_file(result_path) != receipt.get("result_sha256"):
                 raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard.shard_index}")
             shard_count = 0
-            for row in _read_rows(result_path):
+            raw_rows = _read_rows(result_path) if verify_row_hashes else _read_rows_with_raw_lines(result_path)
+            for item in raw_rows:
+                if verify_row_hashes:
+                    row = item
+                    raw_line = None
+                else:
+                    row, raw_line = item
                 ordinal = _verify_row(
                     row,
                     plan_sha256=plan.plan_sha256,
@@ -245,7 +266,12 @@ def reduce_atlas_run(
                     raise ValueError(f"ATLAS_REDUCER_DUPLICATE_ORDINAL:{ordinal}")
                 seen.add(ordinal)
                 cells.add(_cell(row))
-                result_handle.write(json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n")
+                if raw_line is None:
+                    result_handle.write(
+                        json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
+                    )
+                else:
+                    result_handle.write(raw_line)
                 row_count += 1
                 shard_count += 1
             if shard_count != shard.expected_recipe_count:
@@ -289,12 +315,23 @@ def reduce_atlas_run(
     )
     frontier_rows: list[dict[str, object]] = []
     frontier_path = output / "pareto_frontier.jsonl"
-    with frontier_path.open("x", encoding="utf-8", newline="\n") as frontier_handle:
-        for row in _read_rows(results_path):
+    if verify_row_hashes:
+        frontier_handle = frontier_path.open("x", encoding="utf-8", newline="\n")
+        frontier_rows_source = ((row, None) for row in _read_rows(results_path))
+    else:
+        frontier_handle = frontier_path.open("xb")
+        frontier_rows_source = _read_rows_with_raw_lines(results_path)
+    with frontier_handle:
+        for row, raw_line in frontier_rows_source:
             compact = _compact_row(row)
             if _cell(row) in frontier_cells:
                 frontier_rows.append(compact)
-                frontier_handle.write(json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n")
+                if raw_line is None:
+                    frontier_handle.write(
+                        json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
+                    )
+                else:
+                    frontier_handle.write(raw_line)
     frontier_rows.sort(key=lambda row: str(row["strategy_id"]))
     _write_parquet(output / "pareto_cells.parquet", [
         {"positive_weeks": w, "positive_months": m, "joint_positive_above_spy_years": y}
@@ -304,7 +341,12 @@ def reduce_atlas_run(
 
     reserve_limit = 50_000
     reserve_rows: list[dict[str, object]] = []
-    for row in _read_rows(results_path):
+    reserve_rows_source = (
+        ((row, None) for row in _read_rows(results_path))
+        if verify_row_hashes
+        else _read_rows_with_raw_lines(results_path)
+    )
+    for row, _raw_line in reserve_rows_source:
         cell = _cell(row)
         if cell in frontier_cells:
             continue

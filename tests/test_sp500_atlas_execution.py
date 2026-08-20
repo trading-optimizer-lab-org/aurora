@@ -315,6 +315,11 @@ def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
 
     assert summary["verified_recipe_count"] == 8
     assert summary["row_hash_verification_mode"] == "artifact_file_hash_bound"
+    expected_results = b"".join(
+        (shards / f"shard-{index}" / "results.jsonl").read_bytes()
+        for index in range(4)
+    )
+    assert (tmp_path / "out" / "results.jsonl").read_bytes() == expected_results
 
 
 def test_reducer_near_frontier_checks_exact_unit_cube() -> None:
