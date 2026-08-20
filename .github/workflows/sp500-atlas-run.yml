@@ -89,6 +89,7 @@ env:
 
 jobs:
   preflight:
+    if: ${{ inputs.launch_authorization != 'RECOVER_EXISTING_ATLAS_ARTIFACTS' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
@@ -348,7 +349,7 @@ jobs:
           retention-days: 90
 
   pilot_verify:
-    if: ${{ inputs.run_mode == 'pilot_verify' }}
+    if: ${{ inputs.run_mode == 'pilot_verify' && inputs.launch_authorization != 'RECOVER_EXISTING_ATLAS_ARTIFACTS' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -396,6 +397,109 @@ jobs:
           path: outputs
           if-no-files-found: error
           retention-days: 90
+
+  recover_existing:
+    if: ${{ inputs.run_mode == 'pilot_verify' && inputs.launch_authorization == 'RECOVER_EXISTING_ATLAS_ARTIFACTS' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - name: Verify recovery authorization and immutable commit
+        shell: bash
+        env:
+          REQUESTED_COMMIT: ${{ inputs.commit_sha }}
+          RECOVERY_AUTHORIZATION: ${{ inputs.launch_authorization }}
+          SOURCE_RUN_ID: ${{ inputs.pilot_source_run_id }}
+        run: |
+          set -euo pipefail
+          test "$REQUESTED_COMMIT" = "$GITHUB_SHA"
+          test "$RECOVERY_AUTHORIZATION" = "RECOVER_EXISTING_ATLAS_ARTIFACTS"
+          [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-preflight
+          path: ${{ runner.temp }}/preflight
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.pilot_source_run_id }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-atlas-shard-*
+          path: ${{ runner.temp }}/shards
+          merge-multiple: false
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.pilot_source_run_id }}
+      - name: Verify existing train-only plan before reduction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from aurora.infra.sp500_megarun.atlas_execution_contract import load_plan
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "preflight"
+          plan = load_plan(root / "plan" / "atlas_run_plan.json")
+          assert plan.train_end == "2010-12-31"
+          assert plan.validation_opened is False
+          assert plan.locked_opened is False
+          assert plan.total_shards == 360
+          print(json.dumps({
+              "plan_sha256": plan.plan_sha256,
+              "requested_recipe_count": plan.requested_recipe_count,
+              "total_shards": plan.total_shards,
+              "validation_opened": False,
+              "locked_opened": False,
+          }, sort_keys=True))
+          PY
+      - name: Reduce existing shard artifacts without re-evaluation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/reduce_sp500_atlas_run.py \
+            --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
+            --partitions-root "$RUNNER_TEMP/shards" \
+            --output-dir outputs/final
+      - name: Verify recovered reduction receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from aurora.infra.sp500_megarun.atlas_execution_contract import load_plan
+
+          plan = load_plan(
+              Path(os.environ["RUNNER_TEMP"])
+              / "preflight"
+              / "plan"
+              / "atlas_run_plan.json"
+          )
+          receipt = json.loads(Path("outputs/final/reduction_receipt.json").read_text(encoding="utf-8"))
+          assert receipt["accepted"] is True
+          assert receipt["plan_sha256"] == plan.plan_sha256
+          assert receipt["verified_recipe_count"] == plan.requested_recipe_count
+          assert receipt["verified_shard_count"] == plan.total_shards
+          assert receipt["validation_opened"] is False
+          assert receipt["locked_opened"] is False
+          print(json.dumps(receipt, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-recovered-final-results-${{ inputs.pilot_source_run_id }}
+          path: outputs/final
+          if-no-files-found: error
+          retention-days: 90
+
   evaluate_a:
     needs: preflight
     if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}

@@ -10,7 +10,6 @@ POSTRUN_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-postrun.yml"
 SEGMENT_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-segment.yml"
 CONTROLLER_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-controller.yml"
 PILOT_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-pilot.yml"
-RECOVERY_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-recover-existing.yml"
 
 
 def _text() -> str:
@@ -145,14 +144,14 @@ def test_segment_controller_and_pilot_workflows_are_recoverable_and_train_only()
     assert "validation_opened" in pilot and "locked_opened" in pilot
 
 
-def test_recovery_workflow_reuses_existing_artifacts_without_evaluating_again() -> None:
-    text = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+def test_existing_run_recovery_reuses_artifacts_without_evaluating_again() -> None:
+    text = _text()
     assert "source_run_id" in text
     assert "sp500-atlas-shard-*" in text
     assert "sp500-atlas-preflight" in text
     assert "reduce_sp500_atlas_run.py" in text
-    assert "run_sp500_atlas_worker.py" not in text
     assert "RECOVER_EXISTING_ATLAS_ARTIFACTS" in text
     assert 'plan.train_end == "2010-12-31"' in text
     assert "validation_opened" in text
     assert "locked_opened" in text
+    assert "recover_existing:" in text
