@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { authorizePath, authorizeSync } from "./auth";
 import { encodeCursor } from "./db";
+import { assertBatch } from "./sync";
 
 describe("dashboard Worker access", () => {
   it("rejects paths without the exact secret segment", () => {
@@ -23,5 +24,10 @@ describe("dashboard Worker access", () => {
     const request = new Request("https://example.test/internal/sync/batch", { headers: { Authorization: "Bearer sync-secret" } });
     expect(authorizeSync(request, "sync-secret")).toBe(true);
     expect(authorizeSync(request, "other-secret")).toBe(false);
+  });
+
+  it("rejects unbounded or unknown ingestion batches", () => {
+    expect(() => assertBatch({ schema_version: 2 })).toThrow("unsupported sync schema");
+    expect(() => assertBatch({ schema_version: 1, workflows: [], runs: [], jobs: [], artifacts: [], results: [], archives: Array.from({ length: 501 }, () => ({})) })).toThrow("archives batch too large");
   });
 });

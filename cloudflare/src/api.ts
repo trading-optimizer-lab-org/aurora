@@ -1,6 +1,7 @@
 import { authorizeSync } from "./auth";
 import { queryArtifacts, queryHealth, queryOverview, queryResults, queryRunDetail, queryRuns, queryWorkflows } from "./db";
 import type { Env } from "./env";
+import { ingestBatch } from "./sync";
 
 function json(data: unknown, status = 200, extra: HeadersInit = {}): Response {
   const headers = new Headers(extra);
@@ -30,7 +31,12 @@ export async function handleApi(request: Request, env: Env, apiPath: string): Pr
   if (apiPath === "/api/results" && request.method === "GET") return json(await queryResults(env, url.searchParams));
   if (apiPath === "/internal/sync/batch" && request.method === "POST") {
     if (!authorizeSync(request, env.DASHBOARD_SYNC_TOKEN)) return error("not found", 404);
-    return error("sync endpoint is not installed", 501);
+    try {
+      const body = await request.json();
+      return json(await ingestBatch(env, body));
+    } catch (exc) {
+      return error(exc instanceof Error ? exc.message : "invalid sync batch", 400);
+    }
   }
   if (apiPath.startsWith("/internal/")) return error("not found", 404);
   return error("not found", 404);
