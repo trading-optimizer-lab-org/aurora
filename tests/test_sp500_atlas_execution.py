@@ -306,6 +306,16 @@ def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
         raise AssertionError("artifact recovery must not rehash every row")
 
     monkeypatch.setattr("scripts.reduce_sp500_atlas_run.canonical_sha256", fail_if_rehashed)
+    import scripts.reduce_sp500_atlas_run as reducer
+
+    original_sha256_file = reducer._sha256_file
+
+    def fail_if_source_rehashed(path: Path, *args: object, **kwargs: object) -> str:
+        if path.parent.name.startswith("shard-"):
+            raise AssertionError("artifact recovery must hash each source while reading it")
+        return original_sha256_file(path)
+
+    monkeypatch.setattr("scripts.reduce_sp500_atlas_run._sha256_file", fail_if_source_rehashed)
     summary = reduce_atlas_run(
         plan_path=plan_path,
         partitions_root=shards,

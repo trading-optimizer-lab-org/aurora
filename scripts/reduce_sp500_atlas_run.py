@@ -9,6 +9,7 @@ from itertools import product
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -71,9 +72,15 @@ def _read_rows(path: Path) -> Iterable[dict[str, object]]:
             yield row
 
 
-def _read_rows_with_raw_lines(path: Path) -> Iterable[tuple[dict[str, object], bytes]]:
+def _read_rows_with_raw_lines(
+    path: Path,
+    *,
+    file_digest: Any | None = None,
+) -> Iterable[tuple[dict[str, object], bytes]]:
     with Path(path).open("rb") as handle:
         for line_number, raw_line in enumerate(handle, start=1):
+            if file_digest is not None:
+                file_digest.update(raw_line)
             if not raw_line.strip():
                 continue
             row = json.loads(raw_line)
@@ -244,10 +251,15 @@ def reduce_atlas_run(
                 if receipt.get(key) != value:
                     raise ValueError(f"ATLAS_REDUCER_RECEIPT_MISMATCH:{shard.shard_index}:{key}")
             result_path = _find_result_path(receipt_path)
-            if _sha256_file(result_path) != receipt.get("result_sha256"):
+            file_digest = None if verify_row_hashes else hashlib.sha256()
+            if verify_row_hashes and _sha256_file(result_path) != receipt.get("result_sha256"):
                 raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard.shard_index}")
             shard_count = 0
-            raw_rows = _read_rows(result_path) if verify_row_hashes else _read_rows_with_raw_lines(result_path)
+            raw_rows = (
+                _read_rows(result_path)
+                if verify_row_hashes
+                else _read_rows_with_raw_lines(result_path, file_digest=file_digest)
+            )
             for item in raw_rows:
                 if verify_row_hashes:
                     row = item
@@ -274,6 +286,8 @@ def reduce_atlas_run(
                     result_handle.write(raw_line)
                 row_count += 1
                 shard_count += 1
+            if file_digest is not None and file_digest.hexdigest() != receipt.get("result_sha256"):
+                raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard.shard_index}")
             if shard_count != shard.expected_recipe_count:
                 raise ValueError(f"ATLAS_REDUCER_ROW_COUNT_INVALID:{shard.shard_index}")
             print(
