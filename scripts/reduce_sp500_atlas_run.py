@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.json as pajson
 
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.atlas_execution_contract import load_plan
@@ -87,6 +89,36 @@ def _read_rows_with_raw_lines(
             if not isinstance(row, dict):
                 raise ValueError(f"ATLAS_REDUCER_ROW_OBJECT_REQUIRED:{line_number}")
             yield row, raw_line
+
+
+def _read_rows_with_arrow_raw_lines(
+    path: Path,
+    *,
+    file_digest: Any | None = None,
+) -> Iterable[tuple[dict[str, object], bytes]]:
+    """Decode a recovery shard with Arrow while preserving its raw lines.
+
+    Worker result files are already bound to an immutable artifact hash.  The
+    recovery path therefore needs the raw bytes for exact preservation and a
+    structural decode for coverage/metric checks, but it does not need Python's
+    per-line JSON decoder.  Arrow performs that decode in native code.
+    """
+
+    raw_bytes = Path(path).read_bytes()
+    if file_digest is not None:
+        file_digest.update(raw_bytes)
+    raw_lines = [line for line in raw_bytes.splitlines(keepends=True) if line.strip()]
+    table = pajson.read_json(
+        pa.BufferReader(raw_bytes),
+        read_options=pajson.ReadOptions(use_threads=True),
+    )
+    rows = table.to_pylist()
+    if len(rows) != len(raw_lines):
+        raise ValueError("ATLAS_REDUCER_ARROW_ROW_COUNT_INVALID")
+    for line_number, (row, raw_line) in enumerate(zip(rows, raw_lines), start=1):
+        if not isinstance(row, dict):
+            raise ValueError(f"ATLAS_REDUCER_ROW_OBJECT_REQUIRED:{line_number}")
+        yield row, raw_line
 
 
 def _cell(row: dict[str, object]) -> tuple[int, int, int]:
@@ -265,7 +297,7 @@ def reduce_atlas_run(
             raw_rows = (
                 _read_rows(result_path)
                 if verify_row_hashes
-                else _read_rows_with_raw_lines(result_path, file_digest=file_digest)
+                else _read_rows_with_arrow_raw_lines(result_path, file_digest=file_digest)
             )
             for item in raw_rows:
                 if verify_row_hashes:

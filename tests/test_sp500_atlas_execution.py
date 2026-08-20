@@ -309,7 +309,7 @@ def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
     import scripts.reduce_sp500_atlas_run as reducer
 
     original_sha256_file = reducer._sha256_file
-    original_reader = reducer._read_rows_with_raw_lines
+    original_reader = reducer._read_rows_with_arrow_raw_lines
     reader_paths: list[Path] = []
 
     def track_reader(path: Path, **kwargs: object) -> object:
@@ -322,7 +322,7 @@ def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
         return original_sha256_file(path)
 
     monkeypatch.setattr("scripts.reduce_sp500_atlas_run._sha256_file", fail_if_source_rehashed)
-    monkeypatch.setattr(reducer, "_read_rows_with_raw_lines", track_reader)
+    monkeypatch.setattr(reducer, "_read_rows_with_arrow_raw_lines", track_reader)
     summary = reduce_atlas_run(
         plan_path=plan_path,
         partitions_root=shards,
