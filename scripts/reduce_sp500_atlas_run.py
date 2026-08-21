@@ -483,6 +483,135 @@ def _write_parquet(path: Path, rows: list[dict[str, object]]) -> None:
     pd.DataFrame(rows).to_parquet(path, index=False)
 
 
+def _write_reference_only_outputs(
+    *,
+    output: Path,
+    plan: Any,
+    source_shards: list[dict[str, object]],
+    source_run_id: str | None,
+    row_count: int,
+    cells: set[tuple[int, int, int]],
+    redundant_shard_receipt_count: int,
+) -> dict[str, object]:
+    """Write a small recovery receipt that points to immutable source shards.
+
+    The source run already retains every complete ``results.jsonl`` file.  A
+    recovery run must therefore verify and index those files, not duplicate
+    them into one huge output or calculate a full frontier in one public
+    runner.  The compact metric-cell table remains available for audit.
+    """
+
+    source_index: dict[str, object] = {
+        "schema_version": 1,
+        "storage_mode": "source_artifacts_referenced",
+        "source_run_id": source_run_id,
+        "source_artifact_pattern": "sp500-atlas-shard-*",
+        "plan_sha256": plan.plan_sha256,
+        "catalog_manifest_sha256": plan.catalog_manifest_sha256,
+        "row_count": row_count,
+        "shard_count": len(source_shards),
+        "validation_opened": False,
+        "locked_opened": False,
+        "shards": source_shards,
+    }
+    source_index_sha256 = canonical_sha256(source_index)
+    source_index["source_index_sha256"] = source_index_sha256
+    (output / "source_results_index.json").write_text(
+        json.dumps(source_index, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    dataset_manifest = {
+        "schema_version": 1,
+        "storage_mode": "source_artifacts_referenced",
+        "results_path": None,
+        "results_sha256": None,
+        "source_run_id": source_run_id,
+        "source_index_path": "../source_results_index.json",
+        "source_index_sha256": source_index_sha256,
+        "row_count": row_count,
+        "streaming": False,
+        "row_hash_verification_mode": "artifact_file_hash_bound",
+        "row_hashes_recomputed": False,
+        "result_file_hashes_verified": True,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+    dataset = output / "all_results_dataset"
+    dataset.mkdir()
+    (dataset / "manifest.json").write_text(
+        json.dumps(dataset_manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (output / "all_results_manifest.json").write_text(
+        json.dumps(dataset_manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (output / "coverage_report.json").write_text(
+        json.dumps(
+            {
+                "requested_recipe_count": plan.requested_recipe_count,
+                "verified_recipe_count": row_count,
+                "verified_shard_count": len(source_shards),
+                "missing_ordinals": 0,
+                "duplicate_ordinals": 0,
+                "conflicts": 0,
+                "redundant_shard_receipt_count": redundant_shard_receipt_count,
+                "storage_mode": "source_artifacts_referenced",
+                "source_run_id": source_run_id,
+                "validation_opened": False,
+                "locked_opened": False,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_parquet(
+        output / "descriptive_metrics.parquet",
+        [
+            {
+                "positive_weeks": week,
+                "positive_months": month,
+                "joint_positive_above_spy_years": year,
+            }
+            for week, month, year in sorted(cells, reverse=True)
+        ],
+    )
+    summary: dict[str, object] = {
+        "schema_version": 1,
+        "accepted": True,
+        "plan_sha256": plan.plan_sha256,
+        "catalog_manifest_sha256": plan.catalog_manifest_sha256,
+        "selection_sha256": plan.selection_sha256,
+        "requested_recipe_count": plan.requested_recipe_count,
+        "verified_recipe_count": row_count,
+        "verified_shard_count": len(source_shards),
+        "pareto_recipe_count": None,
+        "pareto_cell_count": None,
+        "reserve_recipe_count": 0,
+        "redundant_shard_receipt_count": redundant_shard_receipt_count,
+        "results_sha256": None,
+        "frontier_sha256": None,
+        "storage_mode": "source_artifacts_referenced",
+        "source_run_id": source_run_id,
+        "source_index_sha256": source_index_sha256,
+        "unique_metric_cells": len(cells),
+        "derived_frontier_deferred": True,
+        "row_hash_verification_mode": "artifact_file_hash_bound",
+        "row_hashes_recomputed": False,
+        "result_file_hashes_verified": True,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+    (output / "reduction_receipt.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return summary
+
+
 def reduce_atlas_run(
     *,
     plan_path: Path,
@@ -651,7 +780,8 @@ def reduce_atlas_run(
                         raise ValueError(f"ATLAS_REDUCER_DUPLICATE_ORDINAL:{verified_ordinal}")
                     seen.add(verified_ordinal)
                     cells.add(_cell(row))
-                    cached_rows.append(_recovery_frontier_row(row))
+                    if not reference_only:
+                        cached_rows.append(_recovery_frontier_row(row))
                     row_count += 1
                     shard_count += 1
                 if shard_count != shard.expected_recipe_count:
@@ -684,6 +814,16 @@ def reduce_atlas_run(
         ),
         flush=True,
     )
+    if reference_only:
+        return _write_reference_only_outputs(
+            output=output,
+            plan=plan,
+            source_shards=source_shards,
+            source_run_id=source_run_id,
+            row_count=row_count,
+            cells=cells,
+            redundant_shard_receipt_count=redundant_shard_receipt_count,
+        )
     frontier_cells = _pareto_cells(cells)
     print(
         json.dumps(
