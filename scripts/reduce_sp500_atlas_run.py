@@ -370,7 +370,7 @@ def _iter_recovery_shard_payloads(
     """Process recovery shards in bounded parallel batches."""
 
     shards = list(plan.shards)
-    batch_size = max(1, workers * 2)
+    batch_size = max(1, workers)
     for start in range(0, len(shards), batch_size):
         batch = shards[start : start + batch_size]
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -545,7 +545,7 @@ def reduce_atlas_run(
     recovery_payloads = None
     if not verify_row_hashes:
         try:
-            recovery_workers = max(1, int(os.environ.get("ATLAS_RECOVERY_WORKERS", "8")))
+            recovery_workers = max(1, int(os.environ.get("ATLAS_RECOVERY_WORKERS", "32")))
         except ValueError as exc:
             raise ValueError("ATLAS_REDUCER_RECOVERY_WORKERS_INVALID") from exc
         recovery_payloads = iter(
