@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Iterable
+from contextlib import nullcontext
 import hashlib
 from itertools import product
 import json
@@ -488,7 +489,11 @@ def reduce_atlas_run(
     partitions_root: Path,
     output_dir: Path,
     verify_row_hashes: bool = True,
+    reference_only: bool = False,
+    source_run_id: str | None = None,
 ) -> dict[str, object]:
+    if reference_only and verify_row_hashes:
+        raise ValueError("ATLAS_REDUCER_REFERENCE_ONLY_REQUIRES_ARTIFACT_HASH_MODE")
     plan = load_plan(Path(plan_path))
     print(
         json.dumps(
@@ -533,6 +538,7 @@ def reduce_atlas_run(
     seen: set[int] = set()
     cells: set[tuple[int, int, int]] = set()
     row_count = 0
+    source_shards: list[dict[str, object]] = []
     # Recovery mode already binds every source file to the immutable worker
     # receipt.  Recovery workers decode the compact projection while each
     # source shard is already in memory, so the frontier/reserve pass can use
@@ -541,10 +547,15 @@ def reduce_atlas_run(
     # verification.
     cached_rows: list[dict[str, object]] | None = [] if not verify_row_hashes else None
     results_digest = hashlib.sha256() if not verify_row_hashes else None
-    if verify_row_hashes:
-        result_handle = results_path.open("x", encoding="utf-8", newline="\n")
-    else:
-        result_handle = results_path.open("xb")
+    result_handle_context = (
+        nullcontext(None)
+        if reference_only
+        else (
+            results_path.open("x", encoding="utf-8", newline="\n")
+            if verify_row_hashes
+            else results_path.open("xb")
+        )
+    )
     recovery_payloads = None
     if not verify_row_hashes:
         try:
@@ -558,7 +569,7 @@ def reduce_atlas_run(
                 workers=recovery_workers,
             )
         )
-    with result_handle:
+    with result_handle_context as result_handle:
         for shard in plan.shards:
             receipt_path = by_index[shard.shard_index]
             receipt = json.loads(receipt_path.read_text("utf-8"))
@@ -576,6 +587,18 @@ def reduce_atlas_run(
             for key, value in expected.items():
                 if receipt.get(key) != value:
                     raise ValueError(f"ATLAS_REDUCER_RECEIPT_MISMATCH:{shard.shard_index}:{key}")
+            if reference_only:
+                source_shards.append(
+                    {
+                        "artifact_name": receipt_path.parent.name,
+                        "result_path": "results.jsonl",
+                        "result_sha256": receipt.get("result_sha256"),
+                        "shard_index": shard.shard_index,
+                        "start_ordinal": shard.start_ordinal,
+                        "stop_ordinal": shard.stop_ordinal,
+                        "expected_recipe_count": shard.expected_recipe_count,
+                    }
+                )
             result_path = _find_result_path(receipt_path)
             if verify_row_hashes:
                 if _sha256_file(result_path) != receipt.get("result_sha256"):
@@ -594,6 +617,7 @@ def reduce_atlas_run(
                         raise ValueError(f"ATLAS_REDUCER_DUPLICATE_ORDINAL:{ordinal}")
                     seen.add(ordinal)
                     cells.add(_cell(row))
+                    assert result_handle is not None
                     result_handle.write(
                         json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
                     )
@@ -608,9 +632,11 @@ def reduce_atlas_run(
                 payload_shard_index, raw_bytes, projected_rows = next(recovery_payloads)
                 if payload_shard_index != shard.shard_index:
                     raise ValueError(f"ATLAS_REDUCER_RECOVERY_ORDER_INVALID:{shard.shard_index}")
-                result_handle.write(raw_bytes)
-                assert results_digest is not None
-                results_digest.update(raw_bytes)
+                if not reference_only:
+                    assert result_handle is not None
+                    result_handle.write(raw_bytes)
+                    assert results_digest is not None
+                    results_digest.update(raw_bytes)
                 shard_count = 0
                 for row in projected_rows:
                     verified_ordinal = _verify_row(
@@ -730,14 +756,36 @@ def reduce_atlas_run(
     _write_parquet(output / "descriptive_metrics.parquet", metrics)
     dataset = output / "all_results_dataset"
     dataset.mkdir()
-    if verify_row_hashes:
+    if reference_only:
+        results_sha256 = None
+        source_index = {
+            "schema_version": 1,
+            "storage_mode": "source_artifacts_referenced",
+            "source_run_id": source_run_id,
+            "source_artifact_pattern": "sp500-atlas-shard-*",
+            "plan_sha256": plan.plan_sha256,
+            "catalog_manifest_sha256": plan.catalog_manifest_sha256,
+            "row_count": row_count,
+            "shard_count": len(source_shards),
+            "validation_opened": False,
+            "locked_opened": False,
+            "shards": source_shards,
+        }
+        source_index_sha256 = canonical_sha256(source_index)
+        source_index["source_index_sha256"] = source_index_sha256
+        (output / "source_results_index.json").write_text(
+            json.dumps(source_index, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    elif verify_row_hashes:
         results_sha256 = _sha256_file(results_path)
     else:
         assert results_digest is not None
         results_sha256 = results_digest.hexdigest()
     dataset_manifest = {
         "schema_version": 1,
-        "results_path": "../results.jsonl",
+        "storage_mode": "source_artifacts_referenced" if reference_only else "combined_results_file",
+        "results_path": None if reference_only else "../results.jsonl",
         "results_sha256": results_sha256,
         "row_count": row_count,
         "streaming": True,
@@ -749,6 +797,14 @@ def reduce_atlas_run(
         "validation_opened": False,
         "locked_opened": False,
     }
+    if reference_only:
+        dataset_manifest.update(
+            {
+                "source_run_id": source_run_id,
+                "source_index_path": "../source_results_index.json",
+                "source_index_sha256": source_index_sha256,
+            }
+        )
     (dataset / "manifest.json").write_text(json.dumps(dataset_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (output / "all_results_manifest.json").write_text(json.dumps(dataset_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (output / "coverage_report.json").write_text(json.dumps({
@@ -776,6 +832,7 @@ def reduce_atlas_run(
         "reserve_recipe_count": len(reserve_rows),
         "redundant_shard_receipt_count": redundant_shard_receipt_count,
         "results_sha256": results_sha256,
+        "storage_mode": "source_artifacts_referenced" if reference_only else "combined_results_file",
         "frontier_sha256": _sha256_file(frontier_path),
         "row_hash_verification_mode": (
             "canonical_row_hash" if verify_row_hashes else "artifact_file_hash_bound"
@@ -785,6 +842,13 @@ def reduce_atlas_run(
         "validation_opened": False,
         "locked_opened": False,
     }
+    if reference_only:
+        summary.update(
+            {
+                "source_run_id": source_run_id,
+                "source_index_sha256": source_index_sha256,
+            }
+        )
     (output / "reduction_receipt.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return summary
 
@@ -799,6 +863,12 @@ def main() -> int:
         action="store_true",
         help="Recovery-only mode: bind rows to verified result-file hashes.",
     )
+    parser.add_argument(
+        "--reference-only",
+        action="store_true",
+        help="Do not duplicate source results.jsonl; write a verified source-artifact index.",
+    )
+    parser.add_argument("--source-run-id", help="Run containing the immutable source artifacts.")
     args = parser.parse_args()
     if args.artifact_file_hash_only and os.environ.get("ATLAS_RECOVERY_FAST_PATH") != "1":
         parser.error("--artifact-file-hash-only requires ATLAS_RECOVERY_FAST_PATH=1")
@@ -809,6 +879,11 @@ def main() -> int:
     }
     if args.artifact_file_hash_only:
         reducer_kwargs["verify_row_hashes"] = False
+    if args.reference_only:
+        if not args.artifact_file_hash_only:
+            parser.error("--reference-only requires --artifact-file-hash-only")
+        reducer_kwargs["reference_only"] = True
+        reducer_kwargs["source_run_id"] = args.source_run_id
     print(json.dumps(reduce_atlas_run(**reducer_kwargs), indent=2, sort_keys=True))
     return 0
 

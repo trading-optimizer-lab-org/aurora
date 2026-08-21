@@ -340,6 +340,47 @@ def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
     assert (tmp_path / "out" / "results.jsonl").read_bytes() == expected_results
 
 
+def test_reference_only_recovery_keeps_source_artifact_index_without_concat(
+    tmp_path: Path,
+) -> None:
+    catalog, receipt = _evidence()
+    plan = build_run_plan(
+        catalog_manifest=catalog,
+        calibration_receipt=receipt,
+        target_end_iso="2026-08-20T07:31:00+02:00",
+        implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+        total_shards=4,
+        selection=_selection(),
+    )
+    plan_path = tmp_path / "plan.json"
+    write_plan(plan_path, plan)
+    shards = tmp_path / "shards"
+    shards.mkdir()
+    for index in range(4):
+        _write_shard(shards, plan, index)
+
+    output = tmp_path / "reference-final"
+    summary = reduce_atlas_run(
+        plan_path=plan_path,
+        partitions_root=shards,
+        output_dir=output,
+        verify_row_hashes=False,
+        reference_only=True,
+        source_run_id="32152827229",
+    )
+
+    source_index = json.loads((output / "source_results_index.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output / "all_results_manifest.json").read_text(encoding="utf-8"))
+    assert summary["storage_mode"] == "source_artifacts_referenced"
+    assert summary["source_run_id"] == "32152827229"
+    assert source_index["row_count"] == 8
+    assert source_index["shard_count"] == 4
+    assert len(source_index["shards"]) == 4
+    assert manifest["results_path"] is None
+    assert manifest["source_index_path"] == "../source_results_index.json"
+    assert not (output / "results.jsonl").exists()
+
+
 def test_recovery_decoder_skips_large_nested_annual_rows() -> None:
     import scripts.reduce_sp500_atlas_run as reducer
 

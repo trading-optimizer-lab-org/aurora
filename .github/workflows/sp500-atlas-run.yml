@@ -476,7 +476,9 @@ jobs:
             --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
             --partitions-root "$RUNNER_TEMP/shards" \
             --output-dir outputs/final \
-            --artifact-file-hash-only
+            --artifact-file-hash-only \
+            --reference-only \
+            --source-run-id "${{ inputs.pilot_source_run_id }}"
       - name: Verify recovered reduction receipt
         shell: bash
         run: |
