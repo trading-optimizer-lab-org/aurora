@@ -9,6 +9,7 @@ contains no market-data loading and is safe to use in preflight.
 from __future__ import annotations
 
 from datetime import datetime
+from functools import cached_property
 import json
 from pathlib import Path
 from typing import Literal, Mapping, Sequence
@@ -70,7 +71,7 @@ class AtlasRunPlanV1(FrozenModel):
     validation_opened: Literal[False]
     locked_opened: Literal[False]
 
-    @property
+    @cached_property
     def plan_sha256(self) -> str:
         return canonical_sha256(self)
 

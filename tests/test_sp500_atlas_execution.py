@@ -161,6 +161,39 @@ def test_plan_round_trip_and_hash(tmp_path: Path) -> None:
     assert plan.matrix_groups() == ((0, 3), (1,), (2,))
 
 
+def test_loaded_plan_sha256_is_computed_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aurora.infra.sp500_megarun.atlas_execution_contract as contract
+
+    catalog, receipt = _evidence()
+    plan = build_run_plan(
+        catalog_manifest=catalog,
+        calibration_receipt=receipt,
+        target_end_iso="2026-08-20T07:31:00+02:00",
+        implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+        total_shards=4,
+        selection=_selection(),
+    )
+    plan_path = tmp_path / "plan.json"
+    write_plan(plan_path, plan)
+
+    original = contract.canonical_sha256
+    plan_hash_calls = 0
+
+    def count_plan_hash(value: object) -> str:
+        nonlocal plan_hash_calls
+        if isinstance(value, contract.AtlasRunPlanV1):
+            plan_hash_calls += 1
+        return original(value)
+
+    monkeypatch.setattr(contract, "canonical_sha256", count_plan_hash)
+    loaded = contract.load_plan(plan_path)
+
+    assert loaded.plan_sha256 == loaded.plan_sha256
+    assert plan_hash_calls == 1
+
+
 def test_plan_rejects_warm_calibration_for_conservative_sizing() -> None:
     catalog, receipt = _evidence()
     receipt["recommended_mode"] = "component_warm"
