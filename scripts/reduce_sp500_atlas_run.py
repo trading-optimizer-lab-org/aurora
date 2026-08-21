@@ -9,6 +9,9 @@ from itertools import product
 import json
 import os
 from pathlib import Path
+import re
+import shutil
+import subprocess
 from typing import Any
 
 import pandas as pd
@@ -287,6 +290,52 @@ def _recovery_frontier_row(row: dict[str, object]) -> dict[str, object]:
     return compact
 
 
+_RECOVERY_JQ_FILTER = (
+    "{plan_sha256,shard_index,validation_opened,locked_opened,result_sha256,"
+    "ordinal,positive_weeks,positive_months,joint_positive_above_spy_years,"
+    "strategy_id,scientific_recipe_sha256,raw_ordinal,total_weeks,total_months,"
+    "total_years,positive_week_fraction,positive_month_fraction,"
+    "joint_positive_above_spy_fraction,annualized_strategy_return,"
+    "annualized_alpha,weeks_beating_spy,week_count,components,composition}"
+)
+
+
+def _iter_recovery_projected_rows(path: Path) -> Iterable[dict[str, object]]:
+    """Project only reducer fields with jq on the GitHub runner.
+
+    The complete source line is verified and copied separately.  jq parses
+    JSON in native code and discards the large annual history before Python
+    sees it.  Local/test environments use the Python fallback so the
+    repository remains self-contained.
+    """
+
+    jq = shutil.which("jq") if os.environ.get("GITHUB_ACTIONS") == "true" else None
+    if jq is None:
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            raise RuntimeError("ATLAS_REDUCER_JQ_REQUIRED_ON_GITHUB_RUNNER")
+        for row, _ in _read_rows_with_recovery_raw_lines(path):
+            yield row
+        return
+
+    process = subprocess.Popen(
+        [jq, "-c", _RECOVERY_JQ_FILTER, str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdout is not None
+    for line_number, projected_line in enumerate(process.stdout, start=1):
+        if not projected_line.strip():
+            continue
+        row = json.loads(projected_line)
+        if not isinstance(row, dict):
+            raise ValueError(f"ATLAS_REDUCER_PROJECTED_ROW_OBJECT_REQUIRED:{line_number}")
+        yield row
+    stderr = process.stderr.read().decode("utf-8", errors="replace") if process.stderr is not None else ""
+    return_code = process.wait()
+    if return_code != 0:
+        raise ValueError(f"ATLAS_REDUCER_JQ_FAILED:{return_code}:{stderr[-500:]}")
+
+
 def _cell(row: dict[str, object]) -> tuple[int, int, int]:
     return (
         int(row["positive_weeks"]),
@@ -457,49 +506,64 @@ def reduce_atlas_run(
                 if receipt.get(key) != value:
                     raise ValueError(f"ATLAS_REDUCER_RECEIPT_MISMATCH:{shard.shard_index}:{key}")
             result_path = _find_result_path(receipt_path)
-            file_digest = None if verify_row_hashes else hashlib.sha256()
-            if verify_row_hashes and _sha256_file(result_path) != receipt.get("result_sha256"):
-                raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard.shard_index}")
-            shard_count = 0
-            raw_rows = (
-                _read_rows(result_path)
-                if verify_row_hashes
-                else _read_rows_with_recovery_raw_lines(result_path, file_digest=file_digest)
-            )
-            for item in raw_rows:
-                if verify_row_hashes:
-                    row = item
-                    raw_line = None
-                else:
-                    row, raw_line = item
-                ordinal = _verify_row(
-                    row,
-                    plan_sha256=plan.plan_sha256,
-                    shard_index=shard.shard_index,
-                    verify_result_hash=verify_row_hashes,
-                )
-                if ordinal < shard.start_ordinal or ordinal >= shard.stop_ordinal:
-                    raise ValueError(f"ATLAS_REDUCER_ORDINAL_OUT_OF_SHARD:{ordinal}")
-                if ordinal in seen:
-                    raise ValueError(f"ATLAS_REDUCER_DUPLICATE_ORDINAL:{ordinal}")
-                seen.add(ordinal)
-                cells.add(_cell(row))
-                if raw_line is None:
+            if verify_row_hashes:
+                if _sha256_file(result_path) != receipt.get("result_sha256"):
+                    raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard.shard_index}")
+                shard_count = 0
+                for row in _read_rows(result_path):
+                    ordinal = _verify_row(
+                        row,
+                        plan_sha256=plan.plan_sha256,
+                        shard_index=shard.shard_index,
+                        verify_result_hash=True,
+                    )
+                    if ordinal < shard.start_ordinal or ordinal >= shard.stop_ordinal:
+                        raise ValueError(f"ATLAS_REDUCER_ORDINAL_OUT_OF_SHARD:{ordinal}")
+                    if ordinal in seen:
+                        raise ValueError(f"ATLAS_REDUCER_DUPLICATE_ORDINAL:{ordinal}")
+                    seen.add(ordinal)
+                    cells.add(_cell(row))
                     result_handle.write(
                         json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
                     )
-                else:
-                    result_handle.write(raw_line)
-                    if results_digest is not None:
-                        results_digest.update(raw_line)
-                    if cached_rows is not None:
-                        cached_rows.append(_recovery_frontier_row(row))
-                row_count += 1
-                shard_count += 1
-            if file_digest is not None and file_digest.hexdigest() != receipt.get("result_sha256"):
-                raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard.shard_index}")
-            if shard_count != shard.expected_recipe_count:
-                raise ValueError(f"ATLAS_REDUCER_ROW_COUNT_INVALID:{shard.shard_index}")
+                    row_count += 1
+                    shard_count += 1
+            else:
+                # The worker receipt binds this immutable raw file.  Verify
+                # and copy it as bytes, then use jq's native parser only for
+                # the small fields needed to build the frontier/reserve.
+                raw_bytes = result_path.read_bytes()
+                if not raw_bytes.endswith(b"\n") or raw_bytes.count(b"\n") != shard.expected_recipe_count:
+                    raise ValueError(f"ATLAS_REDUCER_ROW_COUNT_INVALID:{shard.shard_index}")
+                if re.search(rb'"validation_opened"\s*:\s*true', raw_bytes):
+                    raise ValueError(f"ATLAS_REDUCER_ROW_BOUNDARY_OPEN:{shard.shard_index}:validation")
+                if re.search(rb'"locked_opened"\s*:\s*true', raw_bytes):
+                    raise ValueError(f"ATLAS_REDUCER_ROW_BOUNDARY_OPEN:{shard.shard_index}:locked")
+                if hashlib.sha256(raw_bytes).hexdigest() != receipt.get("result_sha256"):
+                    raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard.shard_index}")
+                result_handle.write(raw_bytes)
+                assert results_digest is not None
+                results_digest.update(raw_bytes)
+                shard_count = 0
+                for row in _iter_recovery_projected_rows(result_path):
+                    ordinal = _verify_row(
+                        row,
+                        plan_sha256=plan.plan_sha256,
+                        shard_index=shard.shard_index,
+                        verify_result_hash=False,
+                    )
+                    if ordinal < shard.start_ordinal or ordinal >= shard.stop_ordinal:
+                        raise ValueError(f"ATLAS_REDUCER_ORDINAL_OUT_OF_SHARD:{ordinal}")
+                    if ordinal in seen:
+                        raise ValueError(f"ATLAS_REDUCER_DUPLICATE_ORDINAL:{ordinal}")
+                    seen.add(ordinal)
+                    cells.add(_cell(row))
+                    assert cached_rows is not None
+                    cached_rows.append(_recovery_frontier_row(row))
+                    row_count += 1
+                    shard_count += 1
+                if shard_count != shard.expected_recipe_count:
+                    raise ValueError(f"ATLAS_REDUCER_PROJECTED_ROW_COUNT_INVALID:{shard.shard_index}")
             print(
                 json.dumps(
                     {
