@@ -8,9 +8,10 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated
+from uuid import UUID
 
 import yaml
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from aurora.infra.github_performance.contracts import (
     FrozenModel,
@@ -19,6 +20,28 @@ from aurora.infra.github_performance.contracts import (
 )
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
+)
+
+
+_CONTROLLER_BINDING_FIELDS = (
+    "request_sha256",
+    "prompt_sha256",
+    "source_prompt_sha256",
+    "prompt_migration_sha256",
+    "prompt_policy_sha256",
+    "campaign_registry_sha256",
+    "campaign_definition_manifest_sha256",
+    "campaign_definition_sha256",
+    "campaign_definition_rehash_receipt_sha256",
+    "campaign_id",
+    "authority_id",
+    "execution_plan_sha256",
+    "execution_protocol_sha256",
+    "protected_commit_sha",
+    "github_controls_sha256",
+    "capacity_snapshot_sha256",
+    "request_queue_snapshot_sha256",
+    "authority_anchor_evidence_sha256",
 )
 
 
@@ -31,11 +54,42 @@ class CatalogAdmissionEvidenceV1(FrozenModel):
     manifest_verified: bool
     previous_regression_unresolved: bool
     workflow_uses_optimized_entrypoint: bool
+    request_sha256: Sha256 | None = None
+    prompt_sha256: Sha256 | None = None
+    source_prompt_sha256: Sha256 | None = None
+    prompt_migration_sha256: Sha256 | None = None
+    prompt_policy_sha256: Sha256 | None = None
+    campaign_registry_sha256: Sha256 | None = None
+    campaign_definition_manifest_sha256: Sha256 | None = None
+    campaign_definition_sha256: Sha256 | None = None
+    campaign_definition_rehash_receipt_sha256: Sha256 | None = None
+    campaign_id: Sha256 | None = None
+    authority_id: UUID | None = None
+    execution_plan_sha256: Sha256 | None = None
+    execution_protocol_sha256: Sha256 | None = None
+    protected_commit_sha: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{40}$",
+    )
+    github_controls_sha256: Sha256 | None = None
+    capacity_snapshot_sha256: Sha256 | None = None
+    request_queue_snapshot_sha256: Sha256 | None = None
+    authority_anchor_evidence_sha256: Sha256 | None = None
     qualification_only: bool = False
+
+    @model_validator(mode="after")
+    def _require_controller_binding_in_production(
+        self,
+    ) -> "CatalogAdmissionEvidenceV1":
+        if not self.qualification_only and any(
+            getattr(self, field) is None for field in _CONTROLLER_BINDING_FIELDS
+        ):
+            raise ValueError("CATALOG_CONTROLLER_BINDING_REQUIRED")
+        return self
 
     @property
     def evidence_sha256(self) -> str:
-        return canonical_sha256(self)
+        return canonical_sha256(self.model_dump(mode="json"))
 
 
 class CatalogAdmissionReportV1(FrozenModel):
@@ -47,9 +101,40 @@ class CatalogAdmissionReportV1(FrozenModel):
     admission_token_sha256: Sha256 | None
     expected_physical_component_builds: int
     expected_redundant_component_build_ratio: float
+    request_sha256: Sha256 | None = None
+    prompt_sha256: Sha256 | None = None
+    source_prompt_sha256: Sha256 | None = None
+    prompt_migration_sha256: Sha256 | None = None
+    prompt_policy_sha256: Sha256 | None = None
+    campaign_registry_sha256: Sha256 | None = None
+    campaign_definition_manifest_sha256: Sha256 | None = None
+    campaign_definition_sha256: Sha256 | None = None
+    campaign_definition_rehash_receipt_sha256: Sha256 | None = None
+    campaign_id: Sha256 | None = None
+    authority_id: UUID | None = None
+    execution_plan_sha256: Sha256 | None = None
+    execution_protocol_sha256: Sha256 | None = None
+    protected_commit_sha: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{40}$",
+    )
+    github_controls_sha256: Sha256 | None = None
+    capacity_snapshot_sha256: Sha256 | None = None
+    request_queue_snapshot_sha256: Sha256 | None = None
+    authority_anchor_evidence_sha256: Sha256 | None = None
     qualification_only: bool = False
     validation_opened: bool = False
     locked_opened: bool = False
+
+    @model_validator(mode="after")
+    def _require_controller_binding_in_production(
+        self,
+    ) -> "CatalogAdmissionReportV1":
+        if not self.qualification_only and any(
+            getattr(self, field) is None for field in _CONTROLLER_BINDING_FIELDS
+        ):
+            raise ValueError("CATALOG_CONTROLLER_BINDING_REQUIRED")
+        return self
 
 
 class CatalogRunPlanV1(FrozenModel):
@@ -157,6 +242,26 @@ def admit_catalog_run(
         ),
         expected_physical_component_builds=expected_physical,
         expected_redundant_component_build_ratio=redundant_ratio,
+        request_sha256=evidence.request_sha256,
+        prompt_sha256=evidence.prompt_sha256,
+        source_prompt_sha256=evidence.source_prompt_sha256,
+        prompt_migration_sha256=evidence.prompt_migration_sha256,
+        prompt_policy_sha256=evidence.prompt_policy_sha256,
+        campaign_registry_sha256=evidence.campaign_registry_sha256,
+        campaign_definition_manifest_sha256=(evidence.campaign_definition_manifest_sha256),
+        campaign_definition_sha256=evidence.campaign_definition_sha256,
+        campaign_definition_rehash_receipt_sha256=(
+            evidence.campaign_definition_rehash_receipt_sha256
+        ),
+        campaign_id=evidence.campaign_id,
+        authority_id=evidence.authority_id,
+        execution_plan_sha256=evidence.execution_plan_sha256,
+        execution_protocol_sha256=evidence.execution_protocol_sha256,
+        protected_commit_sha=evidence.protected_commit_sha,
+        github_controls_sha256=evidence.github_controls_sha256,
+        capacity_snapshot_sha256=evidence.capacity_snapshot_sha256,
+        request_queue_snapshot_sha256=evidence.request_queue_snapshot_sha256,
+        authority_anchor_evidence_sha256=(evidence.authority_anchor_evidence_sha256),
         qualification_only=evidence.qualification_only,
     )
 

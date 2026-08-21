@@ -9,6 +9,29 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _controller_binding_values() -> dict[str, object]:
+    return {
+        "request_sha256": "0" * 64,
+        "prompt_sha256": "1" * 64,
+        "source_prompt_sha256": "2" * 64,
+        "prompt_migration_sha256": "3" * 64,
+        "prompt_policy_sha256": "4" * 64,
+        "campaign_registry_sha256": "5" * 64,
+        "campaign_definition_manifest_sha256": "6" * 64,
+        "campaign_definition_sha256": "7" * 64,
+        "campaign_definition_rehash_receipt_sha256": "8" * 64,
+        "campaign_id": "9" * 64,
+        "authority_id": "018f47a2-6e91-7c34-8000-000000000001",
+        "execution_plan_sha256": "a" * 64,
+        "execution_protocol_sha256": "b" * 64,
+        "protected_commit_sha": "c" * 40,
+        "github_controls_sha256": "d" * 64,
+        "capacity_snapshot_sha256": "e" * 64,
+        "request_queue_snapshot_sha256": "f" * 64,
+        "authority_anchor_evidence_sha256": "0" * 64,
+    }
+
+
 def _valid_payload() -> dict[str, object]:
     return {
         "schema_version": "1",
@@ -258,6 +281,7 @@ def test_admission_issues_token_only_for_a_fully_optimized_run() -> None:
         manifest_verified=True,
         previous_regression_unresolved=False,
         workflow_uses_optimized_entrypoint=True,
+        **_controller_binding_values(),
     )
 
     accepted = admit_catalog_run(contract, valid_evidence)
@@ -265,6 +289,8 @@ def test_admission_issues_token_only_for_a_fully_optimized_run() -> None:
     assert accepted.violations == ()
     assert accepted.admission_token_sha256 is not None
     assert accepted.expected_physical_component_builds == 7_274
+    assert accepted.request_sha256 == valid_evidence.request_sha256
+    assert accepted.authority_id == valid_evidence.authority_id
 
     rejected = admit_catalog_run(
         contract,
@@ -281,6 +307,24 @@ def test_admission_issues_token_only_for_a_fully_optimized_run() -> None:
         "MEMORY_BUDGET_EXCEEDED",
         "PREVIOUS_REGRESSION_UNRESOLVED",
     )
+
+
+def test_production_admission_requires_complete_controller_binding() -> None:
+    from aurora.infra.sp500_megarun.catalog_admission import (
+        CatalogAdmissionEvidenceV1,
+    )
+
+    with pytest.raises(ValueError, match="CATALOG_CONTROLLER_BINDING_REQUIRED"):
+        CatalogAdmissionEvidenceV1(
+            estimated_tail_ratio_p99_p50=1.4,
+            estimated_result_bytes_per_recipe=400,
+            estimated_peak_memory_bytes=7_000_000_000,
+            available_memory_bytes=16_000_000_000,
+            cache_compatible=True,
+            manifest_verified=True,
+            previous_regression_unresolved=False,
+            workflow_uses_optimized_entrypoint=True,
+        )
 
 
 def test_legacy_catalog_workflow_must_delegate_to_optimized_entrypoint(
@@ -349,6 +393,7 @@ def test_admitted_plan_covers_every_worker_once() -> None:
         manifest_verified=True,
         previous_regression_unresolved=False,
         workflow_uses_optimized_entrypoint=True,
+        **_controller_binding_values(),
     )
 
     plan = build_catalog_run_plan(contract, evidence)
@@ -379,6 +424,7 @@ def test_admitted_resume_plan_uses_only_active_pending_workers() -> None:
         manifest_verified=True,
         previous_regression_unresolved=False,
         workflow_uses_optimized_entrypoint=True,
+        **_controller_binding_values(),
     )
     plan = build_catalog_run_plan(
         contract,
@@ -418,6 +464,7 @@ def test_plan_script_writes_immutable_plan_and_github_matrices(
                 "manifest_verified": True,
                 "previous_regression_unresolved": False,
                 "workflow_uses_optimized_entrypoint": True,
+                **_controller_binding_values(),
             }
         ),
         "utf-8",
@@ -681,6 +728,7 @@ def test_worker_admission_rejects_wrong_token_or_partition(tmp_path: Path) -> No
         manifest_verified=True,
         previous_regression_unresolved=False,
         workflow_uses_optimized_entrypoint=True,
+        **_controller_binding_values(),
     )
     plan = build_catalog_run_plan(contract, evidence)
     plan_path = tmp_path / "run_plan.json"
