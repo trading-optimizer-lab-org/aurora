@@ -1,0 +1,21 @@
+{
+  "schema_version": "1",
+  "campaigns": [
+    {
+      "campaign_key": "sp500-optimized-catalog-v1",
+      "engine_id": "optimized_catalog_v1",
+      "definition_manifest_path": "config/catalog_campaign_definitions/sp500-optimized-catalog-v1.manifest.json",
+      "optimization_policy_path": "config/sp500_catalog_optimization_policy_v1.json",
+      "campaign_contract_path": "config/sp500_megarun_dehb_campaign_v1.json",
+      "catalog_dir": "config/sp500_megarun_strategy_catalog_v1",
+      "selected_config_path": "config/sp500_megarun_selected_dehb_13.json",
+      "admission_evidence_path": "config/sp500_catalog_admission_evidence_current_v1.json",
+      "data_contract_path": "config/sp500_megarun_free_data_240.json",
+      "feature_contract_path": "config/sp500_megarun_feature_contract_240.json",
+      "runtime_input_run_id": 31418682679,
+      "reference_run_id": 31948898747,
+      "max_free_workers": 360,
+      "active": true
+    }
+  ]
+}
