@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Iterable
 import hashlib
 from itertools import product
@@ -336,6 +337,60 @@ def _iter_recovery_projected_rows(path: Path) -> Iterable[dict[str, object]]:
         raise ValueError(f"ATLAS_REDUCER_JQ_FAILED:{return_code}:{stderr[-500:]}")
 
 
+def _read_recovery_shard_payload(
+    shard_index: int,
+    result_path: Path,
+    expected_recipe_count: int,
+    *,
+    receipt_result_sha256: object,
+) -> tuple[int, bytes, list[dict[str, object]]]:
+    """Read and project one recovery shard, independently of other shards."""
+
+    raw_bytes = result_path.read_bytes()
+    if not raw_bytes.endswith(b"\n") or raw_bytes.count(b"\n") != expected_recipe_count:
+        raise ValueError(f"ATLAS_REDUCER_ROW_COUNT_INVALID:{shard_index}")
+    if re.search(rb'"validation_opened"\s*:\s*true', raw_bytes):
+        raise ValueError(f"ATLAS_REDUCER_ROW_BOUNDARY_OPEN:{shard_index}:validation")
+    if re.search(rb'"locked_opened"\s*:\s*true', raw_bytes):
+        raise ValueError(f"ATLAS_REDUCER_ROW_BOUNDARY_OPEN:{shard_index}:locked")
+    if hashlib.sha256(raw_bytes).hexdigest() != receipt_result_sha256:
+        raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard_index}")
+    rows = list(_iter_recovery_projected_rows(result_path))
+    if len(rows) != expected_recipe_count:
+        raise ValueError(f"ATLAS_REDUCER_PROJECTED_ROW_COUNT_INVALID:{shard_index}")
+    return shard_index, raw_bytes, rows
+
+
+def _iter_recovery_shard_payloads(
+    plan: object,
+    by_index: dict[int, Path],
+    *,
+    workers: int,
+) -> Iterable[tuple[int, bytes, list[dict[str, object]]]]:
+    """Process recovery shards in bounded parallel batches."""
+
+    shards = list(plan.shards)
+    batch_size = max(1, workers * 2)
+    for start in range(0, len(shards), batch_size):
+        batch = shards[start : start + batch_size]
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = []
+            for shard in batch:
+                receipt_path = by_index[shard.shard_index]
+                receipt = json.loads(receipt_path.read_text("utf-8"))
+                futures.append(
+                    executor.submit(
+                        _read_recovery_shard_payload,
+                        shard.shard_index,
+                        _find_result_path(receipt_path),
+                        shard.expected_recipe_count,
+                        receipt_result_sha256=receipt.get("result_sha256"),
+                    )
+                )
+            for future in futures:
+                yield future.result()
+
+
 def _cell(row: dict[str, object]) -> tuple[int, int, int]:
     return (
         int(row["positive_weeks"]),
@@ -487,6 +542,19 @@ def reduce_atlas_run(
         result_handle = results_path.open("x", encoding="utf-8", newline="\n")
     else:
         result_handle = results_path.open("xb")
+    recovery_payloads = None
+    if not verify_row_hashes:
+        try:
+            recovery_workers = max(1, int(os.environ.get("ATLAS_RECOVERY_WORKERS", "8")))
+        except ValueError as exc:
+            raise ValueError("ATLAS_REDUCER_RECOVERY_WORKERS_INVALID") from exc
+        recovery_payloads = iter(
+            _iter_recovery_shard_payloads(
+                plan,
+                by_index,
+                workers=recovery_workers,
+            )
+        )
     with result_handle:
         for shard in plan.shards:
             receipt_path = by_index[shard.shard_index]
@@ -529,23 +597,19 @@ def reduce_atlas_run(
                     row_count += 1
                     shard_count += 1
             else:
-                # The worker receipt binds this immutable raw file.  Verify
-                # and copy it as bytes, then use jq's native parser only for
-                # the small fields needed to build the frontier/reserve.
-                raw_bytes = result_path.read_bytes()
-                if not raw_bytes.endswith(b"\n") or raw_bytes.count(b"\n") != shard.expected_recipe_count:
-                    raise ValueError(f"ATLAS_REDUCER_ROW_COUNT_INVALID:{shard.shard_index}")
-                if re.search(rb'"validation_opened"\s*:\s*true', raw_bytes):
-                    raise ValueError(f"ATLAS_REDUCER_ROW_BOUNDARY_OPEN:{shard.shard_index}:validation")
-                if re.search(rb'"locked_opened"\s*:\s*true', raw_bytes):
-                    raise ValueError(f"ATLAS_REDUCER_ROW_BOUNDARY_OPEN:{shard.shard_index}:locked")
-                if hashlib.sha256(raw_bytes).hexdigest() != receipt.get("result_sha256"):
-                    raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard.shard_index}")
+                # Process independent shards in bounded parallel batches.  A
+                # single runner was spending about eleven minutes on one
+                # shard; parallel native readers keep recovery within the
+                # workflow limit without repeating evaluation.
+                assert recovery_payloads is not None
+                payload_shard_index, raw_bytes, projected_rows = next(recovery_payloads)
+                if payload_shard_index != shard.shard_index:
+                    raise ValueError(f"ATLAS_REDUCER_RECOVERY_ORDER_INVALID:{shard.shard_index}")
                 result_handle.write(raw_bytes)
                 assert results_digest is not None
                 results_digest.update(raw_bytes)
                 shard_count = 0
-                for row in _iter_recovery_projected_rows(result_path):
+                for row in projected_rows:
                     ordinal = _verify_row(
                         row,
                         plan_sha256=plan.plan_sha256,
