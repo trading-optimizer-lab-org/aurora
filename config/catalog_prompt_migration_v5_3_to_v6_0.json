@@ -1,0 +1,252 @@
+{
+  "schema_version": "1",
+  "source_prompt_version": "5.3",
+  "source_prompt_sha256": "6be6180a40c82298c7e6eef6f531344d90979aea50364a2056d2ad3dab601a6b",
+  "active_prompt_version": "6.0-CONTROLLER",
+  "active_prompt_sha256": "11819c62d14d489684f17057e55cc0f0b3c71a60759b46557c090a54d90a5859",
+  "spans": [
+    {
+      "start_line": 1,
+      "end_line": 22,
+      "source_span_sha256": "52c724396409f7824fa1ea1a5c88518c9fc82e7163c95e976d4bc36800f51eee",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Versión activa y obligación de lectura completa",
+      "machine_rule_ids": ["CAT-004", "CAT-025"],
+      "replacement_reason": "La versión activa conserva la lectura obligatoria y la política verifica ambos hashes."
+    },
+    {
+      "start_line": 23,
+      "end_line": 41,
+      "source_span_sha256": "77a26b94011ba95e4a8c410c65b19bb2aaeb90c9f1645ed589cd21ec82e2f401",
+      "disposition": "replaced_incompatible",
+      "active_prompt_section": "Solicitud única y autoridad exclusiva del controlador",
+      "machine_rule_ids": ["CAT-001", "CAT-020", "CAT-025"],
+      "replacement_reason": "La IA ya no ejecuta ni supervisa la campaña; formula una solicitud y el controlador conserva la misión y los estados veraces."
+    },
+    {
+      "start_line": 42,
+      "end_line": 70,
+      "source_span_sha256": "cc3f35a53cd32a80cc870a53e53d68c8094d7c51b432fcefd4b37f68b52a3718",
+      "disposition": "replaced_incompatible",
+      "active_prompt_section": "CAMPAIGN_KEY como único parámetro editable",
+      "machine_rule_ids": ["CAT-001", "CAT-002", "CAT-003", "CAT-004", "CAT-005"],
+      "replacement_reason": "Los campos manuales, referencias y rutas se sustituyen por una campaña registrada e inmutable seleccionada mediante una sola clave."
+    },
+    {
+      "start_line": 71,
+      "end_line": 107,
+      "source_span_sha256": "bf328d66f64de6bc6e9f2defd4078fe4972859e424fe6ab8865fb0b326bf66a0",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Recibo canónico del controlador",
+      "machine_rule_ids": ["CAT-003", "CAT-004", "CAT-020", "CAT-025"],
+      "replacement_reason": "El ledger y los recibos tipados convierten el vocabulario y las fuentes de verdad en estado verificable."
+    },
+    {
+      "start_line": 108,
+      "end_line": 218,
+      "source_span_sha256": "93be951706b0c89099c3b883010cba99d979bf7d9f04ee5f4146f459043bd682",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Obligaciones de la versión 5.3 aplicadas por máquina",
+      "machine_rule_ids": ["CAT-002", "CAT-005", "CAT-006", "CAT-007", "CAT-008", "CAT-009", "CAT-010", "CAT-011", "CAT-012", "CAT-013", "CAT-014", "CAT-015", "CAT-016", "CAT-017", "CAT-018", "CAT-019", "CAT-021", "CAT-022", "CAT-023", "CAT-024", "CAT-025"],
+      "replacement_reason": "El registro cerrado y los gates del controlador materializan todo el contrato obligatorio."
+    },
+    {
+      "start_line": 219,
+      "end_line": 334,
+      "source_span_sha256": "e229589c78cc4cf6bb0b2adc6708a38209c564a9e1484cb8aad057fa3f0143eb",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Adopción idempotente sin duplicados",
+      "machine_rule_ids": ["CAT-003", "CAT-009", "CAT-015", "CAT-016", "CAT-017", "CAT-018", "CAT-020", "CAT-023"],
+      "replacement_reason": "Identidades, idempotencia, adopción y reanudación quedan persistidas en el ledger."
+    },
+    {
+      "start_line": 335,
+      "end_line": 372,
+      "source_span_sha256": "7b44e0f5f6ca54003fdb40021408ad561cee19abc68fd569bcdb8291e442af7f",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Prohibiciones que el controlador no permite eludir",
+      "machine_rule_ids": ["CAT-003", "CAT-005", "CAT-006", "CAT-007", "CAT-008", "CAT-009", "CAT-012", "CAT-013", "CAT-014", "CAT-015", "CAT-016", "CAT-017", "CAT-018", "CAT-020", "CAT-021", "CAT-022", "CAT-023", "CAT-025"],
+      "replacement_reason": "Las reglas innegociables pasan de instrucciones humanas a validaciones fail-closed."
+    },
+    {
+      "start_line": 373,
+      "end_line": 447,
+      "source_span_sha256": "de71c42fe405b2e6033ae59e906bc1d6c4546fadcc3c7d240516822ab0f4d1bc",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Recibos BLOCKED, DEFERRED y terminales",
+      "machine_rule_ids": ["CAT-004", "CAT-005", "CAT-006", "CAT-007", "CAT-009", "CAT-010", "CAT-011", "CAT-012", "CAT-013", "CAT-014", "CAT-015", "CAT-016", "CAT-017", "CAT-019", "CAT-020", "CAT-021", "CAT-022", "CAT-023", "CAT-024", "CAT-025"],
+      "replacement_reason": "El registro de gates y evidencia se representa mediante contratos y recibos persistentes."
+    },
+    {
+      "start_line": 448,
+      "end_line": 465,
+      "source_span_sha256": "09f52a9904f482801119a29e5b6caf8b081513b34ba9bce6c71e8772e1d54c45",
+      "disposition": "replaced_incompatible",
+      "active_prompt_section": "Solicitud única; el controlador decide la admisión",
+      "machine_rule_ids": ["CAT-001", "CAT-002", "CAT-020", "CAT-025"],
+      "replacement_reason": "La secuencia manual previa al dispatch se sustituye por admisión automática y recibos fail-closed."
+    },
+    {
+      "start_line": 466,
+      "end_line": 484,
+      "source_span_sha256": "2b873bac2cd406af4fb21a123a94b779adc54ca5b6e270e5b434fec09719adc7",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Selección exacta de una campaña registrada",
+      "machine_rule_ids": ["CAT-001", "CAT-002", "CAT-003", "CAT-004", "CAT-006", "CAT-022"],
+      "replacement_reason": "La validación de parámetros y secretos queda cerrada por schema, registro y permisos mínimos."
+    },
+    {
+      "start_line": 485,
+      "end_line": 512,
+      "source_span_sha256": "4f946425ce9fc41a658a55cce6ab509e47f609db40ccce650a3cdfa785a0694b",
+      "disposition": "replaced_incompatible",
+      "active_prompt_section": "Cliente instalado sin credenciales de GitHub",
+      "machine_rule_ids": ["CAT-002", "CAT-003", "CAT-020", "CAT-022"],
+      "replacement_reason": "La autenticación directa de CLI/API se elimina de la IA y se confina al broker y a las identidades protegidas."
+    },
+    {
+      "start_line": 513,
+      "end_line": 525,
+      "source_span_sha256": "836370ebe7caf1e0a6684fb6203677614878050ec37009b32f5f6f97b4141aa7",
+      "disposition": "replaced_incompatible",
+      "active_prompt_section": "Commit y referencia derivados del registro protegido",
+      "machine_rule_ids": ["CAT-003", "CAT-020"],
+      "replacement_reason": "La IA no resuelve referencias móviles; el controlador liga el commit inmutable registrado."
+    },
+    {
+      "start_line": 526,
+      "end_line": 553,
+      "source_span_sha256": "3540c60c62b9dfd3cdfb3c4ff3ce952464f6dd009d2512b7081a6605885da650",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Único motor autorizado y workflow protegido",
+      "machine_rule_ids": ["CAT-002", "CAT-003", "CAT-020", "CAT-021", "CAT-022"],
+      "replacement_reason": "Topología, triggers, acciones fijadas y permisos se auditan antes de admitir una campaña."
+    },
+    {
+      "start_line": 554,
+      "end_line": 598,
+      "source_span_sha256": "0f4415525333067c1360db19d0da897ac42f3c55edef60b90e3c7ba8b975bdf1",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Capacidad y eficiencia verificadas por el controlador",
+      "machine_rule_ids": ["CAT-011", "CAT-012", "CAT-013", "CAT-014", "CAT-019", "CAT-024"],
+      "replacement_reason": "Los límites vivos, presupuestos y márgenes se validan con evidencia de capacidad."
+    },
+    {
+      "start_line": 599,
+      "end_line": 629,
+      "source_span_sha256": "b5567f42df8293c84fe021a191ad2fa605e314b23510e754a87509dabebd92ae",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Inputs y componentes preparados e íntegros",
+      "machine_rule_ids": ["CAT-005", "CAT-006", "CAT-007", "CAT-008", "CAT-010", "CAT-014", "CAT-015"],
+      "replacement_reason": "Manifiestos y hashes prueban fuentes, ventanas cerradas y reutilización antes del cómputo."
+    },
+    {
+      "start_line": 630,
+      "end_line": 680,
+      "source_span_sha256": "6af58dec241c47b39f21ec2e841f85d3ee3165da9b8d8c6e06dbbc820c7319d3",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Plan inmutable materializado por el controlador",
+      "machine_rule_ids": ["CAT-003", "CAT-004", "CAT-005", "CAT-006", "CAT-007", "CAT-008", "CAT-009", "CAT-010", "CAT-011", "CAT-012", "CAT-013", "CAT-014", "CAT-019", "CAT-020", "CAT-021", "CAT-022"],
+      "replacement_reason": "La resolución y materialización determinista del plan quedan ligadas por hashes y schemas."
+    },
+    {
+      "start_line": 681,
+      "end_line": 714,
+      "source_span_sha256": "1fe6334555163a4d2ee0058958550511fec8e4e64007c23f2edbfb892a3e20ce",
+      "disposition": "replaced_incompatible",
+      "active_prompt_section": "Cliente inmutable crea una solicitud estricta",
+      "machine_rule_ids": ["CAT-001", "CAT-002", "CAT-003", "CAT-004", "CAT-020", "CAT-022"],
+      "replacement_reason": "La construcción manual del dispatch se reemplaza por una solicitud firmada que no puede ejecutar workflows."
+    },
+    {
+      "start_line": 715,
+      "end_line": 758,
+      "source_span_sha256": "b6868121700c829a1598625b8da2dfd2113b52e1309d3cab14776105c35ad83f",
+      "disposition": "replaced_incompatible",
+      "active_prompt_section": "Una solicitud se adopta y nunca se duplica",
+      "machine_rule_ids": ["CAT-016", "CAT-018", "CAT-020"],
+      "replacement_reason": "El inventario, la adopción y la capacidad ocupada se resuelven dentro del ledger bajo una sola autoridad."
+    },
+    {
+      "start_line": 759,
+      "end_line": 851,
+      "source_span_sha256": "e71c979dfa5e7d0a8ccc011a6dfa498392af3f53b70ba54a1adfe49f85c9d44c",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Arquitectura, cualificación y capacidad automáticas",
+      "machine_rule_ids": ["CAT-005", "CAT-006", "CAT-007", "CAT-008", "CAT-009", "CAT-010", "CAT-011", "CAT-012", "CAT-013", "CAT-014", "CAT-015", "CAT-016", "CAT-017", "CAT-018", "CAT-019", "CAT-020", "CAT-021", "CAT-022", "CAT-023", "CAT-024"],
+      "replacement_reason": "La cualificación y el dimensionamiento se convierten en gates reproducibles previos a la ejecución."
+    },
+    {
+      "start_line": 852,
+      "end_line": 1161,
+      "source_span_sha256": "a4567e55442702a70b97da7b38fa79615ed34a5c2aa0c42ce51eec2baf34283a",
+      "disposition": "replaced_incompatible",
+      "active_prompt_section": "El controlador es la única autoridad de admisión y lanzamiento",
+      "machine_rule_ids": ["CAT-001", "CAT-002", "CAT-003", "CAT-004", "CAT-016", "CAT-017", "CAT-018", "CAT-020", "CAT-021", "CAT-022", "CAT-025"],
+      "replacement_reason": "La decisión, autenticación, dispatch y localización manual del run se sustituyen por transiciones atómicas del controlador."
+    },
+    {
+      "start_line": 1162,
+      "end_line": 1386,
+      "source_span_sha256": "52c16694de83c9dd349d1d0f6ba6f93fcb3c38e7d44a2ef07e05b1afa8969bad",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Motor autorizado aplica toda la arquitectura lógica",
+      "machine_rule_ids": ["CAT-007", "CAT-008", "CAT-009", "CAT-010", "CAT-011", "CAT-012", "CAT-013", "CAT-014", "CAT-015", "CAT-016", "CAT-017", "CAT-018", "CAT-019", "CAT-020", "CAT-023", "CAT-024"],
+      "replacement_reason": "El workflow protegido materializa orden, checkpoints, recuperación, reducción y evidencia terminal."
+    },
+    {
+      "start_line": 1387,
+      "end_line": 1494,
+      "source_span_sha256": "af3f4973217500979040411afb8f62b45c6ced43661b8627d294ab5b1f1e1559",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Transporte y seguridad bajo controles protegidos",
+      "machine_rule_ids": ["CAT-007", "CAT-012", "CAT-013", "CAT-014", "CAT-015", "CAT-021", "CAT-022"],
+      "replacement_reason": "Artifacts, payloads, acciones y permisos se comprueban mediante manifiestos y auditoría de workflows."
+    },
+    {
+      "start_line": 1495,
+      "end_line": 1537,
+      "source_span_sha256": "dc92c68bc1d2bc0c82d40c88418e5593077b0558a8b7df1e9a8fc01040600cbe",
+      "disposition": "replaced_incompatible",
+      "active_prompt_section": "El controlador supervisa y el cliente solo lee recibos",
+      "machine_rule_ids": ["CAT-016", "CAT-017", "CAT-018", "CAT-020", "CAT-025"],
+      "replacement_reason": "El polling y las decisiones manuales de cancelación o repetición se reemplazan por watchdog y reconciliación autónomos."
+    },
+    {
+      "start_line": 1538,
+      "end_line": 1618,
+      "source_span_sha256": "ca4f49483665f991e14b93ada5ca96af495e673afc738d54107a93f43db15556",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Recuperación automática sin repetir trabajo válido",
+      "machine_rule_ids": ["CAT-015", "CAT-016", "CAT-017", "CAT-018", "CAT-020", "CAT-023", "CAT-025"],
+      "replacement_reason": "La clasificación y respuesta a incidentes queda determinada por fingerprints, contadores y checkpoints."
+    },
+    {
+      "start_line": 1619,
+      "end_line": 1653,
+      "source_span_sha256": "cf68e00dde7de5ac8b7a1287e041deee69eb9fce1ce54d11fc8b0a4785c82e9d",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "SUCCESS solo con recibo terminal completo",
+      "machine_rule_ids": ["CAT-023", "CAT-024", "CAT-025"],
+      "replacement_reason": "El finalizador demuestra cobertura, integridad y comparabilidad antes de emitir éxito."
+    },
+    {
+      "start_line": 1654,
+      "end_line": 1748,
+      "source_span_sha256": "8f0a6b8c1851e179c59b577eec3948cde8b566693b9e81633b96fda7b24752c5",
+      "disposition": "machine_enforced",
+      "active_prompt_section": "Comunicación basada exclusivamente en recibos",
+      "machine_rule_ids": ["CAT-023", "CAT-024", "CAT-025"],
+      "replacement_reason": "El resumen canónico conserva estados, métricas y ausencias sin inventar evidencia."
+    },
+    {
+      "start_line": 1749,
+      "end_line": 1785,
+      "source_span_sha256": "e77360e6d58ebe2b109d127780ade6787abd52f9ca39907c23efe9bf9e5949e6",
+      "disposition": "replaced_incompatible",
+      "active_prompt_section": "Solicita una vez y respeta el recibo",
+      "machine_rule_ids": ["CAT-001", "CAT-020", "CAT-025"],
+      "replacement_reason": "La narración y supervisión manual se sustituyen por una única respuesta estructurada del cliente y recibos del controlador."
+    }
+  ]
+}
