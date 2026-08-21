@@ -1,53 +1,6 @@
 name: SP500 Atlas Static Run
 
 on:
-  workflow_dispatch:
-    inputs:
-      run_mode:
-        description: "smoke, plan, or controller-owned full run"
-        required: true
-        default: smoke
-        type: choice
-        options: [smoke, plan, pilot, pilot_verify, full]
-      commit_sha:
-        description: "Exact immutable implementation commit"
-        required: true
-        type: string
-      runtime_input_run_id:
-        description: "Verified train-only runtime input pack run"
-        required: true
-        default: "31418682679"
-        type: string
-      calibration_run_id:
-        description: "Verified 20-minute calibration run"
-        required: true
-        default: "32061399368"
-        type: string
-      target_end_iso:
-        description: "Planning target in Europe/Madrid"
-        required: true
-        default: "2026-08-20T07:31:00+02:00"
-        type: string
-      recipe_count:
-        description: "Exact finite tranche; 64 for smoke, calibrated value for full"
-        required: true
-        default: "64"
-        type: number
-      total_shards:
-        description: "Static shard count; 4 for smoke, 360 for full"
-        required: true
-        default: "4"
-        type: number
-      launch_authorization:
-        description: "Required only for full: AUTHORIZE_SP500_ATLAS_FULL_RUN"
-        required: false
-        default: ""
-        type: string
-      pilot_source_run_id:
-        description: "Existing pilot run whose immutable artifacts must be verified"
-        required: false
-        default: ""
-        type: string
   workflow_call:
     inputs:
       run_mode: {required: true, type: string}

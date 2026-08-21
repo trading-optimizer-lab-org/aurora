@@ -16,9 +16,13 @@ from aurora.infra.github_performance.preflight import (
     load_legacy_workflow_migrations,
     resolve_run_spec,
     validate_future_workflow,
+    validate_catalog_workflow_topology,
     validate_run_spec,
     validate_workflow_policy,
     write_preflight_report,
+)
+from aurora.infra.sp500_megarun.catalog_campaign_registry import (
+    CatalogCampaignRegistryV1,
 )
 from github_performance_helpers import (
     complete_runtime_evidence,
@@ -470,3 +474,113 @@ def test_repository_allowlist_has_frozen_adoption_metadata() -> None:
     allowlist = load_legacy_workflow_allowlist()
     assert len(allowlist) == 99
     assert ".github/workflows/tests.yml" in allowlist
+
+
+def _topology_registry() -> CatalogCampaignRegistryV1:
+    return CatalogCampaignRegistryV1.model_validate(
+        {
+            "schema_version": "1",
+            "campaigns": [
+                {
+                    "campaign_key": "fixture-v1",
+                    "engine_id": "optimized_catalog_v1",
+                    "definition_manifest_path": "config/definition.json",
+                    "optimization_policy_path": "config/policy.json",
+                    "campaign_contract_path": "config/campaign.json",
+                    "catalog_dir": "config/catalog",
+                    "selected_config_path": "config/selected.json",
+                    "admission_evidence_path": "config/evidence.json",
+                    "data_contract_path": "config/data.json",
+                    "feature_contract_path": "config/features.json",
+                    "runtime_input_run_id": 1,
+                    "reference_run_id": 2,
+                    "max_free_workers": 4,
+                    "allowed_protected_branch": "main",
+                    "source_artifact_contracts": ["runtime_input_pack_v1"],
+                    "component_store_family": "sp500_component_store_v1",
+                    "reducer_family": "catalog_hierarchical_reducer_v1",
+                    "active": True,
+                }
+            ],
+        }
+    )
+
+
+def _write_topology_fixture(
+    root: Path,
+    *,
+    trigger: str = "workflow_call",
+    runner: str = "ubuntu-24.04",
+    environment: str | None = "catalog-production",
+    action: str = f"actions/checkout@{'a' * 40}",
+    checkout_ref: str = "${{ inputs.protected_commit_sha }}",
+    run: str = "python scripts/run_sp500_optimized_recipe_worker.py",
+) -> Path:
+    workflow = {
+        "name": "fixture catalog engine",
+        "on": {
+            trigger: (
+                {
+                    "inputs": {
+                        name: {"required": True, "type": "string"}
+                        for name in (
+                            "request_sha256",
+                            "authority_id",
+                            "campaign_id",
+                            "science_sha256",
+                            "execution_plan_sha256",
+                            "execution_protocol_sha256",
+                            "protected_commit_sha",
+                            "decision_sha256",
+                        )
+                    }
+                }
+                if trigger == "workflow_call"
+                else {}
+            )
+        },
+        "permissions": {"actions": "read", "contents": "read"},
+        "jobs": {
+            "engine": {
+                "runs-on": runner,
+                **({"environment": environment} if environment else {}),
+                "steps": [
+                    {"uses": action, "with": {"ref": checkout_ref}},
+                    {"run": run},
+                ],
+            }
+        },
+    }
+    return write_yaml(root / ".github/workflows/catalog-optimized-run.yml", workflow)
+
+
+@pytest.mark.parametrize(
+    ("update", "expected_code"),
+    [
+        ({"trigger": "workflow_dispatch"}, "CATALOG_HEAVY_PUBLIC_TRIGGER"),
+        ({"runner": "windows-latest"}, "CATALOG_PAID_OR_UNSAFE_RUNNER"),
+        ({"runner": "self-hosted"}, "CATALOG_PAID_OR_UNSAFE_RUNNER"),
+        ({"environment": None}, "CATALOG_ENVIRONMENT_MISSING"),
+        ({"action": "actions/checkout@v4"}, "CATALOG_ACTION_NOT_PINNED"),
+        (
+            {"checkout_ref": "${{ github.sha }}"},
+            "CATALOG_PROTECTED_COMMIT_NOT_ENFORCED",
+        ),
+        ({"run": "gh workflow run unsafe.yml"}, "CATALOG_NESTED_DISPATCH"),
+        (
+            {"run": "echo '${{ github.event.issue.body }}'"},
+            "CATALOG_UNTRUSTED_ISSUE_DATAFLOW",
+        ),
+    ],
+)
+def test_catalog_topology_rejects_escape_paths(
+    tmp_path: Path,
+    update: dict[str, object],
+    expected_code: str,
+) -> None:
+    _write_topology_fixture(tmp_path, **update)
+    receipt = validate_catalog_workflow_topology(
+        repo_root=tmp_path,
+        registry=_topology_registry(),
+    )
+    assert expected_code in {item.code for item in receipt.violations}

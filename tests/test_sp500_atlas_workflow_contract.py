@@ -62,7 +62,8 @@ def test_smoke_does_not_require_a_sixty_shard_pilot_manifest() -> None:
 
 def test_atlas_run_contains_authorized_sixty_shard_pilot_path() -> None:
     text = _text()
-    assert "options: [smoke, plan, pilot, pilot_verify, full]" in text
+    assert "workflow_call:" in text
+    assert "workflow_dispatch:" not in text
     assert "AUTHORIZE_SP500_ATLAS_PILOT" in text
     assert "pilot_evaluate:" in text
     assert "max-parallel: 60" in text
@@ -131,7 +132,8 @@ def test_segment_controller_and_pilot_workflows_are_recoverable_and_train_only()
     assert "verify_sp500_atlas_segment.py" in segment
     assert "max-parallel: 120" in segment
     assert "for attempt in 1 2 3" not in segment
-    assert "actions: write" in controller
+    assert "actions: write" not in controller
+    assert "actions: read" in controller
     assert "run_sp500_atlas_controller.py" in controller
     assert "sp500-atlas-segment.yml" in controller_script
     assert "dispatch-ref" in controller_script

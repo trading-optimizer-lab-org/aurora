@@ -24,6 +24,9 @@ on:
         required: true
         type: string
     outputs:
+      receipt_artifact_name:
+        description: Fixed current-run artifact containing the secret-free receipt.
+        value: ${{ jobs.audit.outputs.receipt_artifact_name }}
       receipt_sha256:
         description: Content hash of the secret-free controls receipt.
         value: ${{ jobs.audit.outputs.receipt_sha256 }}
@@ -67,6 +70,7 @@ jobs:
       actions: read
       contents: read
     outputs:
+      receipt_artifact_name: ${{ steps.receipt_artifact.outputs.name }}
       receipt_sha256: ${{ steps.controls.outputs.receipt_sha256 }}
       receipt_status: ${{ steps.controls.outputs.receipt_status }}
     steps:
@@ -108,3 +112,18 @@ jobs:
           --audit-context-sha256 "${{ inputs.audit_context_sha256 }}"
           --output catalog_github_controls_receipt_v1.json
           --github-output "$GITHUB_OUTPUT"
+
+      - name: Freeze the bounded receipt artifact name
+        id: receipt_artifact
+        shell: bash
+        run: >-
+          echo "name=catalog-live-controls-${{ inputs.purpose }}-${{ inputs.audit_context_sha256 }}"
+          >> "$GITHUB_OUTPUT"
+
+      - name: Publish the secret-free controls receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.receipt_artifact.outputs.name }}
+          path: catalog_github_controls_receipt_v1.json
+          if-no-files-found: error
+          retention-days: 90

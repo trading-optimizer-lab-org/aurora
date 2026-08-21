@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from pydantic import Field, field_validator
 
@@ -21,6 +21,14 @@ _PATH_FIELDS = (
     "data_contract_path",
     "feature_contract_path",
 )
+
+CatalogEngineId: TypeAlias = Literal["optimized_catalog_v1"]
+CatalogSourceArtifactContract: TypeAlias = Literal[
+    "runtime_input_pack_v1",
+    "reference_oracle_v1",
+]
+CatalogComponentStoreFamily: TypeAlias = Literal["sp500_component_store_v1"]
+CatalogReducerFamily: TypeAlias = Literal["catalog_hierarchical_reducer_v1"]
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -63,7 +71,7 @@ def _validate_repository_path(value: str) -> str:
 
 class CatalogCampaignEntryV1(FrozenModel):
     campaign_key: str
-    engine_id: Literal["optimized_catalog_v1"]
+    engine_id: CatalogEngineId
     definition_manifest_path: str
     optimization_policy_path: str
     campaign_contract_path: str
@@ -75,12 +83,27 @@ class CatalogCampaignEntryV1(FrozenModel):
     runtime_input_run_id: int = Field(ge=1)
     reference_run_id: int = Field(ge=1)
     max_free_workers: int = Field(ge=1, le=360)
+    allowed_protected_branch: Literal["main"]
+    source_artifact_contracts: tuple[CatalogSourceArtifactContract, ...] = Field(
+        min_length=1
+    )
+    component_store_family: CatalogComponentStoreFamily
+    reducer_family: CatalogReducerFamily
     active: bool
 
     @field_validator(*_PATH_FIELDS)
     @classmethod
     def _require_safe_repository_path(cls, value: str) -> str:
         return _validate_repository_path(value)
+
+    @field_validator("source_artifact_contracts")
+    @classmethod
+    def _require_unique_source_contracts(
+        cls, value: tuple[CatalogSourceArtifactContract, ...]
+    ) -> tuple[CatalogSourceArtifactContract, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("source artifact contracts must be unique")
+        return value
 
     @property
     def repository_paths(self) -> tuple[str, ...]:
@@ -154,4 +177,3 @@ def resolve_catalog_campaign(
     except Exception as exc:
         raise ValueError(f"CATALOG_CAMPAIGN_PATH_INVALID: {exc}") from None
     return entry
-

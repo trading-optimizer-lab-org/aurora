@@ -8,6 +8,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,9 @@ from aurora.infra.github_performance.contracts import (
     Violation,
     canonical_sha256,
     deep_thaw_json,
+)
+from aurora.infra.sp500_megarun.catalog_campaign_registry import (
+    CatalogCampaignRegistryV1,
 )
 
 
@@ -509,6 +513,500 @@ def _iter_uses(workflow: Mapping[str, Any]) -> list[tuple[str, str]]:
             if isinstance(step, Mapping) and isinstance(step.get("uses"), str):
                 output.append((f"jobs.{job_name}.steps.{index}.uses", step["uses"]))
     return output
+
+
+CATALOG_CONTROLLER_WORKFLOW = ".github/workflows/catalog-run-controller.yml"
+CATALOG_RECOVERY_WORKFLOW = ".github/workflows/catalog-recovery-wave.yml"
+CATALOG_WATCHDOG_WORKFLOW = ".github/workflows/catalog-run-watchdog.yml"
+CATALOG_ACTIVE_ENGINE_WORKFLOWS = {
+    "optimized_catalog_v1": ".github/workflows/catalog-optimized-run.yml",
+}
+CATALOG_PRODUCTION_WORKER_WORKFLOWS = frozenset(
+    {
+        ".github/workflows/catalog-component-worker.yml",
+        ".github/workflows/catalog-optimized-worker.yml",
+    }
+)
+CATALOG_LEGACY_INACTIVE_WORKFLOWS = frozenset(
+    {
+        ".github/workflows/sp500-atlas-calibration.yml",
+        ".github/workflows/sp500-atlas-controller.yml",
+        ".github/workflows/sp500-atlas-pilot.yml",
+        ".github/workflows/sp500-atlas-postrun.yml",
+        ".github/workflows/sp500-atlas-run.yml",
+        ".github/workflows/sp500-atlas-segment.yml",
+        ".github/workflows/sp500-catalog-optimization-qualification.yml",
+        ".github/workflows/sp500-strategy-catalog-overnight.yml",
+    }
+)
+CATALOG_NONPRODUCTION_TRIGGER_EXEMPTIONS = frozenset(
+    {
+        ".github/workflows/catalog-controller-policy-check.yml",
+        ".github/workflows/catalog-controller-qualification.yml",
+        ".github/workflows/catalog-live-controls-qualification.yml",
+        ".github/workflows/catalog-capacity-calibration.yml",
+        ".github/workflows/catalog-future-architecture.yml",
+    }
+)
+CATALOG_SEALED_IDENTIFIERS = frozenset(
+    {
+        "request_sha256",
+        "authority_id",
+        "campaign_id",
+        "science_sha256",
+        "execution_plan_sha256",
+        "execution_protocol_sha256",
+        "protected_commit_sha",
+        "decision_sha256",
+    }
+)
+_CATALOG_PUBLIC_HEAVY_TRIGGERS = frozenset(
+    {
+        "workflow_dispatch",
+        "schedule",
+        "repository_dispatch",
+        "push",
+        "pull_request",
+        "pull_request_target",
+        "issues",
+        "issue_comment",
+    }
+)
+_CATALOG_HEAVY_EXECUTABLE_MARKERS = (
+    "build_sp500_component_store",
+    "run_sp500_optimized_recipe_worker",
+    "reduce_sp500_optimized_catalog_run",
+    "run_sp500_strategy_catalog_shard",
+    "run_sp500_atlas_worker",
+    "reduce_sp500_atlas_run",
+    "merge_sp500_atlas",
+    "benchmark_catalog_scale",
+    "catalog-optimized-run.yml",
+    "catalog-component-worker.yml",
+    "catalog-optimized-worker.yml",
+)
+_CATALOG_NESTED_DISPATCH_MARKERS = (
+    "gh workflow run",
+    "/dispatches",
+    "repository_dispatch",
+)
+_CATALOG_UNTRUSTED_ISSUE_EXPRESSIONS = (
+    "github.event.issue.body",
+    "github.event.issue.title",
+    "github.event.issue.user",
+    "github.event.issue.labels",
+)
+
+
+@dataclass(frozen=True)
+class CatalogWorkflowTopologyItemV1:
+    path: str
+    triggers: tuple[str, ...]
+    heavy: bool
+    role: str
+    engine_id: str | None
+    callers: tuple[str, ...]
+    workflow_call_inputs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CatalogWorkflowTopologyReceiptV1:
+    status: str
+    inventory: tuple[CatalogWorkflowTopologyItemV1, ...]
+    violations: tuple[Violation, ...]
+    inventory_sha256: str
+    receipt_sha256: str
+
+
+def _catalog_workflow_triggers(workflow: Mapping[str, Any]) -> tuple[str, ...]:
+    event = workflow.get("on", {})
+    if isinstance(event, str):
+        return (event,)
+    if isinstance(event, Sequence) and not isinstance(event, (str, bytes)):
+        return tuple(sorted(str(item) for item in event))
+    if isinstance(event, Mapping):
+        return tuple(sorted(str(item) for item in event))
+    return ()
+
+
+def _catalog_workflow_call_inputs(workflow: Mapping[str, Any]) -> tuple[str, ...]:
+    event = workflow.get("on", {})
+    if not isinstance(event, Mapping):
+        return ()
+    call = event.get("workflow_call", {})
+    if not isinstance(call, Mapping):
+        return ()
+    inputs = call.get("inputs", {})
+    if not isinstance(inputs, Mapping):
+        return ()
+    return tuple(sorted(str(item) for item in inputs))
+
+
+def _catalog_executable_text(workflow: Mapping[str, Any]) -> str:
+    jobs = workflow.get("jobs", {})
+    if not isinstance(jobs, Mapping):
+        return ""
+    values: list[str] = []
+    for job in jobs.values():
+        if not isinstance(job, Mapping):
+            continue
+        if isinstance(job.get("uses"), str):
+            values.append(job["uses"])
+        for step in job.get("steps", ()):
+            if not isinstance(step, Mapping):
+                continue
+            for key in ("uses", "run"):
+                if isinstance(step.get(key), str):
+                    values.append(step[key])
+    return "\n".join(values).casefold()
+
+
+def _catalog_role(
+    path: str,
+    workflow: Mapping[str, Any],
+    engine_by_path: Mapping[str, str],
+) -> tuple[bool, str, str | None]:
+    if path in engine_by_path:
+        return True, "active_engine", engine_by_path[path]
+    if path in CATALOG_PRODUCTION_WORKER_WORKFLOWS:
+        return True, "production_worker", "optimized_catalog_v1"
+    if path in CATALOG_LEGACY_INACTIVE_WORKFLOWS:
+        return True, "inactive_legacy", None
+    executable = _catalog_executable_text(workflow)
+    heavy = any(marker in executable for marker in _CATALOG_HEAVY_EXECUTABLE_MARKERS)
+    if not heavy:
+        return False, "control_or_lightweight", None
+    if path in CATALOG_NONPRODUCTION_TRIGGER_EXEMPTIONS:
+        return True, "nonproduction_qualification", None
+    return True, "inactive_helper", None
+
+
+def _catalog_local_workflow_target(value: str) -> str | None:
+    if not value.startswith("./.github/workflows/"):
+        return None
+    if "${{" in value or "@" in value:
+        return None
+    return value[2:]
+
+
+def _catalog_violation(code: str, path: str, message: str) -> Violation:
+    return _violation(code, (path,), message)
+
+
+def _catalog_canonical_hash(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def validate_catalog_workflow_topology(
+    *, repo_root: Path, registry: CatalogCampaignRegistryV1
+) -> CatalogWorkflowTopologyReceiptV1:
+    """Validate the complete catalog call graph and return a sealed receipt.
+
+    The validator deliberately uses repository paths and executable workflow
+    content, never an issue-supplied workflow name.  Unknown or malformed
+    catalog topology is reported as a blocking violation.
+    """
+
+    root = Path(repo_root).resolve()
+    workflow_dir = root / ".github/workflows"
+    violations: list[Violation] = []
+    documents: dict[str, Mapping[str, Any]] = {}
+    for workflow_path in sorted(workflow_dir.glob("*.y*ml")):
+        relative = workflow_path.relative_to(root).as_posix()
+        try:
+            documents[relative] = load_github_yaml(workflow_path)
+        except (OSError, ValueError, yaml.YAMLError) as exc:
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_WORKFLOW_PARSE_FAILED", relative, str(exc)
+                )
+            )
+
+    active_engine_ids = {
+        campaign.engine_id for campaign in registry.campaigns if campaign.active
+    }
+    unknown_engines = active_engine_ids - set(CATALOG_ACTIVE_ENGINE_WORKFLOWS)
+    for engine_id in sorted(unknown_engines):
+        violations.append(
+            _catalog_violation(
+                "CATALOG_ENGINE_UNREGISTERED",
+                engine_id,
+                "active registry engine has no fixed workflow",
+            )
+        )
+    engine_by_path = {
+        path: engine_id
+        for engine_id, path in CATALOG_ACTIVE_ENGINE_WORKFLOWS.items()
+        if engine_id in active_engine_ids
+    }
+
+    callers: dict[str, set[str]] = {path: set() for path in documents}
+    for caller_path, workflow in documents.items():
+        for yaml_path, uses in _iter_uses(workflow):
+            if not yaml_path.endswith(".uses") or not yaml_path.count(".steps.") == 0:
+                continue
+            if "${{" in uses:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_DYNAMIC_WORKFLOW_TARGET",
+                        caller_path,
+                        f"dynamic reusable workflow target at {yaml_path}",
+                    )
+                )
+                continue
+            target = _catalog_local_workflow_target(uses)
+            if target is None:
+                if uses.endswith((".yml", ".yaml")) or "/.github/workflows/" in uses:
+                    violations.append(
+                        _catalog_violation(
+                            "CATALOG_REMOTE_WORKFLOW_TARGET",
+                            caller_path,
+                            f"remote reusable workflow target at {yaml_path}",
+                        )
+                    )
+                continue
+            if target not in documents:
+                governed_reference = any(
+                    marker in f"{caller_path}\n{target}".casefold()
+                    for marker in ("catalog", "atlas")
+                )
+                if governed_reference:
+                    violations.append(
+                        _catalog_violation(
+                            "CATALOG_LOCAL_WORKFLOW_MISSING",
+                            caller_path,
+                            f"missing reusable workflow {target}",
+                        )
+                    )
+                continue
+            callers[target].add(caller_path)
+
+    items: list[CatalogWorkflowTopologyItemV1] = []
+    roles: dict[str, tuple[bool, str, str | None]] = {}
+    for path, workflow in documents.items():
+        roles[path] = _catalog_role(path, workflow, engine_by_path)
+        heavy, role, engine_id = roles[path]
+        items.append(
+            CatalogWorkflowTopologyItemV1(
+                path=path,
+                triggers=_catalog_workflow_triggers(workflow),
+                heavy=heavy,
+                role=role,
+                engine_id=engine_id,
+                callers=tuple(sorted(callers[path])),
+                workflow_call_inputs=_catalog_workflow_call_inputs(workflow),
+            )
+        )
+
+    for item in items:
+        if not item.heavy:
+            continue
+        workflow = documents[item.path]
+        public = set(item.triggers) & _CATALOG_PUBLIC_HEAVY_TRIGGERS
+        public_entrypoint = item.path in {
+            CATALOG_CONTROLLER_WORKFLOW,
+            CATALOG_WATCHDOG_WORKFLOW,
+        }
+        if (
+            public
+            and item.path not in CATALOG_NONPRODUCTION_TRIGGER_EXEMPTIONS
+            and not public_entrypoint
+        ):
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_HEAVY_PUBLIC_TRIGGER",
+                    item.path,
+                    f"heavy catalog workflow has public triggers {sorted(public)}",
+                )
+            )
+        if item.role in {"active_engine", "production_worker"}:
+            if set(item.triggers) != {"workflow_call"}:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_HEAVY_NOT_WORKFLOW_CALL_ONLY",
+                        item.path,
+                        "production compute must be workflow_call only",
+                    )
+                )
+            missing = CATALOG_SEALED_IDENTIFIERS - set(item.workflow_call_inputs)
+            if missing:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_SEALED_INPUTS_MISSING",
+                        item.path,
+                        f"missing sealed identifiers {sorted(missing)}",
+                    )
+                )
+            forbidden_inputs = {
+                name
+                for name in item.workflow_call_inputs
+                if any(
+                    marker in name.casefold()
+                    for marker in (
+                        "path",
+                        "workflow",
+                        "command",
+                        "runner",
+                        "artifact_name",
+                        "data_boundary",
+                    )
+                )
+            }
+            if forbidden_inputs:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_ARBITRARY_ENGINE_INPUT",
+                        item.path,
+                        f"forbidden engine inputs {sorted(forbidden_inputs)}",
+                    )
+                )
+            permissions = workflow.get("permissions")
+            if permissions != {"actions": "read", "contents": "read"}:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_ENGINE_PERMISSIONS_INVALID",
+                        item.path,
+                        "production compute permissions must be exactly read-only",
+                    )
+                )
+            jobs = workflow.get("jobs", {})
+            if isinstance(jobs, Mapping):
+                for job_id, job in jobs.items():
+                    if not isinstance(job, Mapping) or "runs-on" not in job:
+                        continue
+                    if job.get("runs-on") != "ubuntu-24.04":
+                        violations.append(
+                            _catalog_violation(
+                                "CATALOG_PAID_OR_UNSAFE_RUNNER",
+                                item.path,
+                                f"job {job_id} does not use ubuntu-24.04",
+                            )
+                        )
+                    if job.get("environment") != "catalog-production":
+                        violations.append(
+                            _catalog_violation(
+                                "CATALOG_ENVIRONMENT_MISSING",
+                                item.path,
+                                f"job {job_id} lacks catalog-production",
+                            )
+                        )
+                    steps = job.get("steps", ())
+                    checkout_refs = {
+                        step.get("with", {}).get("ref")
+                        for step in steps
+                        if isinstance(step, Mapping)
+                        and isinstance(step.get("uses"), str)
+                        and step["uses"].startswith("actions/checkout@")
+                        and isinstance(step.get("with"), Mapping)
+                    }
+                    if "${{ inputs.protected_commit_sha }}" not in checkout_refs:
+                        violations.append(
+                            _catalog_violation(
+                                "CATALOG_PROTECTED_COMMIT_NOT_ENFORCED",
+                                item.path,
+                                f"job {job_id} does not check out the sealed commit",
+                            )
+                        )
+
+        executable = _catalog_executable_text(workflow)
+        if any(marker in executable for marker in _CATALOG_NESTED_DISPATCH_MARKERS):
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_NESTED_DISPATCH",
+                    item.path,
+                    "workflow contains a nested dispatch escape",
+                )
+            )
+        if any(marker in executable for marker in _CATALOG_UNTRUSTED_ISSUE_EXPRESSIONS):
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_UNTRUSTED_ISSUE_DATAFLOW",
+                    item.path,
+                    "untrusted issue text reaches executable workflow data",
+                )
+            )
+
+    for path, workflow in documents.items():
+        for yaml_path, uses in _iter_uses(workflow):
+            if uses.startswith("./"):
+                continue
+            action, separator, revision = uses.rpartition("@")
+            if (
+                not separator
+                or not action
+                or not FULL_SHA_RE.fullmatch(revision)
+            ):
+                if "catalog" in path or "atlas" in path:
+                    violations.append(
+                        _catalog_violation(
+                            "CATALOG_ACTION_NOT_PINNED",
+                            path,
+                            f"external action at {yaml_path} is not full-SHA pinned",
+                        )
+                    )
+
+    for engine_id in sorted(active_engine_ids):
+        engine_path = CATALOG_ACTIVE_ENGINE_WORKFLOWS.get(engine_id)
+        if engine_path is None or engine_path not in documents:
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_ENGINE_WORKFLOW_MISSING",
+                    engine_id,
+                    "active engine workflow is missing",
+                )
+            )
+            continue
+        allowed_callers = {CATALOG_CONTROLLER_WORKFLOW, CATALOG_RECOVERY_WORKFLOW}
+        actual_callers = callers[engine_path]
+        if not actual_callers or not actual_callers <= allowed_callers:
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_ENGINE_CALLER_INVALID",
+                    engine_path,
+                    f"engine callers are {sorted(actual_callers)}",
+                )
+            )
+
+    worker_allowed_callers = {
+        ".github/workflows/catalog-optimized-run.yml",
+        CATALOG_RECOVERY_WORKFLOW,
+    }
+    for worker in sorted(CATALOG_PRODUCTION_WORKER_WORKFLOWS & documents.keys()):
+        if not callers[worker] or not callers[worker] <= worker_allowed_callers:
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_WORKER_CALLER_INVALID",
+                    worker,
+                    f"worker callers are {sorted(callers[worker])}",
+                )
+            )
+
+    ordered_items = tuple(sorted(items, key=lambda item: item.path))
+    inventory_payload = [asdict(item) for item in ordered_items]
+    inventory_sha256 = _catalog_canonical_hash(inventory_payload)
+    ordered_violations = tuple(
+        sorted(violations, key=lambda item: (item.code, item.path, item.message))
+    )
+    receipt_payload = {
+        "status": "ready" if not ordered_violations else "blocked",
+        "inventory_sha256": inventory_sha256,
+        "violations": [item.model_dump(mode="json") for item in ordered_violations],
+    }
+    return CatalogWorkflowTopologyReceiptV1(
+        status=receipt_payload["status"],
+        inventory=ordered_items,
+        violations=ordered_violations,
+        inventory_sha256=inventory_sha256,
+        receipt_sha256=_catalog_canonical_hash(receipt_payload),
+    )
 
 
 def load_legacy_workflow_allowlist(

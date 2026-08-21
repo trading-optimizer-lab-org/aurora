@@ -971,14 +971,14 @@ def test_future_architecture_qualification_is_github_only_and_bounded() -> None:
         "utf-8"
     )
 
-    assert "workflow_dispatch:" in workflow
+    assert "workflow_dispatch:" not in workflow
     assert "workflow_call:" in workflow
     assert "requirements/catalog-architecture.lock" in workflow
     entrypoint = Path(
         ".github/workflows/sp500-search-method-benchmark-short.yml"
     ).read_text("utf-8")
-    assert "optimized_catalog_future_architecture" in entrypoint
-    assert "uses: ./.github/workflows/catalog-future-architecture.yml" in entrypoint
+    assert "Direct catalog and Atlas launch modes were removed." in entrypoint
+    assert "uses: ./.github/workflows/catalog-future-architecture.yml" not in entrypoint
     assert "100, 256" in script
     assert "37_258" in script
     assert '"requested_recipe_asset_evaluations"' in script

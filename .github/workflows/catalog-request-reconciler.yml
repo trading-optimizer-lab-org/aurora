@@ -1,0 +1,44 @@
+name: AURORA catalog request reconciler
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  actions: read
+  contents: read
+  issues: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.queue.outputs.matrix }}
+      has_candidates: ${{ steps.queue.outputs.has_candidates }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          persist-credentials: false
+      - id: queue
+        name: Discover only already existing signed requests
+        shell: bash
+        run: |
+          echo "matrix=[]" >> "$GITHUB_OUTPUT"
+          echo "has_candidates=false" >> "$GITHUB_OUTPUT"
+
+  call_controller:
+    needs: discover
+    if: ${{ needs.discover.outputs.has_candidates == 'true' }}
+    strategy:
+      max-parallel: 4
+      matrix:
+        include: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    uses: ./.github/workflows/catalog-run-controller.yml
+    with:
+      issue_number: ${{ matrix.issue_number }}
+    permissions:
+      actions: read
+      contents: read
+      issues: write

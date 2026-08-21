@@ -1,7 +1,7 @@
 name: SP500 Atlas Autonomous Controller
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       commit_sha:
         description: Exact immutable implementation commit
@@ -26,7 +26,7 @@ on:
         type: string
 
 permissions:
-  actions: write
+  actions: read
   contents: read
 
 jobs:

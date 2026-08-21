@@ -85,14 +85,15 @@ _HEAVY_MARKERS = (
     "run_sp500_optimized_recipe_worker",
     "reduce_sp500_optimized_catalog_run",
     "verify_sp500_optimized_run",
-    "catalog_atlas",
-    "catalog-atlas",
-    "atlas_engine",
-    "atlas-engine",
+    "run_sp500_atlas_worker",
+    "reduce_sp500_atlas_run",
+    "merge_sp500_atlas",
+    "sp500-atlas-run.yml",
+    "run_sp500_strategy_catalog_shard",
+    "benchmark_catalog_scale",
     "catalog planner",
     "catalog_planner",
     "catalog-planner",
-    "backtest",
 )
 
 
@@ -922,15 +923,26 @@ def audit_catalog_github_controls(
     heavy_paths = {
         str(row["path"]) for row in heavy_inventory if row.get("heavy") is True
     }
+    public_heavy_entrypoints = {
+        desired.entrypoints.public_controller,
+        desired.entrypoints.authority_watchdog,
+    }
+    exempt_heavy_triggers = public_heavy_entrypoints | set(
+        desired.entrypoints.fixed_nonproduction_trigger_exemptions
+    )
     direct_dispatch = any(
         "workflow_dispatch" in row.get("direct_heavy_triggers", ())
         for row in heavy_inventory
         if row.get("heavy") is True
+        and row.get("path") not in exempt_heavy_triggers
     )
     other_direct = any(
         set(row.get("direct_heavy_triggers", ())) - {"workflow_dispatch"}
         for row in heavy_inventory
         if row.get("heavy") is True
+        and row.get("path") not in public_heavy_entrypoints
+        and row.get("path")
+        not in desired.entrypoints.fixed_nonproduction_trigger_exemptions
     )
     check("HEAVY_DIRECT_DISPATCH_FORBIDDEN", not direct_dispatch)
     check("HEAVY_DIRECT_TRIGGER_FORBIDDEN", not other_direct)

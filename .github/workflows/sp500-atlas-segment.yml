@@ -1,7 +1,7 @@
 name: SP500 Atlas Reusable Segment
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       commit_sha:
         description: Exact immutable implementation commit

@@ -4,10 +4,20 @@ import json
 from pathlib import Path
 import re
 
-from aurora.infra.github_performance.preflight import load_github_yaml
+import pytest
+
+from aurora.infra.github_performance.preflight import (
+    load_github_yaml,
+    validate_catalog_workflow_topology,
+)
+from aurora.infra.sp500_megarun.catalog_campaign_registry import (
+    load_catalog_campaign_registry,
+)
 from aurora.infra.sp500_megarun.catalog_github_controls import (
     AUDITOR_CALLER_TOPOLOGY,
     AUDITOR_SECRET_CONSUMER,
+    inventory_heavy_workflows,
+    jobs_with_issues_write,
 )
 
 
@@ -17,10 +27,42 @@ POLICY = WORKFLOWS / "catalog-controller-policy-check.yml"
 LIVE_AUDIT = WORKFLOWS / "catalog-live-controls-audit.yml"
 LIVE_QUALIFICATION = WORKFLOWS / "catalog-live-controls-qualification.yml"
 FULL_ACTION_SHA = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
+SEALED_IDENTIFIERS = {
+    "request_sha256",
+    "authority_id",
+    "campaign_id",
+    "science_sha256",
+    "execution_plan_sha256",
+    "execution_protocol_sha256",
+    "protected_commit_sha",
+    "decision_sha256",
+}
+PRODUCTION_HEAVY_WORKFLOWS = {
+    ".github/workflows/catalog-optimized-run.yml",
+    ".github/workflows/catalog-component-worker.yml",
+    ".github/workflows/catalog-optimized-worker.yml",
+}
+LEGACY_CATALOG_WORKFLOWS = {
+    ".github/workflows/sp500-atlas-calibration.yml",
+    ".github/workflows/sp500-atlas-controller.yml",
+    ".github/workflows/sp500-atlas-pilot.yml",
+    ".github/workflows/sp500-atlas-postrun.yml",
+    ".github/workflows/sp500-atlas-run.yml",
+    ".github/workflows/sp500-atlas-segment.yml",
+    ".github/workflows/sp500-catalog-optimization-qualification.yml",
+    ".github/workflows/sp500-strategy-catalog-overnight.yml",
+}
 
 
 def _workflow(path: Path) -> dict[str, object]:
     return dict(load_github_yaml(path))
+
+
+def _all_workflows() -> dict[str, dict[str, object]]:
+    return {
+        path.relative_to(ROOT).as_posix(): _workflow(path)
+        for path in sorted(WORKFLOWS.glob("*.y*ml"))
+    }
 
 
 def _external_action_uses(workflow: dict[str, object]) -> list[str]:
@@ -68,7 +110,9 @@ def test_policy_workflow_is_lightweight_read_only_and_exactly_named() -> None:
         "tests/test_catalog_authority_ledger.py",
         "tests/test_catalog_controller.py",
         "tests/test_catalog_github_controls.py",
+        "tests/test_catalog_controller_reporting.py",
         "tests/test_github_performance_preflight.py",
+        "tests/test_github_performance_workflows.py",
         "tests/test_catalog_controller_workflows.py",
     ):
         assert required_test in rendered
@@ -97,7 +141,11 @@ def test_live_audit_is_one_read_only_protected_reusable_job() -> None:
         "protected_commit_sha",
         "audit_context_sha256",
     }
-    assert set(call["outputs"]) == {"receipt_sha256", "receipt_status"}
+    assert set(call["outputs"]) == {
+        "receipt_artifact_name",
+        "receipt_sha256",
+        "receipt_status",
+    }
     assert workflow["permissions"] == {"actions": "read", "contents": "read"}
     jobs = workflow["jobs"]
     assert isinstance(jobs, dict)
@@ -128,6 +176,10 @@ def test_live_audit_is_one_read_only_protected_reusable_job() -> None:
     assert "--workflow-auditor" in json.dumps(secret_steps[0])
     assert "--github-output" in json.dumps(secret_steps[0])
     assert all(FULL_ACTION_SHA.fullmatch(value) for value in _external_action_uses(workflow))
+    assert any(
+        step.get("uses", "").startswith("actions/upload-artifact@")
+        for step in job["steps"]
+    )
 
 
 def test_auditor_secret_has_exactly_one_workflow_consumer() -> None:
@@ -227,3 +279,358 @@ def test_codeowners_covers_every_catalog_controller_sensitive_path() -> None:
         "/.github/actions/aurora-* @gomez5757",
     ):
         assert line in text
+
+
+def test_controller_has_only_request_lifecycle_and_reconciler_triggers() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    assert workflow["on"]["issues"] == {
+        "types": [
+            "opened",
+            "edited",
+            "deleted",
+            "transferred",
+            "closed",
+            "reopened",
+            "locked",
+            "unlocked",
+            "labeled",
+            "unlabeled",
+        ]
+    }
+    assert set(workflow["on"]) == {"issues", "workflow_call"}
+    assert set(workflow["on"]["workflow_call"]["inputs"]) == {"issue_number"}
+    assert workflow["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "issues": "read",
+    }
+    assert "concurrency" not in workflow
+
+    expected_writers = {
+        "issue_tamper_guard",
+        "reserve",
+        "report_nonexecuting_decision",
+        "record_running",
+        "record_nonterminal_wait",
+        "finalize",
+    }
+    writers = {
+        job
+        for path, job in jobs_with_issues_write(
+            {".github/workflows/catalog-run-controller.yml": workflow}
+        )
+        if path == ".github/workflows/catalog-run-controller.yml"
+    }
+    assert writers == expected_writers
+    for job_id in expected_writers:
+        assert workflow["jobs"][job_id]["permissions"] == {
+            "actions": "read",
+            "contents": "read",
+            "issues": "write",
+        }
+
+    for job_id in (
+        "issue_tamper_guard",
+        "reserve",
+        "record_running",
+        "record_nonterminal_wait",
+        "finalize",
+    ):
+        assert workflow["jobs"][job_id]["concurrency"] == {
+            "group": "catalog-authority-admission-v1",
+            "cancel-in-progress": False,
+            "queue": "max",
+        }
+    assert workflow["jobs"]["report_nonexecuting_decision"]["concurrency"] == {
+        "group": (
+            "catalog-request-receipt-v1-"
+            "${{ needs.filter.outputs.issue_number }}"
+        ),
+        "cancel-in-progress": False,
+        "queue": "max",
+    }
+
+
+def test_controller_job_order_and_authority_gates_are_explicit() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    jobs = workflow["jobs"]
+    assert list(jobs) == [
+        "issue_tamper_guard",
+        "filter",
+        "routing_snapshot",
+        "route_without_privileged_audit",
+        "prepare_admission_candidates",
+        "live_controls_audit_before_reserve",
+        "admission",
+        "reserve",
+        "report_nonexecuting_decision",
+        "record_running",
+        "engine_optimized_catalog_v1",
+        "record_nonterminal_wait",
+        "prepare_terminal_evidence",
+        "live_controls_audit_before_terminal",
+        "prepare_terminal_decision",
+        "finalize",
+    ]
+    assert jobs["prepare_admission_candidates"]["needs"] == (
+        "route_without_privileged_audit"
+    )
+    assert jobs["live_controls_audit_before_reserve"]["needs"] == (
+        "prepare_admission_candidates"
+    )
+    assert jobs["admission"]["needs"] == [
+        "prepare_admission_candidates",
+        "live_controls_audit_before_reserve",
+    ]
+    assert jobs["reserve"]["needs"] == ["routing_snapshot", "admission"]
+    engine = jobs["engine_optimized_catalog_v1"]
+    assert engine["needs"] == ["admission", "reserve", "record_running"]
+    assert engine["uses"] == "./.github/workflows/catalog-optimized-run.yml"
+    assert "needs.reserve.outputs.authority_committed == 'true'" in engine["if"]
+    assert (
+        "needs.record_running.outputs.authority_execution_state_committed == 'true'"
+        in engine["if"]
+    )
+    assert set(engine["with"]) == SEALED_IDENTIFIERS
+    assert "secrets" not in engine
+    assert "concurrency" not in engine
+
+
+@pytest.mark.parametrize(
+    "forbidden",
+    [
+        "github.event.issue.body }}",
+        "github.event.issue.title }}",
+        "pull_request_target",
+        "secrets: inherit",
+        "issues/comments/{comment_id}",
+        "--method PATCH",
+        "--method DELETE",
+        "gh workflow run",
+        "repository_dispatch",
+        "/dispatches",
+    ],
+)
+def test_controller_has_no_untrusted_or_mutable_escape(forbidden: str) -> None:
+    text = (WORKFLOWS / "catalog-run-controller.yml").read_text("utf-8")
+    assert forbidden not in text
+
+
+def test_controller_privileged_audits_are_two_exact_pure_local_calls() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    jobs = workflow["jobs"]
+    expected = {
+        "live_controls_audit_before_reserve": "admission",
+        "live_controls_audit_before_terminal": "terminal",
+    }
+    for job_id, purpose in expected.items():
+        job = jobs[job_id]
+        assert job["uses"] == "./.github/workflows/catalog-live-controls-audit.yml"
+        assert job["with"]["purpose"] == purpose
+        assert job["with"]["caller_workflow"] == (
+            ".github/workflows/catalog-run-controller.yml"
+        )
+        assert job["with"]["caller_job"] == job_id
+        assert "steps" not in job
+        assert "secrets" not in job
+        assert "concurrency" not in job
+
+
+def test_terminal_evidence_is_prepared_before_fresh_terminal_audit() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    jobs = workflow["jobs"]
+    evidence = jobs["prepare_terminal_evidence"]
+    terminal_audit = jobs["live_controls_audit_before_terminal"]
+    decision = jobs["prepare_terminal_decision"]
+    finalizer = jobs["finalize"]
+    assert "concurrency" not in evidence
+    assert evidence["permissions"] == {"actions": "read", "contents": "read"}
+    assert terminal_audit["needs"] == "prepare_terminal_evidence"
+    assert decision["needs"] == [
+        "prepare_terminal_evidence",
+        "live_controls_audit_before_terminal",
+    ]
+    assert "concurrency" not in decision
+    assert "download-artifact" not in json.dumps(finalizer)
+
+
+def test_every_active_catalog_engine_is_workflow_call_only_and_sealed() -> None:
+    workflows = _all_workflows()
+    inventory = inventory_heavy_workflows(workflows)
+    by_path = {item["path"]: item for item in inventory}
+    for path in PRODUCTION_HEAVY_WORKFLOWS:
+        workflow = workflows[path]
+        assert set(workflow["on"]) == {"workflow_call"}
+        assert SEALED_IDENTIFIERS <= set(workflow["on"]["workflow_call"]["inputs"])
+        assert by_path[path]["heavy"] is True
+        assert by_path[path]["direct_heavy_triggers"] == ()
+        assert workflow["permissions"] == {"actions": "read", "contents": "read"}
+
+
+def test_all_catalog_compute_jobs_use_free_linux_and_protected_environment() -> None:
+    workflows = _all_workflows()
+    for path in PRODUCTION_HEAVY_WORKFLOWS:
+        for job in workflows[path]["jobs"].values():
+            if "runs-on" not in job:
+                continue
+            assert job["runs-on"] == "ubuntu-24.04"
+            assert job["environment"] == "catalog-production"
+            assert job.get("permissions", workflows[path]["permissions"]).get(
+                "issues"
+            ) != "write"
+
+
+def test_production_inputs_cannot_select_paths_commands_or_runners() -> None:
+    workflows = _all_workflows()
+    for path in PRODUCTION_HEAVY_WORKFLOWS:
+        names = set(workflows[path]["on"]["workflow_call"]["inputs"])
+        assert all(
+            marker not in name
+            for name in names
+            for marker in (
+                "path",
+                "workflow",
+                "command",
+                "runner",
+                "artifact_name",
+                "data_boundary",
+            )
+        )
+
+
+def test_all_catalog_external_actions_are_full_sha_pinned() -> None:
+    for path, workflow in _all_workflows().items():
+        if "catalog" in path or "atlas" in path:
+            assert all(
+                FULL_ACTION_SHA.fullmatch(value)
+                for value in _external_action_uses(workflow)
+            ), path
+
+
+def test_legacy_catalog_launchers_have_no_public_trigger() -> None:
+    workflows = _all_workflows()
+    violations = {
+        path: tuple(workflows[path]["on"])
+        for path in LEGACY_CATALOG_WORKFLOWS
+        if set(workflows[path]["on"]) != {"workflow_call"}
+    }
+    assert violations == {}
+
+
+def test_request_reconciler_replays_only_existing_requests() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-request-reconciler.yml")
+    assert set(workflow["on"]) == {"schedule"}
+    assert workflow["on"]["schedule"] == [{"cron": "*/15 * * * *"}]
+    assert workflow["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "issues": "read",
+    }
+    text = (WORKFLOWS / "catalog-request-reconciler.yml").read_text("utf-8")
+    for forbidden in (
+        "workflow_dispatch",
+        "--method POST",
+        "create_catalog_run_request",
+        "catalog-optimized-run.yml",
+        "gh workflow run",
+    ):
+        assert forbidden not in text
+    call = workflow["jobs"]["call_controller"]
+    assert "steps" not in call
+    assert call["uses"] == "./.github/workflows/catalog-run-controller.yml"
+    assert call["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "issues": "write",
+    }
+    assert call["strategy"]["max-parallel"] == 4
+    assert set(call["strategy"]["matrix"]) == {"include"}
+    assert call["with"] == {"issue_number": "${{ matrix.issue_number }}"}
+    assert "concurrency" not in call
+
+
+def test_ledger_guard_can_record_tamper_but_never_compute_or_repair() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-ledger-guard.yml")
+    assert workflow["on"] == {"issue_comment": {"types": ["edited", "deleted"]}}
+    assert workflow["permissions"] == {"contents": "read", "issues": "read"}
+    assert jobs_with_issues_write(
+        {".github/workflows/catalog-ledger-guard.yml": workflow}
+    ) == ((".github/workflows/catalog-ledger-guard.yml", "record_tamper_incident"),)
+    writer = workflow["jobs"]["record_tamper_incident"]
+    assert writer["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "issues": "write",
+    }
+    assert writer["concurrency"] == {
+        "group": "catalog-authority-admission-v1",
+        "cancel-in-progress": False,
+        "queue": "max",
+    }
+    text = (WORKFLOWS / "catalog-ledger-guard.yml").read_text("utf-8")
+    assert "AURORA_CATALOG_LEDGER_TAMPER_V1" in text
+    assert "AURORA_CATALOG_REQUEST_COMMENT_TAMPER_V1" in text
+    for forbidden in (
+        "workflow_dispatch",
+        "catalog-optimized",
+        "gh workflow run",
+        "--method PATCH",
+        "--method DELETE",
+    ):
+        assert forbidden not in text
+
+
+def test_issues_write_is_job_scoped_to_the_exact_governance_jobs() -> None:
+    workflows = _all_workflows()
+    assert all(
+        not (
+            isinstance(workflow.get("permissions"), dict)
+            and workflow["permissions"].get("issues") == "write"
+        )
+        for workflow in workflows.values()
+    )
+    assert set(jobs_with_issues_write(workflows)) == {
+        (".github/workflows/catalog-run-controller.yml", "issue_tamper_guard"),
+        (".github/workflows/catalog-run-controller.yml", "reserve"),
+        (
+            ".github/workflows/catalog-run-controller.yml",
+            "report_nonexecuting_decision",
+        ),
+        (".github/workflows/catalog-run-controller.yml", "record_running"),
+        (
+            ".github/workflows/catalog-run-controller.yml",
+            "record_nonterminal_wait",
+        ),
+        (".github/workflows/catalog-run-controller.yml", "finalize"),
+        (".github/workflows/catalog-request-reconciler.yml", "call_controller"),
+        (".github/workflows/catalog-ledger-guard.yml", "record_tamper_incident"),
+    }
+
+
+def test_request_receipt_is_mirrored_before_its_only_post() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    steps = workflow["jobs"]["report_nonexecuting_decision"]["steps"]
+    upload_index = next(
+        index
+        for index, step in enumerate(steps)
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    )
+    post_index = next(
+        index
+        for index, step in enumerate(steps)
+        if "--method POST" in str(step.get("run", ""))
+    )
+    assert upload_index < post_index
+    assert "actions/artifacts/$artifact_id/zip" in steps[post_index]["run"]
+    assert "cmp --silent" in steps[post_index]["run"]
+
+
+def test_repository_catalog_topology_is_closed_and_content_hashed() -> None:
+    registry = load_catalog_campaign_registry(
+        ROOT / "config/catalog_campaign_registry_v1.json"
+    )
+    receipt = validate_catalog_workflow_topology(repo_root=ROOT, registry=registry)
+    assert receipt.status == "ready"
+    assert receipt.violations == ()
+    assert len(receipt.inventory) == len(tuple(WORKFLOWS.glob("*.y*ml")))
+    assert re.fullmatch(r"[0-9a-f]{64}", receipt.receipt_sha256)

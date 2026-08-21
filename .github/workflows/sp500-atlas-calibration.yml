@@ -1,28 +1,6 @@
 name: SP500 Atlas 20 Minute Calibration
 
 on:
-  workflow_dispatch:
-    inputs:
-      commit_sha:
-        description: Exact immutable implementation commit
-        required: true
-        type: string
-      runtime_input_run_id:
-        description: Verified train-only runtime input pack run
-        required: true
-        default: "31418682679"
-        type: string
-      target_end_iso:
-        description: Europe/Madrid planning target
-        required: true
-        default: "2026-08-20T07:31:00+02:00"
-        type: string
-      cache_mode:
-        description: "Measured component cache mode; cold is required for conservative sizing"
-        required: true
-        default: cold
-        type: choice
-        options: [cold, component_warm]
   workflow_call:
     inputs:
       commit_sha:

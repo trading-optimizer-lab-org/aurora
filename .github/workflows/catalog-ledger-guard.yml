@@ -1,0 +1,70 @@
+name: AURORA catalog immutable-ledger guard
+
+on:
+  issue_comment:
+    types: [edited, deleted]
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  record_tamper_incident:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    concurrency:
+      group: catalog-authority-admission-v1
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Classify only a verified immutable catalog marker
+        id: classify
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text("utf-8"))
+          comment = event.get("comment") or {}
+          body = comment.get("body") or ""
+          bot_authored = (comment.get("user") or {}).get("login") == "github-actions[bot]"
+          authority = bot_authored and "AURORA_CATALOG_AUTHORITY_RECORD_V1" in body
+          request = bot_authored and "AURORA_CATALOG_REQUEST_RECEIPT_V1" in body
+          relevant = authority or request
+          marker = "AURORA_CATALOG_LEDGER_TAMPER_V1" if authority else "AURORA_CATALOG_REQUEST_COMMENT_TAMPER_V1"
+          payload = {
+              "schema_version": "1",
+              "marker": marker,
+              "relevant": relevant,
+              "issue_number": (event.get("issue") or {}).get("number"),
+              "original_comment_id": comment.get("id"),
+              "event_action": event.get("action"),
+              "actor": (event.get("sender") or {}).get("login"),
+              "writer_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "writer_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "protected_commit_sha": os.environ["GITHUB_SHA"],
+          }
+          canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+          payload["incident_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+          Path("comment-tamper-incident.json").write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"relevant={str(relevant).lower()}\n")
+          PY
+      - name: Mirror the immutable incident before any comment
+        if: ${{ steps.classify.outputs.relevant == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-comment-tamper-${{ github.run_id }}-${{ github.run_attempt }}
+          path: comment-tamper-incident.json
+          if-no-files-found: error
+          retention-days: 90

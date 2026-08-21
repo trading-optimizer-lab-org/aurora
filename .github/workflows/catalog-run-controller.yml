@@ -1,0 +1,565 @@
+name: AURORA catalog run controller
+
+on:
+  issues:
+    types: [opened, edited, deleted, transferred, closed, reopened, locked, unlocked, labeled, unlabeled]
+  workflow_call:
+    inputs:
+      issue_number:
+        required: true
+        type: number
+
+permissions:
+  actions: read
+  contents: read
+  issues: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}/..
+
+jobs:
+  issue_tamper_guard:
+    if: ${{ github.event_name == 'issues' && github.event.action != 'opened' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    concurrency:
+      group: catalog-authority-admission-v1
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Check out protected controller code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Build a bounded incident without evaluating issue text in a shell
+        id: incident
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text("utf-8"))
+          config = json.loads(Path("config/catalog_authority_anchor_v1.json").read_text("utf-8"))
+          issue = event.get("issue") or {}
+          number = issue.get("number")
+          title = issue.get("title") or ""
+          authority_number = config.get("issue_number")
+          authority = isinstance(number, int) and number == authority_number
+          request = (
+              isinstance(number, int)
+              and number > 0
+              and title.startswith("[AURORA CATALOG RUN REQUEST] ")
+          )
+          relevant = authority or request
+          marker = (
+              "AURORA_CATALOG_AUTHORITY_ISSUE_TAMPER_V1"
+              if authority
+              else "AURORA_CATALOG_REQUEST_TAMPER_V1"
+          )
+          payload = {
+              "schema_version": "1",
+              "marker": marker,
+              "relevant": relevant,
+              "authority_issue": authority,
+              "issue_number": number if isinstance(number, int) and number > 0 else None,
+              "event_action": event.get("action"),
+              "actor": (event.get("sender") or {}).get("login"),
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "protected_commit_sha": os.environ["GITHUB_SHA"],
+          }
+          canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+          payload["incident_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+          Path("incident.json").write_text(
+              json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"relevant={str(relevant).lower()}\n")
+              output.write(f"authority={str(authority).lower()}\n")
+              output.write(f"issue_number={number if isinstance(number, int) and number > 0 else 0}\n")
+          PY
+      - name: Mirror the immutable tamper incident first
+        if: ${{ steps.incident.outputs.relevant == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-tamper-${{ github.run_id }}-${{ github.run_attempt }}
+          path: incident.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record request incident after its mirror
+        if: ${{ steps.incident.outputs.relevant == 'true' && steps.incident.outputs.authority != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ steps.incident.outputs.issue_number }}
+        shell: bash
+        run: |
+          test "$ISSUE_NUMBER" -gt 0
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          incident = json.loads(Path("incident.json").read_text("utf-8"))
+          body = "AURORA_CATALOG_REQUEST_TAMPER_V1\n```json\n" + json.dumps(incident, sort_keys=True, separators=(",", ":")) + "\n```\n"
+          Path("comment-request.json").write_text(json.dumps({"body": body}), encoding="utf-8")
+          PY
+          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --input comment-request.json >/dev/null
+
+  filter:
+    if: ${{ github.event_name == 'workflow_call' || (github.event_name == 'issues' && github.event.action == 'opened') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.verify.outputs.relevant }}
+      valid: ${{ steps.verify.outputs.valid }}
+      issue_number: ${{ steps.verify.outputs.issue_number }}
+      request_sha256: ${{ steps.verify.outputs.request_sha256 }}
+      protected_commit_sha: ${{ steps.verify.outputs.protected_commit_sha }}
+      reason_code: ${{ steps.verify.outputs.reason_code }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r requirements/catalog-controller-linux-py311.lock
+      - name: Fetch and verify the exact signed request
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_ISSUE_NUMBER: ${{ inputs.issue_number || github.event.issue.number }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_request
+
+          number_text = os.environ.get("REQUESTED_ISSUE_NUMBER", "")
+          if not number_text.isdigit() or int(number_text) < 1:
+              raise SystemExit("CATALOG_REQUEST_ISSUE_NUMBER_INVALID")
+          number = int(number_text)
+          raw = subprocess.run(
+              ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/issues/{number}"],
+              check=True,
+              capture_output=True,
+          ).stdout
+          issue = json.loads(raw)
+          actors = json.loads(Path("config/catalog_controller_actors_v1.json").read_text("utf-8"))
+          valid = False
+          relevant = issue.get("title", "").startswith("[AURORA CATALOG RUN REQUEST] ")
+          reason = "CATALOG_PRODUCTION_DISABLED"
+          request_sha = hashlib.sha256(raw).hexdigest()
+          if actors.get("production_enabled") is True:
+              allowed = set(actors.get("request_actors", ()))
+              key_path = actors.get("requester_public_key_path")
+              if issue.get("user", {}).get("login") not in allowed:
+                  reason = "CATALOG_REQUEST_ACTOR_INVALID"
+              elif not isinstance(key_path, str):
+                  reason = "CATALOG_REQUESTER_KEY_UNAVAILABLE"
+              else:
+                  try:
+                      request = parse_catalog_run_request(
+                          issue.get("title", ""),
+                          issue.get("body", ""),
+                          Path(key_path).read_bytes(),
+                      )
+                  except Exception:
+                      reason = "CATALOG_REQUEST_INVALID"
+                  else:
+                      canonical = json.dumps(
+                          request.model_dump(mode="json"),
+                          sort_keys=True,
+                          separators=(",", ":"),
+                      ).encode()
+                      request_sha = hashlib.sha256(canonical).hexdigest()
+                      valid = True
+                      reason = "CATALOG_REQUEST_VERIFIED"
+          receipt = {
+              "schema_version": "1",
+              "issue_number": number,
+              "issue_id": issue.get("id"),
+              "request_sha256": request_sha,
+              "valid": valid,
+              "relevant": relevant,
+              "reason_code": reason,
+              "protected_commit_sha": os.environ["GITHUB_SHA"],
+          }
+          Path("filter-receipt.json").write_text(
+              json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"valid={str(valid).lower()}\n")
+              output.write(f"relevant={str(relevant).lower()}\n")
+              output.write(f"issue_number={number}\n")
+              output.write(f"request_sha256={request_sha}\n")
+              output.write(f"protected_commit_sha={os.environ['GITHUB_SHA']}\n")
+              output.write(f"reason_code={reason}\n")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-filter-receipt
+          path: filter-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+
+  routing_snapshot:
+    needs: filter
+    if: ${{ needs.filter.outputs.valid == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      snapshot_sha256: ${{ steps.snapshot.outputs.snapshot_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ needs.filter.outputs.protected_commit_sha }}
+          persist-credentials: false
+      - name: Capture a bounded routing snapshot
+        id: snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ needs.filter.outputs.issue_number }}
+        shell: bash
+        run: |
+          test "$ISSUE_NUMBER" -gt 0
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" > open-issues-pages.json
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments?per_page=100" > request-comment-pages.json
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          files = ("open-issues-pages.json", "request-comment-pages.json")
+          hashes = {name: hashlib.sha256(Path(name).read_bytes()).hexdigest() for name in files}
+          payload = {
+              "schema_version": "1",
+              "complete": True,
+              "issue_number": int(os.environ["ISSUE_NUMBER"]),
+              "page_hashes": hashes,
+              "adapter_state": "bounded_snapshot_ready",
+          }
+          canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+          payload["snapshot_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+          Path("routing-snapshot.json").write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"snapshot_sha256={payload['snapshot_sha256']}\n")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-routing-snapshot
+          path: |
+            routing-snapshot.json
+            open-issues-pages.json
+            request-comment-pages.json
+          if-no-files-found: error
+          retention-days: 7
+
+  route_without_privileged_audit:
+    needs: [filter, routing_snapshot]
+    if: ${{ needs.routing_snapshot.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      needs_live_audit: ${{ steps.route.outputs.needs_live_audit }}
+      protected_commit_sha: ${{ needs.filter.outputs.protected_commit_sha }}
+      reason_code: ${{ steps.route.outputs.reason_code }}
+    steps:
+      - name: Fail closed until the bounded admission adapter is qualified
+        id: route
+        shell: bash
+        run: |
+          echo "needs_live_audit=false" >> "$GITHUB_OUTPUT"
+          echo "reason_code=CATALOG_ADMISSION_ADAPTER_NOT_QUALIFIED" >> "$GITHUB_OUTPUT"
+
+  prepare_admission_candidates:
+    needs: route_without_privileged_audit
+    if: ${{ needs.route_without_privileged_audit.outputs.needs_live_audit == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      audit_context_sha256: ${{ steps.candidate.outputs.audit_context_sha256 }}
+      protected_commit_sha: ${{ needs.route_without_privileged_audit.outputs.protected_commit_sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          persist-credentials: false
+      - id: candidate
+        run: |
+          echo "CATALOG_ADMISSION_CANDIDATE_BUILDER_NOT_QUALIFIED" >&2
+          exit 1
+
+  live_controls_audit_before_reserve:
+    needs: prepare_admission_candidates
+    if: ${{ needs.prepare_admission_candidates.result == 'success' }}
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/catalog-live-controls-audit.yml
+    with:
+      purpose: admission
+      caller_workflow: .github/workflows/catalog-run-controller.yml
+      caller_job: live_controls_audit_before_reserve
+      protected_commit_sha: ${{ needs.prepare_admission_candidates.outputs.protected_commit_sha }}
+      audit_context_sha256: ${{ needs.prepare_admission_candidates.outputs.audit_context_sha256 }}
+
+  admission:
+    needs: [prepare_admission_candidates, live_controls_audit_before_reserve]
+    if: ${{ needs.live_controls_audit_before_reserve.outputs.receipt_status == 'ready' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      call_engine: ${{ steps.decision.outputs.call_engine }}
+      request_sha256: ${{ steps.decision.outputs.request_sha256 }}
+      authority_id: ${{ steps.decision.outputs.authority_id }}
+      campaign_id: ${{ steps.decision.outputs.campaign_id }}
+      science_sha256: ${{ steps.decision.outputs.science_sha256 }}
+      execution_plan_sha256: ${{ steps.decision.outputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ steps.decision.outputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ steps.decision.outputs.protected_commit_sha }}
+      decision_sha256: ${{ steps.decision.outputs.decision_sha256 }}
+    steps:
+      - id: decision
+        run: |
+          echo "call_engine=false" >> "$GITHUB_OUTPUT"
+          echo "CATALOG_ADMISSION_DECISION_NOT_QUALIFIED" >&2
+          exit 1
+
+  reserve:
+    needs: [routing_snapshot, admission]
+    if: ${{ needs.admission.outputs.call_engine == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    concurrency:
+      group: catalog-authority-admission-v1
+      cancel-in-progress: false
+      queue: max
+    outputs:
+      authority_committed: ${{ steps.reserve.outputs.authority_committed }}
+    steps:
+      - id: reserve
+        run: |
+          echo "authority_committed=false" >> "$GITHUB_OUTPUT"
+          exit 1
+
+  report_nonexecuting_decision:
+    needs: [filter, route_without_privileged_audit, admission]
+    if: ${{ always() && needs.filter.result == 'success' && needs.filter.outputs.relevant == 'true' && needs.admission.outputs.call_engine != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    concurrency:
+      group: catalog-request-receipt-v1-${{ needs.filter.outputs.issue_number }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Emit one bounded nonexecuting receipt
+        env:
+          ISSUE_NUMBER: ${{ needs.filter.outputs.issue_number }}
+          REQUEST_SHA256: ${{ needs.filter.outputs.request_sha256 }}
+          REASON_CODE: ${{ needs.route_without_privileged_audit.outputs.reason_code || needs.filter.outputs.reason_code }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          payload = {
+              "schema_version": "1",
+              "marker": "AURORA_CATALOG_REQUEST_RECEIPT_V1",
+              "state": "DEFERRED" if os.environ["REASON_CODE"] == "CATALOG_ADMISSION_ADAPTER_NOT_QUALIFIED" else "BLOCKED",
+              "reason_code": os.environ["REASON_CODE"] or "CATALOG_REQUEST_BLOCKED",
+              "issue_number": int(os.environ["ISSUE_NUMBER"]),
+              "request_sha256": os.environ["REQUEST_SHA256"],
+              "writer_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "writer_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "writer_job_id": "report_nonexecuting_decision",
+              "protected_commit_sha": os.environ["GITHUB_SHA"],
+          }
+          canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+          payload["receipt_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+          Path("request-receipt.json").write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+          PY
+      - name: Mirror the request receipt first
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-request-receipt-${{ needs.filter.outputs.issue_number }}-${{ github.run_id }}
+          path: request-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Read back the mirror and append at most one exact receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ needs.filter.outputs.issue_number }}
+          ARTIFACT_NAME: catalog-request-receipt-${{ needs.filter.outputs.issue_number }}-${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$ISSUE_NUMBER" -gt 0
+          artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" --jq ".artifacts | map(select(.name == \"$ARTIFACT_NAME\" and .expired == false)) | if length == 1 then .[0].id else empty end")"
+          test -n "$artifact_id"
+          mkdir mirror-readback
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > mirror.zip
+          unzip -q mirror.zip -d mirror-readback
+          cmp --silent request-receipt.json mirror-readback/request-receipt.json
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments?per_page=100" > comments-pages.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          receipt = json.loads(Path("request-receipt.json").read_text("utf-8"))
+          pages = json.loads(Path("comments-pages.json").read_text("utf-8"))
+          comments = [row for page in pages for row in page]
+          marker = "AURORA_CATALOG_REQUEST_RECEIPT_V1"
+          exact = receipt["receipt_sha256"]
+          matching = [row for row in comments if marker in (row.get("body") or "") and exact in (row.get("body") or "")]
+          conflicts = [row for row in comments if marker in (row.get("body") or "") and exact not in (row.get("body") or "")]
+          if conflicts:
+              raise SystemExit("CATALOG_REQUEST_RECEIPT_CONFLICT")
+          if matching:
+              Path("post-required.txt").write_text("false\n", encoding="utf-8")
+          else:
+              body = marker + "\n```json\n" + json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n```\n"
+              Path("comment-request.json").write_text(json.dumps({"body": body}), encoding="utf-8")
+              Path("post-required.txt").write_text("true\n", encoding="utf-8")
+          PY
+          if [ "$(cat post-required.txt)" = "true" ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --input comment-request.json >/dev/null
+          fi
+
+  record_running:
+    needs: [admission, reserve]
+    if: ${{ needs.reserve.outputs.authority_committed == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    concurrency:
+      group: catalog-authority-admission-v1
+      cancel-in-progress: false
+      queue: max
+    outputs:
+      authority_execution_state_committed: ${{ steps.running.outputs.authority_execution_state_committed }}
+    steps:
+      - id: running
+        run: |
+          echo "authority_execution_state_committed=false" >> "$GITHUB_OUTPUT"
+          exit 1
+
+  engine_optimized_catalog_v1:
+    needs: [admission, reserve, record_running]
+    if: >-
+      needs.admission.outputs.call_engine == 'true' &&
+      needs.reserve.outputs.authority_committed == 'true' &&
+      needs.record_running.outputs.authority_execution_state_committed == 'true'
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/catalog-optimized-run.yml
+    with:
+      request_sha256: ${{ needs.admission.outputs.request_sha256 }}
+      authority_id: ${{ needs.admission.outputs.authority_id }}
+      campaign_id: ${{ needs.admission.outputs.campaign_id }}
+      science_sha256: ${{ needs.admission.outputs.science_sha256 }}
+      execution_plan_sha256: ${{ needs.admission.outputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ needs.admission.outputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ needs.admission.outputs.protected_commit_sha }}
+      decision_sha256: ${{ needs.admission.outputs.decision_sha256 }}
+
+  record_nonterminal_wait:
+    needs: [admission, engine_optimized_catalog_v1]
+    if: ${{ always() && needs.engine_optimized_catalog_v1.outputs.campaign_state == 'WAITING_RETRY' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    concurrency:
+      group: catalog-authority-admission-v1
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - run: exit 1
+
+  prepare_terminal_evidence:
+    needs: [admission, engine_optimized_catalog_v1, record_nonterminal_wait]
+    if: ${{ always() && needs.admission.outputs.authority_id != '' && needs.record_nonterminal_wait.result == 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      protected_commit_sha: ${{ steps.index.outputs.protected_commit_sha }}
+      audit_context_sha256: ${{ steps.index.outputs.audit_context_sha256 }}
+    steps:
+      - id: index
+        run: exit 1
+
+  live_controls_audit_before_terminal:
+    needs: prepare_terminal_evidence
+    if: ${{ needs.prepare_terminal_evidence.result == 'success' }}
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/catalog-live-controls-audit.yml
+    with:
+      purpose: terminal
+      caller_workflow: .github/workflows/catalog-run-controller.yml
+      caller_job: live_controls_audit_before_terminal
+      protected_commit_sha: ${{ needs.prepare_terminal_evidence.outputs.protected_commit_sha }}
+      audit_context_sha256: ${{ needs.prepare_terminal_evidence.outputs.audit_context_sha256 }}
+
+  prepare_terminal_decision:
+    needs: [prepare_terminal_evidence, live_controls_audit_before_terminal]
+    if: ${{ needs.live_controls_audit_before_terminal.outputs.receipt_status == 'ready' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - run: exit 1
+
+  finalize:
+    needs: [filter, admission, prepare_terminal_decision]
+    if: ${{ always() && needs.prepare_terminal_decision.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    concurrency:
+      group: catalog-authority-admission-v1
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - run: exit 1

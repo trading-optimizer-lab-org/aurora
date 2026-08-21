@@ -47,6 +47,10 @@ def _campaign(**updates: object) -> dict[str, object]:
         "runtime_input_run_id": 31418682679,
         "reference_run_id": 31948898747,
         "max_free_workers": 360,
+        "allowed_protected_branch": "main",
+        "source_artifact_contracts": ["runtime_input_pack_v1"],
+        "component_store_family": "sp500_component_store_v1",
+        "reducer_family": "catalog_hierarchical_reducer_v1",
         "active": True,
     }
     value.update(updates)
@@ -208,3 +212,15 @@ def test_registry_import_boundary_stays_minimal() -> None:
     assert "aurora.infra.github_performance.contracts" not in imported_modules
     assert "infra.github_performance.contracts" not in imported_modules
 
+
+def test_active_campaign_names_all_fixed_execution_families() -> None:
+    registry = load_catalog_campaign_registry(
+        ROOT / "config/catalog_campaign_registry_v1.json"
+    )
+    active = tuple(item for item in registry.campaigns if item.active)
+    assert active
+    for campaign in active:
+        assert campaign.allowed_protected_branch == "main"
+        assert campaign.source_artifact_contracts
+        assert campaign.component_store_family
+        assert campaign.reducer_family

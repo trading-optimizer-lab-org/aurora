@@ -3,9 +3,15 @@ name: SP500 Optimized Catalog Run
 on:
   workflow_call:
     inputs:
-      commit_sha: {required: true, type: string}
-      runtime_input_run_id: {required: true, type: string}
-      admission_evidence_path: {required: false, type: string, default: "config/sp500_catalog_admission_evidence_current_v1.json"}
+      request_sha256: {required: true, type: string}
+      authority_id: {required: true, type: string}
+      campaign_id: {required: true, type: string}
+      science_sha256: {required: true, type: string}
+      execution_plan_sha256: {required: true, type: string}
+      execution_protocol_sha256: {required: true, type: string}
+      protected_commit_sha: {required: true, type: string}
+      decision_sha256: {required: true, type: string}
+      runtime_input_run_id: {required: false, type: string, default: "31418682679"}
       reference_run_id: {required: false, type: string, default: "31948898747"}
       component_store_run_id: {required: false, type: string, default: ""}
       component_cost_run_id: {required: false, type: string, default: ""}
@@ -14,22 +20,15 @@ on:
       benchmark_processes: {required: false, type: number, default: 0}
       benchmark_component_processes: {required: false, type: number, default: 0}
       benchmark_component_workers: {required: false, type: number, default: 0}
-  workflow_dispatch:
-    inputs:
-      commit_sha: {description: Exact revision, required: true}
-      runtime_input_run_id: {description: Immutable train-only runtime pack, required: true, default: "31418682679"}
-      reference_run_id: {description: Frozen scientific oracle run, required: false, default: "31948898747"}
-      component_store_run_id: {description: Compatible prior component-store run, required: false, default: ""}
-      component_cost_run_id: {description: Prior measured component-cost evidence, required: false, default: ""}
-      evaluation_cache_run_ids: {description: Comma-separated compatible result or checkpoint runs, required: false, default: ""}
-      benchmark_workers: {description: Qualification-only worker candidate; zero uses the promoted policy, required: false, type: number, default: 0}
-      benchmark_processes: {description: Qualification-only process candidate; zero uses the promoted policy, required: false, type: number, default: 0}
-      benchmark_component_processes: {description: Qualification-only component process candidate; zero uses the promoted policy, required: false, type: number, default: 0}
-      benchmark_component_workers: {description: Qualification-only component worker candidate; zero uses the promoted policy, required: false, type: number, default: 0}
+    outputs:
+      campaign_state:
+        value: ${{ jobs.reduce.outputs.campaign_state }}
+      final_evidence_artifact:
+        value: ${{ jobs.reduce.outputs.final_evidence_artifact }}
 
 permissions: {actions: read, contents: read}
 concurrency:
-  group: sp500-optimized-catalog-${{ inputs.commit_sha }}
+  group: sp500-optimized-catalog-${{ inputs.authority_id }}
   cancel-in-progress: false
 
 env:
@@ -48,6 +47,7 @@ env:
 jobs:
   plan:
     runs-on: ubuntu-24.04
+    environment: catalog-production
     timeout-minutes: 20
     outputs:
       matrix_a: ${{ steps.plan.outputs.matrix_a }}
@@ -61,7 +61,7 @@ jobs:
       component_matrix: ${{ steps.plan.outputs.component_matrix }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"
@@ -133,7 +133,7 @@ jobs:
             --campaign config/sp500_megarun_dehb_campaign_v1.json \
             --catalog-dir config/sp500_megarun_strategy_catalog_v1 \
             --selected-config config/sp500_megarun_selected_dehb_13.json \
-            --evidence "${{ inputs.admission_evidence_path || 'config/sp500_catalog_admission_evidence_current_v1.json' }}" \
+            --evidence config/sp500_catalog_admission_evidence_current_v1.json \
             --output-dir outputs/plan \
             --github-output "$GITHUB_OUTPUT" \
             --thermal-state "$thermal_state" \
@@ -185,10 +185,11 @@ jobs:
     # its 50-second preparation cost from the cold-run critical path.
     if: ${{ inputs.component_store_run_id == '' }}
     runs-on: ubuntu-24.04
+    environment: catalog-production
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"
@@ -277,7 +278,14 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.component_matrix) }}
     uses: ./.github/workflows/catalog-component-worker.yml
     with:
-      commit_sha: ${{ inputs.commit_sha }}
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       runtime_fragment_run_id: ${{ github.run_id }}
       component_shard_index: ${{ matrix.component_shard }}
@@ -288,10 +296,11 @@ jobs:
     needs: [plan, build_components]
     if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' && needs.build_components.result == 'success' }}
     runs-on: ubuntu-24.04
+    environment: catalog-production
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"
@@ -357,7 +366,14 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
     uses: ./.github/workflows/catalog-optimized-worker.yml
     with:
-      commit_sha: ${{ inputs.commit_sha }}
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       component_store_run_id: ${{ inputs.component_store_run_id || github.run_id }}
       shard_index: ${{ matrix.shard }}
@@ -373,7 +389,14 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
     uses: ./.github/workflows/catalog-optimized-worker.yml
     with:
-      commit_sha: ${{ inputs.commit_sha }}
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       component_store_run_id: ${{ inputs.component_store_run_id || github.run_id }}
       shard_index: ${{ matrix.shard }}
@@ -389,7 +412,14 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix_c) }}
     uses: ./.github/workflows/catalog-optimized-worker.yml
     with:
-      commit_sha: ${{ inputs.commit_sha }}
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
       runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
       component_store_run_id: ${{ inputs.component_store_run_id || github.run_id }}
       shard_index: ${{ matrix.shard }}
@@ -400,10 +430,14 @@ jobs:
     needs: [plan, evaluate_a, evaluate_b, evaluate_c]
     if: ${{ always() && needs.plan.result == 'success' && ((needs.plan.outputs.pending_recipe_count == '0') || ((needs.evaluate_a.result == 'success' || needs.evaluate_a.result == 'skipped') && (needs.evaluate_b.result == 'success' || needs.evaluate_b.result == 'skipped') && (needs.evaluate_c.result == 'success' || needs.evaluate_c.result == 'skipped'))) }}
     runs-on: ubuntu-24.04
+    environment: catalog-production
     timeout-minutes: 60
+    outputs:
+      campaign_state: ${{ steps.terminal.outputs.campaign_state }}
+      final_evidence_artifact: ${{ steps.terminal.outputs.final_evidence_artifact }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"
@@ -475,16 +509,22 @@ jobs:
           path: outputs/final
           if-no-files-found: error
           retention-days: 90
+      - id: terminal
+        shell: bash
+        run: |
+          echo "campaign_state=TERMINAL_CANDIDATE" >> "$GITHUB_OUTPUT"
+          echo "final_evidence_artifact=sp500-strategy-catalog-final-results" >> "$GITHUB_OUTPUT"
 
   audit_runtime:
     needs: [plan, reduce]
     if: ${{ always() && needs.plan.result == 'success' && needs.reduce.result == 'success' }}
     runs-on: ubuntu-24.04
+    environment: catalog-production
     timeout-minutes: 20
     permissions: {actions: read, contents: read}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: sp500-strategy-catalog-final-results
@@ -538,11 +578,12 @@ jobs:
     needs: [plan, reduce, audit_runtime]
     if: ${{ always() && needs.plan.result == 'success' && needs.reduce.result == 'success' && needs.audit_runtime.result == 'success' }}
     runs-on: ubuntu-24.04
+    environment: catalog-production
     timeout-minutes: 20
     permissions: {actions: read, contents: read}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"

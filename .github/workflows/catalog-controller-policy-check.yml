@@ -44,7 +44,9 @@ jobs:
             tests/test_catalog_campaign_registry.py \
             tests/test_catalog_authority_ledger.py \
             tests/test_catalog_controller.py \
-            tests/test_catalog_controller_cli.py \
-            tests/test_catalog_github_controls.py \
-            tests/test_github_performance_preflight.py \
-            tests/test_catalog_controller_workflows.py
+          tests/test_catalog_controller_cli.py \
+          tests/test_catalog_controller_reporting.py \
+          tests/test_catalog_github_controls.py \
+          tests/test_github_performance_preflight.py \
+          tests/test_github_performance_workflows.py \
+          tests/test_catalog_controller_workflows.py

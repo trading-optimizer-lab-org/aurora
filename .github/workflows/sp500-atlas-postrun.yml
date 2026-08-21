@@ -1,29 +1,6 @@
 name: SP500 Atlas Postrun Robustness and Audit
 
 on:
-  workflow_dispatch:
-    inputs:
-      source_run_id:
-        description: Completed controller run
-        required: true
-        type: string
-      commit_sha:
-        description: Exact immutable postrun implementation commit
-        required: true
-        type: string
-      runtime_input_run_id:
-        description: Verified train-only runtime input pack
-        required: true
-        default: "31418682679"
-        type: string
-      preflight_run_id:
-        description: Run containing the frozen train-only preflight artifact
-        required: true
-        type: string
-      source_artifact:
-        description: Controller artifact containing its final results directory
-        required: true
-        type: string
   workflow_call:
     inputs:
       source_run_id: {required: true, type: string}
