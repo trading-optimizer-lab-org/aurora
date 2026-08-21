@@ -16,6 +16,8 @@ from aurora.infra.sp500_megarun.atlas_execution_contract import (
     write_plan,
 )
 from aurora.infra.sp500_megarun.atlas_campaign_selection import build_campaign_selection
+from scripts.merge_sp500_atlas_reference import merge_reference_chunks
+from scripts.recover_sp500_atlas_reference import recover_reference_chunk
 from scripts.reduce_sp500_atlas_run import reduce_atlas_run
 
 
@@ -378,6 +380,52 @@ def test_reference_only_recovery_keeps_source_artifact_index_without_concat(
     assert len(source_index["shards"]) == 4
     assert manifest["results_path"] is None
     assert manifest["source_index_path"] == "../source_results_index.json"
+    assert not (output / "results.jsonl").exists()
+
+
+def test_reference_recovery_chunks_merge_full_source_coverage(tmp_path: Path) -> None:
+    catalog, receipt = _evidence()
+    plan = build_run_plan(
+        catalog_manifest=catalog,
+        calibration_receipt=receipt,
+        target_end_iso="2026-08-20T07:31:00+02:00",
+        implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+        total_shards=4,
+        selection=_selection(),
+    )
+    plan_path = tmp_path / "plan.json"
+    write_plan(plan_path, plan)
+    chunks_root = tmp_path / "chunks"
+    chunks_root.mkdir()
+    for chunk_index, (start, stop) in enumerate(((0, 2), (2, 4))):
+        source_root = tmp_path / f"source-{chunk_index}"
+        source_root.mkdir()
+        for index in range(start, stop):
+            _write_shard(source_root, plan, index)
+        recover_reference_chunk(
+            plan_path=plan_path,
+            partitions_root=source_root,
+            output_dir=chunks_root / f"chunk-{chunk_index}",
+            chunk_index=chunk_index,
+            chunk_start=start,
+            chunk_stop=stop,
+            source_run_id="32152827229",
+            workers=2,
+        )
+
+    output = tmp_path / "merged"
+    summary = merge_reference_chunks(
+        plan_path=plan_path,
+        chunks_root=chunks_root,
+        output_dir=output,
+        source_run_id="32152827229",
+        expected_chunks=2,
+    )
+    index = json.loads((output / "source_results_index.json").read_text(encoding="utf-8"))
+    assert summary["accepted"] is True
+    assert summary["verified_recipe_count"] == 8
+    assert summary["verified_shard_count"] == 4
+    assert len(index["shards"]) == 4
     assert not (output / "results.jsonl").exists()
 
 

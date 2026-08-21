@@ -403,29 +403,112 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  recover_existing:
+  recover_chunks:
     if: ${{ inputs.run_mode == 'pilot_verify' && inputs.launch_authorization == 'RECOVER_EXISTING_ATLAS_ARTIFACTS' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {chunk_index: 0, chunk_start: 0, chunk_stop: 30}
+          - {chunk_index: 1, chunk_start: 30, chunk_stop: 60}
+          - {chunk_index: 2, chunk_start: 60, chunk_stop: 90}
+          - {chunk_index: 3, chunk_start: 90, chunk_stop: 120}
+          - {chunk_index: 4, chunk_start: 120, chunk_stop: 150}
+          - {chunk_index: 5, chunk_start: 150, chunk_stop: 180}
+          - {chunk_index: 6, chunk_start: 180, chunk_stop: 210}
+          - {chunk_index: 7, chunk_start: 210, chunk_stop: 240}
+          - {chunk_index: 8, chunk_start: 240, chunk_stop: 270}
+          - {chunk_index: 9, chunk_start: 270, chunk_stop: 300}
+          - {chunk_index: 10, chunk_start: 300, chunk_stop: 330}
+          - {chunk_index: 11, chunk_start: 330, chunk_stop: 360}
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: ${{ inputs.pilot_source_run_id }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: {ref: "${{ github.sha }}", persist-credentials: false}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with: {python-version: "3.11"}
       - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
-      - name: Verify recovery authorization and immutable commit
+      - name: Verify recovery contract and train-only plan
         shell: bash
-        env:
-          REQUESTED_COMMIT: ${{ inputs.commit_sha }}
-          WORKFLOW_COMMIT_SHA: ${{ github.sha }}
-          RECOVERY_AUTHORIZATION: ${{ inputs.launch_authorization }}
-          SOURCE_RUN_ID: ${{ inputs.pilot_source_run_id }}
         run: |
           set -euo pipefail
-          test "$REQUESTED_COMMIT" = "$WORKFLOW_COMMIT_SHA"
-          test "$(git rev-parse HEAD)" = "$WORKFLOW_COMMIT_SHA"
-          test "$RECOVERY_AUTHORIZATION" = "RECOVER_EXISTING_ATLAS_ARTIFACTS"
+          test "${{ inputs.commit_sha }}" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "${{ inputs.launch_authorization }}" = "RECOVER_EXISTING_ATLAS_ARTIFACTS"
           [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-preflight
+          path: ${{ runner.temp }}/preflight
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.pilot_source_run_id }}
+      - name: Verify exact train-only plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from aurora.infra.sp500_megarun.atlas_execution_contract import load_plan
+          plan = load_plan(Path(os.environ["RUNNER_TEMP"]) / "preflight" / "plan" / "atlas_run_plan.json")
+          assert plan.train_end == "2010-12-31"
+          assert plan.validation_opened is False
+          assert plan.locked_opened is False
+          assert plan.total_shards == 360
+          assert plan.requested_recipe_count == 209906
+          PY
+      - name: Download only this recovery block from the source run
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/shards"
+          for index in $(seq "${{ matrix.chunk_start }}" "$(( ${{ matrix.chunk_stop }} - 1 ))"); do
+            target="$RUNNER_TEMP/shards/sp500-atlas-shard-$index"
+            mkdir -p "$target"
+            gh run download "$SOURCE_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "sp500-atlas-shard-$index" \
+              --dir "$target"
+          done
+      - name: Verify this source block without re-evaluation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/recover_sp500_atlas_reference.py \
+            --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
+            --partitions-root "$RUNNER_TEMP/shards" \
+            --output-dir outputs/chunk \
+            --chunk-index "${{ matrix.chunk_index }}" \
+            --chunk-start "${{ matrix.chunk_start }}" \
+            --chunk-stop "${{ matrix.chunk_stop }}" \
+            --source-run-id "$SOURCE_RUN_ID" \
+            --workers 4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-recovery-chunk-${{ github.run_id }}-${{ matrix.chunk_index }}
+          path: outputs/chunk
+          if-no-files-found: error
+          retention-days: 90
+
+  recover_merge:
+    needs: recover_chunks
+    if: ${{ always() && inputs.run_mode == 'pilot_verify' && inputs.launch_authorization == 'RECOVER_EXISTING_ATLAS_ARTIFACTS' && needs.recover_chunks.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: ${{ inputs.pilot_source_run_id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: sp500-atlas-preflight
@@ -435,51 +518,20 @@ jobs:
           run-id: ${{ inputs.pilot_source_run_id }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          pattern: sp500-atlas-shard-*
-          path: ${{ runner.temp }}/shards
+          pattern: sp500-atlas-recovery-chunk-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/chunks
           merge-multiple: false
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.pilot_source_run_id }}
-      - name: Verify existing train-only plan before reduction
+      - name: Merge verified block indexes
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          from aurora.infra.sp500_megarun.atlas_execution_contract import load_plan
-
-          root = Path(os.environ["RUNNER_TEMP"]) / "preflight"
-          plan = load_plan(root / "plan" / "atlas_run_plan.json")
-          assert plan.train_end == "2010-12-31"
-          assert plan.validation_opened is False
-          assert plan.locked_opened is False
-          assert plan.total_shards == 360
-          print(json.dumps({
-              "plan_sha256": plan.plan_sha256,
-              "requested_recipe_count": plan.requested_recipe_count,
-              "total_shards": plan.total_shards,
-              "validation_opened": False,
-              "locked_opened": False,
-          }, sort_keys=True))
-          PY
-      - name: Reduce existing shard artifacts without re-evaluation
-        env:
-          ATLAS_RECOVERY_FAST_PATH: "1"
-        shell: bash
-        run: |
-          set -euo pipefail
-          python scripts/reduce_sp500_atlas_run.py \
+          python scripts/merge_sp500_atlas_reference.py \
             --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json" \
-            --partitions-root "$RUNNER_TEMP/shards" \
+            --chunks-root "$RUNNER_TEMP/chunks" \
             --output-dir outputs/final \
-            --artifact-file-hash-only \
-            --reference-only \
-            --source-run-id "${{ inputs.pilot_source_run_id }}"
-      - name: Verify recovered reduction receipt
+            --source-run-id "$SOURCE_RUN_ID" \
+            --expected-chunks 12
+      - name: Verify complete recovery receipt
         shell: bash
         run: |
           set -euo pipefail
@@ -487,25 +539,24 @@ jobs:
           import json
           import os
           from pathlib import Path
-
           from aurora.infra.sp500_megarun.atlas_execution_contract import load_plan
-
-          plan = load_plan(
-              Path(os.environ["RUNNER_TEMP"])
-              / "preflight"
-              / "plan"
-              / "atlas_run_plan.json"
-          )
+          root = Path(os.environ["RUNNER_TEMP"])
+          plan = load_plan(root / "preflight" / "plan" / "atlas_run_plan.json")
           receipt = json.loads(Path("outputs/final/reduction_receipt.json").read_text(encoding="utf-8"))
+          index = json.loads(Path("outputs/final/source_results_index.json").read_text(encoding="utf-8"))
           assert receipt["accepted"] is True
           assert receipt["plan_sha256"] == plan.plan_sha256
           assert receipt["verified_recipe_count"] == plan.requested_recipe_count
           assert receipt["verified_shard_count"] == plan.total_shards
+          assert receipt["verified_chunk_count"] == 12
+          assert receipt["storage_mode"] == "source_artifacts_referenced"
           assert receipt["row_hash_verification_mode"] == "artifact_file_hash_bound"
           assert receipt["row_hashes_recomputed"] is False
           assert receipt["result_file_hashes_verified"] is True
           assert receipt["validation_opened"] is False
           assert receipt["locked_opened"] is False
+          assert index["source_run_id"] == os.environ["SOURCE_RUN_ID"]
+          assert len(index["shards"]) == plan.total_shards
           print(json.dumps(receipt, sort_keys=True))
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

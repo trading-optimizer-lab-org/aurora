@@ -23,7 +23,7 @@ def test_workflow_uses_exact_commit_and_static_shards() -> None:
     assert "run_sp500_atlas_worker.py" in text
     assert "reduce_sp500_atlas_run.py" in text
     assert text.count("max-parallel: 120") == 3
-    assert text.count("fail-fast: false") == 4
+    assert text.count("fail-fast: false") == 5
     assert "recipe_count" in text
     assert "total_shards" in text
     assert "smoke_serial" in text
@@ -103,7 +103,7 @@ def test_atlas_workflows_do_not_checkout_or_execute_untrusted_commit_inputs() ->
     assert 'ref: ${{ github.sha }}' in calibration
     assert 'ref: ${{ github.sha }}' in run
     assert 'test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in calibration
-    assert 'test "$REQUESTED_COMMIT" = "$WORKFLOW_COMMIT_SHA"' in run
+    assert 'test "${{ inputs.commit_sha }}" = "$GITHUB_SHA"' in run
 
 
 def test_postrun_workflow_is_train_only_and_publishes_robustness_audit() -> None:
@@ -149,12 +149,16 @@ def test_existing_run_recovery_reuses_artifacts_without_evaluating_again() -> No
     assert "source_run_id" in text
     assert "sp500-atlas-shard-*" in text
     assert "sp500-atlas-preflight" in text
-    assert "reduce_sp500_atlas_run.py" in text
+    assert "recover_sp500_atlas_reference.py" in text
+    assert "merge_sp500_atlas_reference.py" in text
     assert "RECOVER_EXISTING_ATLAS_ARTIFACTS" in text
-    assert "ATLAS_RECOVERY_FAST_PATH" in text
-    assert "--artifact-file-hash-only" in text
+    assert "recover_chunks:" in text
+    assert "recover_merge:" in text
+    assert "gh run download" in text
+    assert "chunk_stop: 360" in text
+    assert "--expected-chunks 12" in text
     assert 'row_hash_verification_mode"] == "artifact_file_hash_bound"' in text
     assert 'plan.train_end == "2010-12-31"' in text
     assert "validation_opened" in text
     assert "locked_opened" in text
-    assert "recover_existing:" in text
+    assert "sp500-atlas-recovery-chunk-" in text
