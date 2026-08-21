@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from bisect import bisect_right
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Iterable
 import hashlib
@@ -336,12 +335,13 @@ def _read_recovery_shard_payload(
     expected_recipe_count: int,
     *,
     receipt_result_sha256: object,
-) -> tuple[int, bytes]:
+) -> tuple[int, bytes, list[dict[str, object]]]:
     """Verify and return one recovery shard without decoding its JSON rows.
 
-    The source file is already bound to the immutable worker receipt.  Keep
-    this parallel phase strictly byte-oriented; projecting every row happens
-    once after the raw shard files have been concatenated.
+    The source file is already bound to the immutable worker receipt.  Decode
+    only the compact reducer projection while the bytes are already in
+    memory; the large annual history is skipped by ``_decode_recovery_row``.
+    This avoids reopening the concatenated file for a second full pass.
     """
 
     raw_bytes = result_path.read_bytes()
@@ -353,7 +353,14 @@ def _read_recovery_shard_payload(
         raise ValueError(f"ATLAS_REDUCER_ROW_BOUNDARY_OPEN:{shard_index}:locked")
     if hashlib.sha256(raw_bytes).hexdigest() != receipt_result_sha256:
         raise ValueError(f"ATLAS_REDUCER_RESULT_FILE_HASH_INVALID:{shard_index}")
-    return shard_index, raw_bytes
+    projected_rows = [
+        _decode_recovery_row(raw_line, line_number)
+        for line_number, raw_line in enumerate(raw_bytes.splitlines(keepends=True), start=1)
+        if raw_line.strip()
+    ]
+    if len(projected_rows) != expected_recipe_count:
+        raise ValueError(f"ATLAS_REDUCER_PROJECTED_ROW_COUNT_INVALID:{shard_index}")
+    return shard_index, raw_bytes, projected_rows
 
 
 def _iter_recovery_shard_payloads(
@@ -361,7 +368,7 @@ def _iter_recovery_shard_payloads(
     by_index: dict[int, Path],
     *,
     workers: int,
-) -> Iterable[tuple[int, bytes]]:
+) -> Iterable[tuple[int, bytes, list[dict[str, object]]]]:
     """Process recovery shards in bounded parallel batches."""
 
     shards = list(plan.shards)
@@ -527,10 +534,11 @@ def reduce_atlas_run(
     cells: set[tuple[int, int, int]] = set()
     row_count = 0
     # Recovery mode already binds every source file to the immutable worker
-    # receipt.  Keep the decoded projection in memory after one combined pass
-    # over the concatenated output so the frontier/reserve pass does not parse
-    # the complete dataset again.  The normal path deliberately keeps its
-    # existing streaming behaviour and row-hash verification.
+    # receipt.  Recovery workers decode the compact projection while each
+    # source shard is already in memory, so the frontier/reserve pass can use
+    # it without parsing the concatenated output again.  The normal path
+    # deliberately keeps its existing streaming behaviour and row-hash
+    # verification.
     cached_rows: list[dict[str, object]] | None = [] if not verify_row_hashes else None
     results_digest = hashlib.sha256() if not verify_row_hashes else None
     if verify_row_hashes:
@@ -594,17 +602,36 @@ def reduce_atlas_run(
             else:
                 # Process independent shards in bounded parallel batches.  A
                 # single runner was spending about eleven minutes decoding one
-                # shard.  This phase only verifies/copies bytes; the projected
-                # fields are decoded once from the combined output below.
+                # shard.  Each worker now verifies/copies bytes and projects
+                # compact fields once while that shard is already in memory.
                 assert recovery_payloads is not None
-                payload_shard_index, raw_bytes = next(recovery_payloads)
+                payload_shard_index, raw_bytes, projected_rows = next(recovery_payloads)
                 if payload_shard_index != shard.shard_index:
                     raise ValueError(f"ATLAS_REDUCER_RECOVERY_ORDER_INVALID:{shard.shard_index}")
                 result_handle.write(raw_bytes)
                 assert results_digest is not None
                 results_digest.update(raw_bytes)
-                row_count += shard.expected_recipe_count
-                shard_count = shard.expected_recipe_count
+                shard_count = 0
+                for row in projected_rows:
+                    verified_ordinal = _verify_row(
+                        row,
+                        plan_sha256=plan.plan_sha256,
+                        shard_index=shard.shard_index,
+                        verify_result_hash=False,
+                    )
+                    if verified_ordinal < shard.start_ordinal or verified_ordinal >= shard.stop_ordinal:
+                        raise ValueError(f"ATLAS_REDUCER_ORDINAL_OUT_OF_SHARD:{verified_ordinal}")
+                    if verified_ordinal in seen:
+                        raise ValueError(f"ATLAS_REDUCER_DUPLICATE_ORDINAL:{verified_ordinal}")
+                    seen.add(verified_ordinal)
+                    cells.add(_cell(row))
+                    cached_rows.append(_recovery_frontier_row(row))
+                    row_count += 1
+                    shard_count += 1
+                if shard_count != shard.expected_recipe_count:
+                    raise ValueError(
+                        f"ATLAS_REDUCER_PROJECTED_ROW_COUNT_INVALID:{shard.shard_index}:{shard_count}"
+                    )
             print(
                 json.dumps(
                     {
@@ -616,37 +643,6 @@ def reduce_atlas_run(
                 ),
                 flush=True,
             )
-
-    if not verify_row_hashes:
-        # Decode the small reducer projection once from the complete raw
-        # concatenation.  Reopening jq once is materially cheaper on the
-        # public runner than starting it for every artifact, while the raw
-        # output remains byte-for-byte bound to every worker receipt.
-        assert cached_rows is not None
-        shard_stops = [shard.stop_ordinal for shard in plan.shards]
-        projected_count = 0
-        for row in _iter_recovery_projected_rows(results_path):
-            ordinal = int(row.get("ordinal", -1))
-            shard_position = bisect_right(shard_stops, ordinal)
-            if shard_position >= len(plan.shards):
-                raise ValueError(f"ATLAS_REDUCER_ORDINAL_OUT_OF_SHARD:{ordinal}")
-            shard = plan.shards[shard_position]
-            verified_ordinal = _verify_row(
-                row,
-                plan_sha256=plan.plan_sha256,
-                shard_index=shard.shard_index,
-                verify_result_hash=False,
-            )
-            if verified_ordinal < shard.start_ordinal or verified_ordinal >= shard.stop_ordinal:
-                raise ValueError(f"ATLAS_REDUCER_ORDINAL_OUT_OF_SHARD:{verified_ordinal}")
-            if verified_ordinal in seen:
-                raise ValueError(f"ATLAS_REDUCER_DUPLICATE_ORDINAL:{verified_ordinal}")
-            seen.add(verified_ordinal)
-            cells.add(_cell(row))
-            cached_rows.append(_recovery_frontier_row(row))
-            projected_count += 1
-        if projected_count != row_count:
-            raise ValueError(f"ATLAS_REDUCER_PROJECTED_ROW_COUNT_INVALID:{projected_count}:{row_count}")
 
     if row_count != plan.requested_recipe_count or seen != set(range(plan.ordinal_start, plan.ordinal_stop)):
         raise ValueError("ATLAS_REDUCER_GLOBAL_COVERAGE_INVALID")
