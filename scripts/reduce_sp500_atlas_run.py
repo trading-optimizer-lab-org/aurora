@@ -12,8 +12,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
-import subprocess
 from typing import Any
 
 import pandas as pd
@@ -123,6 +121,14 @@ _RECOVERY_ROW_FIELDS = frozenset(
     }
 )
 
+# Worker rows are emitted with ``sort_keys=True``.  Consequently the large
+# annual history is the first value in every canonical row.  In recovery the
+# whole source file is already protected by the receipt's SHA-256, so we can
+# skip that value with the C-backed regular-expression engine and decode only
+# the compact reducer fields.  The old structural scanner remains the safe
+# fallback for non-canonical input and tests.
+_RECOVERY_ANNUAL_ROWS_PREFIX = re.compile(rb'^\{"annual_rows":\[.*?\],')
+
 
 def _skip_json_string(data: bytes, position: int) -> int:
     if position >= len(data) or data[position] != ord('"'):
@@ -195,6 +201,21 @@ def _decode_recovery_row(raw_line: bytes, line_number: int) -> dict[str, object]
     data = raw_line.strip()
     if not data or data[0] != ord("{"):
         raise ValueError(f"ATLAS_REDUCER_ROW_OBJECT_REQUIRED:{line_number}")
+
+    fast_prefix = _RECOVERY_ANNUAL_ROWS_PREFIX.match(data)
+    if fast_prefix is not None:
+        # ``annual_rows`` is deliberately not parsed here: the immutable
+        # artifact hash has already authenticated the complete source line.
+        # Decode the remaining compact object in C instead of walking every
+        # byte of the large annual-history array in Python.
+        try:
+            compact = json.loads(b"{" + data[fast_prefix.end() :])
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError(f"ATLAS_REDUCER_JSON_COMPACT_ROW_INVALID:{line_number}") from exc
+        if not isinstance(compact, dict):
+            raise ValueError(f"ATLAS_REDUCER_ROW_OBJECT_REQUIRED:{line_number}")
+        return {key: value for key, value in compact.items() if key in _RECOVERY_ROW_FIELDS}
+
     position = 1
     row: dict[str, object] = {}
     keys: set[str] = set()
@@ -292,50 +313,21 @@ def _recovery_frontier_row(row: dict[str, object]) -> dict[str, object]:
     return compact
 
 
-_RECOVERY_JQ_FILTER = (
-    "{plan_sha256,shard_index,validation_opened,locked_opened,result_sha256,"
-    "ordinal,positive_weeks,positive_months,joint_positive_above_spy_years,"
-    "strategy_id,scientific_recipe_sha256,raw_ordinal,total_weeks,total_months,"
-    "total_years,positive_week_fraction,positive_month_fraction,"
-    "joint_positive_above_spy_fraction,annualized_strategy_return,"
-    "annualized_alpha,weeks_beating_spy,week_count,components,composition}"
-)
-
-
 def _iter_recovery_projected_rows(path: Path) -> Iterable[dict[str, object]]:
-    """Project only reducer fields with jq on the GitHub runner.
+    """Project reducer fields without parsing the large annual history.
 
-    The complete source line is verified and copied separately.  jq parses
-    JSON in native code and discards the large annual history before Python
-    sees it.  Local/test environments use the Python fallback so the
-    repository remains self-contained.
+    The complete source file is verified and copied separately.  Each row is
+    decoded with ``_decode_recovery_row``; canonical rows take the fast
+    prefix path above and only the compact fields reach ``json.loads``.  This
+    avoids both the old Python byte-at-a-time scan and jq parsing hundreds of
+    megabytes of annual history.
     """
 
-    jq = shutil.which("jq") if os.environ.get("GITHUB_ACTIONS") == "true" else None
-    if jq is None:
-        if os.environ.get("GITHUB_ACTIONS") == "true":
-            raise RuntimeError("ATLAS_REDUCER_JQ_REQUIRED_ON_GITHUB_RUNNER")
-        for row, _ in _read_rows_with_recovery_raw_lines(path):
-            yield row
-        return
-
-    process = subprocess.Popen(
-        [jq, "-c", _RECOVERY_JQ_FILTER, str(path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    assert process.stdout is not None
-    for line_number, projected_line in enumerate(process.stdout, start=1):
-        if not projected_line.strip():
-            continue
-        row = json.loads(projected_line)
-        if not isinstance(row, dict):
-            raise ValueError(f"ATLAS_REDUCER_PROJECTED_ROW_OBJECT_REQUIRED:{line_number}")
-        yield row
-    stderr = process.stderr.read().decode("utf-8", errors="replace") if process.stderr is not None else ""
-    return_code = process.wait()
-    if return_code != 0:
-        raise ValueError(f"ATLAS_REDUCER_JQ_FAILED:{return_code}:{stderr[-500:]}")
+    with Path(path).open("rb") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            if not raw_line.strip():
+                continue
+            yield _decode_recovery_row(raw_line, line_number)
 
 
 def _read_recovery_shard_payload(
