@@ -235,13 +235,56 @@ def _read_rows_with_recovery_raw_lines(
     *,
     file_digest: Any | None = None,
 ) -> Iterable[tuple[dict[str, object], bytes]]:
+    """Read recovery rows with the native JSON decoder and keep raw bytes.
+
+    Recovery is already bound to the immutable worker-file hash.  The
+    previous byte-at-a-time structural scanner tried to avoid decoding
+    ``annual_rows``, but its Python loop was dramatically slower on GitHub
+    runners than the C-backed JSON decoder.  Decode the complete row here,
+    while preserving the exact source line for the output dataset.
+    """
+
     with Path(path).open("rb") as handle:
         for line_number, raw_line in enumerate(handle, start=1):
             if file_digest is not None:
                 file_digest.update(raw_line)
             if not raw_line.strip():
                 continue
-            yield _decode_recovery_row(raw_line, line_number), raw_line
+            row = json.loads(raw_line)
+            if not isinstance(row, dict):
+                raise ValueError(f"ATLAS_REDUCER_ROW_OBJECT_REQUIRED:{line_number}")
+            yield row, raw_line
+
+
+_RECOVERY_FRONTIER_FIELDS = (
+    "ordinal",
+    "strategy_id",
+    "scientific_recipe_sha256",
+    "raw_ordinal",
+    "positive_weeks",
+    "total_weeks",
+    "positive_months",
+    "total_months",
+    "joint_positive_above_spy_years",
+    "total_years",
+    "positive_week_fraction",
+    "positive_month_fraction",
+    "joint_positive_above_spy_fraction",
+    "annualized_strategy_return",
+    "annualized_alpha",
+    "weeks_beating_spy",
+    "week_count",
+    "components",
+    "composition",
+)
+
+
+def _recovery_frontier_row(row: dict[str, object]) -> dict[str, object]:
+    """Keep only fields needed by frontier/reserve and later robustness."""
+
+    compact = {key: row[key] for key in _RECOVERY_FRONTIER_FIELDS if key != "raw_ordinal"}
+    compact["raw_ordinal"] = row.get("raw_ordinal")
+    return compact
 
 
 def _cell(row: dict[str, object]) -> tuple[int, int, int]:
@@ -450,7 +493,7 @@ def reduce_atlas_run(
                     if results_digest is not None:
                         results_digest.update(raw_line)
                     if cached_rows is not None:
-                        cached_rows.append(row)
+                        cached_rows.append(_recovery_frontier_row(row))
                 row_count += 1
                 shard_count += 1
             if file_digest is not None and file_digest.hexdigest() != receipt.get("result_sha256"):
