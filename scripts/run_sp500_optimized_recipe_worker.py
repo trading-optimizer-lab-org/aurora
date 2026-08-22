@@ -11,6 +11,7 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 import shutil
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
@@ -27,7 +28,10 @@ from aurora.infra.sp500_megarun.catalog_fast_objective import FastTrainObjective
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
-from aurora.infra.sp500_megarun.catalog_resume import CatalogResumeWorkManifestV1
+from aurora.infra.sp500_megarun.catalog_resume import (
+    CatalogResumeWorkManifestV1,
+    scientific_result_sha256,
+)
 from aurora.infra.sp500_megarun.catalog_resources import (
     ResourceUsageSnapshot,
     resource_usage_delta,
@@ -68,7 +72,7 @@ _RESULT_SCHEMA = pa.schema(
     ]
 )
 
-_PROCESS_STORE: CatalogComponentStore | None = None
+_PROCESS_STORE: Any = None
 _PROCESS_LEDGER: pd.DataFrame | None = None
 _PROCESS_SEARCH_END: str | None = None
 _PROCESS_OBJECTIVE: FastTrainObjective | None = None
@@ -118,7 +122,7 @@ def _write_resume_microshard(
 def _signals_for_components(
     components: list[dict[str, object]],
     *,
-    store: CatalogComponentStore,
+    store: Any,
     index: pd.Index,
 ) -> list[pd.Series]:
     signals: list[pd.Series] = []
@@ -127,6 +131,102 @@ def _signals_for_components(
         signal = pd.Series(values.astype(float), index=index, dtype=float)
         signals.append(signal.mask(signal == 0.0))
     return signals
+
+
+class _ExactComponentPayload:
+    """Read several exact mmap bundles without copying them into one matrix."""
+
+    def __init__(self, stores: tuple[CatalogComponentStore, ...]) -> None:
+        if not stores:
+            raise ValueError("COMPONENT_PAYLOAD_INCOMPLETE")
+        entries: dict[str, CatalogComponentStore] = {}
+        bundle_manifests: list[str] = []
+        for store in stores:
+            wrapper_path = store.root / "component_bundle_manifest.json"
+            try:
+                wrapper = json.loads(wrapper_path.read_text("utf-8"))
+            except (OSError, ValueError) as exc:
+                raise ValueError("COMPONENT_BUNDLE_MANIFEST_INVALID") from exc
+            wrapper_identity = {
+                key: value
+                for key, value in wrapper.items()
+                if key != "manifest_sha256"
+            }
+            if (
+                wrapper.get("schema_version") != "1"
+                or wrapper.get("component_store_manifest_sha256")
+                != store.manifest.manifest_sha256
+                or wrapper.get("validation_opened") is not False
+                or wrapper.get("locked_opened") is not False
+                or canonical_sha256(wrapper_identity)
+                != wrapper.get("manifest_sha256")
+            ):
+                raise ValueError("COMPONENT_BUNDLE_MANIFEST_INVALID")
+            source_ids = {
+                str(item.get("source_configuration_sha256"))
+                for item in wrapper.get("components", ())
+                if isinstance(item, dict)
+            }
+            manifest_ids = {
+                entry.component_id for entry in store.manifest.entries
+            }
+            if source_ids != manifest_ids:
+                raise ValueError("COMPONENT_BUNDLE_STORE_COVERAGE_INVALID")
+            for component_id in sorted(manifest_ids):
+                if component_id in entries:
+                    raise ValueError("COMPONENT_PAYLOAD_DUPLICATE")
+                entries[component_id] = store
+            bundle_manifests.append(str(wrapper["manifest_sha256"]))
+        self._entries = entries
+        self.manifest = SimpleNamespace(
+            manifest_sha256=canonical_sha256(
+                {
+                    "schema_version": "exact-component-payload-v1",
+                    "bundle_manifest_sha256": tuple(sorted(bundle_manifests)),
+                    "component_ids": tuple(sorted(entries)),
+                }
+            )
+        )
+
+    def get(self, component_id: str):
+        store = self._entries.get(str(component_id))
+        if store is None:
+            raise KeyError(component_id)
+        return store.get(component_id)
+
+
+def _open_exact_component_payload(
+    root: Path,
+    *,
+    data_snapshot_sha256: str,
+    evaluator_sha256: str,
+) -> CatalogComponentStore | _ExactComponentPayload:
+    payload_root = Path(root)
+    if (payload_root / "manifest.json").is_file():
+        return CatalogComponentStore.open(
+            payload_root,
+            expected_data_snapshot_sha256=data_snapshot_sha256,
+            expected_evaluator_sha256=evaluator_sha256,
+        )
+    store_roots = tuple(
+        sorted(
+            {
+                path.parent
+                for path in payload_root.rglob("manifest.json")
+                if (path.parent / "signals.npy").is_file()
+            },
+            key=lambda path: path.relative_to(payload_root).as_posix(),
+        )
+    )
+    stores = tuple(
+        CatalogComponentStore.open(
+            store_root,
+            expected_data_snapshot_sha256=data_snapshot_sha256,
+            expected_evaluator_sha256=evaluator_sha256,
+        )
+        for store_root in store_roots
+    )
+    return _ExactComponentPayload(stores)
 
 
 def _evaluate(
@@ -212,10 +312,10 @@ def _initialize_recipe_process(
     """Load immutable mmap and train-only ledger once per persistent process."""
 
     global _PROCESS_LEDGER, _PROCESS_OBJECTIVE, _PROCESS_SEARCH_END, _PROCESS_STORE
-    _PROCESS_STORE = CatalogComponentStore.open(
+    _PROCESS_STORE = _open_exact_component_payload(
         Path(component_store),
-        expected_data_snapshot_sha256=data_snapshot_sha256,
-        expected_evaluator_sha256=evaluator_sha256,
+        data_snapshot_sha256=data_snapshot_sha256,
+        evaluator_sha256=evaluator_sha256,
     )
     _PROCESS_LEDGER = load_train_total_return_ledger(
         Path(snapshot),
@@ -289,6 +389,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--catalog-dir", type=Path, required=True)
     parser.add_argument("--selected-config", type=Path, required=True)
     parser.add_argument("--component-store", type=Path, required=True)
+    parser.add_argument("--runtime-input-pack", type=Path)
     parser.add_argument("--resolved-contract", type=Path, required=True)
     parser.add_argument("--run-plan", type=Path, required=True)
     parser.add_argument("--resume-work-manifest", type=Path, required=True)
@@ -297,6 +398,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--admission-token", required=True)
     parser.add_argument("--shard-index", type=int, required=True)
     parser.add_argument("--total-shards", type=int, required=True)
+    parser.add_argument("--payload-descriptor", type=Path)
+    parser.add_argument("--assignment-file", type=Path)
+    parser.add_argument("--checkpoint-slot-index", type=int)
+    parser.add_argument("--checkpoint-slot-count", type=int)
+    parser.add_argument("--previous-checkpoint-receipt", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser
 
@@ -336,12 +442,13 @@ def main() -> int:
     receipt = verify_strategy_catalog_directory(args.catalog_dir)
     if receipt["validation_opened"] or receipt["locked_opened"]:
         raise SystemExit("RECIPE_CATALOG_BOUNDARY_OPEN")
-    store = CatalogComponentStore.open(
+    store = _open_exact_component_payload(
         args.component_store,
-        expected_data_snapshot_sha256=resolved.science.data_snapshot_sha256,
-        expected_evaluator_sha256=resolved.science.evaluator_sha256,
+        data_snapshot_sha256=resolved.science.data_snapshot_sha256,
+        evaluator_sha256=resolved.science.evaluator_sha256,
     )
-    snapshot = args.component_store / "train_snapshot_1993_2010"
+    runtime_input_pack = args.runtime_input_pack or args.component_store
+    snapshot = runtime_input_pack / "train_snapshot_1993_2010"
     ledger = load_train_total_return_ledger(
         snapshot,
         allowed_end=campaign.search_end,
@@ -372,7 +479,71 @@ def main() -> int:
     ):
         raise SystemExit("RECIPE_DAG_CATALOG_MISMATCH")
     by_strategy_id = {str(row["strategy_id"]): row for row in rows}
+    payload_descriptor: dict[str, object] | None = None
+    checkpoint_slot_index = 1
+    checkpoint_slot_count = 1
     assigned_ids = work_manifest.assign(args.shard_index)
+    if args.payload_descriptor is not None or args.assignment_file is not None:
+        if (
+            args.payload_descriptor is None
+            or args.assignment_file is None
+            or args.checkpoint_slot_index is None
+            or args.checkpoint_slot_count is None
+        ):
+            raise SystemExit("RECIPE_EXACT_PAYLOAD_ARGUMENTS_INCOMPLETE")
+        try:
+            payload_descriptor = json.loads(
+                args.payload_descriptor.read_text("utf-8")
+            )
+            assignment_payload = json.loads(args.assignment_file.read_text("utf-8"))
+        except (OSError, ValueError) as exc:
+            raise SystemExit("RECIPE_EXACT_PAYLOAD_INVALID") from exc
+        if not isinstance(payload_descriptor, dict) or not isinstance(
+            assignment_payload, dict
+        ):
+            raise SystemExit("RECIPE_EXACT_PAYLOAD_INVALID")
+        checkpoint_slot_index = int(args.checkpoint_slot_index)
+        checkpoint_slot_count = int(args.checkpoint_slot_count)
+        if (
+            payload_descriptor.get("worker_id") != args.shard_index
+            or payload_descriptor.get("checkpoint_slot_count")
+            != checkpoint_slot_count
+            or checkpoint_slot_count not in (1, 2, 4, 8)
+            or not 1 <= checkpoint_slot_index <= checkpoint_slot_count
+        ):
+            raise SystemExit("RECIPE_CHECKPOINT_BINDING_INVALID")
+        if set(assignment_payload) != {
+            "schema_version",
+            "worker_id",
+            "strategy_ids",
+            "expected_strategy_manifest_sha256",
+        }:
+            raise SystemExit("RECIPE_ASSIGNMENT_SCHEMA_INVALID")
+        assignment_ids = tuple(str(value) for value in assignment_payload["strategy_ids"])
+        assignment_identity = {
+            "schema_version": "1",
+            "worker_id": args.shard_index,
+            "strategy_ids": assignment_ids,
+        }
+        expected_strategy_manifest_sha256 = canonical_sha256(assignment_identity)
+        if (
+            assignment_payload["schema_version"] != "1"
+            or assignment_payload["worker_id"] != args.shard_index
+            or assignment_ids != tuple(sorted(set(assignment_ids)))
+            or assignment_payload["expected_strategy_manifest_sha256"]
+            != expected_strategy_manifest_sha256
+            or payload_descriptor.get("expected_strategy_manifest_sha256")
+            != expected_strategy_manifest_sha256
+            or payload_descriptor.get("expected_strategy_count")
+            != len(assignment_ids)
+            or not set(assignment_ids).issubset(work_manifest.pending_strategy_ids)
+        ):
+            raise SystemExit("RECIPE_ASSIGNMENT_BINDING_INVALID")
+        start = (len(assignment_ids) * (checkpoint_slot_index - 1)) // checkpoint_slot_count
+        stop = (len(assignment_ids) * checkpoint_slot_index) // checkpoint_slot_count
+        assigned_ids = assignment_ids[start:stop]
+        if not assigned_ids:
+            raise SystemExit("RECIPE_CHECKPOINT_SEGMENT_EMPTY")
     try:
         assigned = [by_strategy_id[strategy_id] for strategy_id in assigned_ids]
     except KeyError as exc:
@@ -457,7 +628,7 @@ def main() -> int:
     scientific_stage_seconds["write"] = time.perf_counter() - write_started
     selected_output: list[dict[str, object]] = []
     selected_started = time.perf_counter()
-    if args.shard_index == 0:
+    if args.shard_index == 0 and checkpoint_slot_index == 1:
         selected_objective = FastTrainObjective(
             ledger,
             target_years=FULL_YEARS,
@@ -517,12 +688,29 @@ def main() -> int:
         resource_started,
         ResourceUsageSnapshot.capture(),
     )
+    previous_checkpoint_receipt_sha256 = "0" * 64
+    if args.previous_checkpoint_receipt is not None:
+        if not args.previous_checkpoint_receipt.is_file():
+            raise SystemExit("PREVIOUS_CHECKPOINT_RECEIPT_MISSING")
+        previous_checkpoint_receipt_sha256 = sha256_file(
+            args.previous_checkpoint_receipt
+        )
     (args.output_dir / "receipt.json").write_text(
         json.dumps(
             {
                 "schema_version": 1,
                 "shard_index": args.shard_index,
                 "total_shards": args.total_shards,
+                "checkpoint_slot_index": checkpoint_slot_index,
+                "checkpoint_slot_count": checkpoint_slot_count,
+                "attempt_id": (
+                    payload_descriptor.get("attempt_id")
+                    if payload_descriptor is not None
+                    else "legacy-attempt"
+                ),
+                "previous_checkpoint_receipt_sha256": (
+                    previous_checkpoint_receipt_sha256
+                ),
                 "strategy_count": len(output),
                 "selected_strategy_count": len(selected_output),
                 "unique_position_count": len(
@@ -558,6 +746,86 @@ def main() -> int:
             sort_keys=True,
         )
         + "\n",
+        "utf-8",
+    )
+    receipt_path = args.output_dir / "receipt.json"
+    receipt_sha256 = sha256_file(receipt_path)
+    attempt_id = (
+        str(payload_descriptor["attempt_id"])
+        if payload_descriptor is not None
+        else "legacy-attempt"
+    )
+    unit_attempts = [
+        {
+            "strategy_id": str(row["strategy_id"]),
+            "attempt_id": attempt_id,
+            "checkpoint_slot_index": checkpoint_slot_index,
+            "result_sha256": scientific_result_sha256(
+                json.loads(str(row["result_json"]))
+            ),
+        }
+        for row in output
+    ]
+    pq.write_table(
+        pa.Table.from_pylist(unit_attempts),
+        args.output_dir / "unit_attempts.parquet",
+        compression="zstd",
+        use_dictionary=True,
+    )
+    resource_row = {
+        "worker_id": args.shard_index,
+        "attempt_id": attempt_id,
+        "checkpoint_slot_index": checkpoint_slot_index,
+        "scientific_wall_seconds": scientific_wall_seconds,
+        "result_bytes": bytes_written,
+        "strategy_count": len(output),
+        "cpu_seconds": float(resource_usage.get("cpu_seconds", 0.0)),
+        "peak_memory_bytes": int(resource_usage.get("peak_memory_bytes", 0)),
+    }
+    pq.write_table(
+        pa.Table.from_pylist([resource_row]),
+        args.output_dir / "resource_telemetry.parquet",
+        compression="zstd",
+        use_dictionary=True,
+    )
+    (args.output_dir / "resource_summary.json").write_text(
+        json.dumps(resource_row, indent=2, sort_keys=True) + "\n",
+        "utf-8",
+    )
+    attempt_manifest = {
+        "schema_version": "1",
+        "worker_id": args.shard_index,
+        "attempt_id": attempt_id,
+        "checkpoint_slot_index": checkpoint_slot_index,
+        "checkpoint_slot_count": checkpoint_slot_count,
+        "strategy_ids": tuple(str(row["strategy_id"]) for row in output),
+        "result_sha256": sha256_file(result_path),
+        "receipt_sha256": receipt_sha256,
+        "previous_checkpoint_receipt_sha256": (
+            previous_checkpoint_receipt_sha256
+        ),
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+    (args.output_dir / "shard_attempt_manifest.json").write_text(
+        json.dumps(attempt_manifest, indent=2, sort_keys=True) + "\n",
+        "utf-8",
+    )
+    checkpoint_chain = {
+        "schema_version": "1",
+        "worker_id": args.shard_index,
+        "attempt_id": attempt_id,
+        "slot_index": checkpoint_slot_index,
+        "slot_count": checkpoint_slot_count,
+        "previous_receipt_sha256": previous_checkpoint_receipt_sha256,
+        "current_receipt_sha256": receipt_sha256,
+        "completed_strategy_ids": attempt_manifest["strategy_ids"],
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+    checkpoint_chain["chain_sha256"] = canonical_sha256(checkpoint_chain)
+    (args.output_dir / "checkpoint_chain_manifest.json").write_text(
+        json.dumps(checkpoint_chain, indent=2, sort_keys=True) + "\n",
         "utf-8",
     )
     shutil.rmtree(recovery_root)

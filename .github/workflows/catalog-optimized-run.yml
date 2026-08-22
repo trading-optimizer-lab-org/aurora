@@ -11,15 +11,6 @@ on:
       execution_protocol_sha256: {required: true, type: string}
       protected_commit_sha: {required: true, type: string}
       decision_sha256: {required: true, type: string}
-      runtime_input_run_id: {required: false, type: string, default: "31418682679"}
-      reference_run_id: {required: false, type: string, default: "31948898747"}
-      component_store_run_id: {required: false, type: string, default: ""}
-      component_cost_run_id: {required: false, type: string, default: ""}
-      evaluation_cache_run_ids: {required: false, type: string, default: ""}
-      benchmark_workers: {required: false, type: number, default: 0}
-      benchmark_processes: {required: false, type: number, default: 0}
-      benchmark_component_processes: {required: false, type: number, default: 0}
-      benchmark_component_workers: {required: false, type: number, default: 0}
     outputs:
       campaign_state:
         value: ${{ jobs.reduce.outputs.campaign_state }}
@@ -45,237 +36,960 @@ env:
   PYTHONPATH: ${{ github.workspace }}/..
 
 jobs:
-  plan:
+  engine_verify_sealed_plan:
     runs-on: ubuntu-24.04
     environment: catalog-production
-    timeout-minutes: 20
+    timeout-minutes: 10
     outputs:
-      matrix_a: ${{ steps.plan.outputs.matrix_a }}
-      matrix_b: ${{ steps.plan.outputs.matrix_b }}
-      matrix_c: ${{ steps.plan.outputs.matrix_c }}
-      admission_token_sha256: ${{ steps.plan.outputs.admission_token_sha256 }}
-      active_workers: ${{ steps.plan.outputs.active_workers }}
-      pending_recipe_count: ${{ steps.plan.outputs.pending_recipe_count }}
-      cached_recipe_count: ${{ steps.plan.outputs.cached_recipe_count }}
-      component_workers: ${{ steps.plan.outputs.component_workers }}
-      component_matrix: ${{ steps.plan.outputs.component_matrix }}
+      admission_token_sha256: ${{ steps.verify.outputs.admission_token_sha256 }}
+      runtime_mode: ${{ steps.verify.outputs.runtime_mode }}
+      runtime_identity_sha256: ${{ steps.verify.outputs.runtime_identity_sha256 }}
+      runtime_cache_key: ${{ steps.verify.outputs.runtime_cache_key }}
+      runtime_transport_artifact: ${{ steps.verify.outputs.runtime_transport_artifact }}
+      numeric_profile_sha256: ${{ steps.verify.outputs.numeric_profile_sha256 }}
+      prepared_input_cache_key: ${{ steps.verify.outputs.prepared_input_cache_key }}
+      prepared_input_transport_artifact: ${{ steps.verify.outputs.prepared_input_transport_artifact }}
+      prepared_input_identity_sha256: ${{ steps.verify.outputs.prepared_input_identity_sha256 }}
+      prepared_cache_key_core: ${{ steps.verify.outputs.prepared_cache_key_core }}
+      prepared_artifact_core: ${{ steps.verify.outputs.prepared_artifact_core }}
+      prepared_cache_key_d_cboe_pcr: ${{ steps.verify.outputs.prepared_cache_key_d_cboe_pcr }}
+      prepared_artifact_d_cboe_pcr: ${{ steps.verify.outputs.prepared_artifact_d_cboe_pcr }}
+      prepared_cache_key_d_cftc_legacy: ${{ steps.verify.outputs.prepared_cache_key_d_cftc_legacy }}
+      prepared_artifact_d_cftc_legacy: ${{ steps.verify.outputs.prepared_artifact_d_cftc_legacy }}
+      prepared_cache_key_d_cftc: ${{ steps.verify.outputs.prepared_cache_key_d_cftc }}
+      prepared_artifact_d_cftc: ${{ steps.verify.outputs.prepared_artifact_d_cftc }}
+      prepared_cache_key_d_z1: ${{ steps.verify.outputs.prepared_cache_key_d_z1 }}
+      prepared_artifact_d_z1: ${{ steps.verify.outputs.prepared_artifact_d_z1 }}
+      prepared_cache_key_d_fed: ${{ steps.verify.outputs.prepared_cache_key_d_fed }}
+      prepared_artifact_d_fed: ${{ steps.verify.outputs.prepared_artifact_d_fed }}
+      prepared_cache_key_d_macro_pit: ${{ steps.verify.outputs.prepared_cache_key_d_macro_pit }}
+      prepared_artifact_d_macro_pit: ${{ steps.verify.outputs.prepared_artifact_d_macro_pit }}
+      prepared_cache_key_d_french_us: ${{ steps.verify.outputs.prepared_cache_key_d_french_us }}
+      prepared_artifact_d_french_us: ${{ steps.verify.outputs.prepared_artifact_d_french_us }}
+      prepared_cache_key_d_fed_h15_h10: ${{ steps.verify.outputs.prepared_cache_key_d_fed_h15_h10 }}
+      prepared_artifact_d_fed_h15_h10: ${{ steps.verify.outputs.prepared_artifact_d_fed_h15_h10 }}
+      component_matrix_a: ${{ steps.verify.outputs.component_matrix_a }}
+      component_matrix_b: ${{ steps.verify.outputs.component_matrix_b }}
+      cached_component_matrix_a: ${{ steps.verify.outputs.cached_component_matrix_a }}
+      cached_component_matrix_b: ${{ steps.verify.outputs.cached_component_matrix_b }}
+      recipe_matrix_a: ${{ steps.verify.outputs.recipe_matrix_a }}
+      recipe_matrix_b: ${{ steps.verify.outputs.recipe_matrix_b }}
+      recipe_matrix_c: ${{ steps.verify.outputs.recipe_matrix_c }}
+      component_matrix_a_count: ${{ steps.verify.outputs.component_matrix_a_count }}
+      component_matrix_b_count: ${{ steps.verify.outputs.component_matrix_b_count }}
+      cached_component_matrix_a_count: ${{ steps.verify.outputs.cached_component_matrix_a_count }}
+      cached_component_matrix_b_count: ${{ steps.verify.outputs.cached_component_matrix_b_count }}
+      recipe_matrix_a_count: ${{ steps.verify.outputs.recipe_matrix_a_count }}
+      recipe_matrix_b_count: ${{ steps.verify.outputs.recipe_matrix_b_count }}
+      recipe_matrix_c_count: ${{ steps.verify.outputs.recipe_matrix_c_count }}
+      reduction_matrix: ${{ steps.verify.outputs.reduction_matrix }}
+      reduction_matrix_count: ${{ steps.verify.outputs.reduction_matrix_count }}
+      reduction_artifact_pattern: ${{ steps.verify.outputs.reduction_artifact_pattern }}
+      pending_recipe_count: ${{ steps.verify.outputs.pending_recipe_count }}
+      active_recipe_workers: ${{ steps.verify.outputs.active_recipe_workers }}
+      final_evidence_artifact: ${{ steps.verify.outputs.final_evidence_artifact }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Check out exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: "3.11"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
-        with:
-          enable-cache: false
-      - run: >-
-          uv pip install --system --require-hashes
-          -r requirements/catalog-recipe-worker.lock
-      - name: Restore latest compatible autotune history artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/autotune"
-          artifact_id="$(gh api "repos/${{ github.repository }}/actions/artifacts?name=sp500-catalog-autotune-state&per_page=100" --jq '.artifacts | map(select(.expired == false)) | sort_by(.created_at) | reverse | .[0].id // empty')"
-          if [ -n "$artifact_id" ]; then
-            gh api "repos/${{ github.repository }}/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/autotune/state.zip"
-            unzip -q "$RUNNER_TEMP/autotune/state.zip" -d "$RUNNER_TEMP/autotune/latest"
-          fi
-      - name: Download compatible resume sources once for planning
-        if: ${{ inputs.evaluation_cache_run_ids != '' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CACHE_RUN_IDS: ${{ inputs.evaluation_cache_run_ids }}
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/resume"
-          IFS=',' read -ra run_ids <<< "$CACHE_RUN_IDS"
-          for raw_id in "${run_ids[@]}"; do
-            run_id="${raw_id//[[:space:]]/}"
-            [ -n "$run_id" ] || continue
-            mkdir -p "$RUNNER_TEMP/resume/$run_id"
-            if ! gh run download "$run_id" -n sp500-strategy-catalog-final-results -D "$RUNNER_TEMP/resume/$run_id/final"; then
-              gh run download "$run_id" -p 'sp500-catalog-shard-*' -D "$RUNNER_TEMP/resume/$run_id/shards"
-            fi
-          done
-      - id: plan
-        shell: bash
-        run: |
-          resume_args=()
-          if [ -n "${{ inputs.evaluation_cache_run_ids }}" ]; then
-            resume_args+=(--resume-root "$RUNNER_TEMP/resume")
-          fi
-          benchmark_args=()
-          autotune_args=()
-          thermal_state="cold"
-          if [ -n "${{ inputs.component_store_run_id }}" ]; then
-            thermal_state="component_warm"
-          fi
-          if [ -f "$RUNNER_TEMP/autotune/latest/performance_history.json" ]; then
-            autotune_args+=(--autotune-history "$RUNNER_TEMP/autotune/latest/performance_history.json")
-          fi
-          if [ "${{ inputs.benchmark_workers }}" -ne 0 ]; then
-            benchmark_args+=(--benchmark-workers "${{ inputs.benchmark_workers }}")
-          fi
-          if [ "${{ inputs.benchmark_processes }}" -ne 0 ]; then
-            benchmark_args+=(--benchmark-processes "${{ inputs.benchmark_processes }}")
-          fi
-          if [ "${{ inputs.benchmark_component_processes }}" -ne 0 ]; then
-            benchmark_args+=(--benchmark-component-processes "${{ inputs.benchmark_component_processes }}")
-          fi
-          if [ "${{ inputs.benchmark_component_workers }}" -ne 0 ]; then
-            benchmark_args+=(--benchmark-component-workers "${{ inputs.benchmark_component_workers }}")
-          fi
-          python scripts/plan_sp500_optimized_catalog_run.py \
-            --repo-root . \
-            --policy config/sp500_catalog_optimization_policy_v1.json \
-            --campaign config/sp500_megarun_dehb_campaign_v1.json \
-            --catalog-dir config/sp500_megarun_strategy_catalog_v1 \
-            --selected-config config/sp500_megarun_selected_dehb_13.json \
-            --evidence config/sp500_catalog_admission_evidence_current_v1.json \
-            --output-dir outputs/plan \
-            --github-output "$GITHUB_OUTPUT" \
-            --thermal-state "$thermal_state" \
-            "${resume_args[@]}" \
-            "${autotune_args[@]}" \
-            "${benchmark_args[@]}"
-          python -m scripts.compile_sp500_catalog_recipes \
-            --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl \
-            --output-dir outputs/plan
-          if [ -f "$RUNNER_TEMP/autotune/latest/performance_history.json" ]; then
-            cp "$RUNNER_TEMP/autotune/latest/performance_history.json" outputs/plan/autotune_history_prior.json
-          fi
-      - if: ${{ steps.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' && inputs.component_cost_run_id == '' }}
-        run: exit 1
-      - name: Download latest compatible measured component costs
-        if: ${{ steps.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COST_RUN_ID: ${{ inputs.component_cost_run_id }}
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/cost-source"
-          if ! gh run download "$COST_RUN_ID" -n sp500-global-component-store -D "$RUNNER_TEMP/cost-source"; then
-            gh run download "$COST_RUN_ID" -n sp500-strategy-catalog-final-results -D "$RUNNER_TEMP/cost-source"
-          fi
-      - if: ${{ steps.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' }}
-        shell: bash
-        run: |
-          report="$RUNNER_TEMP/cost-source/component_performance.json"
-          if [ ! -f "$report" ]; then
-            report="$RUNNER_TEMP/cost-source/performance.json"
-          fi
-          python -m scripts.plan_sp500_component_schedule \
-            --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl \
-            --selected-config config/sp500_megarun_selected_dehb_13.json \
-            --data-contract config/sp500_megarun_free_data_240.json \
-            --performance-report "$report" \
-            --workers "${{ steps.plan.outputs.component_workers }}" \
-            --output-dir outputs/plan
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-catalog-run-plan
-          path: outputs/plan
-          if-no-files-found: error
-          retention-days: 30
 
-  prepare_runtime_fragments:
-    # This is independent of catalog planning. Running it in parallel removes
-    # its 50-second preparation cost from the cold-run critical path.
-    if: ${{ inputs.component_store_run_id == '' }}
+      - name: Verify protected source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.protected_commit_sha }}"
+
+      - name: Download the controller-sealed execution plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-sealed-execution-plan-${{ inputs.authority_id }}
+          path: ${{ runner.temp }}/sealed-plan
+
+      - name: Verify the complete immutable plan without replanning
+        id: verify
+        shell: bash
+        env:
+          EXPECTED_REQUEST_SHA256: ${{ inputs.request_sha256 }}
+          EXPECTED_AUTHORITY_ID: ${{ inputs.authority_id }}
+          EXPECTED_CAMPAIGN_ID: ${{ inputs.campaign_id }}
+          EXPECTED_SCIENCE_SHA256: ${{ inputs.science_sha256 }}
+          EXPECTED_EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
+          EXPECTED_EXECUTION_PROTOCOL_SHA256: ${{ inputs.execution_protocol_sha256 }}
+          EXPECTED_PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          EXPECTED_DECISION_SHA256: ${{ inputs.decision_sha256 }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "sealed-plan"
+          required_files = {
+              "resolved_contract.json",
+              "controller_binding.json",
+              "rebuildable_store_plan.json",
+              "logical_recipe_manifest.json",
+              "component_requirement_manifest.json",
+              "component_store_input_manifest.json",
+              "pending_component_manifest.json",
+              "cached_component_manifest.json",
+              "component_matrix_a.json",
+              "component_matrix_b.json",
+              "cached_component_matrix_a.json",
+              "cached_component_matrix_b.json",
+              "recipe_assignment_bundle.zip",
+              "recipe_matrix_a.json",
+              "recipe_matrix_b.json",
+              "recipe_matrix_c.json",
+              "payload_bundle_manifest.json",
+              "checkpoint_policy.json",
+              "reduction_plan.json",
+              "artifact_plan.json",
+              "execution_plan_receipt.json",
+          }
+          present = {path.name for path in root.iterdir() if path.is_file()}
+          if not required_files.issubset(present):
+              raise SystemExit("CATALOG_SEALED_PLAN_FILES_MISSING")
+          receipt = json.loads((root / "execution_plan_receipt.json").read_text())
+          receipt_identity = {
+              key: value
+              for key, value in receipt.items()
+              if key != "receipt_sha256"
+          }
+          receipt_hash = hashlib.sha256(
+              json.dumps(
+                  receipt_identity,
+                  sort_keys=True,
+                  separators=(",", ":"),
+                  allow_nan=False,
+              ).encode()
+          ).hexdigest()
+          if receipt_hash != receipt.get("receipt_sha256"):
+              raise SystemExit("CATALOG_SEALED_PLAN_RECEIPT_HASH_INVALID")
+          bindings = {
+              "request_sha256": os.environ["EXPECTED_REQUEST_SHA256"],
+              "authority_id": os.environ["EXPECTED_AUTHORITY_ID"],
+              "campaign_id": os.environ["EXPECTED_CAMPAIGN_ID"],
+              "science_sha256": os.environ["EXPECTED_SCIENCE_SHA256"],
+              "execution_plan_sha256": os.environ["EXPECTED_EXECUTION_PLAN_SHA256"],
+              "execution_protocol_sha256": os.environ[
+                  "EXPECTED_EXECUTION_PROTOCOL_SHA256"
+              ],
+              "protected_commit_sha": os.environ["EXPECTED_PROTECTED_COMMIT_SHA"],
+              "decision_sha256": os.environ["EXPECTED_DECISION_SHA256"],
+          }
+          if any(receipt.get(key) != value for key, value in bindings.items()):
+              raise SystemExit("CATALOG_SEALED_PLAN_BINDING_INVALID")
+          if (
+              receipt.get("schema_version") != "1"
+              or receipt.get("validation_opened") is not False
+              or receipt.get("locked_opened") is not False
+          ):
+              raise SystemExit("CATALOG_SEALED_PLAN_BOUNDARY_INVALID")
+          manifest = receipt.get("content_manifest")
+          if not isinstance(manifest, list) or not manifest:
+              raise SystemExit("CATALOG_SEALED_PLAN_MANIFEST_INVALID")
+          seen = set()
+          for item in manifest:
+              if set(item) != {"path", "sha256", "size_bytes"}:
+                  raise SystemExit("CATALOG_SEALED_PLAN_MANIFEST_INVALID")
+              relative = Path(item["path"])
+              if relative.is_absolute() or ".." in relative.parts or relative.as_posix() in seen:
+                  raise SystemExit("CATALOG_SEALED_PLAN_MANIFEST_INVALID")
+              seen.add(relative.as_posix())
+              target = root / relative
+              if (
+                  not target.is_file()
+                  or target.stat().st_size != item["size_bytes"]
+                  or hashlib.sha256(target.read_bytes()).hexdigest() != item["sha256"]
+              ):
+                  raise SystemExit("CATALOG_SEALED_PLAN_CONTENT_INVALID")
+          all_sealed_files = {
+              path.relative_to(root).as_posix()
+              for path in root.rglob("*")
+              if path.is_file() and path.name != "execution_plan_receipt.json"
+          }
+          if seen != all_sealed_files:
+              raise SystemExit("CATALOG_SEALED_PLAN_MANIFEST_COVERAGE_INVALID")
+          manifest_hash = hashlib.sha256(
+              json.dumps(
+                  manifest,
+                  sort_keys=True,
+                  separators=(",", ":"),
+                  allow_nan=False,
+              ).encode()
+          ).hexdigest()
+          if manifest_hash != receipt.get("content_manifest_sha256"):
+              raise SystemExit("CATALOG_SEALED_PLAN_MANIFEST_HASH_INVALID")
+          matrix_names = (
+              "component_matrix_a",
+              "component_matrix_b",
+              "cached_component_matrix_a",
+              "cached_component_matrix_b",
+              "recipe_matrix_a",
+              "recipe_matrix_b",
+              "recipe_matrix_c",
+          )
+          matrices = {}
+          combined_utf16 = 0
+          for name in matrix_names:
+              value = json.loads((root / f"{name}.json").read_text())
+              rows = value.get("include")
+              if set(value) != {"include"} or not isinstance(rows, list):
+                  raise SystemExit("CATALOG_MATRIX_SCHEMA_INVALID")
+              for row in rows:
+                  if set(row) != {
+                      "worker_id",
+                      "descriptor_bundle_artifact",
+                      "descriptor_member",
+                      "descriptor_sha256",
+                  }:
+                      raise SystemExit("CATALOG_MATRIX_ROW_INVALID")
+              encoded = json.dumps(
+                  value, sort_keys=True, separators=(",", ":")
+              )
+              combined_utf16 += len(encoded.encode("utf-16-le"))
+              matrices[name] = encoded
+          reduction = json.loads((root / "reduction_plan.json").read_text())
+          reduction_identity = {
+              key: value
+              for key, value in reduction.items()
+              if key != "content_sha256"
+          }
+          reduction_hash = hashlib.sha256(
+              json.dumps(
+                  reduction_identity,
+                  sort_keys=True,
+                  separators=(",", ":"),
+                  allow_nan=False,
+              ).encode()
+          ).hexdigest()
+          groups = reduction.get("groups")
+          reduction_matrix = reduction.get("matrix")
+          if (
+              reduction.get("schema_version") != "1"
+              or reduction.get("document_type") != "reduction_plan"
+              or reduction_hash != reduction.get("content_sha256")
+              or reduction.get("group_size") != 24
+              or reduction.get("maximum_group_count") != 15
+              or not isinstance(groups, list)
+              or len(groups) > 15
+              or not isinstance(reduction_matrix, dict)
+              or set(reduction_matrix) != {"include"}
+              or reduction.get("validation_opened") is not False
+              or reduction.get("locked_opened") is not False
+          ):
+              raise SystemExit("CATALOG_REDUCTION_PLAN_INVALID")
+          expected_matrix = []
+          covered_workers = []
+          plan_prefix = receipt["execution_plan_sha256"][:16]
+          for group_id, group in enumerate(groups):
+              expected_pattern = (
+                  f"catalog-checkpoint-{plan_prefix}-g{group_id:02d}-*"
+              )
+              expected_artifact = (
+                  f"catalog-reduction-group-{plan_prefix}-g{group_id:02d}"
+              )
+              if (
+                  not isinstance(group, dict)
+                  or set(group) != {
+                      "group_id",
+                      "worker_ids",
+                      "checkpoint_artifacts",
+                      "checkpoint_artifact_pattern",
+                      "reduction_artifact",
+                  }
+                  or group.get("group_id") != group_id
+                  or not isinstance(group.get("worker_ids"), list)
+                  or not 1 <= len(group["worker_ids"]) <= 24
+                  or group["worker_ids"] != sorted(group["worker_ids"])
+                  or not isinstance(group.get("checkpoint_artifacts"), list)
+                  or not group["checkpoint_artifacts"]
+                  or group.get("checkpoint_artifact_pattern")
+                  != expected_pattern
+                  or group.get("reduction_artifact") != expected_artifact
+              ):
+                  raise SystemExit("CATALOG_REDUCTION_PLAN_INVALID")
+              covered_workers.extend(group["worker_ids"])
+              expected_matrix.append(
+                  {
+                      "group_id": group_id,
+                      "checkpoint_artifact_pattern": expected_pattern,
+                      "reduction_artifact": expected_artifact,
+                  }
+              )
+          if (
+              covered_workers != list(range(receipt["active_recipe_workers"]))
+              or reduction_matrix != {"include": expected_matrix}
+              or reduction.get("reduction_artifact_pattern")
+              != f"catalog-reduction-group-{plan_prefix}-*"
+              or reduction.get("final_evidence_artifact")
+              != receipt["final_evidence_artifact"]
+          ):
+              raise SystemExit("CATALOG_REDUCTION_PLAN_INVALID")
+          reduction_matrix_encoded = json.dumps(
+              reduction_matrix,
+              sort_keys=True,
+              separators=(",", ":"),
+          )
+          combined_utf16 += len(reduction_matrix_encoded.encode("utf-16-le"))
+          if combined_utf16 > 512 * 1024:
+              raise SystemExit("CATALOG_MATRIX_OUTPUT_BUDGET_EXCEEDED")
+          outputs = {
+              "admission_token_sha256": receipt["admission_token_sha256"],
+              "runtime_mode": receipt["runtime_mode"],
+              "runtime_identity_sha256": receipt["runtime_identity_sha256"],
+              "runtime_cache_key": receipt["runtime_cache_key"],
+              "runtime_transport_artifact": receipt["runtime_transport_artifact"],
+              "numeric_profile_sha256": receipt["numeric_profile_sha256"],
+              "prepared_input_cache_key": receipt["prepared_input_cache_key"],
+              "prepared_input_transport_artifact": receipt[
+                  "prepared_input_transport_artifact"
+              ],
+              "prepared_input_identity_sha256": receipt[
+                  "prepared_input_identity_sha256"
+              ],
+              "pending_recipe_count": receipt["pending_recipe_count"],
+              "active_recipe_workers": receipt["active_recipe_workers"],
+              "final_evidence_artifact": receipt["final_evidence_artifact"],
+              "reduction_matrix": reduction_matrix_encoded,
+              "reduction_matrix_count": len(expected_matrix),
+              "reduction_artifact_pattern": reduction[
+                  "reduction_artifact_pattern"
+              ],
+          }
+          fixed_partitions = {
+              "runtime-fragment-core": "core",
+              "runtime-fragment-D_CBOE_PCR": "d_cboe_pcr",
+              "runtime-fragment-D_CFTC_LEGACY": "d_cftc_legacy",
+              "runtime-fragment-D_CFTC": "d_cftc",
+              "runtime-fragment-D_Z1": "d_z1",
+              "runtime-fragment-D_FED_H3_H6_H8_G19_CP": "d_fed",
+              "runtime-fragment-D_MACRO_PIT": "d_macro_pit",
+              "runtime-fragment-D_FRENCH_US": "d_french_us",
+              "runtime-fragment-D_FED_H15_H10": "d_fed_h15_h10",
+          }
+          partition_rows = receipt.get("prepared_input_partitions")
+          if not isinstance(partition_rows, list):
+              raise SystemExit("CATALOG_PREPARED_PARTITION_PLAN_INVALID")
+          by_id = {
+              row.get("logical_id"): row
+              for row in partition_rows
+              if isinstance(row, dict)
+          }
+          if set(by_id) != set(fixed_partitions) or len(by_id) != len(partition_rows):
+              raise SystemExit("CATALOG_PREPARED_PARTITION_PLAN_INVALID")
+          for logical_id, suffix in fixed_partitions.items():
+              row = by_id[logical_id]
+              if set(row) != {
+                  "logical_id",
+                  "transport_artifact",
+                  "cache_lookup_key",
+              }:
+                  raise SystemExit("CATALOG_PREPARED_PARTITION_PLAN_INVALID")
+              outputs[f"prepared_cache_key_{suffix}"] = row["cache_lookup_key"]
+              outputs[f"prepared_artifact_{suffix}"] = row["transport_artifact"]
+          outputs.update(matrices)
+          outputs.update(
+              {
+                  f"{name}_count": len(json.loads(value)["include"])
+                  for name, value in matrices.items()
+              }
+          )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
+              for key, value in outputs.items():
+                  out.write(f"{key}={value}\n")
+          PY
+
+      - name: Publish bounded plan-verification receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-engine-plan-verification-${{ inputs.authority_id }}
+          path: ${{ runner.temp }}/sealed-plan/execution_plan_receipt.json
+          if-no-files-found: error
+          retention-days: 90
+
+  prepare_runtime_and_inputs:
+    needs: engine_verify_sealed_plan
     runs-on: ubuntu-24.04
     environment: catalog-production
-    timeout-minutes: 30
+    timeout-minutes: 45
+    permissions: {actions: read, contents: read}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Check out exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+
+      - name: Use the runtime Python ABI
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
-        with:
-          enable-cache: false
-      - run: >-
-          uv pip install --system --require-hashes
-          -r requirements/catalog-optimized.lock
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
-          path: ${{ runner.temp }}/runtime-source
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.runtime_input_run_id }}
-      - name: Create verified runtime fragments
-        shell: bash
-        run: >-
-          python -m scripts.prepare_sp500_runtime_fragments
-          --runtime-input-pack "$RUNNER_TEMP/runtime-source"
-          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
-          --runtime-source-run-id "${{ github.run_id }}"
-          --output-dir outputs/runtime-fragments
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-runtime-fragment-core
-          path: outputs/runtime-fragments/runtime-fragment-core
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-runtime-fragment-D_CBOE_PCR
-          path: outputs/runtime-fragments/runtime-fragment-D_CBOE_PCR
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-runtime-fragment-D_CFTC_LEGACY
-          path: outputs/runtime-fragments/runtime-fragment-D_CFTC_LEGACY
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-runtime-fragment-D_CFTC
-          path: outputs/runtime-fragments/runtime-fragment-D_CFTC
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-runtime-fragment-D_Z1
-          path: outputs/runtime-fragments/runtime-fragment-D_Z1
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-runtime-fragment-D_FED_H3_H6_H8_G19_CP
-          path: outputs/runtime-fragments/runtime-fragment-D_FED_H3_H6_H8_G19_CP
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-runtime-fragment-D_MACRO_PIT
-          path: outputs/runtime-fragments/runtime-fragment-D_MACRO_PIT
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-runtime-fragment-D_FRENCH_US
-          path: outputs/runtime-fragments/runtime-fragment-D_FRENCH_US
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-runtime-fragment-D_FED_H15_H10
-          path: outputs/runtime-fragments/runtime-fragment-D_FED_H15_H10
-          if-no-files-found: error
-          retention-days: 7
+          cache: ""
 
-  build_components:
-    needs: [plan, prepare_runtime_fragments]
-    if: ${{ needs.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' && needs.prepare_runtime_fragments.result == 'success' }}
+      - name: Restore exact default-branch runtime cache
+        id: runtime_cache
+        if: ${{ needs.engine_verify_sealed_plan.outputs.runtime_cache_key != '' }}
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/runtime-store
+          key: ${{ needs.engine_verify_sealed_plan.outputs.runtime_cache_key }}
+          lookup-only: false
+          fail-on-cache-miss: false
+
+      - name: Validate the complete hashed dependency supply
+        if: ${{ steps.runtime_cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          text = Path("requirements/catalog-optimized.lock").read_text("utf-8")
+          forbidden = ("-e ", "--editable", "git+", "hg+", "svn+", "bzr+", "file:", "--extra-index-url", " @ ")
+          if any(token in text for token in forbidden):
+              raise SystemExit("RUNTIME_DEPENDENCY_SOURCE_FORBIDDEN")
+          requirement_lines = [
+              line for line in text.splitlines()
+              if line and not line.startswith((" ", "#", "--hash="))
+          ]
+          if not requirement_lines or any("==" not in line for line in requirement_lines):
+              raise SystemExit("RUNTIME_DEPENDENCY_NOT_EXACT")
+          hashes = re.findall(r"--hash=sha256:([0-9a-f]{64})", text)
+          if len(hashes) < len(requirement_lines):
+              raise SystemExit("RUNTIME_DEPENDENCY_HASH_MISSING")
+          PY
+
+      - name: Build the one locked runtime store
+        id: runtime_build
+        if: ${{ steps.runtime_cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        env:
+          RUNTIME_MODE: ${{ needs.engine_verify_sealed_plan.outputs.runtime_mode }}
+          RUNTIME_IDENTITY_SHA256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
+          NUMERIC_PROFILE_SHA256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/runtime-store"
+          mkdir -p "$root/wheelhouse"
+          python -m pip download \
+            --disable-pip-version-check \
+            --only-binary=:all: \
+            --require-hashes \
+            --requirement requirements/catalog-optimized.lock \
+            --dest "$root/wheelhouse"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "runtime-store"
+          lock = Path("requirements/catalog-optimized.lock")
+          lock_sha = hashlib.sha256(lock.read_bytes()).hexdigest()
+          wheelhouse = root / "wheelhouse"
+          wheels = sorted(wheelhouse.iterdir())
+          wheel_manifest = {
+              "schema_version": "1",
+              "dependency_lock_sha256": lock_sha,
+              "files": [
+                  {
+                      "path": path.name,
+                      "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                      "size_bytes": path.stat().st_size,
+                  }
+                  for path in wheels
+              ],
+          }
+          (wheelhouse / "wheelhouse_manifest.json").write_text(
+              json.dumps(wheel_manifest, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          file_list = []
+          for path in sorted(root.rglob("*")):
+              if path.is_file() and path.name != "runtime_manifest.json":
+                  file_list.append(
+                      {
+                          "path": path.relative_to(root).as_posix(),
+                          "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                          "size_bytes": path.stat().st_size,
+                      }
+                  )
+          observed = [
+              (item["path"], item["sha256"], item["size_bytes"]) for item in file_list
+          ]
+          object_sha = hashlib.sha256(
+              json.dumps(
+                  observed, sort_keys=True, separators=(",", ":"), allow_nan=False
+              ).encode()
+          ).hexdigest()
+          manifest = {
+              "schema_version": "1",
+              "runtime_mode": os.environ["RUNTIME_MODE"],
+              "runtime_identity_sha256": os.environ["RUNTIME_IDENTITY_SHA256"],
+              "object_sha256": object_sha,
+              "dependency_lock_sha256": lock_sha,
+              "numeric_profile_sha256": os.environ["NUMERIC_PROFILE_SHA256"],
+              "source_sha_verified_separately": os.environ["GITHUB_SHA"],
+              "file_list": file_list,
+          }
+          (root / "runtime_manifest.json").write_text(
+              json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          manifest_sha = hashlib.sha256(
+              (root / "runtime_manifest.json").read_bytes()
+          ).hexdigest()
+          cache_key = (
+              f"aurora-catalog-v1-{os.environ['RUNTIME_IDENTITY_SHA256']}-"
+              f"{manifest_sha}-main"
+          )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
+              out.write(f"cache_key={cache_key}\n")
+          PY
+
+      - name: Save exact immutable runtime cache
+        if: ${{ steps.runtime_cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/runtime-store
+          key: ${{ steps.runtime_build.outputs.cache_key }}
+
+      - name: Restore prepared core cache
+        id: input_cache_core
+        if: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_core != '' }}
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-core
+          key: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_core }}
+          lookup-only: false
+          fail-on-cache-miss: false
+
+      - name: Restore prepared D_CBOE_PCR cache
+        id: input_cache_d_cboe_pcr
+        if: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_cboe_pcr != '' }}
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_CBOE_PCR
+          key: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_cboe_pcr }}
+          lookup-only: false
+          fail-on-cache-miss: false
+
+      - name: Restore prepared D_CFTC_LEGACY cache
+        id: input_cache_d_cftc_legacy
+        if: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_cftc_legacy != '' }}
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_CFTC_LEGACY
+          key: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_cftc_legacy }}
+          lookup-only: false
+          fail-on-cache-miss: false
+
+      - name: Restore prepared D_CFTC cache
+        id: input_cache_d_cftc
+        if: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_cftc != '' }}
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_CFTC
+          key: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_cftc }}
+          lookup-only: false
+          fail-on-cache-miss: false
+
+      - name: Restore prepared D_Z1 cache
+        id: input_cache_d_z1
+        if: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_z1 != '' }}
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_Z1
+          key: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_z1 }}
+          lookup-only: false
+          fail-on-cache-miss: false
+
+      - name: Restore prepared federal block cache
+        id: input_cache_d_fed
+        if: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_fed != '' }}
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_FED_H3_H6_H8_G19_CP
+          key: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_fed }}
+          lookup-only: false
+          fail-on-cache-miss: false
+
+      - name: Restore prepared D_MACRO_PIT cache
+        id: input_cache_d_macro_pit
+        if: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_macro_pit != '' }}
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_MACRO_PIT
+          key: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_macro_pit }}
+          lookup-only: false
+          fail-on-cache-miss: false
+
+      - name: Restore prepared D_FRENCH_US cache
+        id: input_cache_d_french_us
+        if: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_french_us != '' }}
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_FRENCH_US
+          key: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_french_us }}
+          lookup-only: false
+          fail-on-cache-miss: false
+
+      - name: Restore prepared D_FED_H15_H10 cache
+        id: input_cache_d_fed_h15_h10
+        if: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_fed_h15_h10 != '' }}
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_FED_H15_H10
+          key: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_fed_h15_h10 }}
+          lookup-only: false
+          fail-on-cache-miss: false
+
+      - name: Resolve only proven missing prepared partitions
+        id: input_decision
+        shell: bash
+        env:
+          HIT_CORE: ${{ steps.input_cache_core.outputs.cache-hit }}
+          HIT_D_CBOE_PCR: ${{ steps.input_cache_d_cboe_pcr.outputs.cache-hit }}
+          HIT_D_CFTC_LEGACY: ${{ steps.input_cache_d_cftc_legacy.outputs.cache-hit }}
+          HIT_D_CFTC: ${{ steps.input_cache_d_cftc.outputs.cache-hit }}
+          HIT_D_Z1: ${{ steps.input_cache_d_z1.outputs.cache-hit }}
+          HIT_D_FED: ${{ steps.input_cache_d_fed.outputs.cache-hit }}
+          HIT_D_MACRO_PIT: ${{ steps.input_cache_d_macro_pit.outputs.cache-hit }}
+          HIT_D_FRENCH_US: ${{ steps.input_cache_d_french_us.outputs.cache-hit }}
+          HIT_D_FED_H15_H10: ${{ steps.input_cache_d_fed_h15_h10.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          : > "$RUNNER_TEMP/missing-partitions.txt"
+          check() {
+            if [ "$1" != "true" ]; then
+              echo "$2" >> "$RUNNER_TEMP/missing-partitions.txt"
+            fi
+          }
+          check "$HIT_CORE" runtime-fragment-core
+          check "$HIT_D_CBOE_PCR" runtime-fragment-D_CBOE_PCR
+          check "$HIT_D_CFTC_LEGACY" runtime-fragment-D_CFTC_LEGACY
+          check "$HIT_D_CFTC" runtime-fragment-D_CFTC
+          check "$HIT_D_Z1" runtime-fragment-D_Z1
+          check "$HIT_D_FED" runtime-fragment-D_FED_H3_H6_H8_G19_CP
+          check "$HIT_D_MACRO_PIT" runtime-fragment-D_MACRO_PIT
+          check "$HIT_D_FRENCH_US" runtime-fragment-D_FRENCH_US
+          check "$HIT_D_FED_H15_H10" runtime-fragment-D_FED_H15_H10
+          if [ -s "$RUNNER_TEMP/missing-partitions.txt" ]; then
+            echo "has_missing=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_missing=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download and verify the frozen train-only source once
+        if: ${{ steps.input_decision.outputs.has_missing == 'true' }}
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from scripts.run_catalog_artifact_keeper import (
+              GitHubReadOnlyClient,
+              _safe_extract,
+          )
+
+          client = GitHubReadOnlyClient(
+              os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_TOKEN"]
+          )
+          metadata, _ = client.get_json(
+              f"/repos/{os.environ['GITHUB_REPOSITORY']}/actions/artifacts/9075791134"
+          )
+          if (
+              metadata.get("name")
+              != "sp500-megarun-dehb-runtime-inputs-31418682679"
+              or metadata.get("expired") is not False
+              or metadata.get("digest")
+              != "sha256:5f4557069278f9086f3ce4761a52b4119fe5c36e0dd36beab8935dc48b9be5d2"
+              or metadata.get("workflow_run", {}).get("id") != 31418682679
+          ):
+              raise SystemExit("CATALOG_RUNTIME_SOURCE_IDENTITY_INVALID")
+          archive = Path(os.environ["RUNNER_TEMP"]) / "runtime-source.zip"
+          digest = client.download_artifact(
+              9075791134, archive, 2 * 1024 * 1024 * 1024
+          )
+          if digest != "5f4557069278f9086f3ce4761a52b4119fe5c36e0dd36beab8935dc48b9be5d2":
+              raise SystemExit("CATALOG_RUNTIME_SOURCE_ARCHIVE_INVALID")
+          _safe_extract(
+              archive,
+              Path(os.environ["RUNNER_TEMP"]) / "runtime-source",
+              8 * 1024 * 1024 * 1024,
+          )
+          PY
+          mapfile -t manifests < <(find "$RUNNER_TEMP/runtime-source" -type f -name runtime_input_manifest.json)
+          test "${#manifests[@]}" -eq 1
+          source_root="$(dirname "${manifests[0]}")"
+          args=()
+          while IFS= read -r partition; do
+            test -n "$partition"
+            args+=(--partition-id "$partition")
+          done < "$RUNNER_TEMP/missing-partitions.txt"
+          python -m scripts.prepare_sp500_runtime_fragments \
+            --runtime-input-pack "$source_root" \
+            --campaign-contract config/sp500_megarun_dehb_campaign_v1.json \
+            --runtime-source-run-id 31418682679 \
+            --output-dir "$RUNNER_TEMP/prepared-missing" \
+            "${args[@]}"
+          mkdir -p "$RUNNER_TEMP/prepared"
+          while IFS= read -r partition; do
+            test -d "$RUNNER_TEMP/prepared-missing/$partition"
+            test ! -e "$RUNNER_TEMP/prepared/$partition"
+            cp -a "$RUNNER_TEMP/prepared-missing/$partition" "$RUNNER_TEMP/prepared/$partition"
+          done < "$RUNNER_TEMP/missing-partitions.txt"
+
+      - name: Verify every prepared partition and derive immutable save keys
+        id: prepared_keys
+        shell: bash
+        env:
+          PREPARED_IDENTITY: ${{ needs.engine_verify_sealed_plan.outputs.prepared_input_identity_sha256 }}
+          EXPECTED_CORE: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_core }}
+          EXPECTED_D_CBOE_PCR: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_cboe_pcr }}
+          EXPECTED_D_CFTC_LEGACY: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_cftc_legacy }}
+          EXPECTED_D_CFTC: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_cftc }}
+          EXPECTED_D_Z1: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_z1 }}
+          EXPECTED_D_FED: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_fed }}
+          EXPECTED_D_MACRO_PIT: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_macro_pit }}
+          EXPECTED_D_FRENCH_US: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_french_us }}
+          EXPECTED_D_FED_H15_H10: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_d_fed_h15_h10 }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "prepared"
+          partitions = {
+              "core": ("runtime-fragment-core", os.environ["EXPECTED_CORE"]),
+              "d_cboe_pcr": ("runtime-fragment-D_CBOE_PCR", os.environ["EXPECTED_D_CBOE_PCR"]),
+              "d_cftc_legacy": ("runtime-fragment-D_CFTC_LEGACY", os.environ["EXPECTED_D_CFTC_LEGACY"]),
+              "d_cftc": ("runtime-fragment-D_CFTC", os.environ["EXPECTED_D_CFTC"]),
+              "d_z1": ("runtime-fragment-D_Z1", os.environ["EXPECTED_D_Z1"]),
+              "d_fed": ("runtime-fragment-D_FED_H3_H6_H8_G19_CP", os.environ["EXPECTED_D_FED"]),
+              "d_macro_pit": ("runtime-fragment-D_MACRO_PIT", os.environ["EXPECTED_D_MACRO_PIT"]),
+              "d_french_us": ("runtime-fragment-D_FRENCH_US", os.environ["EXPECTED_D_FRENCH_US"]),
+              "d_fed_h15_h10": ("runtime-fragment-D_FED_H15_H10", os.environ["EXPECTED_D_FED_H15_H10"]),
+          }
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for slug, (logical_id, expected_key) in partitions.items():
+                  partition = root / logical_id
+                  files = []
+                  for path in sorted(partition.rglob("*")):
+                      if path.is_file():
+                          files.append(
+                              {
+                                  "path": path.relative_to(partition).as_posix(),
+                                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                                  "size_bytes": path.stat().st_size,
+                              }
+                          )
+                  if not files:
+                      raise SystemExit("CATALOG_PREPARED_PARTITION_EMPTY")
+                  manifest_sha = hashlib.sha256(
+                      json.dumps(
+                          files,
+                          sort_keys=True,
+                          separators=(",", ":"),
+                          allow_nan=False,
+                      ).encode()
+                  ).hexdigest()
+                  cache_key = (
+                      f"aurora-catalog-v1-{os.environ['PREPARED_IDENTITY']}-"
+                      f"{manifest_sha}-main"
+                  )
+                  if expected_key and cache_key != expected_key:
+                      raise SystemExit("CATALOG_PREPARED_CACHE_CONTENT_INVALID")
+                  output.write(f"cache_key_{slug}={cache_key}\n")
+          PY
+
+      - name: Save prepared core cache
+        if: ${{ steps.input_cache_core.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-core
+          key: ${{ steps.prepared_keys.outputs.cache_key_core }}
+
+      - name: Save prepared D_CBOE_PCR cache
+        if: ${{ steps.input_cache_d_cboe_pcr.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_CBOE_PCR
+          key: ${{ steps.prepared_keys.outputs.cache_key_d_cboe_pcr }}
+
+      - name: Save prepared D_CFTC_LEGACY cache
+        if: ${{ steps.input_cache_d_cftc_legacy.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_CFTC_LEGACY
+          key: ${{ steps.prepared_keys.outputs.cache_key_d_cftc_legacy }}
+
+      - name: Save prepared D_CFTC cache
+        if: ${{ steps.input_cache_d_cftc.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_CFTC
+          key: ${{ steps.prepared_keys.outputs.cache_key_d_cftc }}
+
+      - name: Save prepared D_Z1 cache
+        if: ${{ steps.input_cache_d_z1.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_Z1
+          key: ${{ steps.prepared_keys.outputs.cache_key_d_z1 }}
+
+      - name: Save prepared federal block cache
+        if: ${{ steps.input_cache_d_fed.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_FED_H3_H6_H8_G19_CP
+          key: ${{ steps.prepared_keys.outputs.cache_key_d_fed }}
+
+      - name: Save prepared D_MACRO_PIT cache
+        if: ${{ steps.input_cache_d_macro_pit.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_MACRO_PIT
+          key: ${{ steps.prepared_keys.outputs.cache_key_d_macro_pit }}
+
+      - name: Save prepared D_FRENCH_US cache
+        if: ${{ steps.input_cache_d_french_us.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_FRENCH_US
+          key: ${{ steps.prepared_keys.outputs.cache_key_d_french_us }}
+
+      - name: Save prepared D_FED_H15_H10 cache
+        if: ${{ steps.input_cache_d_fed_h15_h10.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_FED_H15_H10
+          key: ${{ steps.prepared_keys.outputs.cache_key_d_fed_h15_h10 }}
+
+      - name: Verify the selected runtime store before fan-out
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.11"
+          runtime-mode: ${{ needs.engine_verify_sealed_plan.outputs.runtime_mode }}
+          runtime-object-path: ${{ runner.temp }}/runtime-store
+          runtime-manifest-path: ${{ runner.temp }}/runtime-store/runtime_manifest.json
+          dependency-lock-path: requirements/catalog-optimized.lock
+          expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
+          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
+
+      - name: Upload one-day runtime transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.runtime_transport_artifact }}
+          path: ${{ runner.temp }}/runtime-store
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload one-day prepared core transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.prepared_artifact_core }}
+          path: ${{ runner.temp }}/prepared/runtime-fragment-core
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload one-day prepared D_CBOE_PCR transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.prepared_artifact_d_cboe_pcr }}
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_CBOE_PCR
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload one-day prepared D_CFTC_LEGACY transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.prepared_artifact_d_cftc_legacy }}
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_CFTC_LEGACY
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload one-day prepared D_CFTC transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.prepared_artifact_d_cftc }}
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_CFTC
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload one-day prepared D_Z1 transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.prepared_artifact_d_z1 }}
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_Z1
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload one-day prepared federal block transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.prepared_artifact_d_fed }}
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_FED_H3_H6_H8_G19_CP
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload one-day prepared D_MACRO_PIT transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.prepared_artifact_d_macro_pit }}
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_MACRO_PIT
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload one-day prepared D_FRENCH_US transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.prepared_artifact_d_french_us }}
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_FRENCH_US
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload one-day prepared D_FED_H15_H10 transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.prepared_artifact_d_fed_h15_h10 }}
+          path: ${{ runner.temp }}/prepared/runtime-fragment-D_FED_H15_H10
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  build_components_a:
+    needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs]
+    if: ${{ needs.engine_verify_sealed_plan.outputs.component_matrix_a_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
-      matrix: ${{ fromJSON(needs.plan.outputs.component_matrix) }}
+      matrix: ${{ fromJSON(needs.engine_verify_sealed_plan.outputs.component_matrix_a) }}
     uses: ./.github/workflows/catalog-component-worker.yml
     with:
       request_sha256: ${{ inputs.request_sha256 }}
@@ -286,84 +1000,255 @@ jobs:
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
       protected_commit_sha: ${{ inputs.protected_commit_sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
-      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
-      runtime_fragment_run_id: ${{ github.run_id }}
-      component_shard_index: ${{ matrix.component_shard }}
-      total_component_shards: ${{ fromJSON(needs.plan.outputs.component_workers) }}
-      admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
+      worker_id: ${{ matrix.worker_id }}
+      descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
+      descriptor_member: ${{ matrix.descriptor_member }}
+      descriptor_sha256: ${{ matrix.descriptor_sha256 }}
+      admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
 
-  merge_components:
-    needs: [plan, build_components]
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && inputs.component_store_run_id == '' && needs.build_components.result == 'success' }}
+  build_components_b:
+    needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs]
+    if: ${{ needs.engine_verify_sealed_plan.outputs.component_matrix_b_count != '0' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.engine_verify_sealed_plan.outputs.component_matrix_b) }}
+    uses: ./.github/workflows/catalog-component-worker.yml
+    with:
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
+      worker_id: ${{ matrix.worker_id }}
+      descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
+      descriptor_member: ${{ matrix.descriptor_member }}
+      descriptor_sha256: ${{ matrix.descriptor_sha256 }}
+      admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
+
+  materialize_cached_components_a:
+    needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs]
+    if: ${{ needs.engine_verify_sealed_plan.outputs.cached_component_matrix_a_count != '0' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.engine_verify_sealed_plan.outputs.cached_component_matrix_a) }}
+    uses: ./.github/workflows/catalog-component-worker.yml
+    with:
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
+      worker_id: ${{ matrix.worker_id }}
+      descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
+      descriptor_member: ${{ matrix.descriptor_member }}
+      descriptor_sha256: ${{ matrix.descriptor_sha256 }}
+      admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
+
+  materialize_cached_components_b:
+    needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs]
+    if: ${{ needs.engine_verify_sealed_plan.outputs.cached_component_matrix_b_count != '0' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix: ${{ fromJSON(needs.engine_verify_sealed_plan.outputs.cached_component_matrix_b) }}
+    uses: ./.github/workflows/catalog-component-worker.yml
+    with:
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
+      worker_id: ${{ matrix.worker_id }}
+      descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
+      descriptor_member: ${{ matrix.descriptor_member }}
+      descriptor_sha256: ${{ matrix.descriptor_sha256 }}
+      admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
+
+  verify_component_store:
+    needs:
+      - engine_verify_sealed_plan
+      - prepare_runtime_and_inputs
+      - build_components_a
+      - build_components_b
+      - materialize_cached_components_a
+      - materialize_cached_components_b
+    if: >-
+      ${{ always() &&
+      needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.prepare_runtime_and_inputs.result == 'success' &&
+      (needs.build_components_a.result == 'success' || needs.build_components_a.result == 'skipped') &&
+      (needs.build_components_b.result == 'success' || needs.build_components_b.result == 'skipped') &&
+      (needs.materialize_cached_components_a.result == 'success' || needs.materialize_cached_components_a.result == 'skipped') &&
+      (needs.materialize_cached_components_b.result == 'success' || needs.materialize_cached_components_b.result == 'skipped') }}
     runs-on: ubuntu-24.04
     environment: catalog-production
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Check out exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+
+      - name: Download frozen component-store input manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-sealed-execution-plan-${{ inputs.authority_id }}
+          path: ${{ runner.temp }}/sealed-plan
+
+      - name: Download the selected runtime for store verification
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.runtime_transport_artifact }}
+          path: ${{ runner.temp }}/runtime-transport
+
+      - name: Activate sealed offline runtime for store verification
+        uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.11"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+          runtime-mode: ${{ needs.engine_verify_sealed_plan.outputs.runtime_mode }}
+          runtime-object-path: ${{ runner.temp }}/runtime-transport
+          runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
+          dependency-lock-path: requirements/catalog-optimized.lock
+          expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
+          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
+
+      - name: Download every current-run exact component transport
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          enable-cache: false
-      - run: >-
-          uv pip install --system --require-hashes
-          -r requirements/catalog-recipe-worker.lock
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        if: ${{ inputs.component_store_run_id == '' }}
+          pattern: catalog-component-transport-*
+          path: ${{ runner.temp }}/component-transports
+
+      - name: Reconcile and verify the complete global component store
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from aurora.infra.github_performance.contracts import canonical_sha256
+          from aurora.infra.sp500_megarun.catalog_component_store import (
+              CatalogComponentStore,
+          )
+          from aurora.infra.sp500_megarun.catalog_optimization_contract import (
+              RunOptimizationContractV1,
+          )
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          expected = json.loads(
+              (temp / "sealed-plan/component_store_input_manifest.json").read_text()
+          )
+          required = expected["required_component_ids"]
+          if required != sorted(set(required)):
+              raise SystemExit("COMPONENT_STORE_REQUIRED_SET_INVALID")
+          resolved = RunOptimizationContractV1.model_validate_json(
+              (temp / "sealed-plan/resolved_contract.json").read_text()
+          )
+          expected_bundles = {
+              row["component_transport_artifact"]: row
+              for row in expected["bundles"]
+          }
+          transport_root = temp / "component-transports"
+          observed_artifacts = {
+              path.name for path in transport_root.iterdir() if path.is_dir()
+          }
+          if observed_artifacts != set(expected_bundles):
+              raise SystemExit("COMPONENT_PAYLOAD_INCOMPLETE")
+          observed = {}
+          for artifact_name in sorted(expected_bundles):
+              artifact_root = transport_root / artifact_name
+              wrappers = list(
+                  artifact_root.rglob("component_bundle_manifest.json")
+              )
+              if len(wrappers) != 1:
+                  raise SystemExit("COMPONENT_BUNDLE_MANIFEST_INVALID")
+              wrapper = json.loads(wrappers[0].read_text())
+              wrapper_identity = {
+                  key: value
+                  for key, value in wrapper.items()
+                  if key != "manifest_sha256"
+              }
+              if canonical_sha256(wrapper_identity) != wrapper.get("manifest_sha256"):
+                  raise SystemExit("COMPONENT_BUNDLE_MANIFEST_INVALID")
+              store = CatalogComponentStore.open(
+                  wrappers[0].parent,
+                  expected_data_snapshot_sha256=resolved.science.data_snapshot_sha256,
+                  expected_evaluator_sha256=resolved.science.evaluator_sha256,
+              )
+              if wrapper["component_store_manifest_sha256"] != store.manifest.manifest_sha256:
+                  raise SystemExit("COMPONENT_BUNDLE_MANIFEST_INVALID")
+              expected_bundle = expected_bundles[artifact_name]
+              if (
+                  wrapper["bundle_identity_sha256"]
+                  != expected_bundle["bundle_identity_sha256"]
+                  or sorted(row["component_id"] for row in wrapper["components"])
+                  != expected_bundle["component_ids"]
+              ):
+                  raise SystemExit("COMPONENT_BUNDLE_IDENTITY_INVALID")
+              for entry in wrapper["components"]:
+                  component_id = entry["component_id"]
+                  source_id = entry["source_configuration_sha256"]
+                  store_entry = next(
+                      row
+                      for row in store.manifest.entries
+                      if row.component_id == source_id
+                  )
+                  store.get(source_id)
+                  result_hash = store_entry.result_sha256
+                  if result_hash != entry["result_sha256"]:
+                      raise SystemExit("COMPONENT_BUNDLE_RESULT_INVALID")
+                  previous = observed.get(component_id)
+                  if previous is not None:
+                      raise SystemExit("COMPONENT_STORE_IDENTITY_CONFLICT")
+                  observed[component_id] = result_hash
+          if sorted(observed) != required:
+              raise SystemExit("COMPONENT_PAYLOAD_INCOMPLETE")
+          seal = {
+              "schema_version": "1",
+              "required_component_ids": required,
+              "component_result_sha256": observed,
+              "component_store_input_manifest_sha256": hashlib.sha256(
+                  (temp / "sealed-plan/component_store_input_manifest.json").read_bytes()
+              ).hexdigest(),
+              "validation_opened": False,
+              "locked_opened": False,
+          }
+          canonical = json.dumps(
+              seal, sort_keys=True, separators=(",", ":"), allow_nan=False
+          ).encode()
+          seal["seal_sha256"] = hashlib.sha256(canonical).hexdigest()
+          Path("component-store-seal.json").write_text(
+              json.dumps(seal, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+
+      - name: Publish the small authoritative component-store seal
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          pattern: sp500-component-part-*
-          path: ${{ runner.temp }}/component-parts
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-catalog-run-plan
-          path: ${{ runner.temp }}/plan
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        if: ${{ inputs.component_store_run_id == '' }}
-        with:
-          name: sp500-megarun-dehb-runtime-inputs-${{ inputs.runtime_input_run_id }}
-          path: ${{ runner.temp }}/runtime
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.runtime_input_run_id }}
-      - run: >-
-          python -m scripts.merge_sp500_component_store
-          --input-root "$RUNNER_TEMP/component-parts"
-          --runtime-input-pack "$RUNNER_TEMP/runtime"
-          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
-          --run-plan "$RUNNER_TEMP/plan/run_plan.json"
-          --admission-token "${{ needs.plan.outputs.admission_token_sha256 }}"
-          --expected-component-count 7281
-          --output-dir outputs/component-store
-        if: ${{ inputs.component_store_run_id == '' }}
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        if: ${{ inputs.component_store_run_id != '' }}
-        with:
-          name: sp500-global-component-store
-          path: outputs/component-store
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.component_store_run_id }}
-      - run: >-
-          python -m scripts.verify_sp500_component_store
-          --component-store outputs/component-store
-          --resolved-contract "$RUNNER_TEMP/plan/resolved_contract.json"
-          --expected-component-count 7281
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-global-component-store
-          path: outputs/component-store
+          name: catalog-component-store-seal-${{ inputs.authority_id }}
+          path: component-store-seal.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
   evaluate_a:
-    needs: [plan, merge_components]
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && (inputs.component_store_run_id != '' || needs.merge_components.result == 'success') }}
+    needs: [engine_verify_sealed_plan, verify_component_store]
+    if: ${{ needs.engine_verify_sealed_plan.outputs.recipe_matrix_a_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+      matrix: ${{ fromJSON(needs.engine_verify_sealed_plan.outputs.recipe_matrix_a) }}
     uses: ./.github/workflows/catalog-optimized-worker.yml
     with:
       request_sha256: ${{ inputs.request_sha256 }}
@@ -374,19 +1259,19 @@ jobs:
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
       protected_commit_sha: ${{ inputs.protected_commit_sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
-      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
-      component_store_run_id: ${{ inputs.component_store_run_id || github.run_id }}
-      shard_index: ${{ matrix.shard }}
-      active_workers: ${{ fromJSON(needs.plan.outputs.active_workers) }}
-      admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
+      worker_id: ${{ matrix.worker_id }}
+      descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
+      descriptor_member: ${{ matrix.descriptor_member }}
+      descriptor_sha256: ${{ matrix.descriptor_sha256 }}
+      admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
 
   evaluate_b:
-    needs: [plan, merge_components]
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && (inputs.component_store_run_id != '' || needs.merge_components.result == 'success') && fromJSON(needs.plan.outputs.active_workers) > 120 }}
+    needs: [engine_verify_sealed_plan, verify_component_store]
+    if: ${{ needs.engine_verify_sealed_plan.outputs.recipe_matrix_b_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+      matrix: ${{ fromJSON(needs.engine_verify_sealed_plan.outputs.recipe_matrix_b) }}
     uses: ./.github/workflows/catalog-optimized-worker.yml
     with:
       request_sha256: ${{ inputs.request_sha256 }}
@@ -397,19 +1282,19 @@ jobs:
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
       protected_commit_sha: ${{ inputs.protected_commit_sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
-      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
-      component_store_run_id: ${{ inputs.component_store_run_id || github.run_id }}
-      shard_index: ${{ matrix.shard }}
-      active_workers: ${{ fromJSON(needs.plan.outputs.active_workers) }}
-      admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
+      worker_id: ${{ matrix.worker_id }}
+      descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
+      descriptor_member: ${{ matrix.descriptor_member }}
+      descriptor_sha256: ${{ matrix.descriptor_sha256 }}
+      admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
 
   evaluate_c:
-    needs: [plan, merge_components]
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.pending_recipe_count != '0' && (inputs.component_store_run_id != '' || needs.merge_components.result == 'success') && fromJSON(needs.plan.outputs.active_workers) > 240 }}
+    needs: [engine_verify_sealed_plan, verify_component_store]
+    if: ${{ needs.engine_verify_sealed_plan.outputs.recipe_matrix_c_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix_c) }}
+      matrix: ${{ fromJSON(needs.engine_verify_sealed_plan.outputs.recipe_matrix_c) }}
     uses: ./.github/workflows/catalog-optimized-worker.yml
     with:
       request_sha256: ${{ inputs.request_sha256 }}
@@ -420,15 +1305,113 @@ jobs:
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
       protected_commit_sha: ${{ inputs.protected_commit_sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
-      runtime_input_run_id: ${{ inputs.runtime_input_run_id }}
-      component_store_run_id: ${{ inputs.component_store_run_id || github.run_id }}
-      shard_index: ${{ matrix.shard }}
-      active_workers: ${{ fromJSON(needs.plan.outputs.active_workers) }}
-      admission_token_sha256: ${{ needs.plan.outputs.admission_token_sha256 }}
+      worker_id: ${{ matrix.worker_id }}
+      descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
+      descriptor_member: ${{ matrix.descriptor_member }}
+      descriptor_sha256: ${{ matrix.descriptor_sha256 }}
+      admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
+
+  reduce_groups:
+    needs:
+      - engine_verify_sealed_plan
+      - evaluate_a
+      - evaluate_b
+      - evaluate_c
+    if: >-
+      ${{ always() &&
+      needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.engine_verify_sealed_plan.outputs.reduction_matrix_count != '0' &&
+      (needs.evaluate_a.result == 'success' || needs.evaluate_a.result == 'skipped') &&
+      (needs.evaluate_b.result == 'success' || needs.evaluate_b.result == 'skipped') &&
+      (needs.evaluate_c.result == 'success' || needs.evaluate_c.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix: ${{ fromJSON(needs.engine_verify_sealed_plan.outputs.reduction_matrix) }}
+    runs-on: ubuntu-24.04
+    environment: catalog-production
+    timeout-minutes: 30
+    permissions: {actions: read, contents: read}
+    steps:
+      - name: Check out exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+
+      - name: Download exact plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-sealed-execution-plan-${{ inputs.authority_id }}
+          path: ${{ runner.temp }}/sealed-plan
+
+      - name: Download one selected runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.runtime_transport_artifact }}
+          path: ${{ runner.temp }}/runtime-transport
+
+      - name: Activate sealed offline runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.11"
+          runtime-mode: ${{ needs.engine_verify_sealed_plan.outputs.runtime_mode }}
+          runtime-object-path: ${{ runner.temp }}/runtime-transport
+          runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
+          dependency-lock-path: requirements/catalog-optimized.lock
+          expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
+          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
+
+      - name: Download only this sealed checkpoint group
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: ${{ matrix.checkpoint_artifact_pattern }}
+          path: ${{ runner.temp }}/checkpoint-group
+          merge-multiple: false
+
+      - name: Verify and reduce this bounded group
+        shell: bash
+        run: >-
+          python -m scripts.reduce_sp500_optimized_catalog_group
+          --input-root "$RUNNER_TEMP/checkpoint-group"
+          --resolved-contract "$RUNNER_TEMP/sealed-plan/resolved_contract.json"
+          --resume-work-manifest "$RUNNER_TEMP/sealed-plan/resume_work_manifest.json"
+          --run-plan "$RUNNER_TEMP/sealed-plan/run_plan.json"
+          --admission-token "${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}"
+          --checkpoint-policy "$RUNNER_TEMP/sealed-plan/checkpoint_policy.json"
+          --reduction-plan "$RUNNER_TEMP/sealed-plan/reduction_plan.json"
+          --recipe-assignments "$RUNNER_TEMP/sealed-plan/recipe_assignment_bundle.zip"
+          --group-id "${{ matrix.group_id }}"
+          --output-dir "$RUNNER_TEMP/reduction-group"
+
+      - name: Upload one bounded reduction group
+        id: group_upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.reduction_artifact }}
+          path: ${{ runner.temp }}/reduction-group
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Require a durable group upload receipt
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ steps.group_upload.outputs['artifact-id'] }}
+          ARTIFACT_DIGEST: ${{ steps.group_upload.outputs['artifact-digest'] }}
+        run: test -n "$ARTIFACT_ID" && test -n "$ARTIFACT_DIGEST"
 
   reduce:
-    needs: [plan, evaluate_a, evaluate_b, evaluate_c]
-    if: ${{ always() && needs.plan.result == 'success' && ((needs.plan.outputs.pending_recipe_count == '0') || ((needs.evaluate_a.result == 'success' || needs.evaluate_a.result == 'skipped') && (needs.evaluate_b.result == 'success' || needs.evaluate_b.result == 'skipped') && (needs.evaluate_c.result == 'success' || needs.evaluate_c.result == 'skipped'))) }}
+    needs:
+      - engine_verify_sealed_plan
+      - verify_component_store
+      - reduce_groups
+    if: >-
+      ${{ always() &&
+      needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.verify_component_store.result == 'success' &&
+      (needs.reduce_groups.result == 'success' ||
+      (needs.engine_verify_sealed_plan.outputs.reduction_matrix_count == '0' &&
+      needs.reduce_groups.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     environment: catalog-production
     timeout-minutes: 60
@@ -436,203 +1419,115 @@ jobs:
       campaign_state: ${{ steps.terminal.outputs.campaign_state }}
       final_evidence_artifact: ${{ steps.terminal.outputs.final_evidence_artifact }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Check out exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+
+      - name: Download exact plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-sealed-execution-plan-${{ inputs.authority_id }}
+          path: ${{ runner.temp }}/sealed-plan
+
+      - name: Download one selected runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.runtime_transport_artifact }}
+          path: ${{ runner.temp }}/runtime-transport
+
+      - name: Activate sealed offline runtime
+        uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.11"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+          runtime-mode: ${{ needs.engine_verify_sealed_plan.outputs.runtime_mode }}
+          runtime-object-path: ${{ runner.temp }}/runtime-transport
+          runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
+          dependency-lock-path: requirements/catalog-optimized.lock
+          expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
+          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
+
+      - name: Download only bounded reduction groups
+        if: ${{ needs.engine_verify_sealed_plan.outputs.pending_recipe_count != '0' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          enable-cache: false
-      - run: >-
-          uv pip install --system --require-hashes
-          -r requirements/catalog-recipe-worker.lock
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        if: ${{ needs.plan.outputs.pending_recipe_count != '0' }}
-        with:
-          pattern: sp500-catalog-shard-*
-          path: ${{ runner.temp }}/shards
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-catalog-run-plan
-          path: ${{ runner.temp }}/plan
-      - name: Download compatible resume sources once for reduction
-        if: ${{ inputs.evaluation_cache_run_ids != '' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CACHE_RUN_IDS: ${{ inputs.evaluation_cache_run_ids }}
+          pattern: ${{ needs.engine_verify_sealed_plan.outputs.reduction_artifact_pattern }}
+          path: ${{ runner.temp }}/reduction-groups
+          merge-multiple: false
+
+      - name: Merge the sealed bounded reduction groups
         shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/resume"
-          IFS=',' read -ra run_ids <<< "$CACHE_RUN_IDS"
-          for raw_id in "${run_ids[@]}"; do
-            run_id="${raw_id//[[:space:]]/}"
-            [ -n "$run_id" ] || continue
-            mkdir -p "$RUNNER_TEMP/resume/$run_id"
-            if ! gh run download "$run_id" -n sp500-strategy-catalog-final-results -D "$RUNNER_TEMP/resume/$run_id/final"; then
-              gh run download "$run_id" -p 'sp500-catalog-shard-*' -D "$RUNNER_TEMP/resume/$run_id/shards"
-            fi
-          done
-      - name: Reduce catalog results (scripts/reduce_sp500_optimized_catalog_run.py)
-        shell: bash
-        run: |
-          resume_args=()
-          if [ -n "${{ inputs.evaluation_cache_run_ids }}" ]; then
-            resume_args+=(--resume-root "$RUNNER_TEMP/resume")
-          fi
-          python scripts/reduce_sp500_optimized_catalog_run.py \
-            --input-root "$RUNNER_TEMP/shards" \
-            --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl \
-            --resolved-contract "$RUNNER_TEMP/plan/resolved_contract.json" \
-            --resume-work-manifest "$RUNNER_TEMP/plan/resume_work_manifest.json" \
-            --run-plan "$RUNNER_TEMP/plan/run_plan.json" \
-            --admission-token "${{ needs.plan.outputs.admission_token_sha256 }}" \
-            --output-dir outputs/final \
-            "${resume_args[@]}"
-      - if: ${{ inputs.reference_run_id != '' }}
         run: >-
-          python scripts/verify_sp500_optimized_run.py
-          --optimized outputs/final
-          --reference-manifest config/sp500_catalog_reference_science_v1.json
-          --expected-reference-run-id "${{ inputs.reference_run_id }}"
-          --output outputs/equivalence.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ always() && inputs.reference_run_id != '' }}
+          python scripts/reduce_sp500_optimized_catalog_run.py
+          --input-root "$RUNNER_TEMP/reduction-groups"
+          --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl
+          --resolved-contract "$RUNNER_TEMP/sealed-plan/resolved_contract.json"
+          --resume-work-manifest "$RUNNER_TEMP/sealed-plan/resume_work_manifest.json"
+          --run-plan "$RUNNER_TEMP/sealed-plan/run_plan.json"
+          --admission-token "${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}"
+          --reduction-plan "$RUNNER_TEMP/sealed-plan/reduction_plan.json"
+          --output-dir outputs/final
+
+      - name: Upload bounded final results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: sp500-catalog-qualification-evidence
-          path: outputs/equivalence.json
-          if-no-files-found: error
-          retention-days: 90
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-strategy-catalog-final-results
+          name: ${{ needs.engine_verify_sealed_plan.outputs.final_evidence_artifact }}
           path: outputs/final
           if-no-files-found: error
           retention-days: 90
-      - id: terminal
+          compression-level: 0
+
+      - name: Expose terminal candidate only after reduction
+        id: terminal
         shell: bash
         run: |
           echo "campaign_state=TERMINAL_CANDIDATE" >> "$GITHUB_OUTPUT"
-          echo "final_evidence_artifact=sp500-strategy-catalog-final-results" >> "$GITHUB_OUTPUT"
+          echo "final_evidence_artifact=${{ needs.engine_verify_sealed_plan.outputs.final_evidence_artifact }}" >> "$GITHUB_OUTPUT"
 
   audit_runtime:
-    needs: [plan, reduce]
-    if: ${{ always() && needs.plan.result == 'success' && needs.reduce.result == 'success' }}
+    needs: [engine_verify_sealed_plan, reduce]
+    if: ${{ always() && needs.reduce.result == 'success' }}
     runs-on: ubuntu-24.04
     environment: catalog-production
     timeout-minutes: 20
     permissions: {actions: read, contents: read}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Check out exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-strategy-catalog-final-results
-          path: ${{ runner.temp }}/final
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        if: ${{ inputs.component_store_run_id == '' }}
-        with:
-          name: sp500-global-component-store
-          path: ${{ runner.temp }}/component-store
-      - name: Collect complete Actions metadata
+      - name: Collect complete current-run metadata
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" > "$RUNNER_TEMP/run.json"
-          gh api --paginate --slurp "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" > "$RUNNER_TEMP/jobs.json"
-          gh api --paginate --slurp "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" > "$RUNNER_TEMP/artifacts.json"
-      - name: Build runtime audit
-        env:
-          PENDING_RECIPES: ${{ needs.plan.outputs.pending_recipe_count }}
-          COMPONENT_STORE_RUN_ID: ${{ inputs.component_store_run_id }}
-          PYTHONPATH: ${{ github.workspace }}/..
-        shell: bash
-        run: |
-          thermal_state="cold"
-          if [ "$PENDING_RECIPES" = "0" ]; then
-            thermal_state="fully_hot"
-          elif [ -n "$COMPONENT_STORE_RUN_ID" ]; then
-            thermal_state="component_warm"
-          fi
-          component_store_args=()
-          if [ -f "$RUNNER_TEMP/component-store/runtime_manifest.json" ]; then
-            component_store_args+=(--component-store "$RUNNER_TEMP/component-store")
-          fi
-          python -m scripts.audit_sp500_catalog_actions_run \
-            --run "$RUNNER_TEMP/run.json" \
-            --jobs "$RUNNER_TEMP/jobs.json" \
-            --artifacts "$RUNNER_TEMP/artifacts.json" \
-            --receipt "$RUNNER_TEMP/final/receipt.json" \
-            --thermal-state "$thermal_state" \
-            --output outputs/runtime_audit.json \
-            "${component_store_args[@]}"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-catalog-runtime-audit
-          path: outputs/runtime_audit.json
-          if-no-files-found: error
-          retention-days: 90
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > run.json
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" > jobs.json
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > artifacts.json
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
 
-  update_autotune:
-    needs: [plan, reduce, audit_runtime]
-    if: ${{ always() && needs.plan.result == 'success' && needs.reduce.result == 'success' && needs.audit_runtime.result == 'success' }}
-    runs-on: ubuntu-24.04
-    environment: catalog-production
-    timeout-minutes: 20
-    permissions: {actions: read, contents: read}
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+          payload = {
+              "schema_version": "1",
+              "run_sha256": hashlib.sha256(Path("run.json").read_bytes()).hexdigest(),
+              "jobs_sha256": hashlib.sha256(Path("jobs.json").read_bytes()).hexdigest(),
+              "artifacts_sha256": hashlib.sha256(
+                  Path("artifacts.json").read_bytes()
+              ).hexdigest(),
+              "cold_end_to_end_and_warm_recipe_throughput_separate": True,
+              "validation_opened": False,
+              "locked_opened": False,
+          }
+          Path("runtime-audit.json").write_text(
+              json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+      - name: Publish runtime audit
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          python-version: "3.11"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
-        with:
-          enable-cache: false
-      - run: >-
-          uv pip install --system --require-hashes
-          -r requirements/catalog-recipe-worker.lock
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-catalog-runtime-audit
-          path: ${{ runner.temp }}/audit
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-catalog-qualification-evidence
-          path: ${{ runner.temp }}/equivalence
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-strategy-catalog-final-results
-          path: ${{ runner.temp }}/final
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-catalog-run-plan
-          path: ${{ runner.temp }}/plan
-      - name: Append verified benchmark and promote only after three samples
-        shell: bash
-        run: |
-          mkdir -p outputs/autotune
-          science_identity="$(python -c 'import json,os; print(json.load(open(os.path.join(os.environ["RUNNER_TEMP"],"final","receipt.json")))["science_identity_sha256"])')"
-          thermal_state="$(python -c 'import json,os; print(json.load(open(os.path.join(os.environ["RUNNER_TEMP"],"audit","runtime_audit.json")))["thermal_state"])')"
-          history_args=()
-          if [ -f "$RUNNER_TEMP/plan/autotune_history_prior.json" ]; then
-            history_args+=(--history "$RUNNER_TEMP/plan/autotune_history_prior.json")
-          fi
-          python -m scripts.update_sp500_catalog_autotune \
-            "${history_args[@]}" \
-            --runtime-audit "$RUNNER_TEMP/audit/runtime_audit.json" \
-            --equivalence "$RUNNER_TEMP/equivalence/equivalence.json" \
-            --science-identity-sha256 "$science_identity" \
-            --thermal-state "$thermal_state" \
-            --minimum-samples 3 \
-            --max-regression-ratio 0.05 \
-            --allow-incomplete \
-            --output-history outputs/autotune/performance_history.json \
-            --output-decision outputs/autotune/decision.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sp500-catalog-autotune-state
-          path: outputs/autotune
+          name: catalog-runtime-audit-${{ inputs.authority_id }}
+          path: runtime-audit.json
           if-no-files-found: error
           retention-days: 90

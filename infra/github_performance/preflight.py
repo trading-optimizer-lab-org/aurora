@@ -518,6 +518,10 @@ def _iter_uses(workflow: Mapping[str, Any]) -> list[tuple[str, str]]:
 CATALOG_CONTROLLER_WORKFLOW = ".github/workflows/catalog-run-controller.yml"
 CATALOG_RECOVERY_WORKFLOW = ".github/workflows/catalog-recovery-wave.yml"
 CATALOG_WATCHDOG_WORKFLOW = ".github/workflows/catalog-run-watchdog.yml"
+CATALOG_KEEPER_WORKFLOW = ".github/workflows/catalog-artifact-keeper.yml"
+CATALOG_KEEPER_AUDIT_CONTEXT_SHA256 = (
+    "0b90c2b50f081b48eb3b173b907eab0015973e536db2e8e195ff8f95b69bec42"
+)
 CATALOG_ACTIVE_ENGINE_WORKFLOWS = {
     "optimized_catalog_v1": ".github/workflows/catalog-optimized-run.yml",
 }
@@ -666,6 +670,8 @@ def _catalog_role(
     workflow: Mapping[str, Any],
     engine_by_path: Mapping[str, str],
 ) -> tuple[bool, str, str | None]:
+    if path == CATALOG_KEEPER_WORKFLOW:
+        return True, "keeper_maintenance", None
     if path in engine_by_path:
         return True, "active_engine", engine_by_path[path]
     if path in CATALOG_PRODUCTION_WORKER_WORKFLOWS:
@@ -703,6 +709,15 @@ def _catalog_canonical_hash(value: object) -> str:
             allow_nan=False,
         ).encode("utf-8")
     ).hexdigest()
+
+
+def _catalog_job_needs(job: Mapping[str, Any]) -> set[str]:
+    needs = job.get("needs", ())
+    if isinstance(needs, str):
+        return {needs}
+    if isinstance(needs, Sequence) and not isinstance(needs, (str, bytes)):
+        return {str(item) for item in needs}
+    return set()
 
 
 def validate_catalog_workflow_topology(
@@ -814,6 +829,7 @@ def validate_catalog_workflow_topology(
         public_entrypoint = item.path in {
             CATALOG_CONTROLLER_WORKFLOW,
             CATALOG_WATCHDOG_WORKFLOW,
+            CATALOG_KEEPER_WORKFLOW,
         }
         if (
             public
@@ -916,6 +932,130 @@ def validate_catalog_workflow_topology(
                             )
                         )
 
+        if item.role == "keeper_maintenance":
+            event = workflow.get("on")
+            if event != {"schedule": [{"cron": "17 3 * * 0"}]}:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_KEEPER_TRIGGER_INVALID",
+                        item.path,
+                        "keeper must have only the fixed weekly schedule",
+                    )
+                )
+            if workflow.get("permissions") != {
+                "actions": "read",
+                "contents": "read",
+                "issues": "read",
+            }:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_KEEPER_PERMISSIONS_INVALID",
+                        item.path,
+                        "keeper top-level permissions must be exactly read-only",
+                    )
+                )
+            if "env" in workflow:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_KEEPER_GLOBAL_ENV_FORBIDDEN",
+                        item.path,
+                        "keeper cannot receive repository-selected environment data",
+                    )
+                )
+            jobs = workflow.get("jobs")
+            required_job_ids = {
+                "live_controls_audit_before_maintenance",
+                "inventory_and_preserve",
+            }
+            if not isinstance(jobs, Mapping) or set(jobs) != required_job_ids:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_KEEPER_JOB_TOPOLOGY_INVALID",
+                        item.path,
+                        "keeper must contain only the fixed audit and preservation jobs",
+                    )
+                )
+            else:
+                audit = jobs["live_controls_audit_before_maintenance"]
+                expected_audit_inputs = {
+                    "purpose": "maintenance",
+                    "caller_workflow": CATALOG_KEEPER_WORKFLOW,
+                    "caller_job": "live_controls_audit_before_maintenance",
+                    "protected_commit_sha": "${{ github.sha }}",
+                    "audit_context_sha256": CATALOG_KEEPER_AUDIT_CONTEXT_SHA256,
+                }
+                if (
+                    not isinstance(audit, Mapping)
+                    or audit.get("uses")
+                    != "./.github/workflows/catalog-live-controls-audit.yml"
+                    or audit.get("with") != expected_audit_inputs
+                    or "steps" in audit
+                    or "secrets" in audit
+                    or audit.get("permissions")
+                    != {"actions": "read", "contents": "read"}
+                ):
+                    violations.append(
+                        _catalog_violation(
+                            "CATALOG_KEEPER_AUDIT_CALL_INVALID",
+                            item.path,
+                            "keeper maintenance audit call is not the fixed pure call",
+                        )
+                    )
+                preservation = jobs["inventory_and_preserve"]
+                if (
+                    not isinstance(preservation, Mapping)
+                    or preservation.get("needs")
+                    != "live_controls_audit_before_maintenance"
+                    or preservation.get("runs-on") != "ubuntu-24.04"
+                    or preservation.get("timeout-minutes") != 20
+                    or preservation.get("permissions")
+                    != {
+                        "actions": "read",
+                        "contents": "read",
+                        "issues": "read",
+                    }
+                    or "environment" in preservation
+                    or "secrets" in preservation
+                ):
+                    violations.append(
+                        _catalog_violation(
+                            "CATALOG_KEEPER_PRESERVATION_JOB_INVALID",
+                            item.path,
+                            "keeper preservation job exceeds its fixed read-only envelope",
+                        )
+                    )
+            keeper_executable = _catalog_executable_text(workflow)
+            forbidden_keeper_markers = (
+                "plan_sp500_optimized_catalog_run",
+                "catalog-optimized-run.yml",
+                "catalog-component-worker.yml",
+                "catalog-optimized-worker.yml",
+                "build_sp500_component_store",
+                "run_sp500_optimized_recipe_worker",
+                "reduce_sp500_optimized_catalog_run",
+                "catalog-recovery-wave.yml",
+                "workflow_dispatch",
+                "--method post",
+                "--method patch",
+                "--method delete",
+                "-x post",
+                "-x patch",
+                "-x delete",
+            )
+            found = tuple(
+                marker
+                for marker in forbidden_keeper_markers
+                if marker in keeper_executable
+            )
+            if found:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_KEEPER_MUTATION_OR_SCIENCE_PATH",
+                        item.path,
+                        f"keeper contains forbidden paths {list(found)}",
+                    )
+                )
+
         executable = _catalog_executable_text(workflow)
         if any(marker in executable for marker in _CATALOG_NESTED_DISPATCH_MARKERS):
             violations.append(
@@ -953,6 +1093,33 @@ def validate_catalog_workflow_topology(
                         )
                     )
 
+        if path != CATALOG_KEEPER_WORKFLOW:
+            executable = _catalog_executable_text(workflow)
+            jobs = workflow.get("jobs", {})
+            maintenance_call = False
+            if isinstance(jobs, Mapping):
+                maintenance_call = any(
+                    isinstance(job, Mapping)
+                    and isinstance(job.get("with"), Mapping)
+                    and job["with"].get("purpose") == "maintenance"
+                    for job in jobs.values()
+                )
+            keeper_execution = any(
+                marker in executable
+                for marker in (
+                    "python scripts/run_catalog_artifact_keeper.py",
+                    "python -m scripts.run_catalog_artifact_keeper",
+                )
+            )
+            if maintenance_call or keeper_execution:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_SECOND_MAINTENANCE_PATH",
+                        path,
+                        "only the fixed catalog artifact keeper may run maintenance",
+                    )
+                )
+
     for engine_id in sorted(active_engine_ids):
         engine_path = CATALOG_ACTIVE_ENGINE_WORKFLOWS.get(engine_id)
         if engine_path is None or engine_path not in documents:
@@ -974,6 +1141,161 @@ def validate_catalog_workflow_topology(
                     f"engine callers are {sorted(actual_callers)}",
                 )
             )
+        engine = documents[engine_path]
+        engine_jobs = engine.get("jobs", {})
+        engine_text = json.dumps(
+            engine,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).casefold()
+        if (
+            not isinstance(engine_jobs, Mapping)
+            or engine_text.count("build the one locked runtime store") != 1
+        ):
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_RUNTIME_ONCE_INVARIANT_MISSING",
+                    engine_path,
+                    "active engine must prepare one exact runtime at most once",
+                )
+            )
+            continue
+        component_jobs = {
+            str(job_id): job
+            for job_id, job in engine_jobs.items()
+            if isinstance(job, Mapping)
+            and job.get("uses")
+            == "./.github/workflows/catalog-component-worker.yml"
+        }
+        recipe_jobs = {
+            str(job_id): job
+            for job_id, job in engine_jobs.items()
+            if isinstance(job, Mapping)
+            and job.get("uses")
+            == "./.github/workflows/catalog-optimized-worker.yml"
+        }
+        verifier = engine_jobs.get("verify_component_store")
+        group_reducer = engine_jobs.get("reduce_groups")
+        final_reducer = engine_jobs.get("reduce")
+        if (
+            not component_jobs
+            or not recipe_jobs
+            or not isinstance(verifier, Mapping)
+            or not set(component_jobs).issubset(_catalog_job_needs(verifier))
+            or any(
+                "prepare_runtime_and_inputs" not in _catalog_job_needs(job)
+                for job in component_jobs.values()
+            )
+            or any(
+                "verify_component_store" not in _catalog_job_needs(job)
+                for job in recipe_jobs.values()
+            )
+        ):
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_COMPONENTS_BEFORE_RECIPES_INVARIANT_MISSING",
+                    engine_path,
+                    "active engine does not seal global components before recipes",
+                )
+            )
+        required_routes = {
+            "worker_id",
+            "descriptor_bundle_artifact",
+            "descriptor_member",
+            "descriptor_sha256",
+        }
+        if any(
+            not isinstance(job.get("with"), Mapping)
+            or not required_routes.issubset(job["with"])
+            for job in (*component_jobs.values(), *recipe_jobs.values())
+        ):
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_EXACT_PAYLOAD_ROUTE_INVARIANT_MISSING",
+                    engine_path,
+                    "active engine workers lack compact exact payload routes",
+                )
+            )
+        if (
+            not isinstance(group_reducer, Mapping)
+            or not isinstance(group_reducer.get("strategy"), Mapping)
+            or group_reducer["strategy"].get("max-parallel", 16) > 15
+            or "reduction_matrix"
+            not in str(group_reducer["strategy"].get("matrix", ""))
+            or not isinstance(final_reducer, Mapping)
+            or "reduce_groups" not in _catalog_job_needs(final_reducer)
+            or "reduction_artifact_pattern"
+            not in json.dumps(final_reducer, sort_keys=True)
+            or "catalog-checkpoint-*"
+            in json.dumps(final_reducer, sort_keys=True).casefold()
+        ):
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_BOUNDED_REDUCTION_INVARIANT_MISSING",
+                    engine_path,
+                    "active engine does not use sealed bounded reduction groups",
+                )
+            )
+
+        worker = documents.get(".github/workflows/catalog-optimized-worker.yml")
+        if not isinstance(worker, Mapping):
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_RECIPE_WORKER_MISSING",
+                    engine_path,
+                    "active engine recipe worker is missing",
+                )
+            )
+        else:
+            worker_text = json.dumps(worker, sort_keys=True).casefold()
+            evaluate = worker.get("jobs", {}).get("evaluate", {})
+            steps = evaluate.get("steps", ()) if isinstance(evaluate, Mapping) else ()
+            compute_steps = {
+                str(step.get("id")): step
+                for step in steps
+                if isinstance(step, Mapping)
+                and str(step.get("id", "")).startswith("compute_")
+            }
+            upload_steps = {
+                str(step.get("id")): step
+                for step in steps
+                if isinstance(step, Mapping)
+                and str(step.get("id", "")).startswith("upload_")
+            }
+            durable_chain = any(
+                isinstance(step, Mapping) and step.get("id") == "durable_chain"
+                for step in steps
+            )
+            checkpoint_chain_valid = (
+                set(compute_steps) == {f"compute_{slot}" for slot in range(1, 9)}
+                and set(upload_steps)
+                == {f"upload_{slot}" for slot in range(1, 9)}
+                and durable_chain
+                and all(
+                    f"steps.upload_{slot - 1}.outputs['artifact-id'] != ''"
+                    in str(compute_steps[f"compute_{slot}"].get("if", ""))
+                    and f"steps.upload_{slot - 1}.outputs['artifact-digest'] != ''"
+                    in str(compute_steps[f"compute_{slot}"].get("if", ""))
+                    for slot in range(2, 9)
+                )
+            )
+            component_escape = any(
+                marker in worker_text
+                for marker in (
+                    "build-component",
+                    "compute-component",
+                    "component fallback",
+                    "allow-component-miss",
+                )
+            )
+            if component_escape or not checkpoint_chain_valid:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_SELECTIVE_RECOVERY_INVARIANT_MISSING",
+                        engine_path,
+                        "active engine worker has a component escape or unsafe checkpoints",
+                    )
+                )
 
     worker_allowed_callers = {
         ".github/workflows/catalog-optimized-run.yml",

@@ -255,3 +255,46 @@ def test_reducer_writes_global_performance_report(tmp_path: Path) -> None:
     assert report["completed_shards"] == 2
     assert report["unique_physical_components"] == 2
     assert json.loads((output_dir / "performance.json").read_text("utf-8")) == report
+
+
+def test_bundle_layout_selects_fastest_qualified_end_to_end_candidate() -> None:
+    from scripts.plan_sp500_optimized_catalog_run import (
+        BundleLayoutQualificationV1,
+        select_qualified_bundle_layout,
+    )
+
+    candidates = tuple(
+        BundleLayoutQualificationV1(
+            bundle_count=count,
+            equivalent=True,
+            sample_count=3,
+            memory_safe=True,
+            disk_safe=True,
+            runner_timeout_safe=True,
+            projected_end_to_end_p50_seconds=p50,
+            projected_end_to_end_p95_seconds=p50 * 1.1,
+            projected_component_download_bytes=bytes_,
+            projected_cache_uploads_per_minute=20,
+            projected_cache_downloads_per_minute=200,
+            checkpoint_upload_seconds_p95=2.0,
+        )
+        for count, p50, bytes_ in (
+            (8, 120.0, 10_000),
+            (16, 90.0, 15_000),
+            (32, 92.0, 8_000),
+            (64, 140.0, 7_000),
+            (96, 150.0, 6_000),
+            (128, 160.0, 5_000),
+        )
+    )
+    selected = select_qualified_bundle_layout(candidates)
+    assert selected.bundle_count == 16
+
+    unsafe_fast = candidates[0].model_copy(
+        update={
+            "projected_end_to_end_p50_seconds": 1.0,
+            "memory_safe": False,
+        }
+    )
+    selected = select_qualified_bundle_layout((unsafe_fast, *candidates[1:]))
+    assert selected.memory_safe is True

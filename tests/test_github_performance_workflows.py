@@ -71,10 +71,20 @@ def test_runtime_setup_is_composite_and_pinned() -> None:
     )
 
 
-def test_runtime_setup_requires_exact_wheelhouse_and_lock() -> None:
+def test_runtime_setup_requires_one_exact_runtime_object_and_lock() -> None:
     action = _load_action()
-    assert action["inputs"]["wheelhouse-path"]["required"] is True
-    assert action["inputs"]["dependency-lock-path"]["required"] is True
+    required = {
+        "python-version",
+        "runtime-mode",
+        "runtime-object-path",
+        "runtime-manifest-path",
+        "dependency-lock-path",
+        "expected-runtime-identity-sha256",
+        "expected-source-sha",
+        "expected-numeric-profile-sha256",
+    }
+    assert set(action["inputs"]) == required
+    assert all(action["inputs"][name]["required"] is True for name in required)
 
 
 def test_runtime_setup_installs_offline_without_resolution_or_building() -> None:
@@ -87,11 +97,20 @@ def test_runtime_setup_installs_offline_without_resolution_or_building() -> None
     assert "https://" not in text
     assert "http://" not in text
     assert "wheelhouse_manifest.json" in text
-    assert "dependency_lock_manifest.json" in text
+    assert "RUNTIME_DEPENDENCY_LOCK_HASH_INVALID" in text
+    assert "RUNTIME_FILE_HASH_INVALID" in text
+    assert "RUNTIME_OBJECT_HASH_INVALID" in text
 
 
-def test_runtime_setup_pins_numeric_threads_to_detected_cpus() -> None:
-    action_text = ACTION_PATH.read_text(encoding="utf-8")
+def test_catalog_workers_pin_numeric_threads_without_oversubscription() -> None:
+    worker_texts = [
+        (ROOT / ".github/workflows/catalog-optimized-worker.yml").read_text(
+            "utf-8"
+        ),
+        (ROOT / ".github/workflows/catalog-component-worker.yml").read_text(
+            "utf-8"
+        ),
+    ]
     for variable in (
         "OMP_NUM_THREADS",
         "OPENBLAS_NUM_THREADS",
@@ -100,8 +119,7 @@ def test_runtime_setup_pins_numeric_threads_to_detected_cpus() -> None:
         "VECLIB_MAXIMUM_THREADS",
         "BLIS_NUM_THREADS",
     ):
-        assert f'echo "{variable}=$cpu_count"' in action_text
-    assert "getconf _NPROCESSORS_ONLN" in action_text
+        assert all(f'{variable}: "1"' in text for text in worker_texts)
 
 
 def test_runtime_setup_has_no_credential_or_larger_runner_escape() -> None:

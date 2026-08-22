@@ -66,8 +66,134 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume-root", type=Path, action="append", default=[])
     parser.add_argument("--run-plan", type=Path, required=True)
     parser.add_argument("--admission-token", required=True)
+    parser.add_argument("--reduction-plan", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser
+
+
+def _verify_group_reduction_inputs(
+    input_root: Path,
+    *,
+    reduction_plan_path: Path,
+    pending_recipe_count: int,
+    expected_science_identity_sha256: str,
+    expected_catalog_manifest_sha256: str,
+    expected_work_manifest_sha256: str,
+) -> list[dict[str, object]]:
+    try:
+        reduction_plan = json.loads(reduction_plan_path.read_text("utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit("OPTIMIZED_REDUCTION_PLAN_INVALID") from exc
+    if not isinstance(reduction_plan, dict):
+        raise SystemExit("OPTIMIZED_REDUCTION_PLAN_INVALID")
+    plan_identity = {
+        key: value
+        for key, value in reduction_plan.items()
+        if key != "content_sha256"
+    }
+    groups = reduction_plan.get("groups")
+    if (
+        reduction_plan.get("schema_version") != "1"
+        or reduction_plan.get("document_type") != "reduction_plan"
+        or canonical_sha256(plan_identity) != reduction_plan.get("content_sha256")
+        or not isinstance(groups, list)
+        or len(groups) > 15
+        or reduction_plan.get("validation_opened") is not False
+        or reduction_plan.get("locked_opened") is not False
+    ):
+        raise SystemExit("OPTIMIZED_REDUCTION_PLAN_INVALID")
+    expected_artifacts: dict[str, dict[str, object]] = {}
+    expected_worker_ids: set[int] = set()
+    for expected_group_id, group in enumerate(groups):
+        if (
+            not isinstance(group, dict)
+            or group.get("group_id") != expected_group_id
+            or set(group) != {
+                "group_id",
+                "worker_ids",
+                "checkpoint_artifacts",
+                "checkpoint_artifact_pattern",
+                "reduction_artifact",
+            }
+            or not isinstance(group.get("worker_ids"), list)
+            or not 1 <= len(group["worker_ids"]) <= 24
+            or any(
+                not isinstance(worker_id, int)
+                or worker_id in expected_worker_ids
+                for worker_id in group["worker_ids"]
+            )
+            or not isinstance(group.get("reduction_artifact"), str)
+            or group["reduction_artifact"] in expected_artifacts
+        ):
+            raise SystemExit("OPTIMIZED_REDUCTION_PLAN_INVALID")
+        expected_worker_ids.update(group["worker_ids"])
+        expected_artifacts[group["reduction_artifact"]] = group
+    if bool(pending_recipe_count) != bool(groups):
+        raise SystemExit("OPTIMIZED_REDUCTION_PLAN_COVERAGE_INVALID")
+    if not groups:
+        if input_root.exists() and any(input_root.iterdir()):
+            raise SystemExit("OPTIMIZED_REDUCTION_INPUT_UNEXPECTED")
+        return []
+    try:
+        entries = list(input_root.iterdir())
+    except OSError as exc:
+        raise SystemExit("OPTIMIZED_REDUCTION_INPUT_MISSING") from exc
+    if (
+        {entry.name for entry in entries} != set(expected_artifacts)
+        or any(not entry.is_dir() or entry.is_symlink() for entry in entries)
+    ):
+        raise SystemExit("OPTIMIZED_REDUCTION_INPUT_SET_INVALID")
+
+    receipts: list[dict[str, object]] = []
+    for artifact, group in expected_artifacts.items():
+        root = input_root / artifact
+        if any(path.is_symlink() for path in root.rglob("*")):
+            raise SystemExit("OPTIMIZED_REDUCTION_INPUT_SET_INVALID")
+        try:
+            receipt = json.loads((root / "receipt.json").read_text("utf-8"))
+            manifest = json.loads(
+                (root / "reduction_group_manifest.json").read_text("utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise SystemExit("OPTIMIZED_REDUCTION_GROUP_INVALID") from exc
+        if not isinstance(receipt, dict) or not isinstance(manifest, dict):
+            raise SystemExit("OPTIMIZED_REDUCTION_GROUP_INVALID")
+        receipt_identity = {
+            key: value for key, value in receipt.items() if key != "receipt_sha256"
+        }
+        result_path = root / "results.parquet"
+        if (
+            receipt.get("reduction_group_id") != group["group_id"]
+            or receipt.get("reduction_artifact") != artifact
+            or receipt.get("worker_ids") != group["worker_ids"]
+            or receipt.get("source_worker_receipt_count")
+            != len(group["worker_ids"])
+            or receipt.get("science_identity_sha256")
+            != expected_science_identity_sha256
+            or receipt.get("catalog_manifest_sha256")
+            != expected_catalog_manifest_sha256
+            or receipt.get("work_manifest_sha256")
+            != expected_work_manifest_sha256
+            or receipt.get("reduction_plan_sha256")
+            != reduction_plan["content_sha256"]
+            or receipt.get("validation_opened") is not False
+            or receipt.get("locked_opened") is not False
+            or canonical_sha256(receipt_identity) != receipt.get("receipt_sha256")
+            or not result_path.is_file()
+            or receipt.get("result_sha256") != sha256_file(result_path)
+            or manifest.get("group_id") != group["group_id"]
+            or manifest.get("worker_ids") != group["worker_ids"]
+            or manifest.get("result_sha256") != receipt.get("result_sha256")
+            or manifest.get("reduction_plan_sha256")
+            != reduction_plan["content_sha256"]
+            or manifest.get("checkpoint_receipt_manifest_sha256")
+            != receipt.get("checkpoint_receipt_manifest_sha256")
+            or manifest.get("validation_opened") is not False
+            or manifest.get("locked_opened") is not False
+        ):
+            raise SystemExit("OPTIMIZED_REDUCTION_GROUP_INVALID")
+        receipts.append(receipt)
+    return receipts
 
 
 def main() -> int:
@@ -100,6 +226,14 @@ def main() -> int:
     expected_ids = [str(row["strategy_id"]) for row in expected_rows]
     catalog_by_id = {str(row["strategy_id"]): row for row in expected_rows}
     science_identity_sha256 = canonical_sha256(resolved.science)
+    worker_receipts = _verify_group_reduction_inputs(
+        args.input_root,
+        reduction_plan_path=args.reduction_plan,
+        pending_recipe_count=plan.pending_recipe_count,
+        expected_science_identity_sha256=science_identity_sha256,
+        expected_catalog_manifest_sha256=resolved.science.catalog_manifest_sha256,
+        expected_work_manifest_sha256=work_manifest.manifest_sha256,
+    )
     resume_index = load_resume_index(
         tuple(args.resume_root),
         expected_science_identity_sha256=science_identity_sha256,
@@ -209,11 +343,6 @@ def main() -> int:
         writer = csv.DictWriter(handle, fieldnames=list(summary_rows[0]))
         writer.writeheader()
         writer.writerows(summary_rows)
-    worker_receipts = [
-        json.loads(path.read_text("utf-8"))
-        for path in sorted(args.input_root.rglob("receipt.json"))
-        if "component" not in path.as_posix().lower()
-    ]
     scientific_stage_seconds = {
         name: sum(
             float(receipt.get("scientific_stage_seconds", {}).get(name, 0.0))
@@ -295,7 +424,14 @@ def main() -> int:
         "result_bytes": total_bytes,
         "result_bytes_per_recipe": total_bytes / len(ordered),
         "result_sha256": sha256_file(result_path),
-        "worker_receipt_count": len(worker_receipts),
+        "worker_receipt_count": sum(
+            int(receipt.get("source_worker_receipt_count", 1))
+            for receipt in worker_receipts
+        ),
+        "checkpoint_receipt_count": sum(
+            int(receipt.get("source_checkpoint_receipt_count", 1))
+            for receipt in worker_receipts
+        ),
         "workers": plan.active_workers,
         "component_workers": plan.component_workers,
         "component_processes_per_worker": (

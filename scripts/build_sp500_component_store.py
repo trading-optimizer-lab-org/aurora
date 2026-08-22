@@ -192,7 +192,11 @@ def main() -> int:
         str(component["configuration_sha256"]): component
         for component in all_components
     }
-    if len(scheduled_ids) != len(set(scheduled_ids)) or set(scheduled_ids) != set(all_by_id):
+    if (
+        len(scheduled_ids) != len(set(scheduled_ids))
+        or not scheduled_ids
+        or not set(scheduled_ids).issubset(all_by_id)
+    ):
         raise SystemExit("COMPONENT_SCHEDULE_COVERAGE_INVALID")
     shard = schedule.shards[args.component_shard_index]
     if shard.shard_index != args.component_shard_index:

@@ -828,8 +828,8 @@ def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> 
 def test_reusable_workflow_skips_empty_matrix_groups_without_blocking_reduce() -> None:
     workflow = Path(".github/workflows/catalog-optimized-run.yml").read_text("utf-8")
 
-    assert "fromJSON(needs.plan.outputs.active_workers) > 120" in workflow
-    assert "fromJSON(needs.plan.outputs.active_workers) > 240" in workflow
+    assert "outputs.recipe_matrix_b_count != '0'" in workflow
+    assert "outputs.recipe_matrix_c_count != '0'" in workflow
     assert "needs.evaluate_b.result == 'skipped'" in workflow
     assert "needs.evaluate_c.result == 'skipped'" in workflow
 
@@ -989,3 +989,29 @@ def test_future_architecture_qualification_is_github_only_and_bounded() -> None:
     assert '"roundtrip_exact": True' in script
     assert '"validation_opened": False' in script
     assert '"locked_opened": False' in script
+
+
+def test_checkpoint_slots_use_the_fewest_durable_low_overhead_segments() -> None:
+    from scripts.plan_sp500_optimized_catalog_run import (
+        select_checkpoint_slot_count,
+    )
+
+    assert (
+        select_checkpoint_slot_count(
+            projected_worker_seconds_p99=840.0,
+            upload_verify_seconds_p95=5.0,
+        )
+        == 2
+    )
+    assert (
+        select_checkpoint_slot_count(
+            projected_worker_seconds_p99=2_100.0,
+            upload_verify_seconds_p95=5.0,
+        )
+        == 4
+    )
+    with pytest.raises(ValueError, match="CHECKPOINT_OVERHEAD_OR_DURABILITY_UNQUALIFIED"):
+        select_checkpoint_slot_count(
+            projected_worker_seconds_p99=6_000.0,
+            upload_verify_seconds_p95=100.0,
+        )

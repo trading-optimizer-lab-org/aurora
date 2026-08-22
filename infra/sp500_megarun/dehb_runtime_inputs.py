@@ -196,6 +196,7 @@ def split_runtime_input_pack(
     *,
     expected_scientific_input_binding_sha256: str,
     runtime_source_run_id: str,
+    selected_partition_ids: Sequence[str] | None = None,
 ) -> Mapping[str, Any]:
     """Create a verified common core and immutable per-dataset fragments.
 
@@ -216,8 +217,18 @@ def split_runtime_input_pack(
     if output.exists() and any(output.iterdir()):
         raise RuntimeInputPackError("RUNTIME_FRAGMENT_OUTPUT_MUST_START_EMPTY")
     output.mkdir(parents=True, exist_ok=True)
+    all_partition_ids = (
+        "runtime-fragment-core",
+        *(f"runtime-fragment-{item}" for item in RUNTIME_FRAGMENT_DATASET_IDS),
+    )
+    selected = (
+        all_partition_ids
+        if selected_partition_ids is None
+        else tuple(sorted(set(str(item) for item in selected_partition_ids)))
+    )
+    if not selected or not set(selected).issubset(all_partition_ids):
+        raise RuntimeInputPackError("RUNTIME_FRAGMENT_PARTITION_SET_INVALID")
     core = output / "runtime-fragment-core"
-    core.mkdir()
     inventory = {
         str(row["path"]): row
         for row in parent["files"]
@@ -232,22 +243,25 @@ def split_runtime_input_pack(
             )
         split_paths[dataset_id] = relative
 
-    for relative, row in inventory.items():
-        if relative in split_paths.values():
-            continue
-        source_file = source / relative
-        target = core / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_file, target)
-    # The complete manifest is metadata for the fragment verifier and is
-    # intentionally not part of its own inventory (the packager writes it
-    # after calculating the inventory).
-    shutil.copy2(
-        source / "runtime_input_manifest.json",
-        core / "runtime_input_manifest.json",
-    )
+    if "runtime-fragment-core" in selected:
+        core.mkdir()
+        for relative, row in inventory.items():
+            if relative in split_paths.values():
+                continue
+            source_file = source / relative
+            target = core / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_file, target)
+        # The complete manifest is metadata for the fragment verifier and is
+        # intentionally not part of its own inventory.
+        shutil.copy2(
+            source / "runtime_input_manifest.json",
+            core / "runtime_input_manifest.json",
+        )
 
     for dataset_id, relative in split_paths.items():
+        if f"runtime-fragment-{dataset_id}" not in selected:
+            continue
         target_root = output / f"runtime-fragment-{dataset_id}"
         target = target_root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -267,11 +281,12 @@ def split_runtime_input_pack(
         "validation_opened": False,
         "locked_opened": False,
     }
-    (core / "runtime_fragment_manifest.json").write_text(
-        json.dumps(fragment_manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    return fragment_manifest
+    if core.is_dir():
+        (core / "runtime_fragment_manifest.json").write_text(
+            json.dumps(fragment_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    return {**fragment_manifest, "selected_partition_ids": list(selected)}
 
 
 def verify_runtime_input_fragments(

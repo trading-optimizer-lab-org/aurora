@@ -53,7 +53,7 @@ class CatalogWorkloadV1(FrozenModel):
 class CatalogExecutionV1(FrozenModel):
     scheduler_version: str = Field(min_length=1)
     workers: Annotated[int, Field(ge=1, le=360)]
-    component_workers: Annotated[int, Field(ge=1, le=120)]
+    component_workers: Annotated[int, Field(ge=1, le=360)]
     component_processes_per_worker: Annotated[int, Field(ge=1, le=4)]
     processes_per_worker: Annotated[int, Field(ge=1, le=4)]
     block_size: PositiveInt
@@ -76,6 +76,100 @@ class CatalogAcceptanceV1(FrozenModel):
     max_performance_regression_ratio: UnitFraction
 
 
+class RuntimePreparationV1(FrozenModel):
+    build_once_per_runtime_identity: Literal[True]
+    reuse_verified_runtime_store_required: Literal[True]
+    dependency_lock_required: Literal[True]
+    worker_network_install_allowed: Literal[False]
+    wheelhouse_sha256_required: Literal[True]
+    runtime_mode: Literal[
+        "verified_relocatable_archive",
+        "offline_wheelhouse",
+    ]
+
+
+class ComponentStoreExecutionV1(FrozenModel):
+    build_before_recipe_evaluation: Literal[True]
+    global_deduplication: Literal[True]
+    recipe_worker_build_allowed: Literal[False]
+    exact_component_bundles: Literal[True]
+    conflicting_successes_block: Literal[True]
+    consumer_hypergraph_partition_required: Literal[True]
+    component_download_amplification_receipt_required: Literal[True]
+    qualified_bundle_count_required: Literal[True]
+
+
+class PayloadExecutionV1(FrozenModel):
+    exact_assignment_member_only: Literal[True]
+    exact_data_partitions_only: Literal[True]
+    exact_component_bundles_only: Literal[True]
+    download_all_attempts_allowed: Literal[False]
+    download_all_checkpoints_allowed: Literal[False]
+
+
+class PreparedInputExecutionV1(FrozenModel):
+    prepare_once_per_input_identity: Literal[True]
+    reuse_verified_partitions_required: Literal[True]
+    partial_store_build_missing_only: Literal[True]
+    approximate_substitution_allowed: Literal[False]
+
+
+class RebuildableStoreExecutionV1(FrozenModel):
+    actions_cache_preferred: Literal[True]
+    cache_authoritative_evidence_allowed: Literal[False]
+    repository_cache_limit_gb: Literal[10]
+    repository_cache_retention_days: Literal[90]
+    paid_cache_storage_allowed: Literal[False]
+    component_cache_bundle_count_options: tuple[
+        Literal[8, 16, 32, 64, 96, 128],
+        ...,
+    ]
+    maximum_new_cache_entries_per_campaign: Literal[160]
+    maximum_component_cache_bundles_per_campaign: Literal[128]
+    maximum_cache_upload_requests_per_minute: Literal[160]
+    maximum_cache_download_requests_per_minute: Literal[1200]
+    persistent_duplicate_payload_artifact_allowed: Literal[False]
+    same_run_transport_artifact_max_retention_days: Literal[1]
+
+    @model_validator(mode="after")
+    def _validate_bundle_options(self) -> RebuildableStoreExecutionV1:
+        if self.component_cache_bundle_count_options != (8, 16, 32, 64, 96, 128):
+            raise ValueError("CATALOG_COMPONENT_BUNDLE_OPTIONS_INVALID")
+        return self
+
+
+class RecoveryExecutionV1(FrozenModel):
+    checkpoint_required: Literal[True]
+    checkpoint_slot_options: tuple[Literal[1, 2, 4, 8], ...]
+    maximum_unpersisted_seconds_p99: Literal[600]
+    maximum_checkpoint_overhead_fraction_p95: Literal[0.05]
+    valid_work_reuse_required: Literal[True]
+    global_rerun_allowed: Literal[False]
+    max_same_failure_occurrences: Literal[3]
+
+    @model_validator(mode="after")
+    def _validate_checkpoint_options(self) -> RecoveryExecutionV1:
+        if self.checkpoint_slot_options != (1, 2, 4, 8):
+            raise ValueError("CATALOG_CHECKPOINT_SLOT_OPTIONS_INVALID")
+        return self
+
+
+class CatalogComponentIdentityV1(FrozenModel):
+    """Every scientific field that can change one reusable component."""
+
+    evaluator_sha256: Sha256
+    data_snapshot_sha256: Sha256
+    numeric_profile_sha256: Sha256
+    feature_definition_sha256: Sha256
+    parameters_sha256: Sha256
+    dtype_sha256: Sha256
+    output_schema_sha256: Sha256
+
+    @property
+    def component_key_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
 class RunOptimizationContractV1(FrozenModel):
     """Immutable evidence that one catalog run cannot bypass optimization."""
 
@@ -88,6 +182,12 @@ class RunOptimizationContractV1(FrozenModel):
     execution: CatalogExecutionV1
     limits: CatalogLimitsV1
     acceptance: CatalogAcceptanceV1
+    runtime_preparation: RuntimePreparationV1
+    component_store_execution: ComponentStoreExecutionV1
+    payload_execution: PayloadExecutionV1
+    prepared_input_execution: PreparedInputExecutionV1
+    rebuildable_store_execution: RebuildableStoreExecutionV1
+    recovery_execution: RecoveryExecutionV1
 
     @model_validator(mode="after")
     def _validate_replication_budget(self) -> RunOptimizationContractV1:
@@ -106,9 +206,16 @@ class RunOptimizationContractV1(FrozenModel):
 
 __all__ = [
     "CatalogAcceptanceV1",
+    "CatalogComponentIdentityV1",
     "CatalogExecutionV1",
     "CatalogLimitsV1",
     "CatalogScienceIdentityV1",
     "CatalogWorkloadV1",
+    "ComponentStoreExecutionV1",
+    "PayloadExecutionV1",
+    "PreparedInputExecutionV1",
+    "RebuildableStoreExecutionV1",
+    "RecoveryExecutionV1",
     "RunOptimizationContractV1",
+    "RuntimePreparationV1",
 ]

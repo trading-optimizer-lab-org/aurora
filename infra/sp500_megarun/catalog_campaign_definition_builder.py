@@ -55,6 +55,13 @@ _PYTHON_MODULE = re.compile(
     r"(?:python|python3|py)(?:\s+-[A-Za-z]+)*\s+-m\s+"
     r"(?P<module>[A-Za-z_][A-Za-z0-9_.]+)"
 )
+_PYTHON_HEREDOC = re.compile(
+    r"(?:python|python3|py|\"\$[A-Za-z_][A-Za-z0-9_]*\")"
+    r"(?:\s+-[A-Za-z]+)*\s+-\s+<<-?\s*['\"]?"
+    r"(?P<tag>[A-Za-z_][A-Za-z0-9_]*)['\"]?[^\n]*\n"
+    r"(?P<body>.*?)\n[ \t]*(?P=tag)[ \t]*(?=\n|$)",
+    re.DOTALL,
+)
 
 
 class _ClosureBuilder:
@@ -194,23 +201,30 @@ class _ClosureBuilder:
                     walk(child, key)
             elif isinstance(value, str):
                 if key == "run":
-                    self._scan_shell(value)
+                    self._scan_shell(relative, value)
                 else:
                     self._consider_string_edge(relative, key, value)
 
         walk(payload)
 
-    def _scan_shell(self, command: str) -> None:
+    def _scan_shell(self, current: str, command: str) -> None:
         for match in _SHELL_PATH.finditer(command):
             self.add(match.group("path").removeprefix("./"))
         for match in _PYTHON_MODULE.finditer(command):
-            resolved = self._resolve_module(match.group("module"), current=None)
-            if resolved is None:
+            module = match.group("module")
+            resolved = self._resolve_module(module, current=None)
+            if resolved is None and self._is_local_module(module):
                 raise ValueError(
                     "CATALOG_DEFINITION_EDGE_UNRESOLVED:"
-                    + match.group("module")
+                    + module
                 )
-            self.add(resolved, "science_code")
+            if resolved is not None:
+                self.add(resolved, "science_code")
+        for match in _PYTHON_HEREDOC.finditer(command):
+            self._scan_python(
+                current,
+                match.group("body").encode("utf-8"),
+            )
 
     def _scan_python(self, relative: str, content: bytes) -> None:
         try:
@@ -293,6 +307,10 @@ class _ClosureBuilder:
             if target.is_dir():
                 for action_name in ("action.yml", "action.yaml"):
                     action = target / action_name
+                    if action.is_symlink():
+                        raise ValueError(
+                            f"CATALOG_DEFINITION_SYMLINK_FORBIDDEN:{raw}/{action_name}"
+                        )
                     if action.is_file():
                         self.add(self._relative(action), "workflow")
                         return
@@ -300,7 +318,11 @@ class _ClosureBuilder:
             self.add(raw, "workflow")
             return
         if key == "uses":
-            if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}", raw):
+            if re.fullmatch(
+                r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
+                r"(?:/[A-Za-z0-9_.-]+)*@[0-9a-f]{40}",
+                raw,
+            ):
                 return
             raise ValueError(
                 f"CATALOG_DEFINITION_EXTERNAL_EDGE_UNPINNED:{current}:{value}"

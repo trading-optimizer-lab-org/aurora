@@ -180,6 +180,60 @@ def test_unresolved_dynamic_import_blocks(tmp_path: Path) -> None:
         )
 
 
+def test_pinned_external_action_subpaths_are_valid_definition_edges() -> None:
+    from aurora.infra.sp500_megarun.catalog_campaign_definition_builder import (
+        _ClosureBuilder,
+    )
+
+    builder = _ClosureBuilder(ROOT, _entry())
+    builder._consider_string_edge(
+        ".github/workflows/example.yml",
+        "uses",
+        "actions/cache/restore@" + "a" * 40,
+    )
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_DEFINITION_EXTERNAL_EDGE_UNPINNED",
+    ):
+        builder._consider_string_edge(
+            ".github/workflows/example.yml",
+            "uses",
+            "actions/cache/restore@v4",
+        )
+
+
+def test_third_party_python_module_commands_are_not_repository_edges() -> None:
+    from aurora.infra.sp500_megarun.catalog_campaign_definition_builder import (
+        _ClosureBuilder,
+    )
+
+    builder = _ClosureBuilder(ROOT, _entry())
+    builder._scan_shell(
+        ".github/workflows/example.yml",
+        "python -m pip download --requirement locked.txt",
+    )
+    with pytest.raises(ValueError, match="CATALOG_DEFINITION_EDGE_UNRESOLVED"):
+        builder._scan_shell(
+            ".github/workflows/example.yml",
+            "python -m scripts.missing_catalog_repository_module"
+        )
+
+
+def test_inline_python_imports_are_in_the_transitive_definition() -> None:
+    from aurora.infra.sp500_megarun.catalog_campaign_definition_builder import (
+        _ClosureBuilder,
+    )
+
+    builder = _ClosureBuilder(ROOT, _entry())
+    builder._scan_shell(
+        ".github/workflows/example.yml",
+        "python - <<'PY'\n"
+        "from scripts.run_catalog_artifact_keeper import _safe_extract\n"
+        "PY\n",
+    )
+    assert "scripts/run_catalog_artifact_keeper.py" in builder.roles
+
+
 def test_unrelated_dirty_path_does_not_change_definition(tmp_path: Path) -> None:
     checked = _load_checked()
     checkout = _copy_definition_checkout(tmp_path, checked)

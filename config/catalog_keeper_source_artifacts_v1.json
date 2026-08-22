@@ -1,0 +1,62 @@
+{
+  "schema_version": "1",
+  "repository": "trading-optimizer-lab-org/aurora",
+  "artifacts": [
+    {
+      "contract_name": "runtime_input_pack_v1",
+      "classification": "training_input",
+      "run_id": 31418682679,
+      "artifact_id": 9075791134,
+      "artifact_name": "sp500-megarun-dehb-runtime-inputs-31418682679",
+      "artifact_digest": "sha256:5f455ed4a7b36b42d537d93de7da69ea5b6322ba42644da896b50f41178be5d2",
+      "artifact_size_in_bytes": 118269999,
+      "head_sha": "2f908a71ad9fa3a6d0ff9dd6b09ce7123b5c3ffc",
+      "verification_mode": "runtime_input_manifest_v1",
+      "content_manifest_path": "runtime_input_manifest.json",
+      "content_manifest_sha256": "ca3fab816ba72a95bbde94e7be286f74dc3c239178609e7fae5a95c47b0ca2b2",
+      "content_aggregate_sha256": "275c881f41b002048d022f5d7bd805496de52af97ff4b0afce5b8b883daac749",
+      "validation_opened": false,
+      "locked_opened": false
+    },
+    {
+      "contract_name": "reference_oracle_v1",
+      "classification": "training_reference",
+      "run_id": 31948898747,
+      "artifact_id": 9264302413,
+      "artifact_name": "sp500-strategy-catalog-final-results",
+      "artifact_digest": "sha256:a89c9c7f3f79613d0e5c1b68838fb6f816ab286c340d967c819f473f06b87793",
+      "artifact_size_in_bytes": 27186213,
+      "head_sha": "13abec8d3e5cc8907526c9986ffd75243d2d672a",
+      "verification_mode": "closed_file_list_v1",
+      "files": [
+        {
+          "path": "performance.json",
+          "bytes": 5925895,
+          "sha256": "47ef71ae21c15815e568c8610b105ac82b688aa35ff4cb61b4ddd72e307340ce"
+        },
+        {
+          "path": "receipt.json",
+          "bytes": 6334,
+          "sha256": "1efeb54cb80b306ef910d0f356d0c5e68cab209fc3fe66c58bdb16e45f218988"
+        },
+        {
+          "path": "results.jsonl",
+          "bytes": 131755046,
+          "sha256": "5210e6a933b457518b05ed0e3b273e72b33785b751a7cb721a6102a62f1ca879"
+        },
+        {
+          "path": "selected_results.jsonl",
+          "bytes": 38987,
+          "sha256": "806db1f7979c39b72cc108984d432971779efc18f0dde49fc5dfc1d1770d1fae"
+        },
+        {
+          "path": "summary.csv",
+          "bytes": 8488244,
+          "sha256": "30e8aaf63e85c58a829ef2c6b9706fd58dfb39a11d9e3338c8304fa298454a05"
+        }
+      ],
+      "validation_opened": false,
+      "locked_opened": false
+    }
+  ]
+}

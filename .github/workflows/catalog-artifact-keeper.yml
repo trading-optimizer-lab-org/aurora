@@ -1,0 +1,96 @@
+name: Catalog artifact keeper
+
+on:
+  schedule:
+    - cron: "17 3 * * 0"
+
+permissions:
+  actions: read
+  contents: read
+  issues: read
+
+concurrency:
+  group: catalog-artifact-keeper-weekly
+  cancel-in-progress: false
+
+jobs:
+  live_controls_audit_before_maintenance:
+    name: Verify live controls before maintenance
+    uses: ./.github/workflows/catalog-live-controls-audit.yml
+    permissions:
+      actions: read
+      contents: read
+    with:
+      purpose: maintenance
+      caller_workflow: .github/workflows/catalog-artifact-keeper.yml
+      caller_job: live_controls_audit_before_maintenance
+      protected_commit_sha: ${{ github.sha }}
+      audit_context_sha256: 0b90c2b50f081b48eb3b173b907eab0015973e536db2e8e195ff8f95b69bec42
+
+  inventory_and_preserve:
+    name: Inventory and preserve verified catalog objects
+    needs: live_controls_audit_before_maintenance
+    if: >-
+      needs.live_controls_audit_before_maintenance.outputs.receipt_status ==
+      'ready'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+    steps:
+      - name: Check out the exact protected commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Use Python 3.11
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+
+      - name: Download the secret-free live-controls receipt
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.live_controls_audit_before_maintenance.outputs.receipt_artifact_name }}
+          path: ${{ runner.temp }}/catalog-keeper/controls
+
+      - name: Build the bounded read-only preservation receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/run_catalog_artifact_keeper.py inventory
+          --repository trading-optimizer-lab-org/aurora
+          --protected-commit-sha "${{ github.sha }}"
+          --registry config/catalog_campaign_registry_v1.json
+          --source-contract config/catalog_keeper_source_artifacts_v1.json
+          --controls-receipt "${{ runner.temp }}/catalog-keeper/controls/catalog_github_controls_receipt_v1.json"
+          --maximum-download-bytes 1073741824
+          --maximum-artifact-copies 8
+          --maximum-cache-restores 16
+          --output "${{ runner.temp }}/catalog-keeper/output"
+
+      - name: Publish the bounded keeper receipt and verified mirrors
+        id: publish
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-artifact-keeper-${{ github.run_id }}
+          path: ${{ runner.temp }}/catalog-keeper/output
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Download the new keeper artifact by immutable ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ steps.publish.outputs.artifact-id }}
+          path: ${{ runner.temp }}/catalog-keeper/readback
+
+      - name: Verify the published keeper artifact byte for byte
+        run: >-
+          python scripts/run_catalog_artifact_keeper.py verify-readback
+          --expected "${{ runner.temp }}/catalog-keeper/output"
+          --observed "${{ runner.temp }}/catalog-keeper/readback"
