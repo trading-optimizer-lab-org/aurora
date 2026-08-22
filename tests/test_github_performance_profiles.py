@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -13,6 +13,7 @@ from aurora.infra.github_performance.profiles import (
     PerformanceProfile,
     PerformanceProfileKey,
     ProfileConflict,
+    assess_profile_freshness,
     assess_profile_reuse,
     build_performance_profile,
     build_timing_distribution,
@@ -262,3 +263,20 @@ def test_profile_builder_requires_repeated_cold_and_warm_evidence() -> None:
             source_run_id="123",
             created_at=datetime(2026, 7, 26, tzinfo=timezone.utc),
         )
+
+
+def test_profile_freshness_expires_after_seven_days() -> None:
+    profile = _profile()
+    boundary = assess_profile_freshness(
+        profile,
+        now=profile.created_at + timedelta(days=7),
+    )
+    stale = assess_profile_freshness(
+        profile,
+        now=profile.created_at + timedelta(days=7, microseconds=1),
+    )
+
+    assert boundary.fresh is True
+    assert boundary.reason_codes == ()
+    assert stale.fresh is False
+    assert stale.reason_codes == ("PERFORMANCE_PROFILE_STALE",)

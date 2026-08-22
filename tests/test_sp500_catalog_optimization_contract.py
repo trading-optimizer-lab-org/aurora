@@ -310,7 +310,8 @@ def test_reduction_consumes_only_the_sealed_plan_and_checkpoint_deltas() -> None
 
     assert "Verify and reduce this bounded group" in workflow
     assert "python -m scripts.reduce_sp500_optimized_catalog_group" in workflow
-    assert "--input-root \"$RUNNER_TEMP/checkpoint-group\"" in workflow
+    assert "uses: ./.github/actions/aurora-merge-level" in workflow
+    assert "catalog-inputs-root: ${{ runner.temp }}/checkpoint-group" in workflow
     assert "pattern: ${{ matrix.checkpoint_artifact_pattern }}" in workflow
     assert "Merge the sealed bounded reduction groups" in workflow
     assert "python scripts/reduce_sp500_optimized_catalog_run.py" in workflow
@@ -634,7 +635,7 @@ def test_repository_workflows_have_one_guarded_public_entrypoint() -> None:
         assert "admission_token_sha256" in serialized
     assert set(jobs["reduce_groups"]["needs"]) == {
         "engine_verify_sealed_plan",
-        *evaluate_jobs,
+        "ready_to_merge",
     }
     assert set(jobs["reduce"]["needs"]) == {
         "engine_verify_sealed_plan",
@@ -976,7 +977,11 @@ def _task10_plan_fixture(
     *,
     warm_component_ordinals: set[int],
     warm_bundle_groups: tuple[tuple[int, ...], ...] = (),
+    central_reduction_safe: bool = False,
 ):
+    from aurora.infra.github_performance.merge_planner import (
+        MergeResourceProjectionV1,
+    )
     from aurora.infra.sp500_megarun.catalog_optimization_contract import (
         CatalogComponentIdentityV1,
         RunOptimizationContractV1,
@@ -1123,6 +1128,22 @@ def _task10_plan_fixture(
         runtime_identity_sha256="9" * 64,
         prepared_input_partition_ids=("partition-a", "partition-b"),
         qualifications=qualifications,
+        reduction_projection=MergeResourceProjectionV1(
+            timeout_fraction_p99=0.60 if central_reduction_safe else 0.71,
+            memory_fraction_p99=0.60,
+            disk_fraction_p99=0.60,
+            artifact_fraction_p99=0.60,
+            download_fraction_p99=0.60,
+            input_count_fraction_p99=0.60,
+        ),
+        hierarchical_reduction_projection=MergeResourceProjectionV1(
+            timeout_fraction_p99=0.40,
+            memory_fraction_p99=0.40,
+            disk_fraction_p99=0.40,
+            artifact_fraction_p99=0.40,
+            download_fraction_p99=0.40,
+            input_count_fraction_p99=0.40,
+        ),
     )
 
 
@@ -1187,6 +1208,20 @@ def test_partial_store_builds_only_verified_missing_components() -> None:
     assert plan.matrix_output_utf16_bytes <= 512 * 1024
     assert plan.component_cache_bundle_count <= 128
     assert plan.new_cache_entry_count <= 160
+
+
+def test_catalog_reduction_selects_central_only_with_complete_margin() -> None:
+    hierarchical = _task10_plan_fixture(
+        warm_component_ordinals=set(),
+        central_reduction_safe=False,
+    )
+    central = _task10_plan_fixture(
+        warm_component_ordinals=set(),
+        central_reduction_safe=True,
+    )
+
+    assert hierarchical.reduction_selection.mode == "hierarchical"
+    assert central.reduction_selection.mode == "central"
 
 
 def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
@@ -1293,6 +1328,12 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
     assert verified["receipt_sha256"] == receipt["receipt_sha256"]
 
     reduction = json.loads((first / "reduction_plan.json").read_text("utf-8"))
+    assert reduction["selected_mode"] == "hierarchical"
+    assert reduction["nodes"]
+    assert all(
+        max(node["resource_projection_p99"].values()) <= 0.70
+        for node in reduction["nodes"]
+    )
     groups = reduction["groups"]
     worker_ids = [
         worker_id
@@ -1319,6 +1360,24 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
             for group in groups
         ]
     }
+
+    central_plan = _task10_plan_fixture(
+        warm_component_ordinals={0, 2, 4},
+        central_reduction_safe=True,
+    )
+    central_dir = tmp_path / "central"
+    write_sealed_global_reuse_execution_plan(
+        output_dir=central_dir,
+        **{**common, "plan": central_plan},
+    )
+    central_reduction = json.loads(
+        (central_dir / "reduction_plan.json").read_text("utf-8")
+    )
+    assert central_reduction["selected_mode"] == "central"
+    assert len(central_reduction["groups"]) == 1
+    assert central_reduction["groups"][0]["worker_ids"] == [
+        item.worker_id for item in central_plan.recipe_assignments
+    ]
 
     target = next((first / "payload_artifacts").rglob("worker-000.json"))
     target.write_bytes(target.read_bytes() + b"\n")

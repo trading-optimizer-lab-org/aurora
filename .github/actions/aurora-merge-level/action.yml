@@ -2,6 +2,10 @@ name: Aurora bounded merge level
 description: Merge one immutable bounded node without nested workflows
 
 inputs:
+  mode:
+    description: Exact reducer mode, generic or catalog
+    required: false
+    default: generic
   group-id:
     description: Exact merge-plan group identifier
     required: true
@@ -32,32 +36,108 @@ inputs:
   prepared-artifact-run-id:
     description: Run containing the immutable prepared market-data artifact
     required: true
+  expected-level:
+    description: Exact zero-based merge level for catalog mode
+    required: false
+    default: "0"
+  expected-authority-id:
+    description: Authority binding required in catalog mode
+    required: false
+    default: ""
+  expected-campaign-id:
+    description: Campaign binding required in catalog mode
+    required: false
+    default: ""
+  expected-science-sha256:
+    description: Science binding required in catalog mode
+    required: false
+    default: ""
+  expected-execution-plan-sha256:
+    description: Execution-plan binding required in catalog mode
+    required: false
+    default: ""
+  catalog-reducer-entrypoint:
+    description: Exact catalog reducer module; arbitrary commands are forbidden
+    required: false
+    default: ""
+  catalog-inputs-root:
+    description: Already downloaded direct catalog children
+    required: false
+    default: ""
+  catalog-resolved-contract:
+    description: Sealed catalog science contract
+    required: false
+    default: ""
+  catalog-resume-work-manifest:
+    description: Sealed catalog work manifest
+    required: false
+    default: ""
+  catalog-run-plan:
+    description: Admitted catalog run plan
+    required: false
+    default: ""
+  catalog-admission-token:
+    description: Exact catalog admission token
+    required: false
+    default: ""
+  catalog-checkpoint-policy:
+    description: Sealed checkpoint policy
+    required: false
+    default: ""
+  catalog-reduction-plan:
+    description: Sealed hierarchical reduction plan
+    required: false
+    default: ""
+  catalog-recipe-assignments:
+    description: Sealed recipe assignment bundle
+    required: false
+    default: ""
+  catalog-output-dir:
+    description: Fresh output directory for the immutable catalog node
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
+    - name: Validate immutable reducer mode
+      shell: bash
+      env:
+        REDUCER_MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+        if [[ "$REDUCER_MODE" != "generic" && "$REDUCER_MODE" != "catalog" ]]; then
+          echo "CATALOG_MERGE_MODE_INVALID" >&2
+          exit 1
+        fi
+
     - name: Download immutable wheelhouse
+      if: ${{ inputs.mode == 'generic' }}
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         name: ${{ inputs.wheelhouse-artifact-name }}
         path: ${{ runner.temp }}/wheelhouse
     - name: Restore Aurora runtime
+      if: ${{ inputs.mode == 'generic' }}
       uses: ./.github/actions/aurora-runtime-setup
       with:
         python-version: "3.12"
         wheelhouse-path: ${{ runner.temp }}/wheelhouse
         dependency-lock-path: requirements/github-performance.lock
     - name: Download frozen contract
+      if: ${{ inputs.mode == 'generic' }}
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         name: ${{ inputs.contract-artifact-name }}
         path: ${{ runner.temp }}/contract
     - name: Download immutable merge plan
+      if: ${{ inputs.mode == 'generic' }}
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         name: ${{ inputs.plan-artifact-name }}
         path: ${{ runner.temp }}/plan
     - name: Download prepared inputs
+      if: ${{ inputs.mode == 'generic' }}
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         name: ${{ inputs.prepared-artifact-name }}
@@ -65,12 +145,14 @@ runs:
         github-token: ${{ github.token }}
         run-id: ${{ inputs.prepared-artifact-run-id }}
     - name: Download direct children only
+      if: ${{ inputs.mode == 'generic' }}
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         pattern: ${{ inputs.input-artifact-pattern }}
         path: ${{ runner.temp }}/children
         merge-multiple: false
     - name: Merge immutable bounded node
+      if: ${{ inputs.mode == 'generic' }}
       shell: bash
       env:
         WORKLOAD: ${{ inputs.workload }}
@@ -87,7 +169,7 @@ runs:
           --inputs-root "$RUNNER_TEMP/children" \
           --output-dir "$RUNNER_TEMP/node"
     - name: Upload immutable merge node
-      if: always()
+      if: ${{ always() && inputs.mode == 'generic' }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: ${{ inputs.output-artifact }}
@@ -95,3 +177,201 @@ runs:
         if-no-files-found: error
         compression-level: 0
         retention-days: ${{ inputs.retention-days }}
+
+    - name: Verify exact catalog node bindings children and margin
+      if: ${{ inputs.mode == 'catalog' }}
+      shell: bash
+      env:
+        GROUP_ID: ${{ inputs.group-id }}
+        EXPECTED_LEVEL: ${{ inputs.expected-level }}
+        EXPECTED_AUTHORITY_ID: ${{ inputs.expected-authority-id }}
+        EXPECTED_CAMPAIGN_ID: ${{ inputs.expected-campaign-id }}
+        EXPECTED_SCIENCE_SHA256: ${{ inputs.expected-science-sha256 }}
+        EXPECTED_EXECUTION_PLAN_SHA256: ${{ inputs.expected-execution-plan-sha256 }}
+        EXPECTED_OUTPUT_ARTIFACT: ${{ inputs.output-artifact }}
+        REDUCTION_PLAN: ${{ inputs.catalog-reduction-plan }}
+        INPUTS_ROOT: ${{ inputs.catalog-inputs-root }}
+        REDUCER_ENTRYPOINT: ${{ inputs.catalog-reducer-entrypoint }}
+      run: |
+        set -euo pipefail
+        test "$REDUCER_ENTRYPOINT" = "python -m scripts.reduce_sp500_optimized_catalog_group"
+        python - <<'PY'
+        import hashlib
+        import json
+        import math
+        import os
+        from pathlib import Path
+
+        def canonical(value):
+            return hashlib.sha256(
+                json.dumps(
+                    value,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode()
+            ).hexdigest()
+
+        plan_path = Path(os.environ["REDUCTION_PLAN"])
+        plan = json.loads(plan_path.read_text("utf-8"))
+        identity = {
+            key: value for key, value in plan.items() if key != "content_sha256"
+        }
+        if canonical(identity) != plan.get("content_sha256"):
+            raise SystemExit("CATALOG_MERGE_PLAN_HASH_INVALID")
+        bindings = {
+            "authority_id": os.environ["EXPECTED_AUTHORITY_ID"],
+            "campaign_id": os.environ["EXPECTED_CAMPAIGN_ID"],
+            "science_sha256": os.environ["EXPECTED_SCIENCE_SHA256"],
+            "execution_plan_sha256": os.environ[
+                "EXPECTED_EXECUTION_PLAN_SHA256"
+            ],
+        }
+        if any(plan.get(key) != value for key, value in bindings.items()):
+            raise SystemExit("CATALOG_MERGE_PLAN_BINDING_INVALID")
+        selected_mode = plan.get("selected_mode")
+        central_eligibility = plan.get("central_eligibility")
+        if (
+            selected_mode not in {"central", "hierarchical"}
+            or not isinstance(central_eligibility, dict)
+            or central_eligibility.get("mode") != selected_mode
+        ):
+            raise SystemExit("CATALOG_MERGE_MODE_INVALID")
+        selection_identity = {
+            key: value
+            for key, value in central_eligibility.items()
+            if key != "decision_sha256"
+        }
+        if canonical(selection_identity) != central_eligibility.get(
+            "decision_sha256"
+        ):
+            raise SystemExit("CATALOG_MERGE_MODE_INVALID")
+        central_projection = central_eligibility.get("projection")
+        central_resources = (
+            ("TIMEOUT", "timeout_fraction_p99"),
+            ("MEMORY", "memory_fraction_p99"),
+            ("DISK", "disk_fraction_p99"),
+            ("ARTIFACT", "artifact_fraction_p99"),
+            ("DOWNLOAD", "download_fraction_p99"),
+            ("INPUT_COUNT", "input_count_fraction_p99"),
+        )
+        if not isinstance(central_projection, dict) or set(
+            central_projection
+        ) != {field for _, field in central_resources}:
+            raise SystemExit("CATALOG_MERGE_MODE_INVALID")
+        expected_reasons = []
+        for name, field in central_resources:
+            value = central_projection[field]
+            if value is None:
+                expected_reasons.append(f"CENTRAL_{name}_EVIDENCE_MISSING")
+                continue
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) < 0
+            ):
+                raise SystemExit("CATALOG_MERGE_MODE_INVALID")
+            if float(value) > 0.70:
+                expected_reasons.append(
+                    f"CENTRAL_{name}_MARGIN_INSUFFICIENT"
+                )
+        expected_mode = "hierarchical" if expected_reasons else "central"
+        if (
+            selected_mode != expected_mode
+            or central_eligibility.get("reason_codes") != expected_reasons
+        ):
+            raise SystemExit("CATALOG_MERGE_MODE_INVALID")
+        group_id = int(os.environ["GROUP_ID"])
+        level = int(os.environ["EXPECTED_LEVEL"])
+        nodes = [
+            node
+            for node in plan.get("nodes", [])
+            if node.get("group_id") == group_id and node.get("level") == level
+        ]
+        if len(nodes) != 1:
+            raise SystemExit("CATALOG_MERGE_NODE_UNKNOWN")
+        node = nodes[0]
+        node_identity = {
+            key: value
+            for key, value in node.items()
+            if key != "node_descriptor_sha256"
+        }
+        children = node.get("direct_children")
+        maximum_children = 360 if selected_mode == "central" else 30
+        if (
+            canonical(node_identity) != node.get("node_descriptor_sha256")
+            or any(node.get(key) != value for key, value in bindings.items())
+            or not isinstance(children, list)
+            or not 1 <= len(children) <= maximum_children
+            or node.get("output_artifact")
+            != os.environ["EXPECTED_OUTPUT_ARTIFACT"]
+            or node.get("validation_opened") is not False
+            or node.get("locked_opened") is not False
+        ):
+            raise SystemExit("CATALOG_MERGE_NODE_INVALID")
+        if any(
+            not isinstance(child, dict)
+            or set(child)
+            != {"child_id", "artifact_ids", "descriptor_sha256"}
+            or not isinstance(child.get("artifact_ids"), list)
+            or not child["artifact_ids"]
+            or not isinstance(child.get("child_id"), str)
+            or not child["child_id"]
+            or not isinstance(child.get("descriptor_sha256"), str)
+            for child in children
+        ):
+            raise SystemExit("CATALOG_MERGE_CHILD_PLAN_INVALID")
+        expected_artifacts = [
+            artifact
+            for child in children
+            for artifact in child["artifact_ids"]
+        ]
+        if (
+            any(not isinstance(artifact, str) or not artifact for artifact in expected_artifacts)
+            or len(expected_artifacts) != len(set(expected_artifacts))
+        ):
+            raise SystemExit("CATALOG_MERGE_CHILD_PLAN_INVALID")
+        root = Path(os.environ["INPUTS_ROOT"])
+        entries = list(root.iterdir())
+        if (
+            {entry.name for entry in entries} != set(expected_artifacts)
+            or any(not entry.is_dir() or entry.is_symlink() for entry in entries)
+            or any(path.is_symlink() for path in root.rglob("*"))
+        ):
+            raise SystemExit("CATALOG_MERGE_DIRECT_CHILD_SET_INVALID")
+        projection = node.get("resource_projection_p99")
+        resource_fields = (
+            "timeout_fraction_p99",
+            "memory_fraction_p99",
+            "disk_fraction_p99",
+            "artifact_fraction_p99",
+            "download_fraction_p99",
+            "input_count_fraction_p99",
+        )
+        if not isinstance(projection, dict) or any(
+            projection.get(field) is None
+            or isinstance(projection[field], bool)
+            or not math.isfinite(float(projection[field]))
+            or float(projection[field]) < 0
+            or float(projection[field]) > 0.70
+            for field in resource_fields
+        ):
+            raise SystemExit("CATALOG_MERGE_RESOURCE_MARGIN_UNPROVEN")
+        PY
+
+    - name: Merge exact immutable catalog node
+      if: ${{ inputs.mode == 'catalog' }}
+      shell: bash
+      run: >-
+        python -m scripts.reduce_sp500_optimized_catalog_group
+        --input-root "${{ inputs.catalog-inputs-root }}"
+        --resolved-contract "${{ inputs.catalog-resolved-contract }}"
+        --resume-work-manifest "${{ inputs.catalog-resume-work-manifest }}"
+        --run-plan "${{ inputs.catalog-run-plan }}"
+        --admission-token "${{ inputs.catalog-admission-token }}"
+        --checkpoint-policy "${{ inputs.catalog-checkpoint-policy }}"
+        --reduction-plan "${{ inputs.catalog-reduction-plan }}"
+        --recipe-assignments "${{ inputs.catalog-recipe-assignments }}"
+        --group-id "${{ inputs.group-id }}"
+        --output-dir "${{ inputs.catalog-output-dir }}"

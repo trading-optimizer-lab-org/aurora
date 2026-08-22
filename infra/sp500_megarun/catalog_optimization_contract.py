@@ -146,7 +146,7 @@ class RecoveryExecutionV1(FrozenModel):
     valid_work_reuse_required: Literal[True]
     global_rerun_allowed: Literal[False]
     max_same_failure_occurrences: Literal[3]
-    max_total_recovery_waves: Literal[6]
+    max_total_recovery_waves: Literal[6] = 6
 
     @model_validator(mode="after")
     def _validate_checkpoint_options(self) -> RecoveryExecutionV1:

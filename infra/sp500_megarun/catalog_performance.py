@@ -13,10 +13,130 @@ import time
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Sequence, TypeVar
+from typing import Annotated, Callable, Literal, Sequence, TypeVar
+
+from pydantic import Field, model_validator
+
+from aurora.infra.github_performance.contracts import FrozenModel, Sha256
 
 
 T = TypeVar("T")
+
+
+class CatalogCampaignPerformanceReceiptV1(FrozenModel):
+    """Comparable cold/warm campaign performance without denominator mixing."""
+
+    schema_version: Literal["1"] = "1"
+    strategy_count: Annotated[int, Field(ge=1)]
+    warm_recipe_strategy_count: Annotated[int, Field(ge=1)]
+    admission_seconds: float = Field(ge=0)
+    queue_seconds: float = Field(ge=0)
+    runtime_prepare_seconds: float = Field(ge=0)
+    input_prepare_seconds: float = Field(ge=0)
+    component_lookup_seconds: float = Field(ge=0)
+    component_build_seconds: float = Field(ge=0)
+    component_reconcile_seconds: float = Field(ge=0)
+    recipe_evaluation_seconds: float = Field(gt=0)
+    recovery_seconds: float = Field(ge=0)
+    reduction_seconds: float = Field(ge=0)
+    verification_seconds: float = Field(ge=0)
+    end_to_end_seconds: float = Field(gt=0)
+    cold_end_to_end_strategies_per_minute: float = Field(gt=0)
+    warm_recipe_strategies_per_minute: float = Field(gt=0)
+    component_cache_hit_ratio: float = Field(ge=0, le=1)
+    selected_component_bundle_count: Annotated[int, Field(ge=0, le=128)]
+    component_unique_required_bytes: Annotated[int, Field(ge=0)]
+    component_worker_download_bytes: Annotated[int, Field(ge=0)]
+    component_download_amplification_p50: float = Field(ge=0)
+    component_download_amplification_p95: float = Field(ge=0)
+    component_bundles_per_worker_p50: float = Field(ge=0)
+    component_bundles_per_worker_p95: float = Field(ge=0)
+    cache_upload_requests_per_minute_peak: Annotated[int, Field(ge=0, le=160)]
+    cache_download_requests_per_minute_peak: Annotated[int, Field(ge=0, le=1200)]
+    valid_work_reuse_ratio: float = Field(ge=0, le=1)
+    runner_minutes: float = Field(ge=0)
+    artifact_count: Annotated[int, Field(ge=0)]
+    cache_entry_count: Annotated[int, Field(ge=0, le=160)]
+    cache_hit_bytes: Annotated[int, Field(ge=0)]
+    download_bytes: Annotated[int, Field(ge=0)]
+    upload_bytes: Annotated[int, Field(ge=0)]
+    projected_artifact_storage_bytes: Annotated[int, Field(ge=0)]
+    observed_artifact_storage_bytes: Annotated[int, Field(ge=0)]
+    verified_free_artifact_headroom_bytes: Annotated[int, Field(ge=0)]
+    projected_cache_storage_bytes: Annotated[int, Field(ge=0)]
+    observed_cache_storage_bytes: Annotated[int, Field(ge=0)]
+    verified_free_cache_headroom_bytes: Annotated[int, Field(ge=0)]
+    zero_spend_budgets_receipt_sha256: Sha256
+    estimated_paid_actions_cost: Literal[0]
+    scientific_outputs_equal: Literal[True]
+    safety_regression: Literal[False]
+    validation_opened: Literal[False] = False
+    locked_opened: Literal[False] = False
+    receipt_sha256: Sha256
+
+    @model_validator(mode="after")
+    def _validate_receipt(self) -> "CatalogCampaignPerformanceReceiptV1":
+        numeric_values = tuple(
+            value
+            for value in self.model_dump(mode="python").values()
+            if isinstance(value, float)
+        )
+        if not all(math.isfinite(value) for value in numeric_values):
+            raise ValueError("CATALOG_PERFORMANCE_NONFINITE")
+        expected_cold = self.strategy_count * 60 / self.end_to_end_seconds
+        expected_warm = (
+            self.warm_recipe_strategy_count
+            * 60
+            / self.recipe_evaluation_seconds
+        )
+        if not math.isclose(
+            self.cold_end_to_end_strategies_per_minute,
+            expected_cold,
+            rel_tol=1e-12,
+        ):
+            raise ValueError("CATALOG_COLD_THROUGHPUT_DENOMINATOR_INVALID")
+        if not math.isclose(
+            self.warm_recipe_strategies_per_minute,
+            expected_warm,
+            rel_tol=1e-12,
+        ):
+            raise ValueError("CATALOG_WARM_THROUGHPUT_DENOMINATOR_INVALID")
+        identity = self.model_dump(mode="python", exclude={"receipt_sha256"})
+        if self.receipt_sha256 != _sha256_bytes(
+            _canonical_json_bytes(identity)
+        ):
+            raise ValueError("CATALOG_PERFORMANCE_RECEIPT_HASH_INVALID")
+        return self
+
+    @classmethod
+    def create(cls, **values: object) -> "CatalogCampaignPerformanceReceiptV1":
+        strategy_count = int(values["strategy_count"])
+        warm_count = int(values["warm_recipe_strategy_count"])
+        end_to_end = float(values["end_to_end_seconds"])
+        recipe_seconds = float(values["recipe_evaluation_seconds"])
+        identity = {
+            "schema_version": "1",
+            **values,
+            "cold_end_to_end_strategies_per_minute": (
+                strategy_count * 60 / end_to_end
+            ),
+            "warm_recipe_strategies_per_minute": (
+                warm_count * 60 / recipe_seconds
+            ),
+        }
+        identity.pop("receipt_sha256", None)
+        candidate = cls.model_construct(
+            **identity,
+            receipt_sha256="0" * 64,
+        )
+        complete = candidate.model_dump(
+            mode="python",
+            exclude={"receipt_sha256"},
+        )
+        return cls(
+            **complete,
+            receipt_sha256=_sha256_bytes(_canonical_json_bytes(complete)),
+        )
 
 
 def _canonical_json_bytes(value: object) -> bytes:
@@ -480,6 +600,7 @@ def aggregate_catalog_performance(roots: Sequence[Path]) -> dict[str, object]:
 
 
 __all__ = [
+    "CatalogCampaignPerformanceReceiptV1",
     "CatalogPerformanceOutputs",
     "CatalogPerformanceRecorder",
     "aggregate_catalog_performance",

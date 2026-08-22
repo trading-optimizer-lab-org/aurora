@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,28 @@ _WALL_STAGE_NAMES = (
     "write",
     "selected_verification",
 )
+_REDUCTION_RESOURCE_FIELDS = {
+    "timeout_fraction_p99",
+    "memory_fraction_p99",
+    "disk_fraction_p99",
+    "artifact_fraction_p99",
+    "download_fraction_p99",
+    "input_count_fraction_p99",
+}
+
+
+def _safe_reduction_projection(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == _REDUCTION_RESOURCE_FIELDS
+        and all(
+            isinstance(item, (int, float))
+            and not isinstance(item, bool)
+            and math.isfinite(float(item))
+            and 0 <= float(item) <= 0.70
+            for item in value.values()
+        )
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -146,7 +169,12 @@ def _load_assignment_documents(path: Path) -> dict[int, dict[str, Any]]:
 
 def _group_row(plan: dict[str, Any], group_id: int) -> dict[str, Any]:
     groups = plan.get("groups")
-    if not isinstance(groups, list) or not 1 <= len(groups) <= 15:
+    selected_mode = plan.get("selected_mode")
+    if selected_mode not in {"central", "hierarchical"}:
+        raise SystemExit("REDUCTION_GROUP_PLAN_INVALID")
+    maximum_groups = 1 if selected_mode == "central" else 15
+    maximum_workers = 360 if selected_mode == "central" else 30
+    if not isinstance(groups, list) or not 1 <= len(groups) <= maximum_groups:
         raise SystemExit("REDUCTION_GROUP_PLAN_INVALID")
     matches = [
         item
@@ -168,7 +196,7 @@ def _group_row(plan: dict[str, Any], group_id: int) -> dict[str, Any]:
     artifacts = row.get("checkpoint_artifacts")
     if (
         not isinstance(worker_ids, list)
-        or not 1 <= len(worker_ids) <= 24
+        or not 1 <= len(worker_ids) <= maximum_workers
         or worker_ids != sorted(worker_ids)
         or len(worker_ids) != len(set(worker_ids))
         or not isinstance(artifacts, list)
@@ -178,6 +206,66 @@ def _group_row(plan: dict[str, Any], group_id: int) -> dict[str, Any]:
     ):
         raise SystemExit("REDUCTION_GROUP_PLAN_INVALID")
     return row
+
+
+def _node_row(
+    plan: dict[str, Any],
+    *,
+    group: dict[str, Any],
+) -> dict[str, Any] | None:
+    nodes = plan.get("nodes")
+    if nodes is None:
+        return None
+    if not isinstance(nodes, list):
+        raise SystemExit("REDUCTION_NODE_PLAN_INVALID")
+    matches = [
+        node
+        for node in nodes
+        if isinstance(node, dict)
+        and node.get("level") == 0
+        and node.get("group_id") == group["group_id"]
+    ]
+    if len(matches) != 1:
+        raise SystemExit("REDUCTION_NODE_PLAN_INVALID")
+    node = matches[0]
+    identity = {
+        key: value
+        for key, value in node.items()
+        if key != "node_descriptor_sha256"
+    }
+    children = node.get("direct_children")
+    if (
+        canonical_sha256(identity) != node.get("node_descriptor_sha256")
+        or node.get("campaign_id") != plan.get("campaign_id")
+        or node.get("authority_id") != plan.get("authority_id")
+        or node.get("science_sha256") != plan.get("science_sha256")
+        or node.get("execution_plan_sha256")
+        != plan.get("execution_plan_sha256")
+        or node.get("output_artifact") != group.get("reduction_artifact")
+        or not _safe_reduction_projection(
+            node.get("resource_projection_p99")
+        )
+        or node.get("validation_opened") is not False
+        or node.get("locked_opened") is not False
+        or not isinstance(children, list)
+        or [
+            artifact
+            for item in children
+            if isinstance(item, dict)
+            for artifact in item.get("artifact_ids", [])
+        ]
+        != group.get("checkpoint_artifacts")
+        or any(
+            not isinstance(item, dict)
+            or set(item)
+            != {"child_id", "artifact_ids", "descriptor_sha256"}
+            or not isinstance(item.get("artifact_ids"), list)
+            or not item["artifact_ids"]
+            for item in children
+        )
+    ):
+        raise SystemExit("REDUCTION_NODE_PLAN_INVALID")
+    return node
 
 
 def _checkpoint_rows(
@@ -224,6 +312,30 @@ def _checkpoint_rows(
             raise SystemExit("REDUCTION_CHECKPOINT_POLICY_INVALID")
         selected[worker_id] = row
     return selected
+
+
+def _validate_node_checkpoint_bindings(
+    node: dict[str, Any] | None,
+    *,
+    worker_ids: list[int],
+    checkpoint_rows: dict[int, dict[str, Any]],
+) -> None:
+    if node is None:
+        return
+    expected_children = [
+        {
+            "child_id": f"worker:{worker_id:03d}",
+            "artifact_ids": checkpoint_rows[worker_id][
+                "checkpoint_slot_artifacts"
+            ][: checkpoint_rows[worker_id]["checkpoint_slot_count"]],
+            "descriptor_sha256": checkpoint_rows[worker_id][
+                "checkpoint_slot_manifest_sha256"
+            ],
+        }
+        for worker_id in worker_ids
+    ]
+    if node.get("direct_children") != expected_children:
+        raise SystemExit("REDUCTION_NODE_CHILD_BINDING_INVALID")
 
 
 def _checkpoint_receipts(
@@ -388,6 +500,25 @@ def main() -> int:
         args.reduction_plan,
         "reduction_plan",
     )
+    selected_mode = reduction_plan.get("selected_mode")
+    central_eligibility = reduction_plan.get("central_eligibility")
+    selection_identity = (
+        {
+            key: value
+            for key, value in central_eligibility.items()
+            if key != "decision_sha256"
+        }
+        if isinstance(central_eligibility, dict)
+        else None
+    )
+    if (
+        selected_mode not in {"central", "hierarchical"}
+        or not isinstance(central_eligibility, dict)
+        or central_eligibility.get("mode") != selected_mode
+        or canonical_sha256(selection_identity)
+        != central_eligibility.get("decision_sha256")
+    ):
+        raise SystemExit("REDUCTION_GROUP_MODE_INVALID")
     checkpoint_policy = _verify_plan_document(
         args.checkpoint_policy,
         "checkpoint_policy",
@@ -410,6 +541,7 @@ def main() -> int:
         raise SystemExit("REDUCTION_GROUP_BOUNDARY_INVALID")
 
     group = _group_row(reduction_plan, args.group_id)
+    node = _node_row(reduction_plan, group=group)
     worker_ids = list(group["worker_ids"])
     assignments = _load_assignment_documents(args.recipe_assignments)
     if not set(worker_ids).issubset(assignments):
@@ -417,6 +549,11 @@ def main() -> int:
     checkpoint_rows = _checkpoint_rows(
         checkpoint_policy,
         worker_ids=worker_ids,
+    )
+    _validate_node_checkpoint_bindings(
+        node,
+        worker_ids=worker_ids,
+        checkpoint_rows=checkpoint_rows,
     )
     expected_artifacts = [
         artifact
@@ -519,6 +656,9 @@ def main() -> int:
         ),
         "result_sha256": sha256_file(result_path),
         "reduction_plan_sha256": reduction_plan["content_sha256"],
+        "node_descriptor_sha256": (
+            node["node_descriptor_sha256"] if node is not None else None
+        ),
         "validation_opened": False,
         "locked_opened": False,
     }
@@ -542,6 +682,9 @@ def main() -> int:
         "catalog_manifest_sha256": resolved.science.catalog_manifest_sha256,
         "work_manifest_sha256": work_manifest.manifest_sha256,
         "reduction_plan_sha256": reduction_plan["content_sha256"],
+        "node_descriptor_sha256": (
+            node["node_descriptor_sha256"] if node is not None else None
+        ),
         "checkpoint_receipt_manifest_sha256": group_manifest[
             "checkpoint_receipt_manifest_sha256"
         ],

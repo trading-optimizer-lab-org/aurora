@@ -4,8 +4,8 @@ Este documento registra **todos** los workflows presentes durante la migración 
 
 ## Resultado
 
-- Workflows inventariados: **180**.
-- Hash canónico del inventario final: `1f4881728efae54df75e262b61aa82c22d6ebe9683adc5ee41b17cd776e526ad`.
+- Workflows inventariados: **181**.
+- Hash canónico del inventario final: `9568ac4915071d97326029aa12bbc1f233457cbd1aaa10efc71c1d19ba3a5fc6`.
 - Estado final del validador de topología: **READY**.
 - Campaña activa: `sp500-optimized-catalog-v1` mediante `optimized_catalog_v1`.
 - Los Atlas antiguos y sus wrappers quedan inactivos y sin disparador público. Su código se conserva para trazabilidad, pero no existe un llamador autorizado.
@@ -40,6 +40,7 @@ Este documento registra **todos** los workflows presentes durante la migración 
 | .github/workflows/btc-5m-pf105-statistical-robustness.yml | push, workflow_dispatch | no | - | - | push, workflow_dispatch | outside catalog execution scope; inventoried with no change | repository topology receipt |
 | .github/workflows/calmar-gt1-pvalue-bootstrap-173495.yml | workflow_dispatch | no | - | - | workflow_dispatch | outside catalog execution scope; inventoried with no change | repository topology receipt |
 | .github/workflows/catalog-artifact-keeper.yml | not present | yes | - | sp500-optimized-catalog-v1 | schedule | created as the sole bounded read-only keeper path | keeper topology and repository topology receipts |
+| .github/workflows/catalog-capacity-calibration.yml | not present | no | - | - | schedule | created as the fixed synthetic read-only capacity calibration | capacity calibration and repository topology tests |
 | .github/workflows/catalog-component-determinism.yml | workflow_call | no | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
 | .github/workflows/catalog-component-worker.yml | workflow_call | yes | optimized_catalog_v1 | sp500-optimized-catalog-v1 | workflow_call | sealed worker inputs and protected environment | sealed heavy engine and environment tests |
 | .github/workflows/catalog-controller-policy-check.yml | pull_request, push | no | - | - | pull_request, push | audited; retained closed/lightweight or internal-only role | repository topology receipt |

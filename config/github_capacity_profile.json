@@ -12,5 +12,13 @@
   "reference_ssd_gb": 14,
   "larger_runners_allowed": false,
   "confirmed_on": "2026-06-02",
-  "confirmation_source": "github_support_email"
+  "confirmation_source": "github_support_email",
+  "structural_ceiling_only": true,
+  "production_admission_enabled": false,
+  "production_admission_requires_fresh_qualification_receipt": true,
+  "qualification_max_age_days": 7,
+  "proven_uncontended_floor": null,
+  "qualification_receipt_sha256": null,
+  "qualification_run_ids": [],
+  "maximum_active_heavy_catalog_campaigns": 1
 }

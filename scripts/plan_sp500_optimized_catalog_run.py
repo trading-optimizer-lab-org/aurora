@@ -40,6 +40,11 @@ from aurora.infra.github_performance.contracts import (
     Sha256,
     canonical_sha256,
 )
+from aurora.infra.github_performance.merge_planner import (
+    MergeResourceProjectionV1,
+    ReductionSelectionV1,
+    choose_reduction_plan,
+)
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     CatalogComponentIdentityV1,
 )
@@ -290,6 +295,9 @@ class CatalogGlobalReuseExecutionPlanV1(FrozenModel):
     component_download_amplification_p50: float = Field(ge=0)
     component_download_amplification_p95: float = Field(ge=0)
     matrix_output_utf16_bytes: int = Field(ge=0, le=512 * 1024)
+    reduction_projection: MergeResourceProjectionV1
+    hierarchical_reduction_projection: MergeResourceProjectionV1
+    reduction_selection: ReductionSelectionV1
     recipe_jobs_depend_on_component_store: Literal[True]
     validation_opened: Literal[False] = False
     locked_opened: Literal[False] = False
@@ -534,6 +542,8 @@ def build_global_reuse_execution_plan(
     runtime_identity_sha256: str,
     prepared_input_partition_ids: tuple[str, ...],
     qualifications: tuple[BundleLayoutQualificationV1, ...],
+    reduction_projection: MergeResourceProjectionV1,
+    hierarchical_reduction_projection: MergeResourceProjectionV1,
 ) -> CatalogGlobalReuseExecutionPlanV1:
     """Build a deterministic cold/warm/partial plan before reservation."""
     if not component_requirements or not recipes:
@@ -566,6 +576,16 @@ def build_global_reuse_execution_plan(
         raise ValueError("CATALOG_PREPARED_PARTITION_SET_INVALID")
 
     resolved = reconcile_verified_store_candidates(store_inventory)
+    reduction_selection = choose_reduction_plan(
+        projection=reduction_projection
+    )
+    if (
+        choose_reduction_plan(
+            projection=hierarchical_reduction_projection
+        ).mode
+        != "central"
+    ):
+        raise ValueError("CATALOG_HIERARCHICAL_REDUCTION_MARGIN_UNPROVEN")
     layout = select_qualified_bundle_layout(qualifications)
     required_component_ids = tuple(sorted(required_by_id))
     component_candidates: dict[
@@ -1186,6 +1206,11 @@ def build_global_reuse_execution_plan(
         "component_download_amplification_p50": amplification,
         "component_download_amplification_p95": amplification,
         "matrix_output_utf16_bytes": matrix_bytes,
+        "reduction_projection": reduction_projection,
+        "hierarchical_reduction_projection": (
+            hierarchical_reduction_projection
+        ),
+        "reduction_selection": reduction_selection,
         "recipe_jobs_depend_on_component_store": True,
         "validation_opened": False,
         "locked_opened": False,
@@ -1662,11 +1687,17 @@ def write_sealed_global_reuse_execution_plan(
         },
     )
     write_json("checkpoint_policy.json", checkpoint_policy)
+    selected_reduction_mode = plan.reduction_selection.mode
+    group_size = (
+        max(1, len(plan.recipe_assignments))
+        if selected_reduction_mode == "central"
+        else 24
+    )
     reduction_groups = []
     for group_id, index in enumerate(
-        range(0, len(plan.recipe_assignments), 24)
+        range(0, len(plan.recipe_assignments), group_size)
     ):
-        assignments = plan.recipe_assignments[index : index + 24]
+        assignments = plan.recipe_assignments[index : index + group_size]
         worker_ids = tuple(item.worker_id for item in assignments)
         checkpoint_artifacts = tuple(
             artifact
@@ -1681,8 +1712,13 @@ def write_sealed_global_reuse_execution_plan(
                 "worker_ids": worker_ids,
                 "checkpoint_artifacts": checkpoint_artifacts,
                 "checkpoint_artifact_pattern": (
-                    f"catalog-checkpoint-{plan.execution_plan_sha256[:16]}-"
-                    f"g{group_id:02d}-*"
+                    f"catalog-checkpoint-{plan.execution_plan_sha256[:16]}-*"
+                    if selected_reduction_mode == "central"
+                    else (
+                        f"catalog-checkpoint-"
+                        f"{plan.execution_plan_sha256[:16]}-"
+                        f"g{group_id:02d}-*"
+                    )
                 ),
                 "reduction_artifact": (
                     f"catalog-reduction-group-"
@@ -1702,14 +1738,119 @@ def write_sealed_global_reuse_execution_plan(
             for item in reduction_groups
         ]
     }
+    assignment_by_worker = {
+        item.worker_id: item for item in plan.recipe_assignments
+    }
+    reduction_nodes = []
+    for group in reduction_groups:
+        direct_children = tuple(
+            {
+                "child_id": f"worker:{worker_id:03d}",
+                "artifact_ids": assignment_by_worker[
+                    worker_id
+                ].checkpoint_slot_artifacts[
+                    : assignment_by_worker[worker_id].checkpoint_slot_count
+                ],
+                "descriptor_sha256": assignment_by_worker[
+                    worker_id
+                ].checkpoint_slot_manifest_sha256,
+            }
+            for worker_id in group["worker_ids"]
+        )
+        node_identity = {
+            "schema_version": "1",
+            "node_id": f"l00-g{group['group_id']:03d}",
+            "level": 0,
+            "group_id": group["group_id"],
+            "campaign_id": plan.campaign_id,
+            "authority_id": plan.authority_id,
+            "science_sha256": plan.science_sha256,
+            "execution_plan_sha256": plan.execution_plan_sha256,
+            "direct_children": direct_children,
+            "output_artifact": group["reduction_artifact"],
+            "resource_projection_p99": (
+                plan.reduction_projection
+                if selected_reduction_mode == "central"
+                else plan.hierarchical_reduction_projection
+            ),
+            "validation_opened": False,
+            "locked_opened": False,
+        }
+        reduction_nodes.append(
+            {
+                **node_identity,
+                "node_descriptor_sha256": canonical_sha256(node_identity),
+            }
+        )
+    root_identity = {
+        "schema_version": "1",
+        "node_id": "l01-g000",
+        "level": 1,
+        "group_id": 0,
+        "campaign_id": plan.campaign_id,
+        "authority_id": plan.authority_id,
+        "science_sha256": plan.science_sha256,
+        "execution_plan_sha256": plan.execution_plan_sha256,
+        "direct_children": tuple(
+            {
+                "child_id": node["node_id"],
+                "artifact_ids": (node["output_artifact"],),
+                "descriptor_sha256": node["node_descriptor_sha256"],
+            }
+            for node in reduction_nodes
+        ),
+        "output_artifact": f"catalog-final-evidence-{plan.authority_id}",
+        "resource_projection_p99": plan.hierarchical_reduction_projection,
+        "validation_opened": False,
+        "locked_opened": False,
+    }
+    root_node = {
+        **root_identity,
+        "node_descriptor_sha256": canonical_sha256(root_identity),
+    }
     reduction_plan = _plan_document(
         plan,
         "reduction_plan",
         {
-            "group_size": 24,
-            "maximum_group_count": 15,
+            "group_size": group_size,
+            "maximum_group_count": (
+                1 if selected_reduction_mode == "central" else 15
+            ),
+            "fan_in": group_size,
+            "maximum_fan_in": (
+                360 if selected_reduction_mode == "central" else 30
+            ),
+            "maximum_levels": 2,
+            "selected_mode": selected_reduction_mode,
+            "central_eligibility": plan.reduction_selection,
             "groups": tuple(reduction_groups),
             "matrix": reduction_matrix,
+            "nodes": tuple(reduction_nodes),
+            "root_node": root_node,
+            "levels": (
+                {
+                    "level": 0,
+                    "matrix": reduction_matrix,
+                    "node_ids": tuple(
+                        node["node_id"] for node in reduction_nodes
+                    ),
+                },
+                {
+                    "level": 1,
+                    "matrix": {
+                        "include": (
+                            {
+                                "group_id": 0,
+                                "node_id": root_node["node_id"],
+                                "output_artifact": root_node[
+                                    "output_artifact"
+                                ],
+                            },
+                        )
+                    },
+                    "node_ids": (root_node["node_id"],),
+                },
+            ),
             "reduction_artifact_pattern": (
                 f"catalog-reduction-group-"
                 f"{plan.execution_plan_sha256[:16]}-*"

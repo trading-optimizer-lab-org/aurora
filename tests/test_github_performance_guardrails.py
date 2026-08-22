@@ -13,9 +13,11 @@ from aurora.infra.github_performance.guardrails import (
     RuntimeLimits,
     SafeStopController,
     SafeStopReason,
+    ZeroSpendBudgetEvidenceV1,
     evaluate_budget,
     evaluate_deadline,
     enforce_plan_guardrails,
+    enforce_zero_spend_budgets,
     write_budget_audit,
     write_deadline_audit,
 )
@@ -272,3 +274,57 @@ def test_budget_and_deadline_audits_are_written(tmp_path: Path) -> None:
         == 35
     )
     assert deadline_payload["route_allowed"] is True
+
+
+def _zero_spend_evidence(**updates: object) -> ZeroSpendBudgetEvidenceV1:
+    values: dict[str, object] = {
+        "observed_at": NOW - timedelta(seconds=30),
+        "actions_budget_verified": True,
+        "actions_storage_budget_verified": True,
+        "cache_storage_budget_verified": True,
+        "prevent_further_usage": True,
+        "cache_storage_limit_bytes": 10 * 1024**3,
+        "cache_retention_days": 90,
+        "estimated_paid_runner_minutes": 0,
+        "estimated_paid_actions_cost": 0,
+    }
+    values.update(updates)
+    return ZeroSpendBudgetEvidenceV1.create(**values)
+
+
+def test_zero_spend_guardrail_requires_all_three_enforced_budgets() -> None:
+    evidence = _zero_spend_evidence()
+    assert enforce_zero_spend_budgets(evidence, now=NOW) == evidence.receipt_sha256
+
+    with pytest.raises(ValueError, match="ZERO_CACHE_STORAGE_BUDGET_REQUIRED"):
+        enforce_zero_spend_budgets(
+            _zero_spend_evidence(cache_storage_budget_verified=False),
+            now=NOW,
+        )
+
+
+def test_zero_spend_guardrail_rejects_any_paid_projection() -> None:
+    with pytest.raises(ValueError, match="PAID_RUNNER_FORBIDDEN"):
+        enforce_zero_spend_budgets(
+            _zero_spend_evidence(estimated_paid_runner_minutes=1),
+            now=NOW,
+        )
+    with pytest.raises(ValueError, match="PAID_ACTIONS_COST_FORBIDDEN"):
+        enforce_zero_spend_budgets(
+            _zero_spend_evidence(estimated_paid_actions_cost=1),
+            now=NOW,
+        )
+
+
+def test_zero_spend_receipt_is_self_hashed_and_at_most_five_minutes_old() -> None:
+    evidence = _zero_spend_evidence()
+    tampered = evidence.model_dump(mode="python")
+    tampered["cache_retention_days"] = 89
+    with pytest.raises(ValueError, match="ZERO_SPEND_BUDGET_RECEIPT_HASH_INVALID"):
+        ZeroSpendBudgetEvidenceV1(**tampered)
+
+    with pytest.raises(ValueError, match="ZERO_SPEND_BUDGET_RECEIPT_STALE"):
+        enforce_zero_spend_budgets(
+            _zero_spend_evidence(observed_at=NOW - timedelta(minutes=5, microseconds=1)),
+            now=NOW,
+        )

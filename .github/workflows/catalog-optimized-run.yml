@@ -266,14 +266,54 @@ jobs:
           ).hexdigest()
           groups = reduction.get("groups")
           reduction_matrix = reduction.get("matrix")
+          selected_mode = reduction.get("selected_mode")
+          central_eligibility = reduction.get("central_eligibility")
+          selection_identity = (
+              {
+                  key: value
+                  for key, value in central_eligibility.items()
+                  if key != "decision_sha256"
+              }
+              if isinstance(central_eligibility, dict)
+              else None
+          )
+          active_recipe_workers = receipt["active_recipe_workers"]
+          expected_group_size = (
+              max(1, active_recipe_workers)
+              if selected_mode == "central"
+              else 24
+          )
+          expected_maximum_groups = 1 if selected_mode == "central" else 15
+          expected_maximum_fan_in = 360 if selected_mode == "central" else 30
+          selection_hash = (
+              hashlib.sha256(
+                  json.dumps(
+                      selection_identity,
+                      sort_keys=True,
+                      separators=(",", ":"),
+                      allow_nan=False,
+                  ).encode()
+              ).hexdigest()
+              if selection_identity is not None
+              else None
+          )
           if (
               reduction.get("schema_version") != "1"
               or reduction.get("document_type") != "reduction_plan"
               or reduction_hash != reduction.get("content_sha256")
-              or reduction.get("group_size") != 24
-              or reduction.get("maximum_group_count") != 15
+              or selected_mode not in {"central", "hierarchical"}
+              or not isinstance(central_eligibility, dict)
+              or central_eligibility.get("mode") != selected_mode
+              or central_eligibility.get("decision_sha256") != selection_hash
+              or reduction.get("group_size") != expected_group_size
+              or reduction.get("maximum_group_count")
+              != expected_maximum_groups
+              or reduction.get("fan_in") != expected_group_size
+              or reduction.get("maximum_fan_in")
+              != expected_maximum_fan_in
+              or reduction.get("maximum_levels") != 2
               or not isinstance(groups, list)
-              or len(groups) > 15
+              or len(groups) > expected_maximum_groups
               or not isinstance(reduction_matrix, dict)
               or set(reduction_matrix) != {"include"}
               or reduction.get("validation_opened") is not False
@@ -285,7 +325,9 @@ jobs:
           plan_prefix = receipt["execution_plan_sha256"][:16]
           for group_id, group in enumerate(groups):
               expected_pattern = (
-                  f"catalog-checkpoint-{plan_prefix}-g{group_id:02d}-*"
+                  f"catalog-checkpoint-{plan_prefix}-*"
+                  if selected_mode == "central"
+                  else f"catalog-checkpoint-{plan_prefix}-g{group_id:02d}-*"
               )
               expected_artifact = (
                   f"catalog-reduction-group-{plan_prefix}-g{group_id:02d}"
@@ -301,7 +343,7 @@ jobs:
                   }
                   or group.get("group_id") != group_id
                   or not isinstance(group.get("worker_ids"), list)
-                  or not 1 <= len(group["worker_ids"]) <= 24
+                  or not 1 <= len(group["worker_ids"]) <= expected_group_size
                   or group["worker_ids"] != sorted(group["worker_ids"])
                   or not isinstance(group.get("checkpoint_artifacts"), list)
                   or not group["checkpoint_artifacts"]
@@ -1318,7 +1360,19 @@ jobs:
       - evaluate_a
       - evaluate_b
       - evaluate_c
-    if: ${{ always() && needs.engine_verify_sealed_plan.result == 'success' && needs.verify_component_store.result == 'success' }}
+    if: >-
+      ${{ always() &&
+      needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.verify_component_store.result == 'success' &&
+      (needs.evaluate_a.result == 'success' ||
+      (needs.engine_verify_sealed_plan.outputs.recipe_matrix_a_count == '0' &&
+      needs.evaluate_a.result == 'skipped')) &&
+      (needs.evaluate_b.result == 'success' ||
+      (needs.engine_verify_sealed_plan.outputs.recipe_matrix_b_count == '0' &&
+      needs.evaluate_b.result == 'skipped')) &&
+      (needs.evaluate_c.result == 'success' ||
+      (needs.engine_verify_sealed_plan.outputs.recipe_matrix_c_count == '0' &&
+      needs.evaluate_c.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     environment: catalog-production
     timeout-minutes: 20
@@ -1714,19 +1768,34 @@ jobs:
           merge-multiple: false
 
       - name: Verify and reduce this bounded group
-        shell: bash
-        run: >-
-          python -m scripts.reduce_sp500_optimized_catalog_group
-          --input-root "$RUNNER_TEMP/checkpoint-group"
-          --resolved-contract "$RUNNER_TEMP/sealed-plan/resolved_contract.json"
-          --resume-work-manifest "$RUNNER_TEMP/sealed-plan/resume_work_manifest.json"
-          --run-plan "$RUNNER_TEMP/sealed-plan/run_plan.json"
-          --admission-token "${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}"
-          --checkpoint-policy "$RUNNER_TEMP/sealed-plan/checkpoint_policy.json"
-          --reduction-plan "$RUNNER_TEMP/sealed-plan/reduction_plan.json"
-          --recipe-assignments "$RUNNER_TEMP/sealed-plan/recipe_assignment_bundle.zip"
-          --group-id "${{ matrix.group_id }}"
-          --output-dir "$RUNNER_TEMP/reduction-group"
+        uses: ./.github/actions/aurora-merge-level
+        with:
+          mode: catalog
+          group-id: ${{ matrix.group_id }}
+          input-artifact-pattern: ${{ matrix.checkpoint_artifact_pattern }}
+          output-artifact: ${{ matrix.reduction_artifact }}
+          workload: optimized_catalog_v1
+          retention-days: "1"
+          wheelhouse-artifact-name: ${{ needs.engine_verify_sealed_plan.outputs.runtime_transport_artifact }}
+          contract-artifact-name: catalog-sealed-execution-plan-${{ inputs.authority_id }}
+          plan-artifact-name: catalog-sealed-execution-plan-${{ inputs.authority_id }}
+          prepared-artifact-name: ${{ needs.engine_verify_sealed_plan.outputs.runtime_transport_artifact }}
+          prepared-artifact-run-id: ${{ github.run_id }}
+          expected-level: "0"
+          expected-authority-id: ${{ inputs.authority_id }}
+          expected-campaign-id: ${{ inputs.campaign_id }}
+          expected-science-sha256: ${{ inputs.science_sha256 }}
+          expected-execution-plan-sha256: ${{ inputs.execution_plan_sha256 }}
+          catalog-reducer-entrypoint: python -m scripts.reduce_sp500_optimized_catalog_group
+          catalog-inputs-root: ${{ runner.temp }}/checkpoint-group
+          catalog-resolved-contract: ${{ runner.temp }}/sealed-plan/resolved_contract.json
+          catalog-resume-work-manifest: ${{ runner.temp }}/sealed-plan/resume_work_manifest.json
+          catalog-run-plan: ${{ runner.temp }}/sealed-plan/run_plan.json
+          catalog-admission-token: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
+          catalog-checkpoint-policy: ${{ runner.temp }}/sealed-plan/checkpoint_policy.json
+          catalog-reduction-plan: ${{ runner.temp }}/sealed-plan/reduction_plan.json
+          catalog-recipe-assignments: ${{ runner.temp }}/sealed-plan/recipe_assignment_bundle.zip
+          catalog-output-dir: ${{ runner.temp }}/reduction-group
 
       - name: Upload one bounded reduction group
         id: group_upload

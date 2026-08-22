@@ -174,6 +174,30 @@ class CapacityProfile(FrozenModel):
     larger_runners_allowed: bool
     confirmed_on: date
     confirmation_source: str
+    structural_ceiling_only: Literal[True] = True
+    production_admission_enabled: bool = False
+    production_admission_requires_fresh_qualification_receipt: Literal[True] = True
+    qualification_max_age_days: Literal[7] = 7
+    proven_uncontended_floor: Annotated[int, Field(ge=1, le=360)] | None = None
+    qualification_receipt_sha256: Sha256 | None = None
+    qualification_run_ids: tuple[str, ...] = ()
+    maximum_active_heavy_catalog_campaigns: Literal[1] = 1
+
+    @model_validator(mode="after")
+    def _validate_production_capacity_evidence(self) -> "CapacityProfile":
+        if len(set(self.qualification_run_ids)) != len(self.qualification_run_ids):
+            raise ValueError("capacity qualification run IDs must be unique")
+        if self.qualification_receipt_sha256 is None:
+            if self.qualification_run_ids:
+                raise ValueError("capacity qualification receipt is missing")
+        elif len(self.qualification_run_ids) < 3:
+            raise ValueError("capacity qualification requires three run IDs")
+        if self.production_admission_enabled and (
+            self.qualification_receipt_sha256 is None
+            or self.proven_uncontended_floor is None
+        ):
+            raise ValueError("production capacity admission is unqualified")
+        return self
 
 
 class PerformanceContract(FrozenModel):

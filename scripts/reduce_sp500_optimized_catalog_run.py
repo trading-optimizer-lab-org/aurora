@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 
 import pyarrow as pa
@@ -21,6 +22,30 @@ from aurora.infra.sp500_megarun.catalog_resume import (
     load_resume_index,
     scientific_result_sha256,
 )
+
+
+_REDUCTION_RESOURCE_FIELDS = {
+    "timeout_fraction_p99",
+    "memory_fraction_p99",
+    "disk_fraction_p99",
+    "artifact_fraction_p99",
+    "download_fraction_p99",
+    "input_count_fraction_p99",
+}
+
+
+def _safe_reduction_projection(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == _REDUCTION_RESOURCE_FIELDS
+        and all(
+            isinstance(item, (int, float))
+            and not isinstance(item, bool)
+            and math.isfinite(float(item))
+            and 0 <= float(item) <= 0.70
+            for item in value.values()
+        )
+    )
 
 
 _RESULT_SCHEMA = pa.schema(
@@ -79,7 +104,7 @@ def _verify_group_reduction_inputs(
     expected_science_identity_sha256: str,
     expected_catalog_manifest_sha256: str,
     expected_work_manifest_sha256: str,
-) -> list[dict[str, object]]:
+) -> tuple[list[dict[str, object]], str | None]:
     try:
         reduction_plan = json.loads(reduction_plan_path.read_text("utf-8"))
     except (OSError, ValueError) as exc:
@@ -92,12 +117,30 @@ def _verify_group_reduction_inputs(
         if key != "content_sha256"
     }
     groups = reduction_plan.get("groups")
+    selected_mode = reduction_plan.get("selected_mode")
+    central_eligibility = reduction_plan.get("central_eligibility")
+    selection_identity = (
+        {
+            key: value
+            for key, value in central_eligibility.items()
+            if key != "decision_sha256"
+        }
+        if isinstance(central_eligibility, dict)
+        else None
+    )
+    maximum_groups = 1 if selected_mode == "central" else 15
+    maximum_workers = 360 if selected_mode == "central" else 30
     if (
         reduction_plan.get("schema_version") != "1"
         or reduction_plan.get("document_type") != "reduction_plan"
         or canonical_sha256(plan_identity) != reduction_plan.get("content_sha256")
         or not isinstance(groups, list)
-        or len(groups) > 15
+        or selected_mode not in {"central", "hierarchical"}
+        or not isinstance(central_eligibility, dict)
+        or central_eligibility.get("mode") != selected_mode
+        or canonical_sha256(selection_identity)
+        != central_eligibility.get("decision_sha256")
+        or len(groups) > maximum_groups
         or reduction_plan.get("validation_opened") is not False
         or reduction_plan.get("locked_opened") is not False
     ):
@@ -116,7 +159,7 @@ def _verify_group_reduction_inputs(
                 "reduction_artifact",
             }
             or not isinstance(group.get("worker_ids"), list)
-            or not 1 <= len(group["worker_ids"]) <= 24
+            or not 1 <= len(group["worker_ids"]) <= maximum_workers
             or any(
                 not isinstance(worker_id, int)
                 or worker_id in expected_worker_ids
@@ -133,7 +176,86 @@ def _verify_group_reduction_inputs(
     if not groups:
         if input_root.exists() and any(input_root.iterdir()):
             raise SystemExit("OPTIMIZED_REDUCTION_INPUT_UNEXPECTED")
-        return []
+        return [], None
+    nodes = reduction_plan.get("nodes")
+    root_node = reduction_plan.get("root_node")
+    node_hashes: dict[str, str] = {}
+    node_ids_by_artifact: dict[str, str] = {}
+    root_node_hash: str | None = None
+    if not isinstance(nodes, list) or not isinstance(root_node, dict):
+        raise SystemExit("OPTIMIZED_REDUCTION_NODE_PLAN_INVALID")
+    if len(nodes) != len(expected_artifacts):
+        raise SystemExit("OPTIMIZED_REDUCTION_NODE_PLAN_INVALID")
+    for node in nodes:
+        if not isinstance(node, dict):
+            raise SystemExit("OPTIMIZED_REDUCTION_NODE_PLAN_INVALID")
+        identity = {
+            key: value
+            for key, value in node.items()
+            if key != "node_descriptor_sha256"
+        }
+        artifact = node.get("output_artifact")
+        digest = node.get("node_descriptor_sha256")
+        group = expected_artifacts.get(str(artifact))
+        if (
+            not isinstance(artifact, str)
+            or artifact in node_hashes
+            or group is None
+            or node.get("node_id") != f"l00-g{group['group_id']:03d}"
+            or node.get("level") != 0
+            or node.get("group_id") != group["group_id"]
+            or canonical_sha256(identity) != digest
+            or node.get("campaign_id") != reduction_plan.get("campaign_id")
+            or node.get("authority_id") != reduction_plan.get("authority_id")
+            or node.get("science_sha256") != reduction_plan.get("science_sha256")
+            or node.get("execution_plan_sha256")
+            != reduction_plan.get("execution_plan_sha256")
+            or not _safe_reduction_projection(
+                node.get("resource_projection_p99")
+            )
+            or node.get("validation_opened") is not False
+            or node.get("locked_opened") is not False
+        ):
+            raise SystemExit("OPTIMIZED_REDUCTION_NODE_PLAN_INVALID")
+        node_hashes[artifact] = str(digest)
+        node_ids_by_artifact[artifact] = str(node["node_id"])
+    if set(node_hashes) != set(expected_artifacts):
+        raise SystemExit("OPTIMIZED_REDUCTION_NODE_PLAN_INVALID")
+    root_identity = {
+        key: value
+        for key, value in root_node.items()
+        if key != "node_descriptor_sha256"
+    }
+    expected_root_children = [
+        {
+            "child_id": node_ids_by_artifact[artifact],
+            "artifact_ids": [artifact],
+            "descriptor_sha256": node_hashes[artifact],
+        }
+        for artifact in expected_artifacts
+    ]
+    if (
+        canonical_sha256(root_identity)
+        != root_node.get("node_descriptor_sha256")
+        or root_node.get("node_id") != "l01-g000"
+        or root_node.get("level") != 1
+        or root_node.get("group_id") != 0
+        or root_node.get("direct_children") != expected_root_children
+        or root_node.get("output_artifact")
+        != reduction_plan.get("final_evidence_artifact")
+        or root_node.get("campaign_id") != reduction_plan.get("campaign_id")
+        or root_node.get("authority_id") != reduction_plan.get("authority_id")
+        or root_node.get("science_sha256") != reduction_plan.get("science_sha256")
+        or root_node.get("execution_plan_sha256")
+        != reduction_plan.get("execution_plan_sha256")
+        or not _safe_reduction_projection(
+            root_node.get("resource_projection_p99")
+        )
+        or root_node.get("validation_opened") is not False
+        or root_node.get("locked_opened") is not False
+    ):
+        raise SystemExit("OPTIMIZED_REDUCTION_ROOT_PLAN_INVALID")
+    root_node_hash = str(root_node["node_descriptor_sha256"])
     try:
         entries = list(input_root.iterdir())
     except OSError as exc:
@@ -176,6 +298,8 @@ def _verify_group_reduction_inputs(
             != expected_work_manifest_sha256
             or receipt.get("reduction_plan_sha256")
             != reduction_plan["content_sha256"]
+            or receipt.get("node_descriptor_sha256")
+            != node_hashes.get(artifact)
             or receipt.get("validation_opened") is not False
             or receipt.get("locked_opened") is not False
             or canonical_sha256(receipt_identity) != receipt.get("receipt_sha256")
@@ -186,6 +310,8 @@ def _verify_group_reduction_inputs(
             or manifest.get("result_sha256") != receipt.get("result_sha256")
             or manifest.get("reduction_plan_sha256")
             != reduction_plan["content_sha256"]
+            or manifest.get("node_descriptor_sha256")
+            != node_hashes.get(artifact)
             or manifest.get("checkpoint_receipt_manifest_sha256")
             != receipt.get("checkpoint_receipt_manifest_sha256")
             or manifest.get("validation_opened") is not False
@@ -193,7 +319,7 @@ def _verify_group_reduction_inputs(
         ):
             raise SystemExit("OPTIMIZED_REDUCTION_GROUP_INVALID")
         receipts.append(receipt)
-    return receipts
+    return receipts, root_node_hash
 
 
 def main() -> int:
@@ -226,13 +352,17 @@ def main() -> int:
     expected_ids = [str(row["strategy_id"]) for row in expected_rows]
     catalog_by_id = {str(row["strategy_id"]): row for row in expected_rows}
     science_identity_sha256 = canonical_sha256(resolved.science)
-    worker_receipts = _verify_group_reduction_inputs(
-        args.input_root,
-        reduction_plan_path=args.reduction_plan,
-        pending_recipe_count=plan.pending_recipe_count,
-        expected_science_identity_sha256=science_identity_sha256,
-        expected_catalog_manifest_sha256=resolved.science.catalog_manifest_sha256,
-        expected_work_manifest_sha256=work_manifest.manifest_sha256,
+    worker_receipts, root_node_descriptor_sha256 = (
+        _verify_group_reduction_inputs(
+            args.input_root,
+            reduction_plan_path=args.reduction_plan,
+            pending_recipe_count=plan.pending_recipe_count,
+            expected_science_identity_sha256=science_identity_sha256,
+            expected_catalog_manifest_sha256=(
+                resolved.science.catalog_manifest_sha256
+            ),
+            expected_work_manifest_sha256=work_manifest.manifest_sha256,
+        )
     )
     resume_index = load_resume_index(
         tuple(args.resume_root),
@@ -414,7 +544,7 @@ def main() -> int:
             str(row["strategy_id"]),
         ),
     )[:10]
-    receipt = {
+    receipt_identity = {
         "schema_version": 1,
         "contract_sha256": plan.contract_sha256,
         "strategy_count": len(ordered),
@@ -451,6 +581,7 @@ def main() -> int:
         "science_identity_sha256": science_identity_sha256,
         "catalog_manifest_sha256": resolved.science.catalog_manifest_sha256,
         "work_manifest_sha256": work_manifest.manifest_sha256,
+        "root_node_descriptor_sha256": root_node_descriptor_sha256,
         "physical_recipe_evaluations": len(current_index.strategy_ids),
         "prior_result_cache_hits": len(resume_index.strategy_ids),
         "resume_source_result_rows": resume_index.physical_result_count,
@@ -458,6 +589,10 @@ def main() -> int:
         "top_10": top,
         "validation_opened": False,
         "locked_opened": False,
+    }
+    receipt = {
+        **receipt_identity,
+        "receipt_sha256": canonical_sha256(receipt_identity),
     }
     (args.output_dir / "receipt.json").write_text(
         json.dumps(receipt, indent=2, sort_keys=True) + "\n",

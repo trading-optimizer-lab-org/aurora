@@ -9,7 +9,10 @@ import pytest
 
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.github_performance.shard_planner import sha256_file
-from scripts.reduce_sp500_optimized_catalog_group import _checkpoint_receipts
+from scripts.reduce_sp500_optimized_catalog_group import (
+    _checkpoint_receipts,
+    _validate_node_checkpoint_bindings,
+)
 
 
 def _write_checkpoint(
@@ -142,4 +145,48 @@ def test_group_reducer_requires_one_exact_contiguous_checkpoint_chain(
             worker_ids=[0],
             checkpoint_rows=policy,
             assignments=assignments,
+        )
+
+
+def test_reduction_node_binds_exact_checkpoint_policy_hash() -> None:
+    artifacts = [f"checkpoint-{slot}" for slot in range(1, 9)]
+    descriptor_sha256 = canonical_sha256(
+        {
+            "schema_version": "1",
+            "artifacts": artifacts,
+            "slot_count": 2,
+        }
+    )
+    policy = {
+        0: {
+            "worker_id": 0,
+            "checkpoint_slot_count": 2,
+            "checkpoint_slot_artifacts": artifacts,
+            "checkpoint_slot_manifest_sha256": descriptor_sha256,
+        }
+    }
+    node = {
+        "direct_children": [
+            {
+                "child_id": "worker:000",
+                "artifact_ids": artifacts[:2],
+                "descriptor_sha256": descriptor_sha256,
+            }
+        ]
+    }
+
+    _validate_node_checkpoint_bindings(
+        node,
+        worker_ids=[0],
+        checkpoint_rows=policy,
+    )
+    node["direct_children"][0]["descriptor_sha256"] = "f" * 64
+    with pytest.raises(
+        SystemExit,
+        match="REDUCTION_NODE_CHILD_BINDING_INVALID",
+    ):
+        _validate_node_checkpoint_bindings(
+            node,
+            worker_ids=[0],
+            checkpoint_rows=policy,
         )

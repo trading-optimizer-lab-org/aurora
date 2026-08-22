@@ -408,7 +408,9 @@ jobs:
 
       - name: Upload checkpoint segment 1
         id: upload_1
-        if: ${{ steps.compute_1.outcome == 'success' }}
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 1 &&
+          steps.compute_1.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_1 }}
@@ -452,7 +454,9 @@ jobs:
 
       - name: Upload checkpoint segment 2
         id: upload_2
-        if: ${{ steps.compute_2.outcome == 'success' }}
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 2 &&
+          steps.compute_2.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_2 }}
@@ -496,7 +500,9 @@ jobs:
 
       - name: Upload checkpoint segment 3
         id: upload_3
-        if: ${{ steps.compute_3.outcome == 'success' }}
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 3 &&
+          steps.compute_3.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_3 }}
@@ -540,7 +546,9 @@ jobs:
 
       - name: Upload checkpoint segment 4
         id: upload_4
-        if: ${{ steps.compute_4.outcome == 'success' }}
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 4 &&
+          steps.compute_4.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_4 }}
@@ -584,7 +592,9 @@ jobs:
 
       - name: Upload checkpoint segment 5
         id: upload_5
-        if: ${{ steps.compute_5.outcome == 'success' }}
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 5 &&
+          steps.compute_5.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_5 }}
@@ -628,7 +638,9 @@ jobs:
 
       - name: Upload checkpoint segment 6
         id: upload_6
-        if: ${{ steps.compute_6.outcome == 'success' }}
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 6 &&
+          steps.compute_6.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_6 }}
@@ -672,7 +684,9 @@ jobs:
 
       - name: Upload checkpoint segment 7
         id: upload_7
-        if: ${{ steps.compute_7.outcome == 'success' }}
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 7 &&
+          steps.compute_7.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_7 }}
@@ -716,7 +730,9 @@ jobs:
 
       - name: Upload checkpoint segment 8
         id: upload_8
-        if: ${{ steps.compute_8.outcome == 'success' }}
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 8 &&
+          steps.compute_8.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_8 }}
