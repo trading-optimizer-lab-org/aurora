@@ -215,9 +215,9 @@ def build_replan_fixture(
     if pending <= 0:
         raise ValueError("fixture must leave pending units")
     now = created_at or datetime.now(timezone.utc)
-    state = transition_campaign_state(
+    recovering = transition_campaign_state(
         previous,
-        phase=CampaignPhase.REPLANNING,
+        phase=CampaignPhase.RECOVERING,
         completed_unit_count=evidence.unit_count,
         completed_unit_manifest_sha256=evidence.unit_manifest_sha256,
         pending_unit_count=pending,
@@ -227,6 +227,12 @@ def build_replan_fixture(
         ),
         wave=previous.wave + 1,
         hard_failure_reason=",".join(reasons),
+        created_at=now,
+    )
+    write_campaign_state(recovering, state_root)
+    state = transition_campaign_state(
+        recovering,
+        phase=CampaignPhase.REPLANNING,
         created_at=now,
     )
     state_path = write_campaign_state(state, state_root)

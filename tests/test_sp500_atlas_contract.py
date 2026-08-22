@@ -127,6 +127,7 @@ def _optimization() -> RunOptimizationContractV1:
             valid_work_reuse_required=True,
             global_rerun_allowed=False,
             max_same_failure_occurrences=3,
+            max_total_recovery_waves=6,
         ),
     )
 

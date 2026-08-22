@@ -16,6 +16,9 @@ on:
       descriptor_member: {required: true, type: string}
       descriptor_sha256: {required: true, type: string}
       admission_token_sha256: {required: true, type: string}
+      recovery_descriptor_artifact: {required: false, type: string, default: ""}
+      recovery_descriptor_member: {required: false, type: string, default: ""}
+      recovery_descriptor_sha256: {required: false, type: string, default: ""}
 
 permissions: {actions: read, contents: read}
 
@@ -57,6 +60,13 @@ jobs:
           name: catalog-sealed-execution-plan-${{ inputs.authority_id }}
           path: ${{ runner.temp }}/sealed-plan
 
+      - name: Download an exact sealed recovery descriptor when selected
+        if: ${{ inputs.recovery_descriptor_artifact != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.recovery_descriptor_artifact }}
+          path: ${{ runner.temp }}/recovery-descriptor
+
       - name: Verify exact recipe descriptor and frozen plan
         id: descriptor
         shell: bash
@@ -64,8 +74,12 @@ jobs:
           DESCRIPTOR_MEMBER: ${{ inputs.descriptor_member }}
           EXPECTED_DESCRIPTOR_SHA256: ${{ inputs.descriptor_sha256 }}
           EXPECTED_WORKER_ID: ${{ inputs.worker_id }}
+          EXPECTED_AUTHORITY_ID: ${{ inputs.authority_id }}
           EXPECTED_CAMPAIGN_ID: ${{ inputs.campaign_id }}
           EXPECTED_EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
+          RECOVERY_DESCRIPTOR_ARTIFACT: ${{ inputs.recovery_descriptor_artifact }}
+          RECOVERY_DESCRIPTOR_MEMBER: ${{ inputs.recovery_descriptor_member }}
+          RECOVERY_DESCRIPTOR_SHA256: ${{ inputs.recovery_descriptor_sha256 }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -82,10 +96,43 @@ jobs:
           source = (root / relative).resolve(strict=True)
           if not source.is_relative_to(root.resolve()):
               raise SystemExit("RECIPE_DESCRIPTOR_PATH_INVALID")
-          raw = source.read_bytes()
-          if hashlib.sha256(raw).hexdigest() != os.environ["EXPECTED_DESCRIPTOR_SHA256"]:
+          original_raw = source.read_bytes()
+          if hashlib.sha256(original_raw).hexdigest() != os.environ["EXPECTED_DESCRIPTOR_SHA256"]:
               raise SystemExit("RECIPE_DESCRIPTOR_HASH_INVALID")
-          payload = json.loads(raw)
+          original = json.loads(original_raw)
+          raw = original_raw
+          payload = original
+          recovery_artifact = os.environ["RECOVERY_DESCRIPTOR_ARTIFACT"]
+          recovery_member = os.environ["RECOVERY_DESCRIPTOR_MEMBER"]
+          recovery_sha256 = os.environ["RECOVERY_DESCRIPTOR_SHA256"]
+          if bool(recovery_artifact) != bool(recovery_member) or bool(recovery_artifact) != bool(recovery_sha256):
+              raise SystemExit("RECOVERY_DESCRIPTOR_ROUTE_INVALID")
+          if recovery_artifact:
+              recovery_root = temp / "recovery-descriptor"
+              recovery_relative = Path(recovery_member)
+              if recovery_relative.is_absolute() or ".." in recovery_relative.parts:
+                  raise SystemExit("RECOVERY_DESCRIPTOR_PATH_INVALID")
+              recovery_source = (recovery_root / recovery_relative).resolve(strict=True)
+              if not recovery_source.is_relative_to(recovery_root.resolve()):
+                  raise SystemExit("RECOVERY_DESCRIPTOR_PATH_INVALID")
+              raw = recovery_source.read_bytes()
+              if hashlib.sha256(raw).hexdigest() != recovery_sha256:
+                  raise SystemExit("RECOVERY_DESCRIPTOR_HASH_INVALID")
+              payload = json.loads(raw)
+              immutable_fields = set(original) - {
+                  "attempt_id",
+                  "prior_checkpoint_chain_artifact",
+              }
+              if any(payload.get(field) != original.get(field) for field in immutable_fields):
+                  raise SystemExit("RECOVERY_DESCRIPTOR_SCIENCE_DRIFT")
+              if (
+                  set(payload) != set(original)
+                  or not str(payload.get("attempt_id", "")).startswith(
+                      os.environ["EXPECTED_AUTHORITY_ID"] + ":worker:"
+                  )
+                  or payload.get("attempt_id") == original.get("attempt_id")
+              ):
+                  raise SystemExit("RECOVERY_DESCRIPTOR_IDENTITY_INVALID")
           required = {
               "worker_id",
               "attempt_id",
@@ -156,6 +203,11 @@ jobs:
               "prior_checkpoint_chain_artifact": payload[
                   "prior_checkpoint_chain_artifact"
               ],
+              "resume_completed_slot_count": (
+                  int(payload["prior_checkpoint_chain_artifact"].rsplit("-s", 1)[1])
+                  if payload["prior_checkpoint_chain_artifact"]
+                  else 0
+              ),
               "checkpoint_slot_count": payload["checkpoint_slot_count"],
               "expected_strategy_count": payload["expected_strategy_count"],
               "runtime_transport_artifact": plan["runtime_transport_artifact"],
@@ -223,6 +275,7 @@ jobs:
           import hashlib
           import json
           import os
+          import shutil
           from pathlib import Path
 
           temp = Path(os.environ["RUNNER_TEMP"])
@@ -268,6 +321,52 @@ jobs:
           ).hexdigest()
           if observed_manifest != descriptor["component_bundle_manifest_sha256"]:
               raise SystemExit("COMPONENT_PAYLOAD_MANIFEST_INVALID")
+          prior_name = descriptor["prior_checkpoint_chain_artifact"]
+          if prior_name:
+              try:
+                  resume_slot = int(prior_name.rsplit("-s", 1)[1])
+              except (IndexError, ValueError):
+                  raise SystemExit("RECOVERY_CHECKPOINT_NAME_INVALID") from None
+              prior_root = temp / "prior"
+              required = {
+                  "results.parquet",
+                  "receipt.json",
+                  "shard_attempt_manifest.json",
+                  "checkpoint_chain_manifest.json",
+              }
+              observed = {
+                  path.name for path in prior_root.iterdir() if path.is_file()
+              }
+              if not required.issubset(observed):
+                  raise SystemExit("RECOVERY_CHECKPOINT_CONTENT_MISSING")
+              chain = json.loads(
+                  (prior_root / "checkpoint_chain_manifest.json").read_text()
+              )
+              receipt_sha256 = hashlib.sha256(
+                  (prior_root / "receipt.json").read_bytes()
+              ).hexdigest()
+              if (
+                  chain.get("worker_id") != descriptor["worker_id"]
+                  or chain.get("slot_index") != resume_slot
+                  or chain.get("slot_count") != descriptor["checkpoint_slot_count"]
+                  or chain.get("current_receipt_sha256") != receipt_sha256
+              ):
+                  raise SystemExit("RECOVERY_CHECKPOINT_CHAIN_INVALID")
+              chain_identity = {
+                  key: value for key, value in chain.items() if key != "chain_sha256"
+              }
+              chain_sha256 = hashlib.sha256(
+                  json.dumps(
+                      chain_identity,
+                      sort_keys=True,
+                      separators=(",", ":"),
+                      allow_nan=False,
+                  ).encode()
+              ).hexdigest()
+              if chain_sha256 != chain.get("chain_sha256"):
+                  raise SystemExit("RECOVERY_CHECKPOINT_CHAIN_INVALID")
+              destination = temp / f"checkpoint-{resume_slot}"
+              shutil.copytree(prior_root, destination)
           PY
 
       - name: Assemble only the exact train input needed by recipes
@@ -282,7 +381,9 @@ jobs:
 
       - name: Compute checkpoint segment 1
         id: compute_1
-        if: ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 1 }}
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 1 &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 1 }}
         shell: bash
         run: >-
           python -m scripts.run_sp500_optimized_recipe_worker
@@ -307,7 +408,7 @@ jobs:
 
       - name: Upload checkpoint segment 1
         id: upload_1
-        if: ${{ steps.compute_1.outcome == 'success' && fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 1 }}
+        if: ${{ steps.compute_1.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_1 }}
@@ -320,9 +421,12 @@ jobs:
         id: compute_2
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 2 &&
-          steps.upload_1.outcome == 'success' &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 2 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 1 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_1.outcome == 'success' &&
           steps.upload_1.outputs['artifact-id'] != '' &&
-          steps.upload_1.outputs['artifact-digest'] != '' }}
+          steps.upload_1.outputs['artifact-digest'] != '')) }}
         shell: bash
         run: >-
           python -m scripts.run_sp500_optimized_recipe_worker
@@ -348,7 +452,7 @@ jobs:
 
       - name: Upload checkpoint segment 2
         id: upload_2
-        if: ${{ steps.compute_2.outcome == 'success' && fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 2 }}
+        if: ${{ steps.compute_2.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_2 }}
@@ -361,9 +465,12 @@ jobs:
         id: compute_3
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 3 &&
-          steps.upload_2.outcome == 'success' &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 3 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 2 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_2.outcome == 'success' &&
           steps.upload_2.outputs['artifact-id'] != '' &&
-          steps.upload_2.outputs['artifact-digest'] != '' }}
+          steps.upload_2.outputs['artifact-digest'] != '')) }}
         shell: bash
         run: >-
           python -m scripts.run_sp500_optimized_recipe_worker
@@ -389,7 +496,7 @@ jobs:
 
       - name: Upload checkpoint segment 3
         id: upload_3
-        if: ${{ steps.compute_3.outcome == 'success' && fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 3 }}
+        if: ${{ steps.compute_3.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_3 }}
@@ -402,9 +509,12 @@ jobs:
         id: compute_4
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 4 &&
-          steps.upload_3.outcome == 'success' &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 4 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 3 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_3.outcome == 'success' &&
           steps.upload_3.outputs['artifact-id'] != '' &&
-          steps.upload_3.outputs['artifact-digest'] != '' }}
+          steps.upload_3.outputs['artifact-digest'] != '')) }}
         shell: bash
         run: >-
           python -m scripts.run_sp500_optimized_recipe_worker
@@ -430,7 +540,7 @@ jobs:
 
       - name: Upload checkpoint segment 4
         id: upload_4
-        if: ${{ steps.compute_4.outcome == 'success' && fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 4 }}
+        if: ${{ steps.compute_4.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_4 }}
@@ -443,9 +553,12 @@ jobs:
         id: compute_5
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 5 &&
-          steps.upload_4.outcome == 'success' &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 5 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 4 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_4.outcome == 'success' &&
           steps.upload_4.outputs['artifact-id'] != '' &&
-          steps.upload_4.outputs['artifact-digest'] != '' }}
+          steps.upload_4.outputs['artifact-digest'] != '')) }}
         shell: bash
         run: >-
           python -m scripts.run_sp500_optimized_recipe_worker
@@ -471,7 +584,7 @@ jobs:
 
       - name: Upload checkpoint segment 5
         id: upload_5
-        if: ${{ steps.compute_5.outcome == 'success' && fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 5 }}
+        if: ${{ steps.compute_5.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_5 }}
@@ -484,9 +597,12 @@ jobs:
         id: compute_6
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 6 &&
-          steps.upload_5.outcome == 'success' &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 6 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 5 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_5.outcome == 'success' &&
           steps.upload_5.outputs['artifact-id'] != '' &&
-          steps.upload_5.outputs['artifact-digest'] != '' }}
+          steps.upload_5.outputs['artifact-digest'] != '')) }}
         shell: bash
         run: >-
           python -m scripts.run_sp500_optimized_recipe_worker
@@ -512,7 +628,7 @@ jobs:
 
       - name: Upload checkpoint segment 6
         id: upload_6
-        if: ${{ steps.compute_6.outcome == 'success' && fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 6 }}
+        if: ${{ steps.compute_6.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_6 }}
@@ -525,9 +641,12 @@ jobs:
         id: compute_7
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 7 &&
-          steps.upload_6.outcome == 'success' &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 7 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 6 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_6.outcome == 'success' &&
           steps.upload_6.outputs['artifact-id'] != '' &&
-          steps.upload_6.outputs['artifact-digest'] != '' }}
+          steps.upload_6.outputs['artifact-digest'] != '')) }}
         shell: bash
         run: >-
           python -m scripts.run_sp500_optimized_recipe_worker
@@ -553,7 +672,7 @@ jobs:
 
       - name: Upload checkpoint segment 7
         id: upload_7
-        if: ${{ steps.compute_7.outcome == 'success' && fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 7 }}
+        if: ${{ steps.compute_7.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_7 }}
@@ -566,9 +685,12 @@ jobs:
         id: compute_8
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 8 &&
-          steps.upload_7.outcome == 'success' &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 8 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 7 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_7.outcome == 'success' &&
           steps.upload_7.outputs['artifact-id'] != '' &&
-          steps.upload_7.outputs['artifact-digest'] != '' }}
+          steps.upload_7.outputs['artifact-digest'] != '')) }}
         shell: bash
         run: >-
           python -m scripts.run_sp500_optimized_recipe_worker
@@ -594,7 +716,7 @@ jobs:
 
       - name: Upload checkpoint segment 8
         id: upload_8
-        if: ${{ steps.compute_8.outcome == 'success' && fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 8 }}
+        if: ${{ steps.compute_8.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.checkpoint_artifact_8 }}
@@ -605,10 +727,24 @@ jobs:
 
       - name: Verify the final durable checkpoint upload receipt
         id: durable_chain
-        if: ${{ always() && steps.upload_1.outcome == 'success' }}
+        if: >-
+          ${{ always() &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) ==
+          fromJSON(steps.descriptor.outputs.checkpoint_slot_count) &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (fromJSON(steps.descriptor.outputs.checkpoint_slot_count) == 1 &&
+          steps.upload_1.outcome == 'success') ||
+          (fromJSON(steps.descriptor.outputs.checkpoint_slot_count) == 2 &&
+          steps.upload_2.outcome == 'success') ||
+          (fromJSON(steps.descriptor.outputs.checkpoint_slot_count) == 4 &&
+          steps.upload_4.outcome == 'success') ||
+          (fromJSON(steps.descriptor.outputs.checkpoint_slot_count) == 8 &&
+          steps.upload_8.outcome == 'success')) }}
         shell: bash
         env:
           CHECKPOINT_SLOT_COUNT: ${{ steps.descriptor.outputs.checkpoint_slot_count }}
+          RESUME_COMPLETED_SLOT_COUNT: ${{ steps.descriptor.outputs.resume_completed_slot_count }}
+          PRIOR_CHECKPOINT: ${{ steps.descriptor.outputs.prior_checkpoint_chain_artifact }}
           ARTIFACT_ID_1: ${{ steps.upload_1.outputs['artifact-id'] }}
           ARTIFACT_DIGEST_1: ${{ steps.upload_1.outputs['artifact-digest'] }}
           ARTIFACT_ID_2: ${{ steps.upload_2.outputs['artifact-id'] }}
@@ -619,6 +755,10 @@ jobs:
           ARTIFACT_DIGEST_8: ${{ steps.upload_8.outputs['artifact-digest'] }}
         run: |
           set -euo pipefail
+          if [ "$RESUME_COMPLETED_SLOT_COUNT" -eq "$CHECKPOINT_SLOT_COUNT" ]; then
+            test -n "$PRIOR_CHECKPOINT"
+            exit 0
+          fi
           id_name="ARTIFACT_ID_${CHECKPOINT_SLOT_COUNT}"
           digest_name="ARTIFACT_DIGEST_${CHECKPOINT_SLOT_COUNT}"
           test -n "${!id_name}"
@@ -641,7 +781,20 @@ jobs:
               (temp / "descriptor-bundle/recipe-descriptor.json").read_text()
           )
           completed = []
-          for index in range(1, descriptor["checkpoint_slot_count"] + 1):
+          prior = descriptor["prior_checkpoint_chain_artifact"]
+          resume_slot = int(prior.rsplit("-s", 1)[1]) if prior else 0
+          if resume_slot:
+              receipt = temp / f"checkpoint-{resume_slot}/receipt.json"
+              if not receipt.is_file():
+                  raise SystemExit("RECOVERY_CHECKPOINT_RECEIPT_MISSING")
+              completed.append(
+                  {
+                      "slot": resume_slot,
+                      "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+                      "cumulative_prior_chain": True,
+                  }
+              )
+          for index in range(resume_slot + 1, descriptor["checkpoint_slot_count"] + 1):
               root = temp / f"checkpoint-{index}"
               receipt = root / "receipt.json"
               if not receipt.is_file():
@@ -650,6 +803,7 @@ jobs:
                   {
                       "slot": index,
                       "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+                      "cumulative_prior_chain": False,
                   }
               )
           payload = {

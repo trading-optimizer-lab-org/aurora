@@ -20,7 +20,7 @@ POLICY_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "github-performance-policy.yml"
 )
 RECOVERY_PLAN_ACTION_PATH = (
-    ROOT / ".github" / "actions" / "aurora-recovery-plan" / "action.yml"
+    ROOT / ".github" / "actions" / "aurora-shard-recovery-plan" / "action.yml"
 )
 RETRY_SHARD_ACTION_PATH = (
     ROOT / ".github" / "actions" / "aurora-retry-shard" / "action.yml"
@@ -369,11 +369,11 @@ def test_recovery_is_durable_and_iterates_to_maximum_retry_budget() -> None:
         job = jobs[name]
         assert job["runs-on"] == "ubuntu-24.04"
         recovery = next(
-            step
-            for step in job["steps"]
-            if step.get("uses")
-            == "./.github/actions/aurora-recovery-plan"
-        )
+                step
+                for step in job["steps"]
+                if step.get("uses")
+                == "./.github/actions/aurora-shard-recovery-plan"
+            )
         assert recovery["with"]["current-wave"] == wave
         assert recovery["with"]["max-waves"] == 6
     assert "campaign-update" in WORKFLOW_PATH.read_text(encoding="utf-8")

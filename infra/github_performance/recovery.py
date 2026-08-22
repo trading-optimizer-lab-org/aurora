@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
-import uuid
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import yaml
 
 from aurora.infra.github_performance.checkpoint import (
     CheckpointIntegrityError,
@@ -23,7 +25,7 @@ from aurora.infra.github_performance.contracts import (
     CheckpointManifest,
     FrozenModel,
     RecoveryDecision,
-    RecoveryPlan,
+    RecoveryPlan as RecoveryPlanContract,
     ShardDefinition,
     ShardPlan,
     TerminalState,
@@ -31,7 +33,6 @@ from aurora.infra.github_performance.contracts import (
     canonical_sha256,
     deep_thaw_json,
 )
-from aurora.infra.github_performance.preflight import load_github_yaml
 from aurora.infra.github_performance.shard_planner import sha256_file
 
 
@@ -45,6 +46,12 @@ class FailureClass(str, Enum):
     SCHEMA = "schema"
     POLICY = "policy"
     CODE = "code"
+    INTEGRITY = "integrity"
+    UNKNOWN = "unknown"
+    DETERMINISTIC_SCIENTIFIC_ENGINE_FAILURE = (
+        "deterministic_scientific_engine_failure"
+    )
+    WORKFLOW_OR_JOB_CANCELLED = "workflow_or_job_cancelled"
     OUT_OF_MEMORY = "out_of_memory"
     DISK_EXHAUSTED = "disk_exhausted"
 
@@ -58,6 +65,8 @@ class RecoveryLoopStatus(str, Enum):
     COMPLETE = "complete"
     BLOCKED_HARD_FAILURE = "blocked_hard_failure"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    FAILED_SCIENTIFIC = "failed_scientific"
+    WAITING_RETRY = "waiting_retry"
 
 
 class RecoveryLoopResult(FrozenModel):
@@ -79,6 +88,8 @@ class TerminalUnitEvidence(FrozenModel):
     unit_count: int
     unit_manifest_sha256: str | None
     source_artifacts: tuple[str, ...]
+    identical_duplicate_unit_keys: tuple[str, ...] = ()
+    duplicate_attempt_ids: tuple[str, ...] = ()
 
 
 TRANSIENT_CLASSES = frozenset(
@@ -114,11 +125,381 @@ REASON_CLASS = {
     "CODE_ERROR": FailureClass.CODE,
     "OUT_OF_MEMORY": FailureClass.OUT_OF_MEMORY,
     "DISK_EXHAUSTED": FailureClass.DISK_EXHAUSTED,
+    "INTEGRITY_ERROR": FailureClass.INTEGRITY,
+    "CHECKPOINT_INTEGRITY_ERROR": FailureClass.INTEGRITY,
+    "SCIENTIFIC_ENGINE_EXPECTED_FAILURE": (
+        FailureClass.DETERMINISTIC_SCIENTIFIC_ENGINE_FAILURE
+    ),
+    "WORKFLOW_CANCELLED": FailureClass.WORKFLOW_OR_JOB_CANCELLED,
+    "WORKFLOW_CANCELED": FailureClass.WORKFLOW_OR_JOB_CANCELLED,
+    "JOB_CANCELLED": FailureClass.WORKFLOW_OR_JOB_CANCELLED,
+    "JOB_CANCELED": FailureClass.WORKFLOW_OR_JOB_CANCELLED,
+    "CANCELLED": FailureClass.WORKFLOW_OR_JOB_CANCELLED,
+    "CANCELED": FailureClass.WORKFLOW_OR_JOB_CANCELLED,
 }
 
 
 class RecoveryMatrixTooLarge(RuntimeError):
     """Raised before recovery descriptors exceed GitHub output limits."""
+
+
+class RecoveryEvidenceError(RuntimeError):
+    """Raised when recovery evidence is missing, ambiguous, or inconsistent."""
+
+
+def _load_recovery_spec(path: Path) -> Mapping[str, Any]:
+    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError("recovery spec must be a YAML mapping")
+    return payload
+
+
+class RecoveryPlan(RecoveryPlanContract):
+    """Closed recovery plan with stable scoped-failure accounting."""
+
+    failure_occurrence_count: int = 0
+    failure_history_manifest_sha256: str = "0" * 64
+    failure_fingerprints: tuple[str, ...] = ()
+    identical_duplicate_success_count: int = 0
+
+
+class CheckpointSlotEvidence(FrozenModel):
+    logical_scope_id: str
+    slot_index: int
+    slot_count: int
+    artifact_name: str
+    previous_receipt_sha256: str
+    receipt_sha256: str
+    artifact_uploaded: bool
+
+
+class CheckpointChainSelection(FrozenModel):
+    logical_scope_id: str
+    completed_slot_count: int
+    next_slot_index: int | None
+    latest_receipt_sha256: str
+    reused_artifacts: tuple[str, ...]
+    chain_manifest_sha256: str
+
+
+class ArtifactInventoryReceipt(FrozenModel):
+    expected: tuple[str, ...]
+    observed: tuple[str, ...]
+    download_outcome: str
+    receipt_sha256: str
+
+
+class RetryTimingDecision(FrozenModel):
+    action: Literal["retry_now", "waiting_retry", "blocked"]
+    retry_not_before: datetime | None
+    delay_seconds: int
+    reason_code: str
+
+
+class AuthorityRecoverySnapshot(FrozenModel):
+    authority_id: str
+    request_issue_number: int
+    state: Literal["reserved", "running", "recovering", "waiting_retry"]
+    retry_not_before: datetime | None
+    owner_run_state: Literal[
+        "queued",
+        "in_progress",
+        "completed",
+        "missing",
+        "ambiguous",
+        "cancelled",
+    ]
+    latest_failure_class: FailureClass
+    engine_started: bool
+    valid_checkpoint_count: int
+    evidence_complete: bool
+    current_protocol_sha256: str
+    authority_protocol_sha256: str
+    external_cancellation_proven_transient: bool
+
+
+class WatchdogRecoveryDecision(FrozenModel):
+    action: Literal["noop", "call_controller", "blocked"]
+    issue_numbers: tuple[int, ...]
+    authority_ids: tuple[str, ...]
+    reason_codes: tuple[str, ...]
+
+
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_NORMALIZED_TOKEN = re.compile(r"[^A-Za-z0-9]+")
+
+
+def _normalized_token(value: object, *, uppercase: bool) -> str:
+    normalized = _NORMALIZED_TOKEN.sub("_", str(value).strip()).strip("_")
+    normalized = normalized or "UNKNOWN"
+    return normalized.upper() if uppercase else normalized.lower()
+
+
+def _normalized_repository_frame(value: object) -> str | None:
+    if value is None:
+        return None
+    frame = str(value).strip().replace("\\", "/")
+    lowered = frame.casefold()
+    marker = "aurora/"
+    offset = lowered.rfind(marker)
+    if offset >= 0:
+        frame = frame[offset:]
+    return frame.casefold()
+
+
+def failure_fingerprint(
+    *,
+    failure_class: FailureClass,
+    reason_code: str,
+    stage: str,
+    logical_scope_id: str,
+    exit_code: int | None = None,
+    exception_type: str | None = None,
+    normalized_frame: str | None = None,
+    message: str | None = None,
+) -> str:
+    """Hash only stable scoped failure identity; dynamic message noise is ignored."""
+
+    del message
+    scope = str(logical_scope_id).strip()
+    if not scope:
+        raise ValueError("FAILURE_LOGICAL_SCOPE_ID_REQUIRED")
+    payload = {
+        "schema_version": "catalog-failure-fingerprint-v1",
+        "failure_class": str(failure_class),
+        "reason_code": _normalized_token(reason_code, uppercase=True),
+        "stage": _normalized_token(stage, uppercase=False),
+        "logical_scope_id": scope,
+        "exit_code": int(exit_code) if exit_code is not None else None,
+        "exception_type": (
+            _normalized_token(exception_type, uppercase=False)
+            if exception_type
+            else None
+        ),
+        "normalized_frame": _normalized_repository_frame(normalized_frame),
+    }
+    return canonical_sha256(payload)
+
+
+def validate_checkpoint_slot_chain(
+    slots: Sequence[CheckpointSlotEvidence],
+    *,
+    logical_scope_id: str,
+    expected_slot_count: int,
+) -> CheckpointChainSelection:
+    """Accept only one contiguous, uploaded, hash-linked checkpoint prefix."""
+
+    if expected_slot_count not in {1, 2, 4, 8}:
+        raise RecoveryEvidenceError("RECOVERY_CHECKPOINT_SLOT_COUNT_INVALID")
+    ordered = tuple(sorted(slots, key=lambda item: item.slot_index))
+    if not ordered:
+        return CheckpointChainSelection(
+            logical_scope_id=logical_scope_id,
+            completed_slot_count=0,
+            next_slot_index=1,
+            latest_receipt_sha256="0" * 64,
+            reused_artifacts=(),
+            chain_manifest_sha256=canonical_sha256([]),
+        )
+    if len({item.slot_index for item in ordered}) != len(ordered):
+        raise RecoveryEvidenceError("RECOVERY_CHECKPOINT_SLOT_DUPLICATE")
+    previous = "0" * 64
+    manifest: list[dict[str, object]] = []
+    for expected_index, slot in enumerate(ordered, start=1):
+        if (
+            slot.logical_scope_id != logical_scope_id
+            or slot.slot_count != expected_slot_count
+            or slot.slot_index != expected_index
+            or not slot.artifact_uploaded
+            or not _SHA256.fullmatch(slot.previous_receipt_sha256)
+            or not _SHA256.fullmatch(slot.receipt_sha256)
+            or slot.previous_receipt_sha256 != previous
+            or not slot.artifact_name
+        ):
+            raise RecoveryEvidenceError("RECOVERY_CHECKPOINT_CHAIN_INVALID")
+        manifest.append(
+            {
+                "slot_index": slot.slot_index,
+                "artifact_name": slot.artifact_name,
+                "previous_receipt_sha256": slot.previous_receipt_sha256,
+                "receipt_sha256": slot.receipt_sha256,
+            }
+        )
+        previous = slot.receipt_sha256
+    if len(ordered) > expected_slot_count:
+        raise RecoveryEvidenceError("RECOVERY_CHECKPOINT_CHAIN_INVALID")
+    return CheckpointChainSelection(
+        logical_scope_id=logical_scope_id,
+        completed_slot_count=len(ordered),
+        next_slot_index=(
+            len(ordered) + 1 if len(ordered) < expected_slot_count else None
+        ),
+        latest_receipt_sha256=previous,
+        reused_artifacts=tuple(item.artifact_name for item in ordered),
+        chain_manifest_sha256=canonical_sha256(manifest),
+    )
+
+
+def reconcile_expected_artifacts(
+    *,
+    expected: Sequence[str],
+    observed: Sequence[str],
+    download_outcome: str,
+) -> ArtifactInventoryReceipt:
+    """Prove an exact artifact set after every optional-pattern download."""
+
+    expected_set = tuple(sorted(str(item) for item in expected))
+    observed_set = tuple(sorted(str(item) for item in observed))
+    if (
+        len(expected_set) != len(set(expected_set))
+        or len(observed_set) != len(set(observed_set))
+        or any(not item or "/" in item or "\\" in item for item in expected_set)
+        or any(not item or "/" in item or "\\" in item for item in observed_set)
+    ):
+        raise RecoveryEvidenceError("RECOVERY_ARTIFACT_SET_INVALID")
+    normalized_outcome = str(download_outcome).casefold()
+    if normalized_outcome not in {"success", "skipped"}:
+        raise RecoveryEvidenceError("RECOVERY_ARTIFACT_DOWNLOAD_FAILED")
+    if normalized_outcome == "skipped" and expected_set:
+        raise RecoveryEvidenceError("RECOVERY_ARTIFACT_DOWNLOAD_SKIPPED")
+    if expected_set != observed_set:
+        raise RecoveryEvidenceError("RECOVERY_ARTIFACT_SET_MISMATCH")
+    payload = {
+        "schema_version": "catalog-recovery-artifact-inventory-v1",
+        "expected": expected_set,
+        "observed": observed_set,
+        "download_outcome": normalized_outcome,
+    }
+    return ArtifactInventoryReceipt(
+        expected=expected_set,
+        observed=observed_set,
+        download_outcome=normalized_outcome,
+        receipt_sha256=canonical_sha256(payload),
+    )
+
+
+def plan_retry_timing(
+    *,
+    now: datetime,
+    failure_occurrence_count: int,
+    retry_after_seconds: int | None = None,
+    rate_limit_reset: datetime | None = None,
+) -> RetryTimingDecision:
+    """Choose bounded immediate retry or durable waiting without runner sleep."""
+
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("RECOVERY_NOW_MUST_BE_TIMEZONE_AWARE")
+    if failure_occurrence_count < 1:
+        raise ValueError("RECOVERY_FAILURE_OCCURRENCE_INVALID")
+    if failure_occurrence_count >= 3:
+        return RetryTimingDecision(
+            action="blocked",
+            retry_not_before=None,
+            delay_seconds=0,
+            reason_code="SAME_FAILURE_OCCURRENCE_LIMIT",
+        )
+    fallback = 30 * (2 ** (failure_occurrence_count - 1))
+    candidates = [fallback]
+    if retry_after_seconds is not None:
+        candidates.append(max(0, min(int(retry_after_seconds), 86_400)))
+    if rate_limit_reset is not None:
+        if rate_limit_reset.tzinfo is None or rate_limit_reset.utcoffset() is None:
+            raise ValueError("RECOVERY_RATE_LIMIT_RESET_INVALID")
+        candidates.append(
+            max(0, min(int((rate_limit_reset - now).total_seconds()), 86_400))
+        )
+    delay = max(candidates)
+    if delay > 60:
+        return RetryTimingDecision(
+            action="waiting_retry",
+            retry_not_before=now.astimezone(UTC) + timedelta(seconds=delay),
+            delay_seconds=delay,
+            reason_code="RETRY_DELAY_REQUIRES_WATCHDOG",
+        )
+    return RetryTimingDecision(
+        action="retry_now",
+        retry_not_before=None,
+        delay_seconds=delay,
+        reason_code="BOUNDED_RETRY_ALLOWED",
+    )
+
+
+def decide_watchdog_reentry(
+    authorities: Sequence[AuthorityRecoverySnapshot],
+    *,
+    now: datetime,
+    claimed_authority_ids: Sequence[str] = (),
+) -> WatchdogRecoveryDecision:
+    """Select existing resumable authorities; never create or steal authority."""
+
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("CATALOG_WATCHDOG_NOW_INVALID")
+    if not authorities:
+        return WatchdogRecoveryDecision(
+            action="noop", issue_numbers=(), authority_ids=(), reason_codes=()
+        )
+    claimed = set(claimed_authority_ids)
+    selected: list[AuthorityRecoverySnapshot] = []
+    for authority in sorted(authorities, key=lambda item: item.authority_id):
+        if authority.authority_id in claimed:
+            continue
+        if not authority.evidence_complete or authority.owner_run_state in {
+            "missing",
+            "ambiguous",
+        }:
+            return WatchdogRecoveryDecision(
+                action="blocked",
+                issue_numbers=(),
+                authority_ids=(authority.authority_id,),
+                reason_codes=("CATALOG_WATCHDOG_EVIDENCE_AMBIGUOUS",),
+            )
+        if (
+            authority.current_protocol_sha256
+            != authority.authority_protocol_sha256
+        ):
+            return WatchdogRecoveryDecision(
+                action="blocked",
+                issue_numbers=(),
+                authority_ids=(authority.authority_id,),
+                reason_codes=("CATALOG_RECOVERY_PROTOCOL_MISMATCH",),
+            )
+        if authority.owner_run_state in {"queued", "in_progress"}:
+            continue
+        if authority.owner_run_state == "cancelled" and not (
+            authority.external_cancellation_proven_transient
+        ):
+            return WatchdogRecoveryDecision(
+                action="blocked",
+                issue_numbers=(),
+                authority_ids=(authority.authority_id,),
+                reason_codes=("BLOCKED_EXTERNAL_INTERVENTION",),
+            )
+        if (
+            authority.state == "waiting_retry"
+            and authority.retry_not_before is not None
+            and now < authority.retry_not_before
+        ):
+            continue
+        resumable = (
+            authority.state == "reserved" and not authority.engine_started
+        ) or (
+            authority.state in {"running", "recovering", "waiting_retry"}
+            and authority.engine_started
+            and authority.valid_checkpoint_count > 0
+            and authority.latest_failure_class in TRANSIENT_CLASSES | REPLAN_CLASSES
+        )
+        if resumable:
+            selected.append(authority)
+    if not selected:
+        return WatchdogRecoveryDecision(
+            action="noop", issue_numbers=(), authority_ids=(), reason_codes=()
+        )
+    return WatchdogRecoveryDecision(
+        action="call_controller",
+        issue_numbers=tuple(item.request_issue_number for item in selected),
+        authority_ids=tuple(item.authority_id for item in selected),
+        reason_codes=(),
+    )
 
 
 def classify_failure(payload: Mapping[str, Any]) -> FailureClass:
@@ -128,7 +509,7 @@ def classify_failure(payload: Mapping[str, Any]) -> FailureClass:
         or payload.get("conclusion")
         or ""
     ).upper()
-    return REASON_CLASS.get(reason, FailureClass.CODE)
+    return REASON_CLASS.get(reason, FailureClass.UNKNOWN)
 
 
 def _attempt_number(attempt_id: str) -> tuple[int, str]:
@@ -136,8 +517,8 @@ def _attempt_number(attempt_id: str) -> tuple[int, str]:
     return (int(digits) if digits else -1, attempt_id)
 
 
-def _new_attempt_id() -> str:
-    return f"a-{uuid.uuid4()}"
+def _new_attempt_id(fingerprint: str, occurrence: int) -> str:
+    return f"recovery-{occurrence + 1}-{fingerprint[:20]}"
 
 
 def _best_checkpoint(
@@ -165,6 +546,9 @@ def _retry_descriptor(
     shard: ShardDefinition,
     attempt_id: str,
     checkpoint: CheckpointManifest | None,
+    *,
+    fingerprint: str,
+    occurrence: int,
 ) -> Mapping[str, Any]:
     return {
         "shard_id": shard.shard_id,
@@ -176,6 +560,11 @@ def _retry_descriptor(
         "assignment_artifact": shard.assignment_artifact,
         "assignment_member": shard.assignment_member,
         "assignment_sha256": shard.assignment_sha256,
+        "failure_fingerprint": fingerprint,
+        "failure_occurrence_count": occurrence,
+        "resume_completed_unit_count": (
+            checkpoint.completed_unit_count if checkpoint is not None else 0
+        ),
     }
 
 
@@ -200,15 +589,28 @@ def build_recovery_plan(
     decisions: list[RecoveryDecision] = []
     retry_descriptors: list[Mapping[str, Any]] = []
     selected_checkpoint_artifacts: set[str] = set()
+    failure_history: list[dict[str, object]] = []
+    maximum_occurrence = 0
+    identical_duplicate_success_count = 0
     for shard in ordered_shards:
         shard_attempts = sorted(
             attempts_by_shard.get(shard.shard_id, []),
             key=lambda item: _attempt_number(item.attempt_id),
         )
-        if shard_attempts and any(
-            item.state is TerminalState.COMPLETED
+        completed_attempts = tuple(
+            item
             for item in shard_attempts
-        ):
+            if item.state is TerminalState.COMPLETED
+        )
+        if completed_attempts:
+            output_hashes = {item.output_sha256 for item in completed_attempts}
+            if len(output_hashes) != 1:
+                raise RecoveryEvidenceError(
+                    f"RECOVERY_CONFLICTING_SUCCESS:{shard.shard_id}"
+                )
+            identical_duplicate_success_count += max(
+                0, len(completed_attempts) - 1
+            )
             continue
         if shard_attempts:
             prior = shard_attempts[-1]
@@ -219,19 +621,49 @@ def build_recovery_plan(
             reason = "MISSING_ATTEMPT"
             failure_class = FailureClass.RUNNER_LOST
             prior_attempt_id = "missing"
+        fingerprint = failure_fingerprint(
+            failure_class=failure_class,
+            reason_code=reason,
+            stage="recipe_worker",
+            logical_scope_id=shard.shard_id,
+        )
+        same_failure_occurrences = sum(
+            failure_fingerprint(
+                failure_class=classify_failure(
+                    {"reason_code": attempt.reason_code or "UNKNOWN"}
+                ),
+                reason_code=attempt.reason_code or "UNKNOWN",
+                stage="recipe_worker",
+                logical_scope_id=shard.shard_id,
+            )
+            == fingerprint
+            for attempt in shard_attempts
+            if attempt.state is TerminalState.FAILED_TECHNICAL
+        )
+        if not shard_attempts:
+            same_failure_occurrences = 1
+        maximum_occurrence = max(maximum_occurrence, same_failure_occurrences)
+        failure_history.append(
+            {
+                "logical_scope_id": shard.shard_id,
+                "failure_fingerprint": fingerprint,
+                "occurrence_count": same_failure_occurrences,
+            }
+        )
         checkpoint = _best_checkpoint(shard.shard_id, checkpoints)
         if failure_class in TRANSIENT_CLASSES:
-            budget = int(retry_policy.get(failure_class.value, 0))
-            same_class_failures = sum(
-                classify_failure(
-                    {"reason_code": attempt.reason_code or ""}
+            budget = min(2, max(0, int(retry_policy.get(failure_class.value, 0))))
+            if same_failure_occurrences >= 3:
+                decision = RecoveryDecision(
+                    shard_id=shard.shard_id,
+                    prior_attempt_id=prior_attempt_id,
+                    action="do_not_retry",
+                    failure_class=failure_class.value,
+                    next_attempt_id=None,
+                    checkpoint_artifact=None,
+                    reason_code="SAME_FAILURE_OCCURRENCE_LIMIT",
                 )
-                is failure_class
-                for attempt in shard_attempts
-                if attempt.state is TerminalState.FAILED_TECHNICAL
-            )
-            retries_used = max(0, same_class_failures - 1)
-            if retries_used >= budget:
+            elif same_failure_occurrences > budget:
                 decision = RecoveryDecision(
                     shard_id=shard.shard_id,
                     prior_attempt_id=prior_attempt_id,
@@ -242,7 +674,10 @@ def build_recovery_plan(
                     reason_code="RETRY_BUDGET_EXHAUSTED",
                 )
             else:
-                next_attempt = _new_attempt_id()
+                next_attempt = _new_attempt_id(
+                    fingerprint,
+                    same_failure_occurrences,
+                )
                 decision = RecoveryDecision(
                     shard_id=shard.shard_id,
                     prior_attempt_id=prior_attempt_id,
@@ -257,23 +692,45 @@ def build_recovery_plan(
                     reason_code=reason,
                 )
                 retry_descriptors.append(
-                    _retry_descriptor(shard, next_attempt, checkpoint)
+                    _retry_descriptor(
+                        shard,
+                        next_attempt,
+                        checkpoint,
+                        fingerprint=fingerprint,
+                        occurrence=same_failure_occurrences,
+                    )
                 )
                 if checkpoint is not None:
                     selected_checkpoint_artifacts.add(
                         checkpoint.artifact_name
                     )
         elif failure_class in REPLAN_CLASSES:
-            decision = RecoveryDecision(
-                shard_id=shard.shard_id,
-                prior_attempt_id=prior_attempt_id,
-                action="replan",
-                failure_class=failure_class.value,
-                next_attempt_id=None,
-                checkpoint_artifact=None,
-                reason_code=reason,
-            )
+            if same_failure_occurrences >= 3:
+                decision = RecoveryDecision(
+                    shard_id=shard.shard_id,
+                    prior_attempt_id=prior_attempt_id,
+                    action="do_not_retry",
+                    failure_class=failure_class.value,
+                    next_attempt_id=None,
+                    checkpoint_artifact=None,
+                    reason_code="SAME_FAILURE_OCCURRENCE_LIMIT",
+                )
+            else:
+                decision = RecoveryDecision(
+                    shard_id=shard.shard_id,
+                    prior_attempt_id=prior_attempt_id,
+                    action="replan",
+                    failure_class=failure_class.value,
+                    next_attempt_id=None,
+                    checkpoint_artifact=None,
+                    reason_code=reason,
+                )
         else:
+            blocked_reason = (
+                "BLOCKED_EXTERNAL_INTERVENTION"
+                if failure_class is FailureClass.WORKFLOW_OR_JOB_CANCELLED
+                else reason
+            )
             decision = RecoveryDecision(
                 shard_id=shard.shard_id,
                 prior_attempt_id=prior_attempt_id,
@@ -281,7 +738,7 @@ def build_recovery_plan(
                 failure_class=failure_class.value,
                 next_attempt_id=None,
                 checkpoint_artifact=None,
-                reason_code=reason,
+                reason_code=blocked_reason,
             )
         decisions.append(decision)
 
@@ -326,6 +783,15 @@ def build_recovery_plan(
             ),
         )
     )
+    history_sha256 = canonical_sha256(
+        sorted(
+            failure_history,
+            key=lambda item: (
+                str(item["logical_scope_id"]),
+                str(item["failure_fingerprint"]),
+            ),
+        )
+    )
     payload = {
         "decisions": [deep_thaw_json(item) for item in decisions],
         "checkpoint_audit": [
@@ -335,6 +801,19 @@ def build_recovery_plan(
         "retry_matrix_b": [dict(item) for item in matrix_b],
         "has_retry_matrix_a": bool(matrix_a),
         "has_retry_matrix_b": bool(matrix_b),
+        "failure_occurrence_count": maximum_occurrence,
+        "failure_history_manifest_sha256": history_sha256,
+        "failure_fingerprints": tuple(
+            sorted(
+                {
+                    str(item["failure_fingerprint"])
+                    for item in failure_history
+                }
+            )
+        ),
+        "identical_duplicate_success_count": (
+            identical_duplicate_success_count
+        ),
     }
     return RecoveryPlan(
         **payload,
@@ -453,7 +932,7 @@ def build_recovery_loop(
         next_wave = current_wave + 1
         reasons = ()
     elif retry_count:
-        status = RecoveryLoopStatus.BUDGET_EXHAUSTED
+        status = RecoveryLoopStatus.BLOCKED_HARD_FAILURE
         next_wave = None
         retry_count = 0
         reasons = ("RECOVERY_WAVE_BUDGET_EXHAUSTED",)
@@ -468,12 +947,15 @@ def build_recovery_loop(
             plan_sha256=canonical_sha256(payload),
         )
     elif do_not_retry and all(
-        decision.reason_code == "RETRY_BUDGET_EXHAUSTED"
+        decision.failure_class
+        == FailureClass.DETERMINISTIC_SCIENTIFIC_ENGINE_FAILURE.value
         for decision in do_not_retry
     ):
-        status = RecoveryLoopStatus.BUDGET_EXHAUSTED
+        status = RecoveryLoopStatus.FAILED_SCIENTIFIC
         next_wave = None
-        reasons = ("RETRY_BUDGET_EXHAUSTED",)
+        reasons = tuple(
+            dict.fromkeys(decision.reason_code for decision in do_not_retry)
+        )
     elif do_not_retry:
         status = RecoveryLoopStatus.BLOCKED_HARD_FAILURE
         next_wave = None
@@ -530,7 +1012,7 @@ def write_recovery_plan(
     plan: RecoveryPlan,
     output_dir: Path,
     *,
-    max_output_bytes: int = 262_144,
+    max_output_bytes: int = 524_288,
 ) -> tuple[Path, Path, Path, Path]:
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -544,9 +1026,12 @@ def write_recovery_plan(
         separators=(",", ":"),
         sort_keys=True,
     )
-    if len(compact_a.encode()) + len(compact_b.encode()) >= max_output_bytes:
+    matrix_output_bytes = len(compact_a.encode("utf-16-le")) + len(
+        compact_b.encode("utf-16-le")
+    )
+    if matrix_output_bytes > max_output_bytes:
         raise RecoveryMatrixTooLarge(
-            "recovery matrix outputs exceed 262144 bytes"
+            "recovery matrix UTF-16 outputs exceed 524288 bytes"
         )
     plan_path = _atomic_json(root / "recovery_plan.json", plan)
     matrix_a_path = _atomic_text(
@@ -741,6 +1226,8 @@ def build_terminal_unit_evidence_from_paths(
                 grouped[row.unit_key].append(row)
 
     selected: list[UnitAttemptRecord] = []
+    identical_duplicate_unit_keys: list[str] = []
+    duplicate_attempt_ids: list[str] = []
     for unit_key in sorted(grouped):
         candidates = sorted(
             grouped[unit_key],
@@ -758,6 +1245,11 @@ def build_terminal_unit_evidence_from_paths(
                     f"conflicting completed output hashes for {unit_key}"
                 )
             chosen = completed[0]
+            if len(completed) > 1:
+                identical_duplicate_unit_keys.append(unit_key)
+                duplicate_attempt_ids.extend(
+                    item.attempt_id for item in completed[1:]
+                )
         else:
             chosen = candidates[-1]
         selected.append(chosen)
@@ -788,6 +1280,8 @@ def build_terminal_unit_evidence_from_paths(
             canonical_sha256(payload) if payload else None
         ),
         source_artifacts=tuple(sorted(source_artifacts)),
+        identical_duplicate_unit_keys=tuple(identical_duplicate_unit_keys),
+        duplicate_attempt_ids=tuple(sorted(duplicate_attempt_ids)),
     )
 
 
@@ -851,7 +1345,7 @@ def build_recovery_plan_from_paths(
         else:
             checkpoints_list.append(checkpoint)
     checkpoints = tuple(checkpoints_list)
-    spec = load_github_yaml(Path(spec_path))
+    spec = _load_recovery_spec(Path(spec_path))
     retry_policy = spec.get("retries", {})
     if not isinstance(retry_policy, Mapping):
         raise ValueError("spec.retries must be a mapping")
@@ -903,7 +1397,7 @@ def build_recovery_loop_from_paths(
             )
         else:
             checkpoints_list.append(checkpoint)
-    spec = load_github_yaml(Path(spec_path))
+    spec = _load_recovery_spec(Path(spec_path))
     retry_policy = spec.get("retries", {})
     if not isinstance(retry_policy, Mapping):
         raise ValueError("spec.retries must be a mapping")

@@ -133,6 +133,13 @@ def test_replan_fixture_preserves_science_and_leaves_only_pending_units(
         logical_unit_manifest_sha256=manifest.sha256,
         logical_unit_count=manifest.unit_count,
         active_plan_sha256=plan.plan_sha256,
+        authority_id="authority-replan-fixture",
+        request_sha256="b" * 64,
+        protected_commit_sha="c" * 40,
+        execution_protocol_sha256="d" * 64,
+        controller_decision_sha256="e" * 64,
+        component_store_manifest_sha256="f" * 64,
+        failure_history_manifest_sha256="1" * 64,
         created_at=created_at,
     )
     write_campaign_state(initial, state_root)

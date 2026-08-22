@@ -4,8 +4,8 @@ Este documento registra **todos** los workflows presentes durante la migración 
 
 ## Resultado
 
-- Workflows inventariados: **178**.
-- Hash canónico del inventario final: `0e49e55b342d1e360860cbca19277252e16618ee044e50e5460069acbb85109c`.
+- Workflows inventariados: **180**.
+- Hash canónico del inventario final: `1f4881728efae54df75e262b61aa82c22d6ebe9683adc5ee41b17cd776e526ad`.
 - Estado final del validador de topología: **READY**.
 - Campaña activa: `sp500-optimized-catalog-v1` mediante `optimized_catalog_v1`.
 - Los Atlas antiguos y sus wrappers quedan inactivos y sin disparador público. Su código se conserva para trazabilidad, pero no existe un llamador autorizado.
@@ -51,10 +51,12 @@ Este documento registra **todos** los workflows presentes durante la migración 
 | .github/workflows/catalog-optimized-run.yml | workflow_call, workflow_dispatch | yes | optimized_catalog_v1 | sp500-optimized-catalog-v1 | workflow_call | removed direct dispatch; sealed active engine | sealed heavy engine and environment tests |
 | .github/workflows/catalog-optimized-verify-only.yml | workflow_call | no | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
 | .github/workflows/catalog-optimized-worker.yml | workflow_call | yes | optimized_catalog_v1 | sp500-optimized-catalog-v1 | workflow_call | sealed worker inputs and protected environment | sealed heavy engine and environment tests |
+| .github/workflows/catalog-recovery-wave.yml | not present | yes | optimized_catalog_v1 | sp500-optimized-catalog-v1 | workflow_call | created as the bounded selective-recovery worker path | recovery policy, sealed inputs and topology tests |
 | .github/workflows/catalog-reference-oracle.yml | workflow_call | no | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
 | .github/workflows/catalog-reference-worker.yml | workflow_call | yes | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
 | .github/workflows/catalog-request-reconciler.yml | not present | no | - | - | schedule | created as bounded delivery fallback | bounded reconciler topology test |
 | .github/workflows/catalog-run-controller.yml | not present | yes | - | - | issues, workflow_call | created as sole public signed-request entrypoint | controller trigger, writer, ordering and gate tests |
+| .github/workflows/catalog-run-watchdog.yml | not present | no | - | - | schedule | created as read-only discovery and controller re-entry only | watchdog authority and topology tests |
 | .github/workflows/concurrency-smoke-500.yml | workflow_dispatch | no | - | - | workflow_dispatch | outside catalog execution scope; inventoried with no change | repository topology receipt |
 | .github/workflows/docs.yml | pull_request, push, workflow_dispatch | no | - | - | pull_request, push, workflow_dispatch | outside catalog execution scope; inventoried with no change | repository topology receipt |
 | .github/workflows/free-15m-equity-universe-download.yml | workflow_dispatch | no | - | - | workflow_dispatch | outside catalog execution scope; inventoried with no change | repository topology receipt |

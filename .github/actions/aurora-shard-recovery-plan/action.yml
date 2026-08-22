@@ -1,0 +1,159 @@
+name: Aurora shard recovery plan
+description: Reconcile generic shard attempts and emit one bounded retry wave
+
+inputs:
+  run-label: {description: Stable artifact prefix for the run, required: true}
+  retention-days: {description: Artifact retention period, required: true}
+  wheelhouse-artifact-name: {description: Immutable wheelhouse artifact, required: true}
+  contract-artifact-name: {description: Frozen scientific contract artifact, required: true}
+  plan-artifact-name: {description: Immutable execution plan artifact, required: true}
+  campaign-state-artifact-name: {description: Latest verified campaign state artifact, required: true}
+  current-wave: {description: Recovery wave being reconciled, required: true}
+  max-waves: {description: Maximum recovery wave budget, required: true}
+  next-state-artifact-name: {description: Unique advanced state artifact, required: true}
+
+outputs:
+  matrix_a: {description: First compact retry matrix, value: "${{ steps.outputs.outputs.matrix_a }}"}
+  matrix_b: {description: Second compact retry matrix, value: "${{ steps.outputs.outputs.matrix_b }}"}
+  has_matrix_a: {description: Matrix A contains retries, value: "${{ steps.outputs.outputs.has_matrix_a }}"}
+  has_matrix_b: {description: Matrix B contains retries, value: "${{ steps.outputs.outputs.has_matrix_b }}"}
+  status: {description: Recovery status, value: "${{ steps.outputs.outputs.status }}"}
+  state_artifact_name: {description: Advanced state artifact, value: "${{ steps.outputs.outputs.state_artifact_name }}"}
+
+runs:
+  using: composite
+  steps:
+    - name: Download immutable wheelhouse
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ inputs.wheelhouse-artifact-name }}
+        path: ${{ runner.temp }}/wheelhouse
+    - name: Restore Aurora runtime
+      uses: ./.github/actions/aurora-runtime-setup
+      with:
+        python-version: "3.12"
+        wheelhouse-path: ${{ runner.temp }}/wheelhouse
+        dependency-lock-path: requirements/github-performance.lock
+    - name: Download frozen contract
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ inputs.contract-artifact-name }}
+        path: ${{ runner.temp }}/contract
+    - name: Download execution plan
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ inputs.plan-artifact-name }}
+        path: ${{ runner.temp }}/plan
+    - name: Download previous immutable campaign state
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ inputs.campaign-state-artifact-name }}
+        path: ${{ runner.temp }}/state
+    - name: Require verified latest-state pointer
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -f "$RUNNER_TEMP/state/campaign_state_latest.json"
+    - name: Download all attempt manifests
+      continue-on-error: true
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: ${{ inputs.run-label }}-shard-*
+        path: ${{ runner.temp }}/attempts
+    - name: Download all valid checkpoints
+      continue-on-error: true
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: run-checkpoint-*
+        path: ${{ runner.temp }}/checkpoints
+    - name: Reconcile immutable evidence and advance campaign
+      shell: bash
+      env:
+        CURRENT_WAVE: ${{ inputs.current-wave }}
+        MAX_WAVES: ${{ inputs.max-waves }}
+      run: |
+        set -euo pipefail
+        mapfile -t attempts < <(
+          find "$RUNNER_TEMP/attempts" \
+            -name shard_attempt_manifest.json -type f 2>/dev/null |
+            sort
+        )
+        mapfile -t checkpoints < <(
+          find "$RUNNER_TEMP/checkpoints" \
+            -name checkpoint_manifest.json -type f 2>/dev/null |
+            sort
+        )
+        mapfile -t unit_attempts < <(
+          find "$RUNNER_TEMP/attempts" \
+            -name unit_attempts.parquet -type f 2>/dev/null |
+            sort
+        )
+        args=(
+          --spec "$RUNNER_TEMP/contract/resolved_run_spec.json"
+          --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json"
+          --state-root "$RUNNER_TEMP/state"
+          --output-dir "$RUNNER_TEMP/recovery"
+          --current-wave "$CURRENT_WAVE"
+          --max-waves "$MAX_WAVES"
+        )
+        for path in "${attempts[@]}"; do args+=(--attempt "$path"); done
+        for path in "${unit_attempts[@]}"; do
+          args+=(--unit-attempt "$path")
+        done
+        for path in "${checkpoints[@]}"; do
+          args+=(--checkpoint "$path")
+        done
+        aurora github recovery-loop "${args[@]}"
+    - name: Emit compact recovery outputs
+      id: outputs
+      shell: bash
+      env:
+        STATE_ARTIFACT_NAME: ${{ inputs.next-state-artifact-name }}
+      run: |
+        set -euo pipefail
+        python - <<'PY'
+        import json
+        import os
+        from pathlib import Path
+
+        root = Path(os.environ["RUNNER_TEMP"]) / "recovery"
+        loop = json.loads(
+            (root / "recovery_loop.json").read_text(encoding="utf-8")
+        )
+        plan = json.loads(
+            (root / "recovery_plan.json").read_text(encoding="utf-8")
+        )
+        values = {
+            "matrix_a": (root / "retry_matrix_a.json").read_text(
+                encoding="utf-8"
+            ).strip(),
+            "matrix_b": (root / "retry_matrix_b.json").read_text(
+                encoding="utf-8"
+            ).strip(),
+            "has_matrix_a": str(plan["has_retry_matrix_a"]).lower(),
+            "has_matrix_b": str(plan["has_retry_matrix_b"]).lower(),
+            "status": loop["status"],
+            "state_artifact_name": os.environ["STATE_ARTIFACT_NAME"],
+        }
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+            for name, value in values.items():
+                out.write(f"{name}={value}\n")
+        PY
+    - name: Upload recovery evidence
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: ${{ inputs.run-label }}-recovery-wave-${{ inputs.current-wave }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/recovery
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: ${{ inputs.retention-days }}
+    - name: Upload next immutable campaign state
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: ${{ inputs.next-state-artifact-name }}
+        path: ${{ runner.temp }}/state
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: ${{ inputs.retention-days }}

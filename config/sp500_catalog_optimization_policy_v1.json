@@ -82,6 +82,7 @@
     "maximum_checkpoint_overhead_fraction_p95": 0.05,
     "valid_work_reuse_required": true,
     "global_rerun_allowed": false,
-    "max_same_failure_occurrences": 3
+    "max_same_failure_occurrences": 3,
+    "max_total_recovery_waves": 6
   }
 }

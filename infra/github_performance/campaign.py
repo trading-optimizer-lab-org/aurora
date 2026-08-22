@@ -28,6 +28,7 @@ class CampaignPhase(str, Enum):
     PLANNED = "planned"
     EXECUTING = "executing"
     RECOVERING = "recovering"
+    WAITING_RETRY = "waiting_retry"
     REPLANNING = "replanning"
     READY_TO_MERGE = "ready_to_merge"
     MERGING = "merging"
@@ -66,6 +67,13 @@ class CampaignState(FrozenModel):
     previous_state_sha256: str | None
     state_sha256: str
     phase: CampaignPhase
+    authority_id: str
+    request_sha256: str
+    protected_commit_sha: str
+    execution_protocol_sha256: str
+    controller_decision_sha256: str
+    component_store_manifest_sha256: str
+    failure_history_manifest_sha256: str
     scientific_contract_sha256: str
     logical_unit_manifest_sha256: str
     logical_unit_count: int = Field(ge=0)
@@ -73,6 +81,7 @@ class CampaignState(FrozenModel):
     completed_unit_count: int = Field(ge=0)
     pending_unit_count: int = Field(ge=0)
     active_plan_sha256: str
+    replan_receipt_sha256: str | None
     operational_overrides: Mapping[str, Any]
     verified_source_artifacts: tuple[str, ...]
     active_attempt_ids: tuple[str, ...]
@@ -80,6 +89,7 @@ class CampaignState(FrozenModel):
     merge_only: bool
     compute_scheduled: bool
     hard_failure_reason: str | None
+    retry_not_before: datetime | None
     created_at: datetime
 
     @field_validator(
@@ -87,6 +97,11 @@ class CampaignState(FrozenModel):
         "scientific_contract_sha256",
         "logical_unit_manifest_sha256",
         "active_plan_sha256",
+        "request_sha256",
+        "execution_protocol_sha256",
+        "controller_decision_sha256",
+        "component_store_manifest_sha256",
+        "failure_history_manifest_sha256",
         mode="after",
     )
     @classmethod
@@ -97,18 +112,40 @@ class CampaignState(FrozenModel):
             raise ValueError("expected lowercase sha256")
         return value
 
-    @field_validator("previous_state_sha256", "completed_unit_manifest_sha256")
+    @field_validator(
+        "previous_state_sha256",
+        "completed_unit_manifest_sha256",
+        "replan_receipt_sha256",
+    )
     @classmethod
     def _require_optional_sha256(cls, value: str | None) -> str | None:
         if value is not None:
             cls._require_sha256(value)
         return value
 
-    @field_validator("created_at")
+    @field_validator("created_at", "retry_not_before")
     @classmethod
-    def _require_timezone(cls, value: datetime) -> datetime:
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
         if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("created_at must be timezone-aware")
+            raise ValueError("campaign timestamps must be timezone-aware")
+        return value
+
+    @field_validator("protected_commit_sha")
+    @classmethod
+    def _require_commit_sha(cls, value: str) -> str:
+        if len(value) != 40 or any(
+            character not in "0123456789abcdef" for character in value
+        ):
+            raise ValueError("expected lowercase protected commit sha")
+        return value
+
+    @field_validator("authority_id")
+    @classmethod
+    def _require_authority_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("authority_id is required")
         return value
 
     @field_validator("operational_overrides", mode="after")
@@ -147,6 +184,19 @@ class CampaignState(FrozenModel):
             raise ValueError("completed units require immutable evidence")
         if self.merge_only and self.compute_scheduled:
             raise ValueError("merge-only cannot schedule compute")
+        if self.phase is CampaignPhase.WAITING_RETRY:
+            if self.retry_not_before is None or self.compute_scheduled:
+                raise ValueError(
+                    "waiting retry requires a deadline and no scheduled compute"
+                )
+        elif self.retry_not_before is not None:
+            raise ValueError("retry_not_before is valid only while waiting")
+        if self.phase is CampaignPhase.READY_TO_MERGE and (
+            self.pending_unit_count != 0
+            or self.completed_unit_count != self.logical_unit_count
+            or self.completed_unit_manifest_sha256 is None
+        ):
+            raise ValueError("ready-to-merge requires every logical unit")
         if self.phase is CampaignPhase.COMPLETED and (
             self.pending_unit_count != 0
             or self.completed_unit_count != self.logical_unit_count
@@ -184,7 +234,27 @@ def initialize_campaign_state(
     logical_unit_count: int,
     active_plan_sha256: str,
     created_at: datetime,
+    authority_id: str | None = None,
+    request_sha256: str | None = None,
+    protected_commit_sha: str | None = None,
+    execution_protocol_sha256: str | None = None,
+    controller_decision_sha256: str | None = None,
+    component_store_manifest_sha256: str | None = None,
+    failure_history_manifest_sha256: str | None = None,
 ) -> CampaignState:
+    bindings = (
+        authority_id,
+        request_sha256,
+        protected_commit_sha,
+        execution_protocol_sha256,
+        controller_decision_sha256,
+        component_store_manifest_sha256,
+        failure_history_manifest_sha256,
+    )
+    if any(value is not None for value in bindings) and not all(
+        value is not None for value in bindings
+    ):
+        raise ValueError("campaign authority bindings must be supplied together")
     return _build_state(
         {
             "schema_version": "1",
@@ -192,6 +262,21 @@ def initialize_campaign_state(
             "version": 0,
             "previous_state_sha256": None,
             "phase": CampaignPhase.PLANNED,
+            "authority_id": authority_id or campaign_id,
+            "request_sha256": request_sha256 or scientific_contract_sha256,
+            "protected_commit_sha": protected_commit_sha or "0" * 40,
+            "execution_protocol_sha256": (
+                execution_protocol_sha256 or scientific_contract_sha256
+            ),
+            "controller_decision_sha256": (
+                controller_decision_sha256 or active_plan_sha256
+            ),
+            "component_store_manifest_sha256": (
+                component_store_manifest_sha256 or "0" * 64
+            ),
+            "failure_history_manifest_sha256": (
+                failure_history_manifest_sha256 or canonical_sha256([])
+            ),
             "scientific_contract_sha256": scientific_contract_sha256,
             "logical_unit_manifest_sha256": (
                 logical_unit_manifest_sha256
@@ -201,6 +286,7 @@ def initialize_campaign_state(
             "completed_unit_count": 0,
             "pending_unit_count": logical_unit_count,
             "active_plan_sha256": active_plan_sha256,
+            "replan_receipt_sha256": None,
             "operational_overrides": {},
             "verified_source_artifacts": (),
             "active_attempt_ids": (),
@@ -208,6 +294,7 @@ def initialize_campaign_state(
             "merge_only": False,
             "compute_scheduled": True,
             "hard_failure_reason": None,
+            "retry_not_before": None,
             "created_at": created_at,
         }
     )
@@ -217,8 +304,49 @@ _TERMINAL_PHASES = frozenset(
     {
         CampaignPhase.COMPLETED,
         CampaignPhase.BLOCKED_HARD_FAILURE,
+        CampaignPhase.BLOCKED_EXTERNAL,
     }
 )
+
+
+_ALLOWED_TRANSITIONS = {
+    CampaignPhase.PLANNED: frozenset({CampaignPhase.EXECUTING}),
+    CampaignPhase.EXECUTING: frozenset(
+        {
+            CampaignPhase.RECOVERING,
+            CampaignPhase.WAITING_RETRY,
+            CampaignPhase.READY_TO_MERGE,
+            CampaignPhase.BLOCKED_HARD_FAILURE,
+        }
+    ),
+    CampaignPhase.RECOVERING: frozenset(
+        {
+            CampaignPhase.RECOVERING,
+            CampaignPhase.WAITING_RETRY,
+            CampaignPhase.REPLANNING,
+            CampaignPhase.READY_TO_MERGE,
+            CampaignPhase.BLOCKED_HARD_FAILURE,
+        }
+    ),
+    CampaignPhase.WAITING_RETRY: frozenset(
+        {CampaignPhase.RECOVERING, CampaignPhase.BLOCKED_HARD_FAILURE}
+    ),
+    CampaignPhase.REPLANNING: frozenset(
+        {
+            CampaignPhase.RECOVERING,
+            CampaignPhase.WAITING_RETRY,
+            CampaignPhase.READY_TO_MERGE,
+            CampaignPhase.BLOCKED_HARD_FAILURE,
+        }
+    ),
+    CampaignPhase.READY_TO_MERGE: frozenset({CampaignPhase.MERGING}),
+    CampaignPhase.MERGING: frozenset(
+        {CampaignPhase.VERIFYING, CampaignPhase.BLOCKED_HARD_FAILURE}
+    ),
+    CampaignPhase.VERIFYING: frozenset(
+        {CampaignPhase.COMPLETED, CampaignPhase.BLOCKED_HARD_FAILURE}
+    ),
+}
 
 
 def transition_campaign_state(
@@ -236,10 +364,23 @@ def transition_campaign_state(
     merge_only: bool | None = None,
     compute_scheduled: bool | None = None,
     hard_failure_reason: str | None = None,
+    retry_not_before: datetime | None = None,
+    replan_receipt_sha256: str | None = None,
     created_at: datetime,
 ) -> CampaignState:
     if previous.phase in _TERMINAL_PHASES:
         raise CampaignTransitionError("terminal campaign cannot transition")
+    if phase not in _ALLOWED_TRANSITIONS.get(previous.phase, frozenset()):
+        raise CampaignTransitionError(
+            f"illegal campaign transition: {previous.phase.value}->{phase.value}"
+        )
+    if (
+        previous.phase is CampaignPhase.WAITING_RETRY
+        and phase is CampaignPhase.RECOVERING
+        and previous.retry_not_before is not None
+        and created_at < previous.retry_not_before
+    ):
+        raise CampaignTransitionError("waiting retry is not due")
     completed = (
         previous.completed_unit_count
         if completed_unit_count is None
@@ -263,7 +404,6 @@ def transition_campaign_state(
         )
     merge_mode = previous.merge_only if merge_only is None else merge_only
     default_compute = phase in {
-        CampaignPhase.PLANNED,
         CampaignPhase.EXECUTING,
         CampaignPhase.RECOVERING,
         CampaignPhase.REPLANNING,
@@ -271,6 +411,28 @@ def transition_campaign_state(
     compute = default_compute if compute_scheduled is None else compute_scheduled
     if merge_mode:
         compute = False
+    if phase is CampaignPhase.WAITING_RETRY:
+        if retry_not_before is None:
+            raise CampaignTransitionError(
+                "waiting retry requires retry_not_before"
+            )
+        compute = False
+    elif retry_not_before is not None:
+        raise CampaignTransitionError(
+            "retry_not_before is valid only for waiting retry"
+        )
+    requested_plan = active_plan_sha256 or previous.active_plan_sha256
+    plan_changed = requested_plan != previous.active_plan_sha256
+    if plan_changed and not (
+        previous.phase is CampaignPhase.REPLANNING
+        and phase is CampaignPhase.RECOVERING
+        and replan_receipt_sha256 is not None
+    ):
+        raise CampaignTransitionError(
+            "active plan change requires an explicit replan receipt"
+        )
+    if replan_receipt_sha256 is not None:
+        CampaignState._require_sha256(replan_receipt_sha256)
     return _build_state(
         {
             "schema_version": "1",
@@ -278,6 +440,21 @@ def transition_campaign_state(
             "version": previous.version + 1,
             "previous_state_sha256": previous.state_sha256,
             "phase": phase,
+            "authority_id": previous.authority_id,
+            "request_sha256": previous.request_sha256,
+            "protected_commit_sha": previous.protected_commit_sha,
+            "execution_protocol_sha256": (
+                previous.execution_protocol_sha256
+            ),
+            "controller_decision_sha256": (
+                previous.controller_decision_sha256
+            ),
+            "component_store_manifest_sha256": (
+                previous.component_store_manifest_sha256
+            ),
+            "failure_history_manifest_sha256": (
+                previous.failure_history_manifest_sha256
+            ),
             "scientific_contract_sha256": (
                 previous.scientific_contract_sha256
             ),
@@ -288,8 +465,11 @@ def transition_campaign_state(
             "completed_unit_manifest_sha256": completed_sha,
             "completed_unit_count": completed,
             "pending_unit_count": pending,
-            "active_plan_sha256": (
-                active_plan_sha256 or previous.active_plan_sha256
+            "active_plan_sha256": requested_plan,
+            "replan_receipt_sha256": (
+                replan_receipt_sha256
+                if replan_receipt_sha256 is not None
+                else previous.replan_receipt_sha256
             ),
             "operational_overrides": (
                 operational_overrides
@@ -310,6 +490,11 @@ def transition_campaign_state(
             "merge_only": merge_mode,
             "compute_scheduled": compute,
             "hard_failure_reason": hard_failure_reason,
+            "retry_not_before": (
+                retry_not_before
+                if phase is CampaignPhase.WAITING_RETRY
+                else None
+            ),
             "created_at": created_at,
         }
     )
@@ -322,6 +507,7 @@ def replan_campaign_state(
     logical_unit_manifest_sha256: str,
     completed_unit_manifest_sha256: str | None,
     operational_overrides: Mapping[str, Any],
+    replan_receipt_sha256: str,
     created_at: datetime,
 ) -> CampaignState:
     if (
@@ -344,15 +530,38 @@ def replan_campaign_state(
             "replan contains non-operational fields: "
             + ",".join(sorted(unknown))
         )
+    if previous.phase is not CampaignPhase.REPLANNING:
+        raise CampaignTransitionError("replan requires REPLANNING state")
     return transition_campaign_state(
         previous,
-        phase=CampaignPhase.PLANNED,
+        phase=CampaignPhase.RECOVERING,
         active_plan_sha256=new_plan_sha256,
         operational_overrides=operational_overrides,
+        replan_receipt_sha256=replan_receipt_sha256,
         merge_only=False,
         compute_scheduled=True,
         created_at=created_at,
     )
+
+
+def assert_recovery_protocol_compatible(
+    *,
+    authority_protocol_sha256: str,
+    current_protocol_sha256: str,
+    qualified_compatibility_pairs: tuple[tuple[str, str], ...] = (),
+) -> None:
+    """Block protocol drift unless an exact protected compatibility pair exists."""
+
+    CampaignState._require_sha256(authority_protocol_sha256)
+    CampaignState._require_sha256(current_protocol_sha256)
+    if authority_protocol_sha256 == current_protocol_sha256:
+        return
+    if (
+        authority_protocol_sha256,
+        current_protocol_sha256,
+    ) in qualified_compatibility_pairs:
+        return
+    raise CampaignTransitionError("CATALOG_RECOVERY_PROTOCOL_MISMATCH")
 
 
 def begin_merge_only(

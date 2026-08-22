@@ -604,6 +604,7 @@ def test_issues_write_is_job_scoped_to_the_exact_governance_jobs() -> None:
         (".github/workflows/catalog-run-controller.yml", "finalize"),
         (".github/workflows/catalog-request-reconciler.yml", "call_controller"),
         (".github/workflows/catalog-ledger-guard.yml", "record_tamper_incident"),
+        (".github/workflows/catalog-run-watchdog.yml", "call_controller"),
     }
 
 
@@ -634,3 +635,145 @@ def test_repository_catalog_topology_is_closed_and_content_hashed() -> None:
     assert receipt.violations == ()
     assert len(receipt.inventory) == len(tuple(WORKFLOWS.glob("*.y*ml")))
     assert re.fullmatch(r"[0-9a-f]{64}", receipt.receipt_sha256)
+
+
+def test_recovery_wave_is_closed_bounded_and_reuses_the_worker() -> None:
+    path = WORKFLOWS / "catalog-recovery-wave.yml"
+    workflow = _workflow(path)
+    assert workflow["on"].keys() == {"workflow_call"}
+    inputs = workflow["on"]["workflow_call"]["inputs"]
+    assert set(inputs) == SEALED_IDENTIFIERS | {
+        "campaign_state_artifact",
+        "attempt_manifest_artifacts",
+        "checkpoint_manifest_artifacts",
+        "current_wave",
+    }
+    assert workflow["permissions"] == {"actions": "read", "contents": "read"}
+    assert workflow["concurrency"] == {
+        "group": "catalog-recovery-${{ inputs.authority_id }}",
+        "cancel-in-progress": False,
+        "queue": "max",
+    }
+    jobs = workflow["jobs"]
+    assert set(jobs) == {
+        "reconcile",
+        "retry_a",
+        "retry_b",
+        "finalize_wave",
+    }
+    assert jobs["retry_a"]["uses"] == (
+        "./.github/workflows/catalog-optimized-worker.yml"
+    )
+    assert jobs["retry_b"]["uses"] == (
+        "./.github/workflows/catalog-optimized-worker.yml"
+    )
+    text = path.read_text("utf-8").casefold()
+    assert "workflow_dispatch" not in text
+    assert "gh run rerun" not in text
+    assert "gh workflow run" not in text
+    assert "continue-on-error" not in text
+    assert "expected_attempt_count" in text
+    assert "expected_checkpoint_count" in text
+
+
+def test_engine_unrolls_exactly_six_selective_recovery_slots() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-optimized-run.yml")
+    jobs = workflow["jobs"]
+    assert "reconcile_wave_0" in jobs
+    for wave in range(1, 7):
+        job = jobs[f"recovery_wave_{wave}"]
+        assert job["uses"] == "./.github/workflows/catalog-recovery-wave.yml"
+        serialized = json.dumps(job, sort_keys=True)
+        assert f"current_wave\": {wave}" in serialized
+        assert "retry" in serialized and "replan" in serialized
+    assert "recovery_wave_7" not in jobs
+    final_gate = jobs["ready_to_merge"]
+    assert "recovery_wave_6" in final_gate["needs"]
+    text = (WORKFLOWS / "catalog-optimized-run.yml").read_text("utf-8")
+    assert "rerun all jobs" not in text.casefold()
+    assert "catalog-recovery-wave.yml" in text
+
+
+def test_checkpoint_upload_must_finish_before_the_next_segment() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-optimized-worker.yml")
+    steps = workflow["jobs"]["evaluate"]["steps"]
+    by_id = {
+        step.get("id"): step
+        for step in steps
+        if isinstance(step, dict) and step.get("id")
+    }
+    for slot in range(2, 9):
+        condition = str(by_id[f"compute_{slot}"]["if"])
+        assert f"steps.upload_{slot - 1}.outputs['artifact-id'] != ''" in condition
+        assert f"steps.upload_{slot - 1}.outputs['artifact-digest'] != ''" in condition
+
+
+def test_recovery_action_accepts_zero_checkpoint_prefix_but_validates_any_chain() -> None:
+    text = (
+        ROOT / ".github/actions/aurora-recovery-plan/action.yml"
+    ).read_text("utf-8")
+    assert "validate_checkpoint_slot_chain" in text
+    assert "CheckpointSlotEvidence" in text
+    assert 'descriptor["prior_checkpoint_chain_artifact"] = (' in text
+    assert 'checkpoint.artifact_name if checkpoint is not None else ""' in text
+    assert "RECOVERY_AUTHORITATIVE_CHECKPOINT_MISSING" not in text
+
+
+def test_watchdog_can_only_reenter_controller_for_existing_authority() -> None:
+    path = WORKFLOWS / "catalog-run-watchdog.yml"
+    workflow = _workflow(path)
+    assert workflow["on"] == {"schedule": [{"cron": "*/15 * * * *"}]}
+    assert workflow["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "issues": "read",
+    }
+    jobs = workflow["jobs"]
+    assert set(jobs) == {"discover", "call_controller"}
+    call = jobs["call_controller"]
+    assert call["uses"] == "./.github/workflows/catalog-run-controller.yml"
+    assert "steps" not in call
+    assert call["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "issues": "write",
+    }
+    text = path.read_text("utf-8")
+    for forbidden in (
+        "workflow_dispatch",
+        "repository_dispatch",
+        "RESERVED",
+        "create_catalog_run_request",
+        "catalog-recovery-wave.yml",
+        "catalog-optimized-run.yml",
+        "build_sp500_component_store",
+        "run_sp500_optimized_recipe_worker",
+    ):
+        assert forbidden not in text
+    assert "ref: main" in text
+    assert "issue_number: ${{ matrix.issue_number }}" in text
+
+
+def test_catalog_reusable_workflow_graph_stays_below_github_limits() -> None:
+    documents = _all_workflows()
+    root = ".github/workflows/catalog-run-controller.yml"
+    visited: set[str] = set()
+
+    def walk(path: str, depth: int) -> int:
+        assert depth <= 10
+        if path in visited:
+            return depth
+        visited.add(path)
+        workflow = documents[path]
+        maximum = depth
+        for job in workflow.get("jobs", {}).values():
+            if not isinstance(job, dict):
+                continue
+            uses = job.get("uses")
+            if isinstance(uses, str) and uses.startswith("./.github/workflows/"):
+                target = uses.removeprefix("./")
+                maximum = max(maximum, walk(target, depth + 1))
+        return maximum
+
+    assert walk(root, 1) <= 10
+    assert len(visited) <= 50

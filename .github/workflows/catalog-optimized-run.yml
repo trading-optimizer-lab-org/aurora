@@ -1311,19 +1311,364 @@ jobs:
       descriptor_sha256: ${{ matrix.descriptor_sha256 }}
       admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
 
-  reduce_groups:
+  reconcile_wave_0:
     needs:
       - engine_verify_sealed_plan
+      - verify_component_store
       - evaluate_a
       - evaluate_b
       - evaluate_c
+    if: ${{ always() && needs.engine_verify_sealed_plan.result == 'success' && needs.verify_component_store.result == 'success' }}
+    runs-on: ubuntu-24.04
+    environment: catalog-production
+    timeout-minutes: 20
+    permissions: {actions: read, contents: read}
+    outputs:
+      status: ${{ steps.state.outputs.status }}
+      campaign_state_artifact: ${{ steps.state.outputs.campaign_state_artifact }}
+      attempt_manifest_artifacts: ${{ steps.state.outputs.attempt_manifest_artifacts }}
+      checkpoint_manifest_artifacts: ${{ steps.state.outputs.checkpoint_manifest_artifacts }}
+    steps:
+      - name: Check out exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+
+      - name: Download the sealed execution plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-sealed-execution-plan-${{ inputs.authority_id }}
+          path: ${{ runner.temp }}/sealed-plan
+
+      - name: Download the verified component-store seal
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-component-store-seal-${{ inputs.authority_id }}
+          path: ${{ runner.temp }}/component-store-seal
+
+      - name: Download the one exact offline runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.runtime_transport_artifact }}
+          path: ${{ runner.temp }}/runtime-transport
+
+      - name: Restore the exact runtime offline
+        id: runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.11"
+          runtime-mode: ${{ needs.engine_verify_sealed_plan.outputs.runtime_mode }}
+          runtime-object-path: ${{ runner.temp }}/runtime-transport
+          runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
+          dependency-lock-path: requirements/catalog-optimized.lock
+          expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
+          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
+
+      - name: Fetch two stable complete artifact inventories
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for snapshot in 1 2; do
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+              > "$RUNNER_TEMP/artifacts-$snapshot.json"
+          done
+          cmp --silent "$RUNNER_TEMP/artifacts-1.json" "$RUNNER_TEMP/artifacts-2.json" || {
+            echo "CATALOG_INITIAL_ARTIFACT_INVENTORY_UNSTABLE" >&2
+            exit 1
+          }
+
+      - name: Seal initial executing state and exact recovery inventory
+        id: state
+        env:
+          RUNTIME_PYTHON: ${{ steps.runtime.outputs.runtime-python }}
+          AUTHORITY_ID: ${{ inputs.authority_id }}
+          CAMPAIGN_ID: ${{ inputs.campaign_id }}
+          REQUEST_SHA256: ${{ inputs.request_sha256 }}
+          SCIENCE_SHA256: ${{ inputs.science_sha256 }}
+          EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
+          EXECUTION_PROTOCOL_SHA256: ${{ inputs.execution_protocol_sha256 }}
+          PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          DECISION_SHA256: ${{ inputs.decision_sha256 }}
+          ACTIVE_RECIPE_WORKERS: ${{ needs.engine_verify_sealed_plan.outputs.active_recipe_workers }}
+          EVALUATE_A_RESULT: ${{ needs.evaluate_a.result }}
+          EVALUATE_B_RESULT: ${{ needs.evaluate_b.result }}
+          EVALUATE_C_RESULT: ${{ needs.evaluate_c.result }}
+        run: |
+          set -euo pipefail
+          "$RUNTIME_PYTHON" - <<'PY'
+          import hashlib
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          from aurora.infra.github_performance.campaign import (
+              CampaignPhase,
+              initialize_campaign_state,
+              transition_campaign_state,
+              write_campaign_state,
+          )
+          from aurora.infra.github_performance.contracts import canonical_sha256
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          plan_root = temp / "sealed-plan"
+          receipt = json.loads(
+              (plan_root / "execution_plan_receipt.json").read_text("utf-8")
+          )
+          work_manifest = json.loads(
+              (plan_root / "resume_work_manifest.json").read_text("utf-8")
+          )
+          if (
+              receipt.get("authority_id") != os.environ["AUTHORITY_ID"]
+              or receipt.get("campaign_id") != os.environ["CAMPAIGN_ID"]
+              or receipt.get("execution_plan_sha256")
+              != os.environ["EXECUTION_PLAN_SHA256"]
+          ):
+              raise SystemExit("CATALOG_INITIAL_STATE_PLAN_BINDING_INVALID")
+          pages = json.loads((temp / "artifacts-1.json").read_text("utf-8"))
+          artifacts = [row for page in pages for row in page.get("artifacts", [])]
+          names = sorted(
+              str(row["name"])
+              for row in artifacts
+              if row.get("expired") is False
+          )
+          attempts = sorted(
+              name for name in names if name.startswith("catalog-terminal-attempt-")
+          )
+          checkpoints = sorted(
+              name for name in names if name.startswith("catalog-checkpoint-")
+          )
+          expected_workers = int(os.environ["ACTIVE_RECIPE_WORKERS"])
+          all_workers_green = all(
+              os.environ[name] in {"success", "skipped"}
+              for name in (
+                  "EVALUATE_A_RESULT",
+                  "EVALUATE_B_RESULT",
+                  "EVALUATE_C_RESULT",
+              )
+          )
+          expected_checkpoint_policy = json.loads(
+              (plan_root / "checkpoint_policy.json").read_text("utf-8")
+          )
+          expected_checkpoints = sorted(
+              artifact
+              for row in expected_checkpoint_policy["workers"]
+              for artifact in row["checkpoint_slot_artifacts"][
+                  : row["checkpoint_slot_count"]
+              ]
+          )
+          if all_workers_green and (
+              len(attempts) != expected_workers
+              or checkpoints != expected_checkpoints
+          ):
+              raise SystemExit("CATALOG_GREEN_WAVE_ARTIFACT_AMBIGUITY")
+
+          component_seal = temp / "component-store-seal/component-store-seal.json"
+          component_sha256 = hashlib.sha256(component_seal.read_bytes()).hexdigest()
+          now = datetime.now(UTC)
+          state_root = temp / "campaign-state"
+          initial = initialize_campaign_state(
+              campaign_id=os.environ["CAMPAIGN_ID"],
+              scientific_contract_sha256=os.environ["SCIENCE_SHA256"],
+              logical_unit_manifest_sha256=work_manifest["manifest_sha256"],
+              logical_unit_count=int(receipt["pending_recipe_count"]),
+              active_plan_sha256=os.environ["EXECUTION_PLAN_SHA256"],
+              authority_id=os.environ["AUTHORITY_ID"],
+              request_sha256=os.environ["REQUEST_SHA256"],
+              protected_commit_sha=os.environ["PROTECTED_COMMIT_SHA"],
+              execution_protocol_sha256=os.environ[
+                  "EXECUTION_PROTOCOL_SHA256"
+              ],
+              controller_decision_sha256=os.environ["DECISION_SHA256"],
+              component_store_manifest_sha256=component_sha256,
+              failure_history_manifest_sha256=canonical_sha256([]),
+              created_at=now,
+          )
+          write_campaign_state(initial, state_root)
+          executing = transition_campaign_state(
+              initial,
+              phase=CampaignPhase.EXECUTING,
+              created_at=now,
+          )
+          write_campaign_state(executing, state_root)
+          artifact_name = f"catalog-campaign-state-{os.environ['AUTHORITY_ID']}-wave-0"
+          outputs = {
+              "status": "retry",
+              "campaign_state_artifact": artifact_name,
+              "attempt_manifest_artifacts": json.dumps(
+                  attempts, separators=(",", ":")
+              ),
+              "checkpoint_manifest_artifacts": json.dumps(
+                  checkpoints, separators=(",", ":")
+              ),
+          }
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for key, value in outputs.items():
+                  output.write(f"{key}={value}\n")
+          PY
+
+      - name: Publish initial immutable campaign state
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.state.outputs.campaign_state_artifact }}
+          path: ${{ runner.temp }}/campaign-state
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  recovery_wave_1:
+    needs: reconcile_wave_0
+    if: ${{ needs.reconcile_wave_0.outputs.status == 'retry' || needs.reconcile_wave_0.outputs.status == 'replan' }}
+    permissions: {actions: read, contents: read}
+    uses: ./.github/workflows/catalog-recovery-wave.yml
+    with:
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
+      campaign_state_artifact: ${{ needs.reconcile_wave_0.outputs.campaign_state_artifact }}
+      attempt_manifest_artifacts: ${{ needs.reconcile_wave_0.outputs.attempt_manifest_artifacts }}
+      checkpoint_manifest_artifacts: ${{ needs.reconcile_wave_0.outputs.checkpoint_manifest_artifacts }}
+      current_wave: 1
+
+  recovery_wave_2:
+    needs: recovery_wave_1
+    if: ${{ needs.recovery_wave_1.outputs.status == 'retry' || needs.recovery_wave_1.outputs.status == 'replan' }}
+    permissions: {actions: read, contents: read}
+    uses: ./.github/workflows/catalog-recovery-wave.yml
+    with:
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
+      campaign_state_artifact: ${{ needs.recovery_wave_1.outputs.campaign_state_artifact }}
+      attempt_manifest_artifacts: ${{ needs.recovery_wave_1.outputs.attempt_manifest_artifacts }}
+      checkpoint_manifest_artifacts: ${{ needs.recovery_wave_1.outputs.checkpoint_manifest_artifacts }}
+      current_wave: 2
+
+  recovery_wave_3:
+    needs: recovery_wave_2
+    if: ${{ needs.recovery_wave_2.outputs.status == 'retry' || needs.recovery_wave_2.outputs.status == 'replan' }}
+    permissions: {actions: read, contents: read}
+    uses: ./.github/workflows/catalog-recovery-wave.yml
+    with:
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
+      campaign_state_artifact: ${{ needs.recovery_wave_2.outputs.campaign_state_artifact }}
+      attempt_manifest_artifacts: ${{ needs.recovery_wave_2.outputs.attempt_manifest_artifacts }}
+      checkpoint_manifest_artifacts: ${{ needs.recovery_wave_2.outputs.checkpoint_manifest_artifacts }}
+      current_wave: 3
+
+  recovery_wave_4:
+    needs: recovery_wave_3
+    if: ${{ needs.recovery_wave_3.outputs.status == 'retry' || needs.recovery_wave_3.outputs.status == 'replan' }}
+    permissions: {actions: read, contents: read}
+    uses: ./.github/workflows/catalog-recovery-wave.yml
+    with:
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
+      campaign_state_artifact: ${{ needs.recovery_wave_3.outputs.campaign_state_artifact }}
+      attempt_manifest_artifacts: ${{ needs.recovery_wave_3.outputs.attempt_manifest_artifacts }}
+      checkpoint_manifest_artifacts: ${{ needs.recovery_wave_3.outputs.checkpoint_manifest_artifacts }}
+      current_wave: 4
+
+  recovery_wave_5:
+    needs: recovery_wave_4
+    if: ${{ needs.recovery_wave_4.outputs.status == 'retry' || needs.recovery_wave_4.outputs.status == 'replan' }}
+    permissions: {actions: read, contents: read}
+    uses: ./.github/workflows/catalog-recovery-wave.yml
+    with:
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
+      campaign_state_artifact: ${{ needs.recovery_wave_4.outputs.campaign_state_artifact }}
+      attempt_manifest_artifacts: ${{ needs.recovery_wave_4.outputs.attempt_manifest_artifacts }}
+      checkpoint_manifest_artifacts: ${{ needs.recovery_wave_4.outputs.checkpoint_manifest_artifacts }}
+      current_wave: 5
+
+  recovery_wave_6:
+    needs: recovery_wave_5
+    if: ${{ needs.recovery_wave_5.outputs.status == 'retry' || needs.recovery_wave_5.outputs.status == 'replan' }}
+    permissions: {actions: read, contents: read}
+    uses: ./.github/workflows/catalog-recovery-wave.yml
+    with:
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
+      campaign_state_artifact: ${{ needs.recovery_wave_5.outputs.campaign_state_artifact }}
+      attempt_manifest_artifacts: ${{ needs.recovery_wave_5.outputs.attempt_manifest_artifacts }}
+      checkpoint_manifest_artifacts: ${{ needs.recovery_wave_5.outputs.checkpoint_manifest_artifacts }}
+      current_wave: 6
+
+  ready_to_merge:
+    needs:
+      - reconcile_wave_0
+      - recovery_wave_1
+      - recovery_wave_2
+      - recovery_wave_3
+      - recovery_wave_4
+      - recovery_wave_5
+      - recovery_wave_6
+    if: >-
+      ${{ always() &&
+      (needs.recovery_wave_1.outputs.status == 'complete' ||
+      needs.recovery_wave_2.outputs.status == 'complete' ||
+      needs.recovery_wave_3.outputs.status == 'complete' ||
+      needs.recovery_wave_4.outputs.status == 'complete' ||
+      needs.recovery_wave_5.outputs.status == 'complete' ||
+      needs.recovery_wave_6.outputs.status == 'complete') }}
+    runs-on: ubuntu-24.04
+    environment: catalog-production
+    timeout-minutes: 5
+    permissions: {actions: read, contents: read}
+    steps:
+      - name: Check out exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+      - name: Confirm selective recovery reached merge readiness
+        run: echo "CATALOG_RECOVERY_READY_TO_MERGE"
+
+  reduce_groups:
+    needs:
+      - engine_verify_sealed_plan
+      - ready_to_merge
     if: >-
       ${{ always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.engine_verify_sealed_plan.outputs.reduction_matrix_count != '0' &&
-      (needs.evaluate_a.result == 'success' || needs.evaluate_a.result == 'skipped') &&
-      (needs.evaluate_b.result == 'success' || needs.evaluate_b.result == 'skipped') &&
-      (needs.evaluate_c.result == 'success' || needs.evaluate_c.result == 'skipped') }}
+      needs.ready_to_merge.result == 'success' }}
     strategy:
       fail-fast: false
       max-parallel: 15

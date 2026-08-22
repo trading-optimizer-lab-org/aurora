@@ -1,0 +1,172 @@
+name: AURORA catalog authority watchdog
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  actions: read
+  contents: read
+  issues: read
+
+concurrency:
+  group: catalog-authority-watchdog-v1
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      matrix_count: ${{ steps.select.outputs.matrix_count }}
+    steps:
+      - name: Check out the protected default branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Use the controller Python family
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+
+      - name: Install only the locked controller dependencies
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r requirements/catalog-controller-linux-py311.lock
+
+      - name: Fetch two complete read-only governance snapshots
+        id: snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          anchor = json.loads(
+              Path("config/catalog_authority_anchor_v1.json").read_text("utf-8")
+          )
+          if anchor.get("production_enabled") is not True:
+              Path("watchdog-disabled").write_text("true\n", encoding="utf-8")
+              raise SystemExit(0)
+          number = anchor.get("issue_number")
+          if not isinstance(number, int) or number < 1:
+              raise SystemExit("CATALOG_WATCHDOG_AUTHORITY_ANCHOR_INVALID")
+          Path("authority-number").write_text(f"{number}\n", encoding="utf-8")
+          PY
+          if [ -f watchdog-disabled ]; then
+            exit 0
+          fi
+          authority_number="$(cat authority-number)"
+          for snapshot in 1 2; do
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/issues/$authority_number/comments?per_page=100" \
+              > "authority-comments-$snapshot.json"
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100" \
+              > "actions-runs-$snapshot.json"
+          done
+          cmp --silent authority-comments-1.json authority-comments-2.json || {
+            echo "CATALOG_WATCHDOG_LEDGER_SNAPSHOT_UNSTABLE" >&2
+            exit 1
+          }
+          cmp --silent actions-runs-1.json actions-runs-2.json || {
+            echo "CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_UNSTABLE" >&2
+            exit 1
+          }
+
+      - name: Select only existing, fully evidenced resumable authorities
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          empty = {"include": []}
+          if Path("watchdog-disabled").is_file():
+              matrix = empty
+          else:
+              # Full adoption is deliberately delegated to the controller.
+              # This read-only selector emits only numeric originating issues
+              # from already-existing nonterminal authority records. Any
+              # incomplete provenance leaves the matrix empty and therefore
+              # cannot start work.
+              pages = json.loads(Path("authority-comments-1.json").read_text("utf-8"))
+              comments = [row for page in pages for row in page]
+              marker = "AURORA_CATALOG_AUTHORITY_V1"
+              latest: dict[str, dict[str, object]] = {}
+              for comment in comments:
+                  body = str(comment.get("body") or "")
+                  if marker not in body or "```json" not in body:
+                      continue
+                  raw = body.split("```json", 1)[1].split("```", 1)[0].strip()
+                  try:
+                      record = json.loads(raw)
+                  except (TypeError, ValueError):
+                      raise SystemExit("CATALOG_WATCHDOG_LEDGER_INVALID")
+                  authority_id = str(record.get("authority_id") or "")
+                  sequence = record.get("sequence")
+                  issue_number = record.get("request_issue_number")
+                  if (
+                      not authority_id
+                      or not isinstance(sequence, int)
+                      or not isinstance(issue_number, int)
+                      or issue_number < 1
+                  ):
+                      raise SystemExit("CATALOG_WATCHDOG_LEDGER_INVALID")
+                  previous = latest.get(authority_id)
+                  if previous is None or int(previous["sequence"]) < sequence:
+                      latest[authority_id] = record
+              nonterminal = {"reserved", "running", "recovering", "waiting_retry"}
+              include = []
+              for authority_id, record in sorted(latest.items()):
+                  if record.get("state") not in nonterminal:
+                      continue
+                  # The controller re-fetches the request, ledger, mirrors,
+                  # incidents, current controls and owner-run evidence under
+                  # the global lock. The selector cannot adopt by itself.
+                  include.append(
+                      {
+                          "authority_id": authority_id,
+                          "issue_number": int(record["request_issue_number"]),
+                      }
+                  )
+              matrix = {"include": include}
+          encoded = json.dumps(matrix, sort_keys=True, separators=(",", ":"))
+          if len(encoded.encode("utf-16-le")) > 512 * 1024:
+              raise SystemExit("CATALOG_WATCHDOG_MATRIX_TOO_LARGE")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
+              out.write(f"matrix={encoded}\n")
+              out.write(f"matrix_count={len(matrix['include'])}\n")
+          PY
+
+  call_controller:
+    needs: discover
+    if: ${{ needs.discover.outputs.matrix_count != '0' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    uses: ./.github/workflows/catalog-run-controller.yml
+    with:
+      issue_number: ${{ matrix.issue_number }}

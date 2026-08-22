@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -10,6 +10,7 @@ from aurora.infra.github_performance.campaign import (
     CampaignPhase,
     CampaignStateIntegrityError,
     CampaignTransitionError,
+    assert_recovery_protocol_compatible,
     begin_merge_only,
     initialize_campaign_state,
     load_latest_campaign_state,
@@ -26,6 +27,12 @@ SHA = {
     "units": "2" * 64,
     "completed": "3" * 64,
     "plan": "4" * 64,
+    "request": "5" * 64,
+    "protocol": "6" * 64,
+    "decision": "7" * 64,
+    "components": "8" * 64,
+    "failures": "9" * 64,
+    "replan": "a" * 64,
 }
 
 
@@ -36,6 +43,37 @@ def _initial():
         logical_unit_manifest_sha256=SHA["units"],
         logical_unit_count=10,
         active_plan_sha256=SHA["plan"],
+        authority_id="authority-1",
+        request_sha256=SHA["request"],
+        protected_commit_sha="b" * 40,
+        execution_protocol_sha256=SHA["protocol"],
+        controller_decision_sha256=SHA["decision"],
+        component_store_manifest_sha256=SHA["components"],
+        failure_history_manifest_sha256=SHA["failures"],
+        created_at=NOW,
+    )
+
+
+def _executing():
+    return transition_campaign_state(
+        _initial(),
+        phase=CampaignPhase.EXECUTING,
+        created_at=NOW,
+    )
+
+
+def _replanning():
+    recovering = transition_campaign_state(
+        _executing(),
+        phase=CampaignPhase.RECOVERING,
+        completed_unit_count=4,
+        completed_unit_manifest_sha256=SHA["completed"],
+        pending_unit_count=6,
+        created_at=NOW,
+    )
+    return transition_campaign_state(
+        recovering,
+        phase=CampaignPhase.REPLANNING,
         created_at=NOW,
     )
 
@@ -99,14 +137,7 @@ def test_resume_repairs_interruption_after_immutable_state_write(
 
 
 def test_replan_changes_only_operational_partitioning() -> None:
-    previous = transition_campaign_state(
-        _initial(),
-        phase=CampaignPhase.REPLANNING,
-        completed_unit_count=4,
-        completed_unit_manifest_sha256=SHA["completed"],
-        pending_unit_count=6,
-        created_at=NOW,
-    )
+    previous = _replanning()
     replanned = replan_campaign_state(
         previous,
         new_plan_sha256="5" * 64,
@@ -116,6 +147,7 @@ def test_replan_changes_only_operational_partitioning() -> None:
             "batch_size": 20,
             "checkpoint_interval_seconds": 30,
         },
+        replan_receipt_sha256=SHA["replan"],
         created_at=NOW,
     )
 
@@ -125,7 +157,8 @@ def test_replan_changes_only_operational_partitioning() -> None:
     assert replanned.completed_unit_count == 4
     assert replanned.pending_unit_count == 6
     assert replanned.active_plan_sha256 == "5" * 64
-    assert replanned.phase is CampaignPhase.PLANNED
+    assert replanned.phase is CampaignPhase.RECOVERING
+    assert replanned.replan_receipt_sha256 == SHA["replan"]
 
     with pytest.raises(
         CampaignTransitionError,
@@ -137,13 +170,14 @@ def test_replan_changes_only_operational_partitioning() -> None:
             logical_unit_manifest_sha256="9" * 64,
             completed_unit_manifest_sha256=SHA["completed"],
             operational_overrides={},
+            replan_receipt_sha256=SHA["replan"],
             created_at=NOW,
         )
 
 
 def test_merge_only_reuses_verified_sources_and_schedules_no_compute() -> None:
     ready = transition_campaign_state(
-        _initial(),
+        _executing(),
         phase=CampaignPhase.READY_TO_MERGE,
         completed_unit_count=10,
         completed_unit_manifest_sha256=SHA["completed"],
@@ -169,7 +203,7 @@ def test_merge_only_reuses_verified_sources_and_schedules_no_compute() -> None:
 
 def test_merge_only_can_branch_from_completed_verified_campaign() -> None:
     ready = transition_campaign_state(
-        _initial(),
+        _executing(),
         phase=CampaignPhase.READY_TO_MERGE,
         completed_unit_count=10,
         completed_unit_manifest_sha256=SHA["completed"],
@@ -218,8 +252,8 @@ def test_merge_only_can_branch_from_completed_verified_campaign() -> None:
 
 def test_transition_rejects_completed_count_regression() -> None:
     progressed = transition_campaign_state(
-        _initial(),
-        phase=CampaignPhase.EXECUTING,
+        _executing(),
+        phase=CampaignPhase.RECOVERING,
         completed_unit_count=4,
         completed_unit_manifest_sha256=SHA["completed"],
         pending_unit_count=6,
@@ -235,24 +269,103 @@ def test_transition_rejects_completed_count_regression() -> None:
         )
 
 
-def test_completed_campaign_requires_every_unit_and_manifest() -> None:
-    with pytest.raises(
-        ValueError,
-        match="completed campaign requires every logical unit",
-    ):
+def test_completed_campaign_requires_legal_chain_and_every_unit() -> None:
+    with pytest.raises(CampaignTransitionError, match="illegal campaign transition"):
         transition_campaign_state(
             _initial(),
             phase=CampaignPhase.COMPLETED,
             created_at=NOW,
         )
 
-    completed = transition_campaign_state(
-        _initial(),
-        phase=CampaignPhase.COMPLETED,
+    ready = transition_campaign_state(
+        _executing(),
+        phase=CampaignPhase.READY_TO_MERGE,
         completed_unit_count=10,
         completed_unit_manifest_sha256=SHA["completed"],
         pending_unit_count=0,
         created_at=NOW,
     )
+    merging = transition_campaign_state(
+        ready,
+        phase=CampaignPhase.MERGING,
+        created_at=NOW,
+    )
+    verifying = transition_campaign_state(
+        merging,
+        phase=CampaignPhase.VERIFYING,
+        created_at=NOW,
+    )
+    completed = transition_campaign_state(
+        verifying,
+        phase=CampaignPhase.COMPLETED,
+        created_at=NOW,
+    )
     assert completed.completed_unit_count == completed.logical_unit_count
     assert completed.pending_unit_count == 0
+
+
+def test_authority_bindings_are_mandatory_and_immutable() -> None:
+    state = _executing()
+    assert state.authority_id == "authority-1"
+    assert state.request_sha256 == SHA["request"]
+    assert state.protected_commit_sha == "b" * 40
+    assert state.execution_protocol_sha256 == SHA["protocol"]
+    assert state.controller_decision_sha256 == SHA["decision"]
+    assert state.component_store_manifest_sha256 == SHA["components"]
+    assert state.failure_history_manifest_sha256 == SHA["failures"]
+
+
+def test_only_the_closed_campaign_transition_graph_is_legal() -> None:
+    with pytest.raises(CampaignTransitionError, match="illegal campaign transition"):
+        transition_campaign_state(
+            _initial(),
+            phase=CampaignPhase.READY_TO_MERGE,
+            completed_unit_count=10,
+            completed_unit_manifest_sha256=SHA["completed"],
+            pending_unit_count=0,
+            created_at=NOW,
+        )
+    recovering = transition_campaign_state(
+        _executing(),
+        phase=CampaignPhase.RECOVERING,
+        created_at=NOW,
+    )
+    waiting = transition_campaign_state(
+        recovering,
+        phase=CampaignPhase.WAITING_RETRY,
+        retry_not_before=NOW + timedelta(minutes=5),
+        created_at=NOW,
+    )
+    assert waiting.compute_scheduled is False
+    assert waiting.retry_not_before == NOW + timedelta(minutes=5)
+    resumed = transition_campaign_state(
+        waiting,
+        phase=CampaignPhase.RECOVERING,
+        created_at=NOW + timedelta(minutes=5),
+    )
+    assert resumed.retry_not_before is None
+
+
+def test_active_plan_changes_only_with_explicit_replan_receipt() -> None:
+    with pytest.raises(CampaignTransitionError, match="replan receipt"):
+        transition_campaign_state(
+            _executing(),
+            phase=CampaignPhase.RECOVERING,
+            active_plan_sha256="c" * 64,
+            created_at=NOW,
+        )
+
+
+def test_recovery_protocol_mismatch_blocks_without_guessing_compatibility() -> None:
+    assert_recovery_protocol_compatible(
+        authority_protocol_sha256=SHA["protocol"],
+        current_protocol_sha256=SHA["protocol"],
+    )
+    with pytest.raises(
+        CampaignTransitionError,
+        match="CATALOG_RECOVERY_PROTOCOL_MISMATCH",
+    ):
+        assert_recovery_protocol_compatible(
+            authority_protocol_sha256=SHA["protocol"],
+            current_protocol_sha256="d" * 64,
+        )

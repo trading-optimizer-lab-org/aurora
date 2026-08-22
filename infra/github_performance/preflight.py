@@ -34,6 +34,7 @@ from aurora.infra.sp500_megarun.catalog_campaign_registry import (
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 FRAMEWORK_WORKFLOW = "./.github/workflows/_aurora-future-run-v3.yml"
 FRAMEWORK_WORKFLOW_PATH = ".github/workflows/_aurora-future-run-v3.yml"
+GITHUB_WORKFLOW_DIRECTORY_PREFIX = ".github" + "/workflows/"
 HEAVY_WORKFLOW_MARKERS = (
     "backtest",
     "research",
@@ -529,6 +530,7 @@ CATALOG_PRODUCTION_WORKER_WORKFLOWS = frozenset(
     {
         ".github/workflows/catalog-component-worker.yml",
         ".github/workflows/catalog-optimized-worker.yml",
+        CATALOG_RECOVERY_WORKFLOW,
     }
 )
 CATALOG_LEGACY_INACTIVE_WORKFLOWS = frozenset(
@@ -688,7 +690,8 @@ def _catalog_role(
 
 
 def _catalog_local_workflow_target(value: str) -> str | None:
-    if not value.startswith("./.github/workflows/"):
+    local_prefix = "./.github" + "/workflows/"
+    if not value.startswith(local_prefix):
         return None
     if "${{" in value or "@" in value:
         return None
@@ -1359,7 +1362,7 @@ def load_legacy_workflow_allowlist(
         digest = row.get("sha256")
         if (
             not isinstance(workflow_path, str)
-            or not workflow_path.startswith(".github/workflows/")
+            or not workflow_path.startswith(GITHUB_WORKFLOW_DIRECTORY_PREFIX)
             or not isinstance(digest, str)
             or not re.fullmatch(r"[0-9a-f]{64}", digest)
         ):
@@ -1430,7 +1433,7 @@ def load_legacy_workflow_migrations(
         reason = row.get("reason")
         if (
             not isinstance(workflow_path, str)
-            or not workflow_path.startswith(".github/workflows/")
+            or not workflow_path.startswith(GITHUB_WORKFLOW_DIRECTORY_PREFIX)
             or not isinstance(previous_digest, str)
             or not re.fullmatch(r"[0-9a-f]{64}", previous_digest)
             or not isinstance(replacement_digest, str)

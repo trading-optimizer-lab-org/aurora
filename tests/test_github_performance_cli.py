@@ -219,16 +219,35 @@ def test_campaign_update_preserves_verified_sources_when_omitted(
         logical_unit_manifest_sha256="2" * 64,
         logical_unit_count=2,
         active_plan_sha256="3" * 64,
+        authority_id="authority-test",
+        request_sha256="5" * 64,
+        protected_commit_sha="6" * 40,
+        execution_protocol_sha256="7" * 64,
+        controller_decision_sha256="8" * 64,
+        component_store_manifest_sha256="9" * 64,
+        failure_history_manifest_sha256="a" * 64,
         created_at=now,
     )
     write_campaign_state(initial, state_root)
-    merging = transition_campaign_state(
+    executing = transition_campaign_state(
         initial,
-        phase=CampaignPhase.MERGING,
+        phase=CampaignPhase.EXECUTING,
+        created_at=now,
+    )
+    write_campaign_state(executing, state_root)
+    ready = transition_campaign_state(
+        executing,
+        phase=CampaignPhase.READY_TO_MERGE,
         completed_unit_count=2,
         completed_unit_manifest_sha256="4" * 64,
         pending_unit_count=0,
         verified_source_artifacts=("partial-a", "partial-b"),
+        created_at=now,
+    )
+    write_campaign_state(ready, state_root)
+    merging = transition_campaign_state(
+        ready,
+        phase=CampaignPhase.MERGING,
         created_at=now,
     )
     write_campaign_state(merging, state_root)
