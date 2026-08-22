@@ -181,7 +181,7 @@ def test_registered_bridge_can_allocate_an_encrypted_reserve_database() -> None:
     assert allocation["if"] == "${{ inputs.mode == 'continuous_allocate' }}"
     assert allocation["runs-on"] == "${{ inputs.allocation_runner }}"
     assert dispatch["allocation_runner"]["default"] == "ubuntu-24.04"
-    assert "continuous_allocate' && 'allocation' || 'main'" in str(
+    assert "inputs.mode == 'continuous_allocate' && 'allocation'" in str(
         workflow["concurrency"]["group"]
     )
     assert "allocation_public_key_b64" in dispatch

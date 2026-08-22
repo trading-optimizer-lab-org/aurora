@@ -19,6 +19,7 @@ from infra.readiness_state_controller.engine import (
 )
 from infra.readiness_state_controller.policy import validate_transition_manifest
 from scripts.generate_gtbi_v7_codeowners_contract import (
+    CATALOG_CONTROLLER_PATTERNS,
     CODEOWNERS,
     CONTRACT,
     EXPECTED_PATTERNS,
@@ -27,7 +28,9 @@ from scripts.generate_gtbi_v7_codeowners_contract import (
     OWNER_DIRECTIVE,
     RECEIPT,
     build_codeowners,
+    build_historical_codeowners,
     build_receipt,
+    raw_sha256_bytes,
     build_transition_manifest,
     validate_contract,
 )
@@ -54,7 +57,12 @@ def test_codeowners_contract_and_outputs_are_canonical() -> None:
         receipt,
         omit_top_level_fields=("receipt_digest",),
     )
-    assert receipt["codeowners_sha256"] == raw_sha256(CODEOWNERS)
+    assert receipt["codeowners_sha256"] == raw_sha256_bytes(
+        build_historical_codeowners()
+    )
+    assert CODEOWNERS.read_bytes().startswith(
+        build_historical_codeowners().rstrip(b"\n") + b"\n\n"
+    )
     assert receipt["contract_file_sha256"] == raw_sha256(CONTRACT)
     validate_transition_manifest(manifest)
 
@@ -65,7 +73,10 @@ def test_codeowners_has_exact_owner_only_coverage() -> None:
         for line in CODEOWNERS.read_text(encoding="utf-8").splitlines()
         if line and not line.startswith("#")
     ]
-    assert lines == [f"{pattern} @gomez5757" for pattern in EXPECTED_PATTERNS]
+    assert lines == [
+        f"{pattern} @gomez5757"
+        for pattern in (*EXPECTED_PATTERNS, *CATALOG_CONTROLLER_PATTERNS)
+    ]
     assert len(lines) == len(set(lines))
     assert all(line.endswith(" @gomez5757") for line in lines)
     assert all(line.count("@") == 1 for line in lines)

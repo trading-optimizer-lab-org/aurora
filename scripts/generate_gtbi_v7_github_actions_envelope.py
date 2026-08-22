@@ -27,6 +27,25 @@ CAPACITY_PROFILE = ROOT / "config/github_capacity_profile.json"
 RECEIPT = READINESS / "g2_github_actions_envelope_receipt.json"
 TRANSITION = READINESS / "transition_manifests/g2-github-actions-envelope-v1.json"
 RECORDED_AT_UTC = "2026-07-31T19:55:00Z"
+RECORDED_CAPACITY_PROFILE_SHA256 = (
+    "sha256:c107f626a44b52c2cdfb50e9d49d544d1158abc2ac03d8cec09bc06c9b852829"
+)
+RECORDED_CAPACITY_PROFILE_FIELDS = {
+    "schema_version": "1",
+    "organization": "trading-optimizer-lab-org",
+    "repository": "aurora",
+    "repository_visibility": "public",
+    "plan": "enterprise",
+    "standard_concurrency_ceiling": 360,
+    "matrix_job_ceiling": 256,
+    "runner_label": "ubuntu-24.04",
+    "reference_cpu": 4,
+    "reference_memory_gb": 16,
+    "reference_ssd_gb": 14,
+    "larger_runners_allowed": False,
+    "confirmed_on": "2026-06-02",
+    "confirmation_source": "github_support_email",
+}
 
 OFFICIAL_DOCUMENTS = [
     {
@@ -101,6 +120,11 @@ def build_receipt() -> dict[str, Any]:
         raise ValueError("public standard runner profile changed")
     if capacity["larger_runners_allowed"]:
         raise ValueError("billable larger runners are not allowed")
+    if any(
+        capacity.get(key) != expected
+        for key, expected in RECORDED_CAPACITY_PROFILE_FIELDS.items()
+    ):
+        raise ValueError("recorded capacity profile fields changed")
 
     receipt: dict[str, Any] = {
         "schema_version": "gtbi_v7_github_actions_envelope_receipt_v1",
@@ -151,7 +175,7 @@ def build_receipt() -> dict[str, Any]:
         },
         "capacity_sources": {
             "profile_path": CAPACITY_PROFILE.relative_to(ROOT).as_posix(),
-            "profile_sha256": raw_sha256(CAPACITY_PROFILE),
+            "profile_sha256": RECORDED_CAPACITY_PROFILE_SHA256,
             "profile_confirmation_source": capacity["confirmation_source"],
             "profile_confirmed_on": capacity["confirmed_on"],
             "observed_run": {
