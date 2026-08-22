@@ -8,7 +8,7 @@ from typing import Literal, TypeAlias
 
 from pydantic import Field, field_validator
 
-from .catalog_request_contract import FrozenModel
+from .catalog_request_contract import FrozenModel, Sha256
 
 
 _PATH_FIELDS = (
@@ -82,6 +82,7 @@ class CatalogCampaignEntryV1(FrozenModel):
     feature_contract_path: str
     runtime_input_run_id: int = Field(ge=1)
     reference_run_id: int = Field(ge=1)
+    scientific_contract_sha256: Sha256
     max_free_workers: int = Field(ge=1, le=360)
     allowed_protected_branch: Literal["main"]
     source_artifact_contracts: tuple[CatalogSourceArtifactContract, ...] = Field(

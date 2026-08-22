@@ -97,56 +97,55 @@ jobs:
           import json
           import os
           from pathlib import Path
+          from aurora.infra.sp500_megarun.catalog_authority_ledger import (
+              extract_authority_comment_records,
+          )
 
           empty = {"include": []}
           if Path("watchdog-disabled").is_file():
               matrix = empty
           else:
-              # Full adoption is deliberately delegated to the controller.
-              # This read-only selector emits only numeric originating issues
-              # from already-existing nonterminal authority records. Any
-              # incomplete provenance leaves the matrix empty and therefore
-              # cannot start work.
               pages = json.loads(Path("authority-comments-1.json").read_text("utf-8"))
               comments = [row for page in pages for row in page]
-              marker = "AURORA_CATALOG_AUTHORITY_V1"
-              latest: dict[str, dict[str, object]] = {}
-              for comment in comments:
-                  body = str(comment.get("body") or "")
-                  if marker not in body or "```json" not in body:
-                      continue
-                  raw = body.split("```json", 1)[1].split("```", 1)[0].strip()
-                  try:
-                      record = json.loads(raw)
-                  except (TypeError, ValueError):
-                      raise SystemExit("CATALOG_WATCHDOG_LEDGER_INVALID")
-                  authority_id = str(record.get("authority_id") or "")
-                  sequence = record.get("sequence")
-                  issue_number = record.get("request_issue_number")
-                  if (
-                      not authority_id
-                      or not isinstance(sequence, int)
-                      or not isinstance(issue_number, int)
-                      or issue_number < 1
-                  ):
-                      raise SystemExit("CATALOG_WATCHDOG_LEDGER_INVALID")
-                  previous = latest.get(authority_id)
-                  if previous is None or int(previous["sequence"]) < sequence:
-                      latest[authority_id] = record
+              records = extract_authority_comment_records(
+                  comments,
+                  expected_author="github-actions[bot]",
+              )
+              latest = {}
+              for record in records:
+                  latest[str(record.authority_id)] = record
+              run_pages = json.loads(Path("actions-runs-1.json").read_text("utf-8"))
+              runs = [
+                  run
+                  for page in run_pages
+                  for run in (page.get("workflow_runs") or [])
+              ]
+              run_states = {}
+              for run in runs:
+                  run_id = run.get("id")
+                  status = run.get("status")
+                  if not isinstance(run_id, int) or status not in {
+                      "queued", "in_progress", "completed"
+                  }:
+                      raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
+                  if run_id in run_states:
+                      raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
+                  run_states[run_id] = status
               nonterminal = {"reserved", "running", "recovering", "waiting_retry"}
               include = []
               for authority_id, record in sorted(latest.items()):
-                  if record.get("state") not in nonterminal:
+                  if record.state.value not in nonterminal:
                       continue
-                  # The controller re-fetches the request, ledger, mirrors,
-                  # incidents, current controls and owner-run evidence under
-                  # the global lock. The selector cannot adopt by itself.
+                  if run_states.get(record.run_id) in {"queued", "in_progress"}:
+                      continue
                   include.append(
                       {
                           "authority_id": authority_id,
-                          "issue_number": int(record["request_issue_number"]),
+                          "issue_number": record.request_issue_number,
                       }
                   )
+              if len(include) > 1:
+                  raise SystemExit("CATALOG_WATCHDOG_ACTIVE_AUTHORITY_CONFLICT")
               matrix = {"include": include}
           encoded = json.dumps(matrix, sort_keys=True, separators=(",", ":"))
           if len(encoded.encode("utf-16-le")) > 512 * 1024:

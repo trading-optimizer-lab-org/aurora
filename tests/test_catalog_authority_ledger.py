@@ -18,9 +18,11 @@ from aurora.infra.sp500_megarun.catalog_authority_ledger import (
     CatalogControllerActorsV1,
     VerifiedAuthorityLedgerV1,
     append_authority_record,
+    extract_authority_comment_records,
     parse_authority_comments,
     reconcile_authority_issue_tamper,
     reconcile_authority_mirrors,
+    reconcile_request_lifecycle,
     reconcile_request_tamper,
     select_campaign_authority,
     verify_authority_checkpoint,
@@ -168,6 +170,18 @@ def _parse_chain(
         expected_author=BOT,
         writer_run_snapshots=(_writer_run_snapshot(records) if snapshots is None else snapshots),
     )
+
+
+def test_comment_records_can_be_extracted_before_writer_provenance_fetch() -> None:
+    records = _valid_chain()
+    comments = [
+        _comment(record.to_comment(), comment_id=index + 1)
+        for index, record in enumerate(records)
+    ]
+    assert extract_authority_comment_records(
+        comments,
+        expected_author=BOT,
+    ) == records
 
 
 def _long_chain(length: int) -> tuple[CatalogAuthorityRecordV1, ...]:
@@ -571,6 +585,77 @@ def test_restored_current_state_does_not_erase_historical_lifecycle_tamper() -> 
     )
     assert result.all_catalog_authorities_blocked is True
     assert result.reason_code == "CATALOG_AUTHORITY_LIFECYCLE_HISTORY_INVALID"
+
+
+def test_request_lifecycle_allows_only_proven_atomic_terminal_close() -> None:
+    running = _running_record()
+    tampered = reconcile_request_lifecycle(
+        running,
+        complete_timeline={
+            "complete": True,
+            "pagination_complete": True,
+            "stable": True,
+            "current_state": "open",
+            "current_labels": [],
+            "historical_events": [
+                {"event": "closed", "actor": "outside-user"},
+                {"event": "reopened", "actor": "outside-user"},
+                {"event": "transferred", "actor": "outside-user"},
+                {"event": "renamed", "actor": "outside-user"},
+                {"event": "locked", "actor": "outside-user"},
+                {"event": "unlocked", "actor": "outside-user"},
+                {"event": "labeled", "actor": "outside-user"},
+                {"event": "unlabeled", "actor": "outside-user"},
+            ],
+        },
+        terminal_close_provenance=None,
+    )
+    assert tampered.authority_blocked is True
+    assert tampered.request_ui_untrusted is True
+    assert tampered.atomic_terminal_close_verified is False
+    assert tampered.reason_code == "CATALOG_REQUEST_LIFECYCLE_TAMPERED"
+
+    success = append_authority_record(
+        previous=running,
+        state=AuthorityState.SUCCESS,
+        writer_job_id="finalize",
+        writer_job_database_id=458,
+        evidence_sha256="e" * 64,
+        created_at=NOW + timedelta(seconds=2),
+    )
+    allowed = reconcile_request_lifecycle(
+        success,
+        complete_timeline={
+            "complete": True,
+            "pagination_complete": True,
+            "stable": True,
+            "current_state": "closed",
+            "current_state_reason": "completed",
+            "current_labels": ["catalog-run-terminal-v1"],
+            "historical_events": [
+                {
+                    "event": "labeled",
+                    "actor": BOT,
+                    "label": "catalog-run-terminal-v1",
+                },
+                {"event": "closed", "actor": BOT},
+            ],
+        },
+        terminal_close_provenance={
+            "verified": True,
+            "atomic_patch": True,
+            "receipt_precedes_events": True,
+            "request_issue_number": success.request_issue_number,
+            "authority_id": str(success.authority_id),
+            "terminal_state": success.state.value,
+            "writer_actor": BOT,
+            "writer_run_job_commit_provenance_verified": True,
+        },
+    )
+    assert allowed.authority_blocked is False
+    assert allowed.request_ui_untrusted is False
+    assert allowed.atomic_terminal_close_verified is True
+    assert allowed.reason_code == "CATALOG_REQUEST_TERMINAL_CLOSE_VERIFIED"
 
 
 def _enabled_anchor() -> CatalogAuthorityAnchorV1:

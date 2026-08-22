@@ -1227,6 +1227,7 @@ def test_catalog_reduction_selects_central_only_with_complete_margin() -> None:
 def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
     tmp_path: Path,
 ) -> None:
+    from aurora.infra.github_performance.contracts import canonical_sha256
     from aurora.infra.sp500_megarun.catalog_optimization_contract import (
         RunOptimizationContractV1,
     )
@@ -1243,6 +1244,27 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
         "protected_commit_sha": "c" * 40,
         "decision_sha256": "d" * 64,
         "admission_token_sha256": "e" * 64,
+    }
+    source_identity = {
+        "schema_version": "1",
+        "document_type": "catalog_source_artifacts_v1",
+        "payload": {
+            "artifacts": [
+                {
+                    "contract_name": "reference_oracle_v1",
+                    "run_id": 31948898747,
+                    "artifact_id": 9264302413,
+                    "artifact_name": "sp500-strategy-catalog-final-results",
+                    "artifact_digest": "sha256:" + "f" * 64,
+                    "validation_opened": False,
+                    "locked_opened": False,
+                }
+            ]
+        },
+    }
+    source_artifacts = {
+        **source_identity,
+        "content_sha256": canonical_sha256(source_identity),
     }
     common = {
         "contract": contract,
@@ -1271,6 +1293,7 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
             "validation_opened": False,
             "locked_opened": False,
         },
+        "source_artifacts": source_artifacts,
     }
     first = tmp_path / "first"
     second = tmp_path / "second"
@@ -1312,6 +1335,7 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
         "checkpoint_policy.json",
         "reduction_plan.json",
         "artifact_plan.json",
+        "source_artifacts.json",
         "execution_plan_receipt.json",
     } <= set(first_tree)
     assert receipt["content_manifest"]

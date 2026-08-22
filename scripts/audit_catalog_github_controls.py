@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import math
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 import hashlib
@@ -22,11 +23,20 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
 from aurora.infra.github_performance.preflight import load_github_yaml
+from aurora.infra.sp500_megarun.catalog_authority_ledger import (
+    AuthorityState,
+    CatalogAuthorityAnchorV1,
+    CatalogAuthorityRecordV1,
+    CatalogControllerActorsV1,
+    extract_authority_comment_records,
+    verify_authority_issue_anchor,
+)
 from aurora.infra.sp500_megarun.catalog_github_controls import (
     AUDITOR_CALLER_TOPOLOGY,
     CatalogGithubAuditorV1,
     CatalogGithubControlsV1,
     audit_catalog_github_controls,
+    inventory_heavy_workflows,
     load_catalog_github_auditor,
     load_catalog_github_controls,
 )
@@ -376,6 +386,641 @@ def _dict(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def _page_endpoint(endpoint: str, page: int) -> str:
+    if page < 1 or not endpoint.startswith("/") or "page=" in endpoint:
+        raise ValueError("CATALOG_GITHUB_PAGINATION_ENDPOINT_INVALID")
+    separator = "&" if "?" in endpoint else "?"
+    return f"{endpoint}{separator}per_page=100&page={page}"
+
+
+def _row_identity(row: dict[str, object]) -> object:
+    for key in ("id", "run_id", "database_id", "node_id", "full_name"):
+        value = row.get(key)
+        if isinstance(value, str | int) and not isinstance(value, bool):
+            return (key, value)
+    raise ValueError("CATALOG_GITHUB_PAGINATION_ID_MISSING")
+
+
+def _paginate_object_rows(
+    client: GhReadOnlyClient | AppReadOnlyClient | object,
+    endpoint: str,
+    *,
+    root: str,
+    max_pages: int = 100,
+) -> tuple[tuple[dict[str, object], ...], bool]:
+    """Read one documented ``total_count`` collection within a fixed bound."""
+
+    if max_pages < 1 or not root:
+        raise ValueError("CATALOG_GITHUB_PAGINATION_BOUND_INVALID")
+    rows: list[dict[str, object]] = []
+    identities: set[object] = set()
+    expected_total: int | None = None
+    for page in range(1, max_pages + 1):
+        payload = getattr(client, "get")(_page_endpoint(endpoint, page))
+        if not isinstance(payload, dict):
+            raise ValueError("CATALOG_GITHUB_PAGINATION_SHAPE_INVALID")
+        total = payload.get("total_count")
+        page_rows = payload.get(root)
+        if (
+            isinstance(total, bool)
+            or not isinstance(total, int)
+            or total < 0
+            or not isinstance(page_rows, list)
+            or len(page_rows) > 100
+        ):
+            raise ValueError("CATALOG_GITHUB_PAGINATION_SHAPE_INVALID")
+        if expected_total is None:
+            expected_total = total
+            if expected_total > max_pages * 100:
+                for raw in page_rows:
+                    if not isinstance(raw, dict):
+                        raise ValueError("CATALOG_GITHUB_PAGINATION_SHAPE_INVALID")
+                    identity = _row_identity(raw)
+                    if identity in identities:
+                        raise ValueError("CATALOG_GITHUB_PAGINATION_DUPLICATE")
+                    identities.add(identity)
+                    rows.append(raw)
+                return tuple(rows), False
+        elif total != expected_total:
+            raise ValueError("CATALOG_GITHUB_PAGINATION_UNSTABLE")
+        for raw in page_rows:
+            if not isinstance(raw, dict):
+                raise ValueError("CATALOG_GITHUB_PAGINATION_SHAPE_INVALID")
+            identity = _row_identity(raw)
+            if identity in identities:
+                raise ValueError("CATALOG_GITHUB_PAGINATION_DUPLICATE")
+            identities.add(identity)
+            rows.append(raw)
+        if len(rows) == expected_total:
+            return tuple(rows), True
+        if not page_rows or len(page_rows) < 100:
+            raise ValueError("CATALOG_GITHUB_PAGINATION_COUNT_MISMATCH")
+    return tuple(rows), False
+
+
+def _parse_utc(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(UTC)
+
+
+def _load_closed_json(path: Path) -> dict[str, object]:
+    payload = _strict_json(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("CATALOG_PROTECTED_CONFIG_INVALID")
+    return payload
+
+
+def _authority_anchor_status(
+    *,
+    client: GhReadOnlyClient | AppReadOnlyClient,
+    repository: str,
+    repository_snapshot: dict[str, object],
+    repo_root: Path,
+) -> tuple[bool, tuple[CatalogAuthorityRecordV1, ...], bool]:
+    try:
+        anchor = CatalogAuthorityAnchorV1.model_validate(
+            _load_closed_json(repo_root / "config/catalog_authority_anchor_v1.json")
+        )
+        if not anchor.production_enabled or anchor.issue_number is None:
+            raise ValueError
+        variable = _dict(
+            client.get(
+                f"/repos/{repository}/actions/variables/"
+                "CATALOG_AUTHORITY_ISSUE_NUMBER"
+            )
+        )
+        issue = _dict(client.get(f"/repos/{repository}/issues/{anchor.issue_number}"))
+        verify_authority_issue_anchor(
+            anchor=anchor,
+            repository_variable_number=variable.get("value"),
+            repository_snapshot=repository_snapshot,
+            issue_snapshot=issue,
+        )
+        comments, complete = _paginate_list_rows(
+            client,
+            f"/repos/{repository}/issues/{anchor.issue_number}/comments",
+            max_pages=100,
+        )
+        if not complete:
+            return True, (), False
+        records = extract_authority_comment_records(
+            comments,
+            expected_author="github-actions[bot]",
+        )
+        return True, records, True
+    except Exception:
+        return False, (), False
+
+
+def _request_actor_permissions(
+    *,
+    client: GhReadOnlyClient | AppReadOnlyClient,
+    repo_root: Path,
+) -> dict[str, object]:
+    """Use only a protected exact bootstrap permission receipt; never infer it."""
+
+    try:
+        actors = CatalogControllerActorsV1.model_validate(
+            _load_closed_json(repo_root / "config/catalog_controller_actors_v1.json")
+        )
+        proof_path = repo_root / "config/catalog_requester_app_permissions_v1.json"
+        if (
+            not actors.production_enabled
+            or len(actors.request_actors) != 1
+            or not proof_path.is_file()
+        ):
+            return {}
+        actor = actors.request_actors[0]
+        proof = _load_closed_json(proof_path)
+        user = _dict(client.get(f"/users/{actor}"))
+        expected = {
+            "login": actor,
+            "kind": "GitHubApp",
+            "repository_administration": "none",
+            "repository_actions": "none",
+            "repository_contents": "none",
+            "repository_issues": "write",
+        }
+        if (
+            proof.get("schema_version") != "1"
+            or proof.get("verified") is not True
+            or proof.get("permissions") != expected
+            or user.get("login") != actor
+            or user.get("type") != "Bot"
+        ):
+            return {}
+        return expected
+    except Exception:
+        return {}
+
+
+def _job_name_is_heavy(value: object) -> bool:
+    name = str(value or "").casefold()
+    return any(
+        marker in name
+        for marker in (
+            "engine_optimized_catalog",
+            "catalog-optimized",
+            "component",
+            "recipe",
+            "recovery_wave",
+            "reconcile_wave",
+            "reduce",
+        )
+    )
+
+
+def _collect_active_run_inventory(
+    *,
+    client: GhReadOnlyClient | AppReadOnlyClient,
+    repository: str,
+    heavy_paths: set[str],
+    authority_records: tuple[CatalogAuthorityRecordV1, ...],
+) -> tuple[tuple[dict[str, object], ...], bool, bool]:
+    runs: list[dict[str, object]] = []
+    seen: set[int] = set()
+    runs_complete = True
+    jobs_complete = True
+    latest_by_authority: dict[object, CatalogAuthorityRecordV1] = {}
+    for record in authority_records:
+        latest_by_authority[record.authority_id] = record
+    latest_records = tuple(latest_by_authority.values())
+    for status in ("queued", "in_progress"):
+        rows, complete = _paginate_object_rows(
+            client,
+            f"/repos/{repository}/actions/runs?status={status}",
+            root="workflow_runs",
+            max_pages=10,
+        )
+        runs_complete = runs_complete and complete
+        for run in rows:
+            run_id = run.get("id")
+            if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id in seen:
+                raise ValueError("CATALOG_ACTIVE_RUN_INVENTORY_INVALID")
+            seen.add(run_id)
+            jobs, complete_jobs = _paginate_object_rows(
+                client,
+                f"/repos/{repository}/actions/runs/{run_id}/jobs",
+                root="jobs",
+                max_pages=20,
+            )
+            jobs_complete = jobs_complete and complete_jobs
+            active_heavy_jobs = tuple(
+                job
+                for job in jobs
+                if job.get("status") in {"queued", "in_progress", "waiting", "pending"}
+                and _job_name_is_heavy(job.get("name"))
+            )
+            path = str(run.get("path") or "").split("@", maxsplit=1)[0]
+            if not active_heavy_jobs and path not in heavy_paths:
+                continue
+            if not active_heavy_jobs and path.endswith("catalog-run-controller.yml"):
+                continue
+            matching = [record for record in latest_records if record.run_id == run_id]
+            record = matching[0] if len(matching) == 1 else None
+            writer_matches = False
+            if record is not None:
+                writer_matches = any(
+                    job.get("id") == record.writer_job_database_id
+                    and (
+                        job.get("name") == record.writer_job_id
+                        or str(job.get("name", "")).endswith(
+                            f" / {record.writer_job_id}"
+                        )
+                    )
+                    for job in jobs
+                )
+            nonterminal = record is not None and record.state in {
+                AuthorityState.RESERVED,
+                AuthorityState.RUNNING,
+                AuthorityState.RECOVERING,
+                AuthorityState.WAITING_RETRY,
+            }
+            runs.append(
+                {
+                    "run_id": run_id,
+                    "workflow_path": path,
+                    "status": run.get("status"),
+                    "authority_bound": nonterminal,
+                    "protected_commit_matches": (
+                        record is not None and record.protected_commit_sha == run.get("head_sha")
+                    ),
+                    "sealed_identifiers_match": (
+                        nonterminal
+                        and record is not None
+                        and bool(record.science_sha256)
+                        and bool(record.execution_plan_sha256)
+                        and bool(record.execution_protocol_sha256)
+                    ),
+                    "writer_provenance_verified": writer_matches,
+                    "current_engine_owner": nonterminal,
+                    "active_heavy_job_database_ids": sorted(
+                        int(job["id"])
+                        for job in active_heavy_jobs
+                        if isinstance(job.get("id"), int)
+                        and not isinstance(job.get("id"), bool)
+                    ),
+                }
+            )
+    return tuple(sorted(runs, key=lambda row: int(row["run_id"]))), runs_complete, jobs_complete
+
+
+def _billing_paid_usage(
+    payload: dict[str, object],
+    *,
+    repository_name: str,
+) -> tuple[int, int, datetime | None]:
+    items = payload.get("usageItems")
+    if not isinstance(items, list):
+        return 0, 0, None
+    paid_minutes = 0.0
+    paid_amount = 0.0
+    latest: datetime | None = None
+    for raw in items:
+        if not isinstance(raw, dict):
+            return 0, 0, None
+        target_repository = (
+            str(raw.get("repositoryName", "")).casefold()
+            == repository_name.casefold()
+        )
+        target_product = str(raw.get("product", "")).casefold() == "actions"
+        observed = _parse_utc(raw.get("date"))
+        if (
+            target_repository
+            and target_product
+            and observed is not None
+            and (latest is None or observed > latest)
+        ):
+            latest = observed
+        if (
+            target_repository
+            and target_product
+            and str(raw.get("unitType", "")).casefold() == "minutes"
+            and isinstance(raw.get("netAmount"), int | float)
+            and not isinstance(raw.get("netAmount"), bool)
+            and math.isfinite(float(raw["netAmount"]))
+            and float(raw["netAmount"]) > 0
+        ):
+            paid_amount += float(raw["netAmount"])
+            if (
+                isinstance(raw.get("quantity"), int | float)
+                and not isinstance(raw.get("quantity"), bool)
+                and math.isfinite(float(raw["quantity"]))
+                and float(raw["quantity"]) >= 0
+            ):
+                paid_minutes += float(raw["quantity"])
+    return math.ceil(paid_minutes), math.ceil(paid_amount * 100), latest
+
+
+def _billing_usage_endpoint(owner: str, observed_at: datetime) -> str:
+    if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+        raise ValueError("CATALOG_BILLING_OBSERVED_AT_INVALID")
+    observed_utc = observed_at.astimezone(UTC)
+    return (
+        f"/organizations/{owner}/settings/billing/usage"
+        f"?year={observed_utc.year}&month={observed_utc.month}"
+    )
+
+
+def _billing_actions_storage_evidence(
+    payload: dict[str, object],
+    *,
+    repository_name: str,
+    observed_at: datetime,
+    included_shared_storage_bytes: int,
+) -> dict[str, object]:
+    """Expose period-average billing evidence without calling it current use."""
+
+    empty: dict[str, object] = {
+        "billing_storage_period_evidence_complete": False,
+        "billing_storage_period_started_at": None,
+        "billing_storage_quantity_gigabyte_hours": None,
+        "billing_storage_period_elapsed_seconds": None,
+        "billing_storage_period_average_bytes": None,
+        "billing_storage_period_average_exceeds_allowance": None,
+    }
+    if (
+        observed_at.tzinfo is None
+        or observed_at.utcoffset() is None
+        or isinstance(included_shared_storage_bytes, bool)
+        or not isinstance(included_shared_storage_bytes, int)
+        or included_shared_storage_bytes < 0
+    ):
+        return empty
+    items = payload.get("usageItems")
+    if not isinstance(items, list):
+        return empty
+    rows: list[tuple[datetime, float]] = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            return empty
+        if not (
+            str(raw.get("repositoryName", "")).casefold()
+            == repository_name.casefold()
+            and str(raw.get("product", "")).casefold() == "actions"
+            and str(raw.get("sku", "")).casefold() == "actions storage"
+            and str(raw.get("unitType", "")).casefold() == "gigabytehours"
+        ):
+            continue
+        period_start = _parse_utc(raw.get("date"))
+        quantity = raw.get("quantity")
+        if (
+            period_start is None
+            or isinstance(quantity, bool)
+            or not isinstance(quantity, int | float)
+            or not math.isfinite(float(quantity))
+            or float(quantity) < 0
+        ):
+            return empty
+        rows.append((period_start, float(quantity)))
+    if not rows:
+        return empty
+    latest_start = max(start for start, _ in rows)
+    quantity = sum(value for start, value in rows if start == latest_start)
+    observed_utc = observed_at.astimezone(UTC)
+    elapsed_seconds = int((observed_utc - latest_start).total_seconds())
+    current_daily_period = (
+        latest_start.date() == observed_utc.date()
+        and 0 < elapsed_seconds <= 24 * 60 * 60
+    )
+    if not current_daily_period:
+        return {
+            **empty,
+            "billing_storage_period_started_at": latest_start.isoformat().replace(
+                "+00:00", "Z"
+            ),
+            "billing_storage_quantity_gigabyte_hours": quantity,
+        }
+    average_bytes = math.ceil(quantity * 3_600 * 1_000_000_000 / elapsed_seconds)
+    return {
+        "billing_storage_period_evidence_complete": True,
+        "billing_storage_period_started_at": latest_start.isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "billing_storage_quantity_gigabyte_hours": quantity,
+        "billing_storage_period_elapsed_seconds": elapsed_seconds,
+        "billing_storage_period_average_bytes": average_bytes,
+        "billing_storage_period_average_exceeds_allowance": (
+            average_bytes > included_shared_storage_bytes
+        ),
+    }
+
+
+def _collect_storage_snapshot(
+    *,
+    client: GhReadOnlyClient | AppReadOnlyClient,
+    desired: CatalogGithubControlsV1,
+    repository: str,
+    owner: str,
+    billing: dict[str, object],
+    github_date: datetime,
+    repo_root: Path,
+    writer_inventory_complete: bool,
+) -> tuple[dict[str, object], bool]:
+    artifacts, artifacts_complete = _paginate_object_rows(
+        client,
+        f"/repos/{repository}/actions/artifacts",
+        root="artifacts",
+        max_pages=25,
+    )
+    caches, caches_complete = _paginate_object_rows(
+        client,
+        f"/repos/{repository}/actions/caches",
+        root="actions_caches",
+        max_pages=10,
+    )
+    package_rows: list[dict[str, object]] = []
+    packages_complete = True
+    for package_type in ("container", "maven", "npm", "nuget", "rubygems"):
+        rows, complete = _paginate_list_rows(
+            client,
+            f"/orgs/{owner}/packages?package_type={package_type}",
+            max_pages=10,
+        )
+        package_rows.extend(rows)
+        packages_complete = packages_complete and complete
+    artifact_sizes_valid = all(
+        isinstance(row.get("size_in_bytes"), int)
+        and not isinstance(row.get("size_in_bytes"), bool)
+        and int(row["size_in_bytes"]) >= 0
+        for row in artifacts
+    )
+    package_sizes_valid = not package_rows or all(
+        isinstance(row.get("size_in_bytes"), int)
+        and not isinstance(row.get("size_in_bytes"), bool)
+        and int(row["size_in_bytes"]) >= 0
+        for row in package_rows
+    )
+    cache_sizes_valid = all(
+        isinstance(row.get("size_in_bytes"), int)
+        and not isinstance(row.get("size_in_bytes"), bool)
+        and int(row["size_in_bytes"]) >= 0
+        for row in caches
+    )
+    org_cache = _dict(client.get(f"/orgs/{owner}/actions/cache/usage"))
+    reported_cache = org_cache.get("total_active_caches_size_in_bytes")
+    reported_cache_valid = (
+        isinstance(reported_cache, int)
+        and not isinstance(reported_cache, bool)
+        and reported_cache >= 0
+    )
+    repository_name = repository.split("/", maxsplit=1)[1]
+    paid_minutes, paid_cost, latest_billing = _billing_paid_usage(
+        billing,
+        repository_name=repository_name,
+    )
+    billing_storage_evidence = _billing_actions_storage_evidence(
+        billing,
+        repository_name=repository_name,
+        observed_at=github_date,
+        included_shared_storage_bytes=desired.billing.included_shared_storage_bytes,
+    )
+    explicit_shared = next(
+        (
+            billing.get(key)
+            for key in (
+                "shared_storage_bytes",
+                "total_storage_bytes",
+                "actions_storage_bytes",
+            )
+            if isinstance(billing.get(key), int)
+            and not isinstance(billing.get(key), bool)
+            and int(billing[key]) >= 0
+        ),
+        None,
+    )
+    billing_fresh = latest_billing is not None and (
+        latest_billing.date() == github_date.date()
+        or (
+            github_date >= latest_billing
+            and github_date - latest_billing
+            <= timedelta(
+                hours=desired.billing.artifact_and_packages_reporting_lag_hours
+            )
+        )
+    )
+    qualification = _load_closed_json(
+        repo_root / "config/catalog_operational_qualification_v1.json"
+    )
+    projected_artifact = qualification.get("projected_artifact_storage_bytes")
+    projected_cache = qualification.get("projected_cache_storage_bytes")
+    projection_valid = (
+        qualification.get("status") == "ready"
+        and isinstance(projected_artifact, int)
+        and not isinstance(projected_artifact, bool)
+        and projected_artifact >= 0
+        and isinstance(projected_cache, int)
+        and not isinstance(projected_cache, bool)
+        and projected_cache >= 0
+    )
+    artifact_cutoff = github_date - timedelta(
+        hours=desired.billing.artifact_and_packages_reporting_lag_hours
+    )
+    cache_cutoff = github_date - timedelta(
+        minutes=desired.billing.cache_reporting_lag_minutes
+    )
+    unreflected = sum(
+        int(row["size_in_bytes"])
+        for row in artifacts
+        if artifact_sizes_valid
+        and (created := _parse_utc(row.get("created_at"))) is not None
+        and created >= artifact_cutoff
+    )
+    pending_cache = sum(
+        int(row["size_in_bytes"])
+        for row in caches
+        if cache_sizes_valid
+        and (created := _parse_utc(row.get("created_at"))) is not None
+        and created >= cache_cutoff
+    )
+    billing_complete = billing_fresh and explicit_shared is not None
+    telemetry_complete = (
+        artifacts_complete
+        and packages_complete
+        and caches_complete
+        and artifact_sizes_valid
+        and package_sizes_valid
+        and cache_sizes_valid
+        and reported_cache_valid
+        and billing_complete
+        and projection_valid
+        and writer_inventory_complete
+    )
+    storage = {
+        "telemetry_complete": telemetry_complete,
+        "artifacts_pagination_complete": artifacts_complete,
+        "packages_pagination_complete": packages_complete,
+        "caches_pagination_complete": caches_complete,
+        "writer_inventory_complete": writer_inventory_complete,
+        "shared_allowance_bytes": desired.billing.included_shared_storage_bytes,
+        "reported_shared_use_bytes": int(explicit_shared or 0),
+        "artifact_inventory_bytes": sum(
+            int(row["size_in_bytes"]) for row in artifacts
+        )
+        if artifact_sizes_valid
+        else 0,
+        "package_inventory_bytes": sum(
+            int(row["size_in_bytes"]) for row in package_rows
+        )
+        if package_sizes_valid
+        else 0,
+        "unreflected_upload_bytes": unreflected,
+        "reported_cache_use_bytes": int(reported_cache or 0),
+        "cache_inventory_bytes": sum(int(row["size_in_bytes"]) for row in caches)
+        if cache_sizes_valid
+        else 0,
+        "pending_cache_bytes": pending_cache,
+        "projected_campaign_artifact_bytes": int(projected_artifact or 0),
+        "projected_campaign_cache_bytes": int(projected_cache or 0),
+        "paid_runner_minutes": paid_minutes,
+        "estimated_paid_actions_cost": paid_cost,
+        "billing_snapshot_complete": billing_complete,
+        "billing_latest_usage_at": (
+            latest_billing.isoformat().replace("+00:00", "Z")
+            if latest_billing is not None
+            else None
+        ),
+        **billing_storage_evidence,
+    }
+    return storage, telemetry_complete
+
+
+def _paginate_list_rows(
+    client: GhReadOnlyClient | AppReadOnlyClient | object,
+    endpoint: str,
+    *,
+    max_pages: int = 100,
+) -> tuple[tuple[dict[str, object], ...], bool]:
+    """Read one documented plain-array collection within a fixed bound."""
+
+    if max_pages < 1:
+        raise ValueError("CATALOG_GITHUB_PAGINATION_BOUND_INVALID")
+    rows: list[dict[str, object]] = []
+    identities: set[object] = set()
+    for page in range(1, max_pages + 1):
+        payload = getattr(client, "get")(_page_endpoint(endpoint, page))
+        if not isinstance(payload, list) or len(payload) > 100:
+            raise ValueError("CATALOG_GITHUB_PAGINATION_SHAPE_INVALID")
+        for raw in payload:
+            if not isinstance(raw, dict):
+                raise ValueError("CATALOG_GITHUB_PAGINATION_SHAPE_INVALID")
+            identity = _row_identity(raw)
+            if identity in identities:
+                raise ValueError("CATALOG_GITHUB_PAGINATION_DUPLICATE")
+            identities.add(identity)
+            rows.append(raw)
+        if len(payload) < 100:
+            return tuple(rows), True
+    return tuple(rows), False
+
+
 def collect_live_snapshot(
     *,
     client: GhReadOnlyClient | AppReadOnlyClient,
@@ -402,20 +1047,20 @@ def collect_live_snapshot(
         f"/repos/{repository}/branches/{desired.default_branch}/protection"
     )
     actions = _dict(client.get(f"/repos/{repository}/actions/permissions/workflow"))
-    larger_runners = _dict(
-        client.get(f"/orgs/{owner}/actions/hosted-runners?per_page=100&page=1")
+    larger_runners, larger_runners_complete = _paginate_object_rows(
+        client,
+        f"/orgs/{owner}/actions/hosted-runners",
+        root="runners",
+        max_pages=10,
     )
-    self_hosted_runners = _dict(
-        client.get(f"/repos/{repository}/actions/runners?per_page=100&page=1")
+    self_hosted_runners, self_hosted_runners_complete = _paginate_object_rows(
+        client,
+        f"/repos/{repository}/actions/runners",
+        root="runners",
+        max_pages=10,
     )
-    larger_runner_count = larger_runners.get("total_count")
-    self_hosted_runner_count = self_hosted_runners.get("total_count")
-    if not isinstance(larger_runner_count, int) or not isinstance(
-        self_hosted_runner_count, int
-    ):
-        raise ValueError("CATALOG_RUNNER_INVENTORY_SHAPE_INVALID")
-    if larger_runner_count > 100 or self_hosted_runner_count > 100:
-        raise ValueError("CATALOG_RUNNER_INVENTORY_PAGINATION_REQUIRED")
+    larger_runner_count = len(larger_runners)
+    self_hosted_runner_count = len(self_hosted_runners)
     environment = _dict(
         client.get_optional(
             f"/repos/{repository}/environments/{desired.environment.name}"
@@ -427,15 +1072,12 @@ def collect_live_snapshot(
         )
     )
     enterprise = desired.billing.budget_control_plane.enterprise_slug
-    budgets_payload = _dict(
-        client.get(
-            f"/enterprises/{enterprise}/settings/billing/budgets"
-            "?scope=repository&per_page=100"
-        )
+    budgets, budgets_complete = _paginate_object_rows(
+        client,
+        f"/enterprises/{enterprise}/settings/billing/budgets?scope=repository",
+        root="budgets",
+        max_pages=10,
     )
-    budgets = budgets_payload.get("budgets")
-    if not isinstance(budgets, list):
-        raise ValueError("CATALOG_BUDGET_LIST_SHAPE_INVALID")
     budget_details = []
     for budget in budgets:
         if not isinstance(budget, dict) or not isinstance(
@@ -457,11 +1099,47 @@ def collect_live_snapshot(
         "storage_limit_gb": cache_storage.get("max_cache_size_gb"),
         "retention_days": cache_retention.get("max_cache_retention_days"),
     }
+    billing_observed_at = client.github_date
+    if billing_observed_at is None:
+        raise ValueError("CATALOG_GITHUB_DATE_HEADER_MISSING")
     billing = _dict(
-        client.get(f"/organizations/{owner}/settings/billing/usage")
+        client.get(_billing_usage_endpoint(owner, billing_observed_at))
     )
     workflows, workflow_hashes = _workflow_documents(repo_root)
+    heavy_paths = {
+        str(row["path"])
+        for row in inventory_heavy_workflows(workflows)  # type: ignore[arg-type]
+        if row.get("heavy") is True
+    }
+    authority_anchor_verified, authority_records, authority_comments_complete = (
+        _authority_anchor_status(
+            client=client,
+            repository=repository,
+            repository_snapshot=repo,
+            repo_root=repo_root,
+        )
+    )
+    active_runs, runs_complete, jobs_complete = _collect_active_run_inventory(
+        client=client,
+        repository=repository,
+        heavy_paths=heavy_paths,
+        authority_records=authority_records,
+    )
+    request_actor = _request_actor_permissions(client=client, repo_root=repo_root)
     now = datetime.now(tz=UTC)
+    github_date = client.github_date
+    if github_date is None:
+        raise ValueError("CATALOG_GITHUB_DATE_HEADER_MISSING")
+    storage, storage_complete = _collect_storage_snapshot(
+        client=client,
+        desired=desired,
+        repository=repository,
+        owner=owner,
+        billing=billing,
+        github_date=github_date,
+        repo_root=repo_root,
+        writer_inventory_complete=runs_complete and jobs_complete,
+    )
     github_date = client.github_date
     if github_date is None:
         raise ValueError("CATALOG_GITHUB_DATE_HEADER_MISSING")
@@ -527,19 +1205,26 @@ def collect_live_snapshot(
                 environment.get("deployment_branch_policy")
             ).get("protected_branches")
             is True,
-            "required_reviewers": [],
+            "required_reviewers": sorted(
+                str(reviewer.get("login"))
+                for rule in environment.get("protection_rules", ())
+                if isinstance(rule, dict)
+                and isinstance(rule.get("reviewers"), list)
+                for reviewer in rule["reviewers"]
+                if isinstance(reviewer, dict) and reviewer.get("login")
+            ),
         },
         "labels": [label] if label else [],
-        "budgets": budgets,
+        "budgets": list(budgets),
         "budget_details": budget_details,
         "cache_settings": cache_settings,
-        "storage": billing,
+        "storage": storage,
         "workflow_documents": workflows,
         "workflow_source_sha256s": workflow_hashes,
-        "active_runs": [],
-        "runs_pagination_complete": False,
-        "jobs_pagination_complete": False,
-        "request_actor_permissions": {},
+        "active_runs": list(active_runs),
+        "runs_pagination_complete": runs_complete,
+        "jobs_pagination_complete": jobs_complete,
+        "request_actor_permissions": request_actor,
         "local_agent": local_agent,
         "auditor_installation": installation,
         "auditor_secret_consumer_workflows": [
@@ -554,8 +1239,16 @@ def collect_live_snapshot(
             for workflow, job, allowed_purpose, _ in AUDITOR_CALLER_TOPOLOGY
             if (repo_root / workflow).is_file()
         ],
-        "authority_anchor_verified": False,
-        "pagination_complete": False,
+        "authority_anchor_verified": authority_anchor_verified,
+        "pagination_complete": (
+            larger_runners_complete
+            and self_hosted_runners_complete
+            and budgets_complete
+            and authority_comments_complete
+            and runs_complete
+            and jobs_complete
+            and storage_complete
+        ),
         "api_version_verified": True,
     }
 

@@ -1,0 +1,179 @@
+name: AURORA catalog controller synthetic qualification
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}/..
+  QUALIFICATION_FIXTURE: tests/fixtures/catalog_controller_qualification/campaign_v1.json
+
+jobs:
+  qualify-controller:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the exact qualification code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Install the closed Python runtime
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - name: Install only hash-locked qualification dependencies
+        shell: bash
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r requirements/catalog-controller-test-linux-py311.lock
+      - name: Run protocol topology and Q-001 through Q-078
+        shell: bash
+        run: >-
+          python -m pytest
+          tests/test_catalog_controller_workflows.py
+          tests/test_catalog_controller_qualification.py
+          -q --junitxml=qualification-junit.xml
+      - name: Build the canonical synthetic qualification receipt
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          import sys
+          import xml.etree.ElementTree as ET
+
+          fixture_path = Path(os.environ["QUALIFICATION_FIXTURE"])
+          fixture_root = fixture_path.parent
+          sys.path.insert(0, str(fixture_root.parents[1].resolve()))
+          simulator_path = fixture_root / "simulator.py"
+          spec = importlib.util.spec_from_file_location(
+              "catalog_controller_qualification_simulator",
+              simulator_path,
+          )
+          if spec is None or spec.loader is None:
+              raise SystemExit("QUALIFICATION_SIMULATOR_IMPORT_INVALID")
+          simulator = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(simulator)
+
+          def canonical_sha256(value):
+              payload = json.dumps(
+                  value,
+                  sort_keys=True,
+                  separators=(",", ":"),
+                  ensure_ascii=False,
+                  allow_nan=False,
+              ).encode("utf-8")
+              return hashlib.sha256(payload).hexdigest()
+
+          report_path = Path("qualification-junit.xml")
+          tree = ET.parse(report_path)
+          durations = {}
+          for case in tree.iter("testcase"):
+              name = case.attrib.get("name", "")
+              marker = "test_closed_q001_q078_scenario_matrix["
+              if name.startswith(marker) and name.endswith("]"):
+                  durations[name[len(marker):-1]] = float(case.attrib.get("time", "0"))
+
+          first_expected = "Q-001"
+          last_expected = "Q-078"
+          scenario_ids = tuple(f"Q-{index:03d}" for index in range(1, 79))
+          if scenario_ids[0] != first_expected or scenario_ids[-1] != last_expected:
+              raise SystemExit("QUALIFICATION_SCENARIO_ENUM_INVALID")
+          if set(durations) != set(scenario_ids):
+              raise SystemExit("QUALIFICATION_SCENARIO_REPORT_INCOMPLETE")
+
+          scenarios = []
+          raw_results = {}
+          for scenario_id in scenario_ids:
+              result = simulator.run_scenario(scenario_id, fixture_path)
+              raw_results[scenario_id] = result
+              scenarios.append({
+                  "scenario_id": scenario_id,
+                  "result": "passed",
+                  "duration_seconds": durations[scenario_id],
+                  "outcome": result["outcome"],
+                  "reason_code": result["reason_code"],
+                  "result_receipt_sha256": result["receipt_sha256"],
+                  "final_evidence_sha256": result["final_evidence_sha256"],
+              })
+
+          fixture_manifest = json.loads(
+              (fixture_root / "manifest_v1.json").read_text("utf-8")
+          )
+          workflow_path = Path(
+              ".github/workflows/catalog-controller-qualification.yml"
+          )
+          identity = {
+              "schema_version": "1",
+              "status": "ready",
+              "scenario_count": 78,
+              "scenarios": scenarios,
+              "qualification_modes": {
+                  "cold_component_store": raw_results["Q-018"]["receipt_sha256"],
+                  "warm_component_store": raw_results["Q-019"]["receipt_sha256"],
+                  "selective_recovery": raw_results["Q-022"]["receipt_sha256"],
+                  "hierarchical_merge": raw_results["Q-030"]["receipt_sha256"],
+                  "exact_final_hash": raw_results["Q-040"]["final_evidence_sha256"],
+                  "central_hierarchical_equivalence": raw_results["Q-031"]["final_evidence_sha256"],
+              },
+              "resource_maximums": {
+                  "maximum_concurrent_jobs": 1,
+                  "maximum_job_minutes": 5,
+                  "paid_runner_minutes": 0,
+                  "estimated_paid_actions_cost": 0,
+              },
+              "boundaries": {
+                  "production_data_accesses": [],
+                  "validation_opened": False,
+                  "locked_opened": False,
+                  "external_downloads": False,
+              },
+              "fixture_manifest_sha256": fixture_manifest["manifest_sha256"],
+              "workflow_sha256": hashlib.sha256(workflow_path.read_bytes()).hexdigest(),
+              "junit_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+              "scenario_results_sha256": canonical_sha256(scenarios),
+          }
+          receipt = {**identity, "receipt_sha256": canonical_sha256(identity)}
+          Path("qualification_receipt_v1.json").write_text(
+              json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Secret scan of the only upload and synthetic fixture
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          fixture_root = Path("tests/fixtures/catalog_controller_qualification")
+          paths = [
+              Path("qualification_receipt_v1.json"),
+              fixture_root / "campaign_v1.json",
+              fixture_root / "manifest_v1.json",
+              fixture_root / "README.md",
+          ]
+          forbidden = (
+              "ghp_",
+              "github_pat_",
+              "-----BEGIN PRIVATE" + " KEY-----",
+              "authorization:" + " bearer",
+          )
+          for path in paths:
+              text = path.read_text("utf-8", errors="ignore").casefold()
+              if any(token.casefold() in text for token in forbidden):
+                  raise SystemExit(f"QUALIFICATION_SECRET_SCAN_FAILED:{path.as_posix()}")
+          PY
+      - name: Upload only the sealed qualification receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-controller-qualification-receipt
+          path: qualification_receipt_v1.json
+          if-no-files-found: error
+          retention-days: 90

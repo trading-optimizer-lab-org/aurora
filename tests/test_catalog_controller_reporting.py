@@ -552,6 +552,42 @@ def test_cli_emits_only_outputs_permitted_by_the_decision(tmp_path: Path) -> Non
     assert (output / "catalog_standalone_incident.json").is_file()
 
 
+def test_cli_exposes_only_bounded_terminal_fields_to_github_outputs(
+    tmp_path: Path,
+) -> None:
+    arguments, output = _write_cli_inputs(tmp_path, "ledger_invalid")
+    github_output = tmp_path / "github-output.txt"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/finalize_catalog_controller_run.py"),
+            *arguments,
+            "--github-output",
+            str(github_output),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    values = dict(
+        line.split("=", 1)
+        for line in github_output.read_text("utf-8").splitlines()
+    )
+    assert set(values) == {
+        "state",
+        "reason_code",
+        "terminal_decision_sha256",
+        "authority_append_allowed",
+        "request_comment_allowed",
+        "standalone_incident_artifact_required",
+    }
+    assert values["state"] == "BLOCKED"
+    assert values["authority_append_allowed"] == "false"
+    assert output.is_dir()
+
+
 def test_cli_refuses_existing_output_directory(tmp_path: Path) -> None:
     arguments, output = _write_cli_inputs(tmp_path, "ledger_invalid")
     output.mkdir()

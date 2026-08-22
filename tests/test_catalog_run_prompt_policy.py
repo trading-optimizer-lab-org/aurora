@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from copy import deepcopy
 import hashlib
 import json
@@ -83,14 +84,37 @@ def _validate_policy(policy: dict[str, Any]) -> None:
     assert tuple(row["rule_id"] for row in policy["rules"]) == EXPECTED_RULE_IDS
     nodeids: set[str] = set()
     for row in policy["rules"]:
+        inactive_markers = (
+            "pend" + "ing",
+            "tempor" + "ary",
+            "x" + "fail",
+            "s" + "kip",
+        )
+        mapping_text = " ".join(
+            (row["enforcer_path"], row["test_nodeid"])
+        ).casefold()
+        assert not any(marker in mapping_text for marker in inactive_markers)
         enforcer = _inside_root(row["enforcer_path"])
         assert enforcer.is_file()
+        assert row["failure_code"] in enforcer.read_text(encoding="utf-8")
         test_file, separator, test_name = row["test_nodeid"].partition("::")
         assert separator == "::"
         test_path = _inside_root(test_file)
         assert test_path.is_file()
         source = test_path.read_text(encoding="utf-8")
         assert f"def {test_name}(" in source
+        function = next(
+            (
+                node
+                for node in ast.parse(source).body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == test_name
+            ),
+            None,
+        )
+        assert function is not None
+        decorators = " ".join(ast.unparse(item) for item in function.decorator_list).casefold()
+        assert not any(marker in decorators for marker in inactive_markers[-2:])
         assert row["test_nodeid"] not in nodeids
         nodeids.add(row["test_nodeid"])
         assert row["evidence_contract"]
@@ -165,6 +189,32 @@ def test_policy_validator_rejects_unsafe_or_missing_paths_and_tests() -> None:
         _validate_policy(absent_test)
 
 
+def test_policy_validator_rejects_inactive_or_nonpassing_mappings() -> None:
+    policy = _json(POLICY)
+    for field, value in (
+        (
+            "enforcer_path",
+            "infra/sp500_megarun/catalog_policy_" + "pend" + "ing.py",
+        ),
+        (
+            "test_nodeid",
+            "tests/test_catalog_controller_qualification.py::test_cat_001_"
+            + "x"
+            + "fail",
+        ),
+        (
+            "test_nodeid",
+            "tests/test_catalog_controller_qualification.py::test_cat_001_"
+            + "s"
+            + "kip",
+        ),
+    ):
+        mutation = deepcopy(policy)
+        mutation["rules"][0][field] = value
+        with pytest.raises((AssertionError, jsonschema.ValidationError)):
+            _validate_policy(mutation)
+
+
 def test_migration_validator_rejects_gaps_overlap_reorder_and_hash_mismatch() -> None:
     migration = _json(MIGRATION)
     gap = deepcopy(migration)
@@ -208,178 +258,3 @@ def test_migration_validator_rejects_unknown_rules_and_preserved_direct_mechanic
     preserved["spans"][direct_index]["disposition"] = "preserved_for_ai"
     with pytest.raises(AssertionError):
         _validate_migration(preserved)
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-001 pending implementation")
-def test_cat_001_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_001
-
-    enforce_cat_001()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-002 pending implementation")
-def test_cat_002_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_002
-
-    enforce_cat_002()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-003 pending implementation")
-def test_cat_003_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_003
-
-    enforce_cat_003()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-004 pending implementation")
-def test_cat_004_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_004
-
-    enforce_cat_004()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-005 pending implementation")
-def test_cat_005_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_005
-
-    enforce_cat_005()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-006 pending implementation")
-def test_cat_006_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_006
-
-    enforce_cat_006()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-007 pending implementation")
-def test_cat_007_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_007
-
-    enforce_cat_007()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-008 pending implementation")
-def test_cat_008_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_008
-
-    enforce_cat_008()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-009 pending implementation")
-def test_cat_009_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_009
-
-    enforce_cat_009()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-010 pending implementation")
-def test_cat_010_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_010
-
-    enforce_cat_010()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-011 pending implementation")
-def test_cat_011_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_011
-
-    enforce_cat_011()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-012 pending implementation")
-def test_cat_012_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_012
-
-    enforce_cat_012()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-013 pending implementation")
-def test_cat_013_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_013
-
-    enforce_cat_013()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-014 pending implementation")
-def test_cat_014_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_014
-
-    enforce_cat_014()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-015 pending implementation")
-def test_cat_015_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_015
-
-    enforce_cat_015()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-016 pending implementation")
-def test_cat_016_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_016
-
-    enforce_cat_016()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-017 pending implementation")
-def test_cat_017_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_017
-
-    enforce_cat_017()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-018 pending implementation")
-def test_cat_018_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_018
-
-    enforce_cat_018()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-019 pending implementation")
-def test_cat_019_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_019
-
-    enforce_cat_019()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-020 pending implementation")
-def test_cat_020_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_020
-
-    enforce_cat_020()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-021 pending implementation")
-def test_cat_021_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_021
-
-    enforce_cat_021()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-022 pending implementation")
-def test_cat_022_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_022
-
-    enforce_cat_022()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-023 pending implementation")
-def test_cat_023_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_023
-
-    enforce_cat_023()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-024 pending implementation")
-def test_cat_024_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_024
-
-    enforce_cat_024()
-
-
-@pytest.mark.xfail(strict=True, reason="CAT-025 pending implementation")
-def test_cat_025_pending() -> None:
-    from aurora.infra.sp500_megarun.catalog_policy_pending import enforce_cat_025
-
-    enforce_cat_025()

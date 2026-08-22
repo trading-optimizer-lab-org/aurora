@@ -618,8 +618,8 @@ def build_recovery_plan(
             failure_class = classify_failure({"reason_code": reason})
             prior_attempt_id = prior.attempt_id
         else:
-            reason = "MISSING_ATTEMPT"
-            failure_class = FailureClass.RUNNER_LOST
+            reason = "RECOVERY_FAILURE_EVIDENCE_MISSING"
+            failure_class = FailureClass.UNKNOWN
             prior_attempt_id = "missing"
         fingerprint = failure_fingerprint(
             failure_class=failure_class,
@@ -640,8 +640,6 @@ def build_recovery_plan(
             for attempt in shard_attempts
             if attempt.state is TerminalState.FAILED_TECHNICAL
         )
-        if not shard_attempts:
-            same_failure_occurrences = 1
         maximum_occurrence = max(maximum_occurrence, same_failure_occurrences)
         failure_history.append(
             {

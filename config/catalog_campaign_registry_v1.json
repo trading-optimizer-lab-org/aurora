@@ -14,6 +14,7 @@
       "feature_contract_path": "config/sp500_megarun_feature_contract_240.json",
       "runtime_input_run_id": 31418682679,
       "reference_run_id": 31948898747,
+      "scientific_contract_sha256": "f0e8c6db17a915f7c5f1dfec7d49ce5a69375c7252c23b49d82283120266419f",
       "max_free_workers": 360,
       "allowed_protected_branch": "main",
       "source_artifact_contracts": [

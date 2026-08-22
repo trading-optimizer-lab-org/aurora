@@ -19,6 +19,12 @@ from aurora.infra.sp500_megarun.catalog_github_controls import (
     load_catalog_github_auditor,
     load_catalog_github_controls,
 )
+from scripts.audit_catalog_github_controls import (
+    _billing_actions_storage_evidence,
+    _billing_usage_endpoint,
+    _paginate_list_rows,
+    _paginate_object_rows,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +75,8 @@ def protected_snapshots() -> dict[str, object]:
             "caller_workflow": ".github/workflows/catalog-run-controller.yml",
             "caller_job": "live_controls_audit_before_reserve",
             "purpose": "admission",
+            "audit_context_sha256": "d" * 64,
+            "protected_commit_sha": "a" * 40,
             "verified": True,
         },
         "observed_at": NOW.isoformat().replace("+00:00", "Z"),
@@ -623,6 +631,8 @@ def test_github_auditor_receipt_requires_exact_read_only_installation() -> None:
         "caller_workflow": ".github/workflows/catalog-live-controls-qualification.yml",
         "caller_job": "qualify_live_admission_controls",
         "purpose": "admission",
+        "audit_context_sha256": "d" * 64,
+        "protected_commit_sha": "a" * 40,
         "verified": True,
     }
     auditor = inputs["auditor"]
@@ -640,6 +650,12 @@ def test_github_auditor_receipt_requires_exact_read_only_installation() -> None:
     assert receipt.local_agent_actor is None
     assert receipt.local_agent_has_admin is None
     assert receipt.audit_use_context == "live_qualification_admission"
+    assert receipt.audit_context_sha256 == "d" * 64
+    assert receipt.protected_commit_sha == "a" * 40
+    assert receipt.caller_workflow == (
+        ".github/workflows/catalog-live-controls-qualification.yml"
+    )
+    assert receipt.caller_job == "qualify_live_admission_controls"
 
 
 def test_incomplete_storage_telemetry_blocks_without_estimating_headroom() -> None:
@@ -650,3 +666,163 @@ def test_incomplete_storage_telemetry_blocks_without_estimating_headroom() -> No
     receipt = audit_catalog_github_controls(**inputs)
     assert "CATALOG_FREE_STORAGE_TELEMETRY_UNAVAILABLE" in receipt.failed_controls
     assert receipt.free_artifact_storage_headroom is None
+
+
+def test_billing_storage_evidence_uses_the_current_daily_repository_period() -> None:
+    payload = {
+        "usageItems": [
+            {
+                "date": "2026-08-21T00:00:00Z",
+                "product": "actions",
+                "sku": "Actions storage",
+                "quantity": 1_200.0,
+                "unitType": "GigabyteHours",
+                "repositoryName": "aurora",
+            },
+            {
+                "date": "2026-08-21T00:00:00Z",
+                "product": "actions",
+                "sku": "Actions storage",
+                "quantity": 9_999.0,
+                "unitType": "GigabyteHours",
+                "repositoryName": "another-repository",
+            },
+            {
+                "date": "2026-08-20T00:00:00Z",
+                "product": "actions",
+                "sku": "Actions storage",
+                "quantity": 2_400.0,
+                "unitType": "GigabyteHours",
+                "repositoryName": "aurora",
+            },
+        ]
+    }
+
+    evidence = _billing_actions_storage_evidence(
+        payload,
+        repository_name="aurora",
+        observed_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
+        included_shared_storage_bytes=50 * 1024**3,
+    )
+
+    assert evidence == {
+        "billing_storage_period_evidence_complete": True,
+        "billing_storage_period_started_at": "2026-08-21T00:00:00Z",
+        "billing_storage_quantity_gigabyte_hours": 1_200.0,
+        "billing_storage_period_elapsed_seconds": 43_200,
+        "billing_storage_period_average_bytes": 100_000_000_000,
+        "billing_storage_period_average_exceeds_allowance": True,
+    }
+
+
+def test_billing_storage_evidence_never_pretends_an_old_or_malformed_row_is_current() -> None:
+    stale = {
+        "usageItems": [
+            {
+                "date": "2026-08-20T00:00:00Z",
+                "product": "actions",
+                "sku": "Actions storage",
+                "quantity": 2_400.0,
+                "unitType": "GigabyteHours",
+                "repositoryName": "aurora",
+            }
+        ]
+    }
+    malformed = deepcopy(stale)
+    malformed["usageItems"][0]["date"] = "not-a-date"
+
+    for payload in (stale, malformed, {"usageItems": []}):
+        evidence = _billing_actions_storage_evidence(
+            payload,
+            repository_name="aurora",
+            observed_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
+            included_shared_storage_bytes=50 * 1024**3,
+        )
+        assert evidence["billing_storage_period_evidence_complete"] is False
+        assert evidence["billing_storage_period_average_bytes"] is None
+        assert evidence["billing_storage_period_average_exceeds_allowance"] is None
+
+
+def test_billing_usage_endpoint_is_bound_to_the_observed_month() -> None:
+    assert _billing_usage_endpoint(
+        "trading-optimizer-lab-org",
+        datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
+    ) == (
+        "/organizations/trading-optimizer-lab-org/settings/billing/usage"
+        "?year=2026&month=8"
+    )
+
+
+class _PagedClient:
+    def __init__(self, pages: dict[str, object]) -> None:
+        self.pages = pages
+        self.requested: list[str] = []
+
+    def get(self, endpoint: str) -> object:
+        self.requested.append(endpoint)
+        return deepcopy(self.pages[endpoint])
+
+
+def test_live_auditor_fully_paginates_object_rows_without_duplicates() -> None:
+    client = _PagedClient(
+        {
+            "/items?per_page=100&page=1": {
+                "total_count": 205,
+                "items": [{"id": value} for value in range(1, 101)],
+            },
+            "/items?per_page=100&page=2": {
+                "total_count": 205,
+                "items": [{"id": value} for value in range(101, 201)],
+            },
+            "/items?per_page=100&page=3": {
+                "total_count": 205,
+                "items": [{"id": value} for value in range(201, 206)],
+            },
+        }
+    )
+    rows, complete = _paginate_object_rows(
+        client,
+        "/items",
+        root="items",
+        max_pages=3,
+    )
+    assert complete is True
+    assert [row["id"] for row in rows] == list(range(1, 206))
+    assert len(client.requested) == 3
+
+
+def test_live_auditor_stops_at_its_bound_and_never_claims_complete() -> None:
+    client = _PagedClient(
+        {
+            "/items?per_page=100&page=1": {
+                "total_count": 201,
+                "items": [{"id": value} for value in range(1, 101)],
+            }
+        }
+    )
+    rows, complete = _paginate_object_rows(
+        client,
+        "/items",
+        root="items",
+        max_pages=1,
+    )
+    assert len(rows) == 100
+    assert complete is False
+
+
+def test_live_auditor_paginates_plain_lists_and_rejects_duplicate_ids() -> None:
+    client = _PagedClient(
+        {
+            "/rows?per_page=100&page=1": [{"id": 1}, {"id": 2}],
+            "/rows?per_page=100&page=2": [],
+        }
+    )
+    rows, complete = _paginate_list_rows(client, "/rows", max_pages=2)
+    assert rows == ({"id": 1}, {"id": 2})
+    assert complete is True
+
+    duplicate = _PagedClient(
+        {"/rows?per_page=100&page=1": [{"id": 1}, {"id": 1}]}
+    )
+    with pytest.raises(ValueError, match="CATALOG_GITHUB_PAGINATION_DUPLICATE"):
+        _paginate_list_rows(duplicate, "/rows", max_pages=1)

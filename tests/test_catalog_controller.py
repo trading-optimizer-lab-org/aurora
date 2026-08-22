@@ -95,7 +95,15 @@ def _registry_entry() -> CatalogCampaignEntryV1:
         feature_contract_path="config/sp500_megarun_feature_contract_240.json",
         runtime_input_run_id=31418682679,
         reference_run_id=31948898747,
+        scientific_contract_sha256=SCIENCE_SHA256,
         max_free_workers=360,
+        allowed_protected_branch="main",
+        source_artifact_contracts=(
+            "runtime_input_pack_v1",
+            "reference_oracle_v1",
+        ),
+        component_store_family="sp500_component_store_v1",
+        reducer_family="catalog_hierarchical_reducer_v1",
         active=True,
     )
 
@@ -232,6 +240,34 @@ def _capacity_evidence() -> CatalogCapacityAdmissionEvidenceV1:
         retry_not_before=None,
         capacity_receipt_sha256="3" * 64,
     )
+
+
+def test_blocked_unknown_capacity_cannot_claim_temporary_unavailability() -> None:
+    evidence = CatalogCapacityAdmissionEvidenceV1(
+        **{
+            **_common_evidence(),
+            "status": "blocked",
+            "reason_codes": ("CATALOG_CAPACITY_UNPROVEN",),
+        },
+        capacity_known=False,
+        temporarily_unavailable=False,
+        compatible_qualified_ceiling=360,
+        current_safe_free_capacity=0,
+        selected_workers=0,
+        standard_runner_only=True,
+        paid_runner_minutes=0,
+        estimated_paid_actions_cost=0,
+        artifact_storage_headroom_proven=False,
+        cache_storage_headroom_proven=False,
+        resource_margin_verified=False,
+        compatible_safe_floor_used=False,
+        retry_not_before=None,
+        capacity_receipt_sha256="3" * 64,
+    )
+
+    assert evidence.status == "blocked"
+    assert evidence.temporarily_unavailable is False
+    assert evidence.selected_workers == 0
 
 
 def _queue_evidence() -> CatalogRequestQueueEvidenceV1:
@@ -435,6 +471,7 @@ def test_clean_new_science_is_admitted_once() -> None:
         "execution_plan_sha256",
         "execution_protocol_sha256",
         "protected_commit_sha",
+        "github_controls_commit_sha",
         "prompt_sha256",
         "prompt_policy_sha256",
         "campaign_registry_sha256",
@@ -448,6 +485,17 @@ def test_clean_new_science_is_admitted_once() -> None:
         "source_artifact_manifest_sha256",
         "artifact_plan_sha256",
     }
+
+
+def test_registry_science_identity_must_match_rebuilt_science() -> None:
+    mismatched = _registry_entry().model_copy(
+        update={"scientific_contract_sha256": "0" * 64}
+    )
+    decision = decide_catalog_run(
+        **_valid_controller_inputs(registry_entry=mismatched)
+    )
+    assert decision.outcome is ControllerOutcome.BLOCKED
+    assert "CATALOG_SCIENCE_IDENTITY_MISMATCH" in decision.failed_gate_codes
 
 
 def test_decision_hash_detects_any_changed_field() -> None:

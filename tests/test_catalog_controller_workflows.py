@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import textwrap
 
 import pytest
 
@@ -26,6 +27,7 @@ WORKFLOWS = ROOT / ".github/workflows"
 POLICY = WORKFLOWS / "catalog-controller-policy-check.yml"
 LIVE_AUDIT = WORKFLOWS / "catalog-live-controls-audit.yml"
 LIVE_QUALIFICATION = WORKFLOWS / "catalog-live-controls-qualification.yml"
+CONTROLLER_QUALIFICATION = WORKFLOWS / "catalog-controller-qualification.yml"
 FULL_ACTION_SHA = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 SEALED_IDENTIFIERS = {
     "request_sha256",
@@ -111,6 +113,8 @@ def test_policy_workflow_is_lightweight_read_only_and_exactly_named() -> None:
         "tests/test_catalog_controller.py",
         "tests/test_catalog_github_controls.py",
         "tests/test_catalog_controller_reporting.py",
+        "tests/test_catalog_controller_qualification.py",
+        "tests/test_catalog_mirror_delivery.py",
         "tests/test_github_performance_preflight.py",
         "tests/test_github_performance_workflows.py",
         "tests/test_catalog_controller_workflows.py",
@@ -127,6 +131,19 @@ def test_policy_workflow_is_lightweight_read_only_and_exactly_named() -> None:
         )
     )
     assert all(FULL_ACTION_SHA.fullmatch(value) for value in _external_action_uses(workflow))
+
+
+def test_every_controller_mirror_write_reconciles_orphans_before_upload() -> None:
+    rendered = (WORKFLOWS / "catalog-run-controller.yml").read_text("utf-8")
+    assert rendered.count("python scripts/reconcile_catalog_mirror_delivery.py") == 8
+    assert rendered.count("name: Claim one mirror-comment repair attempt") == 8
+    assert rendered.count("name: Read back the repair claim before any repaired comment") == 8
+    assert rendered.count("catalog-mirror-repair-claim.zip") == 16
+    assert rendered.count("outputs.action == 'upload_new'") >= 7
+    assert rendered.count("outputs.existing_artifact_id ||") == 7
+    assert "CATALOG_MIRROR_POST_OUTCOME_AMBIGUOUS" in (
+        ROOT / "infra/sp500_megarun/catalog_mirror_delivery.py"
+    ).read_text("utf-8")
 
 
 def test_live_audit_is_one_read_only_protected_reusable_job() -> None:
@@ -222,6 +239,99 @@ def test_live_qualification_has_two_pure_calls_and_one_tiny_finalizer() -> None:
     assert all(FULL_ACTION_SHA.fullmatch(value) for value in _external_action_uses(workflow))
 
 
+def test_controller_qualification_is_one_bounded_synthetic_job() -> None:
+    workflow = _workflow(CONTROLLER_QUALIFICATION)
+    assert workflow["on"] == {"workflow_dispatch": {}}
+    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["env"] == {
+        "PYTHONPATH": "${{ github.workspace }}/..",
+        "QUALIFICATION_FIXTURE": (
+            "tests/fixtures/catalog_controller_qualification/campaign_v1.json"
+        ),
+    }
+    jobs = workflow["jobs"]
+    assert isinstance(jobs, dict)
+    assert 1 <= len(jobs) <= 4
+    assert set(jobs) == {"qualify-controller"}
+    job = jobs["qualify-controller"]
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert job["timeout-minutes"] == 5
+    assert job["permissions"] == {"contents": "read"}
+    assert "environment" not in json.dumps(workflow)
+    assert "secrets" not in json.dumps(workflow).casefold()
+    assert all(FULL_ACTION_SHA.fullmatch(value) for value in _external_action_uses(workflow))
+
+    rendered = json.dumps(workflow, sort_keys=True)
+    for required in (
+        "requirements/catalog-controller-test-linux-py311.lock",
+        "--only-binary=:all:",
+        "--no-deps",
+        "--require-hashes",
+        "tests/test_catalog_controller_qualification.py",
+        "tests/test_catalog_controller_workflows.py",
+        "Q-001",
+        "Q-078",
+        "qualification_receipt_v1.json",
+        "qualification-junit.xml",
+    ):
+        assert required in rendered
+    for forbidden in (
+        "catalog-production",
+        "config/catalog_campaign_registry_v1.json",
+        "sp500-optimized-catalog-v1",
+        "market_data",
+        "runtime_input_run_id",
+        "reference_run_id",
+        "validation/",
+        "locked/",
+        "self-hosted",
+    ):
+        assert forbidden not in rendered.casefold()
+
+    uploads = [
+        step
+        for step in job["steps"]
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    assert len(uploads) == 1
+    assert uploads[0]["with"] == {
+        "name": "catalog-controller-qualification-receipt",
+        "path": "qualification_receipt_v1.json",
+        "if-no-files-found": "error",
+        "retention-days": 90,
+    }
+
+
+def test_controller_qualification_receipt_covers_all_required_modes() -> None:
+    text = CONTROLLER_QUALIFICATION.read_text("utf-8")
+    for field in (
+        '"scenario_count": 78',
+        '"cold_component_store"',
+        '"warm_component_store"',
+        '"selective_recovery"',
+        '"hierarchical_merge"',
+        '"exact_final_hash"',
+        '"central_hierarchical_equivalence"',
+        '"maximum_concurrent_jobs": 1',
+        '"maximum_job_minutes": 5',
+        '"paid_runner_minutes": 0',
+        '"validation_opened": False',
+        '"locked_opened": False',
+        '"receipt_sha256"',
+        "sys.path.insert(0, str(fixture_root.parents[1].resolve()))",
+    ):
+        assert field in text
+    assert "secret scan" in text.casefold()
+    assert '.rglob("*")' not in text
+    for scanned in (
+        "qualification_receipt_v1.json",
+        "campaign_v1.json",
+        "manifest_v1.json",
+        "README.md",
+    ):
+        assert scanned in text
+
+
 def test_task_seven_embeds_all_five_future_auditor_callers() -> None:
     assert AUDITOR_CALLER_TOPOLOGY == (
         (
@@ -308,6 +418,7 @@ def test_controller_has_only_request_lifecycle_and_reconciler_triggers() -> None
 
     expected_writers = {
         "issue_tamper_guard",
+        "repair_request_receipt_orphan",
         "reserve",
         "report_nonexecuting_decision",
         "record_running",
@@ -351,6 +462,14 @@ def test_controller_has_only_request_lifecycle_and_reconciler_triggers() -> None
     }
 
 
+def test_disabled_controller_uses_one_exact_fail_closed_reason() -> None:
+    text = (WORKFLOWS / "catalog-run-controller.yml").read_text("utf-8")
+    disabled = text.index("CATALOG_CONTROLLER_DISABLED")
+    assert "CATALOG_PRODUCTION_DISABLED" not in text
+    assert "should_create_authority" not in text[:disabled]
+    assert "should_schedule_compute" not in text[:disabled]
+
+
 def test_controller_job_order_and_authority_gates_are_explicit() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
     jobs = workflow["jobs"]
@@ -358,6 +477,7 @@ def test_controller_job_order_and_authority_gates_are_explicit() -> None:
         "issue_tamper_guard",
         "filter",
         "routing_snapshot",
+        "repair_request_receipt_orphan",
         "route_without_privileged_audit",
         "prepare_admission_candidates",
         "live_controls_audit_before_reserve",
@@ -372,13 +492,15 @@ def test_controller_job_order_and_authority_gates_are_explicit() -> None:
         "prepare_terminal_decision",
         "finalize",
     ]
-    assert jobs["prepare_admission_candidates"]["needs"] == (
-        "route_without_privileged_audit"
-    )
+    assert jobs["prepare_admission_candidates"]["needs"] == [
+        "routing_snapshot",
+        "route_without_privileged_audit",
+    ]
     assert jobs["live_controls_audit_before_reserve"]["needs"] == (
         "prepare_admission_candidates"
     )
     assert jobs["admission"]["needs"] == [
+        "routing_snapshot",
         "prepare_admission_candidates",
         "live_controls_audit_before_reserve",
     ]
@@ -396,6 +518,126 @@ def test_controller_job_order_and_authority_gates_are_explicit() -> None:
     assert "concurrency" not in engine
 
 
+def test_admission_candidates_are_bounded_to_the_protected_snapshot() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    job = workflow["jobs"]["prepare_admission_candidates"]
+    assert job["needs"] == ["routing_snapshot", "route_without_privileged_audit"]
+    assert job["outputs"] == {
+        "audit_context_sha256": "${{ steps.candidate.outputs.audit_context_sha256 }}",
+        "candidate_manifest_sha256": (
+            "${{ steps.candidate.outputs.candidate_manifest_sha256 }}"
+        ),
+        "controls_commit_sha": "${{ steps.candidate.outputs.controls_commit_sha }}",
+        "execution_protocol_sha256": (
+            "${{ steps.candidate.outputs.execution_protocol_sha256 }}"
+        ),
+        "protected_commit_sha": (
+            "${{ steps.candidate.outputs.protected_commit_sha }}"
+        ),
+    }
+    checkout = job["steps"][0]
+    assert checkout["with"]["ref"] == (
+        "${{ needs.route_without_privileged_audit.outputs.protected_commit_sha }}"
+    )
+    assert checkout["with"]["persist-credentials"] is False
+    rendered = json.dumps(job, sort_keys=True)
+    for required in (
+        "requirements/catalog-controller-linux-py311.lock",
+        "catalog-routing-snapshot",
+        "scripts/prepare_catalog_admission_candidates.py",
+        "--routing-snapshot-dir",
+        "--repo-root",
+        "--output-dir",
+        "--github-output",
+        "catalog-admission-candidates",
+        "GH_TOKEN",
+    ):
+        assert required in rendered
+    for forbidden in (
+        "run_sp500_optimized_recipe_worker",
+        "build_sp500_component_store",
+        "evaluate_catalog",
+        "workflow_dispatch",
+    ):
+        assert forbidden not in rendered
+    uploads = [
+        step
+        for step in job["steps"]
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    assert len(uploads) == 1
+    assert uploads[0]["with"] == {
+        "name": "catalog-admission-candidates",
+        "path": "${{ runner.temp }}/catalog-admission-candidates",
+        "if-no-files-found": "error",
+        "retention-days": 7,
+    }
+
+
+def test_admission_consumes_only_candidates_and_the_fresh_bound_audit() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    job = workflow["jobs"]["admission"]
+    assert job["needs"] == [
+        "routing_snapshot",
+        "prepare_admission_candidates",
+        "live_controls_audit_before_reserve",
+    ]
+    assert job["permissions"] == {"actions": "read", "contents": "read"}
+    assert job["outputs"] == {
+        "call_engine": "${{ steps.decision.outputs.call_engine }}",
+        "outcome": "${{ steps.decision.outputs.outcome }}",
+        "reason_code": "${{ steps.decision.outputs.reason_code }}",
+        "request_issue_number": (
+            "${{ steps.decision.outputs.request_issue_number }}"
+        ),
+        "request_sha256": "${{ steps.decision.outputs.request_sha256 }}",
+        "authority_id": "${{ steps.decision.outputs.authority_id }}",
+        "campaign_id": "${{ steps.decision.outputs.campaign_id }}",
+        "science_sha256": "${{ steps.decision.outputs.science_sha256 }}",
+        "execution_plan_sha256": (
+            "${{ steps.decision.outputs.execution_plan_sha256 }}"
+        ),
+        "execution_protocol_sha256": (
+            "${{ steps.decision.outputs.execution_protocol_sha256 }}"
+        ),
+        "protected_commit_sha": (
+            "${{ steps.decision.outputs.protected_commit_sha }}"
+        ),
+        "controls_commit_sha": "${{ steps.decision.outputs.controls_commit_sha }}",
+        "retry_not_before": "${{ steps.decision.outputs.retry_not_before }}",
+        "decision_sha256": "${{ steps.decision.outputs.decision_sha256 }}",
+    }
+    checkout = job["steps"][0]
+    assert checkout["with"]["ref"] == (
+        "${{ needs.prepare_admission_candidates.outputs.protected_commit_sha }}"
+    )
+    rendered = json.dumps(job, sort_keys=True)
+    for required in (
+        "catalog-routing-snapshot",
+        "catalog-admission-candidates",
+        "receipt_artifact_name",
+        "CATALOG_EXPECTED_CANDIDATE_MANIFEST_SHA256",
+        "CATALOG_EXPECTED_CONTROLS_RECEIPT_SHA256",
+        "CATALOG_EXPECTED_AUDIT_CONTEXT_SHA256",
+        "CATALOG_PROTECTED_COMMIT_SHA",
+        "scripts/prepare_catalog_admission_decision.py",
+        "catalog-admission-decision-",
+        "catalog-sealed-execution-plan-",
+    ):
+        assert required in rendered
+    assert "--emit-authority-comment" not in rendered
+    uploads = [
+        step
+        for step in job["steps"]
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    assert len(uploads) == 2
+    assert uploads[1]["if"] == (
+        "${{ steps.decision.outputs.call_engine == 'true' && "
+        "steps.decision.outputs.sealed_plan_ready == 'true' }}"
+    )
+
+
 @pytest.mark.parametrize(
     "forbidden",
     [
@@ -404,7 +646,6 @@ def test_controller_job_order_and_authority_gates_are_explicit() -> None:
         "pull_request_target",
         "secrets: inherit",
         "issues/comments/{comment_id}",
-        "--method PATCH",
         "--method DELETE",
         "gh workflow run",
         "repository_dispatch",
@@ -451,7 +692,18 @@ def test_terminal_evidence_is_prepared_before_fresh_terminal_audit() -> None:
         "live_controls_audit_before_terminal",
     ]
     assert "concurrency" not in decision
-    assert "download-artifact" not in json.dumps(finalizer)
+    finalizer_text = json.dumps(finalizer)
+    assert "catalog-terminal-candidate" in finalizer_text
+    assert "catalog-admission-decision" in finalizer_text
+    for forbidden in (
+        "catalog-runtime-prepared-seal",
+        "catalog-component-store-seal",
+        "catalog-terminal-science",
+        "catalog-runtime-audit",
+        "catalog-final-root",
+        "catalog-recovery-evidence",
+    ):
+        assert forbidden not in finalizer_text
 
 
 def test_every_active_catalog_engine_is_workflow_call_only_and_sealed() -> None:
@@ -535,6 +787,11 @@ def test_request_reconciler_replays_only_existing_requests() -> None:
         "gh workflow run",
     ):
         assert forbidden not in text
+    assert "matrix=[]" not in text
+    assert "select_catalog_request_reconciliation_candidates.py" in text
+    assert "issues?state=open&sort=created&direction=asc" in (
+        ROOT / "scripts/select_catalog_request_reconciliation_candidates.py"
+    ).read_text("utf-8")
     call = workflow["jobs"]["call_controller"]
     assert "steps" not in call
     assert call["uses"] == "./.github/workflows/catalog-run-controller.yml"
@@ -570,6 +827,19 @@ def test_ledger_guard_can_record_tamper_but_never_compute_or_repair() -> None:
     text = (WORKFLOWS / "catalog-ledger-guard.yml").read_text("utf-8")
     assert "AURORA_CATALOG_LEDGER_TAMPER_V1" in text
     assert "AURORA_CATALOG_REQUEST_COMMENT_TAMPER_V1" in text
+    assert "AURORA_CATALOG_AUTHORITY_V1" in text
+    assert "AURORA_CATALOG_AUTHORITY_RECORD_V1" not in text
+    assert "changes" in text and 'get("from")' in text
+    assert "actions/download-artifact@" in text
+    assert "cmp --silent" in text
+    assert "--method POST" in text
+    assert "issues/comments/$comment_id" in text
+    rendered_steps = json.dumps(writer["steps"], sort_keys=True)
+    assert rendered_steps.index("actions/upload-artifact@") < rendered_steps.index(
+        "actions/download-artifact@"
+    ) < rendered_steps.index("--method POST") < rendered_steps.index(
+        "issues/comments/$comment_id"
+    )
     for forbidden in (
         "workflow_dispatch",
         "catalog-optimized",
@@ -591,6 +861,10 @@ def test_issues_write_is_job_scoped_to_the_exact_governance_jobs() -> None:
     )
     assert set(jobs_with_issues_write(workflows)) == {
         (".github/workflows/catalog-run-controller.yml", "issue_tamper_guard"),
+        (
+            ".github/workflows/catalog-run-controller.yml",
+            "repair_request_receipt_orphan",
+        ),
         (".github/workflows/catalog-run-controller.yml", "reserve"),
         (
             ".github/workflows/catalog-run-controller.yml",
@@ -610,20 +884,119 @@ def test_issues_write_is_job_scoped_to_the_exact_governance_jobs() -> None:
 
 def test_request_receipt_is_mirrored_before_its_only_post() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
-    steps = workflow["jobs"]["report_nonexecuting_decision"]["steps"]
-    upload_index = next(
-        index
-        for index, step in enumerate(steps)
-        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    for job_name in ("report_nonexecuting_decision", "record_nonterminal_wait"):
+        steps = workflow["jobs"][job_name]["steps"]
+        rendered = json.dumps(steps, sort_keys=True)
+        assert "prepare_catalog_request_receipt.py" in rendered
+        assert "outputs.artifact_name" in rendered
+        assert "request-receipt.json" in rendered
+        upload_index = next(
+            index
+            for index, step in enumerate(steps)
+            if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+            and "request" in str(step.get("name", "")).casefold()
+            and "mirror" in str(step.get("name", "")).casefold()
+        )
+        post_index = next(
+            index
+            for index, step in enumerate(steps)
+            if index > upload_index
+            and "--method POST" in str(step.get("run", ""))
+        )
+        assert upload_index < post_index
+        assert "actions/artifacts/$ARTIFACT_ID/zip" in steps[post_index]["run"]
+        assert "cmp --silent" in steps[post_index]["run"]
+        assert "comment.md" in steps[post_index]["run"]
+
+
+def test_controller_has_no_provisional_or_unimplemented_stage() -> None:
+    path = WORKFLOWS / "catalog-run-controller.yml"
+    workflow = _workflow(path)
+    text = path.read_text(encoding="utf-8")
+    for forbidden in (
+        "CATALOG_ADMISSION_ADAPTER_NOT_QUALIFIED",
+        "CATALOG_ADMISSION_CANDIDATE_BUILDER_NOT_QUALIFIED",
+        "CATALOG_ADMISSION_DECISION_NOT_QUALIFIED",
+    ):
+        assert forbidden not in text
+    for job_name in (
+        "route_without_privileged_audit",
+        "prepare_admission_candidates",
+        "admission",
+        "reserve",
+        "record_running",
+        "record_nonterminal_wait",
+        "prepare_terminal_evidence",
+        "prepare_terminal_decision",
+        "finalize",
+    ):
+        steps = workflow["jobs"][job_name].get("steps", ())
+        assert steps
+        assert all(str(step.get("run", "")).strip() != "exit 1" for step in steps)
+
+
+def test_controller_writer_jobs_use_only_declared_request_outputs() -> None:
+    """A writer must not reference a job absent from its own ``needs`` list."""
+
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    running = workflow["jobs"]["record_running"]
+    running_text = json.dumps(running, sort_keys=True)
+    assert "needs.filter.outputs" not in running_text
+    assert "needs.admission.outputs.request_issue_number" in running_text
+
+    report = workflow["jobs"]["report_nonexecuting_decision"]
+    report_text = json.dumps(report, sort_keys=True)
+    assert "needs.admission.outputs.request_issue_number" not in report_text
+    assert "needs.filter.outputs.issue_number" in report_text
+
+
+def test_terminal_pipeline_uses_real_bounded_adapters() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    text_by_job = {
+        name: json.dumps(workflow["jobs"][name], sort_keys=True)
+        for name in (
+            "record_nonterminal_wait",
+            "prepare_terminal_evidence",
+            "prepare_terminal_decision",
+            "finalize",
+        )
+    }
+    assert "prepare_catalog_authority_record.py" in text_by_job[
+        "record_nonterminal_wait"
+    ]
+    assert "prepare_catalog_terminal_evidence.py" in text_by_job[
+        "prepare_terminal_evidence"
+    ]
+    assert "prepare_catalog_terminal_decision.py" in text_by_job[
+        "prepare_terminal_decision"
+    ]
+    assert "finalize_catalog_controller_run.py" in text_by_job[
+        "prepare_terminal_decision"
+    ]
+    assert "catalog-terminal-candidate" in text_by_job["finalize"]
+
+
+def test_only_request_receipt_writers_can_apply_fixed_atomic_terminal_patches() -> None:
+    path = WORKFLOWS / "catalog-run-controller.yml"
+    workflow = _workflow(path)
+    text = path.read_text("utf-8")
+    assert text.count("--method PATCH") == 2
+    reporter = json.dumps(
+        workflow["jobs"]["report_nonexecuting_decision"], sort_keys=True
     )
-    post_index = next(
-        index
-        for index, step in enumerate(steps)
-        if "--method POST" in str(step.get("run", ""))
-    )
-    assert upload_index < post_index
-    assert "actions/artifacts/$artifact_id/zip" in steps[post_index]["run"]
-    assert "cmp --silent" in steps[post_index]["run"]
+    finalizer = json.dumps(workflow["jobs"]["finalize"], sort_keys=True)
+    assert "--method PATCH" in reporter
+    assert "terminal-issue-patch.json" in reporter
+    assert "--method PATCH" in finalizer
+    assert "terminal-issue-patch.json" in finalizer
+    receipt_script = ROOT / "scripts/prepare_catalog_terminal_request_receipt.py"
+    receipt_text = receipt_script.read_text("utf-8")
+    assert '"labels": ["catalog-run-terminal-v1"]' in receipt_text
+    assert '"state": "closed"' in receipt_text
+    assert '"state_reason": "completed"' in receipt_text
+    assert text.count("CATALOG_REQUEST_TERMINAL_READBACK_INVALID") == 2
+    assert text.count('(issue.get("closed_by") or {}).get("login")') == 2
+    assert text.count('gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER"') >= 2
 
 
 def test_repository_catalog_topology_is_closed_and_content_hashed() -> None:
@@ -645,6 +1018,7 @@ def test_recovery_wave_is_closed_bounded_and_reuses_the_worker() -> None:
     assert set(inputs) == SEALED_IDENTIFIERS | {
         "campaign_state_artifact",
         "attempt_manifest_artifacts",
+        "failure_manifest_artifacts",
         "checkpoint_manifest_artifacts",
         "current_wave",
     }
@@ -673,7 +1047,33 @@ def test_recovery_wave_is_closed_bounded_and_reuses_the_worker() -> None:
     assert "gh workflow run" not in text
     assert "continue-on-error" not in text
     assert "expected_attempt_count" in text
+    assert "expected_failure_count" in text
     assert "expected_checkpoint_count" in text
+    assert "catalog-failure-attempt-" in text
+    assert "failure_reason_code" in text
+
+
+def test_catalog_recovery_inline_python_is_syntactically_valid() -> None:
+    paths = (
+        ROOT / ".github/actions/aurora-recovery-plan/action.yml",
+        WORKFLOWS / "catalog-recovery-wave.yml",
+        WORKFLOWS / "catalog-optimized-worker.yml",
+        WORKFLOWS / "catalog-optimized-run.yml",
+    )
+    found = 0
+    for path in paths:
+        source = path.read_text("utf-8")
+        for index, match in enumerate(
+            re.finditer(r"python - <<'PY'\n(.*?)\n\s+PY", source, re.DOTALL),
+            start=1,
+        ):
+            compile(
+                textwrap.dedent(match.group(1)),
+                f"{path}:inline-python-{index}",
+                "exec",
+            )
+            found += 1
+    assert found >= 8
 
 
 def test_engine_unrolls_exactly_six_selective_recovery_slots() -> None:
@@ -686,12 +1086,37 @@ def test_engine_unrolls_exactly_six_selective_recovery_slots() -> None:
         serialized = json.dumps(job, sort_keys=True)
         assert f"current_wave\": {wave}" in serialized
         assert "retry" in serialized and "replan" in serialized
+        assert "always()" in str(job["if"])
     assert "recovery_wave_7" not in jobs
     final_gate = jobs["ready_to_merge"]
     assert "recovery_wave_6" in final_gate["needs"]
     text = (WORKFLOWS / "catalog-optimized-run.yml").read_text("utf-8")
     assert "rerun all jobs" not in text.casefold()
     assert "catalog-recovery-wave.yml" in text
+
+
+def test_engine_publishes_one_content_bound_global_reuse_index() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-optimized-run.yml")
+    steps = workflow["jobs"]["verify_component_store"]["steps"]
+    serialized = json.dumps(steps, sort_keys=True)
+    uploads = [
+        step
+        for step in steps
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+        and step.get("with", {}).get("name")
+        == "catalog-rebuildable-store-index-v1"
+    ]
+    assert len(uploads) == 1
+    assert uploads[0]["with"]["retention-days"] == 90
+    assert "build_catalog_rebuildable_store_index.py" in serialized
+    assert "actions/caches?ref=refs/heads/main&per_page=100" in serialized
+    assert "catalog-runtime-prepared-seal" in serialized
+    assert "catalog-main-caches-1.json" in serialized
+    candidate_source = (
+        ROOT / "scripts/prepare_catalog_admission_candidates.py"
+    ).read_text("utf-8")
+    assert "actions/artifacts?name={_STORE_INDEX_ARTIFACT_NAME}" in candidate_source
+    assert 'f"/repos/{repository}/actions/artifacts",' not in candidate_source
 
 
 def test_checkpoint_upload_must_finish_before_the_next_segment() -> None:
@@ -752,6 +1177,10 @@ def test_watchdog_can_only_reenter_controller_for_existing_authority() -> None:
         assert forbidden not in text
     assert "ref: main" in text
     assert "issue_number: ${{ matrix.issue_number }}" in text
+    assert "extract_authority_comment_records" in text
+    assert "workflow_runs" in text
+    assert 'in {"queued", "in_progress"}' in text
+    assert "CATALOG_WATCHDOG_ACTIVE_AUTHORITY_CONFLICT" in text
 
 
 def test_catalog_reusable_workflow_graph_stays_below_github_limits() -> None:

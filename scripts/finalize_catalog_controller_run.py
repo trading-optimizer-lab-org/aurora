@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 
 from aurora.infra.sp500_megarun.catalog_controller_reporting import (
@@ -245,6 +246,7 @@ def _write_outputs(
 
 
 MappingString = dict[str, str]
+_SAFE_GITHUB_OUTPUT = re.compile(r"^[A-Za-z0-9_.:-]{1,160}$")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -276,6 +278,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
     )
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--github-output", type=Path)
     return parser
 
 
@@ -307,6 +310,31 @@ def main(argv: list[str] | None = None) -> int:
             source_evidence_hashes=source_hashes,
             external_input_hashes=dict(envelope.input_sha256s),
         )
+        if args.github_output is not None:
+            values = {
+                "state": decision.state.value,
+                "reason_code": decision.reason_code,
+                "terminal_decision_sha256": decision.terminal_decision_sha256,
+                "authority_append_allowed": str(
+                    decision.authority_append_allowed
+                ).lower(),
+                "request_comment_allowed": str(
+                    decision.request_comment_allowed
+                ).lower(),
+                "standalone_incident_artifact_required": str(
+                    decision.standalone_incident_artifact_required
+                ).lower(),
+            }
+            if args.github_output.is_symlink() or any(
+                not _SAFE_GITHUB_OUTPUT.fullmatch(value)
+                for value in values.values()
+            ):
+                raise ValueError("CATALOG_FINAL_GITHUB_OUTPUT_INVALID")
+            with args.github_output.open(
+                "a", encoding="utf-8", newline="\n"
+            ) as stream:
+                for key, value in values.items():
+                    stream.write(f"{key}={value}\n")
         print(
             json.dumps(
                 {

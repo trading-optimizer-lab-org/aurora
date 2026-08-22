@@ -494,6 +494,7 @@ def _topology_registry() -> CatalogCampaignRegistryV1:
                     "feature_contract_path": "config/features.json",
                     "runtime_input_run_id": 1,
                     "reference_run_id": 2,
+                    "scientific_contract_sha256": "3" * 64,
                     "max_free_workers": 4,
                     "allowed_protected_branch": "main",
                     "source_artifact_contracts": ["runtime_input_pack_v1"],

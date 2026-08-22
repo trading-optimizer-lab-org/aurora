@@ -60,6 +60,20 @@ _TRANSITIONS: dict[str, frozenset[str]] = {
 _FORBIDDEN_AUTHORITY_LIFECYCLE_EVENTS = frozenset(
     {"edited", "deleted", "transferred", "closed", "reopened", "locked", "unlocked"}
 )
+_REQUEST_LIFECYCLE_MUTATIONS = frozenset(
+    {
+        "edited",
+        "deleted",
+        "transferred",
+        "closed",
+        "reopened",
+        "renamed",
+        "locked",
+        "unlocked",
+        "labeled",
+        "unlabeled",
+    }
+)
 _UNSET = object()
 
 
@@ -394,6 +408,13 @@ class CatalogRequestTamperReconciliationV1(FrozenModel):
     authority_blocked: bool
     request_ui_untrusted: bool
     blocked_request_numbers: tuple[int, ...]
+
+
+class CatalogRequestLifecycleReconciliationV1(FrozenModel):
+    authority_blocked: bool
+    request_ui_untrusted: bool
+    atomic_terminal_close_verified: bool
+    reason_code: str
 
 
 class CatalogAuthorityIssueTamperReconciliationV1(FrozenModel):
@@ -792,6 +813,29 @@ def _verify_writer_record(
         raise ValueError("CATALOG_LEDGER_WRITER_PROVENANCE_INVALID") from None
 
 
+def extract_authority_comment_records(
+    comments: Sequence[Mapping[str, object]],
+    *,
+    expected_author: str,
+) -> tuple[CatalogAuthorityRecordV1, ...]:
+    """Parse and chain-check records before fetching their writer runs."""
+
+    if expected_author != LEDGER_ACTOR:
+        raise ValueError("CATALOG_LEDGER_AUTHOR_INVALID")
+    records = tuple(
+        record
+        for comment in comments
+        if (record := _extract_comment_record(comment, expected_author=expected_author))
+        is not None
+    )
+    ordered = tuple(sorted(records, key=lambda record: record.sequence))
+    sequences = [record.sequence for record in ordered]
+    if len(sequences) != len(set(sequences)):
+        raise ValueError("CATALOG_LEDGER_SEQUENCE_DUPLICATE")
+    _verify_record_sequence(ordered)
+    return ordered
+
+
 def parse_authority_comments(
     comments: Sequence[Mapping[str, object]],
     *,
@@ -802,16 +846,10 @@ def parse_authority_comments(
 ) -> VerifiedAuthorityLedgerV1:
     if expected_author != LEDGER_ACTOR:
         raise ValueError("CATALOG_LEDGER_AUTHOR_INVALID")
-    records = tuple(
-        record
-        for comment in comments
-        if (record := _extract_comment_record(comment, expected_author=expected_author)) is not None
+    ordered = extract_authority_comment_records(
+        comments,
+        expected_author=expected_author,
     )
-    ordered = tuple(sorted(records, key=lambda record: record.sequence))
-    sequences = [record.sequence for record in ordered]
-    if len(sequences) != len(set(sequences)):
-        raise ValueError("CATALOG_LEDGER_SEQUENCE_DUPLICATE")
-    _verify_record_sequence(ordered)
 
     try:
         snapshots = _snapshot_map(writer_run_snapshots)
@@ -996,6 +1034,103 @@ def reconcile_request_tamper(
     )
 
 
+def reconcile_request_lifecycle(
+    authority: CatalogAuthorityRecordV1,
+    *,
+    complete_timeline: object | None,
+    terminal_close_provenance: object | None,
+) -> CatalogRequestLifecycleReconciliationV1:
+    """Fail closed on restored request mutations and admit one proven final close."""
+
+    authority = _validated_record(authority)
+    terminal = authority.state.value in _TERMINAL_STATES
+    if complete_timeline is None:
+        return CatalogRequestLifecycleReconciliationV1(
+            authority_blocked=not terminal,
+            request_ui_untrusted=True,
+            atomic_terminal_close_verified=False,
+            reason_code="CATALOG_REQUEST_LIFECYCLE_HISTORY_UNAVAILABLE",
+        )
+    timeline = _mapping(complete_timeline)
+    if any(
+        timeline.get(flag) is not True for flag in ("complete", "pagination_complete", "stable")
+    ):
+        return CatalogRequestLifecycleReconciliationV1(
+            authority_blocked=not terminal,
+            request_ui_untrusted=True,
+            atomic_terminal_close_verified=False,
+            reason_code="CATALOG_REQUEST_LIFECYCLE_HISTORY_UNAVAILABLE",
+        )
+    raw_events = timeline.get("historical_events", timeline.get("events", ()))
+    if not isinstance(raw_events, Sequence) or isinstance(raw_events, (str, bytes)):
+        return CatalogRequestLifecycleReconciliationV1(
+            authority_blocked=not terminal,
+            request_ui_untrusted=True,
+            atomic_terminal_close_verified=False,
+            reason_code="CATALOG_REQUEST_LIFECYCLE_HISTORY_INVALID",
+        )
+    events: list[Mapping[str, object]] = []
+    try:
+        for event in raw_events:
+            events.append(_mapping(event))
+    except ValueError:
+        return CatalogRequestLifecycleReconciliationV1(
+            authority_blocked=not terminal,
+            request_ui_untrusted=True,
+            atomic_terminal_close_verified=False,
+            reason_code="CATALOG_REQUEST_LIFECYCLE_HISTORY_INVALID",
+        )
+    mutations = tuple(
+        event for event in events if event.get("event") in _REQUEST_LIFECYCLE_MUTATIONS
+    )
+    if not mutations:
+        return CatalogRequestLifecycleReconciliationV1(
+            authority_blocked=False,
+            request_ui_untrusted=False,
+            atomic_terminal_close_verified=False,
+            reason_code="CATALOG_REQUEST_LIFECYCLE_VERIFIED",
+        )
+
+    proof = (
+        _mapping(terminal_close_provenance)
+        if isinstance(terminal_close_provenance, Mapping)
+        else {}
+    )
+    mutation_names = tuple(str(event.get("event")) for event in mutations)
+    expected_actor = proof.get("writer_actor")
+    terminal_close_verified = (
+        terminal
+        and mutation_names == ("labeled", "closed")
+        and timeline.get("current_state") == "closed"
+        and timeline.get("current_state_reason") == "completed"
+        and timeline.get("current_labels") == ["catalog-run-terminal-v1"]
+        and mutations[0].get("label") == "catalog-run-terminal-v1"
+        and isinstance(expected_actor, str)
+        and expected_actor == "github-actions[bot]"
+        and all(event.get("actor") == expected_actor for event in mutations)
+        and proof.get("verified") is True
+        and proof.get("atomic_patch") is True
+        and proof.get("receipt_precedes_events") is True
+        and proof.get("request_issue_number") == authority.request_issue_number
+        and proof.get("authority_id") == str(authority.authority_id)
+        and proof.get("terminal_state") == authority.state.value
+        and proof.get("writer_run_job_commit_provenance_verified") is True
+    )
+    if terminal_close_verified:
+        return CatalogRequestLifecycleReconciliationV1(
+            authority_blocked=False,
+            request_ui_untrusted=False,
+            atomic_terminal_close_verified=True,
+            reason_code="CATALOG_REQUEST_TERMINAL_CLOSE_VERIFIED",
+        )
+    return CatalogRequestLifecycleReconciliationV1(
+        authority_blocked=not terminal,
+        request_ui_untrusted=True,
+        atomic_terminal_close_verified=False,
+        reason_code="CATALOG_REQUEST_LIFECYCLE_TAMPERED",
+    )
+
+
 def reconcile_authority_issue_tamper(
     *,
     ledger: VerifiedAuthorityLedgerV1,
@@ -1128,11 +1263,14 @@ __all__ = [
     "CatalogAuthorityRecordV1",
     "CatalogControllerActorsV1",
     "CatalogRequestTamperReconciliationV1",
+    "CatalogRequestLifecycleReconciliationV1",
     "VerifiedAuthorityLedgerV1",
     "append_authority_record",
+    "extract_authority_comment_records",
     "parse_authority_comments",
     "reconcile_authority_issue_tamper",
     "reconcile_authority_mirrors",
+    "reconcile_request_lifecycle",
     "reconcile_request_tamper",
     "select_campaign_authority",
     "verify_authority_checkpoint",

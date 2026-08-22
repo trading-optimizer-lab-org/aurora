@@ -163,6 +163,20 @@ def test_deterministic_code_failure_never_retries() -> None:
     assert result.plan.retry_matrix_b == ()
 
 
+def test_missing_attempt_without_platform_proof_never_assumes_runner_loss() -> None:
+    result = build_recovery_loop(
+        [make_shard(1)],
+        [],
+        [],
+        {"runner_lost": 2},
+        current_wave=0,
+        max_waves=6,
+    )
+    assert result.status is RecoveryLoopStatus.BLOCKED_HARD_FAILURE
+    assert result.retry_count == 0
+    assert result.reason_codes == ("RECOVERY_FAILURE_EVIDENCE_MISSING",)
+
+
 def _slot(index: int, previous: str, current: str) -> CheckpointSlotEvidence:
     return CheckpointSlotEvidence(
         logical_scope_id="worker:7",

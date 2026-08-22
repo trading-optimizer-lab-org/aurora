@@ -20,7 +20,12 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
         "utf-8"
     )
 
-    assert "python -m scripts.run_sp500_optimized_recipe_worker" in worker
+    assert "python -m scripts.run_catalog_recipe_worker_guarded" in worker
+    assert worker.count("python -m scripts.run_catalog_recipe_worker_guarded") == 8
+    assert "catalog-worker-failure-final.json" in worker
+    assert "catalog-failure-attempt-" in Path(
+        "infra/sp500_megarun/catalog_worker_failure.py"
+    ).read_text("utf-8")
     assert "--runtime-input-pack \"$RUNNER_TEMP/runtime\"" in worker
     assert "_open_exact_component_payload" in worker_script
     assert "score_prepared_lane_candidate" not in worker_script
@@ -43,6 +48,54 @@ def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> No
     assert "Build the one locked runtime store" in run
     assert run.count("Build the one locked runtime store") == 1
     assert _RESULT_SCHEMA.names == ["strategy_id", "result_json"]
+
+
+def test_engine_exposes_one_explicit_verified_outcome_even_after_failure() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    path = Path(".github/workflows/catalog-optimized-run.yml")
+    workflow = load_github_yaml(path)
+    call_outputs = workflow["on"]["workflow_call"]["outputs"]
+    assert call_outputs["campaign_state"]["value"] == (
+        "${{ jobs.campaign_outcome.outputs.campaign_state }}"
+    )
+    assert call_outputs["outcome_evidence_sha256"]["value"] == (
+        "${{ jobs.campaign_outcome.outputs.outcome_evidence_sha256 }}"
+    )
+    assert call_outputs["final_evidence_artifact"]["value"] == (
+        "${{ jobs.campaign_outcome.outputs.final_evidence_artifact }}"
+    )
+    outcome = workflow["jobs"]["campaign_outcome"]
+    assert "always()" in outcome["if"]
+    assert {
+        "reduce",
+        "verify_terminal_science",
+        "audit_runtime",
+        "recovery_wave_6",
+    } <= set(outcome["needs"])
+    rendered = json.dumps(outcome, sort_keys=True)
+    assert "scripts/prepare_catalog_engine_outcome.py" in rendered
+    assert "catalog-engine-outcome-${{ inputs.authority_id }}" in rendered
+
+
+def test_terminal_science_uses_only_the_sealed_reference_identity() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    path = Path(".github/workflows/catalog-optimized-run.yml")
+    workflow = load_github_yaml(path)
+    job = workflow["jobs"]["verify_terminal_science"]
+    rendered = json.dumps(job, sort_keys=True)
+    assert "scripts/fetch_catalog_reference_artifact.py" in rendered
+    assert "scripts/verify_catalog_terminal_science.py" in rendered
+    assert "catalog-terminal-science-${{ inputs.authority_id }}" in rendered
+    text = path.read_text("utf-8")
+    for forbidden in (
+        "9075791134",
+        "9264302413",
+        "sp500-megarun-dehb-runtime-inputs-31418682679",
+        "sp500-strategy-catalog-final-results",
+    ):
+        assert forbidden not in text
 
 
 def test_single_pass_recipe_score_is_scientifically_exact() -> None:
@@ -661,13 +714,16 @@ def test_component_store_round_trip_is_exact_and_conflicts_fail(tmp_path: Path) 
         writer.add("c1", second)
     manifest = writer.commit()
 
-    store = CatalogComponentStore.open(tmp_path / "store")
-    assert manifest.component_count == 2
-    assert store.manifest.manifest_sha256 == manifest.manifest_sha256
-    np.testing.assert_array_equal(store.get("c1"), first)
-    np.testing.assert_array_equal(store.get("c2"), second)
-    with pytest.raises(KeyError):
-        store.get("missing")
+    with CatalogComponentStore.open(tmp_path / "store") as store:
+        assert manifest.component_count == 2
+        assert store.manifest.manifest_sha256 == manifest.manifest_sha256
+        np.testing.assert_array_equal(store.get("c1"), first)
+        np.testing.assert_array_equal(store.get("c2"), second)
+        with pytest.raises(KeyError):
+            store.get("missing")
+    with pytest.raises(ValueError, match="COMPONENT_STORE_CLOSED"):
+        store.get("c1")
+    (tmp_path / "store" / "signals.npy").unlink()
 
 
 def test_component_store_rejects_scientific_mismatch(tmp_path: Path) -> None:
@@ -690,6 +746,66 @@ def test_component_store_rejects_scientific_mismatch(tmp_path: Path) -> None:
             tmp_path / "store",
             expected_data_snapshot_sha256="c" * 64,
         )
+
+
+def test_component_store_closes_mmap_when_loaded_shape_is_invalid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aurora.infra.sp500_megarun import catalog_component_store as module
+
+    writer = module.ComponentStoreWriter(
+        tmp_path / "store",
+        data_snapshot_sha256="a" * 64,
+        evaluator_sha256="b" * 64,
+        session_count=3,
+    )
+    writer.add("c1", np.array([1, 0, -1], dtype=np.int8))
+    writer.commit()
+
+    class Mapping:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class Matrix:
+        shape = (99, 99)
+        _mmap = Mapping()
+
+    matrix = Matrix()
+    monkeypatch.setattr(module.np, "load", lambda *_args, **_kwargs: matrix)
+    with pytest.raises(ValueError, match="COMPONENT_STORE_MATRIX_SHAPE_INVALID"):
+        module.CatalogComponentStore.open(tmp_path / "store")
+    assert matrix._mmap.closed is True
+
+
+def test_component_store_merge_closes_sources_if_a_later_open_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aurora.infra.sp500_megarun import catalog_component_store as module
+
+    class OpenedStore:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    first = OpenedStore()
+
+    def fake_open(_cls: object, path: Path, **_kwargs: object) -> OpenedStore:
+        if Path(path).name == "first":
+            return first
+        raise ValueError("COMPONENT_STORE_MANIFEST_INVALID")
+
+    monkeypatch.setattr(module.CatalogComponentStore, "open", classmethod(fake_open))
+    with pytest.raises(ValueError, match="COMPONENT_STORE_MANIFEST_INVALID"):
+        module.merge_component_stores(
+            [tmp_path / "first", tmp_path / "second"],
+            tmp_path / "merged",
+        )
+    assert first.closed is True
 
 
 def test_recipe_compiler_canonicalizes_commutative_inputs_but_keeps_explanation() -> None:
@@ -811,6 +927,32 @@ def test_cold_runtime_is_built_at_most_once_and_workers_restore_offline() -> Non
     assert "uv pip install" not in component
     assert "setup-uv" not in worker
     assert "setup-uv" not in component
+
+
+def test_runtime_audit_proves_runner_inventory_commit_and_zero_cost() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    path = Path(".github/workflows/catalog-optimized-run.yml")
+    workflow = load_github_yaml(path)
+    audit = workflow["jobs"]["audit_runtime"]
+    text = json.dumps(audit, sort_keys=True)
+    assert "verify_terminal_science" in audit["needs"]
+    assert "audit_catalog_runtime.py" in text
+    assert "jobs-confirmation.json" in text
+    assert "artifacts-confirmation.json" in text
+    assert "catalog-sealed-execution-plan-${{ inputs.authority_id }}" in text
+    assert "--components-reused" in text
+    assert "--components-computed-once" in text
+    for required in (
+        "request_sha256",
+        "authority_id",
+        "campaign_id",
+        "science_sha256",
+        "execution_plan_sha256",
+        "execution_protocol_sha256",
+        "protected_commit_sha",
+    ):
+        assert required in text
 
 
 def test_rebuildable_cache_persistence_failure_does_not_discard_same_run_bytes() -> None:
@@ -1221,10 +1363,41 @@ def test_runtime_and_nine_prepared_partitions_are_reused_selectively() -> None:
         name.startswith("Upload one-day prepared ") for name in names
     ) == 9
     text = workflow_path.read_text("utf-8")
-    assert text.count("9075791134") == 2
+    assert "scripts/fetch_catalog_runtime_input_artifact.py" in text
+    assert "9075791134" not in text
     assert "--partition-id" in text
     assert "prepared-input-store" not in text
     runtime_save = next(
         step for step in steps if step.get("name") == "Save exact immutable runtime cache"
     )
     assert runtime_save["with"]["key"] == "${{ steps.runtime_build.outputs.cache_key }}"
+
+
+def test_runtime_preparation_publishes_one_small_bound_terminal_seal() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    workflow = load_github_yaml(
+        Path(".github/workflows/catalog-optimized-run.yml")
+    )
+    steps = workflow["jobs"]["prepare_runtime_and_inputs"]["steps"]
+    seal = next(
+        step
+        for step in steps
+        if step.get("name") == "Publish bound runtime and prepared-input seal"
+    )
+    assert seal["with"]["name"] == (
+        "catalog-runtime-prepared-seal-${{ inputs.authority_id }}"
+    )
+    assert seal["with"]["retention-days"] == 90
+    rendered = json.dumps(steps, sort_keys=True)
+    for binding in (
+        "request_sha256",
+        "authority_id",
+        "campaign_id",
+        "science_sha256",
+        "execution_plan_sha256",
+        "protected_commit_sha",
+        "prepared_input_identity_sha256",
+        "runtime_identity_sha256",
+    ):
+        assert binding in rendered

@@ -94,6 +94,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument(
+        "--emit-authority-comment",
+        action="store_true",
+        help="Emit the reserved/recovering record only inside the reserve writer job.",
+    )
     return parser
 
 
@@ -476,7 +481,7 @@ def _github_output_values(
     request_issue_number: int,
 ) -> dict[str, str]:
     values = {
-        "call_engine": str(decision.outcome is ControllerOutcome.ADMITTED).lower(),
+        "call_engine": str(decision.should_schedule_compute).lower(),
         "resume_existing": str(
             decision.outcome is ControllerOutcome.ADOPTED
             and decision.should_resume_existing
@@ -489,6 +494,8 @@ def _github_output_values(
         values["authority_id"] = str(decision.authority_id)
     if decision.sealed_inputs is not None:
         for key, value in decision.sealed_inputs.model_dump(mode="json").items():
+            if value is None:
+                continue
             values[f"sealed_{key}"] = str(value)
     if any(not _SAFE_OUTPUT_VALUE.fullmatch(value) for value in values.values()):
         raise ValueError("CATALOG_GITHUB_OUTPUT_VALUE_INVALID")
@@ -634,12 +641,16 @@ def _enabled_decision(
         verified_github_now=observed_at,
         active_owner_run=active_owner_run,
     )
-    authority_comment = _authority_append(
-        decision=decision,
-        ledger=ledger,
-        request_issue_number=issue_number,
-        writer_context=writer_context,
-        observed_at=observed_at,
+    authority_comment = (
+        _authority_append(
+            decision=decision,
+            ledger=ledger,
+            request_issue_number=issue_number,
+            writer_context=writer_context,
+            observed_at=observed_at,
+        )
+        if args.emit_authority_comment
+        else None
     )
     return decision, issue_number, authority_comment
 

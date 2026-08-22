@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import textwrap
 from typing import Any
 
 import yaml
@@ -38,6 +39,7 @@ _DECLARED_PATH_KEYS = frozenset(
         "uses",
     }
 )
+_ARCHIVE_MEMBER_PATH_KEYS = frozenset({"content_manifest_path"})
 _REPOSITORY_PREFIXES = (
     ".github/",
     "config/",
@@ -223,7 +225,7 @@ class _ClosureBuilder:
         for match in _PYTHON_HEREDOC.finditer(command):
             self._scan_python(
                 current,
-                match.group("body").encode("utf-8"),
+                textwrap.dedent(match.group("body")).lstrip("\n").encode("utf-8"),
             )
 
     def _scan_python(self, relative: str, content: bytes) -> None:
@@ -294,6 +296,13 @@ class _ClosureBuilder:
         value: str,
     ) -> None:
         if not value or "://" in value or "${{" in value:
+            return
+        if key in _ARCHIVE_MEMBER_PATH_KEYS:
+            member = Path(value)
+            if member.is_absolute() or ".." in member.parts or "\\" in value:
+                raise ValueError(
+                    f"CATALOG_DEFINITION_ARCHIVE_PATH_INVALID:{current}:{value}"
+                )
             return
         declared = key in _DECLARED_PATH_KEYS or bool(key and key.endswith("_path"))
         raw = value.split("#", 1)[0] if key == "$ref" else value

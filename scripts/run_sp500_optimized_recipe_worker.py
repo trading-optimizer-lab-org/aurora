@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import time
 from types import SimpleNamespace
+from collections.abc import Sequence
 from typing import Any
 
 import pandas as pd
@@ -403,12 +404,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-slot-index", type=int)
     parser.add_argument("--checkpoint-slot-count", type=int)
     parser.add_argument("--previous-checkpoint-receipt", type=Path)
+    parser.add_argument("--processes-per-worker-override", type=int)
+    parser.add_argument("--block-size-override", type=int)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser
 
 
-def main() -> int:
-    args = _parser().parse_args()
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
     scientific_wall_started = time.perf_counter()
     resource_started = ResourceUsageSnapshot.capture()
     numeric_runtime = verify_numeric_runtime_environment()
@@ -548,7 +551,23 @@ def main() -> int:
         assigned = [by_strategy_id[strategy_id] for strategy_id in assigned_ids]
     except KeyError as exc:
         raise SystemExit("RECIPE_WORK_MANIFEST_STRATEGY_UNKNOWN") from exc
-    process_count = plan.processes_per_worker
+    process_count = (
+        args.processes_per_worker_override
+        if args.processes_per_worker_override is not None
+        else plan.processes_per_worker
+    )
+    block_size = (
+        args.block_size_override
+        if args.block_size_override is not None
+        else plan.block_size
+    )
+    if (
+        process_count < 1
+        or process_count > plan.processes_per_worker
+        or block_size < 1
+        or block_size > plan.block_size
+    ):
+        raise SystemExit("RECIPE_OPERATIONAL_REPLAN_INVALID")
     initializer_args = (
         str(args.component_store),
         resolved.science.data_snapshot_sha256,
@@ -592,7 +611,7 @@ def main() -> int:
             for row in executor.map(
                 _evaluate_catalog_row,
                 assigned,
-                chunksize=plan.block_size,
+                chunksize=block_size,
             ):
                 record(row)
     remainder = len(output) % recovery_chunk_size
@@ -731,7 +750,7 @@ def main() -> int:
                 "physical_component_builds": 0,
                 "component_cache_hits": sum(len(row["components"]) for row in assigned),
                 "processes_per_worker": process_count,
-                "block_size": plan.block_size,
+                "block_size": block_size,
                 "scientific_stage_seconds": scientific_stage_seconds,
                 "scientific_wall_stage_seconds": scientific_wall_stage_seconds,
                 "scientific_wall_seconds": scientific_wall_seconds,

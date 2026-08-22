@@ -46,6 +46,7 @@ def _campaign(**updates: object) -> dict[str, object]:
         "feature_contract_path": "config/sp500_megarun_feature_contract_240.json",
         "runtime_input_run_id": 31418682679,
         "reference_run_id": 31948898747,
+        "scientific_contract_sha256": "f" * 64,
         "max_free_workers": 360,
         "allowed_protected_branch": "main",
         "source_artifact_contracts": ["runtime_input_pack_v1"],
@@ -84,6 +85,9 @@ def test_registered_campaign_resolves_only_existing_repo_paths() -> None:
         registry, "sp500-optimized-catalog-v1", ROOT
     )
     assert entry.engine_id == "optimized_catalog_v1"
+    assert entry.scientific_contract_sha256 == (
+        "f0e8c6db17a915f7c5f1dfec7d49ce5a69375c7252c23b49d82283120266419f"
+    )
     assert entry.definition_manifest_path not in entry.repository_paths
     for value in entry.repository_paths:
         assert (ROOT / value).exists()
@@ -220,6 +224,7 @@ def test_active_campaign_names_all_fixed_execution_families() -> None:
     active = tuple(item for item in registry.campaigns if item.active)
     assert active
     for campaign in active:
+        assert len(campaign.scientific_contract_sha256) == 64
         assert campaign.allowed_protected_branch == "main"
         assert campaign.source_artifact_contracts
         assert campaign.component_store_family

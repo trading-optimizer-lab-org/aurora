@@ -580,6 +580,7 @@ _CATALOG_PUBLIC_HEAVY_TRIGGERS = frozenset(
 )
 _CATALOG_HEAVY_EXECUTABLE_MARKERS = (
     "build_sp500_component_store",
+    "run_catalog_recipe_worker_guarded",
     "run_sp500_optimized_recipe_worker",
     "reduce_sp500_optimized_catalog_run",
     "run_sp500_strategy_catalog_shard",
@@ -1034,6 +1035,7 @@ def validate_catalog_workflow_topology(
                 "catalog-component-worker.yml",
                 "catalog-optimized-worker.yml",
                 "build_sp500_component_store",
+                "run_catalog_recipe_worker_guarded",
                 "run_sp500_optimized_recipe_worker",
                 "reduce_sp500_optimized_catalog_run",
                 "catalog-recovery-wave.yml",

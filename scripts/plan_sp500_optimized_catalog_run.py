@@ -30,6 +30,15 @@ from aurora.infra.sp500_megarun.catalog_optimization_contract import (
 from aurora.infra.sp500_megarun.catalog_component_inventory import (
     collect_unique_components,
 )
+from aurora.infra.sp500_megarun.catalog_capacity_qualification import (
+    BundleLayoutQualificationV1,
+)
+from aurora.infra.sp500_megarun.catalog_rebuildable_store import (
+    RebuildableStoreCandidateV1,
+    RebuildableStoreInventoryV1,
+    reconcile_verified_store_candidates,
+    select_component_store_candidates,
+)
 from aurora.infra.sp500_megarun.catalog_resume import (
     CatalogResumeWorkManifestV1,
     build_resume_work_manifest,
@@ -63,7 +72,6 @@ from aurora.infra.sp500_megarun.strategy_catalog import (
 PositiveInt = Annotated[int, Field(ge=1)]
 NonNegativeInt = Annotated[int, Field(ge=0)]
 BundleCount = Literal[8, 16, 32, 64, 96, 128]
-StoreStatus = Literal["verified", "missing", "evicted", "expired", "corrupt"]
 
 
 class CatalogComponentRequirementV1(FrozenModel):
@@ -95,111 +103,6 @@ class CatalogRecipeRequirementV1(FrozenModel):
         ):
             raise ValueError("CATALOG_RECIPE_COMPONENT_SET_INVALID")
         return self
-
-
-class BundleLayoutQualificationV1(FrozenModel):
-    bundle_count: BundleCount
-    equivalent: Literal[True]
-    sample_count: Annotated[int, Field(ge=0)]
-    memory_safe: bool
-    disk_safe: bool
-    runner_timeout_safe: bool
-    projected_end_to_end_p50_seconds: float = Field(gt=0)
-    projected_end_to_end_p95_seconds: float = Field(gt=0)
-    projected_component_download_bytes: PositiveInt
-    projected_cache_uploads_per_minute: NonNegativeInt
-    projected_cache_downloads_per_minute: NonNegativeInt
-    checkpoint_upload_seconds_p95: float = Field(ge=0)
-
-    @model_validator(mode="after")
-    def _validate_percentiles(self) -> BundleLayoutQualificationV1:
-        if (
-            self.projected_end_to_end_p95_seconds
-            < self.projected_end_to_end_p50_seconds
-        ):
-            raise ValueError("CATALOG_LAYOUT_PERCENTILES_INVALID")
-        return self
-
-
-class RebuildableStoreCandidateV1(FrozenModel):
-    object_family: Literal["runtime", "prepared_input", "component"]
-    logical_id: str = Field(min_length=1)
-    identity_sha256: Sha256
-    content_manifest_sha256: Sha256
-    content_sha256: Sha256
-    storage_kind: Literal["actions_cache", "artifact"]
-    status: StoreStatus
-    source_branch: Literal["main"]
-    contained_logical_ids: tuple[str, ...] = ()
-    logical_identity_bindings: tuple[tuple[str, Sha256], ...] = ()
-    cache_key: str | None = None
-    artifact_run_id: int | None = Field(default=None, ge=1)
-    artifact_id: int | None = Field(default=None, ge=1)
-    file_hashes: tuple[tuple[str, Sha256], ...]
-    manifest_verified: bool
-    content_verified: bool
-    scope_verified: bool
-
-    @model_validator(mode="after")
-    def _validate_location_and_manifest(self) -> RebuildableStoreCandidateV1:
-        paths = tuple(path for path, _ in self.file_hashes)
-        if paths != tuple(sorted(set(paths))) or any(
-            not path
-            or Path(path).is_absolute()
-            or ".." in Path(path).parts
-            for path in paths
-        ):
-            raise ValueError("REBUILDABLE_STORE_FILE_LIST_INVALID")
-        if self.status == "verified":
-            if not (
-                self.file_hashes
-                and self.manifest_verified
-                and self.content_verified
-                and self.scope_verified
-            ):
-                raise ValueError("REBUILDABLE_STORE_VERIFICATION_INCOMPLETE")
-            if self.storage_kind == "actions_cache":
-                expected = (
-                    "aurora-catalog-v1-"
-                    f"{self.identity_sha256}-"
-                    f"{self.content_manifest_sha256}-main"
-                )
-                if (
-                    self.cache_key != expected
-                    or self.artifact_run_id is not None
-                    or self.artifact_id is not None
-                ):
-                    raise ValueError("REBUILDABLE_CACHE_LOCATION_INVALID")
-            elif (
-                self.cache_key is not None
-                or self.artifact_run_id is None
-                or self.artifact_id is None
-            ):
-                raise ValueError("REBUILDABLE_ARTIFACT_LOCATION_INVALID")
-        if bool(self.contained_logical_ids) != bool(
-            self.logical_identity_bindings
-        ):
-            raise ValueError("REBUILDABLE_STORE_LOGICAL_BINDINGS_INVALID")
-        if self.contained_logical_ids:
-            if self.contained_logical_ids != tuple(
-                sorted(set(self.contained_logical_ids))
-            ):
-                raise ValueError("REBUILDABLE_STORE_LOGICAL_BINDINGS_INVALID")
-            binding_ids = tuple(item[0] for item in self.logical_identity_bindings)
-            if (
-                self.logical_identity_bindings
-                != tuple(sorted(set(self.logical_identity_bindings)))
-                or binding_ids != self.contained_logical_ids
-            ):
-                raise ValueError("REBUILDABLE_STORE_LOGICAL_BINDINGS_INVALID")
-        return self
-
-
-class RebuildableStoreInventoryV1(FrozenModel):
-    schema_version: Literal["1"] = "1"
-    listing_complete: Literal[True]
-    source_branch: Literal["main"]
-    candidates: tuple[RebuildableStoreCandidateV1, ...]
 
 
 class CompactMatrixRowV1(FrozenModel):
@@ -304,50 +207,6 @@ class CatalogGlobalReuseExecutionPlanV1(FrozenModel):
     plan_sha256: Sha256
 
 
-def reconcile_verified_store_candidates(
-    inventory: RebuildableStoreInventoryV1,
-) -> dict[tuple[str, str, str], RebuildableStoreCandidateV1]:
-    """Resolve exact verified objects; never turn uncertainty into a miss."""
-
-    if not inventory.listing_complete or inventory.source_branch != "main":
-        raise ValueError("REBUILDABLE_STORE_LISTING_UNKNOWN")
-    grouped: dict[
-        tuple[str, str, str],
-        list[RebuildableStoreCandidateV1],
-    ] = {}
-    for candidate in inventory.candidates:
-        if candidate.status != "verified":
-            continue
-        key = (
-            candidate.object_family,
-            candidate.logical_id,
-            candidate.identity_sha256,
-        )
-        grouped.setdefault(key, []).append(candidate)
-    resolved: dict[tuple[str, str, str], RebuildableStoreCandidateV1] = {}
-    for key, candidates in grouped.items():
-        content_identities = {
-            (
-                candidate.content_manifest_sha256,
-                candidate.content_sha256,
-                candidate.file_hashes,
-            )
-            for candidate in candidates
-        }
-        if len(content_identities) != 1:
-            raise ValueError("REBUILDABLE_STORE_IDENTITY_CONFLICT")
-        resolved[key] = min(
-            candidates,
-            key=lambda item: (
-                0 if item.storage_kind == "actions_cache" else 1,
-                item.cache_key or "",
-                item.artifact_run_id or 0,
-                item.artifact_id or 0,
-            ),
-        )
-    return resolved
-
-
 def select_qualified_bundle_layout(
     candidates: tuple[BundleLayoutQualificationV1, ...],
 ) -> BundleLayoutQualificationV1:
@@ -364,8 +223,10 @@ def select_qualified_bundle_layout(
         and candidate.memory_safe
         and candidate.disk_safe
         and candidate.runner_timeout_safe
-        and candidate.projected_cache_uploads_per_minute <= 160
-        and candidate.projected_cache_downloads_per_minute <= 1200
+        # Keep 20% of the qualified cache API envelope unused for variance,
+        # recovery, and concurrent controller traffic.
+        and candidate.projected_cache_uploads_per_minute <= 128
+        and candidate.projected_cache_downloads_per_minute <= 960
     )
     if not qualified:
         raise ValueError("CATALOG_LAYOUT_NO_QUALIFIED_CANDIDATE")
@@ -588,26 +449,17 @@ def build_global_reuse_execution_plan(
         raise ValueError("CATALOG_HIERARCHICAL_REDUCTION_MARGIN_UNPROVEN")
     layout = select_qualified_bundle_layout(qualifications)
     required_component_ids = tuple(sorted(required_by_id))
-    component_candidates: dict[
-        str, RebuildableStoreCandidateV1 | None
-    ] = {component_id: None for component_id in required_component_ids}
-    for candidate in resolved.values():
-        if candidate.object_family != "component":
-            continue
-        bindings = (
-            candidate.logical_identity_bindings
-            if candidate.logical_identity_bindings
-            else ((candidate.logical_id, candidate.identity_sha256),)
-        )
-        for component_id, component_identity in bindings:
-            requirement = required_by_id.get(component_id)
-            if requirement is None:
-                continue
-            if component_identity != requirement.identity.component_key_sha256:
-                raise ValueError("REBUILDABLE_COMPONENT_IDENTITY_MISMATCH")
-            if component_candidates[component_id] is not None:
-                raise ValueError("REBUILDABLE_COMPONENT_LOCATION_CONFLICT")
-            component_candidates[component_id] = candidate
+    selected_component_candidates = select_component_store_candidates(
+        tuple(resolved.values()),
+        required_identity_by_id={
+            component_id: requirement.identity.component_key_sha256
+            for component_id, requirement in required_by_id.items()
+        },
+    )
+    component_candidates: dict[str, RebuildableStoreCandidateV1 | None] = {
+        component_id: selected_component_candidates.get(component_id)
+        for component_id in required_component_ids
+    }
     cached_component_ids = tuple(
         component_id
         for component_id in required_component_ids
@@ -1416,6 +1268,7 @@ def write_sealed_global_reuse_execution_plan(
     resume_work_manifest: Mapping[str, object],
     recipe_dag_bytes: bytes,
     recipe_dag_manifest: Mapping[str, object],
+    source_artifacts: Mapping[str, object],
 ) -> dict[str, object]:
     """Write every immutable plan and exact worker payload byte once."""
 
@@ -1434,6 +1287,38 @@ def write_sealed_global_reuse_execution_plan(
         raise ValueError("CATALOG_GLOBAL_REUSE_PLAN_HASH_INVALID")
     if contract.science.validation_opened or contract.science.locked_opened:
         raise ValueError("CATALOG_SEALED_PLAN_BOUNDARY_OPEN")
+    source_identity = {
+        key: value for key, value in source_artifacts.items() if key != "content_sha256"
+    }
+    source_payload = source_artifacts.get("payload")
+    source_rows = (
+        source_payload.get("artifacts")
+        if isinstance(source_payload, Mapping)
+        else None
+    )
+    if (
+        set(source_artifacts)
+        != {"schema_version", "document_type", "payload", "content_sha256"}
+        or source_artifacts.get("schema_version") != "1"
+        or source_artifacts.get("document_type") != "catalog_source_artifacts_v1"
+        or source_artifacts.get("content_sha256") != canonical_sha256(source_identity)
+        or not isinstance(source_rows, list)
+        or not source_rows
+        or len(source_rows) != len(
+            {
+                str(row.get("contract_name"))
+                for row in source_rows
+                if isinstance(row, Mapping)
+            }
+        )
+        or any(
+            not isinstance(row, Mapping)
+            or row.get("validation_opened") is not False
+            or row.get("locked_opened") is not False
+            for row in source_rows
+        )
+    ):
+        raise ValueError("CATALOG_SEALED_SOURCE_ARTIFACTS_INVALID")
 
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=False)
@@ -1446,6 +1331,7 @@ def write_sealed_global_reuse_execution_plan(
         return raw
 
     resolved_contract_raw = write_json("resolved_contract.json", contract)
+    write_json("source_artifacts.json", source_artifacts)
     controller_document = _plan_document(
         plan,
         "controller_binding",
@@ -2029,6 +1915,7 @@ def verify_sealed_global_reuse_execution_plan(
         "checkpoint_policy.json",
         "reduction_plan.json",
         "artifact_plan.json",
+        "source_artifacts.json",
         "execution_plan_receipt.json",
     }
     present = {path.name for path in sealed.iterdir() if path.is_file()}

@@ -36,6 +36,12 @@ def _signal_sha256(values: np.ndarray) -> str:
     return hashlib.sha256(b"catalog-component-v1\0" + values.tobytes()).hexdigest()
 
 
+def _close_memory_map(matrix: object) -> None:
+    mapped_file = getattr(matrix, "_mmap", None)
+    if mapped_file is not None:
+        mapped_file.close()
+
+
 class ComponentStoreWriter:
     def __init__(
         self,
@@ -119,6 +125,23 @@ class CatalogComponentStore:
         self.manifest = manifest
         self._matrix = matrix
         self._entries = {item.component_id: item for item in manifest.entries}
+        self._closed = False
+
+    def __enter__(self) -> CatalogComponentStore:
+        if self._closed:
+            raise ValueError("COMPONENT_STORE_CLOSED")
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Release the mmap promptly so Windows can replace or remove the store."""
+
+        if self._closed:
+            return
+        _close_memory_map(self._matrix)
+        self._closed = True
 
     @classmethod
     def open(
@@ -150,10 +173,13 @@ class CatalogComponentStore:
             raise ValueError("COMPONENT_STORE_MATRIX_HASH_INVALID")
         matrix = np.load(matrix_path, mmap_mode="r", allow_pickle=False)
         if matrix.shape != (manifest.component_count, manifest.session_count):
+            _close_memory_map(matrix)
             raise ValueError("COMPONENT_STORE_MATRIX_SHAPE_INVALID")
         return cls(root, manifest, matrix)
 
     def get(self, component_id: str) -> np.ndarray:
+        if self._closed:
+            raise ValueError("COMPONENT_STORE_CLOSED")
         entry = self._entries.get(str(component_id))
         if entry is None:
             raise KeyError(component_id)
@@ -169,27 +195,33 @@ def merge_component_stores(
 ) -> ComponentStoreManifestV1:
     """Merge disjoint partial stores and fail on any duplicate conflict."""
 
-    stores = [CatalogComponentStore.open(path) for path in source_roots]
-    if not stores:
-        raise ValueError("COMPONENT_STORE_SOURCES_EMPTY")
-    reference = stores[0].manifest
-    writer = ComponentStoreWriter(
-        output_root,
-        data_snapshot_sha256=reference.data_snapshot_sha256,
-        evaluator_sha256=reference.evaluator_sha256,
-        session_count=reference.session_count,
-    )
-    for store in stores:
-        manifest = store.manifest
-        if (
-            manifest.data_snapshot_sha256 != reference.data_snapshot_sha256
-            or manifest.evaluator_sha256 != reference.evaluator_sha256
-            or manifest.session_count != reference.session_count
-        ):
-            raise ValueError("COMPONENT_STORE_INCOMPATIBLE")
-        for entry in manifest.entries:
-            writer.add(entry.component_id, store.get(entry.component_id))
-    return writer.commit()
+    stores: list[CatalogComponentStore] = []
+    try:
+        for path in source_roots:
+            stores.append(CatalogComponentStore.open(path))
+        if not stores:
+            raise ValueError("COMPONENT_STORE_SOURCES_EMPTY")
+        reference = stores[0].manifest
+        writer = ComponentStoreWriter(
+            output_root,
+            data_snapshot_sha256=reference.data_snapshot_sha256,
+            evaluator_sha256=reference.evaluator_sha256,
+            session_count=reference.session_count,
+        )
+        for store in stores:
+            manifest = store.manifest
+            if (
+                manifest.data_snapshot_sha256 != reference.data_snapshot_sha256
+                or manifest.evaluator_sha256 != reference.evaluator_sha256
+                or manifest.session_count != reference.session_count
+            ):
+                raise ValueError("COMPONENT_STORE_INCOMPATIBLE")
+            for entry in manifest.entries:
+                writer.add(entry.component_id, store.get(entry.component_id))
+        return writer.commit()
+    finally:
+        for store in stores:
+            store.close()
 
 
 __all__ = [

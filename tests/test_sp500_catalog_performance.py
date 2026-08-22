@@ -300,6 +300,37 @@ def test_bundle_layout_selects_fastest_qualified_end_to_end_candidate() -> None:
     assert selected.memory_safe is True
 
 
+def test_bundle_layout_reserves_twenty_percent_cache_api_headroom() -> None:
+    from scripts.plan_sp500_optimized_catalog_run import (
+        BundleLayoutQualificationV1,
+        select_qualified_bundle_layout,
+    )
+
+    candidates = tuple(
+        BundleLayoutQualificationV1(
+            bundle_count=count,
+            equivalent=True,
+            sample_count=3,
+            memory_safe=True,
+            disk_safe=True,
+            runner_timeout_safe=True,
+            projected_end_to_end_p50_seconds=(
+                80.0 if count == 32 else 90.0 if count == 64 else 120.0
+            ),
+            projected_end_to_end_p95_seconds=(
+                90.0 if count == 32 else 100.0 if count == 64 else 130.0
+            ),
+            projected_component_download_bytes=1_000 * count,
+            projected_cache_uploads_per_minute=120 if count == 32 else 100,
+            projected_cache_downloads_per_minute=1_000 if count == 32 else 800,
+            checkpoint_upload_seconds_p95=1.0,
+        )
+        for count in (8, 16, 32, 64, 96, 128)
+    )
+
+    assert select_qualified_bundle_layout(candidates).bundle_count == 64
+
+
 def test_campaign_receipt_keeps_cold_and_warm_denominators_separate() -> None:
     from aurora.infra.sp500_megarun.catalog_performance import (
         CatalogCampaignPerformanceReceiptV1,

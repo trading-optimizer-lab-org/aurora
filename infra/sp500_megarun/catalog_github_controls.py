@@ -82,6 +82,7 @@ _HEAVY_MARKERS = (
     "catalog-component-worker",
     "build_sp500_component_store",
     "merge_sp500_component_store",
+    "run_catalog_recipe_worker_guarded",
     "run_sp500_optimized_recipe_worker",
     "reduce_sp500_optimized_catalog_run",
     "verify_sp500_optimized_run",
@@ -324,6 +325,10 @@ class _CatalogGithubControlsReceiptBaseV1(FrozenModel):
     local_agent_has_admin: bool | None
     auditor_installation_proof: Mapping[str, object] | None
     audit_use_context: AuditUseContext
+    audit_context_sha256: Sha256
+    protected_commit_sha: CommitSha
+    caller_workflow: str = Field(min_length=1)
+    caller_job: str = Field(min_length=1)
     observed_at: datetime
     github_api_observed_at: datetime
     source_snapshot_sha256: Sha256
@@ -1013,12 +1018,27 @@ def audit_catalog_github_controls(
         provenance.get("purpose"),
     )
     audit_context = _AUDIT_CONTEXT_BY_CALLER.get(caller)
+    audit_context_sha256 = provenance.get("audit_context_sha256")
+    protected_commit_sha = provenance.get("protected_commit_sha")
     check(
         "CATALOG_AUDIT_CALLER_PROVENANCE_VERIFIED",
-        provenance.get("verified") is True and audit_context is not None,
+        provenance.get("verified") is True
+        and audit_context is not None
+        and isinstance(audit_context_sha256, str)
+        and bool(re.fullmatch(r"[0-9a-f]{64}", audit_context_sha256))
+        and isinstance(protected_commit_sha, str)
+        and protected_commit_sha == observed_sha,
     )
     if audit_context is None:
         audit_context = "controller_admission"
+    if not isinstance(audit_context_sha256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", audit_context_sha256
+    ):
+        audit_context_sha256 = "0" * 64
+    if not isinstance(protected_commit_sha, str) or not re.fullmatch(
+        r"[0-9a-f]{40}", protected_commit_sha
+    ):
+        protected_commit_sha = "0" * 40
 
     consumer_workflows = snapshots.get("auditor_secret_consumer_workflows")
     callers = _sequence_of_mappings(snapshots.get("auditor_runtime_callers"))
@@ -1118,6 +1138,10 @@ def audit_catalog_github_controls(
         "auditor_installation_proof": auditor_proof,
         "observer_context": observer_context,
         "audit_use_context": audit_context,
+        "audit_context_sha256": audit_context_sha256,
+        "protected_commit_sha": protected_commit_sha,
+        "caller_workflow": str(provenance.get("caller_workflow", "unknown")),
+        "caller_job": str(provenance.get("caller_job", "unknown")),
         "observed_at": observed_at,
         "github_api_observed_at": github_at,
         "source_snapshot_sha256": source_snapshot_sha256,

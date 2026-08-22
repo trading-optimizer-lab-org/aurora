@@ -34,37 +34,135 @@ jobs:
           import json
           import os
           from pathlib import Path
-          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text("utf-8"))
+          event_path = Path(os.environ["GITHUB_EVENT_PATH"])
+          event_bytes = event_path.read_bytes()
+          event = json.loads(event_bytes)
           comment = event.get("comment") or {}
           body = comment.get("body") or ""
+          changes = event.get("changes") or {}
+          changed_body = changes.get("body") or {}
+          previous_body = changed_body.get("from")
+          original_body = previous_body if isinstance(previous_body, str) else body
           bot_authored = (comment.get("user") or {}).get("login") == "github-actions[bot]"
-          authority = bot_authored and "AURORA_CATALOG_AUTHORITY_RECORD_V1" in body
-          request = bot_authored and "AURORA_CATALOG_REQUEST_RECEIPT_V1" in body
+          authority = bot_authored and "AURORA_CATALOG_AUTHORITY_V1" in original_body
+          request = bot_authored and "AURORA_CATALOG_REQUEST_RECEIPT_V1" in original_body
           relevant = authority or request
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"relevant={str(relevant).lower()}\n")
+          if not relevant:
+              raise SystemExit(0)
           marker = "AURORA_CATALOG_LEDGER_TAMPER_V1" if authority else "AURORA_CATALOG_REQUEST_COMMENT_TAMPER_V1"
+          issue_number = (event.get("issue") or {}).get("number")
+          comment_id = comment.get("id")
+          action = event.get("action")
+          actor = (event.get("sender") or {}).get("login")
+          if (
+              not isinstance(issue_number, int)
+              or issue_number < 1
+              or not isinstance(comment_id, int)
+              or comment_id < 1
+              or action not in {"edited", "deleted"}
+              or not isinstance(actor, str)
+              or not actor
+          ):
+              raise SystemExit("CATALOG_COMMENT_TAMPER_EVENT_INVALID")
+          artifact_name = (
+              f"catalog-comment-tamper-{os.environ['GITHUB_RUN_ID']}-"
+              f"{os.environ['GITHUB_RUN_ATTEMPT']}"
+          )
           payload = {
               "schema_version": "1",
               "marker": marker,
-              "relevant": relevant,
-              "issue_number": (event.get("issue") or {}).get("number"),
-              "original_comment_id": comment.get("id"),
-              "event_action": event.get("action"),
-              "actor": (event.get("sender") or {}).get("login"),
+              "relevant": True,
+              "target_kind": "authority" if authority else "request_receipt",
+              "issue_number": issue_number,
+              "original_comment_id": comment_id,
+              "event_action": action,
+              "actor": actor,
               "writer_run_id": int(os.environ["GITHUB_RUN_ID"]),
               "writer_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
               "protected_commit_sha": os.environ["GITHUB_SHA"],
+              "event_sha256": hashlib.sha256(event_bytes).hexdigest(),
+              "original_body_sha256": hashlib.sha256(original_body.encode("utf-8")).hexdigest(),
+              "observed_body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+              "artifact_name": artifact_name,
           }
-          canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-          payload["incident_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
-          Path("comment-tamper-incident.json").write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+          canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+          payload["incident_sha256"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+          encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+          Path("comment-tamper-incident.json").write_text(encoded + "\n", encoding="utf-8")
+          comment_body = f"<!-- {marker} -->\n```json\n{encoded}\n```\n"
+          Path("comment-request.json").write_text(
+              json.dumps({"body": comment_body}, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n",
+              encoding="utf-8",
+          )
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
-              output.write(f"relevant={str(relevant).lower()}\n")
+              output.write(f"artifact_name={artifact_name}\n")
+              output.write(f"issue_number={issue_number}\n")
           PY
       - name: Mirror the immutable incident before any comment
+        id: mirror
         if: ${{ steps.classify.outputs.relevant == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: catalog-comment-tamper-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.classify.outputs.artifact_name }}
           path: comment-tamper-incident.json
           if-no-files-found: error
           retention-days: 90
+      - name: Read the immutable mirror back before posting
+        if: ${{ steps.classify.outputs.relevant == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ steps.mirror.outputs.artifact-id }}
+          path: ${{ runner.temp }}/catalog-comment-tamper-mirror
+      - name: Verify the mirror and post the exact incident
+        id: post
+        if: ${{ steps.classify.outputs.relevant == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp --silent \
+            comment-tamper-incident.json \
+            "$RUNNER_TEMP/catalog-comment-tamper-mirror/comment-tamper-incident.json"
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/${{ steps.classify.outputs.issue_number }}/comments" \
+            --input comment-request.json > posted-comment.json
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          posted = json.loads(Path("posted-comment.json").read_text("utf-8"))
+          comment_id = posted.get("id")
+          if not isinstance(comment_id, int) or comment_id < 1:
+              raise SystemExit("CATALOG_COMMENT_TAMPER_POST_INVALID")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"comment_id={comment_id}\n")
+          PY
+      - name: Read back the exact immutable incident comment
+        if: ${{ steps.classify.outputs.relevant == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          comment_id="${{ steps.post.outputs.comment_id }}"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" > posted-comment-readback.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          request = json.loads(Path("comment-request.json").read_text("utf-8"))
+          posted = json.loads(Path("posted-comment.json").read_text("utf-8"))
+          readback = json.loads(Path("posted-comment-readback.json").read_text("utf-8"))
+          if (
+              posted.get("id") != readback.get("id")
+              or posted.get("body") != request.get("body")
+              or readback.get("body") != request.get("body")
+              or (posted.get("user") or {}).get("login") != "github-actions[bot]"
+              or (readback.get("user") or {}).get("login") != "github-actions[bot]"
+              or posted.get("created_at") != posted.get("updated_at")
+              or readback.get("created_at") != readback.get("updated_at")
+          ):
+              raise SystemExit("CATALOG_COMMENT_TAMPER_READBACK_INVALID")
+          PY

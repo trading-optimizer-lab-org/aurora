@@ -124,6 +124,7 @@
     "issues_write_job_allowlist": {
       ".github/workflows/catalog-run-controller.yml": [
         "issue_tamper_guard",
+        "repair_request_receipt_orphan",
         "reserve",
         "report_nonexecuting_decision",
         "record_running",

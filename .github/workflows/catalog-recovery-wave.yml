@@ -13,6 +13,7 @@ on:
       decision_sha256: {required: true, type: string}
       campaign_state_artifact: {required: true, type: string}
       attempt_manifest_artifacts: {required: true, type: string}
+      failure_manifest_artifacts: {required: true, type: string}
       checkpoint_manifest_artifacts: {required: true, type: string}
       current_wave: {required: true, type: number}
     outputs:
@@ -22,8 +23,18 @@ on:
         value: ${{ jobs.finalize_wave.outputs.campaign_state_artifact }}
       attempt_manifest_artifacts:
         value: ${{ jobs.finalize_wave.outputs.attempt_manifest_artifacts }}
+      failure_manifest_artifacts:
+        value: ${{ jobs.finalize_wave.outputs.failure_manifest_artifacts }}
       checkpoint_manifest_artifacts:
         value: ${{ jobs.finalize_wave.outputs.checkpoint_manifest_artifacts }}
+      failure_fingerprint:
+        value: ${{ jobs.reconcile.outputs.failure_fingerprint }}
+      failure_occurrence_count:
+        value: ${{ jobs.reconcile.outputs.failure_occurrence_count }}
+      failure_reason_code:
+        value: ${{ jobs.reconcile.outputs.failure_reason_code }}
+      retry_not_before:
+        value: ${{ jobs.reconcile.outputs.retry_not_before }}
 
 permissions: {actions: read, contents: read}
 
@@ -47,7 +58,12 @@ jobs:
       state_artifact: ${{ steps.recovery.outputs.state_artifact_name }}
       admission_token_sha256: ${{ steps.plan.outputs.admission_token_sha256 }}
       expected_attempt_count: ${{ steps.recovery.outputs.expected_attempt_count }}
+      expected_failure_count: ${{ steps.recovery.outputs.expected_failure_count }}
       expected_checkpoint_count: ${{ steps.recovery.outputs.expected_checkpoint_count }}
+      failure_fingerprint: ${{ steps.recovery.outputs.failure_fingerprint }}
+      failure_occurrence_count: ${{ steps.recovery.outputs.failure_occurrence_count }}
+      failure_reason_code: ${{ steps.recovery.outputs.failure_reason_code }}
+      retry_not_before: ${{ steps.recovery.outputs.retry_not_before }}
     steps:
       - name: Check out the exact original protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -130,6 +146,7 @@ jobs:
           sealed-plan-path: ${{ runner.temp }}/sealed-plan
           campaign-state-artifact-name: ${{ inputs.campaign_state_artifact }}
           attempt-manifest-artifacts: ${{ inputs.attempt_manifest_artifacts }}
+          failure-manifest-artifacts: ${{ inputs.failure_manifest_artifacts }}
           checkpoint-manifest-artifacts: ${{ inputs.checkpoint_manifest_artifacts }}
           current-wave: ${{ inputs.current_wave }}
           next-state-artifact-name: catalog-campaign-state-${{ inputs.authority_id }}-wave-${{ inputs.current_wave }}
@@ -137,7 +154,7 @@ jobs:
 
   retry_a:
     needs: reconcile
-    if: ${{ needs.reconcile.outputs.status == 'retry' && needs.reconcile.outputs.has_matrix_a == 'true' }}
+    if: ${{ (needs.reconcile.outputs.status == 'retry' || needs.reconcile.outputs.status == 'replan') && needs.reconcile.outputs.has_matrix_a == 'true' }}
     strategy:
       fail-fast: false
       max-parallel: 256
@@ -164,7 +181,7 @@ jobs:
 
   retry_b:
     needs: reconcile
-    if: ${{ needs.reconcile.outputs.status == 'retry' && needs.reconcile.outputs.has_matrix_b == 'true' }}
+    if: ${{ (needs.reconcile.outputs.status == 'retry' || needs.reconcile.outputs.status == 'replan') && needs.reconcile.outputs.has_matrix_b == 'true' }}
     strategy:
       fail-fast: false
       max-parallel: 104
@@ -200,6 +217,7 @@ jobs:
       status: ${{ steps.final.outputs.status }}
       campaign_state_artifact: ${{ steps.final.outputs.campaign_state_artifact }}
       attempt_manifest_artifacts: ${{ steps.final.outputs.attempt_manifest_artifacts }}
+      failure_manifest_artifacts: ${{ steps.final.outputs.failure_manifest_artifacts }}
       checkpoint_manifest_artifacts: ${{ steps.final.outputs.checkpoint_manifest_artifacts }}
     steps:
       - name: Check out the exact original protected source
@@ -219,7 +237,7 @@ jobs:
         run: |
           set -euo pipefail
           for result in "$RETRY_A_RESULT" "$RETRY_B_RESULT"; do
-            case "$result" in success|skipped) ;; *) exit 1 ;; esac
+            case "$result" in success|failure|cancelled|skipped) ;; *) exit 1 ;; esac
           done
           for snapshot in 1 2; do
             gh api --paginate --slurp \
@@ -243,6 +261,7 @@ jobs:
               if row.get("expired") is False
           )
           attempts = sorted(name for name in names if name.startswith("catalog-terminal-attempt-"))
+          failures = sorted(name for name in names if name.startswith("catalog-failure-attempt-"))
           checkpoints = sorted(name for name in names if name.startswith("catalog-checkpoint-"))
           status = os.environ["RECONCILED_STATUS"]
           if status == "retry":
@@ -251,6 +270,7 @@ jobs:
               "status": status,
               "campaign_state_artifact": os.environ["STATE_ARTIFACT"],
               "attempt_manifest_artifacts": json.dumps(attempts, separators=(",", ":")),
+              "failure_manifest_artifacts": json.dumps(failures, separators=(",", ":")),
               "checkpoint_manifest_artifacts": json.dumps(checkpoints, separators=(",", ":")),
           }
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:

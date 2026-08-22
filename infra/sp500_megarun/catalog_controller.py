@@ -195,6 +195,10 @@ class CatalogCapacityAdmissionEvidenceV1(_CatalogEvidenceV1):
 
     @model_validator(mode="after")
     def _require_availability_shape(self) -> "CatalogCapacityAdmissionEvidenceV1":
+        if self.status == "blocked" and self.selected_workers != 0:
+            raise ValueError("blocked capacity cannot select workers")
+        if self.status == "blocked":
+            return self
         if self.temporarily_unavailable and self.selected_workers != 0:
             raise ValueError("temporary unavailability must select zero workers")
         if not self.temporarily_unavailable and self.selected_workers == 0:
@@ -228,6 +232,9 @@ class CatalogSealedInputsV1(FrozenModel):
     execution_plan_sha256: Sha256
     execution_protocol_sha256: Sha256
     protected_commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    github_controls_commit_sha: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{40}$"
+    )
     prompt_sha256: Sha256
     prompt_policy_sha256: Sha256
     campaign_registry_sha256: Sha256
@@ -534,6 +541,11 @@ def decide_catalog_run(
         or registry_entry.campaign_key != request.campaign_key
     ):
         _append_unique(failures, "CATALOG_CAMPAIGN_NOT_REGISTERED")
+    if (
+        registry_entry is not None
+        and registry_entry.scientific_contract_sha256 != science_sha256
+    ):
+        _append_unique(failures, "CATALOG_SCIENCE_IDENTITY_MISMATCH")
     _append_status_failures(
         failures,
         campaign_definition_evidence,
@@ -602,6 +614,8 @@ def decide_catalog_run(
             _append_unique(failures, "CATALOG_COMMIT_NOT_PROTECTED_HEAD")
     else:
         effective_protocol_sha256 = matching_authority.execution_protocol_sha256
+        if execution_protocol_sha256 != matching_authority.execution_protocol_sha256:
+            _append_unique(failures, "CATALOG_EXECUTION_PROTOCOL_INCOMPATIBLE")
         if (
             protected_head_evidence.original_bound_commit_sha
             != matching_authority.protected_commit_sha
@@ -878,6 +892,9 @@ def decide_catalog_run(
         execution_plan_sha256=execution_plan_sha256,
         execution_protocol_sha256=effective_protocol_sha256,
         protected_commit_sha=protected_head_evidence.applicable_commit_sha,
+        github_controls_commit_sha=(
+            protected_head_evidence.current_protected_head_sha
+        ),
         prompt_sha256=prompt_evidence.prompt_sha256,
         prompt_policy_sha256=prompt_evidence.prompt_policy_sha256,
         campaign_registry_sha256=(campaign_definition_evidence.campaign_registry_sha256),

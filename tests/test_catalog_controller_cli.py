@@ -11,6 +11,7 @@ from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import (
     parse_catalog_campaign_definition_bytes,
 )
 from aurora.infra.sp500_megarun.catalog_request_contract import CatalogLaunchTicketV1
+from scripts.control_catalog_run import _parser as controller_parser
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -204,3 +205,32 @@ def test_command_surfaces_have_no_arbitrary_execution_options() -> None:
         result = _run(script, "--help")
         assert result.returncode == 0, result.stderr
         assert forbidden.isdisjoint(result.stdout.split())
+
+
+def test_controller_is_decision_only_unless_reserve_explicitly_requests_record() -> None:
+    required: list[str] = []
+    for name in (
+        "event",
+        "authority-issue",
+        "authority-comments",
+        "request-queue",
+        "protected-head",
+        "github-controls",
+        "capacity",
+        "admission-evidence",
+        "authority-anchor",
+        "registry",
+        "actors",
+        "policy",
+        "repo-root",
+        "output-dir",
+    ):
+        required.extend((f"--{name}", name))
+
+    assert controller_parser().parse_args(required).emit_authority_comment is False
+    assert (
+        controller_parser()
+        .parse_args([*required, "--emit-authority-comment"])
+        .emit_authority_comment
+        is True
+    )
