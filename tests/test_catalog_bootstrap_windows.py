@@ -46,6 +46,7 @@ def test_installer_has_exact_confirmation_and_reproducible_gate() -> None:
     assert source.count("build_catalog_bootstrap_assistant.py") >= 2
     assert "BLOCKED_BOOTSTRAP_BUILD_NONDETERMINISTIC" in source
     assert "status --porcelain=v1 --untracked-files=no" in source
+    assert "@(& git -C $RepoRoot status --porcelain=v1 --untracked-files=no).Count" in source
     assert "CATALOG_CONTROLLER_ENABLED" in source
     assert '$Branch = "main"' in source
     assert "origin/main" in source
