@@ -56,8 +56,6 @@ class GitHubManifestConversion:
     app_id: int
     slug: str
     private_key_pem: bytearray = field(repr=False)
-    client_secret: bytearray = field(repr=False)
-    webhook_secret: bytearray = field(repr=False)
 
     def __repr__(self) -> str:
         return (
@@ -66,11 +64,7 @@ class GitHubManifestConversion:
         )
 
     def clear(self) -> None:
-        for value in (
-            self.private_key_pem,
-            self.client_secret,
-            self.webhook_secret,
-        ):
+        for value in (self.private_key_pem,):
             for index in range(len(value)):
                 value[index] = 0
 
@@ -166,19 +160,12 @@ def exchange_manifest_code(
     if not isinstance(app_id, int) or app_id < 1 or not isinstance(slug, str):
         raise ValueError("MANIFEST_CONVERSION_INVALID")
     private_key_pem = _private_bytes(payload, "pem")
-    try:
-        client_secret = _private_bytes(payload, "client_secret")
-        webhook_secret = _private_bytes(payload, "webhook_secret")
-    except Exception:
-        for index in range(len(private_key_pem)):
-            private_key_pem[index] = 0
-        raise
+    payload.pop("client_secret", None)
+    payload.pop("webhook_secret", None)
     return GitHubManifestConversion(
         app_id=app_id,
         slug=slug,
         private_key_pem=private_key_pem,
-        client_secret=client_secret,
-        webhook_secret=webhook_secret,
     )
 
 
