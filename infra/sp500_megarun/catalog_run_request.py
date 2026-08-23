@@ -11,7 +11,7 @@ from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from aurora.infra.sp500_megarun.catalog_request_contract import (
+from .catalog_request_contract import (
     _attestation_payload,
     _BODY,
     _reject_duplicate_keys,

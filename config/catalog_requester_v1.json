@@ -1,0 +1,59 @@
+{
+  "schema_version": "1",
+  "repository": "trading-optimizer-lab-org/aurora",
+  "api_origin": "https://api.github.com",
+  "api_version": "2026-03-10",
+  "request_issue_endpoint": "/repos/{repository}/issues",
+  "broker": {
+    "transport": "windows_locked_spool_v1",
+    "root": "C:/ProgramData/AURORA/CatalogRequester",
+    "inbox": "inbox",
+    "processing": "processing",
+    "receipts": "receipts",
+    "launch_tickets": "launch-tickets",
+    "campaign_status": "campaign-status",
+    "secrets": "secrets",
+    "production_seal": "config/production-enabled-v1.seal.json",
+    "task_name": "AURORA Catalog Requester Broker",
+    "service_identity": "AURORARequester",
+    "maximum_request_bytes": 4096,
+    "maximum_hint_bytes": 1024,
+    "maximum_pending_entries": 32,
+    "maximum_inbox_bytes": 131072,
+    "poll_seconds": 2,
+    "client_receipt_timeout_seconds": 90,
+    "terminal_reconcile_min_seconds": 60,
+    "terminal_reconcile_max_seconds": 900,
+    "terminal_reconcile_max_gets_per_minute": 30
+  },
+  "terminal_close_marker": {
+    "label": "catalog-run-terminal-v1",
+    "state": "closed",
+    "state_reason": "completed",
+    "closed_by": "github-actions[bot]"
+  },
+  "bootstrap_qualification": {
+    "campaign_key": "controller-bootstrap-qualification-v1",
+    "maximum_posts": 1,
+    "allowed_only_before_broker_seal": true,
+    "must_end_without_authority_or_compute": true
+  },
+  "required_installation_permissions": {
+    "issues": "write",
+    "metadata": "read"
+  },
+  "forbidden_write_permissions": [
+    "actions",
+    "administration",
+    "checks",
+    "contents",
+    "deployments",
+    "environments",
+    "members",
+    "packages",
+    "pull_requests",
+    "secrets",
+    "workflows"
+  ],
+  "timeout_seconds": 30
+}
