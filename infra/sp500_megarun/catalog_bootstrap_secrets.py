@@ -43,6 +43,12 @@ def _is_reparse_point(path: Path) -> bool:
 def _default_acl_checker(parent: Path) -> bool:
     if os.name != "nt" or not parent.is_dir() or _is_reparse_point(parent):
         return False
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.casefold() != "psmodulepath"
+    }
+    environment["AURORA_CATALOG_ACL_PATH"] = str(parent)
     result = subprocess.run(
         [
             "powershell.exe",
@@ -50,11 +56,11 @@ def _default_acl_checker(parent: Path) -> bool:
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "$p=$args[0]; (Get-Acl -LiteralPath $p).Sddl",
-            str(parent),
+            "(Get-Acl -LiteralPath $env:AURORA_CATALOG_ACL_PATH).Sddl",
         ],
         check=False,
         capture_output=True,
+        env=environment,
         text=True,
         timeout=10,
     )

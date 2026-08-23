@@ -100,29 +100,41 @@ def test_public_binding_contains_only_public_key_material() -> None:
 
 
 def test_requester_key_requires_preclosed_parent(tmp_path: Path) -> None:
+    if secrets_module.os.name == "nt":
+        result = secrets_module.subprocess.run(
+            ["icacls.exe", str(tmp_path), "/grant", "*S-1-1-0:(OI)(CI)F"],
+            check=False,
+            capture_output=True,
+        )
+        assert result.returncode == 0
     with pytest.raises(ValueError, match="SECRET_ACL_OPEN"):
         store_requester_key_once(tmp_path / "requester-private-key.pem", _key_pem())
 
 
-def test_default_acl_checker_passes_path_as_first_powershell_argument(
+def test_default_acl_checker_passes_path_via_dedicated_environment_variable(
     tmp_path: Path, monkeypatch
 ) -> None:
-    calls: list[list[str]] = []
+    calls: list[tuple[list[str], dict[str, object]]] = []
 
     class Result:
         returncode = 0
         stdout = "O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
 
-    def fake_run(args: list[str], **_kwargs: object) -> Result:
-        calls.append(args)
+    def fake_run(args: list[str], **kwargs: object) -> Result:
+        calls.append((args, kwargs))
         return Result()
 
     monkeypatch.setattr(secrets_module, "_is_reparse_point", lambda _path: False)
     monkeypatch.setattr(secrets_module.subprocess, "run", fake_run)
 
     assert secrets_module._default_acl_checker(tmp_path) is True
-    assert calls[0][-1] == str(tmp_path)
-    assert "--" not in calls[0]
+    args, kwargs = calls[0]
+    assert str(tmp_path) not in args
+    assert "$env:AURORA_CATALOG_ACL_PATH" in args[-1]
+    environment = kwargs["env"]
+    assert isinstance(environment, dict)
+    assert environment["AURORA_CATALOG_ACL_PATH"] == str(tmp_path)
+    assert not any(key.casefold() == "psmodulepath" for key in environment)
 
 
 def test_requester_key_is_create_new_and_read_back_verified(tmp_path: Path) -> None:
