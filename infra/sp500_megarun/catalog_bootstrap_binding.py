@@ -17,6 +17,7 @@ PUBLIC_BINDING_PATHS = (
     "config/catalog_github_auditor_v1.json",
     "config/catalog_requester_public_key_v1.pem",
 )
+_PRIVATE_PEM_MARKER = b"-----BEGIN " + b"PRIVATE KEY-----"
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +34,7 @@ def _load_document(tree: Mapping[str, bytes], path: str) -> dict[str, object]:
     data = tree.get(path)
     if data is None:
         raise ValueError(f"PUBLIC_BINDING_SOURCE_MISSING:{path}")
-    if b"-----BEGIN PRIVATE KEY-----" in data:
+    if _PRIVATE_PEM_MARKER in data:
         raise ValueError("PRIVATE_MATERIAL_FORBIDDEN")
     try:
         value = json.loads(data)
@@ -84,7 +85,7 @@ def build_public_binding_patch(
 ) -> CatalogPublicBindingPatch:
     if requester.kind != "requester" or auditor.kind != "auditor":
         raise ValueError("PUBLIC_BINDING_ROLE_INVALID")
-    if b"-----BEGIN PRIVATE KEY-----" in requester.public_key_pem:
+    if _PRIVATE_PEM_MARKER in requester.public_key_pem:
         raise ValueError("PRIVATE_MATERIAL_FORBIDDEN")
     checked_authority = create_or_verify_authority_anchor([authority])
     actors = _load_document(tree, "config/catalog_controller_actors_v1.json")

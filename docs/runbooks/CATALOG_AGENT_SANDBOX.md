@@ -74,3 +74,12 @@ Después de reiniciar Codex bajo `AURORAAgent`, una sesión administradora separ
 hace la auditoría final, habilita el controlador, crea el sello local y sale.
 La sesión de la IA solo recibe el recibo sin secretos. Si la sesión
 administradora continúa accesible, el bootstrap no está terminado.
+
+El relanzador cerrado es `scripts/launch_catalog_codex_secure.ps1`. No acepta
+parámetros. Comprueba la familia y el editor del paquete oficial, rechaza
+cualquier proceso ChatGPT/Codex todavía perteneciente a HP, elimina variables
+de GitHub heredadas y fija `CODEX_HOME` en el perfil aislado. Ese perfil
+desactiva navegador, Chrome, control del equipo, conectores, MCP, avisos y
+subprocesos de agentes. La contraseña aleatoria de `AURORAAgent` solo se
+conserva cifrada mediante DPAPI en una carpeta legible por SYSTEM y
+Administradores; no se guarda como texto ni variable de entorno.

@@ -10,6 +10,10 @@ $ErrorActionPreference = "Stop"
 $TargetIdentity = "AURORAAgent"
 $InstallRoot = "C:\ProgramData\AURORA\CatalogAgent"
 $BrokerRoot = "C:\ProgramData\AURORA\CatalogRequester"
+$CredentialRoot = Join-Path $InstallRoot "credentials"
+$CredentialPath = Join-Path $CredentialRoot "catalog-agent-credential.dpapi"
+$ProfileRoot = Join-Path $InstallRoot "profile"
+$ProfilePath = "C:\ProgramData\AURORA\CatalogAgent\profile\config.toml"
 $ExpectedConfirmation = "AURORA_CATALOG_AGENT_SANDBOX_V1"
 $SystemAcl = "*S-1-5-18"
 $AdministratorsAcl = "*S-1-5-32-544"
@@ -70,16 +74,20 @@ if (-not (Get-Command Get-LocalUser -ErrorAction SilentlyContinue)) {
 }
 
 $Existing = Get-LocalUser -Name $TargetIdentity -ErrorAction SilentlyContinue
-if ($null -eq $Existing) {
-    $Password = New-SecretPassword
-    try {
+$Password = New-SecretPassword
+try {
+    if ($null -eq $Existing) {
         New-LocalUser -Name $TargetIdentity -Password $Password `
             -AccountNeverExpires -PasswordNeverExpires `
             -UserMayNotChangePassword -Description "AURORA isolated Codex agent" | Out-Null
     }
-    finally {
-        $Password = $null
+    else {
+        Set-LocalUser -Name $TargetIdentity -Password $Password
     }
+}
+finally {
+    $PasswordForStorage = $Password
+    $Password = $null
 }
 
 $AdminGroup = Get-LocalGroup -SID "S-1-5-32-544"
@@ -107,6 +115,19 @@ if (-not (Test-Path -LiteralPath $InstallRoot)) {
 if ($LASTEXITCODE -ne 0) {
     throw "BLOCKED_AGENT_SANDBOX_ACL_APPLY_FAILED"
 }
+New-Item -ItemType Directory -Path $CredentialRoot, $ProfileRoot -Force | Out-Null
+& icacls.exe $CredentialRoot /inheritance:r /grant:r `
+    "${SystemAcl}:(OI)(CI)(F)" "${AdministratorsAcl}:(OI)(CI)(F)" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "BLOCKED_AGENT_SANDBOX_CREDENTIAL_ACL_FAILED" }
+& icacls.exe $ProfileRoot /inheritance:r /grant:r `
+    "${SystemAcl}:(OI)(CI)(F)" "${AdministratorsAcl}:(OI)(CI)(F)" `
+    "${TargetIdentity}:(OI)(CI)(M)" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "BLOCKED_AGENT_SANDBOX_PROFILE_ACL_FAILED" }
+$ProtectedPassword = ConvertFrom-SecureString -SecureString $PasswordForStorage
+[IO.File]::WriteAllText($CredentialPath, $ProtectedPassword, [Text.UTF8Encoding]::new($false))
+$PasswordForStorage = $null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\config\catalog_agent_codex_profile_v1.toml") `
+    -Destination $ProfilePath -Force
 
 $User = Get-LocalUser -Name $TargetIdentity
 $Plan.mutation_performed = $true
