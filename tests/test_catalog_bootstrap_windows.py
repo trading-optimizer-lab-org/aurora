@@ -51,6 +51,11 @@ def test_installer_has_exact_confirmation_and_reproducible_gate() -> None:
     assert '$Branch = "main"' in source
     assert "origin/main" in source
     assert "BLOCKED_BOOTSTRAP_NOT_PROTECTED_HEAD" in source
+    assert "https://github.com/trading-optimizer-lab-org/aurora.git" in source
+    assert "git@github.com:trading-optimizer-lab-org/aurora.git" in source
+    assert "ssh://git@github.com/trading-optimizer-lab-org/aurora.git" in source
+    assert "$AllowedRemotes -cnotcontains $Remote" in source
+    assert "(?:^|/)trading-optimizer-lab-org/aurora" not in source
     assert "Invoke-Expression" not in source
 
 

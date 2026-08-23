@@ -41,6 +41,7 @@ from infra.sp500_megarun.catalog_bootstrap_manifest import (
     start_manifest_session,
 )
 from infra.sp500_megarun.catalog_bootstrap_secrets import (
+    clear_private_material,
     store_requester_key_once,
     upload_auditor_key_once,
 )
@@ -78,10 +79,29 @@ _HEAVY_WORKFLOW_PATHS = frozenset(
         ".github/workflows/catalog-recovery-wave.yml",
     }
 )
+_PUBLIC_BINDING_PATHS = (
+    "config/catalog_authority_anchor_v1.json",
+    "config/catalog_controller_actors_v1.json",
+    "config/catalog_github_auditor_v1.json",
+    "config/catalog_requester_app_permissions_v1.json",
+    "config/catalog_requester_public_key_v1.pem",
+)
+_BOOTSTRAP_REQUIRED_CHECK_NAMES = frozenset({"GTBI V7 stage-two required"})
+_EXACT_REPOSITORY_REMOTES = frozenset(
+    {
+        "https://github.com/trading-optimizer-lab-org/aurora.git",
+        "git@github.com:trading-optimizer-lab-org/aurora.git",
+        "ssh://git@github.com/trading-optimizer-lab-org/aurora.git",
+    }
+)
 
 
 def _canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _repository_remote_is_exact(remote: str) -> bool:
+    return remote in _EXACT_REPOSITORY_REMOTES
 
 
 def _read_json(path: Path) -> dict[str, object]:
@@ -919,24 +939,359 @@ def apply_public_binding(root: Path) -> None:
     _advance(root, state, "public_binding_committed", receipt)
 
 
+def _wait_for_required_checks(
+    pr_number: str,
+    source: Path,
+    *,
+    timeout_seconds: int = 1800,
+    poll_seconds: int = 5,
+) -> tuple[dict[str, str], ...]:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "checks",
+                pr_number,
+                "--repo",
+                REPOSITORY,
+                "--required",
+                "--json",
+                "name,state,bucket",
+            ],
+            cwd=source,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        rows: object = None
+        if result.stdout.strip():
+            try:
+                rows = json.loads(result.stdout)
+            except json.JSONDecodeError as exc:
+                raise ValueError("BOOTSTRAP_PR_REQUIRED_CHECKS_INVALID") from exc
+        if isinstance(rows, list) and rows:
+            normalized: list[dict[str, str]] = []
+            for row in rows:
+                if (
+                    not isinstance(row, dict)
+                    or not isinstance(row.get("name"), str)
+                    or not isinstance(row.get("state"), str)
+                    or row.get("bucket") not in {"pass", "pending", "fail", "cancel"}
+                ):
+                    raise ValueError("BOOTSTRAP_PR_REQUIRED_CHECKS_INVALID")
+                normalized.append(
+                    {
+                        "bucket": str(row["bucket"]),
+                        "name": str(row["name"]),
+                        "state": str(row["state"]),
+                    }
+                )
+            if len({row["name"] for row in normalized}) != len(normalized):
+                raise ValueError("BOOTSTRAP_PR_REQUIRED_CHECKS_INVALID")
+            if not _BOOTSTRAP_REQUIRED_CHECK_NAMES.issubset(
+                {row["name"] for row in normalized}
+            ):
+                raise ValueError("BOOTSTRAP_PR_REQUIRED_CHECKS_INVALID")
+            if any(row["bucket"] in {"fail", "cancel"} for row in normalized):
+                raise ValueError("BOOTSTRAP_PR_REQUIRED_CHECK_FAILED")
+            if all(row["bucket"] == "pass" for row in normalized):
+                return tuple(sorted(normalized, key=lambda row: row["name"]))
+        elif rows is not None and rows != []:
+            raise ValueError("BOOTSTRAP_PR_REQUIRED_CHECKS_INVALID")
+        elif result.returncode != 0:
+            message = f"{result.stdout}\n{result.stderr}".casefold()
+            if "no required checks reported" not in message:
+                raise ValueError("BOOTSTRAP_PR_REQUIRED_CHECKS_INVALID")
+        time.sleep(poll_seconds)
+    raise ValueError("BOOTSTRAP_PR_NOT_READY")
+
+
+def _verify_existing_installations(root: Path) -> dict[str, int]:
+    observed: dict[str, int] = {}
+    manifests = _manifests()
+    for kind in ("requester", "auditor"):
+        public = _read_json(root / f"{kind}-public-v1.json")
+        installation_id = public.get("installation_id")
+        app_id = public.get("app_id")
+        key_path = root / f"secrets/{kind}-pending.pem"
+        if (
+            not isinstance(installation_id, int)
+            or not isinstance(app_id, int)
+            or not key_path.is_file()
+            or key_path.is_symlink()
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_RETRY_INSTALLATION_INVALID")
+        key_buffer = bytearray(key_path.read_bytes())
+        client: CatalogBootstrapGitHubClient | None = None
+        try:
+            client = CatalogBootstrapGitHubClient(
+                app_id=app_id,
+                private_key_pem=key_buffer,
+            )
+            access = client.find_exact_installation(getattr(manifests, kind))
+        finally:
+            if client is None:
+                clear_private_material(key_buffer)
+            else:
+                client.close()
+        if access.installation_id != installation_id:
+            raise ValueError("CATALOG_BOOTSTRAP_RETRY_INSTALLATION_INVALID")
+        observed[kind] = installation_id
+    return dict(sorted(observed.items()))
+
+
+def _validated_binding_review(
+    root: Path,
+    operation: dict[str, object],
+) -> dict[str, object]:
+    review_path = root / "binding-review-rounds-v1.json"
+    review = _read_json(review_path)
+    if (
+        review_path.read_bytes() != _canonical(review) + b"\n"
+        or
+        hashlib.sha256(_canonical(review)).hexdigest()
+        != operation.get("review_rounds_sha256")
+        or not _COMMIT.fullmatch(str(review.get("staged_tree_sha", "")))
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_RETRY_REVIEW_INVALID")
+    rounds = review.get("rounds")
+    if not isinstance(rounds, list) or len(rounds) != 3:
+        raise ValueError("CATALOG_BOOTSTRAP_RETRY_REVIEW_INVALID")
+    for expected_number, row in enumerate(rounds, 1):
+        if not isinstance(row, dict):
+            raise ValueError("CATALOG_BOOTSTRAP_RETRY_REVIEW_INVALID")
+        unsigned = {key: value for key, value in row.items() if key != "round_sha256"}
+        if (
+            row.get("round") != expected_number
+            or row.get("staged_tree_sha") != review["staged_tree_sha"]
+            or tuple(row.get("changed_paths", ())) != _PUBLIC_BINDING_PATHS
+            or row.get("material_problems_found") != []
+            or row.get("round_sha256")
+            != hashlib.sha256(_canonical(unsigned)).hexdigest()
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_RETRY_REVIEW_INVALID")
+    return review
+
+
+def _resume_transient_merge_block(root: Path) -> bool:
+    state = load_bootstrap_state(_state_path(root))
+    if state.phase != "BLOCKED":
+        return False
+    blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
+    blocked = _read_json(blocked_path)
+    expected_block = {
+        "controller_enabled_readback": False,
+        "phase": "MERGE_PENDING",
+        "reason_code": "BOOTSTRAP_PR_NOT_READY",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    if blocked != expected_block:
+        return False
+    if blocked_path.read_bytes() != _canonical(blocked) + b"\n":
+        raise ValueError("CATALOG_BOOTSTRAP_RETRY_BLOCK_RECEIPT_INVALID")
+    if root.resolve() != EXPECTED_ROOT.resolve():
+        raise ValueError("CATALOG_BOOTSTRAP_ROOT_INVALID")
+    context = _context(root)
+    source = Path(str(context["source_root"]))
+    if source.is_symlink():
+        raise ValueError("CATALOG_BOOTSTRAP_RETRY_SOURCE_INVALID")
+    source = source.resolve(strict=True)
+    _run(["git", "fetch", "origin", "main"], cwd=source)
+    current_commit = _run(["git", "rev-parse", "HEAD"], cwd=source)
+    remote = _run(["git", "remote", "get-url", "origin"], cwd=source)
+    if (
+        current_commit != context["source_commit_sha"]
+        or current_commit != _run(["git", "rev-parse", "origin/main"], cwd=source)
+        or not _repository_remote_is_exact(remote)
+        or _run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=no"],
+            cwd=source,
+        )
+        or _run(["git", "branch", "--show-current"], cwd=source) != "main"
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_RETRY_SOURCE_INVALID")
+    ancestry = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", state.protected_commit_sha, current_commit],
+        cwd=source,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if ancestry.returncode != 0:
+        raise ValueError("CATALOG_BOOTSTRAP_RETRY_SOURCE_INVALID")
+    if _run(
+        ["gh", "variable", "get", CONTROLLER_VARIABLE, "--repo", REPOSITORY]
+    ) != "false":
+        raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_NOT_DISABLED")
+
+    operation_path = root / "public-binding-operation-v1.json"
+    operation = _read_json(operation_path)
+    branch = operation.get("branch")
+    pr_number = operation.get("pr_number")
+    binding_commit = operation.get("binding_commit_sha")
+    if (
+        set(operation)
+        != {"binding_commit_sha", "branch", "pr_number", "review_rounds_sha256"}
+        or not isinstance(branch, str)
+        or not re.fullmatch(r"catalog/bootstrap-binding-[0-9a-f]{12}", branch)
+        or not isinstance(pr_number, int)
+        or not isinstance(binding_commit, str)
+        or not _COMMIT.fullmatch(binding_commit)
+        or not _SHA256.fullmatch(str(operation.get("review_rounds_sha256", "")))
+        or operation_path.read_bytes() != _canonical(operation) + b"\n"
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_RETRY_OPERATION_INVALID")
+    review = _validated_binding_review(root, operation)
+    observed_pr = json.loads(
+        _run(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                REPOSITORY,
+                "--json",
+                "state,baseRefName,headRefName,headRefOid",
+            ],
+            cwd=source,
+        )
+    )
+    if not isinstance(observed_pr, dict):
+        raise ValueError("CATALOG_BOOTSTRAP_RETRY_PR_INVALID")
+    head_commit = observed_pr.get("headRefOid")
+    if (
+        observed_pr.get("state") != "OPEN"
+        or observed_pr.get("baseRefName") != "main"
+        or observed_pr.get("headRefName") != branch
+        or not isinstance(head_commit, str)
+        or not _COMMIT.fullmatch(head_commit)
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_RETRY_PR_INVALID")
+    _run(["git", "fetch", "origin", branch], cwd=source)
+    binding_ancestry = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", binding_commit, head_commit],
+        cwd=source,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if binding_ancestry.returncode != 0:
+        raise ValueError("CATALOG_BOOTSTRAP_RETRY_PR_INVALID")
+    changed_paths = tuple(
+        sorted(
+            path
+            for path in _run(
+                ["gh", "pr", "diff", str(pr_number), "--repo", REPOSITORY, "--name-only"],
+                cwd=source,
+            ).splitlines()
+            if path
+        )
+    )
+    if changed_paths != _PUBLIC_BINDING_PATHS:
+        raise ValueError("CATALOG_BOOTSTRAP_RETRY_PR_INVALID")
+    required_checks = _wait_for_required_checks(str(pr_number), source)
+    installations = _verify_existing_installations(root)
+    baseline = _read_json(root / "github-activity-baseline-v1.json")
+    current_activity = _github_activity_snapshot()
+    if current_activity != baseline:
+        raise ValueError("CATALOG_BOOTSTRAP_RETRY_ACTIVITY_INVALID")
+    recovery = {
+        "binding_commit_sha": binding_commit,
+        "blocked_state_sha256": hashlib.sha256(
+            (root / "state/catalog-bootstrap-state-v1.json").read_bytes()
+        ).hexdigest(),
+        "head_commit_sha": head_commit,
+        "installations": installations,
+        "pr_number": pr_number,
+        "required_checks": list(required_checks),
+        "review_rounds_sha256": hashlib.sha256(_canonical(review)).hexdigest(),
+        "source_commit_sha": current_commit,
+    }
+    _write_canonical(root / "receipts/controller-bootstrap-merge-retry-v1.json", recovery)
+    _advance(root, state, "merge_retry_authorized", recovery)
+    return True
+
+
 def merge_public_binding(root: Path) -> None:
     state = load_bootstrap_state(_state_path(root))
     context = _context(root)
     source = Path(str(context["source_root"]))
     receipt = _read_json(root / "public-binding-operation-v1.json")
     pr_number = str(receipt["pr_number"])
-    checks = subprocess.run(
-        ["gh", "pr", "checks", pr_number, "--repo", REPOSITORY, "--required", "--watch"],
-        cwd=source,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=1800,
+    binding_commit = receipt.get("binding_commit_sha")
+    if not isinstance(binding_commit, str) or not _COMMIT.fullmatch(binding_commit):
+        raise ValueError("BOOTSTRAP_PR_HEAD_MISMATCH")
+    if state.sequence == 6:
+        expected_head = binding_commit
+    elif state.sequence == 8:
+        retry_path = root / "receipts/controller-bootstrap-merge-retry-v1.json"
+        retry = _read_json(retry_path)
+        expected_retry_keys = {
+            "binding_commit_sha",
+            "blocked_state_sha256",
+            "head_commit_sha",
+            "installations",
+            "pr_number",
+            "required_checks",
+            "review_rounds_sha256",
+            "source_commit_sha",
+        }
+        expected_head = retry.get("head_commit_sha")
+        if (
+            set(retry) != expected_retry_keys
+            or retry_path.read_bytes() != _canonical(retry) + b"\n"
+            or retry.get("binding_commit_sha") != binding_commit
+            or retry.get("pr_number") != receipt.get("pr_number")
+            or retry.get("review_rounds_sha256")
+            != receipt.get("review_rounds_sha256")
+            or not isinstance(expected_head, str)
+            or not _COMMIT.fullmatch(expected_head)
+        ):
+            raise ValueError("BOOTSTRAP_PR_HEAD_MISMATCH")
+    else:
+        raise ValueError("BOOTSTRAP_PR_HEAD_MISMATCH")
+    _wait_for_required_checks(pr_number, source)
+    pull_request = json.loads(
+        _run(
+            [
+                "gh",
+                "pr",
+                "view",
+                pr_number,
+                "--repo",
+                REPOSITORY,
+                "--json",
+                "state,baseRefName,headRefOid",
+            ],
+            cwd=source,
+        )
     )
-    if checks.returncode != 0:
-        raise ValueError("BOOTSTRAP_PR_NOT_READY")
+    if (
+        not isinstance(pull_request, dict)
+        or pull_request.get("state") != "OPEN"
+        or pull_request.get("baseRefName") != "main"
+        or pull_request.get("headRefOid") != expected_head
+    ):
+        raise ValueError("BOOTSTRAP_PR_HEAD_MISMATCH")
     _run(
-        ["gh", "pr", "merge", pr_number, "--repo", REPOSITORY, "--merge"],
+        [
+            "gh",
+            "pr",
+            "merge",
+            pr_number,
+            "--repo",
+            REPOSITORY,
+            "--merge",
+            "--match-head-commit",
+            expected_head,
+        ],
         cwd=source,
     )
     observed = json.loads(
@@ -1708,8 +2063,36 @@ def main() -> int:
     state = load_bootstrap_state(state_file)
     while True:
         state = load_bootstrap_state(state_file)
-        if state.phase in {"READY", "BLOCKED"}:
-            return 0 if state.phase == "READY" else 2
+        if state.phase == "READY":
+            return 0
+        if state.phase == "BLOCKED":
+            try:
+                if not _resume_transient_merge_block(args.installed_root):
+                    return 2
+            except Exception as exc:
+                try:
+                    _set_repository_variable(CONTROLLER_VARIABLE, "false")
+                except Exception:
+                    pass
+                reason = str(exc)
+                if not reason or len(reason) > 160 or any(
+                    marker in reason.casefold()
+                    for marker in ("private", "secret", "token", "password", "jwt")
+                ):
+                    reason = "CATALOG_BOOTSTRAP_MERGE_RETRY_FAILED"
+                _write_canonical(
+                    args.installed_root
+                    / "receipts/controller-bootstrap-recovery-blocked-v1.json",
+                    {
+                        "controller_enabled_readback": False,
+                        "phase": "MERGE_PENDING",
+                        "reason_code": reason,
+                        "result": "BLOCKED",
+                        "schema_version": "1",
+                    },
+                )
+                return 2
+            continue
         try:
             run_phase(state.phase, args.installed_root)
         except Exception as exc:
