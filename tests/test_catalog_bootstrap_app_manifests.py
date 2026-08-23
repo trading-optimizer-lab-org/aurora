@@ -88,7 +88,6 @@ def test_github_manifest_payload_is_closed_and_callback_bound() -> None:
         "description": "Read-only verifier for AURORA catalog controls.",
         "redirect_url": callback,
         "public": False,
-        "hook_attributes": {"url": callback, "active": False},
         "default_events": [],
         "default_permissions": dict(sorted(EXPECTED_AUDITOR_MANIFEST_PERMISSIONS.items())),
         "request_oauth_on_install": False,
