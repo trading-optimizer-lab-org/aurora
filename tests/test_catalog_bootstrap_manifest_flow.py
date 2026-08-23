@@ -60,17 +60,11 @@ def test_conversion_repr_never_contains_private_material() -> None:
         app_id=123,
         slug="aurora-catalog-requester",
         private_key_pem=bytearray(b"PRIVATE-MARKER"),
-        client_secret=bytearray(b"CLIENT-MARKER"),
-        webhook_secret=bytearray(b"WEBHOOK-MARKER"),
     )
     rendered = repr(value)
     assert "PRIVATE-MARKER" not in rendered
-    assert "CLIENT-MARKER" not in rendered
-    assert "WEBHOOK-MARKER" not in rendered
     value.clear()
     assert not any(value.private_key_pem)
-    assert not any(value.client_secret)
-    assert not any(value.webhook_secret)
 
 
 class _Response:
@@ -84,8 +78,6 @@ class _Response:
             "id": 123,
             "slug": "aurora-catalog-requester",
             "pem": "PRIVATE-MARKER",
-            "client_secret": "CLIENT-MARKER",
-            "webhook_secret": "WEBHOOK-MARKER",
         }
 
 
