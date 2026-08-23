@@ -251,6 +251,22 @@ def test_unrelated_dirty_path_does_not_change_definition(tmp_path: Path) -> None
     assert before == after == checked
 
 
+def test_text_line_endings_do_not_change_definition(tmp_path: Path) -> None:
+    checked = _load_checked()
+    checkout = _copy_definition_checkout(tmp_path, checked)
+    target = checkout / "infra/sp500_megarun/catalog_campaign_definition_contract.py"
+    original = target.read_bytes().replace(b"\r\n", b"\n")
+    assert b"\n" in original
+    target.write_bytes(original.replace(b"\n", b"\r\n"))
+
+    discovered = discover_catalog_campaign_definition(
+        repo_root=checkout,
+        registry_entry=_entry(),
+    )
+
+    assert discovered == checked
+
+
 def test_registry_row_drift_changes_definition_identity() -> None:
     checked = _load_checked()
     changed = _entry().model_copy(update={"max_free_workers": 120})

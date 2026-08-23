@@ -48,6 +48,21 @@ _REPOSITORY_PREFIXES = (
     "scripts/",
     "infra/",
 )
+_CANONICAL_TEXT_SUFFIXES = frozenset(
+    {
+        ".csv",
+        ".json",
+        ".jsonl",
+        ".lock",
+        ".md",
+        ".ps1",
+        ".py",
+        ".sh",
+        ".txt",
+        ".yaml",
+        ".yml",
+    }
+)
 _SHELL_PATH = re.compile(
     r"(?P<path>(?:\.\/)?(?:\.github|config|schemas|requirements|scripts|infra)/"
     r"[A-Za-z0-9_.\/-]+(?:\.jsonl|\.json|\.py|\.ya?ml|\.lock|\.txt|\.csv|"
@@ -118,6 +133,8 @@ class _ClosureBuilder:
             relative = self.pending.popleft()
             path = self._checked_path(relative, require_file=True)
             content = path.read_bytes()
+            if path.suffix.casefold() in _CANONICAL_TEXT_SUFFIXES:
+                content = content.replace(b"\r\n", b"\n")
             self.contents[relative] = content
             suffix = path.suffix.casefold()
             if suffix == ".py":
