@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
+
+from scripts import run_catalog_bootstrap_assistant as bootstrap_runner
 
 from infra.sp500_megarun.catalog_bootstrap_state import (
     CatalogBootstrapEventV1,
@@ -17,6 +21,48 @@ from infra.sp500_megarun.catalog_bootstrap_state import (
 
 COMMIT = "a" * 40
 BOOTSTRAP_ID = "bootstrap-20260823-001"
+
+
+def test_review_environment_loads_the_selected_checkout_in_child_process(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "checkout-with-arbitrary-name"
+    (source / "infra").mkdir(parents=True)
+    (source / "__init__.py").write_text("", encoding="utf-8")
+    (source / "infra" / "__init__.py").write_text("", encoding="utf-8")
+    (source / "infra" / "probe.py").write_text(
+        'IDENTITY = "selected-checkout"\n', encoding="utf-8"
+    )
+    stale = tmp_path / "stale"
+    (stale / "aurora" / "infra").mkdir(parents=True)
+    (stale / "aurora" / "__init__.py").write_text("", encoding="utf-8")
+    (stale / "aurora" / "infra" / "__init__.py").write_text(
+        "", encoding="utf-8"
+    )
+    (stale / "aurora" / "infra" / "probe.py").write_text(
+        'IDENTITY = "stale-install"\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(stale))
+
+    environment = bootstrap_runner._review_import_environment(
+        tmp_path / "protected",
+        source,
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from aurora.infra.probe import IDENTITY; print(IDENTITY)",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "selected-checkout"
+    assert environment["PYTHONPATH"] != str(stale)
 
 
 def event(name: str, sequence: int, *, bootstrap_id: str = BOOTSTRAP_ID):
