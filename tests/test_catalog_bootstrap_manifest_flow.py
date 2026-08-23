@@ -158,7 +158,7 @@ def test_loopback_server_serves_one_closed_manifest_and_callback() -> None:
             page = response.read().decode("utf-8")
             assert response.headers["Cache-Control"] == "no-store"
         assert "https://github.com/organizations/trading-optimizer-lab-org/settings/apps/new" in page
-        assert "AURORA Catalog Requester f10c7b40e1" in page
+        assert "AURORA Catalog Request f10c7b40e1" in page
         assert f"settings/apps/new?state={session.state}" in page
         manifest_match = re.search(r'name=manifest value="([^"]+)"', page)
         assert manifest_match is not None

@@ -109,8 +109,9 @@ binds their hashes into the final bootstrap receipt. They are governance inputs,
 not scientific campaign inputs, so the campaign-definition closure stays
 unchanged.
 
-Use the deterministic names `AURORA Catalog Requester f10c7b40e1` and
-`AURORA Catalog Controls Auditor cf479d98fb`. The auditor manifest uses the
+Use the deterministic names `AURORA Catalog Request f10c7b40e1` and
+`AURORA Catalog Audit cf479d98fb`. Both names stay within GitHub's 34-character
+limit. The auditor manifest uses the
 provider parameter names `actions_variables` and
 `organization_administration`; the post-installation verifier normalizes the
 provider response to the already sealed repository key `variables` and
