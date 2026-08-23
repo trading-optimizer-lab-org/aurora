@@ -55,7 +55,7 @@ $ProtectedHead = (& git -C $RepoRoot rev-parse origin/main).Trim()
 if ($Head -cne $ProtectedHead) {
     throw "BLOCKED_BOOTSTRAP_NOT_PROTECTED_HEAD"
 }
-if ((& git -C $RepoRoot status --porcelain=v1 --untracked-files=no).Length -ne 0) {
+if (@(& git -C $RepoRoot status --porcelain=v1 --untracked-files=no).Count -ne 0) {
     throw "BLOCKED_BOOTSTRAP_TRACKED_TREE_DIRTY"
 }
 $ControllerValue = (& gh variable get CATALOG_CONTROLLER_ENABLED --repo $Repository).Trim()
