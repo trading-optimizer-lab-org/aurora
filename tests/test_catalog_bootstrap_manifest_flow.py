@@ -3,11 +3,16 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import re
+import urllib.request
 
 import pytest
 
+from infra.sp500_megarun.catalog_bootstrap_contract import (
+    load_catalog_bootstrap_manifests,
+)
 from infra.sp500_megarun.catalog_bootstrap_manifest import (
     GitHubManifestConversion,
+    ManifestLoopbackServer,
     accept_manifest_callback,
     exchange_manifest_code,
     start_manifest_session,
@@ -135,3 +140,29 @@ def test_bootstrap_dependencies_are_exact_and_hash_locked() -> None:
     assert not re.search(r"(?im)(?:^|\s)(?:-e |--editable|https?://|git\+|--extra-index)", lock)
     blocks = re.split(r"(?m)(?=^[a-z0-9][a-z0-9._-]*==)", lock)
     assert all("--hash=sha256:" in block for block in blocks if "==" in block)
+
+
+def test_loopback_server_serves_one_closed_manifest_and_callback() -> None:
+    manifests = load_catalog_bootstrap_manifests(
+        ROOT / "config/catalog_bootstrap_app_manifests_v1.json"
+    )
+    session = start_manifest_session("requester", now=NOW)
+    with ManifestLoopbackServer(
+        session,
+        manifests.requester,
+        clock=lambda: NOW,
+    ) as server:
+        with urllib.request.urlopen(server.start_url, timeout=3) as response:
+            page = response.read().decode("utf-8")
+            assert response.headers["Cache-Control"] == "no-store"
+        assert "https://github.com/organizations/trading-optimizer-lab-org/settings/apps/new" in page
+        assert "AURORA Catalog Requester f10c7b40e1" in page
+        callback = (
+            f"{server.callback_url}?code={'c' * 24}&state={session.state}"
+        )
+        with urllib.request.urlopen(callback, timeout=3) as response:
+            assert response.status == 200
+        accepted = server.wait(now=NOW, timeout_seconds=1)
+        assert accepted.query["code"] == "c" * 24
+        with pytest.raises(ValueError, match="CALLBACK_REPLAY"):
+            server.wait(now=NOW, timeout_seconds=1)

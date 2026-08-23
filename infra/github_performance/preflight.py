@@ -551,6 +551,7 @@ CATALOG_NONPRODUCTION_TRIGGER_EXEMPTIONS = frozenset(
         ".github/workflows/catalog-controller-qualification.yml",
         ".github/workflows/catalog-live-controls-qualification.yml",
         ".github/workflows/catalog-capacity-calibration.yml",
+        CATALOG_KEEPER_WORKFLOW,
         ".github/workflows/catalog-future-architecture.yml",
     }
 )
@@ -938,12 +939,15 @@ def validate_catalog_workflow_topology(
 
         if item.role == "keeper_maintenance":
             event = workflow.get("on")
-            if event != {"schedule": [{"cron": "17 3 * * 0"}]}:
+            if event != {
+                "schedule": [{"cron": "17 3 * * 0"}],
+                "workflow_dispatch": {},
+            }:
                 violations.append(
                     _catalog_violation(
                         "CATALOG_KEEPER_TRIGGER_INVALID",
                         item.path,
-                        "keeper must have only the fixed weekly schedule",
+                        "keeper must have only the fixed weekly schedule and input-free manual qualification trigger",
                     )
                 )
             if workflow.get("permissions") != {

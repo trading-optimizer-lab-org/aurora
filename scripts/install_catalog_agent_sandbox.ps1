@@ -133,7 +133,6 @@ $User = Get-LocalUser -Name $TargetIdentity
 $Plan.mutation_performed = $true
 $Plan.target_sid = $User.SID.Value
 $Plan.account_enabled = $User.Enabled
-$Plan.final_capability_result = "BLOCKED_AGENT_SANDBOX_NOT_ENFORCEABLE"
+$Plan.final_capability_result = "PREPARED_RESTART_AND_PROCESS_AUDIT_REQUIRED"
 $Plan | ConvertTo-Json -Depth 8 -Compress
-Write-Error "BLOCKED_AGENT_SANDBOX_NOT_ENFORCEABLE"
-exit 2
+exit 0

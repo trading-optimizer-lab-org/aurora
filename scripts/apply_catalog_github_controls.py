@@ -12,6 +12,7 @@ import sys
 
 from aurora.infra.sp500_megarun.catalog_github_controls import (
     audit_catalog_github_controls,
+    bootstrap_controls_prepared,
     build_github_controls_mutation_plan,
     load_catalog_github_auditor,
     load_catalog_github_controls,
@@ -116,6 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", type=Path, default=ROOT)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--bootstrap-controls-only", action="store_true")
     parser.add_argument("--expected-current-sha")
     parser.add_argument("--confirm")
     return parser
@@ -123,6 +125,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _live_snapshot(args: argparse.Namespace, desired: object, auditor: object) -> dict[str, object]:
     client = GhReadOnlyClient(api_version=desired.github_api_version)
+    observed_commit = client.get(
+        f"/repos/{args.repository}/commits/{desired.default_branch}"
+    )
+    if not isinstance(observed_commit, dict) or not isinstance(
+        observed_commit.get("sha"), str
+    ):
+        raise ValueError("CATALOG_DEFAULT_BRANCH_SHA_UNAVAILABLE")
+    observed_default_sha = observed_commit["sha"]
     return collect_live_snapshot(
         client=client,
         desired=desired,
@@ -133,7 +143,7 @@ def _live_snapshot(args: argparse.Namespace, desired: object, auditor: object) -
         caller_job="live_controls_audit_before_reserve",
         purpose="admission",
         audit_context_sha256="0" * 64,
-        protected_commit_sha="0" * 40,
+        protected_commit_sha=observed_default_sha,
         repo_root=args.repo_root,
     )
 
@@ -228,15 +238,17 @@ def main(argv: list[str] | None = None) -> int:
             auditor=auditor,
             snapshots=after_snapshots,
         )
-        if after.status != "ready":
+        prepared = args.bootstrap_controls_only and bootstrap_controls_prepared(after)
+        if after.status != "ready" and not prepared:
             raise ValueError("CATALOG_GITHUB_CONTROLS_RECONCILIATION_INCOMPLETE")
         result["api_responses"] = responses
         result["after_receipt"] = after.model_dump(mode="json")
+        result["bootstrap_controls_prepared"] = prepared
         write_json(args.output, result)
         print(
             _canonical_json(
                 {
-                    "mode": "apply",
+                    "mode": "bootstrap_prepared" if prepared else "apply",
                     "mutation_count": len(plan.mutations),
                     "receipt_sha256": after.receipt_sha256,
                     "output": str(args.output),

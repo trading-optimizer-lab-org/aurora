@@ -15,6 +15,7 @@ from aurora.infra.sp500_megarun.catalog_github_controls import (
     CatalogGithubAuditorV1,
     CatalogGithubControlsV1,
     audit_catalog_github_controls,
+    bootstrap_controls_prepared,
     build_github_controls_mutation_plan,
     load_catalog_github_auditor,
     load_catalog_github_controls,
@@ -486,6 +487,26 @@ def test_budget_mutations_use_the_organization_endpoint_only() -> None:
     assert endpoints == {
         "/organizations/trading-optimizer-lab-org/settings/billing/budgets"
     }
+
+
+def test_bootstrap_controls_mode_defers_only_identity_and_live_capacity() -> None:
+    inputs = protected_snapshots()
+    snapshot = inputs["snapshots"]
+    snapshot["local_agent"]["has_admin"] = True
+    snapshot["local_agent"]["broker_acl_verified"] = False
+    receipt = audit_catalog_github_controls(**inputs)
+    assert bootstrap_controls_prepared(receipt)
+
+    drifted = mutated_protection_snapshots("admins_not_enforced")
+    drifted_receipt = audit_catalog_github_controls(**drifted)
+    assert not bootstrap_controls_prepared(drifted_receipt)
+
+
+def test_apply_tool_binds_live_audit_to_observed_default_branch() -> None:
+    source = (ROOT / "scripts/apply_catalog_github_controls.py").read_text("utf-8")
+    assert 'protected_commit_sha="0" * 40' not in source
+    assert 'protected_commit_sha=observed_default_sha' in source
+    assert '"--bootstrap-controls-only"' in source
 
 
 def test_branch_mutation_uses_the_github_rest_shape() -> None:

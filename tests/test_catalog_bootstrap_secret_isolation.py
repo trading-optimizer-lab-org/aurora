@@ -10,6 +10,7 @@ from infra.sp500_megarun.catalog_bootstrap_contract import (
     load_catalog_bootstrap_manifests,
 )
 from infra.sp500_megarun.catalog_bootstrap_github import (
+    CatalogBootstrapGitHubClient,
     derive_public_binding,
     verify_exact_installation,
 )
@@ -161,3 +162,60 @@ def test_clear_private_material_zeroes_all_buffers() -> None:
     values = [bytearray(b"one"), bytearray(b"two")]
     clear_private_material(*values)
     assert all(not any(value) for value in values)
+
+
+class _GithubResponse:
+    def __init__(self, payload: object) -> None:
+        self.payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> object:
+        return self.payload
+
+
+class _GithubHttp:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def request(self, method: str, url: str, **kwargs: object) -> _GithubResponse:
+        self.calls.append((method, url, kwargs))
+        if url.endswith("/app/installations"):
+            return _GithubResponse(
+                [
+                    {
+                        "id": 789,
+                        "app_id": 123,
+                        "app_slug": "aurora-catalog-requester",
+                        "account": {"login": "trading-optimizer-lab-org"},
+                        "permissions": {"issues": "write", "metadata": "read"},
+                    }
+                ]
+            )
+        if url.endswith("/access_tokens"):
+            return _GithubResponse({"token": "EPHEMERAL-MARKER"})
+        if url.endswith("/installation/repositories"):
+            return _GithubResponse(
+                {
+                    "total_count": 1,
+                    "repositories": [{"full_name": "trading-optimizer-lab-org/aurora"}],
+                }
+            )
+        raise AssertionError(url)
+
+
+def test_app_client_verifies_exact_live_installation_without_exposing_token() -> None:
+    private = _key_pem()
+    http = _GithubHttp()
+    client = CatalogBootstrapGitHubClient(
+        app_id=123,
+        private_key_pem=private,
+        http=http,
+    )
+    verified = client.find_exact_installation(MANIFESTS.requester)
+    assert verified.installation_id == 789
+    assert verified.installation.app_slug == "aurora-catalog-requester"
+    assert "EPHEMERAL-MARKER" not in repr(client)
+    client.close()
+    assert not any(private)

@@ -123,6 +123,7 @@ def test_step_ids_are_unique_case_insensitively_within_each_job() -> None:
 def test_policy_workflow_is_lightweight_read_only_and_exactly_named() -> None:
     workflow = _workflow(POLICY)
     assert workflow["on"] == {
+        "workflow_dispatch": {},
         "pull_request": {},
         "push": {"branches": ["main"]},
     }

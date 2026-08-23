@@ -139,6 +139,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_ISSUE_NUMBER: ${{ inputs.issue_number || github.event.issue.number }}
+          CONTROLLER_ENABLED: ${{ vars.CATALOG_CONTROLLER_ENABLED }}
         shell: bash
         run: |
           python - <<'PY'
@@ -165,7 +166,8 @@ jobs:
           relevant = issue.get("title", "").startswith("[AURORA CATALOG RUN REQUEST] ")
           reason = "CATALOG_CONTROLLER_DISABLED"
           request_sha = hashlib.sha256(raw).hexdigest()
-          if actors.get("production_enabled") is True:
+          controller_enabled = os.environ.get("CONTROLLER_ENABLED") == "true"
+          if actors.get("production_enabled") is True and controller_enabled:
               allowed = set(actors.get("request_actors", ()))
               key_path = actors.get("requester_public_key_path")
               if issue.get("user", {}).get("login") not in allowed:

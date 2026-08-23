@@ -17,6 +17,7 @@ EXPECTED_PATHS = (
     "config/catalog_authority_anchor_v1.json",
     "config/catalog_controller_actors_v1.json",
     "config/catalog_github_auditor_v1.json",
+    "config/catalog_requester_app_permissions_v1.json",
     "config/catalog_requester_public_key_v1.pem",
 )
 
@@ -59,10 +60,27 @@ def test_binding_changes_only_public_allowlisted_paths() -> None:
     joined = b"".join(result.documents.values())
     assert b"PRIVATE KEY" not in joined
     actors = json.loads(result.documents["config/catalog_controller_actors_v1.json"])
-    assert actors["production_enabled"] is False
+    assert actors["production_enabled"] is True
     assert actors["request_actors"] == ["aurora-catalog-requester[bot]"]
     auditor = json.loads(result.documents["config/catalog_github_auditor_v1.json"])
     assert auditor["expected_app_slug"] == "aurora-catalog-auditor"
+    anchor = json.loads(result.documents["config/catalog_authority_anchor_v1.json"])
+    assert anchor["production_enabled"] is True
+    permission_proof = json.loads(
+        result.documents["config/catalog_requester_app_permissions_v1.json"]
+    )
+    assert permission_proof == {
+        "schema_version": "1",
+        "verified": True,
+        "permissions": {
+            "login": "aurora-catalog-requester[bot]",
+            "kind": "GitHubApp",
+            "repository_administration": "none",
+            "repository_actions": "none",
+            "repository_contents": "none",
+            "repository_issues": "write",
+        },
+    }
 
 
 def test_authority_anchor_is_unique_and_reused() -> None:
@@ -85,3 +103,12 @@ def test_binding_rejects_private_or_unexpected_tree_material() -> None:
             _authority(),
             tree,
         )
+
+
+def test_controller_requires_the_repository_enable_switch() -> None:
+    workflow = (ROOT / ".github/workflows/catalog-run-controller.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "CONTROLLER_ENABLED: ${{ vars.CATALOG_CONTROLLER_ENABLED }}" in workflow
+    assert 'controller_enabled = os.environ.get("CONTROLLER_ENABLED") == "true"' in workflow
+    assert "if actors.get(\"production_enabled\") is True and controller_enabled:" in workflow

@@ -1,6 +1,7 @@
 name: Catalog artifact keeper
 
 on:
+  workflow_dispatch: {}
   schedule:
     - cron: "17 3 * * 0"
 

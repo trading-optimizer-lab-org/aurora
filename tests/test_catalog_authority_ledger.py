@@ -730,12 +730,19 @@ def test_any_authority_anchor_mismatch_globally_blocks(mutation: str) -> None:
         verify_authority_issue_anchor(**inputs)
 
 
-def test_checked_in_actor_policy_is_deliberately_nonoperational() -> None:
+def test_checked_in_actor_policy_is_valid_before_or_after_protected_binding() -> None:
     payload = json.loads((ROOT / "config/catalog_controller_actors_v1.json").read_text("utf-8"))
     actors = CatalogControllerActorsV1.model_validate(payload)
-    assert actors.production_enabled is False
-    assert actors.request_actors == ()
-    assert actors.requester_public_key_path is None
+    if actors.production_enabled:
+        assert len(actors.request_actors) == 1
+        assert actors.request_actors[0].endswith("[bot]")
+        assert actors.requester_public_key_path == (
+            "config/catalog_requester_public_key_v1.pem"
+        )
+        assert actors.requester_public_key_sha256 is not None
+    else:
+        assert actors.request_actors == ()
+        assert actors.requester_public_key_path is None
 
 
 def test_production_actor_policy_requires_separate_nonadmin_bot_and_public_key() -> None:
@@ -760,14 +767,20 @@ def test_production_actor_policy_requires_separate_nonadmin_bot_and_public_key()
         )
 
 
-def test_checked_in_anchor_is_disabled_and_schema_is_closed() -> None:
+def test_checked_in_anchor_is_closed_before_or_after_protected_binding() -> None:
     payload = json.loads((ROOT / "config/catalog_authority_anchor_v1.json").read_text("utf-8"))
     schema = json.loads(
         (ROOT / "schemas/catalog_authority_anchor_v1.schema.json").read_text("utf-8")
     )
     jsonschema.Draft202012Validator.check_schema(schema)
     jsonschema.validate(payload, schema)
-    assert CatalogAuthorityAnchorV1.model_validate(payload).production_enabled is False
+    anchor = CatalogAuthorityAnchorV1.model_validate(payload)
+    if anchor.production_enabled:
+        assert anchor.repository_node_id
+        assert anchor.issue_number
+        assert anchor.issue_node_id
+        assert anchor.creator_login
+        assert anchor.created_at
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({**payload, "token": "forbidden"}, schema)
 

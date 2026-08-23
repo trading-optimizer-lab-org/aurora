@@ -15,6 +15,7 @@ PUBLIC_BINDING_PATHS = (
     "config/catalog_authority_anchor_v1.json",
     "config/catalog_controller_actors_v1.json",
     "config/catalog_github_auditor_v1.json",
+    "config/catalog_requester_app_permissions_v1.json",
     "config/catalog_requester_public_key_v1.pem",
 )
 _PRIVATE_PEM_MARKER = b"-----BEGIN " + b"PRIVATE KEY-----"
@@ -92,7 +93,7 @@ def build_public_binding_patch(
     auditor_config = _load_document(tree, "config/catalog_github_auditor_v1.json")
     actors.update(
         {
-            "production_enabled": False,
+            "production_enabled": True,
             "request_actors": [f"{requester.app_slug}[bot]"],
             "requester_public_key_path": "config/catalog_requester_public_key_v1.pem",
             "requester_public_key_sha256": requester.public_key_sha256,
@@ -106,7 +107,7 @@ def build_public_binding_patch(
     )
     anchor = {
         "schema_version": "1",
-        "production_enabled": False,
+        "production_enabled": True,
         "repository": REPOSITORY,
         "repository_node_id": checked_authority["repository_node_id"],
         "issue_number": checked_authority["number"],
@@ -119,6 +120,20 @@ def build_public_binding_patch(
         "config/catalog_authority_anchor_v1.json": _canonical_json(anchor),
         "config/catalog_controller_actors_v1.json": _canonical_json(actors),
         "config/catalog_github_auditor_v1.json": _canonical_json(auditor_config),
+        "config/catalog_requester_app_permissions_v1.json": _canonical_json(
+            {
+                "schema_version": "1",
+                "verified": True,
+                "permissions": {
+                    "login": f"{requester.app_slug}[bot]",
+                    "kind": "GitHubApp",
+                    "repository_administration": "none",
+                    "repository_actions": "none",
+                    "repository_contents": "none",
+                    "repository_issues": "write",
+                },
+            }
+        ),
         "config/catalog_requester_public_key_v1.pem": requester.public_key_pem,
     }
     return CatalogPublicBindingPatch(

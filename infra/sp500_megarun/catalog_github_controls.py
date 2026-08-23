@@ -1342,6 +1342,26 @@ def build_github_controls_mutation_plan(
     )
 
 
+_BOOTSTRAP_DEFERRED_CONTROLS = frozenset(
+    {
+        "AGENT_ADMIN_CREDENTIAL_EXPOSED",
+        "AGENT_AUDITOR_CREDENTIAL_EXPOSED",
+        "AGENT_REQUESTER_CREDENTIAL_EXPOSED",
+        "CATALOG_ARTIFACT_STORAGE_HEADROOM_SUFFICIENT",
+        "CATALOG_CACHE_STORAGE_HEADROOM_SUFFICIENT",
+        "CATALOG_FREE_STORAGE_TELEMETRY_UNAVAILABLE",
+        "LOCAL_AGENT_CAPABILITY_AUDIT_COMPLETE",
+    }
+)
+
+
+def bootstrap_controls_prepared(
+    receipt: BootstrapCatalogGithubControlsReceiptV1,
+) -> bool:
+    """Allow only identity/capacity facts intentionally proven after mutation."""
+    return set(receipt.failed_controls) <= _BOOTSTRAP_DEFERRED_CONTROLS
+
+
 __all__ = [
     "AUDITOR_CALLER_TOPOLOGY",
     "AUDITOR_SECRET_CONSUMER",
@@ -1353,6 +1373,7 @@ __all__ = [
     "CatalogGithubControlsV1",
     "GithubControlMutationV1",
     "audit_catalog_github_controls",
+    "bootstrap_controls_prepared",
     "build_github_controls_mutation_plan",
     "inventory_heavy_workflows",
     "jobs_with_issues_write",

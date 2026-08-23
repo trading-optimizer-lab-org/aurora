@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "archive_sha256", "members"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "archive_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "members": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "__main__.py",
+        "config/catalog_bootstrap_app_manifests_v1.json",
+        "infra/__init__.py",
+        "infra/sp500_megarun/__init__.py",
+        "infra/sp500_megarun/catalog_bootstrap_binding.py",
+        "infra/sp500_megarun/catalog_bootstrap_contract.py",
+        "infra/sp500_megarun/catalog_bootstrap_finalizer.py",
+        "infra/sp500_megarun/catalog_bootstrap_github.py",
+        "infra/sp500_megarun/catalog_bootstrap_manifest.py",
+        "infra/sp500_megarun/catalog_bootstrap_secrets.py",
+        "infra/sp500_megarun/catalog_bootstrap_state.py",
+        "infra/sp500_megarun/catalog_request_contract.py"
+      ],
+      "patternProperties": {
+        "^(?:__main__\\.py|config/catalog_bootstrap_app_manifests_v1\\.json|infra/__init__\\.py|infra/sp500_megarun/(?:__init__|catalog_bootstrap_(?:binding|contract|finalizer|github|manifest|secrets|state)|catalog_request_contract)\\.py)$": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

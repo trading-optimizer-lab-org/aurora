@@ -1,6 +1,7 @@
 name: Catalog capacity calibration
 
 on:
+  workflow_dispatch: {}
   schedule:
     - cron: "17 3 */3 * *"
 
