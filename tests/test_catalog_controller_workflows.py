@@ -86,6 +86,40 @@ def _external_action_uses(workflow: dict[str, object]) -> list[str]:
     return found
 
 
+def test_all_concurrency_blocks_use_only_supported_github_actions_keys() -> None:
+    allowed = {"group", "cancel-in-progress"}
+    for path, workflow in _all_workflows().items():
+        blocks: list[tuple[str, object]] = [("workflow", workflow.get("concurrency"))]
+        jobs = workflow.get("jobs", {})
+        assert isinstance(jobs, dict)
+        blocks.extend(
+            (f"job {job_id}", job.get("concurrency"))
+            for job_id, job in jobs.items()
+            if isinstance(job, dict)
+        )
+        for location, block in blocks:
+            if block is None:
+                continue
+            assert isinstance(block, dict)
+            assert set(block) <= allowed, f"{path} {location}: {set(block) - allowed}"
+
+
+def test_step_ids_are_unique_case_insensitively_within_each_job() -> None:
+    for path, workflow in _all_workflows().items():
+        jobs = workflow.get("jobs", {})
+        assert isinstance(jobs, dict)
+        for job_id, job in jobs.items():
+            assert isinstance(job, dict)
+            steps = job.get("steps", [])
+            assert isinstance(steps, list)
+            step_ids = [
+                str(step["id"]).casefold()
+                for step in steps
+                if isinstance(step, dict) and "id" in step
+            ]
+            assert len(step_ids) == len(set(step_ids)), f"{path} job {job_id}"
+
+
 def test_policy_workflow_is_lightweight_read_only_and_exactly_named() -> None:
     workflow = _workflow(POLICY)
     assert workflow["on"] == {
@@ -450,7 +484,6 @@ def test_controller_has_only_request_lifecycle_and_reconciler_triggers() -> None
         assert workflow["jobs"][job_id]["concurrency"] == {
             "group": "catalog-authority-admission-v1",
             "cancel-in-progress": False,
-            "queue": "max",
         }
     assert workflow["jobs"]["report_nonexecuting_decision"]["concurrency"] == {
         "group": (
@@ -458,7 +491,6 @@ def test_controller_has_only_request_lifecycle_and_reconciler_triggers() -> None
             "${{ needs.filter.outputs.issue_number }}"
         ),
         "cancel-in-progress": False,
-        "queue": "max",
     }
 
 
@@ -822,7 +854,6 @@ def test_ledger_guard_can_record_tamper_but_never_compute_or_repair() -> None:
     assert writer["concurrency"] == {
         "group": "catalog-authority-admission-v1",
         "cancel-in-progress": False,
-        "queue": "max",
     }
     text = (WORKFLOWS / "catalog-ledger-guard.yml").read_text("utf-8")
     assert "AURORA_CATALOG_LEDGER_TAMPER_V1" in text
@@ -1026,7 +1057,6 @@ def test_recovery_wave_is_closed_bounded_and_reuses_the_worker() -> None:
     assert workflow["concurrency"] == {
         "group": "catalog-recovery-${{ inputs.authority_id }}",
         "cancel-in-progress": False,
-        "queue": "max",
     }
     jobs = workflow["jobs"]
     assert set(jobs) == {

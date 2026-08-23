@@ -12,7 +12,6 @@ permissions:
 concurrency:
   group: catalog-authority-watchdog-v1
   cancel-in-progress: false
-  queue: max
 
 jobs:
   discover:

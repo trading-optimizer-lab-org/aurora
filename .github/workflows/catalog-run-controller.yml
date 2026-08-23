@@ -30,7 +30,6 @@ jobs:
     concurrency:
       group: catalog-authority-admission-v1
       cancel-in-progress: false
-      queue: max
     steps:
       - name: Check out protected controller code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -287,7 +286,6 @@ jobs:
     concurrency:
       group: catalog-request-receipt-v1-${{ needs.filter.outputs.issue_number }}
       cancel-in-progress: false
-      queue: max
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -592,7 +590,6 @@ jobs:
     concurrency:
       group: catalog-authority-admission-v1
       cancel-in-progress: false
-      queue: max
     outputs:
       authority_committed: ${{ steps.verify.outputs.authority_committed }}
     steps:
@@ -769,7 +766,6 @@ jobs:
     concurrency:
       group: catalog-request-receipt-v1-${{ needs.filter.outputs.issue_number }}
       cancel-in-progress: false
-      queue: max
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -971,7 +967,6 @@ jobs:
     concurrency:
       group: catalog-authority-admission-v1
       cancel-in-progress: false
-      queue: max
     outputs:
       authority_execution_state_committed: ${{ steps.verify.outputs.authority_committed }}
     steps:
@@ -1162,7 +1157,6 @@ jobs:
     concurrency:
       group: catalog-authority-admission-v1
       cancel-in-progress: false
-      queue: max
     outputs:
       authority_wait_committed: ${{ steps.verify.outputs.authority_committed }}
     steps:
@@ -1367,7 +1361,7 @@ jobs:
           path: ${{ runner.temp }}/catalog-wait-request-delivery/artifact
           if-no-files-found: error
           retention-days: 90
-      - id: repair_claim
+      - id: request_repair_claim
         name: Claim one mirror-comment repair attempt
         if: >-
           ${{ steps.request.outputs.receipt_sha256 != '' &&
@@ -1384,7 +1378,7 @@ jobs:
           steps.reconcile_request_mirror.outputs.action == 'repair_comment' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          REPAIR_CLAIM_ARTIFACT_ID: ${{ steps.repair_claim.outputs.artifact-id }}
+          REPAIR_CLAIM_ARTIFACT_ID: ${{ steps.request_repair_claim.outputs.artifact-id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1701,7 +1695,6 @@ jobs:
     concurrency:
       group: catalog-authority-admission-v1
       cancel-in-progress: false
-      queue: max
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -1776,7 +1769,7 @@ jobs:
           path: ${{ runner.temp }}/catalog-terminal-authority-delivery/record.json
           if-no-files-found: error
           retention-days: 90
-      - id: repair_claim
+      - id: authority_repair_claim
         name: Claim one mirror-comment repair attempt
         if: >-
           ${{ steps.prepare.outputs.append_required == 'true' &&
@@ -1793,7 +1786,7 @@ jobs:
           steps.reconcile_mirror.outputs.action == 'repair_comment' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          REPAIR_CLAIM_ARTIFACT_ID: ${{ steps.repair_claim.outputs.artifact-id }}
+          REPAIR_CLAIM_ARTIFACT_ID: ${{ steps.authority_repair_claim.outputs.artifact-id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1909,7 +1902,7 @@ jobs:
           path: ${{ runner.temp }}/catalog-terminal-request-delivery/artifact
           if-no-files-found: error
           retention-days: 90
-      - id: repair_claim
+      - id: request_repair_claim
         name: Claim one mirror-comment repair attempt
         if: >-
           ${{ steps.request.outputs.receipt_sha256 != '' &&
@@ -1926,7 +1919,7 @@ jobs:
           steps.reconcile_request_mirror.outputs.action == 'repair_comment' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          REPAIR_CLAIM_ARTIFACT_ID: ${{ steps.repair_claim.outputs.artifact-id }}
+          REPAIR_CLAIM_ARTIFACT_ID: ${{ steps.request_repair_claim.outputs.artifact-id }}
         shell: bash
         run: |
           set -euo pipefail

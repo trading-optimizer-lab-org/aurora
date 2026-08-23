@@ -41,7 +41,6 @@ permissions: {actions: read, contents: read}
 concurrency:
   group: catalog-recovery-${{ inputs.authority_id }}
   cancel-in-progress: false
-  queue: max
 
 jobs:
   reconcile:
