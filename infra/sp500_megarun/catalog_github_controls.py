@@ -182,8 +182,8 @@ class ZeroBudgetV1(FrozenModel):
 
 
 class BudgetControlPlaneV1(FrozenModel):
-    scope: Literal["enterprise"]
-    enterprise_slug: str
+    scope: Literal["organization"]
+    organization: str
     repository_entity_name: RepositoryName
 
 
@@ -1322,7 +1322,7 @@ def build_github_controls_mutation_plan(
                     order=len(mutations) + 1,
                     method="POST",
                     endpoint=(
-                        f"/enterprises/{desired.billing.budget_control_plane.enterprise_slug}/"
+                        f"/organizations/{desired.billing.budget_control_plane.organization}/"
                         "settings/billing/budgets"
                     ),
                     body=budget.model_dump(mode="json"),

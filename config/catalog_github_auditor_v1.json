@@ -16,9 +16,7 @@
   "required_organization_permissions": {
     "administration": "read"
   },
-  "required_enterprise_permissions": {
-    "enterprise_billing": "read"
-  },
+  "required_enterprise_permissions": {},
   "forbidden_write_permissions": [
     "actions",
     "administration",

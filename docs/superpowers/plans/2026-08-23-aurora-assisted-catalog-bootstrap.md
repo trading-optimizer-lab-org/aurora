@@ -20,6 +20,8 @@
 - Preserve the dirty primary checkout and the two existing untracked user documents.
 - Requester permissions: Metadata read and Issues read/write only.
 - Auditor permissions: exact sealed read-only map in `config/catalog_github_auditor_v1.json`.
+- Billing controls use the organization endpoint with repository scope; no
+  enterprise permission or enterprise-level App installation is allowed.
 - No key, token, JWT, client secret, webhook secret, password, cookie, or session value in argv, inherited environment, stdout, logs, receipts, git, Downloads, temp, or Codex.
 - Stop all HP Codex processes before requesting the first manifest code.
 - Callback only on `127.0.0.1` with one-use random state and one-hour expiry.
@@ -37,8 +39,6 @@
 - Create: `schemas/catalog_bootstrap_app_manifests_v1.schema.json`
 - Create: `infra/sp500_megarun/catalog_bootstrap_contract.py`
 - Create: `tests/test_catalog_bootstrap_app_manifests.py`
-- Modify: `scripts/build_catalog_campaign_definition.py`
-- Modify: `tests/test_catalog_campaign_definition.py`
 
 **Interfaces:**
 
@@ -50,10 +50,11 @@
 def test_bootstrap_manifests_are_exact() -> None:
     value = load_catalog_bootstrap_manifests(MANIFEST_PATH)
     assert value.repository == "trading-optimizer-lab-org/aurora"
-    assert value.requester.default_permissions == {
+    assert value.requester.manifest_permissions == {
         "metadata": "read", "issues": "write"
     }
-    assert value.auditor.default_permissions == EXPECTED_AUDITOR_PERMISSIONS
+    assert value.auditor.manifest_permissions == EXPECTED_AUDITOR_MANIFEST_PERMISSIONS
+    assert value.auditor.expected_repository_permissions == EXPECTED_AUDITOR_PERMISSIONS
     assert value.requester.webhook_active is False
     assert value.auditor.webhook_active is False
     assert value.requester.default_events == ()
@@ -68,7 +69,7 @@ def test_manifest_rejects_unknown_or_write_auditor_permission() -> None:
 - [ ] **Step 2: Run tests and require missing-module failure**
 
 ~~~powershell
-& "C:/Python314/python.exe" -m pytest tests/test_catalog_bootstrap_app_manifests.py tests/test_catalog_campaign_definition.py -q
+& "C:/Python314/python.exe" -m pytest tests/test_catalog_bootstrap_app_manifests.py -q
 ~~~
 
 - [ ] **Step 3: Implement frozen models and exact payload**
@@ -82,7 +83,9 @@ class CatalogBootstrapAppManifestV1(FrozenModel):
     public: Literal[False]
     webhook_active: Literal[False]
     default_events: tuple[()]
-    default_permissions: dict[str, Literal["read", "write"]]
+    manifest_permissions: dict[str, Literal["read", "write"]]
+    expected_repository_permissions: dict[str, Literal["read", "write"]]
+    expected_organization_permissions: dict[str, Literal["read", "write"]]
 
 
 def github_manifest_payload(app, *, redirect_url: str) -> dict[str, object]:
@@ -94,20 +97,33 @@ def github_manifest_payload(app, *, redirect_url: str) -> dict[str, object]:
         "public": False,
         "hook_attributes": {"url": redirect_url, "active": False},
         "default_events": [],
-        "default_permissions": dict(sorted(app.default_permissions.items())),
+        "default_permissions": dict(sorted(app.manifest_permissions.items())),
         "request_oauth_on_install": False,
         "setup_on_update": False,
     }
 ~~~
 
-Validate both exact maps in Python, recursively close the schema, and add both tracked JSON files to the campaign-definition protected allowlist.
+Validate both exact maps in Python and recursively close the schema. Task 6
+includes these files in the assistant's closed application manifest; Task 9
+binds their hashes into the final bootstrap receipt. They are governance inputs,
+not scientific campaign inputs, so the campaign-definition closure stays
+unchanged.
+
+Use the deterministic names `AURORA Catalog Requester f10c7b40e1` and
+`AURORA Catalog Controls Auditor cf479d98fb`. The auditor manifest uses the
+provider parameter names `actions_variables` and
+`organization_administration`; the post-installation verifier normalizes the
+provider response to the already sealed repository key `variables` and
+organization key `administration` before comparing exact maps. Tests cover both
+provider forms and reject every unknown key. The auditor requests no enterprise
+permission: repository-scoped zero budgets are read from the organization
+billing endpoint, so one exact-repository organization installation is enough.
 
 - [ ] **Step 4: Run tests, regenerate/check manifest, and commit**
 
 ~~~powershell
-& "C:/Python314/python.exe" -m pytest tests/test_catalog_bootstrap_app_manifests.py tests/test_catalog_campaign_definition.py -q
-python scripts/build_catalog_campaign_definition.py --campaign-key sp500-optimized-catalog-v1 --check
-git add -- config/catalog_bootstrap_app_manifests_v1.json schemas/catalog_bootstrap_app_manifests_v1.schema.json infra/sp500_megarun/catalog_bootstrap_contract.py tests/test_catalog_bootstrap_app_manifests.py scripts/build_catalog_campaign_definition.py tests/test_catalog_campaign_definition.py config/catalog_campaign_definition_v1.json
+& "C:/Python314/python.exe" -m pytest tests/test_catalog_bootstrap_app_manifests.py -q
+git add -- config/catalog_bootstrap_app_manifests_v1.json schemas/catalog_bootstrap_app_manifests_v1.schema.json infra/sp500_megarun/catalog_bootstrap_contract.py tests/test_catalog_bootstrap_app_manifests.py
 git diff --cached --check
 git commit -m "feat: define catalog bootstrap app manifests"
 ~~~

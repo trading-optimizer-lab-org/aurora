@@ -379,13 +379,10 @@ def test_single_member_repository_policy_does_not_require_second_reviewer() -> N
     )
 
 
-def test_enterprise_billing_control_plane_matches_live_account_shape() -> None:
+def test_organization_billing_control_plane_matches_repository_owner() -> None:
     desired = load_desired_controls()
-    assert desired.billing.budget_control_plane.scope == "enterprise"
-    assert (
-        desired.billing.budget_control_plane.enterprise_slug
-        == "trading-optimizer-lab"
-    )
+    assert desired.billing.budget_control_plane.scope == "organization"
+    assert desired.billing.budget_control_plane.organization == "trading-optimizer-lab-org"
     assert desired.billing.included_shared_storage_bytes == 50 * 1024**3
 
 
@@ -402,7 +399,7 @@ def test_auditor_app_is_read_only() -> None:
         "variables": "read",
     }
     assert desired.required_organization_permissions == {"administration": "read"}
-    assert desired.required_enterprise_permissions == {"enterprise_billing": "read"}
+    assert desired.required_enterprise_permissions == {}
     assert not any(value == "write" for value in desired.required_repository_permissions.values())
 
 
@@ -474,7 +471,7 @@ def test_apply_plan_is_deterministic_and_dry_run_data_only() -> None:
     assert all(mutation.method in {"PUT", "POST", "PATCH"} for mutation in first.mutations)
 
 
-def test_budget_mutations_use_the_enterprise_endpoint_only() -> None:
+def test_budget_mutations_use_the_organization_endpoint_only() -> None:
     inputs = mutated_protection_snapshots("zero_actions_budget_missing")
     receipt = audit_catalog_github_controls(**inputs)
     plan = build_github_controls_mutation_plan(
@@ -487,7 +484,7 @@ def test_budget_mutations_use_the_enterprise_endpoint_only() -> None:
         if "/settings/billing/budgets" in mutation.endpoint
     }
     assert endpoints == {
-        "/enterprises/trading-optimizer-lab/settings/billing/budgets"
+        "/organizations/trading-optimizer-lab-org/settings/billing/budgets"
     }
 
 

@@ -130,6 +130,12 @@ Dos manifiestos cerrados contienen los nombres y permisos exactos ya aprobados:
 - auditora: los permisos de lectura establecidos por el controlador y ningún
   permiso de escritura.
 
+Los tres límites de gasto se consultan y administran mediante el plano de
+facturación de `trading-optimizer-lab-org`, que admite presupuestos de alcance
+repositorio. La App auditora se instala únicamente en la organización y en
+`trading-optimizer-lab-org/aurora`; no solicita permisos empresariales ni exige
+una segunda instalación en `trading-optimizer-lab`.
+
 El coordinador levanta un receptor únicamente en `127.0.0.1`, genera un `state`
 aleatorio de un solo uso y abre el formulario oficial de la organización. Solo
 acepta el retorno si coinciden estado, ventana temporal, organización y tipo de

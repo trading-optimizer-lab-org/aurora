@@ -64,8 +64,8 @@
     "required_enterprise_permissions": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enterprise_billing"],
-      "properties": {"enterprise_billing": {"const": "read"}}
+      "maxProperties": 0,
+      "properties": {}
     },
     "forbidden_write_permissions": {
       "type": "array",

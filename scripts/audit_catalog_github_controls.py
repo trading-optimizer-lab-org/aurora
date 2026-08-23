@@ -1071,10 +1071,10 @@ def collect_live_snapshot(
             f"/repos/{repository}/labels/{desired.issue_labels.terminal.name}"
         )
     )
-    enterprise = desired.billing.budget_control_plane.enterprise_slug
+    organization = desired.billing.budget_control_plane.organization
     budgets, budgets_complete = _paginate_object_rows(
         client,
-        f"/enterprises/{enterprise}/settings/billing/budgets?scope=repository",
+        f"/organizations/{organization}/settings/billing/budgets?scope=repository",
         root="budgets",
         max_pages=10,
     )
@@ -1086,7 +1086,7 @@ def collect_live_snapshot(
             raise ValueError("CATALOG_BUDGET_ID_INVALID")
         budget_details.append(
             client.get(
-                f"/enterprises/{enterprise}/settings/billing/budgets/{budget['id']}"
+                f"/organizations/{organization}/settings/billing/budgets/{budget['id']}"
             )
         )
     cache_retention = _dict(
