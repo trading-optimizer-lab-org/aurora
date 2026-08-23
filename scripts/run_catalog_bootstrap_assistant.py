@@ -114,6 +114,7 @@ def _run(
     args: list[str],
     *,
     cwd: Path | None = None,
+    env: dict[str, str] | None = None,
     timeout_seconds: int = 120,
 ) -> str:
     result = subprocess.run(
@@ -121,6 +122,7 @@ def _run(
         cwd=cwd,
         check=False,
         capture_output=True,
+        env=env,
         text=True,
         timeout=timeout_seconds,
     )
@@ -147,6 +149,61 @@ def _run_with_input(
     if result.returncode != 0:
         raise ValueError("CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED")
     return result.stdout.decode("utf-8").strip()
+
+
+def _review_import_environment(root: Path, source: Path) -> dict[str, str]:
+    source = source.resolve(strict=True)
+    source_init = source / "__init__.py"
+    if not source_init.is_file() or source_init.is_symlink():
+        raise ValueError("CATALOG_BOOTSTRAP_SOURCE_PACKAGE_INVALID")
+    import_root = root / "review-import-v1"
+    package_root = import_root / "aurora"
+    package_root.mkdir(parents=True, exist_ok=True)
+    shim = (
+        "from pathlib import Path as _Path\n"
+        f"_AURORA_SOURCE = _Path({json.dumps(str(source))})\n"
+        "__path__ = [str(_AURORA_SOURCE)]\n"
+        "__file__ = str(_AURORA_SOURCE / '__init__.py')\n"
+        "exec(compile((_AURORA_SOURCE / '__init__.py').read_bytes(), "
+        "__file__, 'exec'), globals(), globals())\n"
+    ).encode("utf-8")
+    shim_path = package_root / "__init__.py"
+    if package_root.is_symlink() or shim_path.is_symlink():
+        raise ValueError("CATALOG_BOOTSTRAP_SOURCE_PACKAGE_INVALID")
+    shim_path.write_bytes(shim)
+    if shim_path.read_bytes() != shim:
+        raise ValueError("CATALOG_BOOTSTRAP_SOURCE_PACKAGE_INVALID")
+    sitecustomize = (
+        "import importlib.util as _importlib_util\n"
+        "import sys as _sys\n"
+        "_sys.meta_path[:] = [\n"
+        "    _finder for _finder in _sys.meta_path\n"
+        "    if not getattr(_finder, '__module__', '').startswith("
+        "'__editable___aurora_')\n"
+        "]\n"
+        f"_source = {json.dumps(str(source))}\n"
+        "_spec = _importlib_util.spec_from_file_location("
+        "'aurora', _source + '/__init__.py', "
+        "submodule_search_locations=[_source])\n"
+        "if _spec is None or _spec.loader is None:\n"
+        "    raise RuntimeError('AURORA_SOURCE_IMPORT_FAILED')\n"
+        "_module = _importlib_util.module_from_spec(_spec)\n"
+        "_sys.modules['aurora'] = _module\n"
+        "_spec.loader.exec_module(_module)\n"
+    ).encode("utf-8")
+    sitecustomize_path = import_root / "sitecustomize.py"
+    if sitecustomize_path.is_symlink():
+        raise ValueError("CATALOG_BOOTSTRAP_SOURCE_PACKAGE_INVALID")
+    sitecustomize_path.write_bytes(sitecustomize)
+    if sitecustomize_path.read_bytes() != sitecustomize:
+        raise ValueError("CATALOG_BOOTSTRAP_SOURCE_PACKAGE_INVALID")
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.casefold() != "pythonpath"
+    }
+    environment["PYTHONPATH"] = str(import_root)
+    return environment
 
 
 def _write_canonical(path: Path, value: object) -> str:
@@ -407,6 +464,7 @@ def _run_binding_review_rounds(root: Path, source: Path) -> dict[str, object]:
     staged_tree = _run(["git", "write-tree"], cwd=source)
     if not _COMMIT.fullmatch(staged_tree):
         raise ValueError("CATALOG_BOOTSTRAP_BINDING_TREE_INVALID")
+    review_environment = _review_import_environment(root, source)
     rounds: list[dict[str, object]] = []
     test_paths = (
         "tests/test_catalog_bootstrap_binding.py",
@@ -421,6 +479,7 @@ def _run_binding_review_rounds(root: Path, source: Path) -> dict[str, object]:
         _run(
             ["C:/Python314/python.exe", "-m", "pytest", "-q", *test_paths],
             cwd=source,
+            env=review_environment,
             timeout_seconds=3600,
         )
         _run(
@@ -433,6 +492,7 @@ def _run_binding_review_rounds(root: Path, source: Path) -> dict[str, object]:
                 *test_paths,
             ],
             cwd=source,
+            env=review_environment,
             timeout_seconds=600,
         )
         _run(["git", "diff", "--cached", "--check"], cwd=source)
