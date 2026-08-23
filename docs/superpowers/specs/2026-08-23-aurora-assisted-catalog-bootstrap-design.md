@@ -17,7 +17,8 @@ no permiten automatizar de forma legítima:
 2. iniciar sesión o confirmar 2FA si GitHub lo exige;
 3. confirmar la creación y la instalación de las dos Apps en el repositorio
    exacto;
-4. pulsar el botón final para reiniciar Codex bajo la identidad aislada.
+4. confirmar una vez el acceso a Codex en el perfil aislado si OpenAI vuelve a
+   solicitar autenticación.
 
 El asistente no lanzará ningún run de catálogo de producción. El resultado solo
 podrá ser `READY` o `BLOCKED` con una causa y una acción concretas.
@@ -196,10 +197,12 @@ tarea programada. Ninguna contraseña se muestra o pasa a Codex.
 
 ### 4.7 Relanzador de Codex aislado
 
-Se instala un relanzador fijo y protegido que solo puede iniciar el ejecutable
-exactamente autorizado de Codex bajo `AURORAAgent`. La credencial aleatoria de
-esa cuenta queda protegida por Windows para el usuario humano y no es legible
-desde `AURORAAgent`.
+Se instala un relanzador fijo y protegido que solo puede activar el paquete
+firmado con familia `OpenAI.Codex_2p2nqsd0c76g0` bajo `AURORAAgent`. Resuelve y
+verifica la versión instalada en cada arranque, por lo que una actualización no
+depende de una ruta antigua ni permite elegir otro ejecutable. La credencial
+aleatoria de esa cuenta queda protegida por Windows para el usuario humano y no
+es legible desde `AURORAAgent`.
 
 El relanzador:
 
@@ -258,8 +261,20 @@ y explícita.
 - `config/catalog_bootstrap_app_manifests_v1.json`: los dos manifiestos cerrados.
 - `schemas/catalog_bootstrap_app_manifests_v1.schema.json`: esquema sin campos
   adicionales.
-- `infra/sp500_megarun/catalog_bootstrap_assistant.py`: contratos, estados,
-  transiciones y recibos puros.
+- `infra/sp500_megarun/catalog_bootstrap_contract.py`: manifiestos y enlaces
+  públicos cerrados.
+- `infra/sp500_megarun/catalog_bootstrap_state.py`: estados, transiciones y
+  persistencia reanudable.
+- `infra/sp500_megarun/catalog_bootstrap_manifest.py`: formulario y retorno
+  local de GitHub sin logs.
+- `infra/sp500_megarun/catalog_bootstrap_github.py`: verificación exacta de las
+  instalaciones.
+- `infra/sp500_megarun/catalog_bootstrap_secrets.py`: custodia y borrado de las
+  claves.
+- `infra/sp500_megarun/catalog_bootstrap_binding.py`: enlace público, ancla, PR
+  y fusión protegida.
+- `infra/sp500_megarun/catalog_bootstrap_finalizer.py`: auditoría, sello y
+  recibo final.
 - `scripts/run_catalog_bootstrap_assistant.py`: receptor local y coordinador de
   GitHub sin interfaz arbitraria.
 - `scripts/install_catalog_bootstrap_assistant.ps1`: preflight, UAC, paquete,
