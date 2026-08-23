@@ -20,3 +20,22 @@
 /tests/*gtbi* @gomez5757
 /docs/adr/ @gomez5757
 /docs/plans/gtbi* @gomez5757
+
+# AURORA catalog controller: sensitive paths and accountable owner.
+/docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md @gomez5757
+/config/catalog_run_prompt_policy_v1.json @gomez5757
+/config/catalog_campaign_registry_v1.json @gomez5757
+/config/catalog_campaign_definitions/ @gomez5757
+/config/catalog_controller_actors_v1.json @gomez5757
+/config/catalog_authority_anchor_v1.json @gomez5757
+/config/catalog_github_controls_v1.json @gomez5757
+/config/catalog_github_auditor_v1.json @gomez5757
+/config/catalog_requester_* @gomez5757
+/schemas/catalog_run_* @gomez5757
+/schemas/catalog_campaign_definition_manifest_v1.schema.json @gomez5757
+/schemas/catalog_github_auditor_v1.schema.json @gomez5757
+/schemas/catalog_authority_anchor_v1.schema.json @gomez5757
+/infra/sp500_megarun/catalog_* @gomez5757
+/scripts/*catalog* @gomez5757
+/.github/workflows/catalog-* @gomez5757
+/.github/actions/aurora-* @gomez5757

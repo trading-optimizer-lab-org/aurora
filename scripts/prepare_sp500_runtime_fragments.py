@@ -19,6 +19,7 @@ def main() -> int:
     parser.add_argument("--runtime-input-pack", type=Path, required=True)
     parser.add_argument("--campaign-contract", type=Path, required=True)
     parser.add_argument("--runtime-source-run-id", required=True)
+    parser.add_argument("--partition-id", action="append", default=[])
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     campaign = load_and_validate_campaign_contract(args.campaign_contract)
@@ -29,6 +30,9 @@ def main() -> int:
             campaign
         ),
         runtime_source_run_id=args.runtime_source_run_id,
+        selected_partition_ids=(
+            tuple(args.partition_id) if args.partition_id else None
+        ),
     )
     return 0
 

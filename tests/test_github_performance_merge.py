@@ -11,11 +11,15 @@ from aurora.infra.github_performance.contracts import (
     ShardDefinition,
     TerminalState,
     UnitAttemptRecord,
+    canonical_sha256,
 )
 from aurora.infra.github_performance.merge_planner import (
+    MergeResourceProjectionV1,
     MergePlanError,
     ReconciliationError,
+    ReductionSelectionV1,
     build_merge_plan,
+    choose_reduction_plan,
     reconcile_attempt_files,
     reconcile_attempts,
     write_reconciliation,
@@ -301,4 +305,78 @@ def test_merge_plan_rejects_unsafe_disk_projection() -> None:
             (make_shard(index) for index in range(2)),
             fan_in=2,
             disk_budget_bytes=1024,
+        )
+
+
+def _merge_projection(**updates: float | None) -> MergeResourceProjectionV1:
+    values: dict[str, float | None] = {
+        "timeout_fraction_p99": 0.69,
+        "memory_fraction_p99": 0.69,
+        "disk_fraction_p99": 0.69,
+        "artifact_fraction_p99": 0.69,
+        "download_fraction_p99": 0.69,
+        "input_count_fraction_p99": 0.69,
+    }
+    values.update(updates)
+    return MergeResourceProjectionV1(**values)
+
+
+def test_central_merge_requires_thirty_percent_margin_on_every_resource() -> None:
+    safe = choose_reduction_plan(projection=_merge_projection())
+    unsafe = choose_reduction_plan(
+        projection=_merge_projection(timeout_fraction_p99=0.71)
+    )
+    boundary = choose_reduction_plan(
+        projection=_merge_projection(
+            timeout_fraction_p99=0.70,
+            memory_fraction_p99=0.70,
+            disk_fraction_p99=0.70,
+            artifact_fraction_p99=0.70,
+            download_fraction_p99=0.70,
+            input_count_fraction_p99=0.70,
+        )
+    )
+
+    assert safe.mode == "central"
+    assert boundary.mode == "central"
+    assert unsafe.mode == "hierarchical"
+    assert unsafe.reason_codes == ("CENTRAL_TIMEOUT_MARGIN_INSUFFICIENT",)
+
+
+def test_missing_central_merge_evidence_uses_hierarchy() -> None:
+    decision = choose_reduction_plan(
+        projection=_merge_projection(download_fraction_p99=None)
+    )
+
+    assert decision.mode == "hierarchical"
+    assert decision.reason_codes == ("CENTRAL_DOWNLOAD_EVIDENCE_MISSING",)
+
+
+def test_resource_projection_rejects_boolean_measurements() -> None:
+    with pytest.raises(ValueError, match="must be numeric"):
+        _merge_projection(memory_fraction_p99=True)
+
+
+def test_reduction_selection_cannot_hash_an_inconsistent_mode() -> None:
+    projection = _merge_projection(timeout_fraction_p99=0.71)
+    identity = {
+        "schema_version": "1",
+        "mode": "central",
+        "maximum_resource_fraction": 0.70,
+        "projection": projection,
+        "reason_codes": (),
+    }
+    with pytest.raises(ValueError, match="decision is inconsistent"):
+        ReductionSelectionV1(
+            **identity,
+            decision_sha256=canonical_sha256(identity),
+        )
+
+
+def test_hierarchical_fan_in_cannot_exceed_thirty() -> None:
+    with pytest.raises(ValueError, match="fan_in cannot exceed 30"):
+        build_merge_plan(
+            (make_shard(index) for index in range(31)),
+            fan_in=31,
+            disk_budget_bytes=10 * 1024**3,
         )

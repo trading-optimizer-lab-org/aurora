@@ -9,16 +9,19 @@ from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from itertools import groupby
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from pydantic import Field, field_validator, model_validator
 
 from aurora.infra.github_performance.contracts import (
     AttemptManifest,
+    FrozenModel,
     MergeGroup,
     MergePlan,
     ReconciliationResult,
+    Sha256,
     ShardDefinition,
     TerminalState,
     UnitAttemptRecord,
@@ -36,6 +39,8 @@ RECONCILIATION_SCHEMA_VERSION = "1"
 DEFAULT_PARTITION_TARGET_BYTES = 512 * 1024**2
 MAX_GITHUB_MATRIX_JOBS = 256
 MAX_WORKFLOW_MERGE_LEVELS = 4
+MAX_QUALIFIED_MERGE_FAN_IN = 30
+CENTRAL_MERGE_MAX_RESOURCE_FRACTION = 0.70
 UNIT_ATTEMPT_SCHEMA = pa.schema(
     [
         pa.field("unit_key", pa.string(), nullable=False),
@@ -92,6 +97,110 @@ class ReconciliationError(RuntimeError):
     """Raised when logical results are missing, unexpected, or conflicting."""
 
 
+class MergeResourceProjectionV1(FrozenModel):
+    """Measured p99 fractions for every resource used by a central merge."""
+
+    timeout_fraction_p99: float | None = Field(default=None, ge=0)
+    memory_fraction_p99: float | None = Field(default=None, ge=0)
+    disk_fraction_p99: float | None = Field(default=None, ge=0)
+    artifact_fraction_p99: float | None = Field(default=None, ge=0)
+    download_fraction_p99: float | None = Field(default=None, ge=0)
+    input_count_fraction_p99: float | None = Field(default=None, ge=0)
+
+    @field_validator(
+        "timeout_fraction_p99",
+        "memory_fraction_p99",
+        "disk_fraction_p99",
+        "artifact_fraction_p99",
+        "download_fraction_p99",
+        "input_count_fraction_p99",
+        mode="before",
+    )
+    @classmethod
+    def _reject_non_numeric(cls, value: object) -> object:
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+        ):
+            raise ValueError("merge resource projections must be numeric")
+        return value
+
+    @model_validator(mode="after")
+    def _reject_nonfinite(self) -> "MergeResourceProjectionV1":
+        if any(
+            value is not None and not math.isfinite(value)
+            for value in self.model_dump(mode="python").values()
+        ):
+            raise ValueError("merge resource projections must be finite")
+        return self
+
+
+def _reduction_reason_codes(
+    projection: MergeResourceProjectionV1,
+) -> tuple[str, ...]:
+    resources = (
+        ("TIMEOUT", projection.timeout_fraction_p99),
+        ("MEMORY", projection.memory_fraction_p99),
+        ("DISK", projection.disk_fraction_p99),
+        ("ARTIFACT", projection.artifact_fraction_p99),
+        ("DOWNLOAD", projection.download_fraction_p99),
+        ("INPUT_COUNT", projection.input_count_fraction_p99),
+    )
+    return tuple(
+        (
+            f"CENTRAL_{name}_EVIDENCE_MISSING"
+            if value is None
+            else f"CENTRAL_{name}_MARGIN_INSUFFICIENT"
+        )
+        for name, value in resources
+        if value is None or value > CENTRAL_MERGE_MAX_RESOURCE_FRACTION
+    )
+
+
+class ReductionSelectionV1(FrozenModel):
+    """Fail-closed central-versus-hierarchical reduction decision."""
+
+    schema_version: Literal["1"] = "1"
+    mode: Literal["central", "hierarchical"]
+    maximum_resource_fraction: Literal[0.70] = 0.70
+    projection: MergeResourceProjectionV1
+    reason_codes: tuple[str, ...]
+    decision_sha256: Sha256
+
+    @model_validator(mode="after")
+    def _validate_hash(self) -> "ReductionSelectionV1":
+        expected_reasons = _reduction_reason_codes(self.projection)
+        expected_mode = "hierarchical" if expected_reasons else "central"
+        if self.reason_codes != expected_reasons or self.mode != expected_mode:
+            raise ValueError("reduction selection decision is inconsistent")
+        identity = self.model_dump(
+            mode="python",
+            exclude={"decision_sha256"},
+        )
+        if self.decision_sha256 != canonical_sha256(identity):
+            raise ValueError("reduction selection hash is invalid")
+        return self
+
+
+def choose_reduction_plan(
+    *,
+    projection: MergeResourceProjectionV1,
+) -> ReductionSelectionV1:
+    """Allow one central job only with at least 30% p99 margin everywhere."""
+
+    reasons = _reduction_reason_codes(projection)
+    identity = {
+        "schema_version": "1",
+        "mode": "hierarchical" if reasons else "central",
+        "maximum_resource_fraction": CENTRAL_MERGE_MAX_RESOURCE_FRACTION,
+        "projection": projection,
+        "reason_codes": reasons,
+    }
+    return ReductionSelectionV1(
+        **identity,
+        decision_sha256=canonical_sha256(identity),
+    )
+
+
 def _atomic_json(path: Path, payload: Any) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -129,6 +238,8 @@ def build_merge_plan(
 
     if fan_in < 2:
         raise ValueError("fan_in must be at least 2")
+    if fan_in > MAX_QUALIFIED_MERGE_FAN_IN:
+        raise ValueError("fan_in cannot exceed 30")
     if disk_budget_bytes <= 0:
         raise ValueError("disk_budget_bytes must be positive")
     if partition_target_bytes < 4096:

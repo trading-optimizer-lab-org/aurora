@@ -29,5 +29,60 @@
     "require_cold_and_hot_benchmarks": true,
     "require_verified_manifest": true,
     "max_performance_regression_ratio": 0.05
+  },
+  "runtime_preparation": {
+    "build_once_per_runtime_identity": true,
+    "reuse_verified_runtime_store_required": true,
+    "dependency_lock_required": true,
+    "worker_network_install_allowed": false,
+    "wheelhouse_sha256_required": true,
+    "runtime_mode": "offline_wheelhouse"
+  },
+  "component_store_execution": {
+    "build_before_recipe_evaluation": true,
+    "global_deduplication": true,
+    "recipe_worker_build_allowed": false,
+    "exact_component_bundles": true,
+    "conflicting_successes_block": true,
+    "consumer_hypergraph_partition_required": true,
+    "component_download_amplification_receipt_required": true,
+    "qualified_bundle_count_required": true
+  },
+  "payload_execution": {
+    "exact_assignment_member_only": true,
+    "exact_data_partitions_only": true,
+    "exact_component_bundles_only": true,
+    "download_all_attempts_allowed": false,
+    "download_all_checkpoints_allowed": false
+  },
+  "prepared_input_execution": {
+    "prepare_once_per_input_identity": true,
+    "reuse_verified_partitions_required": true,
+    "partial_store_build_missing_only": true,
+    "approximate_substitution_allowed": false
+  },
+  "rebuildable_store_execution": {
+    "actions_cache_preferred": true,
+    "cache_authoritative_evidence_allowed": false,
+    "repository_cache_limit_gb": 10,
+    "repository_cache_retention_days": 90,
+    "paid_cache_storage_allowed": false,
+    "component_cache_bundle_count_options": [8, 16, 32, 64, 96, 128],
+    "maximum_new_cache_entries_per_campaign": 160,
+    "maximum_component_cache_bundles_per_campaign": 128,
+    "maximum_cache_upload_requests_per_minute": 160,
+    "maximum_cache_download_requests_per_minute": 1200,
+    "persistent_duplicate_payload_artifact_allowed": false,
+    "same_run_transport_artifact_max_retention_days": 1
+  },
+  "recovery_execution": {
+    "checkpoint_required": true,
+    "checkpoint_slot_options": [1, 2, 4, 8],
+    "maximum_unpersisted_seconds_p99": 600,
+    "maximum_checkpoint_overhead_fraction_p95": 0.05,
+    "valid_work_reuse_required": true,
+    "global_rerun_allowed": false,
+    "max_same_failure_occurrences": 3,
+    "max_total_recovery_waves": 6
   }
 }

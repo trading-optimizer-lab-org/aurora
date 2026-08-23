@@ -1,0 +1,58 @@
+{
+  "schema_version": "1",
+  "repository": "trading-optimizer-lab-org/aurora",
+  "organization": "trading-optimizer-lab-org",
+  "requester": {
+    "kind": "requester",
+    "name": "AURORA Catalog Requester f10c7b40e1",
+    "description": "Narrow issue-only requester for AURORA catalog runs.",
+    "homepage_url": "https://github.com/trading-optimizer-lab-org/aurora",
+    "public": false,
+    "webhook_active": false,
+    "default_events": [],
+    "manifest_permissions": {
+      "issues": "write",
+      "metadata": "read"
+    },
+    "expected_repository_permissions": {
+      "issues": "write",
+      "metadata": "read"
+    },
+    "expected_organization_permissions": {},
+    "expected_enterprise_permissions": {}
+  },
+  "auditor": {
+    "kind": "auditor",
+    "name": "AURORA Catalog Controls Auditor cf479d98fb",
+    "description": "Read-only verifier for AURORA catalog controls.",
+    "homepage_url": "https://github.com/trading-optimizer-lab-org/aurora",
+    "public": false,
+    "webhook_active": false,
+    "default_events": [],
+    "manifest_permissions": {
+      "actions": "read",
+      "actions_variables": "read",
+      "administration": "read",
+      "contents": "read",
+      "environments": "read",
+      "issues": "read",
+      "metadata": "read",
+      "organization_administration": "read",
+      "packages": "read"
+    },
+    "expected_repository_permissions": {
+      "actions": "read",
+      "administration": "read",
+      "contents": "read",
+      "environments": "read",
+      "issues": "read",
+      "metadata": "read",
+      "packages": "read",
+      "variables": "read"
+    },
+    "expected_organization_permissions": {
+      "administration": "read"
+    },
+    "expected_enterprise_permissions": {}
+  }
+}

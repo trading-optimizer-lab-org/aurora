@@ -65,6 +65,28 @@ def build_robustness_manifest(
     return {**identity, "robustness_sha256": _sha256_json(identity)}
 
 
+def slice_robustness_candidates(
+    manifest: Mapping[str, object],
+    candidate_rows: Sequence[Mapping[str, object]],
+    candidate_start: int,
+    candidate_stop: int | None,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    """Select a disjoint frozen slice; never reorders or adapts candidates."""
+
+    if manifest.get("validation_opened") is not False or manifest.get("locked_opened") is not False:
+        raise ValueError("ATLAS_ROBUSTNESS_MANIFEST_BOUNDARY_OPEN")
+    ids = [str(value) for value in manifest.get("candidate_strategy_ids", [])]
+    stop = len(ids) if candidate_stop is None else int(candidate_stop)
+    start = int(candidate_start)
+    if start < 0 or stop < start or stop > len(ids):
+        raise ValueError("ATLAS_ROBUSTNESS_CANDIDATE_SLICE_INVALID")
+    by_id = {str(row["strategy_id"]): dict(row) for row in candidate_rows}
+    selected_ids = ids[start:stop]
+    if any(value not in by_id for value in selected_ids):
+        raise ValueError("ATLAS_ROBUSTNESS_CANDIDATE_MISSING")
+    return [by_id[value] for value in selected_ids], {"candidate_start": start, "candidate_stop": stop}
+
+
 def _read_jsonl(path: Path) -> Iterable[dict[str, object]]:
     with Path(path).open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -153,6 +175,9 @@ def run_robustness(
     feature_contract_path: Path,
     policy_path: Path,
     output_dir: Path,
+    robustness_manifest_path: Path | None = None,
+    candidate_start: int = 0,
+    candidate_stop: int | None = None,
 ) -> dict[str, object]:
     plan = load_plan(plan_path)
     reduction = json.loads((Path(final_results_dir) / "reduction_receipt.json").read_text("utf-8"))
@@ -161,13 +186,23 @@ def run_robustness(
     policy = json.loads(Path(policy_path).read_text("utf-8"))
     frontier = list(_read_jsonl(Path(final_results_dir) / "pareto_frontier.jsonl"))
     by_id = {str(row["strategy_id"]): row for row in frontier}
-    manifest = build_robustness_manifest(
-        policy,
-        list(by_id),
-        plan_sha256=plan.plan_sha256,
-        reduction_sha256=str(reduction["frontier_sha256"]),
+    if robustness_manifest_path is None:
+        manifest = build_robustness_manifest(
+            policy,
+            list(by_id),
+            plan_sha256=plan.plan_sha256,
+            reduction_sha256=str(reduction["frontier_sha256"]),
+        )
+    else:
+        manifest = json.loads(Path(robustness_manifest_path).read_text("utf-8"))
+        if manifest.get("plan_sha256") != plan.plan_sha256 or manifest.get("reduction_sha256") != reduction["frontier_sha256"]:
+            raise ValueError("ATLAS_ROBUSTNESS_MANIFEST_IDENTITY_MISMATCH")
+    candidates, slice_bounds = slice_robustness_candidates(
+        manifest,
+        list(by_id.values()),
+        candidate_start,
+        candidate_stop,
     )
-    candidates = [by_id[str(value)] for value in manifest["candidate_strategy_ids"]]
 
     data_contract = load_and_validate_contract(Path(data_contract_path))
     feature_contract = load_and_validate_feature_contract(Path(feature_contract_path), data_contract)
@@ -303,6 +338,7 @@ def run_robustness(
         "amber_count": int((classifications_frame["status"] == "amber").sum()),
         "red_count": int((classifications_frame["status"] == "red").sum()),
         "invalid_count": int((classifications_frame["status"] == "invalid").sum()),
+        **slice_bounds,
         "validation_opened": False,
         "locked_opened": False,
     }
@@ -321,6 +357,9 @@ def main() -> int:
     parser.add_argument("--feature-contract", type=Path, required=True)
     parser.add_argument("--policy", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--robustness-manifest", type=Path)
+    parser.add_argument("--candidate-start", type=int, default=0)
+    parser.add_argument("--candidate-stop", type=int)
     args = parser.parse_args()
     print(
         json.dumps(
@@ -334,6 +373,9 @@ def main() -> int:
                 feature_contract_path=args.feature_contract,
                 policy_path=args.policy,
                 output_dir=args.output_dir,
+                robustness_manifest_path=args.robustness_manifest,
+                candidate_start=args.candidate_start,
+                candidate_stop=args.candidate_stop,
             ),
             indent=2,
             sort_keys=True,

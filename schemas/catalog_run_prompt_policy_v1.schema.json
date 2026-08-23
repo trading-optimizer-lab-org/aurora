@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CatalogPromptPolicyV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_prompt_version",
+    "source_prompt_sha256",
+    "active_prompt_version",
+    "active_prompt_sha256",
+    "migration_path",
+    "migration_sha256",
+    "rules"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "source_prompt_version": {"const": "5.3"},
+    "source_prompt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "active_prompt_version": {"const": "6.0-CONTROLLER"},
+    "active_prompt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "migration_path": {"const": "config/catalog_prompt_migration_v5_3_to_v6_0.json"},
+    "migration_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "rules": {
+      "type": "array",
+      "minItems": 25,
+      "maxItems": 25,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rule_id",
+          "summary",
+          "enforcement",
+          "enforcer_path",
+          "test_nodeid",
+          "failure_code",
+          "evidence_contract",
+          "evidence_field"
+        ],
+        "properties": {
+          "rule_id": {"type": "string", "pattern": "^CAT-[0-9]{3}$"},
+          "summary": {"type": "string", "minLength": 8},
+          "enforcement": {
+            "enum": ["request", "admission", "workflow", "recovery", "final"]
+          },
+          "enforcer_path": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$"
+          },
+          "test_nodeid": {
+            "type": "string",
+            "pattern": "^tests/[^:]+::test_[A-Za-z0-9_]+$"
+          },
+          "failure_code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]+$"},
+          "evidence_contract": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "evidence_field": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "schema_version": "1",
+  "status": "blocked",
+  "reason_codes": [
+    "CATALOG_OPERATIONAL_QUALIFICATION_MISSING"
+  ],
+  "qualified_at": null,
+  "qualification_receipt_sha256": null,
+  "qualification_run_ids": [],
+  "bundle_layout_qualifications": [],
+  "reduction_projection": null,
+  "hierarchical_reduction_projection": null,
+  "topology_sample_count": 0,
+  "memory_fraction_p50": null,
+  "memory_fraction_p95": null,
+  "memory_fraction_p99": null,
+  "disk_fraction_p50": null,
+  "disk_fraction_p95": null,
+  "disk_fraction_p99": null,
+  "runner_start_seconds_p50": null,
+  "runner_start_seconds_p95": null,
+  "runner_start_seconds_p99": null,
+  "unit_seconds_p50": null,
+  "unit_seconds_p95": null,
+  "unit_seconds_p99": null,
+  "projected_artifact_storage_bytes": null,
+  "projected_cache_storage_bytes": null,
+  "planned_new_cache_entry_count": null,
+  "selected_component_bundle_count": null,
+  "planned_cache_upload_requests_per_minute_peak": null,
+  "planned_cache_download_requests_per_minute_peak": null,
+  "artifact_transport_retention_days": null
+}

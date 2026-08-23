@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CatalogPromptMigrationV5_3ToV6_0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_prompt_version",
+    "source_prompt_sha256",
+    "active_prompt_version",
+    "active_prompt_sha256",
+    "spans"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "source_prompt_version": {"const": "5.3"},
+    "source_prompt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "active_prompt_version": {"const": "6.0-CONTROLLER"},
+    "active_prompt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "spans": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start_line",
+          "end_line",
+          "source_span_sha256",
+          "disposition",
+          "active_prompt_section",
+          "machine_rule_ids",
+          "replacement_reason"
+        ],
+        "properties": {
+          "start_line": {"type": "integer", "minimum": 1},
+          "end_line": {"type": "integer", "minimum": 1},
+          "source_span_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "disposition": {
+            "enum": ["preserved_for_ai", "machine_enforced", "replaced_incompatible"]
+          },
+          "active_prompt_section": {"type": "string"},
+          "machine_rule_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^CAT-(00[1-9]|01[0-9]|02[0-5])$"
+            }
+          },
+          "replacement_reason": {"type": "string"}
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {"disposition": {"const": "replaced_incompatible"}},
+              "required": ["disposition"]
+            },
+            "then": {
+              "properties": {
+                "machine_rule_ids": {"minItems": 1},
+                "replacement_reason": {"minLength": 1}
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

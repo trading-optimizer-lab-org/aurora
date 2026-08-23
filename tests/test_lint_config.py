@@ -107,6 +107,14 @@ def test_no_unmarked_live_data_loads():
             "test_runtime_input_pack_rejects_tampered_file",
         ),
         (
+            "test_sp500_megarun_dehb_runtime_inputs.py",
+            "test_runtime_fragments_preserve_parent_binding_and_required_files",
+        ),
+        (
+            "test_sp500_megarun_dehb_runtime_inputs.py",
+            "test_runtime_fragments_reject_unrequested_dataset",
+        ),
+        (
             "test_sp500_megarun_dehb_worker.py",
             "test_train_snapshot_loader_requires_exact_partition_manifest_and_adjusted_close",
         ),

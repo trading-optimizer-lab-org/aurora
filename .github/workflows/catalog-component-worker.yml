@@ -1,13 +1,20 @@
-name: SP500 Global Component Worker
+name: SP500 Global Component Bundle Worker
 
 on:
   workflow_call:
     inputs:
-      commit_sha: {required: true, type: string}
-      runtime_input_run_id: {required: true, type: string}
-      runtime_fragment_run_id: {required: true, type: string}
-      component_shard_index: {required: true, type: number}
-      total_component_shards: {required: true, type: number}
+      request_sha256: {required: true, type: string}
+      authority_id: {required: true, type: string}
+      campaign_id: {required: true, type: string}
+      science_sha256: {required: true, type: string}
+      execution_plan_sha256: {required: true, type: string}
+      execution_protocol_sha256: {required: true, type: string}
+      protected_commit_sha: {required: true, type: string}
+      decision_sha256: {required: true, type: string}
+      worker_id: {required: true, type: number}
+      descriptor_bundle_artifact: {required: true, type: string}
+      descriptor_member: {required: true, type: string}
+      descriptor_sha256: {required: true, type: string}
       admission_token_sha256: {required: true, type: string}
 
 permissions: {actions: read, contents: read}
@@ -15,6 +22,7 @@ permissions: {actions: read, contents: read}
 jobs:
   build:
     runs-on: ubuntu-24.04
+    environment: catalog-production
     timeout-minutes: 120
     env:
       GITHUB_ACTIONS: "true"
@@ -29,92 +37,286 @@ jobs:
       NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
       PYTHONPATH: ${{ github.workspace }}/..
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: "3.11"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
-        with:
-          enable-cache: false
-      - run: >-
-          uv pip install --system --require-hashes
-          -r requirements/catalog-optimized.lock
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-catalog-run-plan
-          path: ${{ runner.temp }}/plan
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-runtime-fragment-core
-          path: ${{ runner.temp }}/runtime
-      - name: Determine datasets required by this shard
+      - name: Check out the protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+
+      - name: Verify protected source commit
         shell: bash
-        run: >-
-          python -m scripts.sp500_component_runtime_requirements
-          --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl
-          --selected-config config/sp500_megarun_selected_dehb_13.json
-          --data-contract config/sp500_megarun_free_data_240.json
-          --component-schedule "$RUNNER_TEMP/plan/component_schedule.json"
-          --shard-index "${{ inputs.component_shard_index }}"
-          --output "$RUNNER_TEMP/required-datasets.txt"
-      - name: Download only required dataset fragments
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.protected_commit_sha }}"
+
+      - name: Download the compact descriptor bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.descriptor_bundle_artifact }}
+          path: ${{ runner.temp }}/descriptor-bundle
+
+      - name: Verify exact component descriptor
+        id: descriptor
+        shell: bash
+        env:
+          DESCRIPTOR_MEMBER: ${{ inputs.descriptor_member }}
+          EXPECTED_DESCRIPTOR_SHA256: ${{ inputs.descriptor_sha256 }}
+          EXPECTED_WORKER_ID: ${{ inputs.worker_id }}
+          EXPECTED_CAMPAIGN_ID: ${{ inputs.campaign_id }}
+          EXPECTED_EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "descriptor-bundle"
+          relative = Path(os.environ["DESCRIPTOR_MEMBER"])
+          if relative.is_absolute() or ".." in relative.parts:
+              raise SystemExit("COMPONENT_DESCRIPTOR_PATH_INVALID")
+          source = (root / relative).resolve(strict=True)
+          if not source.is_relative_to(root.resolve()):
+              raise SystemExit("COMPONENT_DESCRIPTOR_PATH_INVALID")
+          raw = source.read_bytes()
+          if hashlib.sha256(raw).hexdigest() != os.environ["EXPECTED_DESCRIPTOR_SHA256"]:
+              raise SystemExit("COMPONENT_DESCRIPTOR_HASH_INVALID")
+          payload = json.loads(raw)
+          required = {
+              "schema_version",
+              "worker_id",
+              "campaign_id",
+              "execution_plan_sha256",
+              "runtime_transport_artifact",
+              "runtime_mode",
+              "runtime_identity_sha256",
+              "numeric_profile_sha256",
+              "assignment_artifact",
+              "assignment_member",
+              "assignment_sha256",
+              "data_partition_artifacts",
+              "prepared_input_identity_sha256",
+              "data_partition_manifest_sha256",
+              "component_ids",
+              "expected_component_count",
+              "bundle_identity_sha256",
+              "preparation_required",
+              "source_storage_kind",
+              "source_artifact_run_id",
+              "source_artifact_id",
+              "component_cache_restore_key",
+              "component_cache_persistence_key_prefix",
+              "component_transport_artifact",
+              "component_store_manifest_sha256",
+              "validation_opened",
+              "locked_opened",
+          }
+          if set(payload) != required or payload["schema_version"] != "1":
+              raise SystemExit("COMPONENT_DESCRIPTOR_SCHEMA_INVALID")
+          if (
+              payload["worker_id"] != int(os.environ["EXPECTED_WORKER_ID"])
+              or payload["campaign_id"] != os.environ["EXPECTED_CAMPAIGN_ID"]
+              or payload["execution_plan_sha256"]
+              != os.environ["EXPECTED_EXECUTION_PLAN_SHA256"]
+              or payload["validation_opened"] is not False
+              or payload["locked_opened"] is not False
+          ):
+              raise SystemExit("COMPONENT_DESCRIPTOR_BINDING_INVALID")
+          component_ids = payload["component_ids"]
+          if (
+              not isinstance(component_ids, list)
+              or not component_ids
+              or component_ids != sorted(set(component_ids))
+          ):
+              raise SystemExit("COMPONENT_DESCRIPTOR_SET_INVALID")
+          artifacts = payload["data_partition_artifacts"]
+          if (
+              not isinstance(artifacts, list)
+              or not artifacts
+              or artifacts != sorted(set(artifacts))
+          ):
+              raise SystemExit("COMPONENT_DATA_ARTIFACT_SET_INVALID")
+          checked = root / "component-descriptor.json"
+          checked.write_bytes(raw)
+          (root / "data-artifacts.txt").write_text(
+              "".join(f"{item}\n" for item in artifacts), encoding="utf-8"
+          )
+          outputs = {
+              "runtime_transport_artifact": payload["runtime_transport_artifact"],
+              "runtime_mode": payload["runtime_mode"],
+              "runtime_identity_sha256": payload["runtime_identity_sha256"],
+              "numeric_profile_sha256": payload["numeric_profile_sha256"],
+              "assignment_artifact": payload["assignment_artifact"],
+              "assignment_member": payload["assignment_member"],
+              "assignment_sha256": payload["assignment_sha256"],
+              "prepared_input_identity_sha256": payload[
+                  "prepared_input_identity_sha256"
+              ],
+              "data_partition_manifest_sha256": payload[
+                  "data_partition_manifest_sha256"
+              ],
+              "bundle_identity_sha256": payload["bundle_identity_sha256"],
+              "preparation_required": str(payload["preparation_required"]).lower(),
+              "source_storage_kind": payload["source_storage_kind"],
+              "source_artifact_run_id": payload["source_artifact_run_id"] or "",
+              "source_artifact_id": payload["source_artifact_id"] or "",
+              "component_cache_restore_key": payload[
+                  "component_cache_restore_key"
+              ],
+              "component_cache_persistence_key_prefix": payload[
+                  "component_cache_persistence_key_prefix"
+              ],
+              "component_transport_artifact": payload["component_transport_artifact"],
+              "component_store_manifest_sha256": payload[
+                  "component_store_manifest_sha256"
+              ],
+              "expected_component_count": payload["expected_component_count"],
+          }
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
+              for key, value in outputs.items():
+                  out.write(f"{key}={value}\n")
+          PY
+
+      - name: Restore exact verified component bundle cache
+        id: component_cache
+        if: ${{ steps.descriptor.outputs.source_storage_kind == 'actions_cache' }}
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/component-bundle
+          key: ${{ steps.descriptor.outputs.component_cache_restore_key }}
+          lookup-only: false
+          fail-on-cache-miss: false
+
+      - name: Restore one exact verified legacy artifact candidate
+        if: ${{ steps.descriptor.outputs.source_storage_kind == 'artifact' }}
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RUNTIME_FRAGMENT_RUN_ID: ${{ inputs.runtime_fragment_run_id }}
-        shell: bash
+          SOURCE_ARTIFACT_ID: ${{ steps.descriptor.outputs.source_artifact_id }}
         run: |
-          mkdir -p "$RUNNER_TEMP/runtime-fragments"
-          mkdir -p "$RUNNER_TEMP/runtime/train_snapshot_1993_2010"
-          required_dataset_ids=()
-          while IFS= read -r dataset_id; do
-            [ -n "$dataset_id" ] || continue
-            required_dataset_ids+=("$dataset_id")
-          done < "$RUNNER_TEMP/required-datasets.txt"
+          set -euo pipefail
+          test -n "$SOURCE_ARTIFACT_ID"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT_ID/zip" \
+            > "$RUNNER_TEMP/component-source.zip"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from scripts.run_catalog_artifact_keeper import _safe_extract
 
-          download_one_fragment() {
-            local dataset_id="$1"
-            local fragment_dir="$RUNNER_TEMP/runtime-fragments/$dataset_id"
-            local attempt=1
-            while [ "$attempt" -le 4 ]; do
-              rm -rf "$fragment_dir"
-              mkdir -p "$fragment_dir"
-              if gh run download "$RUNTIME_FRAGMENT_RUN_ID" \
-                --repo "$GITHUB_REPOSITORY" \
-                --name "sp500-runtime-fragment-$dataset_id" \
-                --dir "$fragment_dir"; then
-                fragment_files=()
-                mapfile -t fragment_files < <(
-                  find "$fragment_dir" -type f \
-                    -path "*/train_snapshot_1993_2010/$dataset_id.parquet"
-                )
-                if [ "${#fragment_files[@]}" -eq 1 ]; then
-                  return 0
-                fi
-              fi
-              sleep $((attempt * 2))
-              attempt=$((attempt + 1))
-            done
-            echo "RUNTIME_FRAGMENT_DOWNLOAD_FAILED:$dataset_id" >&2
-            return 1
-          }
-          export -f download_one_fragment
-          if [ "${#required_dataset_ids[@]}" -gt 0 ]; then
-            printf '%s\n' "${required_dataset_ids[@]}" |
-              xargs -r -n 1 -P 4 bash -c 'download_one_fragment "$1"' _
+          _safe_extract(
+              Path(os.environ["RUNNER_TEMP"]) / "component-source.zip",
+              Path(os.environ["RUNNER_TEMP"]) / "component-bundle",
+              2 * 1024 * 1024 * 1024,
+          )
+          PY
+
+      - name: Decide whether this exact bundle must be rebuilt
+        id: source
+        shell: bash
+        env:
+          PREPARATION_REQUIRED: ${{ steps.descriptor.outputs.preparation_required }}
+          SOURCE_STORAGE_KIND: ${{ steps.descriptor.outputs.source_storage_kind }}
+          CACHE_HIT: ${{ steps.component_cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          compute=false
+          if [ "$PREPARATION_REQUIRED" = "true" ]; then
+            compute=true
+          elif [ "$SOURCE_STORAGE_KIND" = "actions_cache" ] && [ "$CACHE_HIT" != "true" ]; then
+            compute=true
+          elif [ "$SOURCE_STORAGE_KIND" = "artifact" ]; then
+            test -f "$RUNNER_TEMP/component-bundle/manifest.json"
+          else
+            echo "::error::COMPONENT_SOURCE_DECISION_INVALID"
+            exit 2
           fi
-          while IFS= read -r dataset_id; do
-            [ -n "$dataset_id" ] || continue
-            fragment_dir="$RUNNER_TEMP/runtime-fragments/$dataset_id"
-            mapfile -t fragment_files < <(
-              find "$fragment_dir" -type f \
-                -path "*/train_snapshot_1993_2010/$dataset_id.parquet"
-            )
-            test "${#fragment_files[@]}" -eq 1
-            cp -- "${fragment_files[0]}" \
-              "$RUNNER_TEMP/runtime/train_snapshot_1993_2010/$dataset_id.parquet"
-          done < "$RUNNER_TEMP/required-datasets.txt"
-      - run: >-
+          echo "compute_required=$compute" >> "$GITHUB_OUTPUT"
+
+      - name: Download the one selected runtime transport
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ steps.descriptor.outputs.runtime_transport_artifact }}
+          path: ${{ runner.temp }}/runtime-transport
+
+      - name: Activate sealed offline runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.11"
+          runtime-mode: ${{ steps.descriptor.outputs.runtime_mode }}
+          runtime-object-path: ${{ runner.temp }}/runtime-transport
+          runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
+          dependency-lock-path: requirements/catalog-optimized.lock
+          expected-runtime-identity-sha256: ${{ steps.descriptor.outputs.runtime_identity_sha256 }}
+          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-numeric-profile-sha256: ${{ steps.descriptor.outputs.numeric_profile_sha256 }}
+
+      - name: Download exact assignment and prepared input partitions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSIGNMENT_ARTIFACT: ${{ steps.descriptor.outputs.assignment_artifact }}
+          COMPUTE_REQUIRED: ${{ steps.source.outputs.compute_required }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/assignment" "$RUNNER_TEMP/runtime"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$ASSIGNMENT_ARTIFACT" --dir "$RUNNER_TEMP/assignment"
+          if [ "$COMPUTE_REQUIRED" = "true" ]; then
+            while IFS= read -r artifact; do
+              test -n "$artifact"
+              target="$RUNNER_TEMP/prepared/$artifact"
+              mkdir -p "$target"
+              gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+                --name "$artifact" --dir "$target"
+            done < "$RUNNER_TEMP/descriptor-bundle/data-artifacts.txt"
+          fi
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          descriptor = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "descriptor-bundle/component-descriptor.json").read_text()
+          )
+          assignment_root = Path(os.environ["RUNNER_TEMP"]) / "assignment"
+          relative = Path(descriptor["assignment_member"])
+          target = (assignment_root / relative).resolve(strict=True)
+          if not target.is_relative_to(assignment_root.resolve()):
+              raise SystemExit("COMPONENT_ASSIGNMENT_PATH_INVALID")
+          if hashlib.sha256(target.read_bytes()).hexdigest() != descriptor["assignment_sha256"]:
+              raise SystemExit("COMPONENT_ASSIGNMENT_HASH_INVALID")
+          assignment = json.loads(target.read_text())
+          if (
+              assignment.get("worker_id") != descriptor["worker_id"]
+              or assignment.get("component_ids") != descriptor["component_ids"]
+              or assignment.get("validation_opened") is not False
+              or assignment.get("locked_opened") is not False
+          ):
+              raise SystemExit("COMPONENT_ASSIGNMENT_BINDING_INVALID")
+          (assignment_root / "component_schedule.json").write_text(
+              json.dumps(
+                  assignment["component_schedule"],
+                  sort_keys=True,
+                  separators=(",", ":"),
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Assemble only the exact prepared fragments for computation
+        if: ${{ steps.source.outputs.compute_required == 'true' }}
+        shell: bash
+        run: >-
+          python -m scripts.assemble_sp500_runtime_fragments
+          --fragment-root "$RUNNER_TEMP/prepared"
+          --output-dir "$RUNNER_TEMP/runtime"
+          --artifact-list-file "$RUNNER_TEMP/descriptor-bundle/data-artifacts.txt"
+          --prepared-input-identity-sha256 "${{ steps.descriptor.outputs.prepared_input_identity_sha256 }}"
+          --expected-artifact-manifest-sha256 "${{ steps.descriptor.outputs.data_partition_manifest_sha256 }}"
+
+      - name: Compute only the sealed missing component bundle
+        if: ${{ steps.source.outputs.compute_required == 'true' }}
+        shell: bash
+        run: >-
           python scripts/build_sp500_component_store.py
           --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
           --data-contract config/sp500_megarun_free_data_240.json
@@ -122,17 +324,49 @@ jobs:
           --catalog-dir config/sp500_megarun_strategy_catalog_v1
           --selected-config config/sp500_megarun_selected_dehb_13.json
           --runtime-input-pack "$RUNNER_TEMP/runtime"
-          --runtime-source-run-id "${{ inputs.runtime_fragment_run_id }}"
-          --resolved-contract "$RUNNER_TEMP/plan/resolved_contract.json"
-          --run-plan "$RUNNER_TEMP/plan/run_plan.json"
-          --component-schedule "$RUNNER_TEMP/plan/component_schedule.json"
+          --runtime-source-run-id "${{ github.run_id }}"
+          --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
+          --run-plan "$RUNNER_TEMP/assignment/run_plan.json"
+          --component-schedule "$RUNNER_TEMP/assignment/component_schedule.json"
           --admission-token "${{ inputs.admission_token_sha256 }}"
-          --component-shard-index "${{ inputs.component_shard_index }}"
-          --total-component-shards "${{ inputs.total_component_shards }}"
-          --output-dir "outputs/component-${{ inputs.component_shard_index }}"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+          --component-shard-index 0
+          --total-component-shards 1
+          --output-dir "$RUNNER_TEMP/component-bundle"
+
+      - name: Verify component bundle before publication
+        id: verify_bundle
+        shell: bash
+        env:
+          EXPECTED_MANIFEST_SHA256: ${{ steps.descriptor.outputs.component_store_manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          expected=()
+          if [ -n "$EXPECTED_MANIFEST_SHA256" ]; then
+            expected=(--expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256")
+          fi
+          python -m scripts.verify_sp500_component_store \
+            --component-store "$RUNNER_TEMP/component-bundle" \
+            --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json" \
+            --expected-component-count "${{ steps.descriptor.outputs.expected_component_count }}" \
+            --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}" \
+            --bundle-identity-sha256 "${{ steps.descriptor.outputs.bundle_identity_sha256 }}" \
+            --cache-key-prefix "${{ steps.descriptor.outputs.component_cache_persistence_key_prefix }}" \
+            --github-output "$GITHUB_OUTPUT" \
+            "${expected[@]}"
+
+      - name: Save exact rebuildable component bundle cache
+        if: ${{ steps.source.outputs.compute_required == 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
-          name: sp500-component-part-${{ inputs.component_shard_index }}
-          path: outputs/component-${{ inputs.component_shard_index }}
+          path: ${{ runner.temp }}/component-bundle
+          key: ${{ steps.verify_bundle.outputs.cache_key }}
+
+      - name: Upload one-day exact component transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.descriptor.outputs.component_transport_artifact }}
+          path: ${{ runner.temp }}/component-bundle
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
+          compression-level: 0

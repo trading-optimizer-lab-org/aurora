@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from aurora.infra.github_performance.contracts import (
     AttemptManifest,
+    CapacityProfile,
     RunSpec,
     canonical_sha256,
 )
@@ -68,10 +69,24 @@ def test_master_template_validates_against_v3_schema() -> None:
 
 def test_capacity_profile_matches_support_confirmation() -> None:
     profile = json.loads(CAPACITY_PATH.read_text(encoding="utf-8"))
+    parsed = CapacityProfile.model_validate(profile)
     assert profile["standard_concurrency_ceiling"] == 360
     assert profile["matrix_job_ceiling"] == 256
     assert profile["runner_label"] == "ubuntu-24.04"
     assert profile["larger_runners_allowed"] is False
+    assert profile["structural_ceiling_only"] is True
+    assert profile["production_admission_enabled"] is False
+    assert profile["qualification_max_age_days"] == 7
+    assert profile["proven_uncontended_floor"] is None
+    assert profile["qualification_receipt_sha256"] is None
+    assert profile["qualification_run_ids"] == []
+    assert profile["maximum_active_heavy_catalog_campaigns"] == 1
+    assert parsed.production_admission_enabled is False
+
+    with pytest.raises(ValidationError, match="production capacity admission is unqualified"):
+        CapacityProfile.model_validate(
+            {**profile, "production_admission_enabled": True}
+        )
 
 
 def test_schema_covers_every_master_template_key() -> None:

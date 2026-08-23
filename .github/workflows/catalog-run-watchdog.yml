@@ -1,0 +1,170 @@
+name: AURORA catalog authority watchdog
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  actions: read
+  contents: read
+  issues: read
+
+concurrency:
+  group: catalog-authority-watchdog-v1
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      matrix_count: ${{ steps.select.outputs.matrix_count }}
+    steps:
+      - name: Check out the protected default branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Use the controller Python family
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+
+      - name: Install only the locked controller dependencies
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r requirements/catalog-controller-linux-py311.lock
+
+      - name: Fetch two complete read-only governance snapshots
+        id: snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          anchor = json.loads(
+              Path("config/catalog_authority_anchor_v1.json").read_text("utf-8")
+          )
+          if anchor.get("production_enabled") is not True:
+              Path("watchdog-disabled").write_text("true\n", encoding="utf-8")
+              raise SystemExit(0)
+          number = anchor.get("issue_number")
+          if not isinstance(number, int) or number < 1:
+              raise SystemExit("CATALOG_WATCHDOG_AUTHORITY_ANCHOR_INVALID")
+          Path("authority-number").write_text(f"{number}\n", encoding="utf-8")
+          PY
+          if [ -f watchdog-disabled ]; then
+            exit 0
+          fi
+          authority_number="$(cat authority-number)"
+          for snapshot in 1 2; do
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/issues/$authority_number/comments?per_page=100" \
+              > "authority-comments-$snapshot.json"
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100" \
+              > "actions-runs-$snapshot.json"
+          done
+          cmp --silent authority-comments-1.json authority-comments-2.json || {
+            echo "CATALOG_WATCHDOG_LEDGER_SNAPSHOT_UNSTABLE" >&2
+            exit 1
+          }
+          cmp --silent actions-runs-1.json actions-runs-2.json || {
+            echo "CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_UNSTABLE" >&2
+            exit 1
+          }
+
+      - name: Select only existing, fully evidenced resumable authorities
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from aurora.infra.sp500_megarun.catalog_authority_ledger import (
+              extract_authority_comment_records,
+          )
+
+          empty = {"include": []}
+          if Path("watchdog-disabled").is_file():
+              matrix = empty
+          else:
+              pages = json.loads(Path("authority-comments-1.json").read_text("utf-8"))
+              comments = [row for page in pages for row in page]
+              records = extract_authority_comment_records(
+                  comments,
+                  expected_author="github-actions[bot]",
+              )
+              latest = {}
+              for record in records:
+                  latest[str(record.authority_id)] = record
+              run_pages = json.loads(Path("actions-runs-1.json").read_text("utf-8"))
+              runs = [
+                  run
+                  for page in run_pages
+                  for run in (page.get("workflow_runs") or [])
+              ]
+              run_states = {}
+              for run in runs:
+                  run_id = run.get("id")
+                  status = run.get("status")
+                  if not isinstance(run_id, int) or status not in {
+                      "queued", "in_progress", "completed"
+                  }:
+                      raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
+                  if run_id in run_states:
+                      raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
+                  run_states[run_id] = status
+              nonterminal = {"reserved", "running", "recovering", "waiting_retry"}
+              include = []
+              for authority_id, record in sorted(latest.items()):
+                  if record.state.value not in nonterminal:
+                      continue
+                  if run_states.get(record.run_id) in {"queued", "in_progress"}:
+                      continue
+                  include.append(
+                      {
+                          "authority_id": authority_id,
+                          "issue_number": record.request_issue_number,
+                      }
+                  )
+              if len(include) > 1:
+                  raise SystemExit("CATALOG_WATCHDOG_ACTIVE_AUTHORITY_CONFLICT")
+              matrix = {"include": include}
+          encoded = json.dumps(matrix, sort_keys=True, separators=(",", ":"))
+          if len(encoded.encode("utf-16-le")) > 512 * 1024:
+              raise SystemExit("CATALOG_WATCHDOG_MATRIX_TOO_LARGE")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
+              out.write(f"matrix={encoded}\n")
+              out.write(f"matrix_count={len(matrix['include'])}\n")
+          PY
+
+  call_controller:
+    needs: discover
+    if: ${{ needs.discover.outputs.matrix_count != '0' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    uses: ./.github/workflows/catalog-run-controller.yml
+    with:
+      issue_number: ${{ matrix.issue_number }}

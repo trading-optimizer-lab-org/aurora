@@ -1,0 +1,278 @@
+name: AURORA bounded catalog recovery wave
+
+on:
+  workflow_call:
+    inputs:
+      request_sha256: {required: true, type: string}
+      authority_id: {required: true, type: string}
+      campaign_id: {required: true, type: string}
+      science_sha256: {required: true, type: string}
+      execution_plan_sha256: {required: true, type: string}
+      execution_protocol_sha256: {required: true, type: string}
+      protected_commit_sha: {required: true, type: string}
+      decision_sha256: {required: true, type: string}
+      campaign_state_artifact: {required: true, type: string}
+      attempt_manifest_artifacts: {required: true, type: string}
+      failure_manifest_artifacts: {required: true, type: string}
+      checkpoint_manifest_artifacts: {required: true, type: string}
+      current_wave: {required: true, type: number}
+    outputs:
+      status:
+        value: ${{ jobs.finalize_wave.outputs.status }}
+      campaign_state_artifact:
+        value: ${{ jobs.finalize_wave.outputs.campaign_state_artifact }}
+      attempt_manifest_artifacts:
+        value: ${{ jobs.finalize_wave.outputs.attempt_manifest_artifacts }}
+      failure_manifest_artifacts:
+        value: ${{ jobs.finalize_wave.outputs.failure_manifest_artifacts }}
+      checkpoint_manifest_artifacts:
+        value: ${{ jobs.finalize_wave.outputs.checkpoint_manifest_artifacts }}
+      failure_fingerprint:
+        value: ${{ jobs.reconcile.outputs.failure_fingerprint }}
+      failure_occurrence_count:
+        value: ${{ jobs.reconcile.outputs.failure_occurrence_count }}
+      failure_reason_code:
+        value: ${{ jobs.reconcile.outputs.failure_reason_code }}
+      retry_not_before:
+        value: ${{ jobs.reconcile.outputs.retry_not_before }}
+
+permissions: {actions: read, contents: read}
+
+concurrency:
+  group: catalog-recovery-${{ inputs.authority_id }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    environment: catalog-production
+    timeout-minutes: 30
+    permissions: {actions: read, contents: read}
+    outputs:
+      matrix_a: ${{ steps.recovery.outputs.matrix_a }}
+      matrix_b: ${{ steps.recovery.outputs.matrix_b }}
+      has_matrix_a: ${{ steps.recovery.outputs.has_matrix_a }}
+      has_matrix_b: ${{ steps.recovery.outputs.has_matrix_b }}
+      status: ${{ steps.recovery.outputs.status }}
+      state_artifact: ${{ steps.recovery.outputs.state_artifact_name }}
+      admission_token_sha256: ${{ steps.plan.outputs.admission_token_sha256 }}
+      expected_attempt_count: ${{ steps.recovery.outputs.expected_attempt_count }}
+      expected_failure_count: ${{ steps.recovery.outputs.expected_failure_count }}
+      expected_checkpoint_count: ${{ steps.recovery.outputs.expected_checkpoint_count }}
+      failure_fingerprint: ${{ steps.recovery.outputs.failure_fingerprint }}
+      failure_occurrence_count: ${{ steps.recovery.outputs.failure_occurrence_count }}
+      failure_reason_code: ${{ steps.recovery.outputs.failure_reason_code }}
+      retry_not_before: ${{ steps.recovery.outputs.retry_not_before }}
+    steps:
+      - name: Check out the exact original protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.protected_commit_sha }}
+          persist-credentials: false
+
+      - name: Verify the original protected source
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.protected_commit_sha }}"
+
+      - name: Download the exact sealed execution plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-sealed-execution-plan-${{ inputs.authority_id }}
+          path: ${{ runner.temp }}/sealed-plan
+
+      - name: Verify plan identity and expose the runtime route
+        id: plan
+        env:
+          EXPECTED_AUTHORITY_ID: ${{ inputs.authority_id }}
+          EXPECTED_CAMPAIGN_ID: ${{ inputs.campaign_id }}
+          EXPECTED_EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          receipt = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "sealed-plan/execution_plan_receipt.json").read_text("utf-8")
+          )
+          if (
+              receipt.get("authority_id") != os.environ["EXPECTED_AUTHORITY_ID"]
+              or receipt.get("campaign_id") != os.environ["EXPECTED_CAMPAIGN_ID"]
+              or receipt.get("execution_plan_sha256")
+              != os.environ["EXPECTED_EXECUTION_PLAN_SHA256"]
+              or receipt.get("validation_opened") is not False
+              or receipt.get("locked_opened") is not False
+          ):
+              raise SystemExit("CATALOG_RECOVERY_PLAN_BINDING_INVALID")
+          keys = (
+              "runtime_transport_artifact",
+              "runtime_mode",
+              "runtime_identity_sha256",
+              "numeric_profile_sha256",
+              "admission_token_sha256",
+          )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for key in keys:
+                  output.write(f"{key}={receipt[key]}\n")
+          PY
+
+      - name: Download the one exact offline runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ steps.plan.outputs.runtime_transport_artifact }}
+          path: ${{ runner.temp }}/runtime-transport
+
+      - name: Restore the exact runtime offline
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.11"
+          runtime-mode: ${{ steps.plan.outputs.runtime_mode }}
+          runtime-object-path: ${{ runner.temp }}/runtime-transport
+          runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
+          dependency-lock-path: requirements/catalog-optimized.lock
+          expected-runtime-identity-sha256: ${{ steps.plan.outputs.runtime_identity_sha256 }}
+          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-numeric-profile-sha256: ${{ steps.plan.outputs.numeric_profile_sha256 }}
+
+      - name: Build one bounded selective recovery plan
+        id: recovery
+        uses: ./.github/actions/aurora-recovery-plan
+        with:
+          authority-id: ${{ inputs.authority_id }}
+          campaign-id: ${{ inputs.campaign_id }}
+          protected-commit-sha: ${{ inputs.protected_commit_sha }}
+          execution-protocol-sha256: ${{ inputs.execution_protocol_sha256 }}
+          sealed-plan-path: ${{ runner.temp }}/sealed-plan
+          campaign-state-artifact-name: ${{ inputs.campaign_state_artifact }}
+          attempt-manifest-artifacts: ${{ inputs.attempt_manifest_artifacts }}
+          failure-manifest-artifacts: ${{ inputs.failure_manifest_artifacts }}
+          checkpoint-manifest-artifacts: ${{ inputs.checkpoint_manifest_artifacts }}
+          current-wave: ${{ inputs.current_wave }}
+          next-state-artifact-name: catalog-campaign-state-${{ inputs.authority_id }}-wave-${{ inputs.current_wave }}
+          retention-days: 90
+
+  retry_a:
+    needs: reconcile
+    if: ${{ (needs.reconcile.outputs.status == 'retry' || needs.reconcile.outputs.status == 'replan') && needs.reconcile.outputs.has_matrix_a == 'true' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.reconcile.outputs.matrix_a) }}
+    permissions: {actions: read, contents: read}
+    uses: ./.github/workflows/catalog-optimized-worker.yml
+    with:
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
+      worker_id: ${{ matrix.worker_id }}
+      descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
+      descriptor_member: ${{ matrix.descriptor_member }}
+      descriptor_sha256: ${{ matrix.descriptor_sha256 }}
+      admission_token_sha256: ${{ needs.reconcile.outputs.admission_token_sha256 }}
+      recovery_descriptor_artifact: ${{ matrix.recovery_descriptor_artifact }}
+      recovery_descriptor_member: ${{ matrix.recovery_descriptor_member }}
+      recovery_descriptor_sha256: ${{ matrix.recovery_descriptor_sha256 }}
+
+  retry_b:
+    needs: reconcile
+    if: ${{ (needs.reconcile.outputs.status == 'retry' || needs.reconcile.outputs.status == 'replan') && needs.reconcile.outputs.has_matrix_b == 'true' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 104
+      matrix: ${{ fromJSON(needs.reconcile.outputs.matrix_b) }}
+    permissions: {actions: read, contents: read}
+    uses: ./.github/workflows/catalog-optimized-worker.yml
+    with:
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
+      worker_id: ${{ matrix.worker_id }}
+      descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
+      descriptor_member: ${{ matrix.descriptor_member }}
+      descriptor_sha256: ${{ matrix.descriptor_sha256 }}
+      admission_token_sha256: ${{ needs.reconcile.outputs.admission_token_sha256 }}
+      recovery_descriptor_artifact: ${{ matrix.recovery_descriptor_artifact }}
+      recovery_descriptor_member: ${{ matrix.recovery_descriptor_member }}
+      recovery_descriptor_sha256: ${{ matrix.recovery_descriptor_sha256 }}
+
+  finalize_wave:
+    needs: [reconcile, retry_a, retry_b]
+    if: ${{ always() && needs.reconcile.result == 'success' }}
+    runs-on: ubuntu-24.04
+    environment: catalog-production
+    timeout-minutes: 10
+    permissions: {actions: read, contents: read}
+    outputs:
+      status: ${{ steps.final.outputs.status }}
+      campaign_state_artifact: ${{ steps.final.outputs.campaign_state_artifact }}
+      attempt_manifest_artifacts: ${{ steps.final.outputs.attempt_manifest_artifacts }}
+      failure_manifest_artifacts: ${{ steps.final.outputs.failure_manifest_artifacts }}
+      checkpoint_manifest_artifacts: ${{ steps.final.outputs.checkpoint_manifest_artifacts }}
+    steps:
+      - name: Check out the exact original protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.protected_commit_sha }}
+          persist-credentials: false
+
+      - name: Build a stable exact inventory for the next reconciliation
+        id: final
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECONCILED_STATUS: ${{ needs.reconcile.outputs.status }}
+          RETRY_A_RESULT: ${{ needs.retry_a.result }}
+          RETRY_B_RESULT: ${{ needs.retry_b.result }}
+          STATE_ARTIFACT: ${{ needs.reconcile.outputs.state_artifact }}
+        run: |
+          set -euo pipefail
+          for result in "$RETRY_A_RESULT" "$RETRY_B_RESULT"; do
+            case "$result" in success|failure|cancelled|skipped) ;; *) exit 1 ;; esac
+          done
+          for snapshot in 1 2; do
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+              > "artifacts-$snapshot.json"
+          done
+          cmp --silent artifacts-1.json artifacts-2.json || {
+            echo "RECOVERY_ARTIFACT_INVENTORY_UNSTABLE" >&2
+            exit 1
+          }
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          pages = json.loads(Path("artifacts-1.json").read_text("utf-8"))
+          artifacts = [row for page in pages for row in page.get("artifacts", [])]
+          names = sorted(
+              str(row["name"])
+              for row in artifacts
+              if row.get("expired") is False
+          )
+          attempts = sorted(name for name in names if name.startswith("catalog-terminal-attempt-"))
+          failures = sorted(name for name in names if name.startswith("catalog-failure-attempt-"))
+          checkpoints = sorted(name for name in names if name.startswith("catalog-checkpoint-"))
+          status = os.environ["RECONCILED_STATUS"]
+          if status == "retry":
+              status = "retry"
+          outputs = {
+              "status": status,
+              "campaign_state_artifact": os.environ["STATE_ARTIFACT"],
+              "attempt_manifest_artifacts": json.dumps(attempts, separators=(",", ":")),
+              "failure_manifest_artifacts": json.dumps(failures, separators=(",", ":")),
+              "checkpoint_manifest_artifacts": json.dumps(checkpoints, separators=(",", ":")),
+          }
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for key, value in outputs.items():
+                  output.write(f"{key}={value}\n")
+          PY

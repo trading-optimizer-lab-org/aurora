@@ -1,8 +1,8 @@
 # Diseño del catálogo inicial de estrategias SP500
 
-**Fecha:** 2026-08-15  
-**Estado:** aprobado para especificación  
-**Worktree autoritativo:** `C:\Users\HP\AURORA_sp500_search_method_benchmark_short`  
+**Fecha:** 2026-08-15
+**Estado:** aprobado para especificación
+**Worktree autoritativo:** `C:\Users\HP\AURORA_sp500_search_method_benchmark_short`
 **Rama:** `codex/sp500-search-method-benchmark-short`
 
 ## 1. Objetivo

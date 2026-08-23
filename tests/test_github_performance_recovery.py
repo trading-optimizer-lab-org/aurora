@@ -649,6 +649,7 @@ def test_recovery_loop_stops_at_wave_budget() -> None:
         current_wave=3,
         max_waves=4,
     )
-    assert result.status is RecoveryLoopStatus.BUDGET_EXHAUSTED
+    assert result.status is RecoveryLoopStatus.BLOCKED_HARD_FAILURE
     assert result.retry_count == 0
     assert result.next_wave is None
+    assert result.reason_codes == ("RECOVERY_WAVE_BUDGET_EXHAUSTED",)

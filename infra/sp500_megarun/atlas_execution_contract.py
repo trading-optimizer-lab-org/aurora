@@ -9,6 +9,7 @@ contains no market-data loading and is safe to use in preflight.
 from __future__ import annotations
 
 from datetime import datetime
+from functools import cached_property
 import json
 from pathlib import Path
 from typing import Literal, Mapping, Sequence
@@ -70,7 +71,7 @@ class AtlasRunPlanV1(FrozenModel):
     validation_opened: Literal[False]
     locked_opened: Literal[False]
 
-    @property
+    @cached_property
     def plan_sha256(self) -> str:
         return canonical_sha256(self)
 
@@ -167,6 +168,8 @@ def build_run_plan(
         raise ValueError("ATLAS_PLAN_CATALOG_ALREADY_AUTHORIZED")
     if calibration_receipt.get("hard_limit_seconds") != 1200.0:
         raise ValueError("ATLAS_PLAN_CALIBRATION_LIMIT_INVALID")
+    if calibration_receipt.get("recommended_mode") != "cold":
+        raise ValueError("ATLAS_PLAN_CALIBRATION_MODE_INVALID")
     if calibration_receipt.get("validation_opened") is not False or calibration_receipt.get(
         "locked_opened"
     ) is not False:

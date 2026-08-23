@@ -46,6 +46,26 @@ EXPECTED_PATTERNS = (
     "/docs/plans/gtbi*",
 )
 
+CATALOG_CONTROLLER_PATTERNS = (
+    "/docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md",
+    "/config/catalog_run_prompt_policy_v1.json",
+    "/config/catalog_campaign_registry_v1.json",
+    "/config/catalog_campaign_definitions/",
+    "/config/catalog_controller_actors_v1.json",
+    "/config/catalog_authority_anchor_v1.json",
+    "/config/catalog_github_controls_v1.json",
+    "/config/catalog_github_auditor_v1.json",
+    "/config/catalog_requester_*",
+    "/schemas/catalog_run_*",
+    "/schemas/catalog_campaign_definition_manifest_v1.schema.json",
+    "/schemas/catalog_github_auditor_v1.schema.json",
+    "/schemas/catalog_authority_anchor_v1.schema.json",
+    "/infra/sp500_megarun/catalog_*",
+    "/scripts/*catalog*",
+    "/.github/workflows/catalog-*",
+    "/.github/actions/aurora-*",
+)
+
 
 def _read_json(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -116,7 +136,8 @@ def validate_contract() -> dict[str, Any]:
     return contract
 
 
-def build_codeowners() -> bytes:
+def build_historical_codeowners() -> bytes:
+    """Rebuild the exact CODEOWNERS bytes bound by the 2026-07-31 receipt."""
     contract = validate_contract()
     login = contract["owner"]["github_login"]
     lines = [
@@ -128,9 +149,24 @@ def build_codeowners() -> bytes:
     return "\n".join(lines).encode("utf-8")
 
 
+def build_codeowners() -> bytes:
+    """Build current owner routing without rewriting the historical receipt."""
+    contract = validate_contract()
+    login = contract["owner"]["github_login"]
+    historical = build_historical_codeowners().decode("utf-8").rstrip("\n")
+    lines = [
+        historical,
+        "",
+        "# AURORA catalog controller: sensitive paths and accountable owner.",
+        *(f"{pattern} @{login}" for pattern in CATALOG_CONTROLLER_PATTERNS),
+        "",
+    ]
+    return "\n".join(lines).encode("utf-8")
+
+
 def build_receipt() -> dict[str, Any]:
     contract = validate_contract()
-    codeowners_bytes = build_codeowners()
+    codeowners_bytes = build_historical_codeowners()
     receipt: dict[str, Any] = {
         "schema_version": "gtbi_v7_owner_controlled_codeowners_receipt_v1",
         "repository": contract["repository"],

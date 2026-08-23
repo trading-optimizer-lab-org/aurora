@@ -1287,7 +1287,7 @@ jobs:
           persist-credentials: false
       - name: Reconcile recovery wave 0
         id: recovery
-        uses: ./.github/actions/aurora-recovery-plan
+        uses: ./.github/actions/aurora-shard-recovery-plan
         with:
           run-label: ${{ inputs.run_label }}
           retention-days: ${{ inputs.retention_days }}
@@ -1617,7 +1617,7 @@ jobs:
           persist-credentials: false
       - name: Reconcile recovery wave 1
         id: recovery
-        uses: ./.github/actions/aurora-recovery-plan
+        uses: ./.github/actions/aurora-shard-recovery-plan
         with:
           run-label: ${{ inputs.run_label }}
           retention-days: ${{ inputs.retention_days }}
@@ -1713,7 +1713,7 @@ jobs:
           persist-credentials: false
       - name: Reconcile recovery wave 2
         id: recovery
-        uses: ./.github/actions/aurora-recovery-plan
+        uses: ./.github/actions/aurora-shard-recovery-plan
         with:
           run-label: ${{ inputs.run_label }}
           retention-days: ${{ inputs.retention_days }}
@@ -1809,7 +1809,7 @@ jobs:
           persist-credentials: false
       - name: Reconcile recovery wave 3
         id: recovery
-        uses: ./.github/actions/aurora-recovery-plan
+        uses: ./.github/actions/aurora-shard-recovery-plan
         with:
           run-label: ${{ inputs.run_label }}
           retention-days: ${{ inputs.retention_days }}
@@ -1905,7 +1905,7 @@ jobs:
           persist-credentials: false
       - name: Reconcile recovery wave 4
         id: recovery
-        uses: ./.github/actions/aurora-recovery-plan
+        uses: ./.github/actions/aurora-shard-recovery-plan
         with:
           run-label: ${{ inputs.run_label }}
           retention-days: ${{ inputs.retention_days }}
@@ -2001,7 +2001,7 @@ jobs:
           persist-credentials: false
       - name: Reconcile recovery wave 5
         id: recovery
-        uses: ./.github/actions/aurora-recovery-plan
+        uses: ./.github/actions/aurora-shard-recovery-plan
         with:
           run-label: ${{ inputs.run_label }}
           retention-days: ${{ inputs.retention_days }}

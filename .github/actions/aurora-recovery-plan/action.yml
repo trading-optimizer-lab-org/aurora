@@ -1,144 +1,52 @@
-name: Aurora recovery plan
-description: Reconcile shard attempts and emit one bounded retry wave
+name: Aurora selective recovery plan
+description: Reconcile immutable catalog evidence and emit one bounded retry wave
 
 inputs:
-  run-label:
-    description: Stable artifact prefix for the run
-    required: true
-  retention-days:
-    description: Artifact retention period
-    required: true
-  wheelhouse-artifact-name:
-    description: Immutable wheelhouse artifact
-    required: true
-  contract-artifact-name:
-    description: Frozen scientific contract artifact
-    required: true
-  plan-artifact-name:
-    description: Immutable execution plan artifact
-    required: true
-  campaign-state-artifact-name:
-    description: Latest verified campaign state artifact
-    required: true
-  current-wave:
-    description: Recovery wave being reconciled
-    required: true
-  max-waves:
-    description: Maximum recovery wave budget
-    required: true
-  next-state-artifact-name:
-    description: Unique artifact name for the advanced campaign state
-    required: true
+  authority-id: {description: Existing controller authority, required: true}
+  campaign-id: {description: Existing campaign identity, required: true}
+  protected-commit-sha: {description: Original protected source commit, required: true}
+  execution-protocol-sha256: {description: Original protected protocol hash, required: true}
+  sealed-plan-path: {description: Downloaded exact sealed plan directory, required: true}
+  campaign-state-artifact-name: {description: Latest immutable state artifact, required: true}
+  attempt-manifest-artifacts: {description: Canonical JSON list from stable inventory, required: true}
+  failure-manifest-artifacts: {description: Canonical failed-attempt inventory, required: true}
+  checkpoint-manifest-artifacts: {description: Canonical JSON list from stable inventory, required: true}
+  current-wave: {description: Recovery wave index, required: true}
+  next-state-artifact-name: {description: Unique next state artifact, required: true}
+  retention-days: {description: Recovery evidence retention, required: true}
 
 outputs:
-  matrix_a:
-    description: First compact retry matrix
-    value: ${{ steps.outputs.outputs.matrix_a }}
-  matrix_b:
-    description: Second compact retry matrix
-    value: ${{ steps.outputs.outputs.matrix_b }}
-  has_matrix_a:
-    description: Whether matrix A contains retries
-    value: ${{ steps.outputs.outputs.has_matrix_a }}
-  has_matrix_b:
-    description: Whether matrix B contains retries
-    value: ${{ steps.outputs.outputs.has_matrix_b }}
-  status:
-    description: Recovery status after reconciliation
-    value: ${{ steps.outputs.outputs.status }}
-  state_artifact_name:
-    description: Advanced immutable campaign state artifact
-    value: ${{ steps.outputs.outputs.state_artifact_name }}
+  matrix_a: {description: First compact retry matrix, value: "${{ steps.reconcile.outputs.matrix_a }}"}
+  matrix_b: {description: Second compact retry matrix, value: "${{ steps.reconcile.outputs.matrix_b }}"}
+  has_matrix_a: {description: Matrix A is nonempty, value: "${{ steps.reconcile.outputs.has_matrix_a }}"}
+  has_matrix_b: {description: Matrix B is nonempty, value: "${{ steps.reconcile.outputs.has_matrix_b }}"}
+  status: {description: Recovery status, value: "${{ steps.reconcile.outputs.status }}"}
+  state_artifact_name: {description: New immutable state artifact, value: "${{ inputs.next-state-artifact-name }}"}
+  recovery_descriptor_artifact: {description: Exact sealed retry descriptors, value: "${{ steps.reconcile.outputs.recovery_descriptor_artifact }}"}
+  expected_attempt_count: {description: Expected attempt artifact count, value: "${{ steps.expected.outputs.expected_attempt_count }}"}
+  expected_failure_count: {description: Expected failed-attempt count, value: "${{ steps.expected.outputs.expected_failure_count }}"}
+  expected_checkpoint_count: {description: Expected checkpoint artifact count, value: "${{ steps.expected.outputs.expected_checkpoint_count }}"}
+  failure_fingerprint: {description: Latest scoped failure fingerprint, value: "${{ steps.reconcile.outputs.failure_fingerprint }}"}
+  failure_occurrence_count: {description: Latest equivalent failure count, value: "${{ steps.reconcile.outputs.failure_occurrence_count }}"}
+  failure_reason_code: {description: Exact closed recovery reason, value: "${{ steps.reconcile.outputs.failure_reason_code }}"}
+  retry_not_before: {description: Durable retry time or empty, value: "${{ steps.reconcile.outputs.retry_not_before }}"}
 
 runs:
   using: composite
   steps:
-    - name: Download immutable wheelhouse
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-      with:
-        name: ${{ inputs.wheelhouse-artifact-name }}
-        path: ${{ runner.temp }}/wheelhouse
-    - name: Restore Aurora runtime
-      uses: ./.github/actions/aurora-runtime-setup
-      with:
-        python-version: "3.12"
-        wheelhouse-path: ${{ runner.temp }}/wheelhouse
-        dependency-lock-path: requirements/github-performance.lock
-    - name: Download frozen contract
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-      with:
-        name: ${{ inputs.contract-artifact-name }}
-        path: ${{ runner.temp }}/contract
-    - name: Download execution plan
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-      with:
-        name: ${{ inputs.plan-artifact-name }}
-        path: ${{ runner.temp }}/plan
-    - name: Download previous immutable campaign state
+    - name: Download the latest immutable campaign state
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         name: ${{ inputs.campaign-state-artifact-name }}
-        path: ${{ runner.temp }}/state
-    - name: Require verified latest-state pointer
-      shell: bash
-      run: |
-        set -euo pipefail
-        test -f "$RUNNER_TEMP/state/campaign_state_latest.json"
-    - name: Download all attempt manifests
-      continue-on-error: true
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-      with:
-        pattern: ${{ inputs.run-label }}-shard-*
-        path: ${{ runner.temp }}/attempts
-    - name: Download all valid checkpoints
-      continue-on-error: true
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-      with:
-        pattern: run-checkpoint-*
-        path: ${{ runner.temp }}/checkpoints
-    - name: Reconcile immutable evidence and advance campaign
+        path: ${{ runner.temp }}/catalog-recovery/state
+
+    - name: Validate closed expected artifact inventories
+      id: expected
       shell: bash
       env:
-        CURRENT_WAVE: ${{ inputs.current-wave }}
-        MAX_WAVES: ${{ inputs.max-waves }}
-      run: |
-        set -euo pipefail
-        mapfile -t attempts < <(
-          find "$RUNNER_TEMP/attempts" \
-            -name shard_attempt_manifest.json -type f 2>/dev/null |
-            sort
-        )
-        mapfile -t checkpoints < <(
-          find "$RUNNER_TEMP/checkpoints" \
-            -name checkpoint_manifest.json -type f 2>/dev/null |
-            sort
-        )
-        mapfile -t unit_attempts < <(
-          find "$RUNNER_TEMP/attempts" \
-            -name unit_attempts.parquet -type f 2>/dev/null |
-            sort
-        )
-        args=(
-          --spec "$RUNNER_TEMP/contract/resolved_run_spec.json"
-          --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json"
-          --state-root "$RUNNER_TEMP/state"
-          --output-dir "$RUNNER_TEMP/recovery"
-          --current-wave "$CURRENT_WAVE"
-          --max-waves "$MAX_WAVES"
-        )
-        for path in "${attempts[@]}"; do args+=(--attempt "$path"); done
-        for path in "${unit_attempts[@]}"; do
-          args+=(--unit-attempt "$path")
-        done
-        for path in "${checkpoints[@]}"; do
-          args+=(--checkpoint "$path")
-        done
-        aurora github recovery-loop "${args[@]}"
-    - name: Emit compact recovery outputs
-      id: outputs
-      shell: bash
-      env:
-        STATE_ARTIFACT_NAME: ${{ inputs.next-state-artifact-name }}
+        EXPECTED_ATTEMPTS: ${{ inputs.attempt-manifest-artifacts }}
+        EXPECTED_FAILURES: ${{ inputs.failure-manifest-artifacts }}
+        EXPECTED_CHECKPOINTS: ${{ inputs.checkpoint-manifest-artifacts }}
       run: |
         set -euo pipefail
         python - <<'PY'
@@ -146,48 +54,707 @@ runs:
         import os
         from pathlib import Path
 
-        root = Path(os.environ["RUNNER_TEMP"]) / "recovery"
-        loop = json.loads(
-            (root / "recovery_loop.json").read_text(encoding="utf-8")
+        def closed_list(name: str) -> list[str]:
+            value = json.loads(os.environ[name])
+            if (
+                not isinstance(value, list)
+                or value != sorted(set(value))
+                or any(
+                    not isinstance(item, str)
+                    or not item
+                    or "/" in item
+                    or "\\" in item
+                    for item in value
+                )
+            ):
+                raise SystemExit(f"RECOVERY_{name}_INVALID")
+            return value
+
+        attempts = closed_list("EXPECTED_ATTEMPTS")
+        failures = closed_list("EXPECTED_FAILURES")
+        checkpoints = closed_list("EXPECTED_CHECKPOINTS")
+        root = Path(os.environ["RUNNER_TEMP"]) / "catalog-recovery"
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "expected-attempts.json").write_text(
+            json.dumps(attempts, separators=(",", ":")) + "\n",
+            encoding="utf-8",
         )
-        plan = json.loads(
-            (root / "recovery_plan.json").read_text(encoding="utf-8")
+        (root / "expected-checkpoints.json").write_text(
+            json.dumps(checkpoints, separators=(",", ":")) + "\n",
+            encoding="utf-8",
         )
-        values = {
-            "matrix_a": (
-                root / "retry_matrix_a.json"
-            ).read_text(encoding="utf-8").strip(),
-            "matrix_b": (
-                root / "retry_matrix_b.json"
-            ).read_text(encoding="utf-8").strip(),
-            "has_matrix_a": str(
-                plan["has_retry_matrix_a"]
-            ).lower(),
-            "has_matrix_b": str(
-                plan["has_retry_matrix_b"]
-            ).lower(),
-            "status": loop["status"],
-            "state_artifact_name": os.environ["STATE_ARTIFACT_NAME"],
-        }
-        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-            for name, value in values.items():
-                out.write(f"{name}={value}\n")
+        (root / "expected-failures.json").write_text(
+            json.dumps(failures, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+            output.write(f"expected_attempt_count={len(attempts)}\n")
+            output.write(f"expected_failure_count={len(failures)}\n")
+            output.write(f"expected_checkpoint_count={len(checkpoints)}\n")
         PY
-    - name: Upload recovery evidence
+
+    - name: Download only the stable attempt inventory
+      id: download_attempts
+      if: ${{ steps.expected.outputs.expected_attempt_count != '0' }}
+      continue-on-error: true
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: catalog-terminal-attempt-*
+        path: ${{ runner.temp }}/catalog-recovery/attempts
+
+    - name: Download only the stable checkpoint inventory
+      id: download_checkpoints
+      if: ${{ steps.expected.outputs.expected_checkpoint_count != '0' }}
+      continue-on-error: true
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: catalog-checkpoint-*
+        path: ${{ runner.temp }}/catalog-recovery/checkpoints
+
+    - name: Download only the stable failed-attempt inventory
+      id: download_failures
+      if: ${{ steps.expected.outputs.expected_failure_count != '0' }}
+      continue-on-error: true
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: catalog-failure-attempt-*
+        path: ${{ runner.temp }}/catalog-recovery/failures
+
+    - name: Download exact original descriptor bundles selected by the plan
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        SEALED_PLAN_PATH: ${{ inputs.sealed-plan-path }}
+      run: |
+        set -euo pipefail
+        python - <<'PY'
+        import json
+        import os
+        from pathlib import Path
+
+        root = Path(os.environ["SEALED_PLAN_PATH"]).resolve(strict=True)
+        artifacts = set()
+        for name in (
+            "recipe_worker_matrix_a.json",
+            "recipe_worker_matrix_b.json",
+            "recipe_worker_matrix_c.json",
+        ):
+            payload = json.loads((root / name).read_text("utf-8"))
+            include = payload.get("include")
+            if not isinstance(include, list):
+                raise SystemExit("RECOVERY_RECIPE_MATRIX_INVALID")
+            artifacts.update(
+                str(row["descriptor_bundle_artifact"]) for row in include
+            )
+        target = (
+            Path(os.environ["RUNNER_TEMP"])
+            / "catalog-recovery/original-descriptors"
+        )
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "artifacts.txt").write_text(
+            "".join(f"{item}\n" for item in sorted(artifacts)),
+            encoding="utf-8",
+        )
+        PY
+        while IFS= read -r artifact; do
+          test -n "$artifact"
+          mkdir -p "$RUNNER_TEMP/catalog-recovery/original-descriptors/$artifact"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$artifact" \
+            --dir "$RUNNER_TEMP/catalog-recovery/original-descriptors/$artifact"
+        done < "$RUNNER_TEMP/catalog-recovery/original-descriptors/artifacts.txt"
+
+    - name: Reconcile exact evidence and seal selective descriptors
+      id: reconcile
+      shell: bash
+      env:
+        AUTHORITY_ID: ${{ inputs.authority-id }}
+        CAMPAIGN_ID: ${{ inputs.campaign-id }}
+        PROTECTED_COMMIT_SHA: ${{ inputs.protected-commit-sha }}
+        EXECUTION_PROTOCOL_SHA256: ${{ inputs.execution-protocol-sha256 }}
+        SEALED_PLAN_PATH: ${{ inputs.sealed-plan-path }}
+        CURRENT_WAVE: ${{ inputs.current-wave }}
+        ATTEMPT_DOWNLOAD_OUTCOME: ${{ steps.download_attempts.outcome }}
+        FAILURE_DOWNLOAD_OUTCOME: ${{ steps.download_failures.outcome }}
+        CHECKPOINT_DOWNLOAD_OUTCOME: ${{ steps.download_checkpoints.outcome }}
+      run: |
+        set -euo pipefail
+        python - <<'PY'
+        import hashlib
+        import json
+        import os
+        from datetime import UTC, datetime
+        from pathlib import Path
+
+        from aurora.infra.github_performance.campaign import (
+            CampaignPhase,
+            assert_recovery_protocol_compatible,
+            replan_campaign_state,
+            resume_campaign_state,
+            transition_campaign_state,
+            write_campaign_state,
+        )
+        from aurora.infra.github_performance.contracts import canonical_sha256
+        from aurora.infra.github_performance.recovery import (
+            CheckpointSlotEvidence,
+            RecoveryEvidenceError,
+            reconcile_expected_artifacts,
+            validate_checkpoint_slot_chain,
+        )
+        from aurora.infra.sp500_megarun.catalog_worker_failure import (
+            CatalogWorkerFailureReceiptV1,
+            decide_catalog_worker_recovery,
+            worker_failure_artifact_name,
+        )
+
+        temp = Path(os.environ["RUNNER_TEMP"]) / "catalog-recovery"
+        plan_root = Path(os.environ["SEALED_PLAN_PATH"]).resolve(strict=True)
+        expected_attempts = json.loads(
+            (temp / "expected-attempts.json").read_text("utf-8")
+        )
+        expected_failures = json.loads(
+            (temp / "expected-failures.json").read_text("utf-8")
+        )
+        expected_checkpoints = json.loads(
+            (temp / "expected-checkpoints.json").read_text("utf-8")
+        )
+
+        def observed_names(root: Path) -> tuple[str, ...]:
+            if not root.is_dir():
+                return ()
+            return tuple(
+                sorted(path.name for path in root.iterdir() if path.is_dir())
+            )
+
+        attempt_outcome = os.environ["ATTEMPT_DOWNLOAD_OUTCOME"]
+        failure_outcome = os.environ["FAILURE_DOWNLOAD_OUTCOME"]
+        checkpoint_outcome = os.environ["CHECKPOINT_DOWNLOAD_OUTCOME"]
+        if not expected_attempts:
+            attempt_outcome = "skipped"
+        if not expected_failures:
+            failure_outcome = "skipped"
+        if not expected_checkpoints:
+            checkpoint_outcome = "skipped"
+        attempt_inventory = reconcile_expected_artifacts(
+            expected=expected_attempts,
+            observed=observed_names(temp / "attempts"),
+            download_outcome=attempt_outcome,
+        )
+        checkpoint_inventory = reconcile_expected_artifacts(
+            expected=expected_checkpoints,
+            observed=observed_names(temp / "checkpoints"),
+            download_outcome=checkpoint_outcome,
+        )
+        failure_inventory = reconcile_expected_artifacts(
+            expected=expected_failures,
+            observed=observed_names(temp / "failures"),
+            download_outcome=failure_outcome,
+        )
+
+        state = resume_campaign_state(
+            temp / "state", campaign_id=os.environ["CAMPAIGN_ID"]
+        )
+        if (
+            state.authority_id != os.environ["AUTHORITY_ID"]
+            or state.protected_commit_sha != os.environ["PROTECTED_COMMIT_SHA"]
+        ):
+            raise SystemExit("CATALOG_RECOVERY_AUTHORITY_BINDING_INVALID")
+        assert_recovery_protocol_compatible(
+            authority_protocol_sha256=state.execution_protocol_sha256,
+            current_protocol_sha256=os.environ["EXECUTION_PROTOCOL_SHA256"],
+        )
+
+        original_rows = []
+        for name in (
+            "recipe_worker_matrix_a.json",
+            "recipe_worker_matrix_b.json",
+            "recipe_worker_matrix_c.json",
+        ):
+            original_rows.extend(
+                json.loads((plan_root / name).read_text("utf-8"))["include"]
+            )
+        original_by_worker = {
+            int(row["worker_id"]): row for row in original_rows
+        }
+        if len(original_by_worker) != len(original_rows):
+            raise SystemExit("RECOVERY_WORKER_MATRIX_DUPLICATE")
+
+        descriptor_by_worker = {}
+        for worker_id, source_route in original_by_worker.items():
+            original_root = (
+                temp
+                / "original-descriptors"
+                / source_route["descriptor_bundle_artifact"]
+            )
+            relative = Path(source_route["descriptor_member"])
+            if relative.is_absolute() or ".." in relative.parts:
+                raise SystemExit("RECOVERY_DESCRIPTOR_PATH_INVALID")
+            source = (original_root / relative).resolve(strict=True)
+            if not source.is_relative_to(original_root.resolve()):
+                raise SystemExit("RECOVERY_DESCRIPTOR_PATH_INVALID")
+            raw = source.read_bytes()
+            if (
+                hashlib.sha256(raw).hexdigest()
+                != source_route["descriptor_sha256"]
+            ):
+                raise SystemExit("RECOVERY_DESCRIPTOR_SOURCE_HASH_INVALID")
+            descriptor = json.loads(raw)
+            if (
+                descriptor.get("worker_id") != worker_id
+                or descriptor.get("checkpoint_slot_count") not in (1, 2, 4, 8)
+            ):
+                raise SystemExit("RECOVERY_DESCRIPTOR_IDENTITY_INVALID")
+            descriptor_by_worker[worker_id] = descriptor
+
+        completed_workers = set()
+        completed_unit_evidence = []
+        for artifact_name in expected_attempts:
+            manifests = list(
+                (temp / "attempts" / artifact_name).rglob(
+                    "terminal-attempt-manifest.json"
+                )
+            )
+            if len(manifests) != 1:
+                raise SystemExit("RECOVERY_TERMINAL_MANIFEST_INVALID")
+            payload = json.loads(manifests[0].read_text("utf-8"))
+            if (
+                payload.get("validation_opened") is not False
+                or payload.get("locked_opened") is not False
+                or payload.get("terminal_contains_result_rows") is not False
+            ):
+                raise SystemExit("RECOVERY_TERMINAL_MANIFEST_INVALID")
+            worker_id = int(payload["worker_id"])
+            if worker_id in completed_workers or worker_id not in original_by_worker:
+                raise SystemExit("RECOVERY_TERMINAL_MANIFEST_CONFLICT")
+            descriptor = descriptor_by_worker[worker_id]
+            completed_slots = payload.get("completed_checkpoint_slots")
+            if (
+                payload.get("expected_strategy_count")
+                != descriptor["expected_strategy_count"]
+                or not isinstance(completed_slots, list)
+                or not completed_slots
+                or int(completed_slots[-1].get("slot", 0))
+                != descriptor["checkpoint_slot_count"]
+            ):
+                raise SystemExit("RECOVERY_TERMINAL_MANIFEST_INVALID")
+            completed_workers.add(worker_id)
+            completed_unit_evidence.append(
+                {
+                    "worker_id": worker_id,
+                    "expected_strategy_count": descriptor[
+                        "expected_strategy_count"
+                    ],
+                    "expected_strategy_manifest_sha256": descriptor[
+                        "expected_strategy_manifest_sha256"
+                    ],
+                    "terminal_artifact": artifact_name,
+                    "attempt_id": str(payload["attempt_id"]),
+                }
+            )
+
+        checkpoint_slots: dict[int, list[CheckpointSlotEvidence]] = {}
+        for artifact_name in expected_checkpoints:
+            roots = list(
+                (temp / "checkpoints" / artifact_name).rglob(
+                    "checkpoint_chain_manifest.json"
+                )
+            )
+            if len(roots) != 1:
+                raise SystemExit("RECOVERY_CHECKPOINT_CHAIN_INVALID")
+            chain_path = roots[0]
+            chain = json.loads(chain_path.read_text("utf-8"))
+            identity = {
+                key: value for key, value in chain.items() if key != "chain_sha256"
+            }
+            if canonical_sha256(identity) != chain.get("chain_sha256"):
+                raise SystemExit("RECOVERY_CHECKPOINT_CHAIN_INVALID")
+            receipt = chain_path.parent / "receipt.json"
+            if (
+                not receipt.is_file()
+                or hashlib.sha256(receipt.read_bytes()).hexdigest()
+                != chain.get("current_receipt_sha256")
+            ):
+                raise SystemExit("RECOVERY_CHECKPOINT_CHAIN_INVALID")
+            worker_id = int(chain["worker_id"])
+            slot_index = int(chain["slot_index"])
+            descriptor = descriptor_by_worker.get(worker_id)
+            if (
+                descriptor is None
+                or chain.get("validation_opened") is not False
+                or chain.get("locked_opened") is not False
+                or slot_index < 1
+                or slot_index > descriptor["checkpoint_slot_count"]
+                or int(chain["slot_count"])
+                != descriptor["checkpoint_slot_count"]
+                or artifact_name
+                != descriptor["checkpoint_slot_artifacts"][slot_index - 1]
+            ):
+                raise SystemExit("RECOVERY_CHECKPOINT_CHAIN_INVALID")
+            checkpoint_slots.setdefault(worker_id, []).append(
+                CheckpointSlotEvidence(
+                    logical_scope_id=f"worker:{worker_id}",
+                    slot_index=slot_index,
+                    slot_count=int(chain["slot_count"]),
+                    artifact_name=artifact_name,
+                    previous_receipt_sha256=str(
+                        chain["previous_receipt_sha256"]
+                    ),
+                    receipt_sha256=str(chain["current_receipt_sha256"]),
+                    artifact_uploaded=True,
+                )
+            )
+
+        latest_checkpoint: dict[int, CheckpointSlotEvidence] = {}
+        for worker_id, descriptor in descriptor_by_worker.items():
+            slots = checkpoint_slots.get(worker_id, [])
+            selection = validate_checkpoint_slot_chain(
+                slots,
+                logical_scope_id=f"worker:{worker_id}",
+                expected_slot_count=descriptor["checkpoint_slot_count"],
+            )
+            if selection.completed_slot_count:
+                latest_checkpoint[worker_id] = max(
+                    slots, key=lambda item: item.slot_index
+                )
+
+        sealed_plan_receipt = json.loads(
+            (plan_root / "execution_plan_receipt.json").read_text("utf-8")
+        )
+        failure_receipts = []
+        for artifact_name in expected_failures:
+            manifests = list(
+                (temp / "failures" / artifact_name).rglob(
+                    "catalog-worker-failure-final.json"
+                )
+            )
+            if len(manifests) != 1:
+                raise SystemExit("RECOVERY_FAILURE_MANIFEST_INVALID")
+            failure = CatalogWorkerFailureReceiptV1.model_validate_json(
+                manifests[0].read_text("utf-8")
+            )
+            if (
+                failure.authority_id != os.environ["AUTHORITY_ID"]
+                or failure.campaign_id != os.environ["CAMPAIGN_ID"]
+                or failure.execution_plan_sha256
+                != sealed_plan_receipt["execution_plan_sha256"]
+                or failure.protected_commit_sha
+                != os.environ["PROTECTED_COMMIT_SHA"]
+                or failure.worker_id not in original_by_worker
+                or artifact_name
+                != worker_failure_artifact_name(
+                    execution_plan_sha256=failure.execution_plan_sha256,
+                    worker_id=failure.worker_id,
+                    attempt_id=failure.attempt_id,
+                )
+            ):
+                raise SystemExit("RECOVERY_FAILURE_MANIFEST_BINDING_INVALID")
+            failure_receipts.append(failure)
+
+        pending_workers = sorted(set(original_by_worker) - completed_workers)
+        current_wave = int(os.environ["CURRENT_WAVE"])
+        recovery_plan = decide_catalog_worker_recovery(
+            expected_worker_ids=tuple(sorted(original_by_worker)),
+            completed_worker_ids=tuple(sorted(completed_workers)),
+            failure_receipts=tuple(failure_receipts),
+            current_wave=current_wave,
+            max_waves=6,
+            now=datetime.now(UTC),
+        )
+        decisions = {
+            item.worker_id: item for item in recovery_plan.decisions
+        }
+        status = recovery_plan.status
+        failure_reason_code = recovery_plan.failure_reason_code
+        retry_rows = []
+        operational_replans = {}
+        descriptor_root = temp / "recovery-descriptors"
+        descriptor_root.mkdir(parents=True, exist_ok=True)
+        recovery_artifact = (
+            f"catalog-recovery-descriptors-{os.environ['AUTHORITY_ID']}-"
+            f"wave-{current_wave}"
+        )
+        if status in {"retry", "replan"}:
+            run_plan = json.loads((plan_root / "run_plan.json").read_text("utf-8"))
+            base_processes = int(run_plan["processes_per_worker"])
+            base_block_size = int(run_plan["block_size"])
+            for worker_id in pending_workers:
+                decision = decisions[worker_id]
+                if decision.action not in {"retry", "replan"}:
+                    continue
+                source_route = original_by_worker[worker_id]
+                descriptor = dict(descriptor_by_worker[worker_id])
+                checkpoint = latest_checkpoint.get(worker_id)
+                descriptor["attempt_id"] = (
+                    f"{os.environ['AUTHORITY_ID']}:worker:{worker_id:03d}:"
+                    f"attempt:{current_wave + 1}"
+                )
+                descriptor["prior_checkpoint_chain_artifact"] = (
+                    checkpoint.artifact_name if checkpoint is not None else ""
+                )
+                if decision.action == "replan":
+                    divisor = 2 ** decision.failure_occurrence_count
+                    processes = max(1, base_processes // divisor)
+                    block_size = max(1, base_block_size // divisor)
+                    if processes == base_processes and block_size == base_block_size:
+                        status = "blocked"
+                        failure_reason_code = "OPERATIONAL_REPLAN_EXHAUSTED"
+                        retry_rows = []
+                        operational_replans = {}
+                        break
+                    replan_identity = {
+                        "schema_version": "1",
+                        "worker_id": worker_id,
+                        "attempt_id": descriptor["attempt_id"],
+                        "reason_code": decision.reason_code,
+                        "processes_per_worker": processes,
+                        "block_size": block_size,
+                    }
+                    descriptor["operational_replan"] = {
+                        **replan_identity,
+                        "replan_receipt_sha256": canonical_sha256(
+                            replan_identity
+                        ),
+                    }
+                    operational_replans[str(worker_id)] = {
+                        "processes_per_worker": processes,
+                        "block_size": block_size,
+                    }
+                member = f"worker-{worker_id:03d}.json"
+                encoded = json.dumps(
+                    descriptor,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode()
+                (descriptor_root / member).write_bytes(encoded)
+                retry_rows.append(
+                    {
+                        "worker_id": worker_id,
+                        "descriptor_bundle_artifact": source_route[
+                            "descriptor_bundle_artifact"
+                        ],
+                        "descriptor_member": source_route["descriptor_member"],
+                        "descriptor_sha256": source_route["descriptor_sha256"],
+                        "recovery_descriptor_artifact": recovery_artifact,
+                        "recovery_descriptor_member": member,
+                        "recovery_descriptor_sha256": hashlib.sha256(
+                            encoded
+                        ).hexdigest(),
+                        "attempt_id": descriptor["attempt_id"],
+                    }
+                )
+
+        matrix_a = {"include": retry_rows[:256]}
+        matrix_b = {"include": retry_rows[256:360]}
+        encoded_a = json.dumps(matrix_a, sort_keys=True, separators=(",", ":"))
+        encoded_b = json.dumps(matrix_b, sort_keys=True, separators=(",", ":"))
+        if (
+            len(encoded_a.encode("utf-16-le"))
+            + len(encoded_b.encode("utf-16-le"))
+            > 512 * 1024
+        ):
+            raise SystemExit("RECOVERY_MATRIX_OUTPUT_LIMIT")
+        receipt = {
+            "schema_version": "catalog-selective-recovery-wave-v1",
+            "authority_id": os.environ["AUTHORITY_ID"],
+            "campaign_id": os.environ["CAMPAIGN_ID"],
+            "current_wave": current_wave,
+            "status": status,
+            "completed_worker_ids": sorted(completed_workers),
+            "pending_worker_ids": pending_workers,
+            "attempt_inventory_sha256": attempt_inventory.receipt_sha256,
+            "failure_inventory_sha256": failure_inventory.receipt_sha256,
+            "checkpoint_inventory_sha256": checkpoint_inventory.receipt_sha256,
+            "failure_history_manifest_sha256": (
+                recovery_plan.failure_history_manifest_sha256
+            ),
+            "failure_fingerprint": recovery_plan.failure_fingerprint,
+            "failure_occurrence_count": (
+                recovery_plan.failure_occurrence_count
+            ),
+            "failure_reason_code": failure_reason_code,
+            "retry_not_before": (
+                recovery_plan.retry_not_before.isoformat()
+                if recovery_plan.retry_not_before is not None
+                else None
+            ),
+            "decisions": [
+                item.model_dump(mode="json")
+                for item in recovery_plan.decisions
+            ],
+            "operational_replans": operational_replans,
+            "recovery_descriptor_manifest_sha256": canonical_sha256(retry_rows),
+            "validation_opened": False,
+            "locked_opened": False,
+        }
+        receipt["receipt_sha256"] = canonical_sha256(receipt)
+        (temp / "recovery-wave-receipt.json").write_text(
+            json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        (temp / "retry_matrix_a.json").write_text(encoded_a + "\n", "utf-8")
+        (temp / "retry_matrix_b.json").write_text(encoded_b + "\n", "utf-8")
+
+        completed_unit_count = sum(
+            int(item["expected_strategy_count"])
+            for item in completed_unit_evidence
+        )
+        if completed_unit_count < state.completed_unit_count:
+            raise RecoveryEvidenceError("RECOVERY_COMPLETED_EVIDENCE_REGRESSED")
+        if completed_unit_count > state.logical_unit_count:
+            raise RecoveryEvidenceError("RECOVERY_COMPLETED_EVIDENCE_EXCESS")
+        completed_manifest_sha256 = (
+            canonical_sha256(
+                sorted(
+                    completed_unit_evidence,
+                    key=lambda item: int(item["worker_id"]),
+                )
+            )
+            if completed_unit_evidence
+            else None
+        )
+        now = datetime.now(UTC)
+        common_transition = {
+            "completed_unit_count": completed_unit_count,
+            "completed_unit_manifest_sha256": completed_manifest_sha256,
+            "pending_unit_count": state.logical_unit_count - completed_unit_count,
+            "verified_source_artifacts": attempt_inventory.observed,
+            "wave": current_wave,
+            "active_attempt_ids": tuple(
+                row["attempt_id"] for row in retry_rows
+            ),
+            "created_at": now,
+        }
+        if status == "replan":
+            recovering = transition_campaign_state(
+                state,
+                phase=CampaignPhase.RECOVERING,
+                **common_transition,
+            )
+            write_campaign_state(recovering, temp / "state")
+            replanning = transition_campaign_state(
+                recovering,
+                phase=CampaignPhase.REPLANNING,
+                created_at=now,
+            )
+            write_campaign_state(replanning, temp / "state")
+            replan_receipt_sha256 = canonical_sha256(
+                {
+                    "schema_version": "1",
+                    "recovery_receipt_sha256": receipt["receipt_sha256"],
+                    "operational_replans": operational_replans,
+                }
+            )
+            next_state = replan_campaign_state(
+                replanning,
+                new_plan_sha256=canonical_sha256(
+                    {
+                        "schema_version": "1",
+                        "prior_plan_sha256": replanning.active_plan_sha256,
+                        "operational_replans": operational_replans,
+                        "wave": current_wave,
+                    }
+                ),
+                logical_unit_manifest_sha256=(
+                    replanning.logical_unit_manifest_sha256
+                ),
+                completed_unit_manifest_sha256=(
+                    replanning.completed_unit_manifest_sha256
+                ),
+                operational_overrides={
+                    "threads": min(
+                        item["processes_per_worker"]
+                        for item in operational_replans.values()
+                    ),
+                    "batch_size": min(
+                        item["block_size"]
+                        for item in operational_replans.values()
+                    ),
+                    "partitioning": operational_replans,
+                },
+                replan_receipt_sha256=replan_receipt_sha256,
+                created_at=now,
+            )
+        else:
+            target_phase = {
+                "complete": CampaignPhase.READY_TO_MERGE,
+                "retry": CampaignPhase.RECOVERING,
+                "waiting_retry": CampaignPhase.WAITING_RETRY,
+                "failed_scientific": CampaignPhase.BLOCKED_HARD_FAILURE,
+                "blocked": CampaignPhase.BLOCKED_HARD_FAILURE,
+            }[status]
+            next_state = transition_campaign_state(
+                state,
+                phase=target_phase,
+                hard_failure_reason=(
+                    failure_reason_code
+                    if status in {"blocked", "failed_scientific"}
+                    else None
+                ),
+                retry_not_before=(
+                    recovery_plan.retry_not_before
+                    if status == "waiting_retry"
+                    else None
+                ),
+                **common_transition,
+            )
+        write_campaign_state(next_state, temp / "state")
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+            output.write(f"matrix_a={encoded_a}\n")
+            output.write(f"matrix_b={encoded_b}\n")
+            output.write(
+                f"has_matrix_a={str(bool(matrix_a['include'])).lower()}\n"
+            )
+            output.write(
+                f"has_matrix_b={str(bool(matrix_b['include'])).lower()}\n"
+            )
+            output.write(f"status={status}\n")
+            output.write(f"recovery_descriptor_artifact={recovery_artifact}\n")
+            output.write(
+                f"failure_fingerprint={recovery_plan.failure_fingerprint or ''}\n"
+            )
+            output.write(
+                "failure_occurrence_count="
+                f"{recovery_plan.failure_occurrence_count}\n"
+            )
+            output.write(
+                f"failure_reason_code={failure_reason_code or ''}\n"
+            )
+            output.write(
+                "retry_not_before="
+                f"{recovery_plan.retry_not_before.isoformat() if recovery_plan.retry_not_before else ''}\n"
+            )
+        PY
+
+    - name: Publish exact recovery descriptors
+      if: ${{ steps.reconcile.outputs.has_matrix_a == 'true' || steps.reconcile.outputs.has_matrix_b == 'true' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: ${{ steps.reconcile.outputs.recovery_descriptor_artifact }}
+        path: ${{ runner.temp }}/catalog-recovery/recovery-descriptors
+        if-no-files-found: error
+        retention-days: 1
+        compression-level: 0
+
+    - name: Publish immutable recovery evidence
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: ${{ inputs.run-label }}-recovery-wave-${{ inputs.current-wave }}-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/recovery
+        name: catalog-recovery-evidence-${{ inputs.authority-id }}-${{ inputs.current-wave }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          ${{ runner.temp }}/catalog-recovery/recovery-wave-receipt.json
+          ${{ runner.temp }}/catalog-recovery/retry_matrix_a.json
+          ${{ runner.temp }}/catalog-recovery/retry_matrix_b.json
         if-no-files-found: error
-        compression-level: 0
         retention-days: ${{ inputs.retention-days }}
-    - name: Upload next immutable campaign state
-      if: always()
+        compression-level: 0
+
+    - name: Publish the next immutable campaign state
+      if: ${{ steps.reconcile.outcome == 'success' }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: ${{ inputs.next-state-artifact-name }}
-        path: ${{ runner.temp }}/state
+        path: ${{ runner.temp }}/catalog-recovery/state
         if-no-files-found: error
-        compression-level: 0
         retention-days: ${{ inputs.retention-days }}
+        compression-level: 0

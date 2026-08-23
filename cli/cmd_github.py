@@ -969,6 +969,24 @@ def cmd_github_campaign_update(args: argparse.Namespace) -> int:
             raise ValueError(
                 "initial campaign state requires active plan sha256"
             )
+        binding_names = (
+            "authority_id",
+            "request_sha256",
+            "protected_commit_sha",
+            "execution_protocol_sha256",
+            "controller_decision_sha256",
+            "component_store_manifest_sha256",
+            "failure_history_manifest_sha256",
+        )
+        supplied_bindings = [
+            name for name in binding_names if str(getattr(args, name, ""))
+        ]
+        if supplied_bindings and len(supplied_bindings) != len(binding_names):
+            missing_bindings = sorted(set(binding_names) - set(supplied_bindings))
+            raise ValueError(
+                "campaign authority bindings must be supplied together; missing: "
+                + ",".join(missing_bindings)
+            )
         previous = initialize_campaign_state(
             campaign_id=campaign_id,
             scientific_contract_sha256=canonical_sha256(spec),
@@ -977,6 +995,23 @@ def cmd_github_campaign_update(args: argparse.Namespace) -> int:
             ),
             logical_unit_count=args.logical_unit_count,
             active_plan_sha256=args.active_plan_sha256,
+            authority_id=getattr(args, "authority_id", "") or None,
+            request_sha256=getattr(args, "request_sha256", "") or None,
+            protected_commit_sha=(
+                getattr(args, "protected_commit_sha", "") or None
+            ),
+            execution_protocol_sha256=(
+                getattr(args, "execution_protocol_sha256", "") or None
+            ),
+            controller_decision_sha256=(
+                getattr(args, "controller_decision_sha256", "") or None
+            ),
+            component_store_manifest_sha256=(
+                getattr(args, "component_store_manifest_sha256", "") or None
+            ),
+            failure_history_manifest_sha256=(
+                getattr(args, "failure_history_manifest_sha256", "") or None
+            ),
             created_at=now,
         )
         path = write_campaign_state(previous, root)
@@ -1047,6 +1082,9 @@ def cmd_github_recovery_loop(args: argparse.Namespace) -> int:
         RecoveryLoopStatus.BUDGET_EXHAUSTED: (
             CampaignPhase.BLOCKED_HARD_FAILURE
         ),
+        RecoveryLoopStatus.FAILED_SCIENTIFIC: (
+            CampaignPhase.BLOCKED_HARD_FAILURE
+        ),
     }
     next_state = transition_campaign_state(
         previous,
@@ -1111,6 +1149,21 @@ def cmd_github_replan(args: argparse.Namespace) -> int:
         root,
         campaign_id=str(spec.identity["campaign_id"]),
     )
+    operational_overrides = _load_operational_overrides(
+        args.operational_overrides
+    )
+    replan_receipt_sha256 = canonical_sha256(
+        {
+            "schema_version": "catalog-operational-replan-receipt-v1",
+            "previous_state_sha256": previous.state_sha256,
+            "new_plan_sha256": args.new_plan_sha256,
+            "logical_unit_manifest_sha256": args.logical_unit_manifest_sha256,
+            "completed_unit_manifest_sha256": (
+                args.completed_unit_manifest_sha256 or None
+            ),
+            "operational_overrides": operational_overrides,
+        }
+    )
     state = replan_campaign_state(
         previous,
         new_plan_sha256=args.new_plan_sha256,
@@ -1120,9 +1173,8 @@ def cmd_github_replan(args: argparse.Namespace) -> int:
         completed_unit_manifest_sha256=(
             args.completed_unit_manifest_sha256 or None
         ),
-        operational_overrides=_load_operational_overrides(
-            args.operational_overrides
-        ),
+        operational_overrides=operational_overrides,
+        replan_receipt_sha256=replan_receipt_sha256,
         created_at=_command_now(args),
     )
     state_path = write_campaign_state(state, root)
@@ -1138,6 +1190,7 @@ def cmd_github_replan(args: argparse.Namespace) -> int:
                 state.completed_unit_manifest_sha256
             ),
             "new_plan_sha256": state.active_plan_sha256,
+            "replan_receipt_sha256": replan_receipt_sha256,
             "operational_overrides": state.operational_overrides,
         },
     )
@@ -1213,6 +1266,16 @@ def cmd_github_replan_pending(args: argparse.Namespace) -> int:
             "requested_parallelism conflicts with requested_jobs"
         )
     overrides["requested_parallelism"] = args.requested_jobs
+    replan_receipt_sha256 = canonical_sha256(
+        {
+            "schema_version": "catalog-operational-replan-receipt-v1",
+            "previous_state_sha256": previous.state_sha256,
+            "new_plan_sha256": plan.plan_sha256,
+            "logical_unit_manifest_sha256": manifest.sha256,
+            "completed_unit_manifest_sha256": evidence.unit_manifest_sha256,
+            "operational_overrides": overrides,
+        }
+    )
     state = replan_campaign_state(
         previous,
         new_plan_sha256=plan.plan_sha256,
@@ -1221,6 +1284,7 @@ def cmd_github_replan_pending(args: argparse.Namespace) -> int:
             evidence.unit_manifest_sha256
         ),
         operational_overrides=overrides,
+        replan_receipt_sha256=replan_receipt_sha256,
         created_at=_command_now(args),
     )
     state_path = write_campaign_state(state, root)
@@ -1230,6 +1294,7 @@ def cmd_github_replan_pending(args: argparse.Namespace) -> int:
             "campaign_state_sha256": state.state_sha256,
             "previous_plan_sha256": previous.active_plan_sha256,
             "new_plan_sha256": plan.plan_sha256,
+            "replan_receipt_sha256": replan_receipt_sha256,
             "logical_unit_manifest_sha256": manifest.sha256,
             "completed_unit_manifest_sha256": (
                 evidence.unit_manifest_sha256
@@ -1503,6 +1568,13 @@ def register(subparsers, parent_parser=None) -> None:
     campaign.add_argument("--logical-unit-manifest-sha256", default="")
     campaign.add_argument("--logical-unit-count", type=int, default=0)
     campaign.add_argument("--active-plan-sha256", default="")
+    campaign.add_argument("--authority-id", default="")
+    campaign.add_argument("--request-sha256", default="")
+    campaign.add_argument("--protected-commit-sha", default="")
+    campaign.add_argument("--execution-protocol-sha256", default="")
+    campaign.add_argument("--controller-decision-sha256", default="")
+    campaign.add_argument("--component-store-manifest-sha256", default="")
+    campaign.add_argument("--failure-history-manifest-sha256", default="")
     campaign.add_argument("--completed-unit-manifest-sha256", default="")
     campaign.add_argument("--completed-unit-count", type=int)
     campaign.add_argument("--pending-unit-count", type=int)
@@ -1534,7 +1606,7 @@ def register(subparsers, parent_parser=None) -> None:
     recovery_loop.add_argument("--state-root", required=True)
     recovery_loop.add_argument("--output-dir", required=True)
     recovery_loop.add_argument("--current-wave", type=int, default=0)
-    recovery_loop.add_argument("--max-waves", type=int, default=4)
+    recovery_loop.add_argument("--max-waves", type=int, default=6)
     recovery_loop.add_argument("--created-at", default="")
     recovery_loop.set_defaults(func=cmd_github_recovery_loop)
 

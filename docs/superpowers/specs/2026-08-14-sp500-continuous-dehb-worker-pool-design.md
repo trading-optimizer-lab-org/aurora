@@ -1,8 +1,8 @@
 # SP500 Continuous DEHB Worker Pool Design
 
-Date: 2026-08-14  
-Status: approved for autonomous implementation  
-Authoritative worktree: `C:\Users\HP\AURORA_sp500_search_method_benchmark_short`  
+Date: 2026-08-14
+Status: approved for autonomous implementation
+Authoritative worktree: `C:\Users\HP\AURORA_sp500_search_method_benchmark_short`
 Branch: `codex/sp500-search-method-benchmark-short`
 
 ## 1. Objective

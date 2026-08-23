@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "production_enabled": false,
+  "request_actors": [],
+  "required_request_actor_kind": "non_admin_github_app",
+  "requester_public_key_path": null,
+  "requester_public_key_sha256": null,
+  "ledger_actor": "github-actions[bot]",
+  "authority_issue_repository_variable": "CATALOG_AUTHORITY_ISSUE_NUMBER",
+  "deny_actor_if_repository_admin_credential_is_exposed": true
+}

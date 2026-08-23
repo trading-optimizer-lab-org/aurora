@@ -1,0 +1,17 @@
+{
+  "document_type": "catalog_controller_qualification_fixture_manifest_v1",
+  "entries": [
+    {
+      "path": "README.md",
+      "sha256": "f4fd91a4c04f66d85ef23b85c49ad53aac8a3aa7b71bcec62c56fb8ee6bbc02c",
+      "size_bytes": 914
+    },
+    {
+      "path": "campaign_v1.json",
+      "sha256": "e943095a50a799fc583fa1f936c0159fab9f7c8541b9d081a7687f9fdb2ba308",
+      "size_bytes": 7691
+    }
+  ],
+  "manifest_sha256": "102fef71a15bc8143dc872059067ea82c0207718dba19d514baf55b20c75ab67",
+  "schema_version": "1"
+}

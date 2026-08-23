@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trading-optimizer-lab-org/aurora/schemas/catalog_requester_app_manifest_v1.schema.json",
+  "title": "AURORA isolated catalog requester application manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_format",
+    "application_kind"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "manifest_format": {
+      "enum": [
+        "embedded",
+        "external"
+      ]
+    },
+    "application_kind": {
+      "enum": [
+        "client",
+        "broker"
+      ]
+    },
+    "application_version": {
+      "const": "1"
+    },
+    "protected_commit_sha": {
+      "$ref": "#/$defs/commitSha"
+    },
+    "python_requirement": {
+      "const": "CPython 3.14"
+    },
+    "entry_point": {
+      "type": "string",
+      "pattern": "^aurora_catalog_requester_(client|broker)\\.catalog_requester(_broker)?_cli:main$"
+    },
+    "archive_package": {
+      "enum": [
+        "aurora_catalog_requester_client",
+        "aurora_catalog_requester_broker"
+      ]
+    },
+    "source_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/sourceFile"
+      }
+    },
+    "generated_members": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "$ref": "#/$defs/archiveMember"
+      }
+    },
+    "archive_members": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/archiveMember"
+      }
+    },
+    "embedded_manifest_member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "order",
+        "mode"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/safePath"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mode": {
+          "const": "0644"
+        }
+      }
+    },
+    "dependency_input": {
+      "$ref": "#/$defs/fileDigest"
+    },
+    "dependency_lock": {
+      "$ref": "#/$defs/fileDigest"
+    },
+    "public_inputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/fileDigest"
+      }
+    },
+    "embedded_manifest_sha256_location": {
+      "const": "external_manifest"
+    },
+    "application_sha256_location": {
+      "const": "external_manifest"
+    },
+    "manifest_core": {
+      "$ref": "#"
+    },
+    "embedded_manifest_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "application_sha256": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "manifest_format": {
+          "const": "embedded"
+        }
+      },
+      "required": [
+        "application_version",
+        "protected_commit_sha",
+        "python_requirement",
+        "entry_point",
+        "archive_package",
+        "source_files",
+        "generated_members",
+        "archive_members",
+        "embedded_manifest_member",
+        "dependency_input",
+        "dependency_lock",
+        "public_inputs",
+        "embedded_manifest_sha256_location",
+        "application_sha256_location"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "manifest_core"
+            ]
+          },
+          {
+            "required": [
+              "embedded_manifest_sha256"
+            ]
+          },
+          {
+            "required": [
+              "application_sha256"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "manifest_format": {
+          "const": "external"
+        }
+      },
+      "required": [
+        "manifest_core",
+        "embedded_manifest_sha256",
+        "application_sha256"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "application_version"
+            ]
+          },
+          {
+            "required": [
+              "protected_commit_sha"
+            ]
+          },
+          {
+            "required": [
+              "source_files"
+            ]
+          },
+          {
+            "required": [
+              "python_requirement"
+            ]
+          },
+          {
+            "required": [
+              "entry_point"
+            ]
+          },
+          {
+            "required": [
+              "archive_package"
+            ]
+          },
+          {
+            "required": [
+              "generated_members"
+            ]
+          },
+          {
+            "required": [
+              "archive_members"
+            ]
+          },
+          {
+            "required": [
+              "embedded_manifest_member"
+            ]
+          },
+          {
+            "required": [
+              "dependency_input"
+            ]
+          },
+          {
+            "required": [
+              "dependency_lock"
+            ]
+          },
+          {
+            "required": [
+              "public_inputs"
+            ]
+          },
+          {
+            "required": [
+              "embedded_manifest_sha256_location"
+            ]
+          },
+          {
+            "required": [
+              "application_sha256_location"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "commitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "safePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)[A-Za-z0-9._/-]+$"
+    },
+    "fileDigest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "size_bytes"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/safePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "archive_member",
+        "sha256",
+        "size_bytes"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/safePath"
+        },
+        "archive_member": {
+          "$ref": "#/$defs/safePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "archiveMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "order",
+        "mode",
+        "sha256",
+        "size_bytes"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/safePath"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mode": {
+          "const": "0644"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

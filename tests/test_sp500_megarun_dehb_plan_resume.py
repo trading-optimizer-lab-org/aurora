@@ -45,3 +45,48 @@ def test_plan_script_accepts_only_closed_matching_prior_decision(tmp_path: Path)
         assert "PRIOR_CONTROLLER_DECISION_INVALID" in str(exc)
     else:
         raise AssertionError("opened validation decision was accepted")
+
+
+def test_rebuildable_store_conflict_blocks_instead_of_picking_newest() -> None:
+    from scripts.plan_sp500_optimized_catalog_run import (
+        RebuildableStoreCandidateV1,
+        RebuildableStoreInventoryV1,
+        reconcile_verified_store_candidates,
+    )
+
+    identity = "1" * 64
+    first_manifest = "2" * 64
+    first = RebuildableStoreCandidateV1(
+        object_family="component",
+        logical_id="component-a",
+        identity_sha256=identity,
+        content_manifest_sha256=first_manifest,
+        content_sha256="3" * 64,
+        storage_kind="actions_cache",
+        status="verified",
+        source_branch="main",
+        cache_key=f"aurora-catalog-v1-{identity}-{first_manifest}-main",
+        file_hashes=(("signals.npy", "4" * 64),),
+        manifest_verified=True,
+        content_verified=True,
+        scope_verified=True,
+    )
+    second_manifest = "5" * 64
+    second = first.model_copy(
+        update={
+            "content_manifest_sha256": second_manifest,
+            "content_sha256": "6" * 64,
+            "cache_key": f"aurora-catalog-v1-{identity}-{second_manifest}-main",
+        }
+    )
+    inventory = RebuildableStoreInventoryV1(
+        listing_complete=True,
+        source_branch="main",
+        candidates=(first, second),
+    )
+    try:
+        reconcile_verified_store_candidates(inventory)
+    except ValueError as exc:
+        assert "REBUILDABLE_STORE_IDENTITY_CONFLICT" in str(exc)
+    else:
+        raise AssertionError("conflicting store objects were silently selected")

@@ -1,0 +1,261 @@
+{
+  "schema_version": "1",
+  "source_prompt_version": "5.3",
+  "source_prompt_sha256": "6be6180a40c82298c7e6eef6f531344d90979aea50364a2056d2ad3dab601a6b",
+  "active_prompt_version": "6.0-CONTROLLER",
+  "active_prompt_sha256": "11819c62d14d489684f17057e55cc0f0b3c71a60759b46557c090a54d90a5859",
+  "migration_path": "config/catalog_prompt_migration_v5_3_to_v6_0.json",
+  "migration_sha256": "d206b0034ccefc3a5e3293fd5d84d56a20cf7564421ec8489d808a06f29a8a74",
+  "rules": [
+    {
+      "rule_id": "CAT-001",
+      "summary": "Declaración de solicitud explícita",
+      "enforcement": "request",
+      "enforcer_path": "infra/sp500_megarun/catalog_run_request.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_001_enforced",
+      "failure_code": "CATALOG_REQUEST_INVALID",
+      "evidence_contract": "CatalogRequestV1",
+      "evidence_field": "explicit_user_request"
+    },
+    {
+      "rule_id": "CAT-002",
+      "summary": "Solo campañas registradas",
+      "enforcement": "admission",
+      "enforcer_path": "infra/sp500_megarun/catalog_campaign_registry.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_002_enforced",
+      "failure_code": "CATALOG_CAMPAIGN_UNRESOLVED",
+      "evidence_contract": "CatalogCampaignRegistryV1",
+      "evidence_field": "campaign_key"
+    },
+    {
+      "rule_id": "CAT-003",
+      "summary": "Commit completo e inmutable",
+      "enforcement": "admission",
+      "enforcer_path": "infra/sp500_megarun/catalog_controller.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_003_enforced",
+      "failure_code": "CATALOG_COMMIT_NOT_PROTECTED_HEAD",
+      "evidence_contract": "CatalogCampaignRegistryV1",
+      "evidence_field": "commit_sha"
+    },
+    {
+      "rule_id": "CAT-004",
+      "summary": "Prompt exacto versionado",
+      "enforcement": "admission",
+      "enforcer_path": "infra/sp500_megarun/catalog_controller.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_004_enforced",
+      "failure_code": "CATALOG_PROMPT_HASH_MISMATCH",
+      "evidence_contract": "CatalogPromptPolicyV1",
+      "evidence_field": "active_prompt_sha256"
+    },
+    {
+      "rule_id": "CAT-005",
+      "summary": "Ciencia inmutable",
+      "enforcement": "admission",
+      "enforcer_path": "infra/sp500_megarun/catalog_authority_ledger.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_005_enforced",
+      "failure_code": "CATALOG_EXECUTION_PROTOCOL_CHANGED",
+      "evidence_contract": "CatalogCampaignRegistryV1",
+      "evidence_field": "science_sha256"
+    },
+    {
+      "rule_id": "CAT-006",
+      "summary": "Validation y locked cerrados",
+      "enforcement": "admission",
+      "enforcer_path": "infra/sp500_megarun/catalog_controller_reporting.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_006_enforced",
+      "failure_code": "FINAL_VALIDATION_OPENED",
+      "evidence_contract": "CatalogFinalReceiptV1",
+      "evidence_field": "validation_opened"
+    },
+    {
+      "rule_id": "CAT-007",
+      "summary": "Inputs preparados e íntegros",
+      "enforcement": "admission",
+      "enforcer_path": "infra/sp500_megarun/catalog_controller_reporting.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_007_enforced",
+      "failure_code": "SOURCE_ARTIFACT_UNAVAILABLE",
+      "evidence_contract": "CatalogInputManifestV1",
+      "evidence_field": "manifest_sha256"
+    },
+    {
+      "rule_id": "CAT-008",
+      "summary": "Componentes globales reutilizables",
+      "enforcement": "workflow",
+      "enforcer_path": "infra/sp500_megarun/catalog_component_store.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_008_enforced",
+      "failure_code": "COMPONENT_STORE_INCOMPATIBLE",
+      "evidence_contract": "CatalogComponentManifestV1",
+      "evidence_field": "component_store_sha256"
+    },
+    {
+      "rule_id": "CAT-009",
+      "summary": "Cobertura exacta sin prefijos sesgados",
+      "enforcement": "workflow",
+      "enforcer_path": "infra/sp500_megarun/catalog_controller_reporting.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_009_enforced",
+      "failure_code": "FINAL_LOGICAL_UNIT_MISSING",
+      "evidence_contract": "CatalogExecutionManifestV1",
+      "evidence_field": "unit_manifest_sha256"
+    },
+    {
+      "rule_id": "CAT-010",
+      "summary": "Calibración representativa",
+      "enforcement": "admission",
+      "enforcer_path": "infra/sp500_megarun/catalog_capacity.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_010_enforced",
+      "failure_code": "CAPACITY_PROFILE_STALE",
+      "evidence_contract": "CatalogCalibrationReceiptV1",
+      "evidence_field": "profile_sha256"
+    },
+    {
+      "rule_id": "CAT-011",
+      "summary": "Capacidad con margen",
+      "enforcement": "admission",
+      "enforcer_path": "infra/sp500_megarun/catalog_capacity.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_011_enforced",
+      "failure_code": "CAPACITY_MEMORY_MARGIN_INSUFFICIENT",
+      "evidence_contract": "CatalogCapacityReceiptV1",
+      "evidence_field": "capacity_margin_pass"
+    },
+    {
+      "rule_id": "CAT-012",
+      "summary": "Solo capacidad gratuita",
+      "enforcement": "workflow",
+      "enforcer_path": "infra/sp500_megarun/catalog_capacity.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_012_enforced",
+      "failure_code": "PAID_RUNNER_FORBIDDEN",
+      "evidence_contract": "CatalogCapacityReceiptV1",
+      "evidence_field": "free_capacity_only"
+    },
+    {
+      "rule_id": "CAT-013",
+      "summary": "Payload acotado por unidad",
+      "enforcement": "workflow",
+      "enforcer_path": "infra/github_performance/preflight.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_013_enforced",
+      "failure_code": "CATALOG_EXACT_PAYLOAD_ROUTE_INVARIANT_MISSING",
+      "evidence_contract": "CatalogExecutionManifestV1",
+      "evidence_field": "max_payload_bytes"
+    },
+    {
+      "rule_id": "CAT-014",
+      "summary": "Runtime preparado una vez por identidad y reutilizado",
+      "enforcement": "workflow",
+      "enforcer_path": "infra/github_performance/preflight.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_014_enforced",
+      "failure_code": "CATALOG_RUNTIME_ONCE_INVARIANT_MISSING",
+      "evidence_contract": "CatalogRuntimeManifestV1",
+      "evidence_field": "runtime_identity_sha256"
+    },
+    {
+      "rule_id": "CAT-015",
+      "summary": "Checkpoints duraderos",
+      "enforcement": "workflow",
+      "enforcer_path": "infra/github_performance/recovery.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_015_enforced",
+      "failure_code": "RECOVERY_CHECKPOINT_CHAIN_INVALID",
+      "evidence_contract": "CatalogCheckpointManifestV1",
+      "evidence_field": "published"
+    },
+    {
+      "rule_id": "CAT-016",
+      "summary": "Solo recuperación faltante",
+      "enforcement": "recovery",
+      "enforcer_path": "infra/github_performance/preflight.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_016_enforced",
+      "failure_code": "CATALOG_SELECTIVE_RECOVERY_INVARIANT_MISSING",
+      "evidence_contract": "CatalogRecoveryPlanV1",
+      "evidence_field": "missing_unit_ids"
+    },
+    {
+      "rule_id": "CAT-017",
+      "summary": "Máximo tres fallos equivalentes",
+      "enforcement": "recovery",
+      "enforcer_path": "infra/sp500_megarun/catalog_authority_ledger.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_017_enforced",
+      "failure_code": "CATALOG_FAILURE_LIMIT_REACHED",
+      "evidence_contract": "CatalogLedgerV1",
+      "evidence_field": "equivalent_failure_count"
+    },
+    {
+      "rule_id": "CAT-018",
+      "summary": "No cancelar por lentitud",
+      "enforcement": "recovery",
+      "enforcer_path": "infra/github_performance/recovery.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_018_enforced",
+      "failure_code": "BLOCKED_EXTERNAL_INTERVENTION",
+      "evidence_contract": "CatalogLedgerV1",
+      "evidence_field": "cancellation_authority"
+    },
+    {
+      "rule_id": "CAT-019",
+      "summary": "Reducción cualificada y con margen",
+      "enforcement": "workflow",
+      "enforcer_path": "infra/github_performance/preflight.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_019_enforced",
+      "failure_code": "CATALOG_BOUNDED_REDUCTION_INVARIANT_MISSING",
+      "evidence_contract": "CatalogReductionPlanV1",
+      "evidence_field": "reduction_margin_pass"
+    },
+    {
+      "rule_id": "CAT-020",
+      "summary": "Una sola autoridad",
+      "enforcement": "admission",
+      "enforcer_path": "infra/sp500_megarun/catalog_authority_ledger.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_020_enforced",
+      "failure_code": "CATALOG_AUTHORITY_DUPLICATE",
+      "evidence_contract": "CatalogLedgerV1",
+      "evidence_field": "canonical_request_id"
+    },
+    {
+      "rule_id": "CAT-021",
+      "summary": "Acciones externas fijadas por SHA",
+      "enforcement": "admission",
+      "enforcer_path": "infra/github_performance/preflight.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_021_enforced",
+      "failure_code": "CATALOG_ACTION_NOT_PINNED",
+      "evidence_contract": "CatalogWorkflowAuditV1",
+      "evidence_field": "pinned_actions_pass"
+    },
+    {
+      "rule_id": "CAT-022",
+      "summary": "Permisos mínimos",
+      "enforcement": "admission",
+      "enforcer_path": "infra/github_performance/preflight.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_022_enforced",
+      "failure_code": "CATALOG_ENGINE_PERMISSIONS_INVALID",
+      "evidence_contract": "CatalogWorkflowAuditV1",
+      "evidence_field": "permissions_pass"
+    },
+    {
+      "rule_id": "CAT-023",
+      "summary": "Éxito solo con cobertura total",
+      "enforcement": "final",
+      "enforcer_path": "infra/sp500_megarun/catalog_controller_reporting.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_023_enforced",
+      "failure_code": "FINAL_LOGICAL_UNIT_MISSING",
+      "evidence_contract": "CatalogFinalReceiptV1",
+      "evidence_field": "verified_unit_count"
+    },
+    {
+      "rule_id": "CAT-024",
+      "summary": "Métricas comparables",
+      "enforcement": "final",
+      "enforcer_path": "infra/sp500_megarun/catalog_performance.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_024_enforced",
+      "failure_code": "CATALOG_PERFORMANCE_BOUNDARY_INVALID",
+      "evidence_contract": "CatalogPerformanceReceiptV1",
+      "evidence_field": "comparable_metrics_pass"
+    },
+    {
+      "rule_id": "CAT-025",
+      "summary": "Comunicación basada en recibos",
+      "enforcement": "final",
+      "enforcer_path": "infra/sp500_megarun/catalog_controller_reporting.py",
+      "test_nodeid": "tests/test_catalog_controller_qualification.py::test_cat_025_enforced",
+      "failure_code": "FINAL_TERMINAL_DECISION_HASH_INVALID",
+      "evidence_contract": "CatalogFinalReceiptV1",
+      "evidence_field": "terminal_status"
+    }
+  ]
+}

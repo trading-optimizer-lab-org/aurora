@@ -1,10 +1,10 @@
 # Auditoría de ejecución: optimización máxima del catálogo SPY
 
-**Fecha:** 17 de agosto de 2026  
-**Worktree autoritativo:** `C:\Users\HP\AURORA_sp500_search_method_benchmark_short`  
-**Rama:** `codex/sp500-search-method-benchmark-short`  
-**HEAD auditado:** `7af75ec86aea31273b03b52e8e1befaec3a2593a`  
-**Ámbito:** SPY, catálogo completo, entrenamiento hasta `2010-12-31`  
+**Fecha:** 17 de agosto de 2026
+**Worktree autoritativo:** `C:\Users\HP\AURORA_sp500_search_method_benchmark_short`
+**Rama:** `codex/sp500-search-method-benchmark-short`
+**HEAD auditado:** `7af75ec86aea31273b03b52e8e1befaec3a2593a`
+**Ámbito:** SPY, catálogo completo, entrenamiento hasta `2010-12-31`
 **Periodos protegidos:** validation 2011–2020 y locked 2021+ cerrados en todas las pruebas
 
 ## Resultado ejecutivo

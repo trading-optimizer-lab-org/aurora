@@ -1,0 +1,113 @@
+name: SP500 Atlas Autonomous Controller
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha:
+        description: Exact immutable implementation commit
+        required: true
+        type: string
+      preflight_run_id:
+        description: Run containing the frozen train-only plan and segment manifest
+        required: true
+        type: string
+      runtime_input_run_id:
+        description: Verified train-only runtime input pack run
+        required: true
+        type: string
+      target_end_iso:
+        description: Europe/Madrid target used only for the reduction reserve deadline
+        required: true
+        default: "2026-08-20T07:31:00+02:00"
+        type: string
+      launch_authorization:
+        description: Explicit authorization for the finite full campaign
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  controller:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_ACTIONS: "true"
+      PYTHONHASHSEED: "0"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+      PYTHONPATH: ${{ github.workspace }}/..
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: "3.11"}
+      - run: python -m pip install --disable-pip-version-check --require-hashes --no-cache-dir -r requirements/catalog-optimized.lock
+      - name: Verify exact commit
+        shell: bash
+        env:
+          REQUESTED_COMMIT: ${{ inputs.commit_sha }}
+        run: test "$REQUESTED_COMMIT" = "$GITHUB_SHA"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-preflight
+          path: ${{ runner.temp }}/preflight
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.preflight_run_id }}
+      - name: Verify frozen train-only controller inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from aurora.infra.sp500_megarun.atlas_execution_contract import load_plan
+          from aurora.infra.sp500_megarun.atlas_segments import load_segment_manifest
+          root = Path("${{ runner.temp }}/preflight")
+          plan = load_plan(root / "plan" / "atlas_run_plan.json")
+          manifest = load_segment_manifest((root / "plan" / "atlas_segment_manifest.json").read_text(encoding="utf-8"), plan=plan)
+          freeze = json.loads(Path("config/sp500_atlas_1/freeze_manifest_v1.json").read_text(encoding="utf-8"))
+          assert plan.train_end == "2010-12-31"
+          assert plan.validation_opened is False
+          assert plan.locked_opened is False
+          assert manifest["validation_opened"] is False
+          assert manifest["locked_opened"] is False
+          assert plan.implementation_commit_sha == freeze["scientific_implementation_commit_sha"]
+          assert freeze["launch_authorized"] is True
+          assert freeze["frozen_plan_sha256"] == plan.plan_sha256
+          print(json.dumps({"plan_sha256": plan.plan_sha256, "segment_manifest_sha256": manifest["manifest_sha256"]}, sort_keys=True))
+          PY
+      - name: Dispatch and supervise all segments
+        shell: bash
+        env:
+          LAUNCH_AUTHORIZATION: ${{ inputs.launch_authorization }}
+        run: >-
+          python scripts/run_sp500_atlas_controller.py
+          --repository "$GITHUB_REPOSITORY"
+          --commit-sha "${{ inputs.commit_sha }}"
+          --dispatch-ref "$GITHUB_REF_NAME"
+          --preflight-run-id "${{ inputs.preflight_run_id }}"
+          --runtime-input-run-id "${{ inputs.runtime_input_run_id }}"
+          --controller-run-id "$GITHUB_RUN_ID"
+          --plan "$RUNNER_TEMP/preflight/plan/atlas_run_plan.json"
+          --segment-manifest "$RUNNER_TEMP/preflight/plan/atlas_segment_manifest.json"
+          --output-dir outputs/controller
+          --target-end-iso "${{ inputs.target_end_iso }}"
+          --launch-authorization "$LAUNCH_AUTHORIZATION"
+          --parallel-segments 3
+          --max-attempts 3
+          --poll-seconds 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-atlas-controller-results-${{ github.run_id }}
+          path: outputs/controller
+          if-no-files-found: error
+          retention-days: 90

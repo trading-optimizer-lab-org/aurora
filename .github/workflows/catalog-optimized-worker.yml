@@ -1,20 +1,31 @@
-name: SP500 Optimized Recipe Worker
+name: SP500 Exact Recipe Payload Worker
 
 on:
   workflow_call:
     inputs:
-      commit_sha: {required: true, type: string}
-      runtime_input_run_id: {required: true, type: string}
-      component_store_run_id: {required: true, type: string}
-      shard_index: {required: true, type: number}
-      active_workers: {required: true, type: number}
+      request_sha256: {required: true, type: string}
+      authority_id: {required: true, type: string}
+      campaign_id: {required: true, type: string}
+      science_sha256: {required: true, type: string}
+      execution_plan_sha256: {required: true, type: string}
+      execution_protocol_sha256: {required: true, type: string}
+      protected_commit_sha: {required: true, type: string}
+      decision_sha256: {required: true, type: string}
+      worker_id: {required: true, type: number}
+      descriptor_bundle_artifact: {required: true, type: string}
+      descriptor_member: {required: true, type: string}
+      descriptor_sha256: {required: true, type: string}
       admission_token_sha256: {required: true, type: string}
+      recovery_descriptor_artifact: {required: false, type: string, default: ""}
+      recovery_descriptor_member: {required: false, type: string, default: ""}
+      recovery_descriptor_sha256: {required: false, type: string, default: ""}
 
 permissions: {actions: read, contents: read}
 
 jobs:
   evaluate:
     runs-on: ubuntu-24.04
+    environment: catalog-production
     timeout-minutes: 60
     env:
       GITHUB_ACTIONS: "true"
@@ -29,51 +40,1050 @@ jobs:
       NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
       PYTHONPATH: ${{ github.workspace }}/..
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.commit_sha }}", persist-credentials: false}
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      - name: Check out the protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+
+      - name: Verify protected source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.protected_commit_sha }}"
+
+      - name: Download compact worker descriptor
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.descriptor_bundle_artifact }}
+          path: ${{ runner.temp }}/descriptor-bundle
+
+      - name: Download frozen campaign contract and plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-sealed-execution-plan-${{ inputs.authority_id }}
+          path: ${{ runner.temp }}/sealed-plan
+
+      - name: Download an exact sealed recovery descriptor when selected
+        if: ${{ inputs.recovery_descriptor_artifact != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.recovery_descriptor_artifact }}
+          path: ${{ runner.temp }}/recovery-descriptor
+
+      - name: Verify exact recipe descriptor and frozen plan
+        id: descriptor
+        shell: bash
+        env:
+          DESCRIPTOR_MEMBER: ${{ inputs.descriptor_member }}
+          EXPECTED_DESCRIPTOR_SHA256: ${{ inputs.descriptor_sha256 }}
+          EXPECTED_WORKER_ID: ${{ inputs.worker_id }}
+          EXPECTED_AUTHORITY_ID: ${{ inputs.authority_id }}
+          EXPECTED_CAMPAIGN_ID: ${{ inputs.campaign_id }}
+          EXPECTED_EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
+          RECOVERY_DESCRIPTOR_ARTIFACT: ${{ inputs.recovery_descriptor_artifact }}
+          RECOVERY_DESCRIPTOR_MEMBER: ${{ inputs.recovery_descriptor_member }}
+          RECOVERY_DESCRIPTOR_SHA256: ${{ inputs.recovery_descriptor_sha256 }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          root = temp / "descriptor-bundle"
+          relative = Path(os.environ["DESCRIPTOR_MEMBER"])
+          if relative.is_absolute() or ".." in relative.parts:
+              raise SystemExit("RECIPE_DESCRIPTOR_PATH_INVALID")
+          source = (root / relative).resolve(strict=True)
+          if not source.is_relative_to(root.resolve()):
+              raise SystemExit("RECIPE_DESCRIPTOR_PATH_INVALID")
+          original_raw = source.read_bytes()
+          if hashlib.sha256(original_raw).hexdigest() != os.environ["EXPECTED_DESCRIPTOR_SHA256"]:
+              raise SystemExit("RECIPE_DESCRIPTOR_HASH_INVALID")
+          original = json.loads(original_raw)
+          raw = original_raw
+          payload = original
+          recovery_artifact = os.environ["RECOVERY_DESCRIPTOR_ARTIFACT"]
+          recovery_member = os.environ["RECOVERY_DESCRIPTOR_MEMBER"]
+          recovery_sha256 = os.environ["RECOVERY_DESCRIPTOR_SHA256"]
+          if bool(recovery_artifact) != bool(recovery_member) or bool(recovery_artifact) != bool(recovery_sha256):
+              raise SystemExit("RECOVERY_DESCRIPTOR_ROUTE_INVALID")
+          if recovery_artifact:
+              recovery_root = temp / "recovery-descriptor"
+              recovery_relative = Path(recovery_member)
+              if recovery_relative.is_absolute() or ".." in recovery_relative.parts:
+                  raise SystemExit("RECOVERY_DESCRIPTOR_PATH_INVALID")
+              recovery_source = (recovery_root / recovery_relative).resolve(strict=True)
+              if not recovery_source.is_relative_to(recovery_root.resolve()):
+                  raise SystemExit("RECOVERY_DESCRIPTOR_PATH_INVALID")
+              raw = recovery_source.read_bytes()
+              if hashlib.sha256(raw).hexdigest() != recovery_sha256:
+                  raise SystemExit("RECOVERY_DESCRIPTOR_HASH_INVALID")
+              payload = json.loads(raw)
+              immutable_fields = set(original) - {
+                  "attempt_id",
+                  "prior_checkpoint_chain_artifact",
+              }
+              if any(payload.get(field) != original.get(field) for field in immutable_fields):
+                  raise SystemExit("RECOVERY_DESCRIPTOR_SCIENCE_DRIFT")
+              if (
+                  set(payload) not in (
+                      set(original),
+                      set(original) | {"operational_replan"},
+                  )
+                  or not str(payload.get("attempt_id", "")).startswith(
+                      os.environ["EXPECTED_AUTHORITY_ID"] + ":worker:"
+                  )
+                  or payload.get("attempt_id") == original.get("attempt_id")
+              ):
+                  raise SystemExit("RECOVERY_DESCRIPTOR_IDENTITY_INVALID")
+          required = {
+              "worker_id",
+              "attempt_id",
+              "assignment_artifact",
+              "assignment_member",
+              "assignment_sha256",
+              "data_partition_artifacts",
+              "data_partition_manifest_sha256",
+              "component_bundle_artifacts",
+              "component_bundle_manifest_sha256",
+              "prior_checkpoint_chain_artifact",
+              "checkpoint_slot_artifacts",
+              "checkpoint_slot_manifest_sha256",
+              "checkpoint_slot_count",
+              "expected_strategy_count",
+              "expected_strategy_manifest_sha256",
+          }
+          if set(payload) != required:
+              if set(payload) != required | {"operational_replan"}:
+                  raise SystemExit("RECIPE_DESCRIPTOR_SCHEMA_INVALID")
+          if payload["worker_id"] != int(os.environ["EXPECTED_WORKER_ID"]):
+              raise SystemExit("RECIPE_DESCRIPTOR_WORKER_INVALID")
+          if payload["checkpoint_slot_count"] not in (1, 2, 4, 8):
+              raise SystemExit("RECIPE_CHECKPOINT_SLOT_COUNT_INVALID")
+          for field in ("data_partition_artifacts", "component_bundle_artifacts"):
+              values = payload[field]
+              if not isinstance(values, list) or not values or values != sorted(set(values)):
+                  raise SystemExit("RECIPE_PAYLOAD_ARTIFACT_SET_INVALID")
+          slots = payload["checkpoint_slot_artifacts"]
+          if (
+              not isinstance(slots, list)
+              or len(slots) != 8
+              or len(set(slots)) != 8
+          ):
+              raise SystemExit("RECIPE_CHECKPOINT_ARTIFACT_PLAN_INVALID")
+          plan = json.loads(
+              (temp / "sealed-plan/execution_plan_receipt.json").read_text()
+          )
+          run_plan = json.loads(
+              (temp / "sealed-plan/run_plan.json").read_text()
+          )
+          if (
+              plan["campaign_id"] != os.environ["EXPECTED_CAMPAIGN_ID"]
+              or plan["execution_plan_sha256"]
+              != os.environ["EXPECTED_EXECUTION_PLAN_SHA256"]
+              or plan["validation_opened"] is not False
+              or plan["locked_opened"] is not False
+          ):
+              raise SystemExit("RECIPE_EXECUTION_PLAN_BINDING_INVALID")
+          processes_per_worker = int(run_plan["processes_per_worker"])
+          block_size = int(run_plan["block_size"])
+          operational_replan = payload.get("operational_replan")
+          if operational_replan is not None:
+              if set(operational_replan) != {
+                  "schema_version",
+                  "worker_id",
+                  "attempt_id",
+                  "reason_code",
+                  "processes_per_worker",
+                  "block_size",
+                  "replan_receipt_sha256",
+              }:
+                  raise SystemExit("RECIPE_OPERATIONAL_REPLAN_INVALID")
+              identity = {
+                  key: value
+                  for key, value in operational_replan.items()
+                  if key != "replan_receipt_sha256"
+              }
+              observed_replan_sha256 = hashlib.sha256(
+                  json.dumps(
+                      identity,
+                      sort_keys=True,
+                      separators=(",", ":"),
+                      allow_nan=False,
+                  ).encode()
+              ).hexdigest()
+              if (
+                  operational_replan["schema_version"] != "1"
+                  or operational_replan["worker_id"] != payload["worker_id"]
+                  or operational_replan["attempt_id"] != payload["attempt_id"]
+                  or operational_replan["reason_code"]
+                  not in {"OUT_OF_MEMORY", "DISK_EXHAUSTED"}
+                  or operational_replan["replan_receipt_sha256"]
+                  != observed_replan_sha256
+                  or not 1
+                  <= int(operational_replan["processes_per_worker"])
+                  <= processes_per_worker
+                  or not 1 <= int(operational_replan["block_size"]) <= block_size
+                  or (
+                      int(operational_replan["processes_per_worker"])
+                      == processes_per_worker
+                      and int(operational_replan["block_size"]) == block_size
+                  )
+              ):
+                  raise SystemExit("RECIPE_OPERATIONAL_REPLAN_INVALID")
+              processes_per_worker = int(
+                  operational_replan["processes_per_worker"]
+              )
+              block_size = int(operational_replan["block_size"])
+          (root / "recipe-descriptor.json").write_bytes(raw)
+          for field, filename in (
+              ("data_partition_artifacts", "data-artifacts.txt"),
+              ("component_bundle_artifacts", "component-artifacts.txt"),
+          ):
+              (root / filename).write_text(
+                  "".join(f"{item}\n" for item in payload[field]), encoding="utf-8"
+              )
+          outputs = {
+              "attempt_id": payload["attempt_id"],
+              "assignment_artifact": payload["assignment_artifact"],
+              "assignment_member": payload["assignment_member"],
+              "assignment_sha256": payload["assignment_sha256"],
+              "prepared_input_identity_sha256": plan[
+                  "prepared_input_identity_sha256"
+              ],
+              "data_partition_manifest_sha256": payload[
+                  "data_partition_manifest_sha256"
+              ],
+              "component_bundle_manifest_sha256": payload[
+                  "component_bundle_manifest_sha256"
+              ],
+              "prior_checkpoint_chain_artifact": payload[
+                  "prior_checkpoint_chain_artifact"
+              ],
+              "resume_completed_slot_count": (
+                  int(payload["prior_checkpoint_chain_artifact"].rsplit("-s", 1)[1])
+                  if payload["prior_checkpoint_chain_artifact"]
+                  else 0
+              ),
+              "checkpoint_slot_count": payload["checkpoint_slot_count"],
+              "expected_strategy_count": payload["expected_strategy_count"],
+              "runtime_transport_artifact": plan["runtime_transport_artifact"],
+              "runtime_mode": plan["runtime_mode"],
+              "runtime_identity_sha256": plan["runtime_identity_sha256"],
+              "numeric_profile_sha256": plan["numeric_profile_sha256"],
+              "active_recipe_workers": plan["active_recipe_workers"],
+              "processes_per_worker": processes_per_worker,
+              "block_size": block_size,
+              "terminal_attempt_artifact": plan["worker_artifacts"][
+                  str(payload["worker_id"])
+              ]["terminal_attempt_artifact"],
+          }
+          for index, name in enumerate(slots, start=1):
+              outputs[f"checkpoint_artifact_{index}"] = name
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
+              for key, value in outputs.items():
+                  out.write(f"{key}={value}\n")
+          PY
+
+      - name: Download the one selected runtime transport
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ steps.descriptor.outputs.runtime_transport_artifact }}
+          path: ${{ runner.temp }}/runtime-transport
+
+      - name: Activate sealed offline runtime
+        uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.11"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
-        with:
-          enable-cache: false
-      - run: >-
-          uv pip install --system --require-hashes
-          -r requirements/catalog-recipe-worker.lock
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-catalog-run-plan
-          path: ${{ runner.temp }}/plan
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: sp500-global-component-store
-          path: ${{ runner.temp }}/component-store
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.component_store_run_id }}
-      - id: evaluate
-        continue-on-error: true
+          runtime-mode: ${{ steps.descriptor.outputs.runtime_mode }}
+          runtime-object-path: ${{ runner.temp }}/runtime-transport
+          runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
+          dependency-lock-path: requirements/catalog-optimized.lock
+          expected-runtime-identity-sha256: ${{ steps.descriptor.outputs.runtime_identity_sha256 }}
+          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-numeric-profile-sha256: ${{ steps.descriptor.outputs.numeric_profile_sha256 }}
+
+      - name: Download only exact assignment, data, components, and prior checkpoint
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSIGNMENT_ARTIFACT: ${{ steps.descriptor.outputs.assignment_artifact }}
+          PRIOR_CHECKPOINT: ${{ steps.descriptor.outputs.prior_checkpoint_chain_artifact }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/assignment" "$RUNNER_TEMP/data" "$RUNNER_TEMP/components" "$RUNNER_TEMP/prior"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$ASSIGNMENT_ARTIFACT" --dir "$RUNNER_TEMP/assignment"
+          while IFS= read -r artifact; do
+            test -n "$artifact"
+            mkdir -p "$RUNNER_TEMP/data/$artifact"
+            gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --name "$artifact" --dir "$RUNNER_TEMP/data/$artifact"
+          done < "$RUNNER_TEMP/descriptor-bundle/data-artifacts.txt"
+          while IFS= read -r artifact; do
+            test -n "$artifact"
+            mkdir -p "$RUNNER_TEMP/components/$artifact"
+            gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --name "$artifact" --dir "$RUNNER_TEMP/components/$artifact"
+          done < "$RUNNER_TEMP/descriptor-bundle/component-artifacts.txt"
+          if [ -n "$PRIOR_CHECKPOINT" ]; then
+            gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --name "$PRIOR_CHECKPOINT" --dir "$RUNNER_TEMP/prior"
+          fi
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          descriptor = json.loads(
+              (temp / "descriptor-bundle/recipe-descriptor.json").read_text()
+          )
+          assignment_root = temp / "assignment"
+          member = Path(descriptor["assignment_member"])
+          target = (assignment_root / member).resolve(strict=True)
+          if not target.is_relative_to(assignment_root.resolve()):
+              raise SystemExit("RECIPE_ASSIGNMENT_PATH_INVALID")
+          if hashlib.sha256(target.read_bytes()).hexdigest() != descriptor["assignment_sha256"]:
+              raise SystemExit("RECIPE_ASSIGNMENT_HASH_INVALID")
+          expected_artifacts = descriptor["component_bundle_artifacts"]
+          observed_artifacts = sorted(
+              path.name for path in (temp / "components").iterdir() if path.is_dir()
+          )
+          if observed_artifacts != expected_artifacts:
+              raise SystemExit("COMPONENT_PAYLOAD_INCOMPLETE")
+          bundle_ids = []
+          for artifact in expected_artifacts:
+              wrappers = list(
+                  (temp / "components" / artifact).rglob(
+                      "component_bundle_manifest.json"
+                  )
+              )
+              if len(wrappers) != 1:
+                  raise SystemExit("COMPONENT_PAYLOAD_INCOMPLETE")
+              wrapper = json.loads(wrappers[0].read_text())
+              bundle_ids.append(wrapper["bundle_identity_sha256"])
+          component_identity = {
+              "schema_version": "1",
+              "bundle_ids": bundle_ids,
+              "artifacts": expected_artifacts,
+          }
+          observed_manifest = hashlib.sha256(
+              json.dumps(
+                  component_identity,
+                  sort_keys=True,
+                  separators=(",", ":"),
+                  allow_nan=False,
+              ).encode()
+          ).hexdigest()
+          if observed_manifest != descriptor["component_bundle_manifest_sha256"]:
+              raise SystemExit("COMPONENT_PAYLOAD_MANIFEST_INVALID")
+          prior_name = descriptor["prior_checkpoint_chain_artifact"]
+          if prior_name:
+              try:
+                  resume_slot = int(prior_name.rsplit("-s", 1)[1])
+              except (IndexError, ValueError):
+                  raise SystemExit("RECOVERY_CHECKPOINT_NAME_INVALID") from None
+              prior_root = temp / "prior"
+              required = {
+                  "results.parquet",
+                  "receipt.json",
+                  "shard_attempt_manifest.json",
+                  "checkpoint_chain_manifest.json",
+              }
+              observed = {
+                  path.name for path in prior_root.iterdir() if path.is_file()
+              }
+              if not required.issubset(observed):
+                  raise SystemExit("RECOVERY_CHECKPOINT_CONTENT_MISSING")
+              chain = json.loads(
+                  (prior_root / "checkpoint_chain_manifest.json").read_text()
+              )
+              receipt_sha256 = hashlib.sha256(
+                  (prior_root / "receipt.json").read_bytes()
+              ).hexdigest()
+              if (
+                  chain.get("worker_id") != descriptor["worker_id"]
+                  or chain.get("slot_index") != resume_slot
+                  or chain.get("slot_count") != descriptor["checkpoint_slot_count"]
+                  or chain.get("current_receipt_sha256") != receipt_sha256
+              ):
+                  raise SystemExit("RECOVERY_CHECKPOINT_CHAIN_INVALID")
+              chain_identity = {
+                  key: value for key, value in chain.items() if key != "chain_sha256"
+              }
+              chain_sha256 = hashlib.sha256(
+                  json.dumps(
+                      chain_identity,
+                      sort_keys=True,
+                      separators=(",", ":"),
+                      allow_nan=False,
+                  ).encode()
+              ).hexdigest()
+              if chain_sha256 != chain.get("chain_sha256"):
+                  raise SystemExit("RECOVERY_CHECKPOINT_CHAIN_INVALID")
+              destination = temp / f"checkpoint-{resume_slot}"
+              shutil.copytree(prior_root, destination)
+          PY
+
+      - name: Assemble only the exact train input needed by recipes
+        shell: bash
         run: >-
-          python -m scripts.run_sp500_optimized_recipe_worker
+          python -m scripts.assemble_sp500_runtime_fragments
+          --fragment-root "$RUNNER_TEMP/data"
+          --output-dir "$RUNNER_TEMP/runtime"
+          --artifact-list-file "$RUNNER_TEMP/descriptor-bundle/data-artifacts.txt"
+          --prepared-input-identity-sha256 "${{ steps.descriptor.outputs.prepared_input_identity_sha256 }}"
+          --expected-artifact-manifest-sha256 "${{ steps.descriptor.outputs.data_partition_manifest_sha256 }}"
+
+      - name: Compute checkpoint segment 1
+        id: compute_1
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 1 &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 1 }}
+        shell: bash
+        run: >-
+          python -m scripts.run_catalog_recipe_worker_guarded
+          --failure-receipt "$RUNNER_TEMP/catalog-worker-failure.json"
+          --authority-id "${{ inputs.authority_id }}"
+          --campaign-id "${{ inputs.campaign_id }}"
+          --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
+          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --worker-id "${{ inputs.worker_id }}"
+          --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
+          --stage recipe_worker
+          --
           --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
           --catalog-dir config/sp500_megarun_strategy_catalog_v1
           --selected-config config/sp500_megarun_selected_dehb_13.json
-          --component-store "$RUNNER_TEMP/component-store"
-          --resolved-contract "$RUNNER_TEMP/plan/resolved_contract.json"
-          --run-plan "$RUNNER_TEMP/plan/run_plan.json"
-          --resume-work-manifest "$RUNNER_TEMP/plan/resume_work_manifest.json"
-          --recipe-dag "$RUNNER_TEMP/plan/recipe_dag.parquet"
-          --recipe-dag-manifest "$RUNNER_TEMP/plan/recipe_dag_manifest.json"
+          --component-store "$RUNNER_TEMP/components"
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
+          --run-plan "$RUNNER_TEMP/assignment/run_plan.json"
+          --resume-work-manifest "$RUNNER_TEMP/assignment/resume_work_manifest.json"
+          --recipe-dag "$RUNNER_TEMP/assignment/recipe_dag.parquet"
+          --recipe-dag-manifest "$RUNNER_TEMP/assignment/recipe_dag_manifest.json"
+          --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
+          --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
+          --checkpoint-slot-index 1
+          --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
           --admission-token "${{ inputs.admission_token_sha256 }}"
-          --shard-index "${{ inputs.shard_index }}" --total-shards "${{ inputs.active_workers }}"
-          --output-dir "outputs/shard-${{ inputs.shard_index }}"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ always() }}
+          --shard-index "${{ inputs.worker_id }}"
+          --total-shards "${{ steps.descriptor.outputs.active_recipe_workers }}"
+          --processes-per-worker-override "${{ steps.descriptor.outputs.processes_per_worker }}"
+          --block-size-override "${{ steps.descriptor.outputs.block_size }}"
+          --output-dir "$RUNNER_TEMP/checkpoint-1"
+
+      - name: Upload checkpoint segment 1
+        id: upload_1
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 1 &&
+          steps.compute_1.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: sp500-catalog-shard-${{ inputs.shard_index }}
-          path: outputs/shard-${{ inputs.shard_index }}
-          if-no-files-found: warn
+          name: ${{ steps.descriptor.outputs.checkpoint_artifact_1 }}
+          path: ${{ runner.temp }}/checkpoint-1
+          if-no-files-found: error
           retention-days: 30
-      - name: Preserve failure after uploading committed microshards
-        if: ${{ steps.evaluate.outcome != 'success' }}
-        run: exit 1
+          compression-level: 0
+
+      - name: Compute checkpoint segment 2
+        id: compute_2
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 2 &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 2 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 1 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_1.outcome == 'success' &&
+          steps.upload_1.outputs['artifact-id'] != '' &&
+          steps.upload_1.outputs['artifact-digest'] != '')) }}
+        shell: bash
+        run: >-
+          python -m scripts.run_catalog_recipe_worker_guarded
+          --failure-receipt "$RUNNER_TEMP/catalog-worker-failure.json"
+          --authority-id "${{ inputs.authority_id }}"
+          --campaign-id "${{ inputs.campaign_id }}"
+          --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
+          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --worker-id "${{ inputs.worker_id }}"
+          --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
+          --stage recipe_worker
+          --
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --component-store "$RUNNER_TEMP/components"
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
+          --run-plan "$RUNNER_TEMP/assignment/run_plan.json"
+          --resume-work-manifest "$RUNNER_TEMP/assignment/resume_work_manifest.json"
+          --recipe-dag "$RUNNER_TEMP/assignment/recipe_dag.parquet"
+          --recipe-dag-manifest "$RUNNER_TEMP/assignment/recipe_dag_manifest.json"
+          --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
+          --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
+          --checkpoint-slot-index 2
+          --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
+          --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-1/receipt.json"
+          --admission-token "${{ inputs.admission_token_sha256 }}"
+          --shard-index "${{ inputs.worker_id }}"
+          --total-shards "${{ steps.descriptor.outputs.active_recipe_workers }}"
+          --processes-per-worker-override "${{ steps.descriptor.outputs.processes_per_worker }}"
+          --block-size-override "${{ steps.descriptor.outputs.block_size }}"
+          --output-dir "$RUNNER_TEMP/checkpoint-2"
+
+      - name: Upload checkpoint segment 2
+        id: upload_2
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 2 &&
+          steps.compute_2.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.descriptor.outputs.checkpoint_artifact_2 }}
+          path: ${{ runner.temp }}/checkpoint-2
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Compute checkpoint segment 3
+        id: compute_3
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 3 &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 3 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 2 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_2.outcome == 'success' &&
+          steps.upload_2.outputs['artifact-id'] != '' &&
+          steps.upload_2.outputs['artifact-digest'] != '')) }}
+        shell: bash
+        run: >-
+          python -m scripts.run_catalog_recipe_worker_guarded
+          --failure-receipt "$RUNNER_TEMP/catalog-worker-failure.json"
+          --authority-id "${{ inputs.authority_id }}"
+          --campaign-id "${{ inputs.campaign_id }}"
+          --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
+          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --worker-id "${{ inputs.worker_id }}"
+          --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
+          --stage recipe_worker
+          --
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --component-store "$RUNNER_TEMP/components"
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
+          --run-plan "$RUNNER_TEMP/assignment/run_plan.json"
+          --resume-work-manifest "$RUNNER_TEMP/assignment/resume_work_manifest.json"
+          --recipe-dag "$RUNNER_TEMP/assignment/recipe_dag.parquet"
+          --recipe-dag-manifest "$RUNNER_TEMP/assignment/recipe_dag_manifest.json"
+          --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
+          --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
+          --checkpoint-slot-index 3
+          --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
+          --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-2/receipt.json"
+          --admission-token "${{ inputs.admission_token_sha256 }}"
+          --shard-index "${{ inputs.worker_id }}"
+          --total-shards "${{ steps.descriptor.outputs.active_recipe_workers }}"
+          --processes-per-worker-override "${{ steps.descriptor.outputs.processes_per_worker }}"
+          --block-size-override "${{ steps.descriptor.outputs.block_size }}"
+          --output-dir "$RUNNER_TEMP/checkpoint-3"
+
+      - name: Upload checkpoint segment 3
+        id: upload_3
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 3 &&
+          steps.compute_3.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.descriptor.outputs.checkpoint_artifact_3 }}
+          path: ${{ runner.temp }}/checkpoint-3
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Compute checkpoint segment 4
+        id: compute_4
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 4 &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 4 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 3 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_3.outcome == 'success' &&
+          steps.upload_3.outputs['artifact-id'] != '' &&
+          steps.upload_3.outputs['artifact-digest'] != '')) }}
+        shell: bash
+        run: >-
+          python -m scripts.run_catalog_recipe_worker_guarded
+          --failure-receipt "$RUNNER_TEMP/catalog-worker-failure.json"
+          --authority-id "${{ inputs.authority_id }}"
+          --campaign-id "${{ inputs.campaign_id }}"
+          --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
+          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --worker-id "${{ inputs.worker_id }}"
+          --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
+          --stage recipe_worker
+          --
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --component-store "$RUNNER_TEMP/components"
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
+          --run-plan "$RUNNER_TEMP/assignment/run_plan.json"
+          --resume-work-manifest "$RUNNER_TEMP/assignment/resume_work_manifest.json"
+          --recipe-dag "$RUNNER_TEMP/assignment/recipe_dag.parquet"
+          --recipe-dag-manifest "$RUNNER_TEMP/assignment/recipe_dag_manifest.json"
+          --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
+          --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
+          --checkpoint-slot-index 4
+          --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
+          --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-3/receipt.json"
+          --admission-token "${{ inputs.admission_token_sha256 }}"
+          --shard-index "${{ inputs.worker_id }}"
+          --total-shards "${{ steps.descriptor.outputs.active_recipe_workers }}"
+          --processes-per-worker-override "${{ steps.descriptor.outputs.processes_per_worker }}"
+          --block-size-override "${{ steps.descriptor.outputs.block_size }}"
+          --output-dir "$RUNNER_TEMP/checkpoint-4"
+
+      - name: Upload checkpoint segment 4
+        id: upload_4
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 4 &&
+          steps.compute_4.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.descriptor.outputs.checkpoint_artifact_4 }}
+          path: ${{ runner.temp }}/checkpoint-4
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Compute checkpoint segment 5
+        id: compute_5
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 5 &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 5 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 4 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_4.outcome == 'success' &&
+          steps.upload_4.outputs['artifact-id'] != '' &&
+          steps.upload_4.outputs['artifact-digest'] != '')) }}
+        shell: bash
+        run: >-
+          python -m scripts.run_catalog_recipe_worker_guarded
+          --failure-receipt "$RUNNER_TEMP/catalog-worker-failure.json"
+          --authority-id "${{ inputs.authority_id }}"
+          --campaign-id "${{ inputs.campaign_id }}"
+          --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
+          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --worker-id "${{ inputs.worker_id }}"
+          --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
+          --stage recipe_worker
+          --
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --component-store "$RUNNER_TEMP/components"
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
+          --run-plan "$RUNNER_TEMP/assignment/run_plan.json"
+          --resume-work-manifest "$RUNNER_TEMP/assignment/resume_work_manifest.json"
+          --recipe-dag "$RUNNER_TEMP/assignment/recipe_dag.parquet"
+          --recipe-dag-manifest "$RUNNER_TEMP/assignment/recipe_dag_manifest.json"
+          --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
+          --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
+          --checkpoint-slot-index 5
+          --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
+          --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-4/receipt.json"
+          --admission-token "${{ inputs.admission_token_sha256 }}"
+          --shard-index "${{ inputs.worker_id }}"
+          --total-shards "${{ steps.descriptor.outputs.active_recipe_workers }}"
+          --processes-per-worker-override "${{ steps.descriptor.outputs.processes_per_worker }}"
+          --block-size-override "${{ steps.descriptor.outputs.block_size }}"
+          --output-dir "$RUNNER_TEMP/checkpoint-5"
+
+      - name: Upload checkpoint segment 5
+        id: upload_5
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 5 &&
+          steps.compute_5.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.descriptor.outputs.checkpoint_artifact_5 }}
+          path: ${{ runner.temp }}/checkpoint-5
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Compute checkpoint segment 6
+        id: compute_6
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 6 &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 6 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 5 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_5.outcome == 'success' &&
+          steps.upload_5.outputs['artifact-id'] != '' &&
+          steps.upload_5.outputs['artifact-digest'] != '')) }}
+        shell: bash
+        run: >-
+          python -m scripts.run_catalog_recipe_worker_guarded
+          --failure-receipt "$RUNNER_TEMP/catalog-worker-failure.json"
+          --authority-id "${{ inputs.authority_id }}"
+          --campaign-id "${{ inputs.campaign_id }}"
+          --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
+          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --worker-id "${{ inputs.worker_id }}"
+          --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
+          --stage recipe_worker
+          --
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --component-store "$RUNNER_TEMP/components"
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
+          --run-plan "$RUNNER_TEMP/assignment/run_plan.json"
+          --resume-work-manifest "$RUNNER_TEMP/assignment/resume_work_manifest.json"
+          --recipe-dag "$RUNNER_TEMP/assignment/recipe_dag.parquet"
+          --recipe-dag-manifest "$RUNNER_TEMP/assignment/recipe_dag_manifest.json"
+          --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
+          --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
+          --checkpoint-slot-index 6
+          --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
+          --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-5/receipt.json"
+          --admission-token "${{ inputs.admission_token_sha256 }}"
+          --shard-index "${{ inputs.worker_id }}"
+          --total-shards "${{ steps.descriptor.outputs.active_recipe_workers }}"
+          --processes-per-worker-override "${{ steps.descriptor.outputs.processes_per_worker }}"
+          --block-size-override "${{ steps.descriptor.outputs.block_size }}"
+          --output-dir "$RUNNER_TEMP/checkpoint-6"
+
+      - name: Upload checkpoint segment 6
+        id: upload_6
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 6 &&
+          steps.compute_6.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.descriptor.outputs.checkpoint_artifact_6 }}
+          path: ${{ runner.temp }}/checkpoint-6
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Compute checkpoint segment 7
+        id: compute_7
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 7 &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 7 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 6 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_6.outcome == 'success' &&
+          steps.upload_6.outputs['artifact-id'] != '' &&
+          steps.upload_6.outputs['artifact-digest'] != '')) }}
+        shell: bash
+        run: >-
+          python -m scripts.run_catalog_recipe_worker_guarded
+          --failure-receipt "$RUNNER_TEMP/catalog-worker-failure.json"
+          --authority-id "${{ inputs.authority_id }}"
+          --campaign-id "${{ inputs.campaign_id }}"
+          --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
+          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --worker-id "${{ inputs.worker_id }}"
+          --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
+          --stage recipe_worker
+          --
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --component-store "$RUNNER_TEMP/components"
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
+          --run-plan "$RUNNER_TEMP/assignment/run_plan.json"
+          --resume-work-manifest "$RUNNER_TEMP/assignment/resume_work_manifest.json"
+          --recipe-dag "$RUNNER_TEMP/assignment/recipe_dag.parquet"
+          --recipe-dag-manifest "$RUNNER_TEMP/assignment/recipe_dag_manifest.json"
+          --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
+          --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
+          --checkpoint-slot-index 7
+          --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
+          --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-6/receipt.json"
+          --admission-token "${{ inputs.admission_token_sha256 }}"
+          --shard-index "${{ inputs.worker_id }}"
+          --total-shards "${{ steps.descriptor.outputs.active_recipe_workers }}"
+          --processes-per-worker-override "${{ steps.descriptor.outputs.processes_per_worker }}"
+          --block-size-override "${{ steps.descriptor.outputs.block_size }}"
+          --output-dir "$RUNNER_TEMP/checkpoint-7"
+
+      - name: Upload checkpoint segment 7
+        id: upload_7
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 7 &&
+          steps.compute_7.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.descriptor.outputs.checkpoint_artifact_7 }}
+          path: ${{ runner.temp }}/checkpoint-7
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Compute checkpoint segment 8
+        id: compute_8
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 8 &&
+          fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 8 &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) == 7 &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (steps.upload_7.outcome == 'success' &&
+          steps.upload_7.outputs['artifact-id'] != '' &&
+          steps.upload_7.outputs['artifact-digest'] != '')) }}
+        shell: bash
+        run: >-
+          python -m scripts.run_catalog_recipe_worker_guarded
+          --failure-receipt "$RUNNER_TEMP/catalog-worker-failure.json"
+          --authority-id "${{ inputs.authority_id }}"
+          --campaign-id "${{ inputs.campaign_id }}"
+          --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
+          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --worker-id "${{ inputs.worker_id }}"
+          --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
+          --stage recipe_worker
+          --
+          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
+          --catalog-dir config/sp500_megarun_strategy_catalog_v1
+          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --component-store "$RUNNER_TEMP/components"
+          --runtime-input-pack "$RUNNER_TEMP/runtime"
+          --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
+          --run-plan "$RUNNER_TEMP/assignment/run_plan.json"
+          --resume-work-manifest "$RUNNER_TEMP/assignment/resume_work_manifest.json"
+          --recipe-dag "$RUNNER_TEMP/assignment/recipe_dag.parquet"
+          --recipe-dag-manifest "$RUNNER_TEMP/assignment/recipe_dag_manifest.json"
+          --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
+          --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
+          --checkpoint-slot-index 8
+          --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
+          --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-7/receipt.json"
+          --admission-token "${{ inputs.admission_token_sha256 }}"
+          --shard-index "${{ inputs.worker_id }}"
+          --total-shards "${{ steps.descriptor.outputs.active_recipe_workers }}"
+          --processes-per-worker-override "${{ steps.descriptor.outputs.processes_per_worker }}"
+          --block-size-override "${{ steps.descriptor.outputs.block_size }}"
+          --output-dir "$RUNNER_TEMP/checkpoint-8"
+
+      - name: Upload checkpoint segment 8
+        id: upload_8
+        if: >-
+          ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 8 &&
+          steps.compute_8.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.descriptor.outputs.checkpoint_artifact_8 }}
+          path: ${{ runner.temp }}/checkpoint-8
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Verify the final durable checkpoint upload receipt
+        id: durable_chain
+        if: >-
+          ${{ always() &&
+          ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) ==
+          fromJSON(steps.descriptor.outputs.checkpoint_slot_count) &&
+          steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
+          (fromJSON(steps.descriptor.outputs.checkpoint_slot_count) == 1 &&
+          steps.upload_1.outcome == 'success') ||
+          (fromJSON(steps.descriptor.outputs.checkpoint_slot_count) == 2 &&
+          steps.upload_2.outcome == 'success') ||
+          (fromJSON(steps.descriptor.outputs.checkpoint_slot_count) == 4 &&
+          steps.upload_4.outcome == 'success') ||
+          (fromJSON(steps.descriptor.outputs.checkpoint_slot_count) == 8 &&
+          steps.upload_8.outcome == 'success')) }}
+        shell: bash
+        env:
+          CHECKPOINT_SLOT_COUNT: ${{ steps.descriptor.outputs.checkpoint_slot_count }}
+          RESUME_COMPLETED_SLOT_COUNT: ${{ steps.descriptor.outputs.resume_completed_slot_count }}
+          PRIOR_CHECKPOINT: ${{ steps.descriptor.outputs.prior_checkpoint_chain_artifact }}
+          ARTIFACT_ID_1: ${{ steps.upload_1.outputs['artifact-id'] }}
+          ARTIFACT_DIGEST_1: ${{ steps.upload_1.outputs['artifact-digest'] }}
+          ARTIFACT_ID_2: ${{ steps.upload_2.outputs['artifact-id'] }}
+          ARTIFACT_DIGEST_2: ${{ steps.upload_2.outputs['artifact-digest'] }}
+          ARTIFACT_ID_4: ${{ steps.upload_4.outputs['artifact-id'] }}
+          ARTIFACT_DIGEST_4: ${{ steps.upload_4.outputs['artifact-digest'] }}
+          ARTIFACT_ID_8: ${{ steps.upload_8.outputs['artifact-id'] }}
+          ARTIFACT_DIGEST_8: ${{ steps.upload_8.outputs['artifact-digest'] }}
+        run: |
+          set -euo pipefail
+          if [ "$RESUME_COMPLETED_SLOT_COUNT" -eq "$CHECKPOINT_SLOT_COUNT" ]; then
+            test -n "$PRIOR_CHECKPOINT"
+            exit 0
+          fi
+          id_name="ARTIFACT_ID_${CHECKPOINT_SLOT_COUNT}"
+          digest_name="ARTIFACT_DIGEST_${CHECKPOINT_SLOT_COUNT}"
+          test -n "${!id_name}"
+          test -n "${!digest_name}"
+
+      - name: Seal the exact failed worker attempt
+        id: failure
+        if: ${{ always() && steps.durable_chain.outcome != 'success' }}
+        shell: bash
+        env:
+          AUTHORITY_ID: ${{ inputs.authority_id }}
+          CAMPAIGN_ID: ${{ inputs.campaign_id }}
+          EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
+          PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          WORKER_ID: ${{ inputs.worker_id }}
+          VERIFIED_ATTEMPT_ID: ${{ steps.descriptor.outputs.attempt_id }}
+          COMPUTE_1: ${{ steps.compute_1.outcome }}
+          COMPUTE_2: ${{ steps.compute_2.outcome }}
+          COMPUTE_3: ${{ steps.compute_3.outcome }}
+          COMPUTE_4: ${{ steps.compute_4.outcome }}
+          COMPUTE_5: ${{ steps.compute_5.outcome }}
+          COMPUTE_6: ${{ steps.compute_6.outcome }}
+          COMPUTE_7: ${{ steps.compute_7.outcome }}
+          COMPUTE_8: ${{ steps.compute_8.outcome }}
+          UPLOAD_1: ${{ steps.upload_1.outcome }}
+          UPLOAD_2: ${{ steps.upload_2.outcome }}
+          UPLOAD_3: ${{ steps.upload_3.outcome }}
+          UPLOAD_4: ${{ steps.upload_4.outcome }}
+          UPLOAD_5: ${{ steps.upload_5.outcome }}
+          UPLOAD_6: ${{ steps.upload_6.outcome }}
+          UPLOAD_7: ${{ steps.upload_7.outcome }}
+          UPLOAD_8: ${{ steps.upload_8.outcome }}
+        run: |
+          set -euo pipefail
+          attempt_id="$VERIFIED_ATTEMPT_ID"
+          if [ -z "$attempt_id" ]; then
+            attempt_id="$AUTHORITY_ID:worker:$WORKER_ID:unverified:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT"
+          fi
+          common=(
+            --authority-id "$AUTHORITY_ID"
+            --campaign-id "$CAMPAIGN_ID"
+            --execution-plan-sha256 "$EXECUTION_PLAN_SHA256"
+            --protected-commit-sha "$PROTECTED_COMMIT_SHA"
+            --worker-id "$WORKER_ID"
+            --attempt-id "$attempt_id"
+            --output "$RUNNER_TEMP/catalog-worker-failure-final.json"
+            --github-output "$GITHUB_OUTPUT"
+          )
+          if [ -f "$RUNNER_TEMP/catalog-worker-failure.json" ]; then
+            python -m scripts.prepare_catalog_worker_failure \
+              "${common[@]}" \
+              --existing "$RUNNER_TEMP/catalog-worker-failure.json"
+            exit 0
+          fi
+          reason="UNKNOWN_WORKER_FAILURE"
+          stage="setup"
+          source="WORKER_STEP_FAILED_WITHOUT_CLASSIFIED_RECEIPT"
+          for outcome in \
+            "$UPLOAD_1" "$UPLOAD_2" "$UPLOAD_3" "$UPLOAD_4" \
+            "$UPLOAD_5" "$UPLOAD_6" "$UPLOAD_7" "$UPLOAD_8"; do
+            if [ "$outcome" = "failure" ]; then
+              reason="ARTIFACT_UPLOAD_FAILED"
+              stage="checkpoint_upload"
+              source="CHECKPOINT_ARTIFACT_UPLOAD_FAILED"
+            fi
+          done
+          any_compute="false"
+          for outcome in \
+            "$COMPUTE_1" "$COMPUTE_2" "$COMPUTE_3" "$COMPUTE_4" \
+            "$COMPUTE_5" "$COMPUTE_6" "$COMPUTE_7" "$COMPUTE_8"; do
+            if [ "$outcome" = "success" ] || [ "$outcome" = "failure" ]; then
+              any_compute="true"
+            fi
+          done
+          if [ "$reason" = "UNKNOWN_WORKER_FAILURE" ] && \
+             [ "$any_compute" = "true" ]; then
+            reason="INTEGRITY_ERROR"
+            stage="terminal_manifest"
+            source="DURABLE_CHECKPOINT_RECEIPT_INVALID"
+          fi
+          python -m scripts.prepare_catalog_worker_failure \
+            "${common[@]}" \
+            --stage "$stage" \
+            --reason-code "$reason" \
+            --exit-code 1 \
+            --exception-type WorkflowStepFailure \
+            --source-error-code "$source"
+
+      - name: Publish the sealed failed worker attempt
+        if: ${{ always() && steps.failure.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.failure.outputs.failure_artifact }}
+          path: ${{ runner.temp }}/catalog-worker-failure-final.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Write tiny terminal attempt manifest without result rows
+        id: terminal
+        if: ${{ always() && steps.durable_chain.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          descriptor = json.loads(
+              (temp / "descriptor-bundle/recipe-descriptor.json").read_text()
+          )
+          completed = []
+          prior = descriptor["prior_checkpoint_chain_artifact"]
+          resume_slot = int(prior.rsplit("-s", 1)[1]) if prior else 0
+          if resume_slot:
+              receipt = temp / f"checkpoint-{resume_slot}/receipt.json"
+              if not receipt.is_file():
+                  raise SystemExit("RECOVERY_CHECKPOINT_RECEIPT_MISSING")
+              completed.append(
+                  {
+                      "slot": resume_slot,
+                      "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+                      "cumulative_prior_chain": True,
+                  }
+              )
+          for index in range(resume_slot + 1, descriptor["checkpoint_slot_count"] + 1):
+              root = temp / f"checkpoint-{index}"
+              receipt = root / "receipt.json"
+              if not receipt.is_file():
+                  raise SystemExit("CHECKPOINT_RECEIPT_MISSING")
+              completed.append(
+                  {
+                      "slot": index,
+                      "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+                      "cumulative_prior_chain": False,
+                  }
+              )
+          payload = {
+              "schema_version": "1",
+              "worker_id": descriptor["worker_id"],
+              "attempt_id": descriptor["attempt_id"],
+              "completed_checkpoint_slots": completed,
+              "expected_strategy_count": descriptor["expected_strategy_count"],
+              "terminal_contains_result_rows": False,
+              "validation_opened": False,
+              "locked_opened": False,
+          }
+          Path("terminal-attempt-manifest.json").write_text(
+              json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload tiny terminal attempt manifest
+        if: ${{ steps.terminal.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.descriptor.outputs.terminal_attempt_artifact }}
+          path: terminal-attempt-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

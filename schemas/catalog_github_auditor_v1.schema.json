@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trading-optimizer-lab-org/aurora/schemas/catalog_github_auditor_v1.schema.json",
+  "title": "AURORA catalog GitHub auditor v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repository",
+    "expected_app_slug",
+    "public_key_sha256",
+    "required_repository_permissions",
+    "required_organization_permissions",
+    "required_enterprise_permissions",
+    "forbidden_write_permissions",
+    "private_key_environment_secret",
+    "app_id_variable"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "repository": {"const": "trading-optimizer-lab-org/aurora"},
+    "expected_app_slug": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"}
+      ]
+    },
+    "public_key_sha256": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      ]
+    },
+    "required_repository_permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actions",
+        "administration",
+        "contents",
+        "environments",
+        "issues",
+        "metadata",
+        "packages",
+        "variables"
+      ],
+      "properties": {
+        "actions": {"const": "read"},
+        "administration": {"const": "read"},
+        "contents": {"const": "read"},
+        "environments": {"const": "read"},
+        "issues": {"const": "read"},
+        "metadata": {"const": "read"},
+        "packages": {"const": "read"},
+        "variables": {"const": "read"}
+      }
+    },
+    "required_organization_permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["administration"],
+      "properties": {"administration": {"const": "read"}}
+    },
+    "required_enterprise_permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0,
+      "properties": {}
+    },
+    "forbidden_write_permissions": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "prefixItems": [
+        {"const": "actions"},
+        {"const": "administration"},
+        {"const": "contents"},
+        {"const": "environments"},
+        {"const": "issues"},
+        {"const": "packages"},
+        {"const": "pull_requests"},
+        {"const": "secrets"},
+        {"const": "variables"},
+        {"const": "workflows"}
+      ],
+      "items": false
+    },
+    "private_key_environment_secret": {
+      "const": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY"
+    },
+    "app_id_variable": {"const": "AURORA_CATALOG_AUDITOR_APP_ID"}
+  }
+}

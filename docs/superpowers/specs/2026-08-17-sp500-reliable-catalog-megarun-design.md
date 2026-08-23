@@ -1,9 +1,9 @@
 # Diseño: mega-run SP500 fiable con catálogos prediseñados
 
-**Fecha:** 2026-08-17  
-**Estado:** diseño aprobado conversacionalmente; pendiente de revisión escrita  
-**Worktree autoritativo:** `C:\Users\HP\AURORA_sp500_search_method_benchmark_short`  
-**Rama:** `codex/sp500-search-method-benchmark-short`  
+**Fecha:** 2026-08-17
+**Estado:** diseño aprobado conversacionalmente; pendiente de revisión escrita
+**Worktree autoritativo:** `C:\Users\HP\AURORA_sp500_search_method_benchmark_short`
+**Rama:** `codex/sp500-search-method-benchmark-short`
 **Ámbito:** SPY como representación operativa del S&P 500, entrenamiento hasta `2010-12-31`
 
 ## 1. Objetivo

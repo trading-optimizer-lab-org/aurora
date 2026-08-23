@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from aurora.infra.sp500_megarun.atlas_execution_contract import (
     write_plan,
 )
 from aurora.infra.sp500_megarun.atlas_campaign_selection import build_campaign_selection
+from scripts.merge_sp500_atlas_reference import merge_reference_chunks
+from scripts.recover_sp500_atlas_reference import recover_reference_chunk
 from scripts.reduce_sp500_atlas_run import reduce_atlas_run
 
 
@@ -113,6 +116,7 @@ def _evidence() -> tuple[dict[str, object], dict[str, object]]:
         "hard_limit_seconds": 1200.0,
         "target_recipe_count_with_margin": 8,
         "recipes_per_minute": 10.0,
+        "recommended_mode": "cold",
         "available_minutes_to_target": 100.0,
         "safety_fraction": 0.8,
         "validation_opened": False,
@@ -155,6 +159,53 @@ def test_plan_round_trip_and_hash(tmp_path: Path) -> None:
     assert load_plan(path).plan_sha256 == plan.plan_sha256
     assert sum(row.expected_recipe_count for row in plan.shards) == 8
     assert plan.matrix_groups() == ((0, 3), (1,), (2,))
+
+
+def test_loaded_plan_sha256_is_computed_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aurora.infra.sp500_megarun.atlas_execution_contract as contract
+
+    catalog, receipt = _evidence()
+    plan = build_run_plan(
+        catalog_manifest=catalog,
+        calibration_receipt=receipt,
+        target_end_iso="2026-08-20T07:31:00+02:00",
+        implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+        total_shards=4,
+        selection=_selection(),
+    )
+    plan_path = tmp_path / "plan.json"
+    write_plan(plan_path, plan)
+
+    original = contract.canonical_sha256
+    plan_hash_calls = 0
+
+    def count_plan_hash(value: object) -> str:
+        nonlocal plan_hash_calls
+        if isinstance(value, contract.AtlasRunPlanV1):
+            plan_hash_calls += 1
+        return original(value)
+
+    monkeypatch.setattr(contract, "canonical_sha256", count_plan_hash)
+    loaded = contract.load_plan(plan_path)
+
+    assert loaded.plan_sha256 == loaded.plan_sha256
+    assert plan_hash_calls == 1
+
+
+def test_plan_rejects_warm_calibration_for_conservative_sizing() -> None:
+    catalog, receipt = _evidence()
+    receipt["recommended_mode"] = "component_warm"
+    with pytest.raises(ValueError, match="ATLAS_PLAN_CALIBRATION_MODE_INVALID"):
+        build_run_plan(
+            catalog_manifest=catalog,
+            calibration_receipt=receipt,
+            target_end_iso="2026-08-20T07:31:00+02:00",
+            implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+            total_shards=4,
+            selection=_selection(),
+        )
 
 
 def test_plan_binds_stratified_selection_instead_of_a_prefix(tmp_path: Path) -> None:
@@ -267,6 +318,222 @@ def test_reducer_requires_every_shard_and_preserves_all_rows(tmp_path: Path) -> 
     assert output.joinpath("pareto_strategies.parquet").is_file()
 
 
+def test_reducer_artifact_recovery_can_bind_rows_to_verified_file_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog, receipt = _evidence()
+    plan = build_run_plan(
+        catalog_manifest=catalog,
+        calibration_receipt=receipt,
+        target_end_iso="2026-08-20T07:31:00+02:00",
+        implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+        total_shards=4,
+        selection=_selection(),
+    )
+    plan_path = tmp_path / "plan.json"
+    write_plan(plan_path, plan)
+    shards = tmp_path / "shards"
+    shards.mkdir()
+    for index in range(4):
+        _write_shard(shards, plan, index)
+
+    def fail_if_rehashed(*args: object, **kwargs: object) -> str:
+        raise AssertionError("artifact recovery must not rehash every row")
+
+    monkeypatch.setattr("scripts.reduce_sp500_atlas_run.canonical_sha256", fail_if_rehashed)
+    import scripts.reduce_sp500_atlas_run as reducer
+
+    original_sha256_file = reducer._sha256_file
+    original_reader = reducer._read_rows_with_recovery_raw_lines
+    reader_paths: list[Path] = []
+
+    def track_reader(path: Path, **kwargs: object) -> object:
+        reader_paths.append(path)
+        return original_reader(path, **kwargs)
+
+    def fail_if_source_rehashed(path: Path, *args: object, **kwargs: object) -> str:
+        if path.parent.name.startswith("shard-"):
+            raise AssertionError("artifact recovery must hash each source while reading it")
+        return original_sha256_file(path)
+
+    monkeypatch.setattr("scripts.reduce_sp500_atlas_run._sha256_file", fail_if_source_rehashed)
+    monkeypatch.setattr(reducer, "_read_rows_with_recovery_raw_lines", track_reader)
+    summary = reduce_atlas_run(
+        plan_path=plan_path,
+        partitions_root=shards,
+        output_dir=tmp_path / "out",
+        verify_row_hashes=False,
+    )
+
+    assert summary["verified_recipe_count"] == 8
+    assert summary["row_hash_verification_mode"] == "artifact_file_hash_bound"
+    assert not reader_paths or reader_paths == [tmp_path / "out" / "results.jsonl"]
+    expected_results = b"".join(
+        (shards / f"shard-{index}" / "results.jsonl").read_bytes()
+        for index in range(4)
+    )
+    assert (tmp_path / "out" / "results.jsonl").read_bytes() == expected_results
+
+
+def test_reference_only_recovery_keeps_source_artifact_index_without_concat(
+    tmp_path: Path,
+) -> None:
+    catalog, receipt = _evidence()
+    plan = build_run_plan(
+        catalog_manifest=catalog,
+        calibration_receipt=receipt,
+        target_end_iso="2026-08-20T07:31:00+02:00",
+        implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+        total_shards=4,
+        selection=_selection(),
+    )
+    plan_path = tmp_path / "plan.json"
+    write_plan(plan_path, plan)
+    shards = tmp_path / "shards"
+    shards.mkdir()
+    for index in range(4):
+        _write_shard(shards, plan, index)
+
+    output = tmp_path / "reference-final"
+    summary = reduce_atlas_run(
+        plan_path=plan_path,
+        partitions_root=shards,
+        output_dir=output,
+        verify_row_hashes=False,
+        reference_only=True,
+        source_run_id="32152827229",
+    )
+
+    source_index = json.loads((output / "source_results_index.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output / "all_results_manifest.json").read_text(encoding="utf-8"))
+    assert summary["storage_mode"] == "source_artifacts_referenced"
+    assert summary["source_run_id"] == "32152827229"
+    assert source_index["row_count"] == 8
+    assert source_index["shard_count"] == 4
+    assert len(source_index["shards"]) == 4
+    assert manifest["results_path"] is None
+    assert manifest["source_index_path"] == "../source_results_index.json"
+    assert not (output / "results.jsonl").exists()
+
+
+def test_reference_recovery_chunks_merge_full_source_coverage(tmp_path: Path) -> None:
+    catalog, receipt = _evidence()
+    plan = build_run_plan(
+        catalog_manifest=catalog,
+        calibration_receipt=receipt,
+        target_end_iso="2026-08-20T07:31:00+02:00",
+        implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+        total_shards=4,
+        selection=_selection(),
+    )
+    plan_path = tmp_path / "plan.json"
+    write_plan(plan_path, plan)
+    chunks_root = tmp_path / "chunks"
+    chunks_root.mkdir()
+    for chunk_index, (start, stop) in enumerate(((0, 2), (2, 4))):
+        source_root = tmp_path / f"source-{chunk_index}"
+        source_root.mkdir()
+        for index in range(start, stop):
+            _write_shard(source_root, plan, index)
+        recover_reference_chunk(
+            plan_path=plan_path,
+            partitions_root=source_root,
+            output_dir=chunks_root / f"chunk-{chunk_index}",
+            chunk_index=chunk_index,
+            chunk_start=start,
+            chunk_stop=stop,
+            source_run_id="32152827229",
+            workers=2,
+        )
+
+    output = tmp_path / "merged"
+    summary = merge_reference_chunks(
+        plan_path=plan_path,
+        chunks_root=chunks_root,
+        output_dir=output,
+        source_run_id="32152827229",
+        expected_chunks=2,
+    )
+    index = json.loads((output / "source_results_index.json").read_text(encoding="utf-8"))
+    assert summary["accepted"] is True
+    assert summary["verified_recipe_count"] == 8
+    assert summary["verified_shard_count"] == 4
+    assert len(index["shards"]) == 4
+    assert not (output / "results.jsonl").exists()
+
+
+def test_recovery_decoder_skips_large_nested_annual_rows() -> None:
+    import scripts.reduce_sp500_atlas_run as reducer
+
+    row = {
+        "annual_rows": [
+            {
+                "strategy_return": -0.1,
+                "spy_return": 0.2,
+                "year": 2000,
+                "nested": {"text": "escaped \\\"value\\\""},
+            }
+        ],
+        "plan_sha256": "p" * 64,
+        "shard_index": 2,
+        "validation_opened": False,
+        "locked_opened": False,
+        "result_sha256": "r" * 64,
+        "ordinal": 7,
+        "strategy_id": "strategy-7",
+        "scientific_recipe_sha256": "s" * 64,
+        "raw_ordinal": None,
+        "positive_weeks": 10,
+        "positive_months": 8,
+        "joint_positive_above_spy_years": 3,
+        "total_weeks": 12,
+        "total_months": 12,
+        "total_years": 4,
+        "positive_week_fraction": 0.8,
+        "positive_month_fraction": 0.7,
+        "joint_positive_above_spy_fraction": 0.6,
+        "annualized_strategy_return": 0.2,
+        "annualized_alpha": 0.1,
+        "weeks_beating_spy": 9,
+        "week_count": 12,
+        "components": ["signal-a"],
+        "composition": {"direction": 1, "kind": "single"},
+        "evaluation_origin": "physical",
+        "position_sha256": "x" * 64,
+        "strategy_kind": "catalog",
+    }
+    raw_line = json.dumps(row, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+
+    decoded = reducer._decode_recovery_row(raw_line, 1)
+
+    assert decoded == {key: value for key, value in row.items() if key in reducer._RECOVERY_ROW_FIELDS}
+    assert "annual_rows" not in decoded
+    assert decoded["components"] == ["signal-a"]
+    assert decoded["composition"] == {"direction": 1, "kind": "single"}
+
+
+def test_reducer_near_frontier_checks_exact_unit_cube() -> None:
+    import scripts.reduce_sp500_atlas_run as reducer
+
+    frontier = {(10, 20, 3), (12, 18, 4), (20, 20, 8)}
+    cells = {
+        (9, 19, 2),   # close to (10, 20, 3)
+        (10, 20, 2),  # close to (10, 20, 3)
+        (11, 18, 3),  # close to (12, 18, 4)
+        (8, 19, 2),   # week difference is two: not close
+        (10, 19, 1),  # year difference is two: not close
+        (19, 20, 6),  # year difference is two: not close
+    }
+
+    for cell in cells:
+        expected = any(
+            all(front[index] >= cell[index] for index in range(3))
+            and max(front[index] - cell[index] for index in range(3)) <= 1
+            for front in frontier
+        )
+        assert reducer._is_near_frontier(cell, frontier) is expected
+
+
 def test_reducer_rejects_missing_shard(tmp_path: Path) -> None:
     catalog, receipt = _evidence()
     plan = build_run_plan(
@@ -285,3 +552,31 @@ def test_reducer_rejects_missing_shard(tmp_path: Path) -> None:
         _write_shard(shards, plan, index)
     with pytest.raises(ValueError, match="SHARD_COVERAGE_INVALID"):
         reduce_atlas_run(plan_path=plan_path, partitions_root=shards, output_dir=tmp_path / "out")
+
+
+def test_reducer_accepts_identical_duplicate_receipt_and_records_redundancy(tmp_path: Path) -> None:
+    catalog, receipt = _evidence()
+    plan = build_run_plan(
+        catalog_manifest=catalog,
+        calibration_receipt=receipt,
+        target_end_iso="2026-08-20T07:31:00+02:00",
+        implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+        total_shards=4,
+        selection=_selection(),
+    )
+    plan_path = tmp_path / "plan.json"
+    write_plan(plan_path, plan)
+    shards = tmp_path / "shards"
+    shards.mkdir()
+    for index in range(4):
+        _write_shard(shards, plan, index)
+    shutil.copytree(shards / "shard-0", shards / "duplicate-shard-0")
+
+    summary = reduce_atlas_run(
+        plan_path=plan_path,
+        partitions_root=shards,
+        output_dir=tmp_path / "out",
+    )
+
+    assert summary["verified_recipe_count"] == 8
+    assert summary["redundant_shard_receipt_count"] == 1

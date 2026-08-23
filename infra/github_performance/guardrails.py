@@ -7,10 +7,16 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
+from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
-from aurora.infra.github_performance.contracts import FrozenModel, RunSpec
+from aurora.infra.github_performance.contracts import (
+    FrozenModel,
+    RunSpec,
+    Sha256,
+    canonical_sha256,
+)
 from aurora.infra.github_performance.telemetry import ResourceObservation
 
 
@@ -79,6 +85,83 @@ class BudgetDecision(FrozenModel):
     checkpoint_requested: bool
     evidence_complete: bool
     reason_codes: tuple[str, ...]
+
+
+class ZeroSpendBudgetEvidenceV1(FrozenModel):
+    """Exact live proof that Actions cannot spill into paid usage."""
+
+    schema_version: Literal["1"] = "1"
+    observed_at: datetime
+    actions_budget_verified: bool
+    actions_storage_budget_verified: bool
+    cache_storage_budget_verified: bool
+    prevent_further_usage: bool
+    cache_storage_limit_bytes: int = Field(ge=0)
+    cache_retention_days: int = Field(ge=1)
+    estimated_paid_runner_minutes: int = Field(ge=0)
+    estimated_paid_actions_cost: int = Field(ge=0)
+    receipt_sha256: Sha256
+
+    @field_validator("observed_at")
+    @classmethod
+    def _validate_observed_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("observed_at must be timezone-aware")
+        return value.astimezone(timezone.utc)
+
+    @model_validator(mode="after")
+    def _validate_receipt_hash(self) -> "ZeroSpendBudgetEvidenceV1":
+        identity = self.model_dump(mode="python", exclude={"receipt_sha256"})
+        if self.receipt_sha256 != canonical_sha256(identity):
+            raise ValueError("ZERO_SPEND_BUDGET_RECEIPT_HASH_INVALID")
+        return self
+
+    @classmethod
+    def create(cls, **values: object) -> "ZeroSpendBudgetEvidenceV1":
+        identity = {"schema_version": "1", **values}
+        identity.pop("receipt_sha256", None)
+        observed_at = identity.get("observed_at")
+        if isinstance(observed_at, datetime):
+            if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+                raise ValueError("observed_at must be timezone-aware")
+            identity["observed_at"] = observed_at.astimezone(timezone.utc)
+        candidate = cls.model_construct(**identity, receipt_sha256="0" * 64)
+        complete = candidate.model_dump(
+            mode="python",
+            exclude={"receipt_sha256"},
+        )
+        return cls(**complete, receipt_sha256=canonical_sha256(complete))
+
+
+def enforce_zero_spend_budgets(
+    evidence: ZeroSpendBudgetEvidenceV1,
+    *,
+    now: datetime,
+) -> str:
+    """Fail closed unless all three zero-spend controls are exact and active."""
+
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
+    age = now.astimezone(timezone.utc) - evidence.observed_at
+    if age > timedelta(minutes=5) or age < -timedelta(seconds=30):
+        raise ValueError("ZERO_SPEND_BUDGET_RECEIPT_STALE")
+    if not evidence.actions_budget_verified:
+        raise ValueError("ZERO_ACTIONS_SPEND_BUDGET_REQUIRED")
+    if not evidence.actions_storage_budget_verified:
+        raise ValueError("ZERO_ACTIONS_STORAGE_BUDGET_REQUIRED")
+    if not evidence.cache_storage_budget_verified:
+        raise ValueError("ZERO_CACHE_STORAGE_BUDGET_REQUIRED")
+    if not evidence.prevent_further_usage:
+        raise ValueError("ZERO_SPEND_BUDGET_ENFORCEMENT_REQUIRED")
+    if evidence.cache_storage_limit_bytes != 10 * 1024**3:
+        raise ValueError("FREE_CACHE_STORAGE_LIMIT_REQUIRED")
+    if evidence.cache_retention_days != 90:
+        raise ValueError("FREE_CACHE_RETENTION_REQUIRED")
+    if evidence.estimated_paid_runner_minutes != 0:
+        raise ValueError("PAID_RUNNER_FORBIDDEN")
+    if evidence.estimated_paid_actions_cost != 0:
+        raise ValueError("PAID_ACTIONS_COST_FORBIDDEN")
+    return evidence.receipt_sha256
 
 
 class DeadlineDecision(FrozenModel):

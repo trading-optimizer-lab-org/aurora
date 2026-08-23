@@ -255,3 +255,134 @@ def test_reducer_writes_global_performance_report(tmp_path: Path) -> None:
     assert report["completed_shards"] == 2
     assert report["unique_physical_components"] == 2
     assert json.loads((output_dir / "performance.json").read_text("utf-8")) == report
+
+
+def test_bundle_layout_selects_fastest_qualified_end_to_end_candidate() -> None:
+    from scripts.plan_sp500_optimized_catalog_run import (
+        BundleLayoutQualificationV1,
+        select_qualified_bundle_layout,
+    )
+
+    candidates = tuple(
+        BundleLayoutQualificationV1(
+            bundle_count=count,
+            equivalent=True,
+            sample_count=3,
+            memory_safe=True,
+            disk_safe=True,
+            runner_timeout_safe=True,
+            projected_end_to_end_p50_seconds=p50,
+            projected_end_to_end_p95_seconds=p50 * 1.1,
+            projected_component_download_bytes=bytes_,
+            projected_cache_uploads_per_minute=20,
+            projected_cache_downloads_per_minute=200,
+            checkpoint_upload_seconds_p95=2.0,
+        )
+        for count, p50, bytes_ in (
+            (8, 120.0, 10_000),
+            (16, 90.0, 15_000),
+            (32, 92.0, 8_000),
+            (64, 140.0, 7_000),
+            (96, 150.0, 6_000),
+            (128, 160.0, 5_000),
+        )
+    )
+    selected = select_qualified_bundle_layout(candidates)
+    assert selected.bundle_count == 16
+
+    unsafe_fast = candidates[0].model_copy(
+        update={
+            "projected_end_to_end_p50_seconds": 1.0,
+            "memory_safe": False,
+        }
+    )
+    selected = select_qualified_bundle_layout((unsafe_fast, *candidates[1:]))
+    assert selected.memory_safe is True
+
+
+def test_bundle_layout_reserves_twenty_percent_cache_api_headroom() -> None:
+    from scripts.plan_sp500_optimized_catalog_run import (
+        BundleLayoutQualificationV1,
+        select_qualified_bundle_layout,
+    )
+
+    candidates = tuple(
+        BundleLayoutQualificationV1(
+            bundle_count=count,
+            equivalent=True,
+            sample_count=3,
+            memory_safe=True,
+            disk_safe=True,
+            runner_timeout_safe=True,
+            projected_end_to_end_p50_seconds=(
+                80.0 if count == 32 else 90.0 if count == 64 else 120.0
+            ),
+            projected_end_to_end_p95_seconds=(
+                90.0 if count == 32 else 100.0 if count == 64 else 130.0
+            ),
+            projected_component_download_bytes=1_000 * count,
+            projected_cache_uploads_per_minute=120 if count == 32 else 100,
+            projected_cache_downloads_per_minute=1_000 if count == 32 else 800,
+            checkpoint_upload_seconds_p95=1.0,
+        )
+        for count in (8, 16, 32, 64, 96, 128)
+    )
+
+    assert select_qualified_bundle_layout(candidates).bundle_count == 64
+
+
+def test_campaign_receipt_keeps_cold_and_warm_denominators_separate() -> None:
+    from aurora.infra.sp500_megarun.catalog_performance import (
+        CatalogCampaignPerformanceReceiptV1,
+    )
+
+    receipt = CatalogCampaignPerformanceReceiptV1.create(
+        strategy_count=7200,
+        warm_recipe_strategy_count=6000,
+        admission_seconds=30.0,
+        queue_seconds=60.0,
+        runtime_prepare_seconds=120.0,
+        input_prepare_seconds=180.0,
+        component_lookup_seconds=20.0,
+        component_build_seconds=600.0,
+        component_reconcile_seconds=30.0,
+        recipe_evaluation_seconds=240.0,
+        recovery_seconds=0.0,
+        reduction_seconds=90.0,
+        verification_seconds=30.0,
+        end_to_end_seconds=1200.0,
+        component_cache_hit_ratio=0.80,
+        selected_component_bundle_count=64,
+        component_unique_required_bytes=1_000_000,
+        component_worker_download_bytes=2_000_000,
+        component_download_amplification_p50=1.5,
+        component_download_amplification_p95=2.0,
+        component_bundles_per_worker_p50=3.0,
+        component_bundles_per_worker_p95=5.0,
+        cache_upload_requests_per_minute_peak=100,
+        cache_download_requests_per_minute_peak=800,
+        valid_work_reuse_ratio=0.90,
+        runner_minutes=200.0,
+        artifact_count=80,
+        cache_entry_count=100,
+        cache_hit_bytes=1_500_000,
+        download_bytes=2_500_000,
+        upload_bytes=500_000,
+        projected_artifact_storage_bytes=5_000_000,
+        observed_artifact_storage_bytes=4_500_000,
+        verified_free_artifact_headroom_bytes=50_000_000,
+        projected_cache_storage_bytes=3_000_000,
+        observed_cache_storage_bytes=2_500_000,
+        verified_free_cache_headroom_bytes=20_000_000,
+        zero_spend_budgets_receipt_sha256="a" * 64,
+        estimated_paid_actions_cost=0,
+        scientific_outputs_equal=True,
+        safety_regression=False,
+    )
+
+    assert receipt.cold_end_to_end_strategies_per_minute == 360.0
+    assert receipt.warm_recipe_strategies_per_minute == 1500.0
+    assert receipt.cold_end_to_end_strategies_per_minute != (
+        receipt.strategy_count * 60 / receipt.recipe_evaluation_seconds
+    )
+    assert len(receipt.receipt_sha256) == 64

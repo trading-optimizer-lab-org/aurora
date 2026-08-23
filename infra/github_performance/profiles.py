@@ -7,7 +7,7 @@ import math
 import os
 import statistics
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -269,6 +269,43 @@ class ProfileReuseDecision(FrozenModel):
     pilot_required: bool
     reason_codes: tuple[str, ...]
     profile_sha256: Sha256 | None
+
+
+class ProfileFreshnessDecision(FrozenModel):
+    """Seven-day production freshness gate for immutable performance evidence."""
+
+    fresh: bool
+    age_seconds: float
+    maximum_age_seconds: float
+    reason_codes: tuple[str, ...]
+
+
+def assess_profile_freshness(
+    profile: PerformanceProfile,
+    *,
+    now: datetime,
+    maximum_age: timedelta = timedelta(days=7),
+) -> ProfileFreshnessDecision:
+    """Expire profiles after seven days and reject future-dated evidence."""
+
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
+    if maximum_age.total_seconds() <= 0:
+        raise ValueError("maximum_age must be positive")
+    age = now - profile.created_at
+    reasons: tuple[str, ...]
+    if age < -timedelta(seconds=30):
+        reasons = ("PERFORMANCE_PROFILE_FUTURE_DATED",)
+    elif age > maximum_age:
+        reasons = ("PERFORMANCE_PROFILE_STALE",)
+    else:
+        reasons = ()
+    return ProfileFreshnessDecision(
+        fresh=not reasons,
+        age_seconds=age.total_seconds(),
+        maximum_age_seconds=maximum_age.total_seconds(),
+        reason_codes=reasons,
+    )
 
 
 def assess_profile_reuse(

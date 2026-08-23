@@ -7,6 +7,9 @@ import json
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/sp500-atlas-run.yml"
 POSTRUN_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-postrun.yml"
+SEGMENT_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-segment.yml"
+CONTROLLER_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-controller.yml"
+PILOT_WORKFLOW = ROOT / ".github/workflows/sp500-atlas-pilot.yml"
 
 
 def _text() -> str:
@@ -16,11 +19,11 @@ def _text() -> str:
 def test_workflow_uses_exact_commit_and_static_shards() -> None:
     text = _text()
     assert "ref: ${{ github.sha }}" in text
-    assert 'run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in text
+    assert 'test "$ATLAS_REQUESTED_COMMIT_SHA" = "$WORKFLOW_COMMIT_SHA"' in text
     assert "run_sp500_atlas_worker.py" in text
     assert "reduce_sp500_atlas_run.py" in text
     assert text.count("max-parallel: 120") == 3
-    assert text.count("fail-fast: false") == 3
+    assert text.count("fail-fast: false") == 5
     assert "recipe_count" in text
     assert "total_shards" in text
     assert "smoke_serial" in text
@@ -28,6 +31,8 @@ def test_workflow_uses_exact_commit_and_static_shards() -> None:
     assert "ATLAS_FROZEN_FULL_PLAN_ACCEPTED" in text
     assert "atlas_campaign_selection.json" in text
     assert "selection_sha256" in text
+    assert "ATLAS_CALIBRATION_RUN_ID" in text
+    assert "calibration_receipt_32061399368.json" not in text
 
 
 def test_workflow_has_bounded_retries_and_no_dynamic_claim_loop() -> None:
@@ -49,17 +54,43 @@ def test_workflow_preserves_train_only_boundaries_and_final_failure_gate() -> No
     assert "if: ${{ always() && needs.preflight.result == 'success' && inputs.run_mode == 'full' }}" in text
 
 
+def test_smoke_does_not_require_a_sixty_shard_pilot_manifest() -> None:
+    text = _text()
+    assert 'if [ "${{ inputs.run_mode }}" != "smoke" ]; then' in text
+    assert 'names = ["atlas_segment_manifest.json"]' in text
+
+
+def test_atlas_run_contains_authorized_sixty_shard_pilot_path() -> None:
+    text = _text()
+    assert "workflow_call:" in text
+    assert "workflow_dispatch:" not in text
+    assert "AUTHORIZE_SP500_ATLAS_PILOT" in text
+    assert "pilot_evaluate:" in text
+    assert "max-parallel: 60" in text
+    assert "pilot_summarize:" in text
+    assert "pilot_verify:" in text
+    assert "pilot_source_run_id" in text
+    assert "run_sp500_atlas_pilot_faults.py" in text
+
+
 def test_freeze_manifest_binds_exact_plan_and_keeps_launch_closed() -> None:
     freeze = json.loads(
         (ROOT / "config/sp500_atlas_1/freeze_manifest_v1.json").read_text(encoding="utf-8")
     )
-    assert freeze["requested_recipe_count"] == 12079704
+    assert freeze["requested_recipe_count"] == 209906
     assert freeze["total_shards"] == 360
     assert freeze["train_end"] == "2010-12-31"
     assert freeze["validation_opened"] is False
     assert freeze["locked_opened"] is False
     assert freeze["execution_authorized"] is False
-    assert freeze["launch_authorized"] is False
+    assert freeze["launch_authorized"] is True
+    assert freeze["calibration_run_id"] == "32137133180"
+    assert freeze["planning_rate_recipes_per_minute"] == 107.55
+    assert freeze["pilot_verify_run_id"] == "32152459079"
+    assert freeze["pilot_verified_recipe_count"] == 34985
+    assert freeze["pilot_verified_shard_count"] == 60
+    assert freeze["pilot_validation_opened"] is False
+    assert freeze["pilot_locked_opened"] is False
     assert freeze["required_launch_authorization"] == "AUTHORIZE_SP500_ATLAS_FULL_RUN"
 
 
@@ -72,8 +103,8 @@ def test_atlas_workflows_do_not_checkout_or_execute_untrusted_commit_inputs() ->
     assert "ref: ${{ inputs.commit_sha }}" not in run
     assert 'ref: ${{ github.sha }}' in calibration
     assert 'ref: ${{ github.sha }}' in run
-    assert 'run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in calibration
-    assert 'run: test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in run
+    assert 'test "$ATLAS_REQUESTED_COMMIT_SHA" = "$GITHUB_SHA"' in calibration
+    assert 'test "${{ inputs.commit_sha }}" = "$GITHUB_SHA"' in run
 
 
 def test_postrun_workflow_is_train_only_and_publishes_robustness_audit() -> None:
@@ -84,3 +115,52 @@ def test_postrun_workflow_is_train_only_and_publishes_robustness_audit() -> None
     assert "validation_opened" in text
     assert "locked_opened" in text
     assert "sp500-atlas-postrun-results" in text
+    assert "plan_sp500_atlas_robustness.py" in text
+    assert "merge_sp500_atlas_robustness.py" in text
+    assert "max-parallel: 120" in text
+    assert "candidate-start" in text
+    assert "candidate-stop" in text
+
+
+def test_segment_controller_and_pilot_workflows_are_recoverable_and_train_only() -> None:
+    segment = SEGMENT_WORKFLOW.read_text(encoding="utf-8")
+    controller = CONTROLLER_WORKFLOW.read_text(encoding="utf-8")
+    controller_script = (ROOT / "scripts/run_sp500_atlas_controller.py").read_text(encoding="utf-8")
+    pilot = PILOT_WORKFLOW.read_text(encoding="utf-8")
+    pilot_script = (ROOT / "scripts/summarize_sp500_atlas_pilot.py").read_text(encoding="utf-8")
+    assert "atlas_segment_manifest.json" in segment
+    assert "verify_sp500_atlas_segment.py" in segment
+    assert "max-parallel: 120" in segment
+    assert "for attempt in 1 2 3" not in segment
+    assert "actions: write" not in controller
+    assert "actions: read" in controller
+    assert "run_sp500_atlas_controller.py" in controller
+    assert "sp500-atlas-segment.yml" in controller_script
+    assert "dispatch-ref" in controller_script
+    assert "--dispatch-ref \"$GITHUB_REF_NAME\"" in controller
+    assert "reduce_sp500_atlas_run.py" in controller_script
+    assert "validation_opened" in controller and "locked_opened" in controller
+    assert "atlas_pilot_manifest.json" in pilot
+    assert "run_sp500_atlas_pilot_faults.py" in pilot
+    assert "effective_concurrency" in pilot_script
+    assert "validation_opened" in pilot and "locked_opened" in pilot
+
+
+def test_existing_run_recovery_reuses_artifacts_without_evaluating_again() -> None:
+    text = _text()
+    assert "source_run_id" in text
+    assert "sp500-atlas-shard-*" in text
+    assert "sp500-atlas-preflight" in text
+    assert "recover_sp500_atlas_reference.py" in text
+    assert "merge_sp500_atlas_reference.py" in text
+    assert "RECOVER_EXISTING_ATLAS_ARTIFACTS" in text
+    assert "recover_chunks:" in text
+    assert "recover_merge:" in text
+    assert "gh run download" in text
+    assert "chunk_stop: 360" in text
+    assert "--expected-chunks 12" in text
+    assert 'row_hash_verification_mode"] == "artifact_file_hash_bound"' in text
+    assert 'plan.train_end == "2010-12-31"' in text
+    assert "validation_opened" in text
+    assert "locked_opened" in text
+    assert "sp500-atlas-recovery-chunk-" in text

@@ -1,226 +1,208 @@
 name: Aurora runtime setup
-description: Install one verified offline Aurora runtime on a standard runner
+description: Restore exactly one sealed offline Aurora runtime on a standard runner
 
 inputs:
   python-version:
-    description: Exact Python version used by the run contract
+    description: Exact Python version bound by the runtime identity
     required: true
-  wheelhouse-path:
-    description: Downloaded immutable wheelhouse directory
+  runtime-mode:
+    description: verified_relocatable_archive or offline_wheelhouse
+    required: true
+  runtime-object-path:
+    description: Downloaded one-day transport object selected by the sealed plan
+    required: true
+  runtime-manifest-path:
+    description: Closed manifest for the selected runtime object
     required: true
   dependency-lock-path:
     description: Repository-relative complete hashed dependency lock
     required: true
+  expected-runtime-identity-sha256:
+    description: Runtime identity sealed before fan-out
+    required: true
+  expected-source-sha:
+    description: Protected AURORA source commit verified separately
+    required: true
+  expected-numeric-profile-sha256:
+    description: Frozen numeric-runtime profile
+    required: true
 
 outputs:
-  cpu-count:
-    description: Logical CPUs visible to the standard runner
-    value: ${{ steps.runner.outputs.cpu_count }}
-  memory-mb:
-    description: Memory visible to the standard runner
-    value: ${{ steps.runner.outputs.memory_mb }}
-  free-disk-mb:
-    description: Free workspace disk before installation
-    value: ${{ steps.runner.outputs.free_disk_mb }}
-  image-os:
-    description: GitHub runner image operating system
-    value: ${{ steps.runner.outputs.image_os }}
-  image-version:
-    description: GitHub runner image version
-    value: ${{ steps.runner.outputs.image_version }}
-  wheelhouse-sha256:
-    description: Canonical identity of the installed wheelhouse
-    value: ${{ steps.manifest.outputs.wheelhouse_sha256 }}
+  runtime-python:
+    description: Python executable inside the verified offline runtime
+    value: ${{ steps.activate.outputs.runtime_python }}
+  runtime-identity-sha256:
+    description: Verified exact runtime-store identity
+    value: ${{ steps.verify.outputs.runtime_identity_sha256 }}
   environment-sha256:
-    description: Canonical SHA-256 of environment_manifest.json
-    value: ${{ steps.manifest.outputs.environment_sha256 }}
+    description: Canonical runtime receipt hash
+    value: ${{ steps.receipt.outputs.environment_sha256 }}
   setup-seconds:
-    description: Total offline runtime setup wall seconds
-    value: ${{ steps.manifest.outputs.setup_seconds }}
+    description: Offline restore and verification wall time
+    value: ${{ steps.receipt.outputs.setup_seconds }}
 
 runs:
   using: composite
   steps:
-    - name: Inspect standard runner
-      id: runner
-      shell: bash
-      run: |
-        set -euo pipefail
-        cpu_count="$(getconf _NPROCESSORS_ONLN)"
-        memory_mb="$(awk '/MemTotal/ {print int($2 / 1024)}' /proc/meminfo)"
-        free_disk_mb="$(df -Pm "$GITHUB_WORKSPACE" | awk 'NR == 2 {print $4}')"
-        {
-          echo "cpu_count=$cpu_count"
-          echo "memory_mb=$memory_mb"
-          echo "free_disk_mb=$free_disk_mb"
-          echo "image_os=${ImageOS:-unknown}"
-          echo "image_version=${ImageVersion:-unknown}"
-        } >> "$GITHUB_OUTPUT"
-        {
-          echo "OMP_NUM_THREADS=$cpu_count"
-          echo "OPENBLAS_NUM_THREADS=$cpu_count"
-          echo "MKL_NUM_THREADS=$cpu_count"
-          echo "NUMEXPR_NUM_THREADS=$cpu_count"
-          echo "VECLIB_MAXIMUM_THREADS=$cpu_count"
-          echo "BLIS_NUM_THREADS=$cpu_count"
-          echo "AURORA_RUNNER_CPU_COUNT=$cpu_count"
-        } >> "$GITHUB_ENV"
-
-    - name: Set up Python
+    - name: Use the sealed Python interpreter family
       uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
       with:
         python-version: ${{ inputs.python-version }}
         cache: ""
 
-    - name: Install exact offline runtime
-      id: install
+    - name: Verify selected runtime object and closed manifest
+      id: verify
       shell: bash
       env:
-        WHEELHOUSE_PATH: ${{ inputs.wheelhouse-path }}
+        RUNTIME_MODE: ${{ inputs.runtime-mode }}
+        RUNTIME_OBJECT_PATH: ${{ inputs.runtime-object-path }}
+        RUNTIME_MANIFEST_PATH: ${{ inputs.runtime-manifest-path }}
         DEPENDENCY_LOCK_PATH: ${{ inputs.dependency-lock-path }}
+        EXPECTED_RUNTIME_IDENTITY_SHA256: ${{ inputs.expected-runtime-identity-sha256 }}
+        EXPECTED_SOURCE_SHA: ${{ inputs.expected-source-sha }}
+        EXPECTED_NUMERIC_PROFILE_SHA256: ${{ inputs.expected-numeric-profile-sha256 }}
       run: |
         set -euo pipefail
         started_at="$(date +%s%N)"
-        wheelhouse="$(realpath "$WHEELHOUSE_PATH")"
-        dependency_lock="$(realpath "$DEPENDENCY_LOCK_PATH")"
-        test -f "$wheelhouse/wheelhouse_manifest.json"
-        test -f "$wheelhouse/dependency_lock_manifest.json"
-        runtime="$RUNNER_TEMP/aurora-runtime"
-        rm -rf "$runtime"
-        python -m venv "$runtime"
-        runtime_python="$runtime/bin/python"
-        "$runtime_python" -m pip install \
-          --disable-pip-version-check \
-          --no-index \
-          --no-deps \
-          --no-compile \
-          --find-links "$wheelhouse" \
-          --require-hashes \
-          --requirement "$dependency_lock"
-        mapfile -t aurora_wheels < <(
-          find "$wheelhouse" -maxdepth 1 -type f -name 'aurora-*.whl' |
-            sort
-        )
-        if [[ "${#aurora_wheels[@]}" -ne 1 ]]; then
-          echo "::error::wheelhouse must contain exactly one Aurora wheel"
-          exit 3
-        fi
-        "$runtime_python" -m pip install \
-          --disable-pip-version-check \
-          --no-index \
-          --no-deps \
-          "${aurora_wheels[0]}"
-        "$runtime_python" \
-          scripts/build_github_performance_wheelhouse.py verify \
-          --requirements-lock "$dependency_lock" \
-          --wheelhouse "$wheelhouse"
-        finished_at="$(date +%s%N)"
-        {
-          echo "runtime=$runtime"
-          echo "runtime_python=$runtime_python"
-          echo "wheelhouse=$wheelhouse"
-          echo "dependency_lock=$dependency_lock"
-          echo "setup_nanoseconds=$((finished_at - started_at))"
-        } >> "$GITHUB_OUTPUT"
-        echo "$runtime/bin" >> "$GITHUB_PATH"
-        echo "VIRTUAL_ENV=$runtime" >> "$GITHUB_ENV"
+        case "$RUNTIME_MODE" in
+          verified_relocatable_archive|offline_wheelhouse) ;;
+          *) echo "::error::RUNTIME_MODE_INVALID"; exit 2 ;;
+        esac
+        python - <<'PY'
+        import hashlib
+        import json
+        import os
+        from pathlib import Path
 
-    - name: Write environment manifest
-      id: manifest
+        manifest_path = Path(os.environ["RUNTIME_MANIFEST_PATH"]).resolve(strict=True)
+        object_path = Path(os.environ["RUNTIME_OBJECT_PATH"]).resolve(strict=True)
+        dependency_lock = Path(os.environ["DEPENDENCY_LOCK_PATH"]).resolve(strict=True)
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        required = {
+            "schema_version",
+            "runtime_mode",
+            "runtime_identity_sha256",
+            "object_sha256",
+            "dependency_lock_sha256",
+            "numeric_profile_sha256",
+            "source_sha_verified_separately",
+            "file_list",
+        }
+        if set(payload) != required or payload["schema_version"] != "1":
+            raise SystemExit("RUNTIME_MANIFEST_SCHEMA_INVALID")
+        if payload["runtime_mode"] != os.environ["RUNTIME_MODE"]:
+            raise SystemExit("RUNTIME_MODE_PLAN_MISMATCH")
+        if payload["runtime_identity_sha256"] != os.environ["EXPECTED_RUNTIME_IDENTITY_SHA256"]:
+            raise SystemExit("RUNTIME_IDENTITY_MISMATCH")
+        if payload["numeric_profile_sha256"] != os.environ["EXPECTED_NUMERIC_PROFILE_SHA256"]:
+            raise SystemExit("RUNTIME_NUMERIC_PROFILE_MISMATCH")
+        if payload["source_sha_verified_separately"] != os.environ["EXPECTED_SOURCE_SHA"]:
+            raise SystemExit("RUNTIME_SOURCE_BINDING_MISMATCH")
+        if hashlib.sha256(dependency_lock.read_bytes()).hexdigest() != payload[
+            "dependency_lock_sha256"
+        ]:
+            raise SystemExit("RUNTIME_DEPENDENCY_LOCK_HASH_INVALID")
+        files = payload["file_list"]
+        if not isinstance(files, list) or not files:
+            raise SystemExit("RUNTIME_FILE_LIST_INVALID")
+        observed = []
+        root = object_path if object_path.is_dir() else object_path.parent
+        for item in files:
+            if set(item) != {"path", "sha256", "size_bytes"}:
+                raise SystemExit("RUNTIME_FILE_ENTRY_INVALID")
+            relative = Path(item["path"])
+            if relative.is_absolute() or ".." in relative.parts:
+                raise SystemExit("RUNTIME_FILE_PATH_INVALID")
+            target = root / relative
+            if not target.is_file():
+                raise SystemExit("RUNTIME_FILE_MISSING")
+            digest = hashlib.sha256(target.read_bytes()).hexdigest()
+            if digest != item["sha256"] or target.stat().st_size != item["size_bytes"]:
+                raise SystemExit("RUNTIME_FILE_HASH_INVALID")
+            observed.append((relative.as_posix(), digest, item["size_bytes"]))
+        canonical = json.dumps(
+            observed, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+        if hashlib.sha256(canonical).hexdigest() != payload["object_sha256"]:
+            raise SystemExit("RUNTIME_OBJECT_HASH_INVALID")
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+            output.write(
+                f"runtime_identity_sha256={payload['runtime_identity_sha256']}\n"
+            )
+        PY
+        echo "started_nanoseconds=$started_at" >> "$GITHUB_OUTPUT"
+
+    - name: Activate exactly one offline runtime mode
+      id: activate
       shell: bash
       env:
-        AURORA_RUNTIME_PYTHON: ${{ steps.install.outputs.runtime_python }}
-        AURORA_SETUP_NANOSECONDS: ${{ steps.install.outputs.setup_nanoseconds }}
-        AURORA_WHEELHOUSE: ${{ steps.install.outputs.wheelhouse }}
-        AURORA_IMAGE_OS: ${{ steps.runner.outputs.image_os }}
-        AURORA_IMAGE_VERSION: ${{ steps.runner.outputs.image_version }}
+        RUNTIME_MODE: ${{ inputs.runtime-mode }}
+        RUNTIME_OBJECT_PATH: ${{ inputs.runtime-object-path }}
+        DEPENDENCY_LOCK_PATH: ${{ inputs.dependency-lock-path }}
       run: |
         set -euo pipefail
-        "$AURORA_RUNTIME_PYTHON" - <<'PY'
+        runtime="$RUNNER_TEMP/aurora-runtime"
+        rm -rf -- "$runtime"
+        if [ "$RUNTIME_MODE" = "verified_relocatable_archive" ]; then
+          mkdir -p "$runtime"
+          tar --extract --file "$RUNTIME_OBJECT_PATH/runtime.tar.zst" --directory "$runtime"
+          runtime_python="$runtime/bin/python"
+          test -x "$runtime_python"
+        else
+          wheelhouse="$(realpath "$RUNTIME_OBJECT_PATH/wheelhouse")"
+          dependency_lock="$(realpath "$DEPENDENCY_LOCK_PATH")"
+          test -f "$wheelhouse/wheelhouse_manifest.json"
+          python -m venv "$runtime"
+          runtime_python="$runtime/bin/python"
+          "$runtime_python" -m pip install \
+            --disable-pip-version-check \
+            --no-index \
+            --no-deps \
+            --no-compile \
+            --find-links "$wheelhouse" \
+            --require-hashes \
+            --requirement "$dependency_lock"
+        fi
+        "$runtime_python" -I -c "import hashlib,json,sys; print(json.dumps({'python':sys.version_info[:3],'ok':True},sort_keys=True))"
+        echo "$runtime/bin" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=$runtime" >> "$GITHUB_ENV"
+        echo "runtime_python=$runtime_python" >> "$GITHUB_OUTPUT"
+
+    - name: Emit secret-free runtime receipt
+      id: receipt
+      shell: bash
+      env:
+        RUNTIME_PYTHON: ${{ steps.activate.outputs.runtime_python }}
+        RUNTIME_MODE: ${{ inputs.runtime-mode }}
+        RUNTIME_IDENTITY_SHA256: ${{ steps.verify.outputs.runtime_identity_sha256 }}
+        STARTED_NANOSECONDS: ${{ steps.verify.outputs.started_nanoseconds }}
+      run: |
+        set -euo pipefail
+        finished_at="$(date +%s%N)"
+        "$RUNTIME_PYTHON" - <<'PY'
         import hashlib
-        import importlib.metadata
         import json
         import os
         import platform
         from pathlib import Path
 
-        wheelhouse = Path(os.environ["AURORA_WHEELHOUSE"])
-        wheelhouse_manifest = json.loads(
-            (wheelhouse / "wheelhouse_manifest.json").read_text(encoding="utf-8")
-        )
-        lock_manifest = json.loads(
-            (wheelhouse / "dependency_lock_manifest.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        packages = sorted(
-            {
-                (
-                    distribution.metadata.get("Name", "unknown"),
-                    distribution.version,
-                )
-                for distribution in importlib.metadata.distributions()
-            }
-        )
-        thread_names = (
-            "OMP_NUM_THREADS",
-            "OPENBLAS_NUM_THREADS",
-            "MKL_NUM_THREADS",
-            "NUMEXPR_NUM_THREADS",
-            "VECLIB_MAXIMUM_THREADS",
-            "BLIS_NUM_THREADS",
-        )
-        identity = {
-            "schema_version": "2",
-            "runner": {
-                "os": platform.system(),
-                "architecture": platform.machine(),
-                "cpu_count": int(os.environ["AURORA_RUNNER_CPU_COUNT"]),
-            },
-            "python": {
-                "version": platform.python_version(),
-                "implementation": platform.python_implementation(),
-            },
-            "dependency_lock_sha256": lock_manifest["lock_sha256"],
-            "installed_wheelhouse_sha256": wheelhouse_manifest[
-                "wheelhouse_sha256"
-            ],
-            "installed_packages": [
-                {"name": name, "version": version}
-                for name, version in packages
-            ],
-            "thread_limits": {
-                name: int(os.environ[name]) for name in thread_names
-            },
-        }
-        encoded = json.dumps(
-            identity,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode()
-        digest = hashlib.sha256(encoded).hexdigest()
-        setup_seconds = (
-            int(os.environ["AURORA_SETUP_NANOSECONDS"]) / 1_000_000_000.0
-        )
         payload = {
-            "schema_version": "2",
-            "identity": identity,
-            "observations": {
-                "image_os": os.environ["AURORA_IMAGE_OS"],
-                "image_version": os.environ["AURORA_IMAGE_VERSION"],
-                "setup_seconds": setup_seconds,
-            },
-            "environment_sha256": digest,
+            "schema_version": "1",
+            "runtime_mode": os.environ["RUNTIME_MODE"],
+            "runtime_identity_sha256": os.environ["RUNTIME_IDENTITY_SHA256"],
+            "python_version": platform.python_version(),
+            "platform": platform.platform(),
+            "network_dependency_install": False,
         }
-        with open("environment_manifest.json", "w", encoding="utf-8") as out:
-            json.dump(payload, out, indent=2, sort_keys=True)
-            out.write("\n")
-        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-            out.write(f"environment_sha256={digest}\n")
-            out.write(
-                "wheelhouse_sha256="
-                f"{wheelhouse_manifest['wheelhouse_sha256']}\n"
-            )
-            out.write(f"setup_seconds={setup_seconds:.9f}\n")
+        canonical = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+        payload["environment_sha256"] = hashlib.sha256(canonical).hexdigest()
+        Path("runtime_receipt.json").write_text(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+            output.write(f"environment_sha256={payload['environment_sha256']}\n")
         PY
+        python -c "print('setup_seconds={:.9f}'.format(($finished_at - $STARTED_NANOSECONDS) / 1000000000))" >> "$GITHUB_OUTPUT"

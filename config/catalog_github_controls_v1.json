@@ -1,0 +1,155 @@
+{
+  "schema_version": "1",
+  "github_api_version": "2026-03-10",
+  "repository_identity": {
+    "full_name": "trading-optimizer-lab-org/aurora",
+    "owner_type": "Organization",
+    "visibility": "public"
+  },
+  "default_branch": "main",
+  "audit_freshness": {
+    "maximum_age_seconds": 300,
+    "maximum_future_skew_seconds": 30,
+    "time_source": "github_api_date_header",
+    "expired_admission_action": "defer_without_authority",
+    "expired_terminal_action": "refresh_without_compute"
+  },
+  "branch_protection": {
+    "enforce_admins": true,
+    "require_pull_request": true,
+    "required_approving_review_count": 0,
+    "require_code_owner_reviews": false,
+    "dismiss_stale_reviews": false,
+    "require_last_push_approval": false,
+    "strict_status_checks": true,
+    "required_conversation_resolution": true,
+    "required_linear_history": true,
+    "allow_force_pushes": false,
+    "allow_deletions": false,
+    "required_status_checks": [
+      "GTBI V7 stage-two required",
+      "catalog-controller-policy"
+    ]
+  },
+  "actions": {
+    "default_workflow_permissions": "read",
+    "can_approve_pull_request_reviews": false,
+    "standard_github_hosted_only": true,
+    "larger_runners_allowed": false,
+    "self_hosted_runners_allowed": false
+  },
+  "billing": {
+    "budget_control_plane": {
+      "scope": "organization",
+      "organization": "trading-optimizer-lab-org",
+      "repository_entity_name": "trading-optimizer-lab-org/aurora"
+    },
+    "required_zero_budgets": [
+      {
+        "budget_scope": "repository",
+        "budget_entity_name": "trading-optimizer-lab-org/aurora",
+        "budget_type": "ProductPricing",
+        "budget_product_sku": "actions",
+        "budget_amount": 0,
+        "prevent_further_usage": true,
+        "budget_alerting": {
+          "will_alert": false,
+          "alert_recipients": []
+        }
+      },
+      {
+        "budget_scope": "repository",
+        "budget_entity_name": "trading-optimizer-lab-org/aurora",
+        "budget_type": "SkuPricing",
+        "budget_product_sku": "actions_storage",
+        "budget_amount": 0,
+        "prevent_further_usage": true,
+        "budget_alerting": {
+          "will_alert": false,
+          "alert_recipients": []
+        }
+      },
+      {
+        "budget_scope": "repository",
+        "budget_entity_name": "trading-optimizer-lab-org/aurora",
+        "budget_type": "SkuPricing",
+        "budget_product_sku": "actions_cache_storage",
+        "budget_amount": 0,
+        "prevent_further_usage": true,
+        "budget_alerting": {
+          "will_alert": false,
+          "alert_recipients": []
+        }
+      }
+    ],
+    "included_shared_storage_bytes": 53687091200,
+    "repository_cache_storage_limit_gb": 10,
+    "repository_cache_retention_days": 90,
+    "artifact_and_packages_reporting_lag_hours": 12,
+    "cache_reporting_lag_minutes": 5,
+    "artifact_storage_safety_fraction": 0.2,
+    "cache_storage_safety_fraction": 0.1,
+    "paid_actions_usage_allowed": false
+  },
+  "environment": {
+    "name": "catalog-production",
+    "protected_branches_only": true,
+    "required_reviewers": []
+  },
+  "issue_labels": {
+    "terminal": {
+      "name": "catalog-run-terminal-v1",
+      "color": "0e8a16",
+      "description": "Controller-verified terminal catalog request; do not apply manually"
+    }
+  },
+  "auditor": {
+    "config_path": "config/catalog_github_auditor_v1.json",
+    "app_id_variable": "AURORA_CATALOG_AUDITOR_APP_ID",
+    "private_key_environment_secret": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+    "only_token_consumer_workflow": ".github/workflows/catalog-live-controls-audit.yml"
+  },
+  "entrypoints": {
+    "public_controller": ".github/workflows/catalog-run-controller.yml",
+    "request_reconciler": ".github/workflows/catalog-request-reconciler.yml",
+    "ledger_guard": ".github/workflows/catalog-ledger-guard.yml",
+    "authority_watchdog": ".github/workflows/catalog-run-watchdog.yml",
+    "issues_write_workflow_allowlist": [
+      ".github/workflows/catalog-run-controller.yml",
+      ".github/workflows/catalog-request-reconciler.yml",
+      ".github/workflows/catalog-ledger-guard.yml",
+      ".github/workflows/catalog-run-watchdog.yml"
+    ],
+    "issues_write_must_be_job_scoped": true,
+    "issues_write_job_allowlist": {
+      ".github/workflows/catalog-run-controller.yml": [
+        "issue_tamper_guard",
+        "repair_request_receipt_orphan",
+        "reserve",
+        "report_nonexecuting_decision",
+        "record_running",
+        "record_nonterminal_wait",
+        "finalize"
+      ],
+      ".github/workflows/catalog-request-reconciler.yml": [
+        "call_controller"
+      ],
+      ".github/workflows/catalog-ledger-guard.yml": [
+        "record_tamper_incident"
+      ],
+      ".github/workflows/catalog-run-watchdog.yml": [
+        "call_controller"
+      ]
+    },
+    "fixed_nonproduction_trigger_exemptions": [
+      ".github/workflows/catalog-controller-policy-check.yml",
+      ".github/workflows/catalog-controller-qualification.yml",
+      ".github/workflows/catalog-live-controls-qualification.yml",
+      ".github/workflows/catalog-capacity-calibration.yml"
+    ],
+    "scheduled_read_only_maintenance_allowlist": [
+      ".github/workflows/catalog-artifact-keeper.yml"
+    ],
+    "heavy_workflows_must_be_workflow_call_only": true
+  }
+}

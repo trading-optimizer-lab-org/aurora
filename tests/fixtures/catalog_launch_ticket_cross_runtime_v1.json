@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "ticket": {
+    "schema_version": "1",
+    "request_id": "018f47a2-6e91-7c34-8000-000000000001",
+    "campaign_key": "sp500-optimized-catalog-v1",
+    "launch_generation": 1,
+    "campaign_definition_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "prompt_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "previous_terminal_request_sha256": null
+  },
+  "canonical_ticket_json": "{\"campaign_definition_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"campaign_key\":\"sp500-optimized-catalog-v1\",\"launch_generation\":1,\"previous_terminal_request_sha256\":null,\"prompt_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"request_id\":\"018f47a2-6e91-7c34-8000-000000000001\",\"schema_version\":\"1\"}",
+  "launch_ticket_sha256": "7b97bd8dfb283e6b6423dffe67e821989bae25ecddaa3861ce1fcb25a23c8b17"
+}

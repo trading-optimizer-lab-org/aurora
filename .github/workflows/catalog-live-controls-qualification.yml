@@ -1,0 +1,93 @@
+name: Catalog live controls qualification
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  qualify_live_admission_controls:
+    name: Qualify admission controls
+    uses: ./.github/workflows/catalog-live-controls-audit.yml
+    with:
+      purpose: admission
+      caller_workflow: .github/workflows/catalog-live-controls-qualification.yml
+      caller_job: qualify_live_admission_controls
+      protected_commit_sha: ${{ github.sha }}
+      audit_context_sha256: 188a007b5b956430175492a1016026214d71c4ba4af0f7afc2f5dea6d8aecbe4
+
+  qualify_live_terminal_controls:
+    name: Qualify terminal controls
+    needs: qualify_live_admission_controls
+    uses: ./.github/workflows/catalog-live-controls-audit.yml
+    with:
+      purpose: terminal
+      caller_workflow: .github/workflows/catalog-live-controls-qualification.yml
+      caller_job: qualify_live_terminal_controls
+      protected_commit_sha: ${{ github.sha }}
+      audit_context_sha256: c32c0915943952c27734fcb52279556e3cc814a2fd6ef3d500335ceca7c0bcb3
+
+  verify_qualification_receipt:
+    name: Verify controls qualification receipt
+    needs:
+      - qualify_live_admission_controls
+      - qualify_live_terminal_controls
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Write one closed qualification receipt
+        env:
+          ADMISSION_RECEIPT_SHA256: ${{ needs.qualify_live_admission_controls.outputs.receipt_sha256 }}
+          ADMISSION_RECEIPT_STATUS: ${{ needs.qualify_live_admission_controls.outputs.receipt_status }}
+          TERMINAL_RECEIPT_SHA256: ${{ needs.qualify_live_terminal_controls.outputs.receipt_sha256 }}
+          TERMINAL_RECEIPT_STATUS: ${{ needs.qualify_live_terminal_controls.outputs.receipt_status }}
+          PROTECTED_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          hashes = {
+              "admission_receipt_sha256": os.environ["ADMISSION_RECEIPT_SHA256"],
+              "terminal_receipt_sha256": os.environ["TERMINAL_RECEIPT_SHA256"],
+          }
+          if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in hashes.values()):
+              raise SystemExit("CATALOG_LIVE_QUALIFICATION_HASH_INVALID")
+          if {
+              os.environ["ADMISSION_RECEIPT_STATUS"],
+              os.environ["TERMINAL_RECEIPT_STATUS"],
+          } != {"ready"}:
+              raise SystemExit("CATALOG_LIVE_QUALIFICATION_BLOCKED")
+          receipt = {
+              "schema_version": "1",
+              "observer_context": "live_qualification",
+              "protected_commit_sha": os.environ["PROTECTED_COMMIT_SHA"],
+              **hashes,
+          }
+          canonical = json.dumps(
+              receipt,
+              sort_keys=True,
+              separators=(",", ":"),
+              allow_nan=False,
+          )
+          receipt["receipt_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+          Path("catalog_live_controls_qualification_receipt_v1.json").write_text(
+              json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Preserve the tiny qualification receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-live-controls-qualification-${{ github.run_id }}
+          path: catalog_live_controls_qualification_receipt_v1.json
+          if-no-files-found: error
+          retention-days: 1

@@ -11,124 +11,91 @@ import pytest
 def test_recipe_worker_is_started_as_repo_module_and_store_can_be_reused() -> None:
     from scripts.run_sp500_optimized_recipe_worker import _RESULT_SCHEMA
 
-    worker = Path(".github/workflows/catalog-optimized-worker.yml").read_text(
-        encoding="utf-8"
+    worker = Path(".github/workflows/catalog-optimized-worker.yml").read_text("utf-8")
+    component = Path(".github/workflows/catalog-component-worker.yml").read_text(
+        "utf-8"
     )
-    run = Path(".github/workflows/catalog-optimized-run.yml").read_text(
-        encoding="utf-8"
-    )
-
-    assert "python -m scripts.run_sp500_optimized_recipe_worker" in worker
-    assert "plan.processes_per_worker" in Path(
-        "scripts/run_sp500_optimized_recipe_worker.py"
-    ).read_text("utf-8")
-    assert "plan.component_processes_per_worker" in Path(
-        "scripts/build_sp500_component_store.py"
-    ).read_text("utf-8")
-    assert "score_prepared_lane_candidate" not in Path(
-        "scripts/run_sp500_optimized_recipe_worker.py"
-    ).read_text("utf-8")
-    assert "score_ledger_decisions" not in Path(
-        "scripts/run_sp500_optimized_recipe_worker.py"
-    ).read_text("utf-8")
-    assert "FastTrainObjective" in Path(
-        "scripts/run_sp500_optimized_recipe_worker.py"
-    ).read_text("utf-8")
-    assert "scientific_stage_seconds" in Path(
-        "scripts/run_sp500_optimized_recipe_worker.py"
-    ).read_text("utf-8")
-    assert "scientific_attribution_difference_ratio" in Path(
-        "scripts/run_sp500_optimized_recipe_worker.py"
-    ).read_text("utf-8")
-    assert "component_store_run_id" in worker
-    assert "continue-on-error: true" in worker
-    assert "if: ${{ always() }}" in worker
-    assert "steps.evaluate.outcome != 'success'" in worker
-    assert "recovery_microshards" in Path(
-        "scripts/run_sp500_optimized_recipe_worker.py"
-    ).read_text("utf-8")
-    assert "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d" in worker
-    assert "uv pip install --system --require-hashes" in worker
-    assert "PYTHONPATH: ${{ github.workspace }}/.." in worker
-    assert "pip install --no-deps -e ." not in worker
-    assert "component_store_run_id" in run
-    assert "inputs.component_store_run_id != '' || needs.merge_components.result == 'success'" in run
-    assert "inputs.component_store_run_id || github.run_id" in run
-    assert "component_cost_run_id" in run
-    assert "evaluation_cache_run_ids" in run
-    assert "pending_recipe_count" in run
-    assert "resume_work_manifest.json" in worker
-    assert "--resume-root" in run
-    assert "python -m scripts.plan_sp500_component_schedule" in run
-    assert "python -m scripts.audit_sp500_catalog_actions_run" in run
-    assert "PYTHONPATH: ${{ github.workspace }}/.." in run
-    assert "python scripts/verify_sp500_optimized_run.py" in run
-    assert "  verify_qualification:" not in run
-    assert "sp500-catalog-runtime-audit" in run
-    audit_section = run.split("  audit_runtime:", 1)[1].split(
-        "  update_autotune:", 1
-    )[0]
-    assert "pip install" not in audit_section
-    assert "pip install --no-deps -e ." not in run
-    assert run.count(
-        "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d"
-    ) == 5
-    assert run.count("uv pip install --system --require-hashes") == 5
-    assert "python -m scripts.compile_sp500_catalog_recipes" in run
-    assert "--recipe-dag" in worker
-    assert "verify_recipe_dag_artifacts" in Path(
-        "scripts/run_sp500_optimized_recipe_worker.py"
-    ).read_text("utf-8")
-
-    combined = "\n".join(
-        Path(path).read_text("utf-8")
-        for path in (
-            ".github/workflows/catalog-optimized-run.yml",
-            ".github/workflows/catalog-optimized-worker.yml",
-            ".github/workflows/catalog-component-worker.yml",
-        )
-    )
-    assert 'cache: ""' not in combined
-    assert 'cache: "pip"' not in run
-    assert 'cache-dependency-path: "requirements/catalog-recipe-worker.lock"' not in run
-    component_worker = Path(
-        ".github/workflows/catalog-component-worker.yml"
-    ).read_text(encoding="utf-8")
-    assert "requirements/catalog-optimized.lock" in component_worker
-    assert "uv pip install --system --require-hashes" in component_worker
-    assert "PYTHONPATH: ${{ github.workspace }}/.." in component_worker
-    assert "pip install --no-deps -e ." not in component_worker
-    assert "--component-schedule" in component_worker
-    assert "total_component_shards" in component_worker
-    assert "fromJSON(needs.plan.outputs.component_matrix)" in run
-    assert "component_schedule.json" in component_worker
-    assert 'runtime-fragments/$dataset_id' in component_worker
-    assert 'gh run download "$RUNTIME_FRAGMENT_RUN_ID"' in component_worker
-    assert 'download_one_fragment()' in component_worker
-    assert 'xargs -r -n 1 -P 4' in component_worker
-    assert "sleep $((attempt * 2))" in component_worker
-    assert 'runtime/train_snapshot_1993_2010/$dataset_id.parquet' in component_worker
-    assert "inputs.component_store_run_id == ''" in run
-    resume_gate = (
-        "always() && needs.plan.result == 'success' && "
-        "needs.plan.outputs.pending_recipe_count != '0' && "
-        "(inputs.component_store_run_id != '' || "
-        "needs.merge_components.result == 'success')"
-    )
-    assert run.count(resume_gate) == 3
-    assert (
-        "always() && needs.plan.result == 'success' && "
-        "needs.reduce.result == 'success'"
-        in run
+    run = Path(".github/workflows/catalog-optimized-run.yml").read_text("utf-8")
+    worker_script = Path("scripts/run_sp500_optimized_recipe_worker.py").read_text(
+        "utf-8"
     )
 
-    verify_only = Path(
-        ".github/workflows/catalog-optimized-verify-only.yml"
-    ).read_text(encoding="utf-8")
-    assert "optimized_result_run_id" in verify_only
-    assert "python -m scripts.verify_sp500_optimized_run" in verify_only
-    assert "if: ${{ always() }}" in verify_only
+    assert "python -m scripts.run_catalog_recipe_worker_guarded" in worker
+    assert worker.count("python -m scripts.run_catalog_recipe_worker_guarded") == 8
+    assert "catalog-worker-failure-final.json" in worker
+    assert "catalog-failure-attempt-" in Path(
+        "infra/sp500_megarun/catalog_worker_failure.py"
+    ).read_text("utf-8")
+    assert "--runtime-input-pack \"$RUNNER_TEMP/runtime\"" in worker
+    assert "_open_exact_component_payload" in worker_script
+    assert "score_prepared_lane_candidate" not in worker_script
+    assert "score_ledger_decisions" not in worker_script
+    assert "FastTrainObjective" in worker_script
+    assert "scientific_stage_seconds" in worker_script
+    assert "aurora-runtime-setup" in worker
+    assert "aurora-runtime-setup" in component
+    assert "setup-uv" not in worker
+    assert "setup-uv" not in component
+    assert "uv pip install" not in worker
+    assert "uv pip install" not in component
+    assert "component_store_run_id" not in worker
+    assert "--component-shard-index 0" in component
+    assert "--total-component-shards 1" in component
+    assert "component_cache_persistence_key_prefix" in component
+    assert "steps.verify_bundle.outputs.cache_key" in component
+    assert "verify_component_store" in run
+    assert "needs: [engine_verify_sealed_plan, verify_component_store]" in run
+    assert "Build the one locked runtime store" in run
+    assert run.count("Build the one locked runtime store") == 1
     assert _RESULT_SCHEMA.names == ["strategy_id", "result_json"]
+
+
+def test_engine_exposes_one_explicit_verified_outcome_even_after_failure() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    path = Path(".github/workflows/catalog-optimized-run.yml")
+    workflow = load_github_yaml(path)
+    call_outputs = workflow["on"]["workflow_call"]["outputs"]
+    assert call_outputs["campaign_state"]["value"] == (
+        "${{ jobs.campaign_outcome.outputs.campaign_state }}"
+    )
+    assert call_outputs["outcome_evidence_sha256"]["value"] == (
+        "${{ jobs.campaign_outcome.outputs.outcome_evidence_sha256 }}"
+    )
+    assert call_outputs["final_evidence_artifact"]["value"] == (
+        "${{ jobs.campaign_outcome.outputs.final_evidence_artifact }}"
+    )
+    outcome = workflow["jobs"]["campaign_outcome"]
+    assert "always()" in outcome["if"]
+    assert {
+        "reduce",
+        "verify_terminal_science",
+        "audit_runtime",
+        "recovery_wave_6",
+    } <= set(outcome["needs"])
+    rendered = json.dumps(outcome, sort_keys=True)
+    assert "scripts/prepare_catalog_engine_outcome.py" in rendered
+    assert "catalog-engine-outcome-${{ inputs.authority_id }}" in rendered
+
+
+def test_terminal_science_uses_only_the_sealed_reference_identity() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    path = Path(".github/workflows/catalog-optimized-run.yml")
+    workflow = load_github_yaml(path)
+    job = workflow["jobs"]["verify_terminal_science"]
+    rendered = json.dumps(job, sort_keys=True)
+    assert "scripts/fetch_catalog_reference_artifact.py" in rendered
+    assert "scripts/verify_catalog_terminal_science.py" in rendered
+    assert "catalog-terminal-science-${{ inputs.authority_id }}" in rendered
+    text = path.read_text("utf-8")
+    for forbidden in (
+        "9075791134",
+        "9264302413",
+        "sp500-megarun-dehb-runtime-inputs-31418682679",
+        "sp500-strategy-catalog-final-results",
+    ):
+        assert forbidden not in text
 
 
 def test_single_pass_recipe_score_is_scientifically_exact() -> None:
@@ -747,13 +714,16 @@ def test_component_store_round_trip_is_exact_and_conflicts_fail(tmp_path: Path) 
         writer.add("c1", second)
     manifest = writer.commit()
 
-    store = CatalogComponentStore.open(tmp_path / "store")
-    assert manifest.component_count == 2
-    assert store.manifest.manifest_sha256 == manifest.manifest_sha256
-    np.testing.assert_array_equal(store.get("c1"), first)
-    np.testing.assert_array_equal(store.get("c2"), second)
-    with pytest.raises(KeyError):
-        store.get("missing")
+    with CatalogComponentStore.open(tmp_path / "store") as store:
+        assert manifest.component_count == 2
+        assert store.manifest.manifest_sha256 == manifest.manifest_sha256
+        np.testing.assert_array_equal(store.get("c1"), first)
+        np.testing.assert_array_equal(store.get("c2"), second)
+        with pytest.raises(KeyError):
+            store.get("missing")
+    with pytest.raises(ValueError, match="COMPONENT_STORE_CLOSED"):
+        store.get("c1")
+    (tmp_path / "store" / "signals.npy").unlink()
 
 
 def test_component_store_rejects_scientific_mismatch(tmp_path: Path) -> None:
@@ -776,6 +746,66 @@ def test_component_store_rejects_scientific_mismatch(tmp_path: Path) -> None:
             tmp_path / "store",
             expected_data_snapshot_sha256="c" * 64,
         )
+
+
+def test_component_store_closes_mmap_when_loaded_shape_is_invalid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aurora.infra.sp500_megarun import catalog_component_store as module
+
+    writer = module.ComponentStoreWriter(
+        tmp_path / "store",
+        data_snapshot_sha256="a" * 64,
+        evaluator_sha256="b" * 64,
+        session_count=3,
+    )
+    writer.add("c1", np.array([1, 0, -1], dtype=np.int8))
+    writer.commit()
+
+    class Mapping:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class Matrix:
+        shape = (99, 99)
+        _mmap = Mapping()
+
+    matrix = Matrix()
+    monkeypatch.setattr(module.np, "load", lambda *_args, **_kwargs: matrix)
+    with pytest.raises(ValueError, match="COMPONENT_STORE_MATRIX_SHAPE_INVALID"):
+        module.CatalogComponentStore.open(tmp_path / "store")
+    assert matrix._mmap.closed is True
+
+
+def test_component_store_merge_closes_sources_if_a_later_open_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aurora.infra.sp500_megarun import catalog_component_store as module
+
+    class OpenedStore:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    first = OpenedStore()
+
+    def fake_open(_cls: object, path: Path, **_kwargs: object) -> OpenedStore:
+        if Path(path).name == "first":
+            return first
+        raise ValueError("COMPONENT_STORE_MANIFEST_INVALID")
+
+    monkeypatch.setattr(module.CatalogComponentStore, "open", classmethod(fake_open))
+    with pytest.raises(ValueError, match="COMPONENT_STORE_MANIFEST_INVALID"):
+        module.merge_component_stores(
+            [tmp_path / "first", tmp_path / "second"],
+            tmp_path / "merged",
+        )
+    assert first.closed is True
 
 
 def test_recipe_compiler_canonicalizes_commutative_inputs_but_keeps_explanation() -> None:
@@ -877,3 +907,497 @@ def test_vector_engine_matches_scalar_and_deduplicates_positions() -> None:
     assert vector.behavior_equivalence_hits == 1
     assert vector.validation_opened is False
     assert vector.locked_opened is False
+
+
+def test_cold_runtime_is_built_at_most_once_and_workers_restore_offline() -> None:
+    run = Path(".github/workflows/catalog-optimized-run.yml").read_text("utf-8")
+    worker = Path(".github/workflows/catalog-optimized-worker.yml").read_text("utf-8")
+    component = Path(".github/workflows/catalog-component-worker.yml").read_text("utf-8")
+    setup = Path(".github/actions/aurora-runtime-setup/action.yml").read_text("utf-8")
+
+    assert run.count("Build the one locked runtime store") == 1
+    assert "--require-hashes" in run
+    assert "--no-index" in setup
+    assert "--require-hashes" in setup
+    assert "aurora-runtime-setup" in worker
+    assert "aurora-runtime-setup" in component
+    assert "pip install -r requirements" not in worker
+    assert "pip install -r requirements" not in component
+    assert "uv pip install" not in worker
+    assert "uv pip install" not in component
+    assert "setup-uv" not in worker
+    assert "setup-uv" not in component
+
+
+def test_runtime_audit_proves_runner_inventory_commit_and_zero_cost() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    path = Path(".github/workflows/catalog-optimized-run.yml")
+    workflow = load_github_yaml(path)
+    audit = workflow["jobs"]["audit_runtime"]
+    text = json.dumps(audit, sort_keys=True)
+    assert "verify_terminal_science" in audit["needs"]
+    assert "audit_catalog_runtime.py" in text
+    assert "jobs-confirmation.json" in text
+    assert "artifacts-confirmation.json" in text
+    assert "catalog-sealed-execution-plan-${{ inputs.authority_id }}" in text
+    assert "--components-reused" in text
+    assert "--components-computed-once" in text
+    for required in (
+        "request_sha256",
+        "authority_id",
+        "campaign_id",
+        "science_sha256",
+        "execution_plan_sha256",
+        "execution_protocol_sha256",
+        "protected_commit_sha",
+    ):
+        assert required in text
+
+
+def test_rebuildable_cache_persistence_failure_does_not_discard_same_run_bytes() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    paths = (
+        Path(".github/workflows/catalog-optimized-run.yml"),
+        Path(".github/workflows/catalog-component-worker.yml"),
+    )
+    save_steps = []
+    for path in paths:
+        workflow = load_github_yaml(path)
+        for job in workflow["jobs"].values():
+            for step in job.get("steps", ()):
+                if str(step.get("uses", "")).startswith("actions/cache/save@"):
+                    save_steps.append(step)
+    assert len(save_steps) == 11
+    assert all(step.get("continue-on-error") is True for step in save_steps)
+    assert "Upload one-day runtime transport" in paths[0].read_text("utf-8")
+    assert "Upload one-day exact component transport" in paths[1].read_text("utf-8")
+
+
+def test_recipe_workers_have_exact_payloads_and_no_component_escape() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    root = Path(".github/workflows")
+    run = load_github_yaml(root / "catalog-optimized-run.yml")
+    worker = load_github_yaml(root / "catalog-optimized-worker.yml")
+    component = load_github_yaml(root / "catalog-component-worker.yml")
+    required_route_inputs = {
+        "worker_id",
+        "descriptor_bundle_artifact",
+        "descriptor_member",
+        "descriptor_sha256",
+    }
+    assert required_route_inputs <= set(worker["on"]["workflow_call"]["inputs"])
+    assert required_route_inputs <= set(component["on"]["workflow_call"]["inputs"])
+    forbidden_inputs = {
+        "runtime_input_run_id",
+        "component_store_run_id",
+        "shard_index",
+        "active_workers",
+        "component_shard_index",
+        "total_component_shards",
+    }
+    assert not forbidden_inputs.intersection(worker["on"]["workflow_call"]["inputs"])
+    assert not forbidden_inputs.intersection(component["on"]["workflow_call"]["inputs"])
+
+    for job_name in ("evaluate_a", "evaluate_b", "evaluate_c"):
+        job = run["jobs"][job_name]
+        assert "verify_component_store" in job["needs"]
+        assert set(job["with"]) >= required_route_inputs
+
+    text = (root / "catalog-optimized-worker.yml").read_text("utf-8").lower()
+    for forbidden in (
+        "build-component",
+        "compute-component",
+        "component fallback",
+        "allow-component-miss",
+    ):
+        assert forbidden not in text
+    assert "component_payload_incomplete" in text
+    assert "download every" not in text
+
+
+def test_recipe_worker_unrolls_exactly_eight_checkpoint_step_pairs() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    worker = load_github_yaml(
+        Path(".github/workflows/catalog-optimized-worker.yml")
+    )
+    steps = worker["jobs"]["evaluate"]["steps"]
+    names = [str(step.get("name", "")) for step in steps]
+    for slot in range(1, 9):
+        assert names.count(f"Compute checkpoint segment {slot}") == 1
+        assert names.count(f"Upload checkpoint segment {slot}") == 1
+    assert sum(name.startswith("Compute checkpoint segment ") for name in names) == 8
+    assert sum(name.startswith("Upload checkpoint segment ") for name in names) == 8
+    assert all(
+        "checkpoint_slot_count" in json.dumps(step, sort_keys=True)
+        for step in steps
+        if str(step.get("name", "")).startswith("Compute checkpoint segment ")
+        or str(step.get("name", "")).startswith("Upload checkpoint segment ")
+    )
+
+
+def test_each_next_checkpoint_requires_a_durable_upload_receipt() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    worker = load_github_yaml(
+        Path(".github/workflows/catalog-optimized-worker.yml")
+    )
+    steps = {
+        str(step.get("id")): step
+        for step in worker["jobs"]["evaluate"]["steps"]
+        if step.get("id")
+    }
+    for slot in range(2, 9):
+        condition = str(steps[f"compute_{slot}"]["if"])
+        prior = slot - 1
+        assert f"steps.upload_{prior}.outputs['artifact-id'] != ''" in condition
+        assert f"steps.upload_{prior}.outputs['artifact-digest'] != ''" in condition
+
+
+def test_engine_reduces_sealed_checkpoint_groups_before_final_merge() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    run = load_github_yaml(
+        Path(".github/workflows/catalog-optimized-run.yml")
+    )
+    jobs = run["jobs"]
+    grouped = jobs["reduce_groups"]
+    assert grouped["strategy"]["max-parallel"] <= 15
+    assert "reduction_matrix" in str(grouped["strategy"]["matrix"])
+    grouped_text = json.dumps(grouped, sort_keys=True)
+    assert "checkpoint_artifact_pattern" in grouped_text
+    assert "scripts.reduce_sp500_optimized_catalog_group" in grouped_text
+    assert "retention-days\": 1" in grouped_text
+
+    final = jobs["reduce"]
+    assert "reduce_groups" in final["needs"]
+    final_text = json.dumps(final, sort_keys=True)
+    assert "reduction_artifact_pattern" in final_text
+    assert "catalog-checkpoint-*" not in final_text
+    assert "--reduction-plan" in final_text
+
+
+def test_every_active_registry_engine_uses_the_common_efficient_path() -> None:
+    from aurora.infra.github_performance.preflight import (
+        CATALOG_ACTIVE_ENGINE_WORKFLOWS,
+        load_github_yaml,
+        validate_catalog_workflow_topology,
+    )
+    from aurora.infra.sp500_megarun.catalog_campaign_registry import (
+        load_catalog_campaign_registry,
+    )
+
+    root = Path(".")
+    registry = load_catalog_campaign_registry(
+        root / "config/catalog_campaign_registry_v1.json"
+    )
+    active = [campaign for campaign in registry.campaigns if campaign.active]
+    assert active
+    assert {campaign.engine_id for campaign in active} <= set(
+        CATALOG_ACTIVE_ENGINE_WORKFLOWS
+    )
+    receipt = validate_catalog_workflow_topology(
+        repo_root=root,
+        registry=registry,
+    )
+    assert receipt.status == "ready"
+    assert receipt.violations == ()
+
+    for campaign in active:
+        path = Path(CATALOG_ACTIVE_ENGINE_WORKFLOWS[campaign.engine_id])
+        workflow = load_github_yaml(path)
+        assert set(workflow["on"]) == {"workflow_call"}
+        jobs = workflow["jobs"]
+        recipe_jobs = [
+            job
+            for job in jobs.values()
+            if job.get("uses")
+            == "./.github/workflows/catalog-optimized-worker.yml"
+        ]
+        assert recipe_jobs
+        assert all("verify_component_store" in job["needs"] for job in recipe_jobs)
+        assert jobs["reduce_groups"]["strategy"]["max-parallel"] <= 15
+        assert "reduce_groups" in jobs["reduce"]["needs"]
+
+
+def test_weekly_keeper_is_read_only_and_cannot_launch_science() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    keeper_path = Path(".github/workflows/catalog-artifact-keeper.yml")
+    keeper = load_github_yaml(keeper_path)
+    assert keeper["on"] == {"schedule": [{"cron": "17 3 * * 0"}]}
+    assert keeper["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "issues": "read",
+    }
+    audit = keeper["jobs"]["live_controls_audit_before_maintenance"]
+    assert audit["uses"] == "./.github/workflows/catalog-live-controls-audit.yml"
+    assert audit["with"]["purpose"] == "maintenance"
+    assert "steps" not in audit
+    assert "secrets" not in audit
+    preservation = keeper["jobs"]["inventory_and_preserve"]
+    assert preservation["runs-on"] == "ubuntu-24.04"
+    assert preservation["timeout-minutes"] == 20
+    assert "environment" not in preservation
+    assert "secrets" not in preservation
+    text = keeper_path.read_text("utf-8").lower()
+    for forbidden in (
+        "workflow_dispatch",
+        "catalog-optimized-run.yml",
+        "catalog-component-worker.yml",
+        "catalog-optimized-worker.yml",
+        "--method post",
+        "--method patch",
+        "--method delete",
+    ):
+        assert forbidden not in text
+    assert "--maximum-download-bytes 1073741824" in text
+    assert "--maximum-artifact-copies 8" in text
+    assert "--maximum-cache-restores 16" in text
+
+
+def test_keeper_source_contract_is_closed_and_covers_active_registry() -> None:
+    from scripts.run_catalog_artifact_keeper import _validate_contract
+
+    registry = json.loads(Path("config/catalog_campaign_registry_v1.json").read_text("utf-8"))
+    source_contract = json.loads(
+        Path("config/catalog_keeper_source_artifacts_v1.json").read_text("utf-8")
+    )
+    rows = _validate_contract(
+        source_contract,
+        repository="trading-optimizer-lab-org/aurora",
+        registry=registry,
+    )
+
+    assert {row["contract_name"] for row in rows} == {
+        "runtime_input_pack_v1",
+        "reference_oracle_v1",
+    }
+    assert all(row["validation_opened"] is False for row in rows)
+    assert all(row["locked_opened"] is False for row in rows)
+
+
+def test_keeper_closed_file_verifier_rejects_one_changed_byte(tmp_path: Path) -> None:
+    from scripts.run_catalog_artifact_keeper import (
+        KeeperError,
+        _file_sha256,
+        _verify_closed_file_list,
+    )
+
+    root = tmp_path / "artifact"
+    root.mkdir()
+    target = root / "receipt.json"
+    target.write_bytes(b"sealed\n")
+    contract = {
+        "files": [
+            {
+                "path": "receipt.json",
+                "bytes": target.stat().st_size,
+                "sha256": _file_sha256(target),
+            }
+        ]
+    }
+    assert len(_verify_closed_file_list(root, contract)) == 64
+
+    target.write_bytes(b"changed\n")
+    with pytest.raises(KeeperError, match="KEEPER_SOURCE_CONTENT_MISMATCH"):
+        _verify_closed_file_list(root, contract)
+
+
+def test_keeper_network_client_is_get_only_and_has_no_science_escape() -> None:
+    text = Path("scripts/run_catalog_artifact_keeper.py").read_text("utf-8").lower()
+    assert 'method="get"' in text
+    for forbidden in (
+        'method="post"',
+        'method="patch"',
+        'method="delete"',
+        "subprocess",
+        "build_sp500_component_store",
+        "run_sp500_optimized_recipe_worker",
+        "reduce_sp500_optimized_catalog_run",
+    ):
+        assert forbidden not in text
+
+
+def test_keeper_drops_github_token_on_signed_storage_redirect() -> None:
+    from urllib.request import Request
+
+    from scripts.run_catalog_artifact_keeper import _ArtifactRedirectHandler
+
+    source = Request(
+        "https://api.github.com/repos/example/example/actions/artifacts/1/zip",
+        method="GET",
+        headers={"Authorization": "Bearer must-not-leak"},
+    )
+    redirected = _ArtifactRedirectHandler().redirect_request(
+        source,
+        None,
+        302,
+        "Found",
+        {},
+        "https://example.blob.core.windows.net/result/file.zip?sealed=1",
+    )
+    assert redirected is not None
+    assert not any(
+        key.casefold() == "authorization" for key in redirected.headers
+    )
+
+
+def test_exact_runtime_fragment_assembly_rejects_cross_artifact_conflicts(
+    tmp_path: Path,
+) -> None:
+    from aurora.infra.github_performance.contracts import canonical_sha256
+    from scripts.assemble_sp500_runtime_fragments import (
+        assemble_runtime_fragments,
+    )
+
+    fragment_root = tmp_path / "fragments"
+    names = ("catalog-input-a", "catalog-input-b")
+    for name in names:
+        target = fragment_root / name / "train_snapshot_1993_2010"
+        target.mkdir(parents=True)
+        (target / f"{name}.parquet").write_bytes(name.encode("ascii"))
+    identity_sha256 = "a" * 64
+    manifest_sha256 = canonical_sha256(
+        {
+            "schema_version": "1",
+            "artifacts": names,
+            "prepared_input_identity_sha256": identity_sha256,
+        }
+    )
+    receipt = assemble_runtime_fragments(
+        fragment_root,
+        tmp_path / "assembled",
+        artifact_names=names,
+        prepared_input_identity_sha256=identity_sha256,
+        expected_artifact_manifest_sha256=manifest_sha256,
+    )
+    assert receipt["file_count"] == 2
+
+    shared = Path("shared.json")
+    (fragment_root / names[0] / shared).write_text("left", "utf-8")
+    (fragment_root / names[1] / shared).write_text("right", "utf-8")
+    with pytest.raises(ValueError, match="RUNTIME_FRAGMENT_FILE_CONFLICT"):
+        assemble_runtime_fragments(
+            fragment_root,
+            tmp_path / "conflict",
+            artifact_names=names,
+            prepared_input_identity_sha256=identity_sha256,
+            expected_artifact_manifest_sha256=manifest_sha256,
+        )
+
+
+def test_recipe_worker_reads_exact_component_bundles_without_merging_copy(
+    tmp_path: Path,
+) -> None:
+    from aurora.infra.github_performance.contracts import canonical_sha256
+    from aurora.infra.sp500_megarun.catalog_component_store import (
+        ComponentStoreWriter,
+    )
+    from scripts.run_sp500_optimized_recipe_worker import (
+        _open_exact_component_payload,
+    )
+
+    payload_root = tmp_path / "components"
+    for ordinal, values in enumerate(
+        (np.array([1, 0, -1], dtype=np.int8), np.array([-1, 1, 0], dtype=np.int8))
+    ):
+        source_id = f"{ordinal + 1:064x}"
+        root = payload_root / f"bundle-{ordinal}"
+        writer = ComponentStoreWriter(
+            root,
+            data_snapshot_sha256="a" * 64,
+            evaluator_sha256="b" * 64,
+            session_count=3,
+        )
+        writer.add(source_id, values)
+        manifest = writer.commit()
+        identity = {
+            "schema_version": "1",
+            "bundle_identity_sha256": f"{ordinal + 10:064x}",
+            "component_store_manifest_sha256": manifest.manifest_sha256,
+            "component_count": 1,
+            "components": [
+                {
+                    "component_id": f"{ordinal + 20:064x}",
+                    "source_configuration_sha256": source_id,
+                    "result_sha256": manifest.entries[0].result_sha256,
+                }
+            ],
+            "validation_opened": False,
+            "locked_opened": False,
+        }
+        (root / "component_bundle_manifest.json").write_text(
+            json.dumps(
+                {**identity, "manifest_sha256": canonical_sha256(identity)},
+                sort_keys=True,
+            )
+            + "\n",
+            "utf-8",
+        )
+
+    payload = _open_exact_component_payload(
+        payload_root,
+        data_snapshot_sha256="a" * 64,
+        evaluator_sha256="b" * 64,
+    )
+    np.testing.assert_array_equal(payload.get(f"{1:064x}"), [1, 0, -1])
+    np.testing.assert_array_equal(payload.get(f"{2:064x}"), [-1, 1, 0])
+    assert not (payload_root / "signals.npy").exists()
+
+
+def test_runtime_and_nine_prepared_partitions_are_reused_selectively() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    workflow_path = Path(".github/workflows/catalog-optimized-run.yml")
+    workflow = load_github_yaml(workflow_path)
+    steps = workflow["jobs"]["prepare_runtime_and_inputs"]["steps"]
+    names = [str(step.get("name", "")) for step in steps]
+    assert sum(name.startswith("Restore prepared ") for name in names) == 9
+    assert sum(name.startswith("Save prepared ") for name in names) == 9
+    assert sum(
+        name.startswith("Upload one-day prepared ") for name in names
+    ) == 9
+    text = workflow_path.read_text("utf-8")
+    assert "scripts/fetch_catalog_runtime_input_artifact.py" in text
+    assert "9075791134" not in text
+    assert "--partition-id" in text
+    assert "prepared-input-store" not in text
+    runtime_save = next(
+        step for step in steps if step.get("name") == "Save exact immutable runtime cache"
+    )
+    assert runtime_save["with"]["key"] == "${{ steps.runtime_build.outputs.cache_key }}"
+
+
+def test_runtime_preparation_publishes_one_small_bound_terminal_seal() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    workflow = load_github_yaml(
+        Path(".github/workflows/catalog-optimized-run.yml")
+    )
+    steps = workflow["jobs"]["prepare_runtime_and_inputs"]["steps"]
+    seal = next(
+        step
+        for step in steps
+        if step.get("name") == "Publish bound runtime and prepared-input seal"
+    )
+    assert seal["with"]["name"] == (
+        "catalog-runtime-prepared-seal-${{ inputs.authority_id }}"
+    )
+    assert seal["with"]["retention-days"] == 90
+    rendered = json.dumps(steps, sort_keys=True)
+    for binding in (
+        "request_sha256",
+        "authority_id",
+        "campaign_id",
+        "science_sha256",
+        "execution_plan_sha256",
+        "protected_commit_sha",
+        "prepared_input_identity_sha256",
+        "runtime_identity_sha256",
+    ):
+        assert binding in rendered

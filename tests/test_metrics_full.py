@@ -29,7 +29,7 @@ def daily_returns_series(daily_returns):
 
 
 @pytest.fixture
-def benchmark(rng):
+def benchmark_returns(rng):
     n = 252 * 3
     return rng.normal(loc=0.0004, scale=0.010, size=n)
 
@@ -111,9 +111,9 @@ def test_drawdown_details_columns(daily_returns_series):
         assert (df["recovery_days"] >= 0).all()
 
 
-def test_all_metrics_returns_dict_with_50_keys(daily_returns, benchmark):
+def test_all_metrics_returns_dict_with_50_keys(daily_returns, benchmark_returns):
     """all_metrics with benchmark should yield >= 50 metric keys."""
-    s = mf.all_metrics(daily_returns, benchmark=benchmark)
+    s = mf.all_metrics(daily_returns, benchmark=benchmark_returns)
     assert isinstance(s, pd.Series)
     assert len(s) >= 50, f"Got only {len(s)} metrics, expected >= 50"
     # all values must be finite numbers
@@ -155,13 +155,13 @@ def test_sharpe_rises_with_positive_drift(rng):
     assert mf.sharpe_ratio(high) > mf.sharpe_ratio(low)
 
 
-def test_information_ratio_finite(daily_returns, benchmark):
-    val = mf.information_ratio(daily_returns, benchmark)
+def test_information_ratio_finite(daily_returns, benchmark_returns):
+    val = mf.information_ratio(daily_returns, benchmark_returns)
     assert math.isfinite(val)
 
 
-def test_treynor_ratio_finite(daily_returns, benchmark):
-    val = mf.treynor_ratio(daily_returns, benchmark, rf=0.02, ppy=252)
+def test_treynor_ratio_finite(daily_returns, benchmark_returns):
+    val = mf.treynor_ratio(daily_returns, benchmark_returns, rf=0.02, ppy=252)
     assert math.isfinite(val)
 
 

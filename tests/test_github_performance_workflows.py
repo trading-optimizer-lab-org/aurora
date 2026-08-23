@@ -20,7 +20,7 @@ POLICY_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "github-performance-policy.yml"
 )
 RECOVERY_PLAN_ACTION_PATH = (
-    ROOT / ".github" / "actions" / "aurora-recovery-plan" / "action.yml"
+    ROOT / ".github" / "actions" / "aurora-shard-recovery-plan" / "action.yml"
 )
 RETRY_SHARD_ACTION_PATH = (
     ROOT / ".github" / "actions" / "aurora-retry-shard" / "action.yml"
@@ -39,6 +39,12 @@ REFERENCE_WORKFLOW_PATH = (
 )
 VALIDATION_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "github-performance-validation.yml"
+)
+CAPACITY_CALIBRATION_WORKFLOW_PATH = (
+    ROOT / ".github" / "workflows" / "catalog-capacity-calibration.yml"
+)
+CATALOG_OPTIMIZED_WORKFLOW_PATH = (
+    ROOT / ".github" / "workflows" / "catalog-optimized-run.yml"
 )
 
 
@@ -71,10 +77,20 @@ def test_runtime_setup_is_composite_and_pinned() -> None:
     )
 
 
-def test_runtime_setup_requires_exact_wheelhouse_and_lock() -> None:
+def test_runtime_setup_requires_one_exact_runtime_object_and_lock() -> None:
     action = _load_action()
-    assert action["inputs"]["wheelhouse-path"]["required"] is True
-    assert action["inputs"]["dependency-lock-path"]["required"] is True
+    required = {
+        "python-version",
+        "runtime-mode",
+        "runtime-object-path",
+        "runtime-manifest-path",
+        "dependency-lock-path",
+        "expected-runtime-identity-sha256",
+        "expected-source-sha",
+        "expected-numeric-profile-sha256",
+    }
+    assert set(action["inputs"]) == required
+    assert all(action["inputs"][name]["required"] is True for name in required)
 
 
 def test_runtime_setup_installs_offline_without_resolution_or_building() -> None:
@@ -87,11 +103,20 @@ def test_runtime_setup_installs_offline_without_resolution_or_building() -> None
     assert "https://" not in text
     assert "http://" not in text
     assert "wheelhouse_manifest.json" in text
-    assert "dependency_lock_manifest.json" in text
+    assert "RUNTIME_DEPENDENCY_LOCK_HASH_INVALID" in text
+    assert "RUNTIME_FILE_HASH_INVALID" in text
+    assert "RUNTIME_OBJECT_HASH_INVALID" in text
 
 
-def test_runtime_setup_pins_numeric_threads_to_detected_cpus() -> None:
-    action_text = ACTION_PATH.read_text(encoding="utf-8")
+def test_catalog_workers_pin_numeric_threads_without_oversubscription() -> None:
+    worker_texts = [
+        (ROOT / ".github/workflows/catalog-optimized-worker.yml").read_text(
+            "utf-8"
+        ),
+        (ROOT / ".github/workflows/catalog-component-worker.yml").read_text(
+            "utf-8"
+        ),
+    ]
     for variable in (
         "OMP_NUM_THREADS",
         "OPENBLAS_NUM_THREADS",
@@ -100,8 +125,7 @@ def test_runtime_setup_pins_numeric_threads_to_detected_cpus() -> None:
         "VECLIB_MAXIMUM_THREADS",
         "BLIS_NUM_THREADS",
     ):
-        assert f'echo "{variable}=$cpu_count"' in action_text
-    assert "getconf _NPROCESSORS_ONLN" in action_text
+        assert all(f'{variable}: "1"' in text for text in worker_texts)
 
 
 def test_runtime_setup_has_no_credential_or_larger_runner_escape() -> None:
@@ -351,11 +375,11 @@ def test_recovery_is_durable_and_iterates_to_maximum_retry_budget() -> None:
         job = jobs[name]
         assert job["runs-on"] == "ubuntu-24.04"
         recovery = next(
-            step
-            for step in job["steps"]
-            if step.get("uses")
-            == "./.github/actions/aurora-recovery-plan"
-        )
+                step
+                for step in job["steps"]
+                if step.get("uses")
+                == "./.github/actions/aurora-shard-recovery-plan"
+            )
         assert recovery["with"]["current-wave"] == wave
         assert recovery["with"]["max-waves"] == 6
     assert "campaign-update" in WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -953,3 +977,95 @@ def test_policy_workflow_is_lightweight_static_pr_enforcement() -> None:
     text = POLICY_WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "validate_github_workflow_policy.py" in text
     assert "workflow_dispatch" in workflow["on"]
+
+
+def test_catalog_capacity_calibration_is_fixed_synthetic_and_read_only() -> None:
+    workflow = load_github_yaml(CAPACITY_CALIBRATION_WORKFLOW_PATH)
+    assert set(workflow["on"]) == {"schedule", "workflow_dispatch"}
+    assert workflow["on"]["workflow_dispatch"] == {}
+    assert workflow["on"]["schedule"] == [{"cron": "17 3 */3 * *"}]
+    assert workflow["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+    }
+    jobs = workflow["jobs"]
+    assert set(jobs) == {"synthetic_probe", "seal_receipt"}
+    probe = jobs["synthetic_probe"]
+    assert probe["runs-on"] == "ubuntu-24.04"
+    assert probe["strategy"]["max-parallel"] == 11
+    assert len(probe["strategy"]["matrix"]["probe_id"]) == 11
+    assert jobs["seal_receipt"]["runs-on"] == "ubuntu-24.04"
+    assert _needs(jobs["seal_receipt"]) == {"synthetic_probe"}
+
+    text = CAPACITY_CALIBRATION_WORKFLOW_PATH.read_text("utf-8")
+    lowered = text.lower()
+    for forbidden in (
+        "catalog-optimized-run",
+        "catalog-component-worker",
+        "catalog-optimized-worker",
+        "catalog-recovery-wave",
+        "run_sp500_optimized_recipe_worker",
+        "build_sp500_component_store",
+        "reduce_sp500_optimized_catalog",
+        "git push",
+        "github_capacity_profile.json",
+    ):
+        assert forbidden not in lowered
+    assert "catalog_capacity_calibration_v1.json" in text
+    assert '"p50"' in text
+    assert '"p95"' in text
+    assert '"p99"' in text
+    assert "Download exact tiny probe evidence for timing" in text
+    assert '"artifact_download_seconds": distribution(download_seconds)' in text
+    assert "receipt_sha256" in text
+    assert "retention-days: 90" in text
+
+
+def test_catalog_reduction_uses_bound_merge_action_and_root_only() -> None:
+    workflow = load_github_yaml(CATALOG_OPTIMIZED_WORKFLOW_PATH)
+    jobs = workflow["jobs"]
+    grouped = jobs["reduce_groups"]
+    merge_step = next(
+        step
+        for step in grouped["steps"]
+        if step.get("uses") == "./.github/actions/aurora-merge-level"
+    )
+    assert merge_step["with"]["mode"] == "catalog"
+    assert merge_step["with"]["expected-level"] == "0"
+    assert merge_step["with"]["expected-authority-id"] == (
+        "${{ inputs.authority_id }}"
+    )
+    assert merge_step["with"]["expected-campaign-id"] == (
+        "${{ inputs.campaign_id }}"
+    )
+    assert merge_step["with"]["expected-science-sha256"] == (
+        "${{ inputs.science_sha256 }}"
+    )
+    assert merge_step["with"]["expected-execution-plan-sha256"] == (
+        "${{ inputs.execution_plan_sha256 }}"
+    )
+    final_download = next(
+        step
+        for step in jobs["reduce"]["steps"]
+        if step["name"] == "Download only bounded reduction groups"
+    )
+    assert "reduction_artifact_pattern" in final_download["with"]["pattern"]
+    assert "checkpoint" not in final_download["with"]["pattern"]
+
+    workflow_text = CATALOG_OPTIMIZED_WORKFLOW_PATH.read_text("utf-8")
+    assert 'selected_mode == "central"' in workflow_text
+    assert "expected_maximum_groups = 1" in workflow_text
+    assert "expected_maximum_fan_in = 360" in workflow_text
+
+    action_text = MERGE_LEVEL_ACTION_PATH.read_text("utf-8")
+    for marker in (
+        "Validate immutable reducer mode",
+        "CATALOG_MERGE_MODE_INVALID",
+        "CATALOG_MERGE_DIRECT_CHILD_SET_INVALID",
+        "CATALOG_MERGE_PLAN_BINDING_INVALID",
+        "CATALOG_MERGE_RESOURCE_MARGIN_UNPROVEN",
+        "node_descriptor_sha256",
+        "float(projection[field]) > 0.70",
+        "float(projection[field]) < 0",
+    ):
+        assert marker in action_text

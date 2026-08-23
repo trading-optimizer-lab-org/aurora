@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trading-optimizer-lab-org/aurora/schemas/catalog_github_controls_v1.schema.json",
+  "title": "AURORA catalog GitHub controls v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "github_api_version",
+    "repository_identity",
+    "default_branch",
+    "audit_freshness",
+    "branch_protection",
+    "actions",
+    "billing",
+    "environment",
+    "issue_labels",
+    "auditor",
+    "entrypoints"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "github_api_version": {"const": "2026-03-10"},
+    "repository_identity": {"$ref": "#/$defs/repository_identity"},
+    "default_branch": {"const": "main"},
+    "audit_freshness": {"$ref": "#/$defs/audit_freshness"},
+    "branch_protection": {"$ref": "#/$defs/branch_protection"},
+    "actions": {"$ref": "#/$defs/actions"},
+    "billing": {"$ref": "#/$defs/billing"},
+    "environment": {"$ref": "#/$defs/environment"},
+    "issue_labels": {"$ref": "#/$defs/issue_labels"},
+    "auditor": {"$ref": "#/$defs/auditor"},
+    "entrypoints": {"$ref": "#/$defs/entrypoints"}
+  },
+  "$defs": {
+    "repository_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full_name", "owner_type", "visibility"],
+      "properties": {
+        "full_name": {"const": "trading-optimizer-lab-org/aurora"},
+        "owner_type": {"const": "Organization"},
+        "visibility": {"const": "public"}
+      }
+    },
+    "audit_freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maximum_age_seconds",
+        "maximum_future_skew_seconds",
+        "time_source",
+        "expired_admission_action",
+        "expired_terminal_action"
+      ],
+      "properties": {
+        "maximum_age_seconds": {"const": 300},
+        "maximum_future_skew_seconds": {"const": 30},
+        "time_source": {"const": "github_api_date_header"},
+        "expired_admission_action": {"const": "defer_without_authority"},
+        "expired_terminal_action": {"const": "refresh_without_compute"}
+      }
+    },
+    "branch_protection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enforce_admins",
+        "require_pull_request",
+        "required_approving_review_count",
+        "require_code_owner_reviews",
+        "dismiss_stale_reviews",
+        "require_last_push_approval",
+        "strict_status_checks",
+        "required_conversation_resolution",
+        "required_linear_history",
+        "allow_force_pushes",
+        "allow_deletions",
+        "required_status_checks"
+      ],
+      "properties": {
+        "enforce_admins": {"const": true},
+        "require_pull_request": {"const": true},
+        "required_approving_review_count": {"const": 0},
+        "require_code_owner_reviews": {"const": false},
+        "dismiss_stale_reviews": {"const": false},
+        "require_last_push_approval": {"const": false},
+        "strict_status_checks": {"const": true},
+        "required_conversation_resolution": {"const": true},
+        "required_linear_history": {"const": true},
+        "allow_force_pushes": {"const": false},
+        "allow_deletions": {"const": false},
+        "required_status_checks": {
+          "type": "array",
+          "prefixItems": [
+            {"const": "GTBI V7 stage-two required"},
+            {"const": "catalog-controller-policy"}
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    },
+    "actions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default_workflow_permissions",
+        "can_approve_pull_request_reviews",
+        "standard_github_hosted_only",
+        "larger_runners_allowed",
+        "self_hosted_runners_allowed"
+      ],
+      "properties": {
+        "default_workflow_permissions": {"const": "read"},
+        "can_approve_pull_request_reviews": {"const": false},
+        "standard_github_hosted_only": {"const": true},
+        "larger_runners_allowed": {"const": false},
+        "self_hosted_runners_allowed": {"const": false}
+      }
+    },
+    "budget_alerting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["will_alert", "alert_recipients"],
+      "properties": {
+        "will_alert": {"const": false},
+        "alert_recipients": {"type": "array", "maxItems": 0}
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "budget_scope",
+        "budget_entity_name",
+        "budget_type",
+        "budget_product_sku",
+        "budget_amount",
+        "prevent_further_usage",
+        "budget_alerting"
+      ],
+      "properties": {
+        "budget_scope": {"const": "repository"},
+        "budget_entity_name": {"const": "trading-optimizer-lab-org/aurora"},
+        "budget_type": {"enum": ["ProductPricing", "SkuPricing"]},
+        "budget_product_sku": {
+          "enum": ["actions", "actions_storage", "actions_cache_storage"]
+        },
+        "budget_amount": {"const": 0},
+        "prevent_further_usage": {"const": true},
+        "budget_alerting": {"$ref": "#/$defs/budget_alerting"}
+      }
+    },
+    "budget_control_plane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "organization", "repository_entity_name"],
+      "properties": {
+        "scope": {"const": "organization"},
+        "organization": {"const": "trading-optimizer-lab-org"},
+        "repository_entity_name": {
+          "const": "trading-optimizer-lab-org/aurora"
+        }
+      }
+    },
+    "billing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "budget_control_plane",
+        "required_zero_budgets",
+        "included_shared_storage_bytes",
+        "repository_cache_storage_limit_gb",
+        "repository_cache_retention_days",
+        "artifact_and_packages_reporting_lag_hours",
+        "cache_reporting_lag_minutes",
+        "artifact_storage_safety_fraction",
+        "cache_storage_safety_fraction",
+        "paid_actions_usage_allowed"
+      ],
+      "properties": {
+        "budget_control_plane": {"$ref": "#/$defs/budget_control_plane"},
+        "required_zero_budgets": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/budget"},
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "included_shared_storage_bytes": {"const": 53687091200},
+        "repository_cache_storage_limit_gb": {"const": 10},
+        "repository_cache_retention_days": {"const": 90},
+        "artifact_and_packages_reporting_lag_hours": {"const": 12},
+        "cache_reporting_lag_minutes": {"const": 5},
+        "artifact_storage_safety_fraction": {"const": 0.2},
+        "cache_storage_safety_fraction": {"const": 0.1},
+        "paid_actions_usage_allowed": {"const": false}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "protected_branches_only", "required_reviewers"],
+      "properties": {
+        "name": {"const": "catalog-production"},
+        "protected_branches_only": {"const": true},
+        "required_reviewers": {"type": "array", "maxItems": 0}
+      }
+    },
+    "terminal_label": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "color", "description"],
+      "properties": {
+        "name": {"const": "catalog-run-terminal-v1"},
+        "color": {"const": "0e8a16"},
+        "description": {
+          "const": "Controller-verified terminal catalog request; do not apply manually"
+        }
+      }
+    },
+    "issue_labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terminal"],
+      "properties": {"terminal": {"$ref": "#/$defs/terminal_label"}}
+    },
+    "auditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config_path",
+        "app_id_variable",
+        "private_key_environment_secret",
+        "only_token_consumer_workflow"
+      ],
+      "properties": {
+        "config_path": {"const": "config/catalog_github_auditor_v1.json"},
+        "app_id_variable": {"const": "AURORA_CATALOG_AUDITOR_APP_ID"},
+        "private_key_environment_secret": {
+          "const": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY"
+        },
+        "only_token_consumer_workflow": {
+          "const": ".github/workflows/catalog-live-controls-audit.yml"
+        }
+      }
+    },
+    "issues_write_job_allowlist": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        ".github/workflows/catalog-run-controller.yml",
+        ".github/workflows/catalog-request-reconciler.yml",
+        ".github/workflows/catalog-ledger-guard.yml",
+        ".github/workflows/catalog-run-watchdog.yml"
+      ],
+      "properties": {
+        ".github/workflows/catalog-run-controller.yml": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        ".github/workflows/catalog-request-reconciler.yml": {
+          "const": ["call_controller"]
+        },
+        ".github/workflows/catalog-ledger-guard.yml": {
+          "const": ["record_tamper_incident"]
+        },
+        ".github/workflows/catalog-run-watchdog.yml": {
+          "const": ["call_controller"]
+        }
+      }
+    },
+    "entrypoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "public_controller",
+        "request_reconciler",
+        "ledger_guard",
+        "authority_watchdog",
+        "issues_write_workflow_allowlist",
+        "issues_write_must_be_job_scoped",
+        "issues_write_job_allowlist",
+        "fixed_nonproduction_trigger_exemptions",
+        "scheduled_read_only_maintenance_allowlist",
+        "heavy_workflows_must_be_workflow_call_only"
+      ],
+      "properties": {
+        "public_controller": {"const": ".github/workflows/catalog-run-controller.yml"},
+        "request_reconciler": {
+          "const": ".github/workflows/catalog-request-reconciler.yml"
+        },
+        "ledger_guard": {"const": ".github/workflows/catalog-ledger-guard.yml"},
+        "authority_watchdog": {"const": ".github/workflows/catalog-run-watchdog.yml"},
+        "issues_write_workflow_allowlist": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "issues_write_must_be_job_scoped": {"const": true},
+        "issues_write_job_allowlist": {
+          "$ref": "#/$defs/issues_write_job_allowlist"
+        },
+        "fixed_nonproduction_trigger_exemptions": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "scheduled_read_only_maintenance_allowlist": {
+          "const": [".github/workflows/catalog-artifact-keeper.yml"]
+        },
+        "heavy_workflows_must_be_workflow_call_only": {"const": true}
+      }
+    }
+  }
+}

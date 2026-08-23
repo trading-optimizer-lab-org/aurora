@@ -1,0 +1,263 @@
+name: Catalog capacity calibration
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "17 3 */3 * *"
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: catalog-capacity-calibration-v1
+  cancel-in-progress: false
+
+jobs:
+  synthetic_probe:
+    name: Synthetic standard-runner probe ${{ matrix.probe_id }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      max-parallel: 11
+      matrix:
+        probe_id: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - name: Mark probe start
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/capacity-probe"
+          date +%s%N > "$RUNNER_TEMP/capacity-probe/probe-start-ns.txt"
+
+      - name: Restore one fixed tiny calibration cache identity
+        id: tiny_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/capacity-calibration-cache-v1
+          key: capacity-calibration-v1-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Measure synthetic network-free work
+        shell: bash
+        env:
+          PROBE_ID: ${{ matrix.probe_id }}
+          CACHE_HIT: ${{ steps.tiny_cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import platform
+          import shutil
+          import time
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "capacity-probe"
+          cache_root = Path(os.environ["RUNNER_TEMP"]) / "capacity-calibration-cache-v1"
+          cache_root.mkdir(parents=True, exist_ok=True)
+          fixed = cache_root / "fixed-1024.bin"
+          if not fixed.exists():
+              fixed.write_bytes(bytes(range(256)) * 4)
+          started = time.perf_counter_ns()
+          payload = bytes(range(256)) * 4096
+          digest = hashlib.sha256(payload).hexdigest()
+          elapsed = (time.perf_counter_ns() - started) / 1_000_000_000
+          memory = {}
+          for line in Path("/proc/meminfo").read_text("utf-8").splitlines():
+              key, value = line.split(":", 1)
+              memory[key] = int(value.strip().split()[0]) * 1024
+          disk = shutil.disk_usage(os.environ["RUNNER_TEMP"])
+          probe_started_ns = int((root / "probe-start-ns.txt").read_text("ascii"))
+          receipt = {
+              "schema_version": "1",
+              "probe_id": int(os.environ["PROBE_ID"]),
+              "runner_image": "ubuntu-24.04",
+              "standard_runner_only": True,
+              "larger_runner": False,
+              "self_hosted_runner": False,
+              "paid_runner_minutes": 0,
+              "estimated_paid_actions_cost": 0,
+              "cpu_count": os.cpu_count(),
+              "machine": platform.machine(),
+              "python": platform.python_version(),
+              "memory_total_bytes": memory["MemTotal"],
+              "memory_available_bytes": memory["MemAvailable"],
+              "disk_total_bytes": disk.total,
+              "disk_free_bytes": disk.free,
+              "network_free_runtime_seconds": elapsed,
+              "synthetic_sha256": digest,
+              "cache_hit": os.environ.get("CACHE_HIT", "") == "true",
+              "cache_object_sha256": hashlib.sha256(fixed.read_bytes()).hexdigest(),
+              "cache_object_bytes": fixed.stat().st_size,
+              "probe_elapsed_seconds": (time.time_ns() - probe_started_ns) / 1_000_000_000,
+          }
+          canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+          receipt["probe_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+          (root / "probe.json").write_text(
+              json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload fixed tiny probe evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: capacity-calibration-probe-${{ github.run_id }}-${{ matrix.probe_id }}
+          path: ${{ runner.temp }}/capacity-probe/probe.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+      - name: Download exact tiny probe evidence for timing
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: capacity-calibration-probe-${{ github.run_id }}-${{ matrix.probe_id }}
+          path: ${{ runner.temp }}/capacity-probe-download
+
+  seal_receipt:
+    name: Seal canonical calibration receipt
+    needs: synthetic_probe
+    if: ${{ always() && needs.synthetic_probe.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Download every exact probe
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: capacity-calibration-probe-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/capacity-probes
+          merge-multiple: false
+
+      - name: Collect read-only job timing
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$RUNNER_TEMP/calibration-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" > "$RUNNER_TEMP/calibration-jobs.json"
+
+      - name: Seal content-hashed p50 p95 p99 receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import math
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          paths = sorted((temp / "capacity-probes").rglob("probe.json"))
+          if len(paths) != 11:
+              raise SystemExit("CAPACITY_CALIBRATION_PROBE_COVERAGE_INVALID")
+          probes = [json.loads(path.read_text("utf-8")) for path in paths]
+          if [row["probe_id"] for row in sorted(probes, key=lambda row: row["probe_id"])] != list(range(11)):
+              raise SystemExit("CAPACITY_CALIBRATION_PROBE_ID_INVALID")
+          for row in probes:
+              identity = {key: value for key, value in row.items() if key != "probe_sha256"}
+              canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+              if hashlib.sha256(canonical.encode()).hexdigest() != row.get("probe_sha256"):
+                  raise SystemExit("CAPACITY_CALIBRATION_PROBE_HASH_INVALID")
+
+          run = json.loads((temp / "calibration-run.json").read_text("utf-8"))
+          jobs_payload = json.loads((temp / "calibration-jobs.json").read_text("utf-8"))
+          jobs = jobs_payload.get("jobs", [])
+          created = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+          probe_jobs = [row for row in jobs if row.get("name", "").startswith("Synthetic standard-runner probe")]
+          if len(probe_jobs) != 11 or any(row.get("conclusion") != "success" for row in probe_jobs):
+              raise SystemExit("CAPACITY_CALIBRATION_JOB_COVERAGE_INVALID")
+
+          def seconds(start, end):
+              first = datetime.fromisoformat(start.replace("Z", "+00:00"))
+              last = datetime.fromisoformat(end.replace("Z", "+00:00"))
+              return max(0.0, (last - first).total_seconds())
+
+          def distribution(values):
+              ordered = sorted(float(value) for value in values)
+              if len(ordered) < 3 or any(not math.isfinite(value) or value < 0 for value in ordered):
+                  raise SystemExit("CAPACITY_CALIBRATION_DISTRIBUTION_INVALID")
+              def nearest(q):
+                  return ordered[max(0, math.ceil(q * len(ordered)) - 1)]
+              return {"p50": nearest(0.50), "p95": nearest(0.95), "p99": nearest(0.99)}
+
+          upload_seconds = []
+          for job in probe_jobs:
+              matches = [step for step in job.get("steps", []) if step.get("name") == "Upload fixed tiny probe evidence"]
+              if len(matches) != 1:
+                  raise SystemExit("CAPACITY_CALIBRATION_UPLOAD_TIMING_MISSING")
+              upload_seconds.append(seconds(matches[0]["started_at"], matches[0]["completed_at"]))
+          queue_seconds = [
+              max(0.0, (datetime.fromisoformat(row["started_at"].replace("Z", "+00:00")) - created).total_seconds())
+              for row in probe_jobs
+          ]
+          download_seconds = []
+          for job in probe_jobs:
+              matches = [
+                  step
+                  for step in job.get("steps", [])
+                  if step.get("name") == "Download exact tiny probe evidence for timing"
+              ]
+              if len(matches) != 1:
+                  raise SystemExit("CAPACITY_CALIBRATION_DOWNLOAD_TIMING_MISSING")
+              download_seconds.append(seconds(matches[0]["started_at"], matches[0]["completed_at"]))
+          compatibility = {
+              "runner_image": "ubuntu-24.04",
+              "cpu_counts": sorted({row["cpu_count"] for row in probes}),
+              "machines": sorted({row["machine"] for row in probes}),
+              "python_versions": sorted({row["python"] for row in probes}),
+              "cache_object_sha256s": sorted({row["cache_object_sha256"] for row in probes}),
+          }
+          compatibility_sha256 = hashlib.sha256(
+              json.dumps(compatibility, sort_keys=True, separators=(",", ":")).encode()
+          ).hexdigest()
+          receipt = {
+              "schema_version": "1",
+              "document_type": "catalog_capacity_calibration_v1",
+              "source_run_id": os.environ["GITHUB_RUN_ID"],
+              "source_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "observed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+              "sample_count": len(probes),
+              "runner_image": "ubuntu-24.04",
+              "standard_runner_only": True,
+              "larger_runner": False,
+              "self_hosted_runner": False,
+              "paid_runner_minutes": 0,
+              "estimated_paid_actions_cost": 0,
+              "does_not_infer_account_concurrency_ceiling": True,
+              "compatibility": compatibility,
+              "compatibility_sha256": compatibility_sha256,
+              "distributions": {
+                  "queue_seconds": distribution(queue_seconds),
+                  "probe_elapsed_seconds": distribution(row["probe_elapsed_seconds"] for row in probes),
+                  "network_free_runtime_seconds": distribution(row["network_free_runtime_seconds"] for row in probes),
+                  "memory_available_bytes": distribution(row["memory_available_bytes"] for row in probes),
+                  "disk_free_bytes": distribution(row["disk_free_bytes"] for row in probes),
+                  "artifact_upload_seconds": distribution(upload_seconds),
+                  "artifact_download_seconds": distribution(download_seconds),
+              },
+              "cache_hit_count": sum(bool(row["cache_hit"]) for row in probes),
+              "job_conclusions": [row["conclusion"] for row in sorted(probe_jobs, key=lambda row: row["name"])],
+              "validation_opened": False,
+              "locked_opened": False,
+          }
+          canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":"), allow_nan=False)
+          receipt["receipt_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+          Path("catalog_capacity_calibration_v1.json").write_text(
+              json.dumps(receipt, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Publish immutable calibration evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-capacity-calibration-v1-${{ github.run_id }}
+          path: catalog_capacity_calibration_v1.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90

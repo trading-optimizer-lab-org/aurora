@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trading-optimizer-lab-org/aurora/schemas/catalog_authority_anchor_v1.schema.json",
+  "title": "AURORA catalog authority anchor v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "production_enabled",
+    "repository",
+    "repository_node_id",
+    "issue_number",
+    "issue_node_id",
+    "exact_title",
+    "creator_login",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "production_enabled": {
+      "type": "boolean"
+    },
+    "repository": {
+      "const": "trading-optimizer-lab-org/aurora"
+    },
+    "repository_node_id": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "issue_number": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "issue_node_id": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "exact_title": {
+      "const": "AURORA CATALOG AUTHORITY LEDGER - DO NOT EDIT"
+    },
+    "creator_login": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "created_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "production_enabled": {
+            "const": true
+          }
+        },
+        "required": ["production_enabled"]
+      },
+      "then": {
+        "properties": {
+          "repository_node_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "issue_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "issue_node_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "creator_login": {
+            "type": "string",
+            "minLength": 1
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  ]
+}
