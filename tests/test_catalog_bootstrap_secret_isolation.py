@@ -6,6 +6,8 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 
+from infra.sp500_megarun import catalog_bootstrap_secrets as secrets_module
+
 from infra.sp500_megarun.catalog_bootstrap_contract import (
     load_catalog_bootstrap_manifests,
 )
@@ -100,6 +102,27 @@ def test_public_binding_contains_only_public_key_material() -> None:
 def test_requester_key_requires_preclosed_parent(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="SECRET_ACL_OPEN"):
         store_requester_key_once(tmp_path / "requester-private-key.pem", _key_pem())
+
+
+def test_default_acl_checker_passes_path_as_first_powershell_argument(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stdout = "O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+
+    def fake_run(args: list[str], **_kwargs: object) -> Result:
+        calls.append(args)
+        return Result()
+
+    monkeypatch.setattr(secrets_module, "_is_reparse_point", lambda _path: False)
+    monkeypatch.setattr(secrets_module.subprocess, "run", fake_run)
+
+    assert secrets_module._default_acl_checker(tmp_path) is True
+    assert calls[0][-1] == str(tmp_path)
+    assert "--" not in calls[0]
 
 
 def test_requester_key_is_create_new_and_read_back_verified(tmp_path: Path) -> None:
