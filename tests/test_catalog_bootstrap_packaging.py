@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import json
+import runpy
 import zipfile
 from pathlib import Path
 
@@ -92,3 +93,49 @@ def test_runner_has_closed_phase_dispatch_and_no_production_launch() -> None:
     assert "_REQUIRED\")" not in text
     assert '"PRECHECK": perform_precheck' in text
     assert '"FINAL_AUDIT_PENDING": perform_final_audit' in text
+
+
+def test_activity_snapshot_queries_only_bounded_heavy_workflows(monkeypatch) -> None:
+    namespace = runpy.run_path(str(RUNNER))
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> str:
+        calls.append(args)
+        endpoint = args[-1]
+        if "/issues?state=all&per_page=100" in endpoint:
+            return json.dumps(
+                [
+                    [
+                        {
+                            "number": 17,
+                            "title": "[AURORA CATALOG RUN REQUEST] bootstrap",
+                        }
+                    ]
+                ]
+            )
+        if "/actions/workflows/" in endpoint:
+            workflow_name = endpoint.split("/actions/workflows/", 1)[1].split(
+                "/runs?", 1
+            )[0]
+            return json.dumps(
+                {
+                    "workflow_runs": [
+                        {
+                            "id": len(calls) + 100,
+                            "path": f".github/workflows/{workflow_name}",
+                        }
+                    ]
+                }
+            )
+        raise AssertionError(f"unexpected command: {args}")
+
+    snapshot_function = namespace["_github_activity_snapshot"]
+    monkeypatch.setitem(snapshot_function.__globals__, "_run", fake_run)
+    snapshot = snapshot_function()
+
+    assert snapshot["request_issue_numbers"] == [17]
+    assert len(snapshot["heavy_run_ids"]) == 4
+    heavy_calls = [args for args in calls if "/actions/workflows/" in args[-1]]
+    assert len(heavy_calls) == 4
+    assert all("branch=main&per_page=100" in args[-1] for args in heavy_calls)
+    assert not any("/actions/runs?per_page=100" in args[-1] for args in calls)
