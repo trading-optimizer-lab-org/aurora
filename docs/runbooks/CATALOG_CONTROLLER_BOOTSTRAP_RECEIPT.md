@@ -6,6 +6,8 @@
 result=BLOCKED
 production_enabled=false
 production_run_created=false
+controller_enabled_readback=false
+live_audit_utc=2026-08-23T11:59:09Z
 ```
 
 Este archivo no acredita una instalación terminada. Es el registro honesto de
@@ -16,7 +18,13 @@ obtenido de las identidades, archivos y controles reales.
 
 ```text
 repository=trading-optimizer-lab-org/aurora
-implementation_commit=PENDING_TASK_14_COMMIT
+implementation_branch=codex/sp500-search-method-benchmark-short
+implementation_commit=30d90d941ee62c5c81b027fa58609744307c5e78
+implementation_merged=false
+github_lint_run_id=32637970710
+github_lint_passed=true
+catalog_actionlint_files_passed=20
+github_catalog_workflow_definition_error_fixed=true
 requester_client_built=false
 requester_broker_built=false
 requester_apps_installed=false
@@ -26,6 +34,16 @@ authority_anchor_bound=false
 agent_sandbox_active=false
 broker_service_active=false
 production_seal_present=false
+github_app_installations_observed=0
+catalog_production_environment_present=false
+catalog_auditor_secret_present=false
+requester_public_key_present=false
+agent_account_present=false
+requester_account_present=false
+broker_task_present=false
+current_ai_os_identity=DESKTOP-4LEK540\HP
+current_ai_has_admin_os_token=false
+current_ai_has_admin_github_credential=true
 local_requester_tests_passed=true
 bounded_reconcile_hint_implemented=true
 terminal_backoff_and_rate_limit_implemented=true
@@ -53,8 +71,16 @@ REQUESTER_APP_IDENTITY_UNBOUND
 AUDITOR_APP_IDENTITY_UNBOUND
 AUTHORITY_ANCHOR_UNBOUND
 AGENT_SANDBOX_NOT_ENFORCEABLE_IN_CURRENT_CODEX_PROCESS
+BROKER_IDENTITY_UNINSTALLED
+CATALOG_PRODUCTION_ENVIRONMENT_UNBOUND
 CURRENT_ARTIFACT_STORAGE_HEADROOM_UNPROVEN
 ```
+
+El 23 de agosto de 2026 GitHub devolvió cero instalaciones de Apps para la
+organización, no mostró el entorno `catalog-production` ni el secreto auditor,
+y confirmó `CATALOG_CONTROLLER_ENABLED=false`. El token de GitHub disponible
+en el contexto actual conserva permisos administrativos, por lo que este mismo
+proceso no puede acreditar la separación final exigida para producción.
 
 La auditoría de almacenamiento observó una media del periodo muy superior a la
 asignación gratuita configurada, pero GitHub no proporcionó una lectura exacta
