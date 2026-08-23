@@ -71,7 +71,7 @@
       "required": ["kind", "name", "description", "homepage_url", "public", "webhook_active", "default_events", "manifest_permissions", "expected_repository_permissions", "expected_organization_permissions", "expected_enterprise_permissions"],
       "properties": {
         "kind": {"const": "requester"},
-        "name": {"const": "AURORA Catalog Requester f10c7b40e1"},
+        "name": {"const": "AURORA Catalog Request f10c7b40e1"},
         "description": {"const": "Narrow issue-only requester for AURORA catalog runs."},
         "homepage_url": {"const": "https://github.com/trading-optimizer-lab-org/aurora"},
         "public": {"const": false},
@@ -89,7 +89,7 @@
       "required": ["kind", "name", "description", "homepage_url", "public", "webhook_active", "default_events", "manifest_permissions", "expected_repository_permissions", "expected_organization_permissions", "expected_enterprise_permissions"],
       "properties": {
         "kind": {"const": "auditor"},
-        "name": {"const": "AURORA Catalog Controls Auditor cf479d98fb"},
+        "name": {"const": "AURORA Catalog Audit cf479d98fb"},
         "description": {"const": "Read-only verifier for AURORA catalog controls."},
         "homepage_url": {"const": "https://github.com/trading-optimizer-lab-org/aurora"},
         "public": {"const": false},

@@ -4,7 +4,7 @@
   "organization": "trading-optimizer-lab-org",
   "requester": {
     "kind": "requester",
-    "name": "AURORA Catalog Requester f10c7b40e1",
+    "name": "AURORA Catalog Request f10c7b40e1",
     "description": "Narrow issue-only requester for AURORA catalog runs.",
     "homepage_url": "https://github.com/trading-optimizer-lab-org/aurora",
     "public": false,
@@ -23,7 +23,7 @@
   },
   "auditor": {
     "kind": "auditor",
-    "name": "AURORA Catalog Controls Auditor cf479d98fb",
+    "name": "AURORA Catalog Audit cf479d98fb",
     "description": "Read-only verifier for AURORA catalog controls.",
     "homepage_url": "https://github.com/trading-optimizer-lab-org/aurora",
     "public": false,

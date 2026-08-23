@@ -57,8 +57,10 @@ def test_bootstrap_manifests_are_exact() -> None:
     value = load_catalog_bootstrap_manifests(MANIFEST_PATH)
     assert value.repository == "trading-optimizer-lab-org/aurora"
     assert value.organization == "trading-optimizer-lab-org"
-    assert value.requester.name == "AURORA Catalog Requester f10c7b40e1"
-    assert value.auditor.name == "AURORA Catalog Controls Auditor cf479d98fb"
+    assert len(value.requester.name) <= 34
+    assert len(value.auditor.name) <= 34
+    assert value.requester.name == "AURORA Catalog Request f10c7b40e1"
+    assert value.auditor.name == "AURORA Catalog Audit cf479d98fb"
     assert value.requester.manifest_permissions == {
         "metadata": "read",
         "issues": "write",
@@ -83,7 +85,7 @@ def test_github_manifest_payload_is_closed_and_callback_bound() -> None:
     callback = "http://127.0.0.1:43127/github/manifest/callback"
     payload = github_manifest_payload(value.auditor, redirect_url=callback)
     assert payload == {
-        "name": "AURORA Catalog Controls Auditor cf479d98fb",
+        "name": "AURORA Catalog Audit cf479d98fb",
         "url": "https://github.com/trading-optimizer-lab-org/aurora",
         "description": "Read-only verifier for AURORA catalog controls.",
         "redirect_url": callback,
