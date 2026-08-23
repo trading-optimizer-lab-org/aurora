@@ -1,11 +1,11 @@
 {
   "schema_version": "1",
-  "production_enabled": false,
+  "production_enabled": true,
   "repository": "trading-optimizer-lab-org/aurora",
-  "repository_node_id": null,
-  "issue_number": null,
-  "issue_node_id": null,
+  "repository_node_id": "R_kgDOSXi2RA",
+  "issue_number": 161,
+  "issue_node_id": "I_kwDOSXi2RM8AAAABN5tkKQ",
   "exact_title": "AURORA CATALOG AUTHORITY LEDGER - DO NOT EDIT",
-  "creator_login": null,
-  "created_at": null
+  "creator_login": "gomez5757",
+  "created_at": "2026-08-23T16:31:19Z"
 }

@@ -1,10 +1,12 @@
 {
   "schema_version": "1",
-  "production_enabled": false,
-  "request_actors": [],
+  "production_enabled": true,
+  "request_actors": [
+    "aurora-catalog-request-f10c7b40e1[bot]"
+  ],
   "required_request_actor_kind": "non_admin_github_app",
-  "requester_public_key_path": null,
-  "requester_public_key_sha256": null,
+  "requester_public_key_path": "config/catalog_requester_public_key_v1.pem",
+  "requester_public_key_sha256": "7d9f2bf3eefca26d615b2843f3ac2de9f3b04ff398e2b0b6ed65fb8ebac23a5b",
   "ledger_actor": "github-actions[bot]",
   "authority_issue_repository_variable": "CATALOG_AUTHORITY_ISSUE_NUMBER",
   "deny_actor_if_repository_admin_credential_is_exposed": true
