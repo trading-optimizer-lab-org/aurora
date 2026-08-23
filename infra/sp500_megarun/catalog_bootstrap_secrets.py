@@ -51,7 +51,6 @@ def _default_acl_checker(parent: Path) -> bool:
             "-NonInteractive",
             "-Command",
             "$p=$args[0]; (Get-Acl -LiteralPath $p).Sddl",
-            "--",
             str(parent),
         ],
         check=False,
