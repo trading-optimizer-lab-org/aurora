@@ -335,10 +335,14 @@ def test_authority_anchor_is_unique_and_reused() -> None:
 ~~~text
 config/catalog_controller_actors_v1.json
 config/catalog_authority_anchor_v1.json
-config/catalog_requester_v1.json
 config/catalog_requester_public_key_v1.pem
 config/catalog_github_auditor_v1.json
 ~~~
+
+`config/catalog_requester_v1.json` remains unchanged: it already seals the
+requester transport and exact permission contract and contains no public App
+identity field. Touching it would create a meaningless diff and would mix
+bootstrap identity with the stable requester protocol.
 
 Use fixed git/gh argument arrays. Require exact remote, branch, head, clean tracked tree, no index lock, no other writer, exact diff paths, one PR, green checks, satisfied protection, and a merge SHA containing the exact binding commit.
 
