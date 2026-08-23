@@ -87,6 +87,53 @@ asignación gratuita configurada, pero GitHub no proporcionó una lectura exacta
 del uso actual. No se transforma esa media en una cifra de uso instantáneo y no
 se borran artifacts para forzar un resultado.
 
+## Acción humana imprescindible para desbloquear el bootstrap
+
+Esta intervención no puede hacerla la IA actual sin invalidar la separación de
+credenciales que el controlador debe garantizar:
+
+1. Cerrar Codex y cualquier otra IA con acceso al equipo.
+2. Entrar en una sesión de Windows administradora separada y autenticarse en
+   GitHub como propietario de `trading-optimizer-lab-org`.
+3. Crear e instalar, solo en `trading-optimizer-lab-org/aurora`, estas dos Apps
+   privadas de la organización, con webhook desactivado:
+   - `AURORA Catalog Requester`: Metadata de lectura e Issues de lectura y
+     escritura; ningún otro permiso.
+   - `AURORA Catalog Controls Auditor`: Metadata, Actions, Administration,
+     Contents, Environments, Issues, Packages y Variables de solo lectura;
+     Administration de organización de solo lectura; ningún permiso de
+     escritura.
+4. Generar una clave distinta para cada App. Sin abrirlas ni imprimirlas,
+   moverlas inmediatamente desde Descargas a dos ubicaciones distintas bajo
+   `C:\ProgramData\AURORA\BootstrapStaging`, con herencia desactivada y acceso
+   solo para SYSTEM y Administradores. La clave solicitante debe terminar como
+   `requester-private-key.pem`. La clave auditora no se entrega a Codex.
+5. Anotar únicamente, para cada App: App ID, Installation ID, login exacto
+   `<slug>[bot]`, permisos observados, repositorio instalado y huella SHA-256 de
+   la clave pública. No anotar ni enviar ninguna clave privada, JWT o token.
+6. Reanudar esta tarea solo con esos datos no secretos. La siguiente fase ligará
+   las identidades públicas, repetirá las pruebas, fusionará el cambio protegido
+   y dejará preparados los dos instaladores. Su aplicación requerirá después
+   una consola administradora separada y estos comandos exactos:
+
+   ```powershell
+   & scripts/install_catalog_agent_sandbox.ps1 `
+     -Apply `
+     -Confirm AURORA_CATALOG_AGENT_SANDBOX_V1
+
+   & scripts/install_catalog_requester_broker.ps1 `
+     -Apply `
+     -Confirm AURORA_CATALOG_REQUESTER_BROKER_V1
+   ```
+
+7. Codex deberá reiniciarse finalmente bajo la cuenta no administradora
+   `AURORAAgent`. El controlador permanecerá desactivado hasta que esa sesión y
+   la sesión administradora separada superen todas las comprobaciones finales.
+
+Si GitHub pide login, CAPTCHA, 2FA o confirmación de identidad, el resultado
+sigue siendo `BLOCKED_GITHUB_APP_IDENTITY_CONFIRMATION_REQUIRED`. No se debe
+entregar una clave a esta IA para acelerar el proceso.
+
 ## Campos que debe rellenar la sesión de bootstrap real
 
 ```text
