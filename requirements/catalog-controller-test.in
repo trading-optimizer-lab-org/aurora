@@ -1,5 +1,8 @@
 cryptography==50.0.0
 jsonschema==4.26.0
+numpy==1.26.4
+pandas==2.2.3
+pyarrow==16.1.0
 pydantic==2.13.4
 PyYAML==6.0.3
 requests==2.34.2

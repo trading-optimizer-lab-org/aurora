@@ -981,7 +981,8 @@ def test_policy_workflow_is_lightweight_static_pr_enforcement() -> None:
 
 def test_catalog_capacity_calibration_is_fixed_synthetic_and_read_only() -> None:
     workflow = load_github_yaml(CAPACITY_CALIBRATION_WORKFLOW_PATH)
-    assert set(workflow["on"]) == {"schedule"}
+    assert set(workflow["on"]) == {"schedule", "workflow_dispatch"}
+    assert workflow["on"]["workflow_dispatch"] == {}
     assert workflow["on"]["schedule"] == [{"cron": "17 3 */3 * *"}]
     assert workflow["permissions"] == {
         "actions": "read",
@@ -999,7 +1000,6 @@ def test_catalog_capacity_calibration_is_fixed_synthetic_and_read_only() -> None
     text = CAPACITY_CALIBRATION_WORKFLOW_PATH.read_text("utf-8")
     lowered = text.lower()
     for forbidden in (
-        "workflow_dispatch",
         "catalog-optimized-run",
         "catalog-component-worker",
         "catalog-optimized-worker",
