@@ -12,6 +12,11 @@ $InstallRoot = "C:\ProgramData\AURORA\CatalogBootstrap"
 $Repository = "trading-optimizer-lab-org/aurora"
 $Branch = "main"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$AllowedRemotes = @(
+    "https://github.com/trading-optimizer-lab-org/aurora.git",
+    "git@github.com:trading-optimizer-lab-org/aurora.git",
+    "ssh://git@github.com/trading-optimizer-lab-org/aurora.git"
+)
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -42,7 +47,7 @@ if (Test-Path -LiteralPath (Join-Path $RepoRoot ".git\index.lock")) {
     throw "BLOCKED_BOOTSTRAP_GIT_WRITER_ACTIVE"
 }
 $Remote = (& git -C $RepoRoot remote get-url origin).Trim()
-if ($Remote -notmatch "(?:^|/)trading-optimizer-lab-org/aurora(?:\.git)?$") {
+if ($AllowedRemotes -cnotcontains $Remote) {
     throw "BLOCKED_BOOTSTRAP_REMOTE_INVALID"
 }
 if ((& git -C $RepoRoot branch --show-current).Trim() -cne $Branch) {
