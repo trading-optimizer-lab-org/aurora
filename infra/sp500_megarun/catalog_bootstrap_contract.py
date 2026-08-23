@@ -122,7 +122,6 @@ def github_manifest_payload(
         "description": app.description,
         "redirect_url": redirect_url,
         "public": False,
-        "hook_attributes": {"url": redirect_url, "active": False},
         "default_events": [],
         "default_permissions": dict(sorted(app.manifest_permissions.items())),
         "request_oauth_on_install": False,
