@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trading-optimizer-lab-org/aurora/schemas/catalog_bootstrap_app_manifests_v1.schema.json",
+  "title": "AURORA catalog bootstrap GitHub App manifests v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "repository", "organization", "requester", "auditor"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "repository": {"const": "trading-optimizer-lab-org/aurora"},
+    "organization": {"const": "trading-optimizer-lab-org"},
+    "requester": {"$ref": "#/$defs/requester"},
+    "auditor": {"$ref": "#/$defs/auditor"}
+  },
+  "$defs": {
+    "empty_permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0,
+      "properties": {}
+    },
+    "requester_permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issues", "metadata"],
+      "properties": {
+        "issues": {"const": "write"},
+        "metadata": {"const": "read"}
+      }
+    },
+    "auditor_manifest_permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actions", "actions_variables", "administration", "contents", "environments", "issues", "metadata", "organization_administration", "packages"],
+      "properties": {
+        "actions": {"const": "read"},
+        "actions_variables": {"const": "read"},
+        "administration": {"const": "read"},
+        "contents": {"const": "read"},
+        "environments": {"const": "read"},
+        "issues": {"const": "read"},
+        "metadata": {"const": "read"},
+        "organization_administration": {"const": "read"},
+        "packages": {"const": "read"}
+      }
+    },
+    "auditor_repository_permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actions", "administration", "contents", "environments", "issues", "metadata", "packages", "variables"],
+      "properties": {
+        "actions": {"const": "read"},
+        "administration": {"const": "read"},
+        "contents": {"const": "read"},
+        "environments": {"const": "read"},
+        "issues": {"const": "read"},
+        "metadata": {"const": "read"},
+        "packages": {"const": "read"},
+        "variables": {"const": "read"}
+      }
+    },
+    "auditor_organization_permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["administration"],
+      "properties": {"administration": {"const": "read"}}
+    },
+    "requester": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "description", "homepage_url", "public", "webhook_active", "default_events", "manifest_permissions", "expected_repository_permissions", "expected_organization_permissions", "expected_enterprise_permissions"],
+      "properties": {
+        "kind": {"const": "requester"},
+        "name": {"const": "AURORA Catalog Requester f10c7b40e1"},
+        "description": {"const": "Narrow issue-only requester for AURORA catalog runs."},
+        "homepage_url": {"const": "https://github.com/trading-optimizer-lab-org/aurora"},
+        "public": {"const": false},
+        "webhook_active": {"const": false},
+        "default_events": {"type": "array", "maxItems": 0},
+        "manifest_permissions": {"$ref": "#/$defs/requester_permissions"},
+        "expected_repository_permissions": {"$ref": "#/$defs/requester_permissions"},
+        "expected_organization_permissions": {"$ref": "#/$defs/empty_permissions"},
+        "expected_enterprise_permissions": {"$ref": "#/$defs/empty_permissions"}
+      }
+    },
+    "auditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "description", "homepage_url", "public", "webhook_active", "default_events", "manifest_permissions", "expected_repository_permissions", "expected_organization_permissions", "expected_enterprise_permissions"],
+      "properties": {
+        "kind": {"const": "auditor"},
+        "name": {"const": "AURORA Catalog Controls Auditor cf479d98fb"},
+        "description": {"const": "Read-only verifier for AURORA catalog controls."},
+        "homepage_url": {"const": "https://github.com/trading-optimizer-lab-org/aurora"},
+        "public": {"const": false},
+        "webhook_active": {"const": false},
+        "default_events": {"type": "array", "maxItems": 0},
+        "manifest_permissions": {"$ref": "#/$defs/auditor_manifest_permissions"},
+        "expected_repository_permissions": {"$ref": "#/$defs/auditor_repository_permissions"},
+        "expected_organization_permissions": {"$ref": "#/$defs/auditor_organization_permissions"},
+        "expected_enterprise_permissions": {"$ref": "#/$defs/empty_permissions"}
+      }
+    }
+  }
+}
