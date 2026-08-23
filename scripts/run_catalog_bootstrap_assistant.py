@@ -203,6 +203,27 @@ def _list_workflow_runs(workflow: str) -> list[dict[str, object]]:
     return value
 
 
+def _list_recent_heavy_workflow_runs(
+    workflow_path: str,
+) -> list[dict[str, object]]:
+    if workflow_path not in _HEAVY_WORKFLOW_PATHS:
+        raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_FORBIDDEN")
+    workflow_name = Path(workflow_path).name
+    raw = _run(
+        [
+            "gh",
+            "api",
+            f"/repos/{REPOSITORY}/actions/workflows/{workflow_name}/runs"
+            "?branch=main&per_page=100",
+        ]
+    )
+    value = json.loads(raw)
+    rows = value.get("workflow_runs") if isinstance(value, dict) else None
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_LIST_INVALID")
+    return rows
+
+
 def _dispatch_workflow(workflow: str, protected_commit_sha: str) -> dict[str, object]:
     if workflow not in _ALLOWED_BOOTSTRAP_WORKFLOWS or not _COMMIT.fullmatch(
         protected_commit_sha
@@ -370,25 +391,12 @@ def _github_activity_snapshot() -> dict[str, object]:
         and isinstance(row.get("number"), int)
         and str(row.get("title", "")).startswith("[AURORA CATALOG RUN REQUEST] ")
     ]
-    run_pages = json.loads(
-        _run(
-            [
-                "gh",
-                "api",
-                "--paginate",
-                "--slurp",
-                f"/repos/{REPOSITORY}/actions/runs?per_page=100",
-            ]
-        )
-    )
-    runs = [row for page in run_pages for row in page]
-    heavy = [
+    heavy = {
         int(row["id"])
-        for row in runs
-        if isinstance(row, dict)
-        and isinstance(row.get("id"), int)
-        and row.get("path") in _HEAVY_WORKFLOW_PATHS
-    ]
+        for workflow_path in _HEAVY_WORKFLOW_PATHS
+        for row in _list_recent_heavy_workflow_runs(workflow_path)
+        if isinstance(row.get("id"), int) and row.get("path") == workflow_path
+    }
     return {
         "request_issue_numbers": sorted(requests),
         "heavy_run_ids": sorted(heavy),
