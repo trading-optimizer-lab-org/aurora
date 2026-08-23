@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import html
+import json
 from pathlib import Path
 import re
 import urllib.request
@@ -157,6 +159,11 @@ def test_loopback_server_serves_one_closed_manifest_and_callback() -> None:
             assert response.headers["Cache-Control"] == "no-store"
         assert "https://github.com/organizations/trading-optimizer-lab-org/settings/apps/new" in page
         assert "AURORA Catalog Requester f10c7b40e1" in page
+        assert f"settings/apps/new?state={session.state}" in page
+        manifest_match = re.search(r'name=manifest value="([^"]+)"', page)
+        assert manifest_match is not None
+        manifest = json.loads(html.unescape(manifest_match.group(1)))
+        assert manifest["redirect_url"] == server.callback_url
         callback = (
             f"{server.callback_url}?code={'c' * 24}&state={session.state}"
         )

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Callable, Literal, Mapping, Protocol
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from .catalog_bootstrap_contract import (
     CatalogBootstrapAppManifestV1,
@@ -218,15 +218,15 @@ class ManifestLoopbackServer:
         return f"http://127.0.0.1:{self.port}{self.session.callback_path}"
 
     def _start_page(self) -> bytes:
-        redirect = f"{self.callback_url}?state={self.session.state}"
         manifest = json.dumps(
-            github_manifest_payload(self.app, redirect_url=redirect),
+            github_manifest_payload(self.app, redirect_url=self.callback_url),
             sort_keys=True,
             separators=(",", ":"),
         )
         action = (
             "https://github.com/organizations/"
-            "trading-optimizer-lab-org/settings/apps/new"
+            "trading-optimizer-lab-org/settings/apps/new?state="
+            f"{quote(self.session.state, safe='')}"
         )
         return (
             "<!doctype html><meta charset=utf-8><meta name=referrer content=no-referrer>"
