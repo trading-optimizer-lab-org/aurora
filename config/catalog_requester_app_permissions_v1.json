@@ -1,0 +1,12 @@
+{
+  "schema_version": "1",
+  "verified": true,
+  "permissions": {
+    "login": "aurora-catalog-request-f10c7b40e1[bot]",
+    "kind": "GitHubApp",
+    "repository_administration": "none",
+    "repository_actions": "none",
+    "repository_contents": "none",
+    "repository_issues": "write"
+  }
+}
