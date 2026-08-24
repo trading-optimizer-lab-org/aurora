@@ -899,15 +899,36 @@ $ClientDependencyLock = Join-Path $SourceRoot `
     "requirements\catalog-requester-client-win-py314.lock"
 $BrokerDependencyLock = Join-Path $SourceRoot `
     "requirements\catalog-requester-broker-win-py314.lock"
-$ClientDependencyInventory = @(& (Join-Path $ClientVenv "Scripts\python.exe") `
-    -I -s -E -c $DependencyInventoryVerifier $ClientDependencyLock)
-if ($LASTEXITCODE -ne 0 -or $ClientDependencyInventory.Count -ne 1 -or `
+$DependencyVerifierPath = Join-Path $StagingRoot `
+    ("dependency-inventory-verifier-" + [Guid]::NewGuid().ToString("N") + ".py")
+[IO.File]::WriteAllText(
+    $DependencyVerifierPath,
+    $DependencyInventoryVerifier,
+    [Text.UTF8Encoding]::new($false)
+)
+& icacls.exe $DependencyVerifierPath /inheritance:r /grant:r `
+    "${SystemAcl}:(F)" "${AdministratorsAcl}:(F)" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "BLOCKED_REQUESTER_VERIFIER_ACL_APPLY_FAILED"
+}
+try {
+    $ClientDependencyInventory = @(& (Join-Path $ClientVenv "Scripts\python.exe") `
+        -I -s -E $DependencyVerifierPath $ClientDependencyLock)
+    $ClientDependencyInventoryExitCode = $LASTEXITCODE
+    $BrokerDependencyInventory = @(& (Join-Path $BrokerVenv "Scripts\python.exe") `
+        -I -s -E $DependencyVerifierPath $BrokerDependencyLock)
+    $BrokerDependencyInventoryExitCode = $LASTEXITCODE
+}
+finally {
+    Remove-Item -LiteralPath $DependencyVerifierPath -Force -ErrorAction SilentlyContinue
+}
+if ($ClientDependencyInventoryExitCode -ne 0 -or `
+    $ClientDependencyInventory.Count -ne 1 -or `
     $ClientDependencyInventory[0] -notmatch "^[0-9a-f]{64}$") {
     throw "BLOCKED_REQUESTER_CLIENT_DEPENDENCY_INVENTORY_INVALID"
 }
-$BrokerDependencyInventory = @(& (Join-Path $BrokerVenv "Scripts\python.exe") `
-    -I -s -E -c $DependencyInventoryVerifier $BrokerDependencyLock)
-if ($LASTEXITCODE -ne 0 -or $BrokerDependencyInventory.Count -ne 1 -or `
+if ($BrokerDependencyInventoryExitCode -ne 0 -or `
+    $BrokerDependencyInventory.Count -ne 1 -or `
     $BrokerDependencyInventory[0] -notmatch "^[0-9a-f]{64}$") {
     throw "BLOCKED_REQUESTER_BROKER_DEPENDENCY_INVENTORY_INVALID"
 }
@@ -954,18 +975,40 @@ $KeyToVerify = if ($StagedPrivateKeyExists) {
 else {
     $InstalledPrivateKey
 }
-$FingerprintLines = @(& (Join-Path $BrokerVenv "Scripts\python.exe") `
-    -I -s -E -c $FingerprintVerifier $KeyToVerify `
-    (Join-Path $SourceRoot "config\catalog_requester_public_key_v1.pem"))
-if ($LASTEXITCODE -ne 0 -or $FingerprintLines.Count -ne 2 `
+$FingerprintVerifierPath = Join-Path $StagingRoot `
+    ("fingerprint-verifier-" + [Guid]::NewGuid().ToString("N") + ".py")
+[IO.File]::WriteAllText(
+    $FingerprintVerifierPath,
+    $FingerprintVerifier,
+    [Text.UTF8Encoding]::new($false)
+)
+& icacls.exe $FingerprintVerifierPath /inheritance:r /grant:r `
+    "${SystemAcl}:(F)" "${AdministratorsAcl}:(F)" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "BLOCKED_REQUESTER_VERIFIER_ACL_APPLY_FAILED"
+}
+try {
+    $FingerprintLines = @(& (Join-Path $BrokerVenv "Scripts\python.exe") `
+        -I -s -E $FingerprintVerifierPath $KeyToVerify `
+        (Join-Path $SourceRoot "config\catalog_requester_public_key_v1.pem"))
+    $FingerprintExitCode = $LASTEXITCODE
+    if ($InstalledPrivateKeyExists -and $StagedPrivateKeyExists) {
+        $InstalledFingerprintLines = @(& (Join-Path $BrokerVenv "Scripts\python.exe") `
+            -I -s -E $FingerprintVerifierPath $InstalledPrivateKey `
+            (Join-Path $SourceRoot "config\catalog_requester_public_key_v1.pem"))
+        $InstalledFingerprintExitCode = $LASTEXITCODE
+    }
+}
+finally {
+    Remove-Item -LiteralPath $FingerprintVerifierPath -Force -ErrorAction SilentlyContinue
+}
+if ($FingerprintExitCode -ne 0 -or $FingerprintLines.Count -ne 2 `
     -or $FingerprintLines[0] -cne $FingerprintLines[1]) {
     throw "BLOCKED_REQUESTER_PRIVATE_PUBLIC_KEY_MISMATCH"
 }
 if ($InstalledPrivateKeyExists -and $StagedPrivateKeyExists) {
-    $InstalledFingerprintLines = @(& (Join-Path $BrokerVenv "Scripts\python.exe") `
-        -I -s -E -c $FingerprintVerifier $InstalledPrivateKey `
-        (Join-Path $SourceRoot "config\catalog_requester_public_key_v1.pem"))
-    if ($LASTEXITCODE -ne 0 -or $InstalledFingerprintLines.Count -ne 2 `
+    if ($InstalledFingerprintExitCode -ne 0 `
+        -or $InstalledFingerprintLines.Count -ne 2 `
         -or $InstalledFingerprintLines[0] -cne $InstalledFingerprintLines[1] `
         -or $InstalledFingerprintLines[0] -cne $FingerprintLines[0]) {
         throw "BLOCKED_REQUESTER_KEY_ROTATION_UNSAFE"
