@@ -961,6 +961,7 @@ def test_keeper_accepts_the_protected_seven_day_cache_policy() -> None:
 
     inputs = protected_snapshots()
     snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
     snapshots["observer_context"] = "github_auditor"
     snapshots["local_agent"] = {}
     snapshots["runtime_provenance"].update(
@@ -971,6 +972,7 @@ def test_keeper_accepts_the_protected_seven_day_cache_policy() -> None:
         }
     )
     auditor = inputs["auditor"]
+    assert isinstance(auditor, CatalogGithubAuditorV1)
     snapshots["auditor_installation"] = {
         "repository_permissions": dict(auditor.required_repository_permissions),
         "organization_permissions": dict(auditor.required_organization_permissions),
