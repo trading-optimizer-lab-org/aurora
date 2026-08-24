@@ -44,6 +44,7 @@ from aurora.infra.sp500_megarun.catalog_github_controls import (
     audit_catalog_github_controls,
     bootstrap_controls_prepared,
     build_github_controls_mutation_plan,
+    github_controls_state_sha256,
     load_catalog_github_auditor,
     load_catalog_github_controls,
 )
@@ -124,7 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Audit and plan exact catalog GitHub controls. No mutation occurs "
-            "unless --apply, the current receipt hash, and the fixed confirmation "
+            "unless --apply, the current control-state hash, and the fixed confirmation "
             "are all supplied."
         )
     )
@@ -147,7 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--bootstrap-controls-only", action="store_true")
-    parser.add_argument("--expected-current-sha")
+    parser.add_argument("--expected-current-state-sha")
     parser.add_argument("--confirm")
     return parser
 
@@ -196,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
             auditor=auditor,
             snapshots=snapshots,
         )
+        before_state_sha = github_controls_state_sha256(before)
         plan = build_github_controls_mutation_plan(
             desired=desired,
             receipt=before,
@@ -206,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
             "repository": args.repository,
             "before_receipt": before.model_dump(mode="json"),
             "current_receipt_sha256": before.receipt_sha256,
+            "current_state_sha256": before_state_sha,
             "plan_sha256": plan.plan_sha256,
             "mutations": [
                 mutation.model_dump(mode="json") for mutation in plan.mutations
@@ -228,8 +231,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.confirm != CONFIRMATION:
             raise ValueError("CATALOG_GITHUB_CONTROLS_CONFIRMATION_REQUIRED")
-        if not isinstance(args.expected_current_sha, str) or not re.fullmatch(
-            r"[0-9a-f]{64}", args.expected_current_sha
+        if not isinstance(args.expected_current_state_sha, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", args.expected_current_state_sha
         ):
             raise ValueError("CATALOG_GITHUB_CONTROLS_EXPECTED_SHA_REQUIRED")
 
@@ -243,9 +246,10 @@ def main(argv: list[str] | None = None) -> int:
             auditor=auditor,
             snapshots=fresh_snapshots,
         )
+        fresh_state_sha = github_controls_state_sha256(fresh)
         if (
-            fresh.receipt_sha256 != args.expected_current_sha
-            or fresh.receipt_sha256 != before.receipt_sha256
+            fresh_state_sha != args.expected_current_state_sha
+            or fresh_state_sha != before_state_sha
         ):
             raise ValueError("CATALOG_GITHUB_CONTROLS_STALE")
         if args.snapshot_dir is not None:
