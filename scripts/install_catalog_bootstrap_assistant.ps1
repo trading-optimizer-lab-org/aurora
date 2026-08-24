@@ -129,3 +129,4 @@ finally {
     if (Test-Path -LiteralPath $BuildRoot) { Remove-Item -LiteralPath $BuildRoot -Recurse -Force }
 }
 $Receipt | ConvertTo-Json -Compress
+exit 0
