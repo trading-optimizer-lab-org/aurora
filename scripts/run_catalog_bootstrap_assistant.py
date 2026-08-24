@@ -182,6 +182,7 @@ _GITHUB_CONTROLS_CACHE_RETENTION_REPAIR_PATHS = (
 )
 _GITHUB_CONTROLS_STORAGE_AUDIT_REPAIR_PATHS = (
     ".github/workflows/catalog-live-controls-audit.yml",
+    "config/catalog_campaign_definitions/sp500-optimized-catalog-v1.manifest.json",
     "scripts/audit_catalog_github_controls.py",
     "scripts/run_catalog_artifact_keeper.py",
     "scripts/run_catalog_bootstrap_assistant.py",
