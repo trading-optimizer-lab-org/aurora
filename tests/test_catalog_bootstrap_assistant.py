@@ -958,10 +958,10 @@ def test_github_controls_repair_graph_rejects_wrong_patch(
 
     def fake_run(arguments: list[str], *, cwd: Path) -> str:
         assert cwd == tmp_path
-        if arguments[-1] == "c" * 40 + "^1":
-            return "a" * 40
-        if arguments[-1] == "c" * 40 + "^2":
-            return "b" * 40
+        if arguments == [
+            "git", "rev-list", "--parents", "-n", "1", "c" * 40
+        ]:
+            return " ".join(("c" * 40, "a" * 40, "b" * 40))
         raise AssertionError(arguments)
 
     monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
@@ -978,6 +978,36 @@ def test_github_controls_repair_graph_rejects_wrong_patch(
         bootstrap_runner._verify_github_controls_repair_graph(
             tmp_path, operation
         )
+
+
+def test_github_controls_repair_graph_accepts_verified_linear_merge(
+    tmp_path: Path, monkeypatch
+) -> None:
+    operation = _github_controls_cache_retention_repair_operation(
+        prior_merge="a" * 40,
+        repair_head="b" * 40,
+        repair_merge="c" * 40,
+    )
+
+    def fake_run(arguments: list[str], *, cwd: Path) -> str:
+        assert cwd == tmp_path
+        assert arguments == [
+            "git", "rev-list", "--parents", "-n", "1", "c" * 40
+        ]
+        return " ".join(("c" * 40, "a" * 40))
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_github_controls_repair_patch_sha256",
+        lambda _source, base, target, _paths: (
+            "5" * 64
+            if base == "a" * 40 and target in {"b" * 40, "c" * 40}
+            else "0" * 64
+        ),
+    )
+
+    bootstrap_runner._verify_github_controls_repair_graph(tmp_path, operation)
 
 
 def test_post_install_verification_uses_installed_requester_key(

@@ -1593,22 +1593,27 @@ def _verify_github_controls_repair_graph(
     operation: dict[str, object],
 ) -> None:
     merge_commit = str(operation["merge_commit_sha"])
-    if (
-        _run(["git", "rev-parse", f"{merge_commit}^1"], cwd=source)
-        != operation["base_commit_sha"]
-        or _run(["git", "rev-parse", f"{merge_commit}^2"], cwd=source)
-        != operation["head_commit_sha"]
-    ):
+    base_commit = str(operation["base_commit_sha"])
+    head_commit = str(operation["head_commit_sha"])
+    parents = _run(
+        ["git", "rev-list", "--parents", "-n", "1", merge_commit],
+        cwd=source,
+    ).split()
+    merge_graph_valid = (
+        parents == [merge_commit, base_commit, head_commit]
+        or parents == [merge_commit, base_commit]
+    )
+    if not merge_graph_valid:
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_GRAPH_INVALID")
-    if (
-        _github_controls_repair_patch_sha256(
-            source,
-            str(operation["base_commit_sha"]),
-            str(operation["head_commit_sha"]),
-            tuple(str(path) for path in operation["changed_paths"]),
-        )
-        != operation["patch_sha256"]
-    ):
+    changed_paths = tuple(str(path) for path in operation["changed_paths"])
+    expected_patch = operation["patch_sha256"]
+    if _github_controls_repair_patch_sha256(
+        source, base_commit, head_commit, changed_paths
+    ) != expected_patch:
+        raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_PATCH_INVALID")
+    if len(parents) == 2 and _github_controls_repair_patch_sha256(
+        source, base_commit, merge_commit, changed_paths
+    ) != expected_patch:
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_PATCH_INVALID")
 
 
