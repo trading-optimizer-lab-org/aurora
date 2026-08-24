@@ -25,7 +25,7 @@ from aurora.infra.sp500_megarun.catalog_github_controls import (
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github/workflows"
 POLICY = WORKFLOWS / "catalog-controller-policy-check.yml"
-LIVE_AUDIT = WORKFLOWS / "catalog-live-controls-audit.yml"
+LIVE_AUDIT = ROOT / ".github/actions/catalog-live-controls-audit/action.yml"
 LIVE_QUALIFICATION = WORKFLOWS / "catalog-live-controls-qualification.yml"
 CONTROLLER_QUALIFICATION = WORKFLOWS / "catalog-controller-qualification.yml"
 FULL_ACTION_SHA = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
@@ -181,38 +181,27 @@ def test_every_controller_mirror_write_reconciles_orphans_before_upload() -> Non
     ).read_text("utf-8")
 
 
-def test_live_audit_is_one_read_only_protected_reusable_job() -> None:
-    workflow = _workflow(LIVE_AUDIT)
-    assert set(workflow["on"]) == {"workflow_call"}
-    call = workflow["on"]["workflow_call"]
-    assert set(call) == {"inputs", "outputs", "secrets"}
-    assert set(call["inputs"]) == {
+def test_live_audit_is_one_fixed_secret_consuming_composite_action() -> None:
+    action = _workflow(LIVE_AUDIT)
+    assert set(action["inputs"]) == {
         "purpose",
         "caller_workflow",
         "caller_job",
         "protected_commit_sha",
         "audit_context_sha256",
+        "auditor_app_id",
+        "auditor_private_key",
+        "enterprise_billing_token",
     }
-    assert set(call["outputs"]) == {
+    assert all(value["required"] is True for value in action["inputs"].values())
+    assert set(action["outputs"]) == {
         "receipt_artifact_name",
         "receipt_sha256",
         "receipt_status",
     }
-    assert call["secrets"] == {
-        "AURORA_CATALOG_AUDITOR_PRIVATE_KEY": {"required": False},
-        "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN": {"required": False},
-    }
-    assert workflow["permissions"] == {"actions": "read", "contents": "read"}
-    jobs = workflow["jobs"]
-    assert isinstance(jobs, dict)
-    assert set(jobs) == {"audit"}
-    job = jobs["audit"]
-    assert job["environment"] == "catalog-production"
-    assert job["runs-on"] == "ubuntu-24.04"
-    assert job["timeout-minutes"] == 20
-    assert job["permissions"] == {"actions": "read", "contents": "read"}
-    assert "strategy" not in json.dumps(workflow).casefold()
-    rendered = json.dumps(workflow, sort_keys=True)
+    assert action["runs"]["using"] == "composite"
+    steps = action["runs"]["steps"]
+    rendered = json.dumps(action, sort_keys=True)
     for forbidden in (
         "catalog-optimized-worker",
         "build_sp500_component_store",
@@ -222,7 +211,6 @@ def test_live_audit_is_one_read_only_protected_reusable_job() -> None:
         "matrix",
     ):
         assert forbidden not in rendered.casefold()
-    steps = job["steps"]
     secret_steps = [
         step
         for step in steps
@@ -232,20 +220,31 @@ def test_live_audit_is_one_read_only_protected_reusable_job() -> None:
     assert "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN" in json.dumps(secret_steps[0])
     assert "--workflow-auditor" in json.dumps(secret_steps[0])
     assert "--github-output" in json.dumps(secret_steps[0])
-    assert all(FULL_ACTION_SHA.fullmatch(value) for value in _external_action_uses(workflow))
+    external_uses = [
+        step["uses"]
+        for step in steps
+        if isinstance(step.get("uses"), str) and not step["uses"].startswith("./")
+    ]
+    assert all(FULL_ACTION_SHA.fullmatch(value) for value in external_uses)
     assert any(
         step.get("uses", "").startswith("actions/upload-artifact@")
-        for step in job["steps"]
+        for step in steps
     )
 
 
-def test_auditor_private_key_has_exactly_one_workflow_consumer() -> None:
+def test_auditor_private_key_is_limited_to_fixed_environment_jobs_and_action() -> None:
     consumers = {
         path.relative_to(ROOT).as_posix()
         for path in WORKFLOWS.glob("*.y*ml")
         if "AURORA_CATALOG_AUDITOR_PRIVATE_KEY" in path.read_text("utf-8")
     }
-    assert consumers == {AUDITOR_SECRET_CONSUMER}
+    assert consumers == {
+        ".github/workflows/catalog-artifact-keeper.yml",
+        ".github/workflows/catalog-live-controls-qualification.yml",
+        ".github/workflows/catalog-run-controller.yml",
+    }
+    assert AUDITOR_SECRET_CONSUMER == LIVE_AUDIT.relative_to(ROOT).as_posix()
+    assert "AURORA_CATALOG_AUDITOR_PRIVATE_KEY" in LIVE_AUDIT.read_text("utf-8")
 
 
 def test_enterprise_billing_token_is_only_forwarded_to_the_auditor() -> None:
@@ -255,19 +254,17 @@ def test_enterprise_billing_token_is_only_forwarded_to_the_auditor() -> None:
         if "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN" in path.read_text("utf-8")
     }
     assert consumers == {
-        AUDITOR_SECRET_CONSUMER,
         ".github/workflows/catalog-artifact-keeper.yml",
         ".github/workflows/catalog-live-controls-qualification.yml",
         ".github/workflows/catalog-run-controller.yml",
     }
+    assert "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN" in LIVE_AUDIT.read_text("utf-8")
 
 
-def test_live_qualification_has_two_pure_calls_and_one_tiny_finalizer() -> None:
+def test_live_qualification_has_two_protected_action_jobs_and_one_tiny_finalizer() -> None:
     workflow = _workflow(LIVE_QUALIFICATION)
     assert workflow["on"] == {"workflow_dispatch": {}}
     assert workflow["permissions"] == {"actions": "read", "contents": "read"}
-    assert "environment" not in json.dumps(workflow)
-    assert "AURORA_CATALOG_AUDITOR" not in json.dumps(workflow)
     jobs = workflow["jobs"]
     assert isinstance(jobs, dict)
     assert set(jobs) == {
@@ -277,18 +274,15 @@ def test_live_qualification_has_two_pure_calls_and_one_tiny_finalizer() -> None:
     }
     admission = jobs["qualify_live_admission_controls"]
     terminal = jobs["qualify_live_terminal_controls"]
-    assert admission["uses"] == "./.github/workflows/catalog-live-controls-audit.yml"
-    assert terminal["uses"] == "./.github/workflows/catalog-live-controls-audit.yml"
-    assert admission["with"]["purpose"] == "admission"
-    assert terminal["with"]["purpose"] == "terminal"
+    for job, purpose in ((admission, "admission"), (terminal, "terminal")):
+        assert job["environment"] == "catalog-production"
+        assert job["runs-on"] == "ubuntu-24.04"
+        assert job["timeout-minutes"] == 20
+        assert job["permissions"] == {"actions": "read", "contents": "read"}
+        assert job["steps"][1]["uses"] == "./.github/actions/catalog-live-controls-audit"
+        assert job["steps"][1]["with"]["purpose"] == purpose
+        assert "AURORA_CATALOG_AUDITOR_PRIVATE_KEY" in json.dumps(job["steps"][1])
     assert terminal["needs"] == "qualify_live_admission_controls"
-    expected_secrets = {
-        "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN": (
-            "${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}"
-        )
-    }
-    assert admission["secrets"] == expected_secrets
-    assert terminal["secrets"] == expected_secrets
     final = jobs["verify_qualification_receipt"]
     assert final["runs-on"] == "ubuntu-24.04"
     assert final["timeout-minutes"] == 5
@@ -714,7 +708,7 @@ def test_controller_has_no_untrusted_or_mutable_escape(forbidden: str) -> None:
     assert forbidden not in text
 
 
-def test_controller_privileged_audits_are_two_exact_pure_local_calls() -> None:
+def test_controller_privileged_audits_are_two_exact_protected_action_jobs() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
     jobs = workflow["jobs"]
     expected = {
@@ -723,18 +717,20 @@ def test_controller_privileged_audits_are_two_exact_pure_local_calls() -> None:
     }
     for job_id, purpose in expected.items():
         job = jobs[job_id]
-        assert job["uses"] == "./.github/workflows/catalog-live-controls-audit.yml"
-        assert job["with"]["purpose"] == purpose
-        assert job["with"]["caller_workflow"] == (
+        assert job["environment"] == "catalog-production"
+        assert job["runs-on"] == "ubuntu-24.04"
+        assert job["timeout-minutes"] == 20
+        assert len(job["steps"]) == 2
+        audit = job["steps"][1]
+        assert audit["uses"] == "./.github/actions/catalog-live-controls-audit"
+        assert audit["with"]["purpose"] == purpose
+        assert audit["with"]["caller_workflow"] == (
             ".github/workflows/catalog-run-controller.yml"
         )
-        assert job["with"]["caller_job"] == job_id
-        assert "steps" not in job
-        assert job["secrets"] == {
-            "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN": (
-                "${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}"
-            )
-        }
+        assert audit["with"]["caller_job"] == job_id
+        assert audit["with"]["auditor_private_key"] == (
+            "${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}"
+        )
         assert "concurrency" not in job
 
 

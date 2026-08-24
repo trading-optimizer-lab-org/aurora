@@ -1138,9 +1138,10 @@ def test_weekly_keeper_is_read_only_and_cannot_launch_science() -> None:
         "issues": "read",
     }
     audit = keeper["jobs"]["live_controls_audit_before_maintenance"]
-    assert audit["uses"] == "./.github/workflows/catalog-live-controls-audit.yml"
-    assert audit["with"]["purpose"] == "maintenance"
-    assert "steps" not in audit
+    assert audit["environment"] == "catalog-production"
+    assert audit["runs-on"] == "ubuntu-24.04"
+    assert audit["steps"][1]["uses"] == "./.github/actions/catalog-live-controls-audit"
+    assert audit["steps"][1]["with"]["purpose"] == "maintenance"
     assert "secrets" not in audit
     preservation = keeper["jobs"]["inventory_and_preserve"]
     assert preservation["runs-on"] == "ubuntu-24.04"

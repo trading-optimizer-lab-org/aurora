@@ -155,7 +155,7 @@ def protected_snapshots() -> dict[str, object]:
         },
         "auditor_installation": None,
         "auditor_secret_consumer_workflows": [
-            ".github/workflows/catalog-live-controls-audit.yml"
+            ".github/actions/catalog-live-controls-audit/action.yml"
         ],
         "auditor_runtime_callers": [
             {

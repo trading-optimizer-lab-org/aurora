@@ -991,21 +991,31 @@ def validate_catalog_workflow_topology(
                     "caller_job": "live_controls_audit_before_maintenance",
                     "protected_commit_sha": "${{ github.sha }}",
                     "audit_context_sha256": CATALOG_KEEPER_AUDIT_CONTEXT_SHA256,
-                }
-                expected_audit_secrets = {
-                    "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN": (
+                    "auditor_app_id": "${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}",
+                    "auditor_private_key": (
+                        "${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}"
+                    ),
+                    "enterprise_billing_token": (
                         "${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}"
-                    )
+                    ),
                 }
+                audit_steps = audit.get("steps") if isinstance(audit, Mapping) else None
+                action_step = (
+                    audit_steps[1]
+                    if isinstance(audit_steps, list) and len(audit_steps) == 2
+                    else None
+                )
                 if (
                     not isinstance(audit, Mapping)
-                    or audit.get("uses")
-                    != "./.github/workflows/catalog-live-controls-audit.yml"
-                    or audit.get("with") != expected_audit_inputs
-                    or "steps" in audit
-                    or audit.get("secrets") != expected_audit_secrets
+                    or audit.get("runs-on") != "ubuntu-24.04"
+                    or audit.get("timeout-minutes") != 20
+                    or audit.get("environment") != "catalog-production"
                     or audit.get("permissions")
                     != {"actions": "read", "contents": "read"}
+                    or not isinstance(action_step, Mapping)
+                    or action_step.get("uses")
+                    != "./.github/actions/catalog-live-controls-audit"
+                    or action_step.get("with") != expected_audit_inputs
                 ):
                     violations.append(
                         _catalog_violation(
