@@ -201,7 +201,6 @@ _GITHUB_CONTROLS_AUDIT_THROUGHPUT_REPAIR_PATHS = (
     "tests/test_catalog_github_controls.py",
 )
 _GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS = (
-    "scripts/install_catalog_bootstrap_assistant.ps1",
     "scripts/run_catalog_bootstrap_assistant.py",
     "tests/test_catalog_bootstrap_assistant.py",
 )
@@ -2324,7 +2323,7 @@ def _validated_github_controls_package_token_repair(
         or operation.get("prior_runtime_commit_sha")
         != prior_repair.get("merge_commit_sha")
         or operation.get("branch")
-        != "codex/catalog-idempotent-controls-recovery"
+        != "codex/catalog-idempotent-receipt-binding"
         or not isinstance(changed_paths, list)
         or tuple(changed_paths) != _GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS
         or not isinstance(operation.get("base_commit_sha"), str)
