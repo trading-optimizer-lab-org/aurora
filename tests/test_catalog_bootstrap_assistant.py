@@ -259,6 +259,14 @@ def _blocked_github_controls_seventh_state():
     return advance_bootstrap_state(state, event("blocked", 37))
 
 
+def _blocked_github_controls_eighth_state():
+    state = advance_bootstrap_state(
+        _blocked_github_controls_seventh_state(),
+        event("github_controls_retry_authorized", 38),
+    )
+    return advance_bootstrap_state(state, event("blocked", 39))
+
+
 def test_only_exact_merge_retry_can_leave_terminal_blocked_state() -> None:
     blocked = _blocked_merge_state()
     assert blocked.phase == "BLOCKED"
@@ -626,7 +634,7 @@ def _github_controls_package_token_repair_operation(
 ) -> dict[str, object]:
     return {
         "base_commit_sha": prior_merge,
-        "branch": "codex/catalog-installer-success-exit-recovery",
+        "branch": "codex/catalog-idempotent-controls-recovery",
         "changed_paths": list(
             bootstrap_runner._GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS
         ),
@@ -1316,6 +1324,50 @@ def test_prepare_auditor_secret_reuses_only_proven_protected_secret(
         "name": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
         "status": "preserved",
     }
+
+
+def test_existing_bootstrap_control_receipts_are_reused_only_when_canonical(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "protected"
+    receipts = root / "receipts"
+    receipts.mkdir(parents=True)
+    dry = {"current_state_sha256": "a" * 64, "mode": "dry_run"}
+    applied = {"bootstrap_controls_prepared": True, "mode": "apply"}
+    (receipts / "github-controls-dry-run-v1.json").write_bytes(
+        bootstrap_runner._canonical(dry) + b"\n"
+    )
+    (receipts / "github-controls-apply-v1.json").write_bytes(
+        bootstrap_runner._canonical(applied) + b"\n"
+    )
+
+    assert bootstrap_runner._validated_existing_github_control_receipts(
+        root
+    ) == (dry, applied)
+
+
+def test_eighth_github_controls_block_waits_for_idempotent_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_github_controls_eighth_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "GITHUB_CONTROLS_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+
+    assert bootstrap_runner._resume_transient_github_controls_block(root) is False
 
 
 def test_local_install_recovery_rejects_context_not_bound_to_repair(
