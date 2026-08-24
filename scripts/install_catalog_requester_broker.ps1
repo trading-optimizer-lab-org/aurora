@@ -1204,14 +1204,20 @@ if (-not (Test-Path -LiteralPath $BrokerPython -PathType Leaf)) {
 }
 $BrokerPyz = Join-Path $BrokerRoot "bin\catalog-requester-broker.pyz"
 $Action = New-ScheduledTaskAction -Execute $BrokerPython -Argument "-I -s -E `"$BrokerPyz`""
-$Principal = New-ScheduledTaskPrincipal -UserId $TargetIdentity -LogonType Password -RunLevel Limited
+$TargetAccountName = $InstalledUser.SID.Translate(
+    [Security.Principal.NTAccount]
+).Value
+if ($TargetAccountName -notmatch "\\$([Regex]::Escape($TargetIdentity))$") {
+    throw "BLOCKED_REQUESTER_ACCOUNT_NAME_INVALID"
+}
+$Principal = New-ScheduledTaskPrincipal -UserId $TargetAccountName -LogonType Password -RunLevel Limited
 $Settings = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
     -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit (New-TimeSpan -Days 3650)
 $Trigger = New-ScheduledTaskTrigger -AtStartup
 $Task = New-ScheduledTask -Action $Action -Principal $Principal -Settings $Settings -Trigger $Trigger
-$Credential = [PSCredential]::new(".\$TargetIdentity", $TaskPassword)
+$Credential = [PSCredential]::new($TargetAccountName, $TaskPassword)
 Register-ScheduledTask -TaskName $TaskName -InputObject $Task `
     -User $Credential.UserName -Password $Credential.GetNetworkCredential().Password -Force | Out-Null
 $RegisteredTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop

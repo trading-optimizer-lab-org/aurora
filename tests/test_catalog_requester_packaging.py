@@ -888,6 +888,16 @@ def test_broker_read_only_acl_check_rejects_only_mutating_rights() -> None:
     ) == 1
 
 
+def test_broker_registers_task_with_windows_resolved_account_name() -> None:
+    source = BROKER_INSTALLER.read_text(encoding="utf-8")
+    assert "$InstalledUser.SID.Translate(" in source
+    assert "[Security.Principal.NTAccount]" in source
+    assert "BLOCKED_REQUESTER_ACCOUNT_NAME_INVALID" in source
+    assert "New-ScheduledTaskPrincipal -UserId $TargetAccountName" in source
+    assert "[PSCredential]::new($TargetAccountName, $TaskPassword)" in source
+    assert '[PSCredential]::new(".\\$TargetIdentity", $TaskPassword)' not in source
+
+
 def test_broker_installer_finishes_read_only_preflight_before_stopping_service() -> None:
     source = BROKER_INSTALLER.read_text(encoding="utf-8")
     stop = source.index("Stop-ScheduledTask -TaskName $TaskName")
