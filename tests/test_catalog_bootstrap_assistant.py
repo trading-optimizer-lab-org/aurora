@@ -626,7 +626,7 @@ def _github_controls_package_token_repair_operation(
 ) -> dict[str, object]:
     return {
         "base_commit_sha": prior_merge,
-        "branch": "codex/catalog-package-token-bootstrap-recovery",
+        "branch": "codex/catalog-uploaded-auditor-recovery",
         "changed_paths": list(
             bootstrap_runner._GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS
         ),
@@ -1257,6 +1257,65 @@ def test_post_install_verification_uses_installed_requester_key(
         "_verify_post_install_installations"
         in bootstrap_runner._resume_transient_github_controls_block.__code__.co_names
     )
+
+
+def test_post_install_recovery_accepts_auditor_secret_already_uploaded(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    broker = tmp_path / "broker"
+    (root / "secrets").mkdir(parents=True)
+    (broker / "secrets").mkdir(parents=True)
+    (root / "requester-public-v1.json").write_text(
+        '{"app_id":11,"installation_id":101}\n', encoding="utf-8"
+    )
+    (root / "auditor-public-v1.json").write_text(
+        '{"app_id":22,"installation_id":202}\n', encoding="utf-8"
+    )
+    (broker / "secrets/requester-private-key.pem").write_bytes(b"requester")
+    manifests = SimpleNamespace(requester=object(), auditor=object())
+
+    class FakeClient:
+        def __init__(self, *, app_id: int, private_key_pem: bytearray) -> None:
+            assert app_id == 11
+            assert bytes(private_key_pem) == b"requester"
+
+        def find_exact_installation(self, _manifest: object) -> object:
+            return SimpleNamespace(installation_id=101)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(bootstrap_runner, "BROKER_ROOT", broker)
+    monkeypatch.setattr(bootstrap_runner, "_manifests", lambda: manifests)
+    monkeypatch.setattr(
+        bootstrap_runner, "CatalogBootstrapGitHubClient", FakeClient
+    )
+    monkeypatch.setattr(
+        bootstrap_runner, "_protected_environment_secret_exists", lambda: True
+    )
+
+    assert bootstrap_runner._verify_post_install_installations(
+        root, allow_uploaded_auditor=True
+    ) == {"auditor": 202, "requester": 101}
+
+
+def test_prepare_auditor_secret_reuses_only_proven_protected_secret(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    (root / "receipts").mkdir(parents=True)
+    (
+        root / "receipts/controller-bootstrap-github-controls-retry-9-v1.json"
+    ).write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        bootstrap_runner, "_protected_environment_secret_exists", lambda: True
+    )
+
+    assert bootstrap_runner._prepare_auditor_secret(root) == {
+        "name": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+        "status": "preserved",
+    }
 
 
 def test_local_install_recovery_rejects_context_not_bound_to_repair(
