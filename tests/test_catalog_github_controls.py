@@ -33,6 +33,7 @@ from scripts.audit_catalog_github_controls import (
     _campaign_storage_projection,
     _paginate_list_rows,
     _paginate_object_rows,
+    _package_inventory_endpoint,
     _reported_shared_storage_evidence,
     _retry_transient_snapshot_collection,
 )
@@ -619,6 +620,14 @@ def test_live_snapshot_does_not_retry_non_transient_errors() -> None:
     with pytest.raises(ValueError, match="CATALOG_AUDITOR_PERMISSIONS_INVALID"):
         _retry_transient_snapshot_collection(collect, sleep=lambda _: None)
     assert attempts == 1
+
+
+def test_package_inventory_uses_githubs_canonical_organization_route() -> None:
+    assert _package_inventory_endpoint(287229438, "container") == (
+        "/organizations/287229438/packages?package_type=container"
+    )
+    with pytest.raises(ValueError, match="CATALOG_GITHUB_ORGANIZATION_ID_INVALID"):
+        _package_inventory_endpoint(0, "container")
 
 
 def test_bootstrap_controls_mode_defers_only_identity_and_live_capacity() -> None:
