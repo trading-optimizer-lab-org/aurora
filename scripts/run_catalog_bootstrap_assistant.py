@@ -2324,7 +2324,7 @@ def _validated_github_controls_package_token_repair(
         or operation.get("prior_runtime_commit_sha")
         != prior_repair.get("merge_commit_sha")
         or operation.get("branch")
-        != "codex/catalog-installer-success-exit-recovery"
+        != "codex/catalog-idempotent-controls-recovery"
         or not isinstance(changed_paths, list)
         or tuple(changed_paths) != _GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS
         or not isinstance(operation.get("base_commit_sha"), str)
@@ -4001,7 +4001,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
 def _resume_transient_github_controls_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
     if state.phase != "BLOCKED" or state.sequence not in {
-        25, 27, 29, 31, 33, 35, 37,
+        25, 27, 29, 31, 33, 35, 37, 39,
     }:
         return False
     blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
@@ -4059,7 +4059,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     followup_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-2-v1.json"
     )
-    if state.sequence == 37:
+    if state.sequence in {37, 39}:
         if not package_token_retry_path.exists():
             return False
         if (
@@ -4258,7 +4258,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     _wait_for_required_checks(str(operation["pr_number"]), source)
     if _verify_post_install_installations(
         root,
-        allow_uploaded_auditor=state.sequence == 37,
+        allow_uploaded_auditor=state.sequence in {37, 39},
     ) != evidence.get("installations"):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_INSTALLATIONS_INVALID")
     baseline_path = root / "github-activity-baseline-v1.json"
@@ -4520,6 +4520,38 @@ def _prepare_auditor_secret(root: Path) -> dict[str, object]:
     return {"name": AUDITOR_SECRET, "status": "preserved"}
 
 
+def _validated_existing_github_control_receipts(
+    root: Path,
+) -> tuple[dict[str, object], dict[str, object]]:
+    dry_path = root / "receipts/github-controls-dry-run-v1.json"
+    apply_path = root / "receipts/github-controls-apply-v1.json"
+    if (
+        not dry_path.is_file()
+        or dry_path.is_symlink()
+        or dry_path.is_junction()
+        or not apply_path.is_file()
+        or apply_path.is_symlink()
+        or apply_path.is_junction()
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_RECEIPTS_INVALID")
+    dry = _read_json(dry_path)
+    applied = _read_json(apply_path)
+    prepared = applied.get("bootstrap_controls_prepared") is True or (
+        isinstance(applied.get("after_receipt"), dict)
+        and applied["after_receipt"].get("status") == "ready"  # type: ignore[index]
+    )
+    if (
+        dry_path.read_bytes() != _canonical(dry) + b"\n"
+        or apply_path.read_bytes() != _canonical(applied) + b"\n"
+        or dry.get("mode") != "dry_run"
+        or not _SHA256.fullmatch(str(dry.get("current_state_sha256", "")))
+        or applied.get("mode") != "apply"
+        or not prepared
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_RECEIPTS_INVALID")
+    return dry, applied
+
+
 def apply_github_controls(root: Path) -> None:
     state = load_bootstrap_state(_state_path(root))
     context = _context(root)
@@ -4539,44 +4571,47 @@ def apply_github_controls(root: Path) -> None:
         "CATALOG_AUTHORITY_ISSUE_NUMBER", str(authority["issue_number"])
     )
     dry_path = root / "receipts/github-controls-dry-run-v1.json"
-    _run(
-        [
-            "C:/Python314/python.exe",
-            str(source / "scripts/apply_catalog_github_controls.py"),
-            "--repo-root",
-            str(source),
-            "--output",
-            str(dry_path),
-        ],
-        cwd=source,
-        timeout_seconds=1800,
-    )
-    dry = _read_json(dry_path)
-    current_sha = str(dry.get("current_state_sha256", ""))
-    if not _SHA256.fullmatch(current_sha):
-        raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_DRY_RUN_INVALID")
     apply_path = root / "receipts/github-controls-apply-v1.json"
-    _run(
-        [
-            "C:/Python314/python.exe",
-            str(source / "scripts/apply_catalog_github_controls.py"),
-            "--repo-root",
-            str(source),
-            "--output",
-            str(apply_path),
-            "--apply",
-            "--bootstrap-controls-only",
-            "--verified-dry-run",
-            str(dry_path),
-            "--expected-current-state-sha",
-            current_sha,
-            "--confirm",
-            "CATALOG_GITHUB_CONTROLS_V1",
-        ],
-        cwd=source,
-        timeout_seconds=1800,
-    )
-    applied = _read_json(apply_path)
+    if dry_path.exists() or apply_path.exists():
+        _, applied = _validated_existing_github_control_receipts(root)
+    else:
+        _run(
+            [
+                "C:/Python314/python.exe",
+                str(source / "scripts/apply_catalog_github_controls.py"),
+                "--repo-root",
+                str(source),
+                "--output",
+                str(dry_path),
+            ],
+            cwd=source,
+            timeout_seconds=1800,
+        )
+        dry = _read_json(dry_path)
+        current_sha = str(dry.get("current_state_sha256", ""))
+        if not _SHA256.fullmatch(current_sha):
+            raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_DRY_RUN_INVALID")
+        _run(
+            [
+                "C:/Python314/python.exe",
+                str(source / "scripts/apply_catalog_github_controls.py"),
+                "--repo-root",
+                str(source),
+                "--output",
+                str(apply_path),
+                "--apply",
+                "--bootstrap-controls-only",
+                "--verified-dry-run",
+                str(dry_path),
+                "--expected-current-state-sha",
+                current_sha,
+                "--confirm",
+                "CATALOG_GITHUB_CONTROLS_V1",
+            ],
+            cwd=source,
+            timeout_seconds=1800,
+        )
+        applied = _read_json(apply_path)
     if applied.get("bootstrap_controls_prepared") is not True and (
         not isinstance(applied.get("after_receipt"), dict)
         or applied["after_receipt"].get("status") != "ready"  # type: ignore[index]
