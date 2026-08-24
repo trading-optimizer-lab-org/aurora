@@ -95,6 +95,13 @@ _LOCAL_INSTALL_REPAIR_PATHS = (
     "tests/test_catalog_bootstrap_assistant.py",
     "tests/test_catalog_requester_packaging.py",
 )
+_LOCAL_INSTALL_FOLLOWUP_REPAIR_PATHS = (
+    ".gitattributes",
+    "scripts/build_catalog_requester_apps.py",
+    "scripts/run_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_requester_packaging.py",
+)
 _BOOTSTRAP_REQUIRED_CHECK_NAMES = frozenset({"GTBI V7 stage-two required"})
 _EXACT_REPOSITORY_REMOTES = frozenset(
     {
@@ -1255,6 +1262,33 @@ def _local_install_repair_patch_sha256(
     return hashlib.sha256(result.stdout).hexdigest()
 
 
+def _local_install_followup_patch_sha256(
+    source: Path,
+    base_commit: str,
+    head_commit: str,
+) -> str:
+    result = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--binary",
+            "--full-index",
+            f"{base_commit}..{head_commit}",
+            "--",
+            *_LOCAL_INSTALL_FOLLOWUP_REPAIR_PATHS,
+        ],
+        cwd=source,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_FOLLOWUP_PATCH_INVALID")
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
 def _validated_local_install_repair(
     root: Path,
     binding: dict[str, object],
@@ -1298,6 +1332,51 @@ def _validated_local_install_repair(
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_INVALID")
     return repair
+
+
+def _validated_local_install_followup_repair(
+    root: Path,
+    prior_repair: dict[str, object],
+) -> dict[str, object]:
+    path = root / "local-install-followup-repair-operation-v1.json"
+    operation = _read_json(path)
+    changed_paths = operation.get("changed_paths")
+    if (
+        set(operation)
+        != {
+            "base_commit_sha",
+            "branch",
+            "changed_paths",
+            "head_commit_sha",
+            "merge_commit_sha",
+            "patch_sha256",
+            "pr_number",
+            "repository",
+            "required_check",
+            "schema_version",
+        }
+        or path.read_bytes() != _canonical(operation) + b"\n"
+        or operation.get("schema_version") != "1"
+        or operation.get("repository") != REPOSITORY
+        or operation.get("base_commit_sha") != prior_repair.get("merge_commit_sha")
+        or not isinstance(operation.get("branch"), str)
+        or not re.fullmatch(
+            r"codex/catalog-local-install-followup-[0-9a-f]{12}",
+            str(operation.get("branch")),
+        )
+        or not isinstance(changed_paths, list)
+        or tuple(changed_paths) != _LOCAL_INSTALL_FOLLOWUP_REPAIR_PATHS
+        or not isinstance(operation.get("head_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("head_commit_sha")))
+        or not isinstance(operation.get("merge_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
+        or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
+        or not isinstance(operation.get("pr_number"), int)
+        or int(operation["pr_number"]) < 1
+        or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_FOLLOWUP_REPAIR_INVALID")
+    return operation
 
 
 def _runtime_commit(root: Path) -> str:
@@ -1344,12 +1423,57 @@ def _runtime_commit(root: Path) -> str:
         or not isinstance(retry.get("installations"), dict)
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_RECEIPT_INVALID")
-    return str(repair_merge)
+    followup_retry_path = (
+        root / "receipts/controller-bootstrap-local-install-retry-2-v1.json"
+    )
+    if not followup_retry_path.exists():
+        return str(repair_merge)
+    if followup_retry_path.is_symlink() or followup_retry_path.is_junction():
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_FOLLOWUP_RETRY_RECEIPT_INVALID")
+    followup = _validated_local_install_followup_repair(root, repair)
+    followup_retry = _read_json(followup_retry_path)
+    followup_merge = followup["merge_commit_sha"]
+    if (
+        set(followup_retry)
+        != {
+            "activity_baseline_sha256",
+            "blocked_state_sha256",
+            "bootstrap_source_commit_sha",
+            "followup_merge_commit_sha",
+            "followup_operation_sha256",
+            "followup_pr_number",
+            "installations",
+            "prior_retry_receipt_sha256",
+            "prior_runtime_commit_sha",
+            "schema_version",
+        }
+        or followup_retry_path.read_bytes() != _canonical(followup_retry) + b"\n"
+        or followup_retry.get("schema_version") != "1"
+        or followup_retry.get("prior_runtime_commit_sha") != repair_merge
+        or followup_retry.get("followup_merge_commit_sha") != followup_merge
+        or followup_retry.get("followup_pr_number") != followup.get("pr_number")
+        or followup_retry.get("followup_operation_sha256")
+        != hashlib.sha256(_canonical(followup)).hexdigest()
+        or followup_retry.get("prior_retry_receipt_sha256")
+        != hashlib.sha256(retry_path.read_bytes()).hexdigest()
+        or not _SHA256.fullmatch(
+            str(followup_retry.get("activity_baseline_sha256", ""))
+        )
+        or not _SHA256.fullmatch(
+            str(followup_retry.get("blocked_state_sha256", ""))
+        )
+        or not _COMMIT.fullmatch(
+            str(followup_retry.get("bootstrap_source_commit_sha", ""))
+        )
+        or not isinstance(followup_retry.get("installations"), dict)
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_FOLLOWUP_RETRY_RECEIPT_INVALID")
+    return str(followup_merge)
 
 
 def _resume_transient_local_install_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
-    if state.phase != "BLOCKED" or state.sequence != 10:
+    if state.phase != "BLOCKED" or state.sequence not in {10, 12}:
         return False
     blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
     blocked = _read_json(blocked_path)
@@ -1366,6 +1490,15 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_BLOCK_RECEIPT_INVALID")
     if root.resolve() != EXPECTED_ROOT.resolve():
         raise ValueError("CATALOG_BOOTSTRAP_ROOT_INVALID")
+    followup_retry_path = (
+        root / "receipts/controller-bootstrap-local-install-retry-2-v1.json"
+    )
+    if state.sequence == 12 and followup_retry_path.exists():
+        evidence = _read_json(followup_retry_path)
+        if _runtime_commit(root) != evidence.get("followup_merge_commit_sha"):
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_FOLLOWUP_RETRY_RECEIPT_INVALID")
+        _advance(root, state, "local_install_retry_authorized", evidence)
+        return True
 
     context_path = root / "install-context-v1.json"
     context = _context(root)
@@ -1417,7 +1550,23 @@ def _resume_transient_local_install_block(root: Path) -> bool:
     repair_head = str(repair["head_commit_sha"])
     repair_merge = str(repair["merge_commit_sha"])
     repair_pr_number = int(repair["pr_number"])
-    if source_commit != repair_merge:
+    followup: dict[str, object] | None = None
+    if state.sequence == 12:
+        if _runtime_commit(root) != repair_merge:
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_FOLLOWUP_RETRY_RECEIPT_INVALID")
+        followup = _validated_local_install_followup_repair(root, repair)
+        runtime_base = repair_merge
+        runtime_head = str(followup["head_commit_sha"])
+        runtime_merge = str(followup["merge_commit_sha"])
+        runtime_paths = _LOCAL_INSTALL_FOLLOWUP_REPAIR_PATHS
+        runtime_patch_sha256 = _local_install_followup_patch_sha256
+    else:
+        runtime_base = binding_merge
+        runtime_head = repair_head
+        runtime_merge = repair_merge
+        runtime_paths = _LOCAL_INSTALL_REPAIR_PATHS
+        runtime_patch_sha256 = _local_install_repair_patch_sha256
+    if source_commit != runtime_merge:
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_CONTEXT_INVALID")
 
     for installed_root in (AGENT_ROOT, BROKER_ROOT):
@@ -1444,7 +1593,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
     current_commit = _run(["git", "rev-parse", "HEAD"], cwd=source)
     remote = _run(["git", "remote", "get-url", "origin"], cwd=source)
     if (
-        current_commit != repair_merge
+        current_commit != runtime_merge
         or current_commit != _run(["git", "rev-parse", "origin/main"], cwd=source)
         or not _repository_remote_is_exact(remote)
         or _run(
@@ -1452,16 +1601,16 @@ def _resume_transient_local_install_block(root: Path) -> bool:
             cwd=source,
         )
         or _run(["git", "branch", "--show-current"], cwd=source) != "main"
-        or _run(["git", "rev-parse", f"{repair_merge}^1"], cwd=source)
-        != binding_merge
-        or _run(["git", "rev-parse", f"{repair_merge}^2"], cwd=source)
-        != repair_head
+        or _run(["git", "rev-parse", f"{runtime_merge}^1"], cwd=source)
+        != runtime_base
+        or _run(["git", "rev-parse", f"{runtime_merge}^2"], cwd=source)
+        != runtime_head
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_SOURCE_INVALID")
 
     for revision in (
-        f"{binding_merge}..{repair_head}",
-        f"{binding_merge}..{repair_merge}",
+        f"{runtime_base}..{runtime_head}",
+        f"{runtime_base}..{runtime_merge}",
     ):
         changed = tuple(
             line
@@ -1471,15 +1620,15 @@ def _resume_transient_local_install_block(root: Path) -> bool:
             ).splitlines()
             if line
         )
-        if changed != _LOCAL_INSTALL_REPAIR_PATHS:
+        if changed != runtime_paths:
             raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_PATHS_INVALID")
     if (
-        _local_install_repair_patch_sha256(
+        runtime_patch_sha256(
             source,
-            binding_merge,
-            repair_head,
+            runtime_base,
+            runtime_head,
         )
-        != repair["patch_sha256"]
+        != (followup or repair)["patch_sha256"]
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_PATCH_INVALID")
 
@@ -1589,6 +1738,60 @@ def _resume_transient_local_install_block(root: Path) -> bool:
     if observed_paths != _LOCAL_INSTALL_REPAIR_PATHS:
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_PATHS_INVALID")
     _wait_for_required_checks(str(repair_pr_number), source)
+    if followup is not None:
+        followup_pr_number = int(followup["pr_number"])
+        observed_followup = json.loads(
+            _run(
+                [
+                    "gh",
+                    "pr",
+                    "view",
+                    str(followup_pr_number),
+                    "--repo",
+                    REPOSITORY,
+                    "--json",
+                    "state,baseRefName,headRefName,headRefOid,mergeCommit",
+                ],
+                cwd=source,
+            )
+        )
+        observed_followup_merge = (
+            observed_followup.get("mergeCommit")
+            if isinstance(observed_followup, dict)
+            else None
+        )
+        if (
+            not isinstance(observed_followup, dict)
+            or set(observed_followup)
+            != {"baseRefName", "headRefName", "headRefOid", "mergeCommit", "state"}
+            or observed_followup.get("state") != "MERGED"
+            or observed_followup.get("baseRefName") != "main"
+            or observed_followup.get("headRefName") != followup["branch"]
+            or observed_followup.get("headRefOid") != followup["head_commit_sha"]
+            or not isinstance(observed_followup_merge, dict)
+            or set(observed_followup_merge) != {"oid"}
+            or observed_followup_merge.get("oid") != followup["merge_commit_sha"]
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_FOLLOWUP_REPAIR_PR_INVALID")
+        observed_followup_paths = tuple(
+            line
+            for line in _run(
+                [
+                    "gh",
+                    "pr",
+                    "diff",
+                    str(followup_pr_number),
+                    "--repo",
+                    REPOSITORY,
+                    "--name-only",
+                ],
+                cwd=source,
+            ).splitlines()
+            if line
+        )
+        if observed_followup_paths != _LOCAL_INSTALL_FOLLOWUP_REPAIR_PATHS:
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_FOLLOWUP_REPAIR_PATHS_INVALID")
+        _wait_for_required_checks(str(followup_pr_number), source)
 
     installations = _verify_existing_installations(root)
     baseline_path = root / "github-activity-baseline-v1.json"
@@ -1602,23 +1805,44 @@ def _resume_transient_local_install_block(root: Path) -> bool:
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_ACTIVITY_INVALID")
 
-    recovery = {
+    common_recovery = {
         "activity_baseline_sha256": hashlib.sha256(_canonical(baseline)).hexdigest(),
         "blocked_state_sha256": hashlib.sha256(
             (root / "state/catalog-bootstrap-state-v1.json").read_bytes()
         ).hexdigest(),
         "bootstrap_source_commit_sha": state.protected_commit_sha,
         "installations": installations,
-        "public_binding_merge_commit_sha": binding_merge,
-        "repair_merge_commit_sha": repair_merge,
-        "repair_operation_sha256": hashlib.sha256(_canonical(repair)).hexdigest(),
-        "repair_pr_number": repair_pr_number,
         "schema_version": "1",
     }
-    _write_canonical(
-        root / "receipts/controller-bootstrap-local-install-retry-v1.json",
-        recovery,
-    )
+    if followup is None:
+        recovery = {
+            **common_recovery,
+            "public_binding_merge_commit_sha": binding_merge,
+            "repair_merge_commit_sha": repair_merge,
+            "repair_operation_sha256": hashlib.sha256(_canonical(repair)).hexdigest(),
+            "repair_pr_number": repair_pr_number,
+        }
+        recovery_path = (
+            root / "receipts/controller-bootstrap-local-install-retry-v1.json"
+        )
+    else:
+        prior_retry_path = (
+            root / "receipts/controller-bootstrap-local-install-retry-v1.json"
+        )
+        recovery = {
+            **common_recovery,
+            "followup_merge_commit_sha": followup["merge_commit_sha"],
+            "followup_operation_sha256": hashlib.sha256(
+                _canonical(followup)
+            ).hexdigest(),
+            "followup_pr_number": followup["pr_number"],
+            "prior_retry_receipt_sha256": hashlib.sha256(
+                prior_retry_path.read_bytes()
+            ).hexdigest(),
+            "prior_runtime_commit_sha": repair_merge,
+        }
+        recovery_path = followup_retry_path
+    _write_canonical(recovery_path, recovery)
     _advance(root, state, "local_install_retry_authorized", recovery)
     return True
 
