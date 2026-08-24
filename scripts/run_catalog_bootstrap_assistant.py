@@ -2323,7 +2323,7 @@ def _validated_github_controls_package_token_repair(
         or operation.get("prior_runtime_commit_sha")
         != prior_repair.get("merge_commit_sha")
         or operation.get("branch")
-        != "codex/catalog-idempotent-receipt-binding"
+        != "codex/catalog-windows-receipt-recovery"
         or not isinstance(changed_paths, list)
         or tuple(changed_paths) != _GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS
         or not isinstance(operation.get("base_commit_sha"), str)
@@ -4000,7 +4000,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
 def _resume_transient_github_controls_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
     if state.phase != "BLOCKED" or state.sequence not in {
-        25, 27, 29, 31, 33, 35, 37, 39,
+        25, 27, 29, 31, 33, 35, 37, 39, 41,
     }:
         return False
     blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
@@ -4012,9 +4012,13 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
             "CATALOG_BOOTSTRAP_WORKFLOW_FAILED"
             if state.sequence == 37
             else (
-                "CATALOG_BOOTSTRAP_PHASE_FAILED"
-                if state.sequence == 35
-                else "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED"
+                "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_RECEIPTS_INVALID"
+                if state.sequence == 41
+                else (
+                    "CATALOG_BOOTSTRAP_PHASE_FAILED"
+                    if state.sequence == 35
+                    else "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED"
+                )
             )
         ),
         "result": "BLOCKED",
@@ -4058,7 +4062,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     followup_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-2-v1.json"
     )
-    if state.sequence in {37, 39}:
+    if state.sequence in {37, 39, 41}:
         if not package_token_retry_path.exists():
             return False
         if (
@@ -4257,7 +4261,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     _wait_for_required_checks(str(operation["pr_number"]), source)
     if _verify_post_install_installations(
         root,
-        allow_uploaded_auditor=state.sequence in {37, 39},
+        allow_uploaded_auditor=state.sequence in {37, 39, 41},
     ) != evidence.get("installations"):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_INSTALLATIONS_INVALID")
     baseline_path = root / "github-activity-baseline-v1.json"
@@ -4540,8 +4544,14 @@ def _validated_existing_github_control_receipts(
         and applied["after_receipt"].get("status") == "ready"  # type: ignore[index]
     )
     if (
-        dry_path.read_bytes() != _canonical(dry) + b"\n"
-        or apply_path.read_bytes() != _canonical(applied) + b"\n"
+        dry_path.read_bytes() not in {
+            _canonical(dry) + b"\n",
+            _canonical(dry) + b"\r\n",
+        }
+        or apply_path.read_bytes() not in {
+            _canonical(applied) + b"\n",
+            _canonical(applied) + b"\r\n",
+        }
         or dry.get("mode") != "dry_run"
         or not _SHA256.fullmatch(str(dry.get("current_state_sha256", "")))
         or applied.get("mode") != "apply"
