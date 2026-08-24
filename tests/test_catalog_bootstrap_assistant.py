@@ -363,6 +363,28 @@ def _local_install_task_identity_repair_operation(
     }
 
 
+def _local_install_task_identity_followup_repair_operation(
+    *,
+    task_identity_merge: str,
+    followup_head: str,
+    followup_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": task_identity_merge,
+        "branch": "codex/catalog-local-install-task-identity-followup-012345fedcba",
+        "changed_paths": list(
+            bootstrap_runner._LOCAL_INSTALL_TASK_IDENTITY_FOLLOWUP_REPAIR_PATHS
+        ),
+        "head_commit_sha": followup_head,
+        "merge_commit_sha": followup_merge,
+        "patch_sha256": "2" * 64,
+        "pr_number": 172,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+
+
 def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None:
     blocked = _blocked_local_install_state()
 
@@ -1234,30 +1256,44 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     (
         root / "local-install-task-identity-repair-operation-v1.json"
     ).write_bytes(bootstrap_runner._canonical(task_identity) + b"\n")
+    assert bootstrap_runner._runtime_commit(root) == task_identity_merge
+
+    task_identity_followup_head = "d" * 40
+    task_identity_followup_merge = "e" * 40
+    task_identity_followup = (
+        _local_install_task_identity_followup_repair_operation(
+            task_identity_merge=task_identity_merge,
+            followup_head=task_identity_followup_head,
+            followup_merge=task_identity_followup_merge,
+        )
+    )
+    (
+        root / "local-install-task-identity-followup-repair-operation-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(task_identity_followup) + b"\n")
     sixth_retry_path = (
         root / "receipts/controller-bootstrap-local-install-retry-6-v1.json"
     )
     seventh_retry = {
-        "activity_baseline_sha256": "d" * 64,
-        "blocked_state_sha256": "e" * 64,
+        "activity_baseline_sha256": "f" * 64,
+        "blocked_state_sha256": "1" * 64,
         "bootstrap_source_commit_sha": COMMIT,
         "installations": {"auditor": 2, "requester": 1},
         "prior_retry_receipt_sha256": hashlib.sha256(
             sixth_retry_path.read_bytes()
         ).hexdigest(),
-        "prior_runtime_commit_sha": acl_merge,
+        "prior_runtime_commit_sha": task_identity_merge,
         "schema_version": "1",
-        "task_identity_merge_commit_sha": task_identity_merge,
-        "task_identity_operation_sha256": hashlib.sha256(
-            bootstrap_runner._canonical(task_identity)
+        "task_identity_followup_merge_commit_sha": task_identity_followup_merge,
+        "task_identity_followup_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(task_identity_followup)
         ).hexdigest(),
-        "task_identity_pr_number": 171,
+        "task_identity_followup_pr_number": 172,
     }
     (
         root / "receipts/controller-bootstrap-local-install-retry-7-v1.json"
     ).write_bytes(bootstrap_runner._canonical(seventh_retry) + b"\n")
 
-    assert bootstrap_runner._runtime_commit(root) == task_identity_merge
+    assert bootstrap_runner._runtime_commit(root) == task_identity_followup_merge
 
 
 def test_post_repair_phases_all_use_the_runtime_commit() -> None:
