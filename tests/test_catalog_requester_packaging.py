@@ -103,6 +103,36 @@ def test_builder_completes_a_partial_manifest_write(
     )
 
 
+def test_builder_git_verification_uses_an_exact_command_local_safe_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import build_catalog_requester_apps as builder_module
+
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(builder_module.subprocess, "run", fake_run)
+    root = tmp_path.resolve(strict=True)
+
+    builder_module._run_git(root, "rev-parse", "HEAD")
+
+    assert calls == [
+        [
+            "git",
+            "-c",
+            f"safe.directory={root}",
+            "-C",
+            str(root),
+            "rev-parse",
+            "HEAD",
+        ]
+    ]
+
+
 def test_broker_runtime_rejects_an_administrative_service_token() -> None:
     source = BROKER_CLI.read_text(encoding="utf-8")
     assert "GetUserNameW" in source
@@ -999,14 +1029,14 @@ def test_broker_task_runs_continuously_on_a_laptop_and_catches_missed_start() ->
         assert setting in broker
 
 
-def test_agent_installer_never_reports_isolation_before_real_host_restart() -> None:
+def test_agent_installer_reports_only_prepared_before_real_host_restart() -> None:
     agent = AGENT_INSTALLER.read_text(encoding="utf-8")
     assert (
-        '$Plan.final_capability_result = "BLOCKED_AGENT_SANDBOX_NOT_ENFORCEABLE"'
+        '$Plan.final_capability_result = '
+        '"PREPARED_RESTART_AND_PROCESS_AUDIT_REQUIRED"'
         in agent
     )
-    assert 'Write-Error "BLOCKED_AGENT_SANDBOX_NOT_ENFORCEABLE"' in agent
-    assert "exit 2" in agent
+    assert "AGENT_ISOLATION_VERIFIED" not in agent
 
 
 def test_broker_installer_reuses_only_the_same_installed_private_key() -> None:

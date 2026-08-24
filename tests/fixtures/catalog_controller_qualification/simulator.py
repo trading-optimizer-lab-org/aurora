@@ -1691,8 +1691,20 @@ def _prove_controls_capacity_or_requester(
         workflow = (root / ".github/workflows/catalog-run-controller.yml").read_text(
             "utf-8"
         )
-        if actors.get("production_enabled") is not False:
-            raise AssertionError("QUALIFICATION_BOOTSTRAP_NOT_DISABLED")
+        if actors.get("production_enabled") is not True:
+            raise AssertionError("QUALIFICATION_PUBLIC_BINDING_NOT_ENABLED")
+        if "CONTROLLER_ENABLED: ${{ vars.CATALOG_CONTROLLER_ENABLED }}" not in workflow:
+            raise AssertionError("DISABLED_CONTROLLER_VARIABLE_NOT_BOUND")
+        if (
+            'controller_enabled = os.environ.get("CONTROLLER_ENABLED") == "true"'
+            not in workflow
+        ):
+            raise AssertionError("DISABLED_CONTROLLER_VARIABLE_NOT_READ")
+        if (
+            'if actors.get("production_enabled") is True and controller_enabled:'
+            not in workflow
+        ):
+            raise AssertionError("DISABLED_CONTROLLER_GATE_NOT_QUALIFIED")
         if "CATALOG_CONTROLLER_DISABLED" not in workflow:
             raise AssertionError("DISABLED_CONTROLLER_REASON_NOT_QUALIFIED")
         if "should_create_authority" in workflow.split("CATALOG_CONTROLLER_DISABLED", 1)[0]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -136,6 +137,15 @@ def _blocked_merge_state():
     )
 
 
+def _blocked_local_install_state():
+    state = advance_bootstrap_state(
+        _blocked_merge_state(),
+        event("merge_retry_authorized", 8),
+    )
+    state = advance_bootstrap_state(state, event("protected_merge_observed", 9))
+    return advance_bootstrap_state(state, event("blocked", 10))
+
+
 def test_only_exact_merge_retry_can_leave_terminal_blocked_state() -> None:
     blocked = _blocked_merge_state()
     assert blocked.phase == "BLOCKED"
@@ -147,6 +157,491 @@ def test_only_exact_merge_retry_can_leave_terminal_blocked_state() -> None:
     precheck = initial_bootstrap_state(BOOTSTRAP_ID, COMMIT)
     with pytest.raises(ValueError, match="TRANSITION_INVALID"):
         advance_bootstrap_state(precheck, event("merge_retry_authorized", 1))
+
+
+def _local_install_repair_operation(
+    *,
+    binding_merge: str,
+    repair_head: str,
+    repair_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": binding_merge,
+        "branch": "codex/catalog-local-install-recovery-123456789abc",
+        "changed_paths": list(bootstrap_runner._LOCAL_INSTALL_REPAIR_PATHS),
+        "head_commit_sha": repair_head,
+        "merge_commit_sha": repair_merge,
+        "patch_sha256": "9" * 64,
+        "pr_number": 165,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+
+
+def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None:
+    blocked = _blocked_local_install_state()
+
+    resumed = advance_bootstrap_state(
+        blocked,
+        event("local_install_retry_authorized", 11),
+    )
+
+    assert resumed.phase == "LOCAL_INSTALL_PENDING"
+    assert resumed.sequence == 11
+
+
+def test_local_install_recovery_rejects_context_not_bound_to_repair(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    source = tmp_path / "source"
+    source.mkdir(parents=True)
+    binding_merge = "b" * 40
+    repair_head = "e" * 40
+    repair_merge = "f" * 40
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_local_install_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "LOCAL_INSTALL_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    context = {
+        "repository": bootstrap_runner.REPOSITORY,
+        "source_commit_sha": "d" * 40,
+        "source_root": str(source),
+    }
+    (root / "install-context-v1.json").write_bytes(
+        bootstrap_runner._canonical(context) + b"\n"
+    )
+    operation = {
+        "binding_commit_sha": "c" * 40,
+        "branch": "catalog/bootstrap-binding-123456789abc",
+        "merge_commit_sha": binding_merge,
+        "pr_number": 163,
+        "review_rounds_sha256": "d" * 64,
+    }
+    (root / "public-binding-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(operation) + b"\n"
+    )
+    repair = _local_install_repair_operation(
+        binding_merge=binding_merge,
+        repair_head=repair_head,
+        repair_merge=repair_merge,
+    )
+    (root / "local-install-repair-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(repair) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("external command must not run"),
+    )
+
+    with pytest.raises(ValueError, match="LOCAL_RETRY_CONTEXT_INVALID"):
+        bootstrap_runner._resume_transient_local_install_block(root)
+
+
+def test_recover_exact_clean_local_install_block_through_protected_repair(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    source = tmp_path / "source"
+    source.mkdir(parents=True)
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    agent_root = tmp_path / "agent"
+    broker_root = tmp_path / "broker"
+    binding_merge = "b" * 40
+    repair_head = "e" * 40
+    repair_merge = "f" * 40
+    binding_branch = "catalog/bootstrap-binding-123456789abc"
+    repair_branch = "codex/catalog-local-install-recovery-123456789abc"
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    persist_bootstrap_state(state_path, _blocked_local_install_state())
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "LOCAL_INSTALL_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    context = {
+        "repository": bootstrap_runner.REPOSITORY,
+        "source_commit_sha": repair_merge,
+        "source_root": str(source),
+    }
+    (root / "install-context-v1.json").write_bytes(
+        bootstrap_runner._canonical(context) + b"\n"
+    )
+    operation = {
+        "binding_commit_sha": "c" * 40,
+        "branch": binding_branch,
+        "merge_commit_sha": binding_merge,
+        "pr_number": 163,
+        "review_rounds_sha256": "d" * 64,
+    }
+    (root / "public-binding-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(operation) + b"\n"
+    )
+    repair = _local_install_repair_operation(
+        binding_merge=binding_merge,
+        repair_head=repair_head,
+        repair_merge=repair_merge,
+    )
+    (root / "local-install-repair-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(repair) + b"\n"
+    )
+    baseline = {"heavy_run_ids": [], "request_issue_numbers": []}
+    (root / "github-activity-baseline-v1.json").write_bytes(
+        bootstrap_runner._canonical(baseline) + b"\n"
+    )
+    (root / "secrets").mkdir()
+    (root / "secrets/requester-pending.pem").write_bytes(b"test-pending-key")
+
+    calls: list[list[str]] = []
+
+    def fake_fixed_run(args: list[str], **_kwargs: object) -> str:
+        calls.append(args)
+        if args == ["git", "fetch", "origin", "main"]:
+            return ""
+        if args == ["git", "rev-parse", "HEAD"]:
+            return repair_merge
+        if args == ["git", "rev-parse", "origin/main"]:
+            return repair_merge
+        if args == ["git", "rev-parse", f"{repair_merge}^1"]:
+            return binding_merge
+        if args == ["git", "rev-parse", f"{repair_merge}^2"]:
+            return repair_head
+        if args == ["git", "remote", "get-url", "origin"]:
+            return "https://github.com/trading-optimizer-lab-org/aurora.git"
+        if args == ["git", "status", "--porcelain=v1", "--untracked-files=no"]:
+            return ""
+        if args == ["git", "branch", "--show-current"]:
+            return "main"
+        if args[:3] == ["git", "diff", "--name-only"]:
+            return "\n".join(bootstrap_runner._LOCAL_INSTALL_REPAIR_PATHS)
+        if args[:3] == ["gh", "variable", "get"]:
+            return "false"
+        if args[:3] == ["gh", "pr", "view"] and args[3] == "163":
+            return json.dumps(
+                {
+                    "baseRefName": "main",
+                    "headRefName": binding_branch,
+                    "mergeCommit": {"oid": binding_merge},
+                    "state": "MERGED",
+                }
+            )
+        if args[:3] == ["gh", "pr", "view"] and args[3] == "165":
+            return json.dumps(
+                {
+                    "baseRefName": "main",
+                    "headRefName": repair_branch,
+                    "headRefOid": repair_head,
+                    "mergeCommit": {"oid": repair_merge},
+                    "state": "MERGED",
+                }
+            )
+        if args[:3] == ["gh", "pr", "diff"]:
+            return "\n".join(bootstrap_runner._LOCAL_INSTALL_REPAIR_PATHS)
+        raise AssertionError(f"unexpected command: {args}")
+
+    def fake_process(args: list[str], **_kwargs: object):
+        assert args == [
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            COMMIT,
+            binding_merge,
+        ]
+        return subprocess.CompletedProcess(args=args, returncode=0)
+
+    checked_prs: list[str] = []
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(bootstrap_runner, "BOOTSTRAP_STAGING_ROOT", staging)
+    monkeypatch.setattr(bootstrap_runner, "AGENT_ROOT", agent_root)
+    monkeypatch.setattr(bootstrap_runner, "BROKER_ROOT", broker_root)
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_fixed_run)
+    monkeypatch.setattr(bootstrap_runner.subprocess, "run", fake_process)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_local_install_repair_patch_sha256",
+        lambda *_args: "9" * 64,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_wait_for_required_checks",
+        lambda pr, _source: checked_prs.append(pr),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_verify_existing_installations",
+        lambda _root: {"auditor": 2, "requester": 1},
+    )
+    monkeypatch.setattr(bootstrap_runner, "_github_activity_snapshot", lambda: baseline)
+
+    assert bootstrap_runner._resume_transient_local_install_block(root) is True
+    resumed = load_bootstrap_state(state_path)
+    assert resumed.phase == "LOCAL_INSTALL_PENDING"
+    assert resumed.sequence == 11
+    recovery_path = root / "receipts/controller-bootstrap-local-install-retry-v1.json"
+    recovery = json.loads(recovery_path.read_text("utf-8"))
+    assert recovery["public_binding_merge_commit_sha"] == binding_merge
+    assert recovery["repair_merge_commit_sha"] == repair_merge
+    assert recovery["bootstrap_source_commit_sha"] == COMMIT
+    assert checked_prs == ["165"]
+    assert not any(command[:3] == ["gh", "pr", "merge"] for command in calls)
+
+
+def test_local_install_recovery_rejects_partial_staging_before_any_command(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    source = tmp_path / "source"
+    source.mkdir(parents=True)
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "partial-output").write_text("unexpected", encoding="utf-8")
+    binding_merge = "b" * 40
+    repair_head = "e" * 40
+    repair_merge = "f" * 40
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_local_install_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "LOCAL_INSTALL_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    context = {
+        "repository": bootstrap_runner.REPOSITORY,
+        "source_commit_sha": repair_merge,
+        "source_root": str(source),
+    }
+    (root / "install-context-v1.json").write_bytes(
+        bootstrap_runner._canonical(context) + b"\n"
+    )
+    operation = {
+        "binding_commit_sha": "c" * 40,
+        "branch": "catalog/bootstrap-binding-123456789abc",
+        "merge_commit_sha": binding_merge,
+        "pr_number": 163,
+        "review_rounds_sha256": "d" * 64,
+    }
+    (root / "public-binding-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(operation) + b"\n"
+    )
+    repair = _local_install_repair_operation(
+        binding_merge=binding_merge,
+        repair_head=repair_head,
+        repair_merge=repair_merge,
+    )
+    (root / "local-install-repair-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(repair) + b"\n"
+    )
+
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(bootstrap_runner, "BOOTSTRAP_STAGING_ROOT", staging)
+    monkeypatch.setattr(bootstrap_runner, "AGENT_ROOT", tmp_path / "agent")
+    monkeypatch.setattr(bootstrap_runner, "BROKER_ROOT", tmp_path / "broker")
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("external command must not run"),
+    )
+
+    with pytest.raises(ValueError, match="LOCAL_RETRY_PARTIAL_INSTALL"):
+        bootstrap_runner._resume_transient_local_install_block(root)
+
+
+def test_runtime_commit_defaults_to_the_public_binding(tmp_path: Path) -> None:
+    root = tmp_path / "protected"
+    binding_merge = "b" * 40
+    binding = {
+        "binding_commit_sha": "c" * 40,
+        "branch": "catalog/bootstrap-binding-123456789abc",
+        "merge_commit_sha": binding_merge,
+        "pr_number": 163,
+        "review_rounds_sha256": "d" * 64,
+    }
+    (root / "receipts").mkdir(parents=True)
+    (root / "public-binding-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(binding) + b"\n"
+    )
+
+    assert bootstrap_runner._runtime_commit(root) == binding_merge
+
+
+def test_runtime_commit_uses_the_verified_repair_receipt(tmp_path: Path) -> None:
+    root = tmp_path / "protected"
+    (root / "receipts").mkdir(parents=True)
+    binding_merge = "b" * 40
+    repair_head = "e" * 40
+    repair_merge = "f" * 40
+    binding = {
+        "binding_commit_sha": "c" * 40,
+        "branch": "catalog/bootstrap-binding-123456789abc",
+        "merge_commit_sha": binding_merge,
+        "pr_number": 163,
+        "review_rounds_sha256": "d" * 64,
+    }
+    (root / "public-binding-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(binding) + b"\n"
+    )
+    repair = _local_install_repair_operation(
+        binding_merge=binding_merge,
+        repair_head=repair_head,
+        repair_merge=repair_merge,
+    )
+    repair_path = root / "local-install-repair-operation-v1.json"
+    repair_path.write_bytes(bootstrap_runner._canonical(repair) + b"\n")
+    retry = {
+        "activity_baseline_sha256": "1" * 64,
+        "blocked_state_sha256": "2" * 64,
+        "bootstrap_source_commit_sha": COMMIT,
+        "installations": {"auditor": 2, "requester": 1},
+        "public_binding_merge_commit_sha": binding_merge,
+        "repair_merge_commit_sha": repair_merge,
+        "repair_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(repair)
+        ).hexdigest(),
+        "repair_pr_number": 165,
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-local-install-retry-v1.json").write_bytes(
+        bootstrap_runner._canonical(retry) + b"\n"
+    )
+
+    assert bootstrap_runner._runtime_commit(root) == repair_merge
+
+
+def test_post_repair_phases_all_use_the_runtime_commit() -> None:
+    for handler in (
+        bootstrap_runner.install_local_components,
+        bootstrap_runner.apply_github_controls,
+        bootstrap_runner.run_qualifications,
+        bootstrap_runner.perform_final_audit,
+    ):
+        assert "_runtime_commit" in handler.__code__.co_names
+
+
+def test_main_tries_local_recovery_after_merge_recovery_declines(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{}\n", encoding="utf-8")
+    blocked = _blocked_local_install_state()
+    ready = blocked.model_copy(update={"phase": "READY", "sequence": 11})
+    observed_states = iter((blocked, blocked, ready))
+    recoveries: list[str] = []
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "load_bootstrap_state",
+        lambda _path: next(observed_states),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_resume_transient_merge_block",
+        lambda _root: recoveries.append("merge") or False,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_resume_transient_local_install_block",
+        lambda _root: recoveries.append("local") or True,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["catalog-bootstrap-assistant", "--installed-root", str(root)],
+    )
+
+    assert bootstrap_runner.main() == 0
+    assert recoveries == ["merge", "local"]
+
+
+def test_main_reports_the_actual_phase_when_local_recovery_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{}\n", encoding="utf-8")
+    (root / "receipts").mkdir(parents=True)
+    blocked_receipt = {
+        "controller_enabled_readback": False,
+        "phase": "LOCAL_INSTALL_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked_receipt) + b"\n"
+    )
+    blocked = _blocked_local_install_state()
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "load_bootstrap_state",
+        lambda _path: blocked,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_resume_transient_merge_block",
+        lambda _root: False,
+    )
+
+    def fail_local_recovery(_root: Path) -> bool:
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_FAILED")
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_resume_transient_local_install_block",
+        fail_local_recovery,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_set_repository_variable",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["catalog-bootstrap-assistant", "--installed-root", str(root)],
+    )
+
+    assert bootstrap_runner.main() == 2
+    receipt = json.loads(
+        (
+            root
+            / "receipts/controller-bootstrap-recovery-blocked-v1.json"
+        ).read_text("utf-8")
+    )
+    assert receipt["phase"] == "LOCAL_INSTALL_PENDING"
+    assert receipt["reason_code"] == "CATALOG_BOOTSTRAP_LOCAL_RETRY_FAILED"
 
 
 def test_required_check_wait_tolerates_registration_race(monkeypatch) -> None:
@@ -297,6 +792,45 @@ def test_nontransient_block_never_auto_resumes(tmp_path: Path) -> None:
     assert load_bootstrap_state(
         root / "state/catalog-bootstrap-state-v1.json"
     ).phase == "BLOCKED"
+
+
+def test_merge_recovery_rejects_a_matching_receipt_at_the_wrong_sequence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    source = tmp_path / "source"
+    source.mkdir(parents=True)
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_local_install_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    receipt = {
+        "controller_enabled_readback": False,
+        "phase": "MERGE_PENDING",
+        "reason_code": "BOOTSTRAP_PR_NOT_READY",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(receipt) + b"\n"
+    )
+    context = {
+        "repository": bootstrap_runner.REPOSITORY,
+        "source_commit_sha": COMMIT,
+        "source_root": str(source),
+    }
+    (root / "install-context-v1.json").write_bytes(
+        bootstrap_runner._canonical(context) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("external command must not run"),
+    )
+
+    assert bootstrap_runner._resume_transient_merge_block(root) is False
 
 
 def test_recover_exact_merge_block_without_replaying_prior_phases(

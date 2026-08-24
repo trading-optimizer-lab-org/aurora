@@ -78,7 +78,14 @@ def _parser() -> argparse.ArgumentParser:
 
 def _run_git(root: Path, *arguments: str) -> bytes:
     result = subprocess.run(
-        ["git", "-C", os.fspath(root), *arguments],
+        [
+            "git",
+            "-c",
+            f"safe.directory={os.fspath(root)}",
+            "-C",
+            os.fspath(root),
+            *arguments,
+        ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
