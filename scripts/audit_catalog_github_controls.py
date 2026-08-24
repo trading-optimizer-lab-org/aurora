@@ -170,6 +170,14 @@ def _auditor_provider_permissions(
     return provider
 
 
+def _auditor_installation_token_request(
+    auditor: CatalogGithubAuditorV1,
+) -> dict[str, object]:
+    """Keep organization reads while the installation itself stays repo-scoped."""
+
+    return {"permissions": _auditor_provider_permissions(auditor)}
+
+
 class AppReadOnlyClient:
     """One-process GitHub App reader; no token or key leaves this process."""
 
@@ -237,10 +245,7 @@ class AppReadOnlyClient:
             "POST",
             f"/app/installations/{installation['id']}/access_tokens",
             bearer=jwt,
-            body={
-                "repositories": [self.repository.split("/", maxsplit=1)[1]],
-                "permissions": provider_permissions,
-            },
+            body=_auditor_installation_token_request(self.auditor),
         )
         if not isinstance(token_payload, dict) or not isinstance(
             token_payload.get("token"), str

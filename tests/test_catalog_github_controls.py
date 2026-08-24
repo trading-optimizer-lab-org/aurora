@@ -26,6 +26,7 @@ from aurora.infra.sp500_megarun.catalog_github_controls import (
 from scripts.audit_catalog_github_controls import (
     AppReadOnlyClient,
     _active_artifact_inventory,
+    _auditor_installation_token_request,
     _auditor_provider_permissions,
     _billing_actions_storage_evidence,
     _billing_usage_endpoint,
@@ -579,6 +580,14 @@ def test_auditor_provider_permissions_match_the_created_github_app() -> None:
         "organization_administration": "read",
         "packages": "read",
     }
+
+
+def test_auditor_token_keeps_org_inventory_without_expanding_installation() -> None:
+    request = _auditor_installation_token_request(load_desired_auditor())
+    assert set(request) == {"permissions"}
+    assert request["permissions"] == _auditor_provider_permissions(
+        load_desired_auditor()
+    )
 
 
 def test_live_snapshot_retries_only_bounded_transient_pagination_drift() -> None:
