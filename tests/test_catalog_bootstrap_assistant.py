@@ -634,7 +634,7 @@ def _github_controls_package_token_repair_operation(
 ) -> dict[str, object]:
     return {
         "base_commit_sha": prior_merge,
-        "branch": "codex/catalog-idempotent-controls-recovery",
+        "branch": "codex/catalog-idempotent-receipt-binding",
         "changed_paths": list(
             bootstrap_runner._GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS
         ),
