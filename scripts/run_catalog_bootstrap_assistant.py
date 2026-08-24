@@ -121,6 +121,7 @@ _LOCAL_INSTALL_VERIFIER_REPAIR_PATHS = (
     "tests/test_catalog_bootstrap_assistant.py",
     "tests/test_catalog_requester_packaging.py",
 )
+_LOCAL_INSTALL_ACL_REPAIR_PATHS = _LOCAL_INSTALL_VERIFIER_REPAIR_PATHS
 _BOOTSTRAP_REQUIRED_CHECK_NAMES = frozenset({"GTBI V7 stage-two required"})
 _EXACT_REPOSITORY_REMOTES = frozenset(
     {
@@ -1389,6 +1390,33 @@ def _local_install_verifier_patch_sha256(
     return hashlib.sha256(result.stdout).hexdigest()
 
 
+def _local_install_acl_patch_sha256(
+    source: Path,
+    base_commit: str,
+    head_commit: str,
+) -> str:
+    result = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--binary",
+            "--full-index",
+            f"{base_commit}..{head_commit}",
+            "--",
+            *_LOCAL_INSTALL_ACL_REPAIR_PATHS,
+        ],
+        cwd=source,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACL_PATCH_INVALID")
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
 def _validated_local_install_repair(
     root: Path,
     binding: dict[str, object],
@@ -1611,6 +1639,44 @@ def _validated_local_install_verifier_repair(
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_VERIFIER_REPAIR_INVALID")
+    return operation
+
+
+def _validated_local_install_acl_repair(
+    root: Path,
+    prior_repair: dict[str, object],
+) -> dict[str, object]:
+    path = root / "local-install-acl-repair-operation-v1.json"
+    operation = _read_json(path)
+    changed_paths = operation.get("changed_paths")
+    if (
+        set(operation)
+        != {
+            "base_commit_sha", "branch", "changed_paths", "head_commit_sha",
+            "merge_commit_sha", "patch_sha256", "pr_number", "repository",
+            "required_check", "schema_version",
+        }
+        or path.read_bytes() != _canonical(operation) + b"\n"
+        or operation.get("schema_version") != "1"
+        or operation.get("repository") != REPOSITORY
+        or operation.get("base_commit_sha") != prior_repair.get("merge_commit_sha")
+        or not isinstance(operation.get("branch"), str)
+        or not re.fullmatch(
+            r"codex/catalog-local-install-acl-[0-9a-f]{12}",
+            str(operation.get("branch")),
+        )
+        or not isinstance(changed_paths, list)
+        or tuple(changed_paths) != _LOCAL_INSTALL_ACL_REPAIR_PATHS
+        or not isinstance(operation.get("head_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("head_commit_sha")))
+        or not isinstance(operation.get("merge_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
+        or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
+        or not isinstance(operation.get("pr_number"), int)
+        or int(operation["pr_number"]) < 1
+        or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACL_REPAIR_INVALID")
     return operation
 
 
@@ -1838,12 +1904,46 @@ def _runtime_commit(root: Path) -> str:
         or not isinstance(verifier_retry.get("installations"), dict)
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_VERIFIER_RETRY_RECEIPT_INVALID")
-    return str(verifier_merge)
+    acl_retry_path = (
+        root / "receipts/controller-bootstrap-local-install-retry-6-v1.json"
+    )
+    if not acl_retry_path.exists():
+        return str(verifier_merge)
+    if acl_retry_path.is_symlink() or acl_retry_path.is_junction():
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACL_RETRY_RECEIPT_INVALID")
+    acl = _validated_local_install_acl_repair(root, verifier)
+    acl_retry = _read_json(acl_retry_path)
+    acl_merge = acl["merge_commit_sha"]
+    if (
+        set(acl_retry)
+        != {
+            "acl_merge_commit_sha", "acl_operation_sha256", "acl_pr_number",
+            "activity_baseline_sha256", "blocked_state_sha256",
+            "bootstrap_source_commit_sha", "installations",
+            "prior_retry_receipt_sha256", "prior_runtime_commit_sha",
+            "schema_version",
+        }
+        or acl_retry_path.read_bytes() != _canonical(acl_retry) + b"\n"
+        or acl_retry.get("schema_version") != "1"
+        or acl_retry.get("prior_runtime_commit_sha") != verifier_merge
+        or acl_retry.get("acl_merge_commit_sha") != acl_merge
+        or acl_retry.get("acl_pr_number") != acl.get("pr_number")
+        or acl_retry.get("acl_operation_sha256")
+        != hashlib.sha256(_canonical(acl)).hexdigest()
+        or acl_retry.get("prior_retry_receipt_sha256")
+        != hashlib.sha256(verifier_retry_path.read_bytes()).hexdigest()
+        or not _SHA256.fullmatch(str(acl_retry.get("activity_baseline_sha256", "")))
+        or not _SHA256.fullmatch(str(acl_retry.get("blocked_state_sha256", "")))
+        or not _COMMIT.fullmatch(str(acl_retry.get("bootstrap_source_commit_sha", "")))
+        or not isinstance(acl_retry.get("installations"), dict)
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACL_RETRY_RECEIPT_INVALID")
+    return str(acl_merge)
 
 
 def _resume_transient_local_install_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
-    if state.phase != "BLOCKED" or state.sequence not in {10, 12, 14, 16, 18}:
+    if state.phase != "BLOCKED" or state.sequence not in {10, 12, 14, 16, 18, 20}:
         return False
     blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
     blocked = _read_json(blocked_path)
@@ -1894,6 +1994,15 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         evidence = _read_json(verifier_retry_path)
         if _runtime_commit(root) != evidence.get("verifier_merge_commit_sha"):
             raise ValueError("CATALOG_BOOTSTRAP_LOCAL_VERIFIER_RETRY_RECEIPT_INVALID")
+        _advance(root, state, "local_install_retry_authorized", evidence)
+        return True
+    acl_retry_path = (
+        root / "receipts/controller-bootstrap-local-install-retry-6-v1.json"
+    )
+    if state.sequence == 20 and acl_retry_path.exists():
+        evidence = _read_json(acl_retry_path)
+        if _runtime_commit(root) != evidence.get("acl_merge_commit_sha"):
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACL_RETRY_RECEIPT_INVALID")
         _advance(root, state, "local_install_retry_authorized", evidence)
         return True
 
@@ -1951,7 +2060,22 @@ def _resume_transient_local_install_block(root: Path) -> bool:
     compat: dict[str, object] | None = None
     account: dict[str, object] | None = None
     verifier: dict[str, object] | None = None
-    if state.sequence == 18:
+    acl: dict[str, object] | None = None
+    if state.sequence == 20:
+        followup = _validated_local_install_followup_repair(root, repair)
+        compat = _validated_local_install_compat_repair(root, followup)
+        account = _validated_local_install_account_repair(root, compat)
+        verifier = _validated_local_install_verifier_repair(root, account)
+        verifier_merge = str(verifier["merge_commit_sha"])
+        if _runtime_commit(root) != verifier_merge:
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACL_RETRY_RECEIPT_INVALID")
+        acl = _validated_local_install_acl_repair(root, verifier)
+        runtime_base = verifier_merge
+        runtime_head = str(acl["head_commit_sha"])
+        runtime_merge = str(acl["merge_commit_sha"])
+        runtime_paths = _LOCAL_INSTALL_ACL_REPAIR_PATHS
+        runtime_patch_sha256 = _local_install_acl_patch_sha256
+    elif state.sequence == 18:
         followup = _validated_local_install_followup_repair(root, repair)
         compat = _validated_local_install_compat_repair(root, followup)
         account = _validated_local_install_account_repair(root, compat)
@@ -2064,7 +2188,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
             runtime_base,
             runtime_head,
         )
-        != (verifier or account or compat or followup or repair)["patch_sha256"]
+        != (acl or verifier or account or compat or followup or repair)["patch_sha256"]
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_PATCH_INVALID")
 
@@ -2390,6 +2514,47 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         if observed_verifier_paths != _LOCAL_INSTALL_VERIFIER_REPAIR_PATHS:
             raise ValueError("CATALOG_BOOTSTRAP_LOCAL_VERIFIER_REPAIR_PATHS_INVALID")
         _wait_for_required_checks(str(verifier_pr_number), source)
+    if acl is not None:
+        acl_pr_number = int(acl["pr_number"])
+        observed_acl = json.loads(
+            _run(
+                [
+                    "gh", "pr", "view", str(acl_pr_number), "--repo", REPOSITORY,
+                    "--json", "state,baseRefName,headRefName,headRefOid,mergeCommit",
+                ],
+                cwd=source,
+            )
+        )
+        observed_acl_merge = (
+            observed_acl.get("mergeCommit") if isinstance(observed_acl, dict) else None
+        )
+        if (
+            not isinstance(observed_acl, dict)
+            or set(observed_acl)
+            != {"baseRefName", "headRefName", "headRefOid", "mergeCommit", "state"}
+            or observed_acl.get("state") != "MERGED"
+            or observed_acl.get("baseRefName") != "main"
+            or observed_acl.get("headRefName") != acl["branch"]
+            or observed_acl.get("headRefOid") != acl["head_commit_sha"]
+            or not isinstance(observed_acl_merge, dict)
+            or set(observed_acl_merge) != {"oid"}
+            or observed_acl_merge.get("oid") != acl["merge_commit_sha"]
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACL_REPAIR_PR_INVALID")
+        observed_acl_paths = tuple(
+            line
+            for line in _run(
+                [
+                    "gh", "pr", "diff", str(acl_pr_number), "--repo", REPOSITORY,
+                    "--name-only",
+                ],
+                cwd=source,
+            ).splitlines()
+            if line
+        )
+        if observed_acl_paths != _LOCAL_INSTALL_ACL_REPAIR_PATHS:
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACL_REPAIR_PATHS_INVALID")
+        _wait_for_required_checks(str(acl_pr_number), source)
 
     installations = _verify_existing_installations(root)
     baseline_path = root / "github-activity-baseline-v1.json"
@@ -2412,7 +2577,20 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         "installations": installations,
         "schema_version": "1",
     }
-    if verifier is not None:
+    if acl is not None:
+        prior_retry_path = verifier_retry_path
+        recovery = {
+            **common_recovery,
+            "acl_merge_commit_sha": acl["merge_commit_sha"],
+            "acl_operation_sha256": hashlib.sha256(_canonical(acl)).hexdigest(),
+            "acl_pr_number": acl["pr_number"],
+            "prior_retry_receipt_sha256": hashlib.sha256(
+                prior_retry_path.read_bytes()
+            ).hexdigest(),
+            "prior_runtime_commit_sha": verifier["merge_commit_sha"],
+        }
+        recovery_path = acl_retry_path
+    elif verifier is not None:
         prior_retry_path = account_retry_path
         recovery = {
             **common_recovery,
