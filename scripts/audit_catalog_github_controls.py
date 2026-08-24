@@ -914,6 +914,14 @@ def _reported_shared_storage_evidence(
     }
 
 
+def _package_inventory_endpoint(organization_id: int, package_type: str) -> str:
+    if organization_id < 1:
+        raise ValueError("CATALOG_GITHUB_ORGANIZATION_ID_INVALID")
+    if package_type not in {"container", "maven", "npm", "nuget", "rubygems"}:
+        raise ValueError("CATALOG_GITHUB_PACKAGE_TYPE_INVALID")
+    return f"/organizations/{organization_id}/packages?package_type={package_type}"
+
+
 def _campaign_storage_projection(
     *,
     qualification: dict[str, object],
@@ -963,6 +971,7 @@ def _collect_storage_snapshot(
     desired: CatalogGithubControlsV1,
     repository: str,
     owner: str,
+    organization_id: int,
     billing: dict[str, object],
     github_date: datetime,
     repo_root: Path,
@@ -988,7 +997,7 @@ def _collect_storage_snapshot(
     for package_type in ("container", "maven", "npm", "nuget", "rubygems"):
         rows, complete = _paginate_list_rows(
             client,
-            f"/orgs/{owner}/packages?package_type={package_type}",
+            _package_inventory_endpoint(organization_id, package_type),
             max_pages=10,
         )
         package_rows.extend(rows)
@@ -1228,6 +1237,9 @@ def collect_live_snapshot(
         raise ValueError("CATALOG_REPOSITORY_UNEXPECTED")
     owner, _ = repository.split("/", maxsplit=1)
     repo = _dict(client.get(f"/repos/{repository}"))
+    organization_id = _dict(repo.get("owner")).get("id")
+    if isinstance(organization_id, bool) or not isinstance(organization_id, int):
+        raise ValueError("CATALOG_GITHUB_ORGANIZATION_ID_INVALID")
     branch = client.get(
         f"/repos/{repository}/branches/{desired.default_branch}/protection"
     )
@@ -1320,6 +1332,7 @@ def collect_live_snapshot(
         desired=desired,
         repository=repository,
         owner=owner,
+        organization_id=organization_id,
         billing=billing,
         github_date=github_date,
         repo_root=repo_root,
