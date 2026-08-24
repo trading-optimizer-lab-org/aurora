@@ -998,6 +998,9 @@ def validate_catalog_workflow_topology(
                     "enterprise_billing_token": (
                         "${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}"
                     ),
+                    "package_inventory_token": (
+                        "${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}"
+                    ),
                 }
                 audit_steps = audit.get("steps") if isinstance(audit, Mapping) else None
                 action_step = (

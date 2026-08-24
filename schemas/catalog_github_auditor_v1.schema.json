@@ -14,9 +14,11 @@
     "required_organization_permissions",
     "required_enterprise_permissions",
     "required_enterprise_token_scopes",
+    "required_package_inventory_token_scopes",
     "forbidden_write_permissions",
     "private_key_environment_secret",
     "enterprise_billing_token_environment_secret",
+    "package_inventory_token_environment_secret",
     "app_id_variable"
   ],
   "properties": {
@@ -74,6 +76,9 @@
     "required_enterprise_token_scopes": {
       "const": ["manage_billing:enterprise"]
     },
+    "required_package_inventory_token_scopes": {
+      "const": ["read:packages"]
+    },
     "forbidden_write_permissions": {
       "type": "array",
       "minItems": 10,
@@ -98,6 +103,9 @@
     },
     "enterprise_billing_token_environment_secret": {
       "const": "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"
+    },
+    "package_inventory_token_environment_secret": {
+      "const": "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN"
     },
     "app_id_variable": {"const": "AURORA_CATALOG_AUDITOR_APP_ID"}
   }

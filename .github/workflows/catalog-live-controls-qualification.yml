@@ -38,6 +38,7 @@ jobs:
           auditor_app_id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
           auditor_private_key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
           enterprise_billing_token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
+          package_inventory_token: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
 
   qualify_live_terminal_controls:
     name: Qualify terminal controls
@@ -70,6 +71,7 @@ jobs:
           auditor_app_id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
           auditor_private_key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
           enterprise_billing_token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
+          package_inventory_token: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
 
   verify_qualification_receipt:
     name: Verify controls qualification receipt

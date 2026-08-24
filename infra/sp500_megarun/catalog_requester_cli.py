@@ -72,6 +72,7 @@ def main() -> int:
             "AURORA_CATALOG_AUDITOR_JWT",
             "AURORA_CATALOG_AUDITOR_TOKEN",
             "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+            "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN",
         )
     ):
         raise RuntimeError("AGENT_AUDITOR_CREDENTIAL_EXPOSED")

@@ -517,6 +517,7 @@ jobs:
           auditor_app_id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
           auditor_private_key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
           enterprise_billing_token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
+          package_inventory_token: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
 
   admission:
     needs: [routing_snapshot, prepare_admission_candidates, live_controls_audit_before_reserve]
@@ -1632,6 +1633,7 @@ jobs:
           auditor_app_id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
           auditor_private_key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
           enterprise_billing_token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
+          package_inventory_token: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
 
   prepare_terminal_decision:
     needs: [prepare_terminal_evidence, live_controls_audit_before_terminal]

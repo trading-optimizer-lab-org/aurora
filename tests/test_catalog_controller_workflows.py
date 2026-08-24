@@ -192,6 +192,7 @@ def test_live_audit_is_one_fixed_secret_consuming_composite_action() -> None:
         "auditor_app_id",
         "auditor_private_key",
         "enterprise_billing_token",
+        "package_inventory_token",
     }
     assert all(value["required"] is True for value in action["inputs"].values())
     assert set(action["outputs"]) == {
@@ -218,6 +219,7 @@ def test_live_audit_is_one_fixed_secret_consuming_composite_action() -> None:
     ]
     assert len(secret_steps) == 1
     assert "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN" in json.dumps(secret_steps[0])
+    assert "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN" in json.dumps(secret_steps[0])
     assert "--workflow-auditor" in json.dumps(secret_steps[0])
     assert "--github-output" in json.dumps(secret_steps[0])
     external_uses = [
@@ -259,6 +261,20 @@ def test_enterprise_billing_token_is_only_forwarded_to_the_auditor() -> None:
         ".github/workflows/catalog-run-controller.yml",
     }
     assert "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN" in LIVE_AUDIT.read_text("utf-8")
+
+
+def test_package_inventory_token_is_only_forwarded_to_the_auditor() -> None:
+    consumers = {
+        path.relative_to(ROOT).as_posix()
+        for path in WORKFLOWS.glob("*.y*ml")
+        if "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN" in path.read_text("utf-8")
+    }
+    assert consumers == {
+        ".github/workflows/catalog-artifact-keeper.yml",
+        ".github/workflows/catalog-live-controls-qualification.yml",
+        ".github/workflows/catalog-run-controller.yml",
+    }
+    assert "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN" in LIVE_AUDIT.read_text("utf-8")
 
 
 def test_live_qualification_has_two_protected_action_jobs_and_one_tiny_finalizer() -> None:

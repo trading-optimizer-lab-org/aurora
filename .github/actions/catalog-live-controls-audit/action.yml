@@ -18,6 +18,8 @@ inputs:
     required: true
   enterprise_billing_token:
     required: true
+  package_inventory_token:
+    required: true
 
 outputs:
   receipt_artifact_name:
@@ -52,6 +54,7 @@ runs:
         AURORA_CATALOG_AUDITOR_APP_ID: ${{ inputs.auditor_app_id }}
         AURORA_CATALOG_AUDITOR_PRIVATE_KEY: ${{ inputs.auditor_private_key }}
         AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN: ${{ inputs.enterprise_billing_token }}
+        AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN: ${{ inputs.package_inventory_token }}
         PYTHONPATH: ${{ github.workspace }}/..
       run: >-
         python scripts/audit_catalog_github_controls.py

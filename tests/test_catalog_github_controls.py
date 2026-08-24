@@ -422,6 +422,10 @@ def test_auditor_app_is_read_only() -> None:
         "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"
     )
     assert desired.required_enterprise_token_scopes == ("manage_billing:enterprise",)
+    assert desired.package_inventory_token_environment_secret == (
+        "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN"
+    )
+    assert desired.required_package_inventory_token_scopes == ("read:packages",)
     assert not any(value == "write" for value in desired.required_repository_permissions.values())
 
 
@@ -559,12 +563,26 @@ def test_auditor_routes_enterprise_billing_to_a_separate_token() -> None:
     )
     client._repository_token = "repository-token"
     client._enterprise_token = "enterprise-token"
+    client._package_token = "package-token"
     assert client._token_for_endpoint("/repos/trading-optimizer-lab-org/aurora") == (
         "repository-token"
     )
     assert client._token_for_endpoint(
         "/enterprises/trading-optimizer-lab/settings/billing/budgets"
     ) == "enterprise-token"
+    assert client._token_for_endpoint(
+        "/organizations/287229438/packages?package_type=container"
+    ) == "package-token"
+    assert client._token_for_endpoint(
+        "/orgs/trading-optimizer-lab-org/packages?package_type=npm"
+    ) == "package-token"
+    assert client._token_for_endpoint(
+        "/organizations/287229438/packages?package_type=nuget&per_page=100&page=2"
+    ) == "package-token"
+    with pytest.raises(ValueError, match="CATALOG_AUDITOR_ENDPOINT_INVALID"):
+        client._token_for_endpoint(
+            "/organizations/287229438/packages?package_type=container&per_page=50"
+        )
     with pytest.raises(ValueError, match="CATALOG_AUDITOR_ENDPOINT_INVALID"):
         client._token_for_endpoint("/enterprises/other/settings/billing/budgets")
 
@@ -922,6 +940,11 @@ def test_github_auditor_receipt_requires_exact_read_only_installation() -> None:
             auditor.required_enterprise_token_scopes
         ),
         "enterprise_write_blocked_by_client": True,
+        "package_credential_kind": "oauth_device_token",
+        "package_credential_scopes": list(
+            auditor.required_package_inventory_token_scopes
+        ),
+        "package_write_blocked_by_client": True,
     }
     receipt = audit_catalog_github_controls(**inputs)
     assert receipt.status == "ready"
@@ -1151,6 +1174,11 @@ def test_keeper_accepts_the_protected_seven_day_cache_policy() -> None:
             auditor.required_enterprise_token_scopes
         ),
         "enterprise_write_blocked_by_client": True,
+        "package_credential_kind": "oauth_device_token",
+        "package_credential_scopes": list(
+            auditor.required_package_inventory_token_scopes
+        ),
+        "package_write_blocked_by_client": True,
     }
     receipt = audit_catalog_github_controls(**inputs).model_dump(mode="json")
 
