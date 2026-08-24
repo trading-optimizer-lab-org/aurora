@@ -182,7 +182,8 @@ class ZeroBudgetV1(FrozenModel):
 
 
 class BudgetControlPlaneV1(FrozenModel):
-    scope: Literal["organization"]
+    scope: Literal["enterprise"]
+    enterprise: str
     organization: str
     repository_entity_name: RepositoryName
 
@@ -269,6 +270,7 @@ class CatalogGithubControlsV1(FrozenModel):
 class CatalogGithubAuditorV1(FrozenModel):
     schema_version: Literal["1"]
     repository: RepositoryName
+    enterprise: str
     expected_app_slug: str | None
     public_key_sha256: Sha256 | None
     required_repository_permissions: Mapping[str, Literal["read"]]
@@ -1322,7 +1324,7 @@ def build_github_controls_mutation_plan(
                     order=len(mutations) + 1,
                     method="POST",
                     endpoint=(
-                        f"/organizations/{desired.billing.budget_control_plane.organization}/"
+                        f"/enterprises/{desired.billing.budget_control_plane.enterprise}/"
                         "settings/billing/budgets"
                     ),
                     body=budget.model_dump(mode="json"),

@@ -7,6 +7,7 @@
   "required": [
     "schema_version",
     "repository",
+    "enterprise",
     "expected_app_slug",
     "public_key_sha256",
     "required_repository_permissions",
@@ -19,6 +20,7 @@
   "properties": {
     "schema_version": {"const": "1"},
     "repository": {"const": "trading-optimizer-lab-org/aurora"},
+    "enterprise": {"const": "trading-optimizer-lab"},
     "expected_app_slug": {
       "oneOf": [
         {"type": "null"},
@@ -64,8 +66,8 @@
     "required_enterprise_permissions": {
       "type": "object",
       "additionalProperties": false,
-      "maxProperties": 0,
-      "properties": {}
+      "required": ["enterprise_billing"],
+      "properties": {"enterprise_billing": {"const": "read"}}
     },
     "forbidden_write_permissions": {
       "type": "array",
