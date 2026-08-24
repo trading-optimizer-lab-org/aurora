@@ -626,7 +626,7 @@ def _github_controls_package_token_repair_operation(
 ) -> dict[str, object]:
     return {
         "base_commit_sha": prior_merge,
-        "branch": "codex/catalog-uploaded-auditor-recovery",
+        "branch": "codex/catalog-installer-success-exit-recovery",
         "changed_paths": list(
             bootstrap_runner._GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS
         ),
@@ -2328,6 +2328,17 @@ def test_post_repair_phases_all_use_the_runtime_commit() -> None:
         bootstrap_runner.perform_final_audit,
     ):
         assert "_runtime_commit" in handler.__code__.co_names
+
+
+def test_bootstrap_installer_closes_with_explicit_success() -> None:
+    installer = (
+        Path(__file__).resolve().parents[1]
+        / "scripts/install_catalog_bootstrap_assistant.ps1"
+    )
+
+    assert installer.read_text("utf-8").rstrip().endswith(
+        "$Receipt | ConvertTo-Json -Compress\nexit 0"
+    )
 
 
 def test_main_tries_local_recovery_after_merge_recovery_declines(
