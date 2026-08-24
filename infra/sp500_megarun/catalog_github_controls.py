@@ -222,6 +222,7 @@ class AuditorReferenceV1(FrozenModel):
     app_id_variable: str
     private_key_environment_secret: str
     enterprise_billing_token_environment_secret: str
+    package_inventory_token_environment_secret: str
     only_token_consumer_workflow: str
 
 
@@ -278,9 +279,11 @@ class CatalogGithubAuditorV1(FrozenModel):
     required_organization_permissions: Mapping[str, Literal["read"]]
     required_enterprise_permissions: Mapping[str, Literal["read"]]
     required_enterprise_token_scopes: tuple[str, ...]
+    required_package_inventory_token_scopes: tuple[str, ...]
     forbidden_write_permissions: tuple[str, ...]
     private_key_environment_secret: str
     enterprise_billing_token_environment_secret: str
+    package_inventory_token_environment_secret: str
     app_id_variable: str
 
     @model_validator(mode="after")
@@ -630,6 +633,14 @@ def _auditor_proof_is_exact(
     ):
         return False
     if proof.get("enterprise_write_blocked_by_client") is not True:
+        return False
+    if proof.get("package_credential_kind") != "oauth_device_token":
+        return False
+    if proof.get("package_credential_scopes") != list(
+        auditor.required_package_inventory_token_scopes
+    ):
+        return False
+    if proof.get("package_write_blocked_by_client") is not True:
         return False
     permissions = {
         **_mapping(repository_permissions),

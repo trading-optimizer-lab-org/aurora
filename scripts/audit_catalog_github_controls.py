@@ -195,6 +195,7 @@ class AppReadOnlyClient:
         self._session = requests.Session()
         self._repository_token: str | None = None
         self._enterprise_token: str | None = None
+        self._package_token: str | None = None
         self._last_oauth_scopes: tuple[str, ...] = ()
         self.installation_proof: dict[str, object] | None = None
 
@@ -204,7 +205,10 @@ class AppReadOnlyClient:
         enterprise_token = os.environ.get(
             self.auditor.enterprise_billing_token_environment_secret
         )
-        if not app_id or not private_key or not enterprise_token:
+        package_token = os.environ.get(
+            self.auditor.package_inventory_token_environment_secret
+        )
+        if not app_id or not private_key or not enterprise_token or not package_token:
             raise ValueError("CATALOG_AUDITOR_CREDENTIAL_MISSING")
         key_bytes = private_key.encode("utf-8")
         key = serialization.load_pem_private_key(key_bytes, password=None)
@@ -253,11 +257,19 @@ class AppReadOnlyClient:
             raise ValueError("CATALOG_AUDITOR_TOKEN_MINT_FAILED")
         self._repository_token = token_payload["token"]
         self._enterprise_token = enterprise_token
+        self._package_token = package_token
         self._request("GET", "/user", bearer=enterprise_token)
-        if self._last_oauth_scopes != tuple(
+        enterprise_scopes = self._last_oauth_scopes
+        if enterprise_scopes != tuple(
             sorted(self.auditor.required_enterprise_token_scopes)
         ):
             raise ValueError("CATALOG_AUDITOR_ENTERPRISE_TOKEN_SCOPES_INVALID")
+        self._request("GET", "/user", bearer=package_token)
+        package_scopes = self._last_oauth_scopes
+        if package_scopes != tuple(
+            sorted(self.auditor.required_package_inventory_token_scopes)
+        ):
+            raise ValueError("CATALOG_AUDITOR_PACKAGE_TOKEN_SCOPES_INVALID")
         self.installation_proof = {
             "repository_permissions": dict(self.auditor.required_repository_permissions),
             "organization_permissions": dict(self.auditor.required_organization_permissions),
@@ -269,10 +281,15 @@ class AppReadOnlyClient:
             "app_slug": installation.get("app_slug"),
             "public_key_sha256": fingerprint,
             "enterprise_credential_kind": "classic_pat",
-            "enterprise_credential_scopes": list(self._last_oauth_scopes),
+            "enterprise_credential_scopes": list(enterprise_scopes),
             "enterprise_write_blocked_by_client": True,
+            "package_credential_kind": "oauth_device_token",
+            "package_credential_scopes": list(package_scopes),
+            "package_write_blocked_by_client": True,
         }
         private_key = ""
+        enterprise_token = ""
+        package_token = ""
         key_bytes = b""
         jwt = ""
         return self
@@ -280,6 +297,7 @@ class AppReadOnlyClient:
     def __exit__(self, *_: object) -> None:
         self._repository_token = None
         self._enterprise_token = None
+        self._package_token = None
         self._last_oauth_scopes = ()
         self._session.headers.clear()
         self._session.close()
@@ -294,6 +312,23 @@ class AppReadOnlyClient:
                 raise ValueError("CATALOG_AUDITOR_ENTERPRISE_TOKEN_UNAVAILABLE")
             return self._enterprise_token
         if endpoint.startswith("/enterprises/"):
+            raise ValueError("CATALOG_AUDITOR_ENDPOINT_INVALID")
+        owner = self.repository.split("/", maxsplit=1)[0]
+        package_suffix = (
+            r"packages\?package_type=(?:container|maven|npm|nuget|rubygems)"
+            r"(?:&per_page=100&page=[1-9][0-9]*)?"
+        )
+        package_endpoint = (
+            re.fullmatch(rf"/organizations/[1-9][0-9]*/{package_suffix}", endpoint)
+            is not None
+            or re.fullmatch(rf"/orgs/{re.escape(owner)}/{package_suffix}", endpoint)
+            is not None
+        )
+        if package_endpoint:
+            if self._package_token is None:
+                raise ValueError("CATALOG_AUDITOR_PACKAGE_TOKEN_UNAVAILABLE")
+            return self._package_token
+        if "/packages?" in endpoint:
             raise ValueError("CATALOG_AUDITOR_ENDPOINT_INVALID")
         if self._repository_token is None:
             raise ValueError("CATALOG_AUDITOR_TOKEN_UNAVAILABLE")

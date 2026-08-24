@@ -978,6 +978,7 @@ def test_broker_rejects_requester_and_auditor_credential_environments() -> None:
         "AURORA_CATALOG_AUDITOR_JWT",
         "AURORA_CATALOG_AUDITOR_TOKEN",
         "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+        "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN",
     ):
         assert f'"{variable}"' in source
 
@@ -1016,6 +1017,7 @@ def test_client_rejects_requester_and_auditor_credential_environments() -> None:
         "AURORA_CATALOG_AUDITOR_JWT",
         "AURORA_CATALOG_AUDITOR_TOKEN",
         "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+        "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN",
     ):
         assert f'"{variable}"' in source
     assert "AGENT_AUDITOR_CREDENTIAL_EXPOSED" in source

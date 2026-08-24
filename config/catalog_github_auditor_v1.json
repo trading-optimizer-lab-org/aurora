@@ -23,6 +23,9 @@
   "required_enterprise_token_scopes": [
     "manage_billing:enterprise"
   ],
+  "required_package_inventory_token_scopes": [
+    "read:packages"
+  ],
   "forbidden_write_permissions": [
     "actions",
     "administration",
@@ -37,5 +40,6 @@
   ],
   "private_key_environment_secret": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
   "enterprise_billing_token_environment_secret": "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+  "package_inventory_token_environment_secret": "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN",
   "app_id_variable": "AURORA_CATALOG_AUDITOR_APP_ID"
 }
