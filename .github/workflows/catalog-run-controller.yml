@@ -493,6 +493,8 @@ jobs:
       actions: read
       contents: read
     uses: ./.github/workflows/catalog-live-controls-audit.yml
+    secrets:
+      AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
     with:
       purpose: admission
       caller_workflow: .github/workflows/catalog-run-controller.yml
@@ -1590,6 +1592,8 @@ jobs:
       actions: read
       contents: read
     uses: ./.github/workflows/catalog-live-controls-audit.yml
+    secrets:
+      AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
     with:
       purpose: terminal
       caller_workflow: .github/workflows/catalog-run-controller.yml

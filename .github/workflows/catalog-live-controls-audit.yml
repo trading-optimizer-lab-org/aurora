@@ -23,6 +23,11 @@ on:
         description: SHA-256 of the fixed, non-secret audit context.
         required: true
         type: string
+    secrets:
+      AURORA_CATALOG_AUDITOR_PRIVATE_KEY:
+        required: false
+      AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN:
+        required: false
     outputs:
       receipt_artifact_name:
         description: Fixed current-run artifact containing the secret-free receipt.
