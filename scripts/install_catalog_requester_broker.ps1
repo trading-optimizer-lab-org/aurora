@@ -672,7 +672,8 @@ if ($null -eq $Existing) {
 }
 else {
     Set-LocalUser -Name $TargetIdentity -Password $TaskPassword `
-        -AccountNeverExpires -PasswordNeverExpires -UserMayNotChangePassword
+        -AccountNeverExpires -PasswordNeverExpires $true `
+        -UserMayChangePassword $false
 }
 $AdminGroup = Get-LocalGroup -SID "S-1-5-32-544"
 $AdminMember = Get-LocalGroupMember -Group $AdminGroup -ErrorAction SilentlyContinue |

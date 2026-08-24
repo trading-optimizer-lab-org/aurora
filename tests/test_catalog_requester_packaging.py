@@ -843,6 +843,17 @@ def test_installers_generate_passwords_with_windows_powershell_51_api() -> None:
         assert "$Generator.Dispose()" in source
 
 
+def test_broker_retry_uses_boolean_set_local_user_parameters() -> None:
+    source = BROKER_INSTALLER.read_text(encoding="utf-8")
+    assert "-PasswordNeverExpires $true" in source
+    assert "-UserMayChangePassword $false" in source
+    assert (
+        "Set-LocalUser -Name $TargetIdentity -Password $TaskPassword `\n"
+        "        -AccountNeverExpires -PasswordNeverExpires -UserMayNotChangePassword"
+        not in source
+    )
+
+
 def test_broker_installer_finishes_read_only_preflight_before_stopping_service() -> None:
     source = BROKER_INSTALLER.read_text(encoding="utf-8")
     stop = source.index("Stop-ScheduledTask -TaskName $TaskName")

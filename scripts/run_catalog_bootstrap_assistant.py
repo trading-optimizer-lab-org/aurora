@@ -109,6 +109,12 @@ _LOCAL_INSTALL_COMPAT_REPAIR_PATHS = (
     "tests/test_catalog_bootstrap_assistant.py",
     "tests/test_catalog_requester_packaging.py",
 )
+_LOCAL_INSTALL_ACCOUNT_REPAIR_PATHS = (
+    "scripts/install_catalog_requester_broker.ps1",
+    "scripts/run_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_requester_packaging.py",
+)
 _BOOTSTRAP_REQUIRED_CHECK_NAMES = frozenset({"GTBI V7 stage-two required"})
 _EXACT_REPOSITORY_REMOTES = frozenset(
     {
@@ -1323,6 +1329,33 @@ def _local_install_compat_patch_sha256(
     return hashlib.sha256(result.stdout).hexdigest()
 
 
+def _local_install_account_patch_sha256(
+    source: Path,
+    base_commit: str,
+    head_commit: str,
+) -> str:
+    result = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--binary",
+            "--full-index",
+            f"{base_commit}..{head_commit}",
+            "--",
+            *_LOCAL_INSTALL_ACCOUNT_REPAIR_PATHS,
+        ],
+        cwd=source,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACCOUNT_PATCH_INVALID")
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
 def _validated_local_install_repair(
     root: Path,
     binding: dict[str, object],
@@ -1455,6 +1488,51 @@ def _validated_local_install_compat_repair(
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_COMPAT_REPAIR_INVALID")
+    return operation
+
+
+def _validated_local_install_account_repair(
+    root: Path,
+    prior_repair: dict[str, object],
+) -> dict[str, object]:
+    path = root / "local-install-account-repair-operation-v1.json"
+    operation = _read_json(path)
+    changed_paths = operation.get("changed_paths")
+    if (
+        set(operation)
+        != {
+            "base_commit_sha",
+            "branch",
+            "changed_paths",
+            "head_commit_sha",
+            "merge_commit_sha",
+            "patch_sha256",
+            "pr_number",
+            "repository",
+            "required_check",
+            "schema_version",
+        }
+        or path.read_bytes() != _canonical(operation) + b"\n"
+        or operation.get("schema_version") != "1"
+        or operation.get("repository") != REPOSITORY
+        or operation.get("base_commit_sha") != prior_repair.get("merge_commit_sha")
+        or not isinstance(operation.get("branch"), str)
+        or not re.fullmatch(
+            r"codex/catalog-local-install-account-[0-9a-f]{12}",
+            str(operation.get("branch")),
+        )
+        or not isinstance(changed_paths, list)
+        or tuple(changed_paths) != _LOCAL_INSTALL_ACCOUNT_REPAIR_PATHS
+        or not isinstance(operation.get("head_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("head_commit_sha")))
+        or not isinstance(operation.get("merge_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
+        or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
+        or not isinstance(operation.get("pr_number"), int)
+        or int(operation["pr_number"]) < 1
+        or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACCOUNT_REPAIR_INVALID")
     return operation
 
 
@@ -1592,12 +1670,57 @@ def _runtime_commit(root: Path) -> str:
         or not isinstance(compat_retry.get("installations"), dict)
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_COMPAT_RETRY_RECEIPT_INVALID")
-    return str(compat_merge)
+    account_retry_path = (
+        root / "receipts/controller-bootstrap-local-install-retry-4-v1.json"
+    )
+    if not account_retry_path.exists():
+        return str(compat_merge)
+    if account_retry_path.is_symlink() or account_retry_path.is_junction():
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACCOUNT_RETRY_RECEIPT_INVALID")
+    account = _validated_local_install_account_repair(root, compat)
+    account_retry = _read_json(account_retry_path)
+    account_merge = account["merge_commit_sha"]
+    if (
+        set(account_retry)
+        != {
+            "account_merge_commit_sha",
+            "account_operation_sha256",
+            "account_pr_number",
+            "activity_baseline_sha256",
+            "blocked_state_sha256",
+            "bootstrap_source_commit_sha",
+            "installations",
+            "prior_retry_receipt_sha256",
+            "prior_runtime_commit_sha",
+            "schema_version",
+        }
+        or account_retry_path.read_bytes() != _canonical(account_retry) + b"\n"
+        or account_retry.get("schema_version") != "1"
+        or account_retry.get("prior_runtime_commit_sha") != compat_merge
+        or account_retry.get("account_merge_commit_sha") != account_merge
+        or account_retry.get("account_pr_number") != account.get("pr_number")
+        or account_retry.get("account_operation_sha256")
+        != hashlib.sha256(_canonical(account)).hexdigest()
+        or account_retry.get("prior_retry_receipt_sha256")
+        != hashlib.sha256(compat_retry_path.read_bytes()).hexdigest()
+        or not _SHA256.fullmatch(
+            str(account_retry.get("activity_baseline_sha256", ""))
+        )
+        or not _SHA256.fullmatch(
+            str(account_retry.get("blocked_state_sha256", ""))
+        )
+        or not _COMMIT.fullmatch(
+            str(account_retry.get("bootstrap_source_commit_sha", ""))
+        )
+        or not isinstance(account_retry.get("installations"), dict)
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACCOUNT_RETRY_RECEIPT_INVALID")
+    return str(account_merge)
 
 
 def _resume_transient_local_install_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
-    if state.phase != "BLOCKED" or state.sequence not in {10, 12, 14}:
+    if state.phase != "BLOCKED" or state.sequence not in {10, 12, 14, 16}:
         return False
     blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
     blocked = _read_json(blocked_path)
@@ -1630,6 +1753,15 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         evidence = _read_json(compat_retry_path)
         if _runtime_commit(root) != evidence.get("compat_merge_commit_sha"):
             raise ValueError("CATALOG_BOOTSTRAP_LOCAL_COMPAT_RETRY_RECEIPT_INVALID")
+        _advance(root, state, "local_install_retry_authorized", evidence)
+        return True
+    account_retry_path = (
+        root / "receipts/controller-bootstrap-local-install-retry-4-v1.json"
+    )
+    if state.sequence == 16 and account_retry_path.exists():
+        evidence = _read_json(account_retry_path)
+        if _runtime_commit(root) != evidence.get("account_merge_commit_sha"):
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACCOUNT_RETRY_RECEIPT_INVALID")
         _advance(root, state, "local_install_retry_authorized", evidence)
         return True
 
@@ -1685,7 +1817,20 @@ def _resume_transient_local_install_block(root: Path) -> bool:
     repair_pr_number = int(repair["pr_number"])
     followup: dict[str, object] | None = None
     compat: dict[str, object] | None = None
-    if state.sequence == 14:
+    account: dict[str, object] | None = None
+    if state.sequence == 16:
+        followup = _validated_local_install_followup_repair(root, repair)
+        compat = _validated_local_install_compat_repair(root, followup)
+        compat_merge = str(compat["merge_commit_sha"])
+        if _runtime_commit(root) != compat_merge:
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACCOUNT_RETRY_RECEIPT_INVALID")
+        account = _validated_local_install_account_repair(root, compat)
+        runtime_base = compat_merge
+        runtime_head = str(account["head_commit_sha"])
+        runtime_merge = str(account["merge_commit_sha"])
+        runtime_paths = _LOCAL_INSTALL_ACCOUNT_REPAIR_PATHS
+        runtime_patch_sha256 = _local_install_account_patch_sha256
+    elif state.sequence == 14:
         followup = _validated_local_install_followup_repair(root, repair)
         followup_merge = str(followup["merge_commit_sha"])
         if _runtime_commit(root) != followup_merge:
@@ -1773,7 +1918,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
             runtime_base,
             runtime_head,
         )
-        != (compat or followup or repair)["patch_sha256"]
+        != (account or compat or followup or repair)["patch_sha256"]
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_PATCH_INVALID")
 
@@ -1991,6 +2136,60 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         if observed_compat_paths != _LOCAL_INSTALL_COMPAT_REPAIR_PATHS:
             raise ValueError("CATALOG_BOOTSTRAP_LOCAL_COMPAT_REPAIR_PATHS_INVALID")
         _wait_for_required_checks(str(compat_pr_number), source)
+    if account is not None:
+        account_pr_number = int(account["pr_number"])
+        observed_account = json.loads(
+            _run(
+                [
+                    "gh",
+                    "pr",
+                    "view",
+                    str(account_pr_number),
+                    "--repo",
+                    REPOSITORY,
+                    "--json",
+                    "state,baseRefName,headRefName,headRefOid,mergeCommit",
+                ],
+                cwd=source,
+            )
+        )
+        observed_account_merge = (
+            observed_account.get("mergeCommit")
+            if isinstance(observed_account, dict)
+            else None
+        )
+        if (
+            not isinstance(observed_account, dict)
+            or set(observed_account)
+            != {"baseRefName", "headRefName", "headRefOid", "mergeCommit", "state"}
+            or observed_account.get("state") != "MERGED"
+            or observed_account.get("baseRefName") != "main"
+            or observed_account.get("headRefName") != account["branch"]
+            or observed_account.get("headRefOid") != account["head_commit_sha"]
+            or not isinstance(observed_account_merge, dict)
+            or set(observed_account_merge) != {"oid"}
+            or observed_account_merge.get("oid") != account["merge_commit_sha"]
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACCOUNT_REPAIR_PR_INVALID")
+        observed_account_paths = tuple(
+            line
+            for line in _run(
+                [
+                    "gh",
+                    "pr",
+                    "diff",
+                    str(account_pr_number),
+                    "--repo",
+                    REPOSITORY,
+                    "--name-only",
+                ],
+                cwd=source,
+            ).splitlines()
+            if line
+        )
+        if observed_account_paths != _LOCAL_INSTALL_ACCOUNT_REPAIR_PATHS:
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACCOUNT_REPAIR_PATHS_INVALID")
+        _wait_for_required_checks(str(account_pr_number), source)
 
     installations = _verify_existing_installations(root)
     baseline_path = root / "github-activity-baseline-v1.json"
@@ -2013,7 +2212,22 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         "installations": installations,
         "schema_version": "1",
     }
-    if compat is not None:
+    if account is not None:
+        prior_retry_path = compat_retry_path
+        recovery = {
+            **common_recovery,
+            "account_merge_commit_sha": account["merge_commit_sha"],
+            "account_operation_sha256": hashlib.sha256(
+                _canonical(account)
+            ).hexdigest(),
+            "account_pr_number": account["pr_number"],
+            "prior_retry_receipt_sha256": hashlib.sha256(
+                prior_retry_path.read_bytes()
+            ).hexdigest(),
+            "prior_runtime_commit_sha": compat["merge_commit_sha"],
+        }
+        recovery_path = account_retry_path
+    elif compat is not None:
         prior_retry_path = followup_retry_path
         recovery = {
             **common_recovery,
