@@ -15,7 +15,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from typing import Any, Mapping
+import time
+from typing import Any, Callable, Mapping
 
 import requests
 import yaml
@@ -1474,6 +1475,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_TRANSIENT_SNAPSHOT_ERRORS = frozenset(
+    {
+        "CATALOG_GITHUB_PAGINATION_COUNT_MISMATCH",
+        "CATALOG_GITHUB_PAGINATION_DUPLICATE",
+        "CATALOG_GITHUB_PAGINATION_UNSTABLE",
+    }
+)
+
+
+def _retry_transient_snapshot_collection(
+    collect: Callable[[], dict[str, object]],
+    *,
+    attempts: int = 3,
+    sleep: Callable[[float], object] = time.sleep,
+) -> dict[str, object]:
+    if attempts < 1 or attempts > 3:
+        raise ValueError("CATALOG_GITHUB_SNAPSHOT_RETRY_BOUND_INVALID")
+    for attempt in range(attempts):
+        try:
+            return collect()
+        except ValueError as exc:
+            if str(exc) not in _TRANSIENT_SNAPSHOT_ERRORS or attempt + 1 == attempts:
+                raise
+            sleep(2.0)
+    raise AssertionError("unreachable")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -1502,24 +1530,29 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 raise ValueError("CATALOG_PROTECTED_COMMIT_SHA_INVALID")
             if args.workflow_auditor:
-                with AppReadOnlyClient(
-                    api_version=desired.github_api_version,
-                    repository=args.repository,
-                    auditor=auditor,
-                ) as client:
-                    snapshots = collect_live_snapshot(
-                        client=client,
-                        desired=desired,
-                        auditor=auditor,
+                def collect_workflow_snapshot() -> dict[str, object]:
+                    with AppReadOnlyClient(
+                        api_version=desired.github_api_version,
                         repository=args.repository,
-                        observer_context="github_auditor",
-                        caller_workflow=caller_workflow,
-                        caller_job=caller_job,
-                        purpose=purpose,
-                        audit_context_sha256=args.audit_context_sha256,
-                        protected_commit_sha=args.protected_commit_sha,
-                        repo_root=args.repo_root,
-                    )
+                        auditor=auditor,
+                    ) as client:
+                        return collect_live_snapshot(
+                            client=client,
+                            desired=desired,
+                            auditor=auditor,
+                            repository=args.repository,
+                            observer_context="github_auditor",
+                            caller_workflow=caller_workflow,
+                            caller_job=caller_job,
+                            purpose=purpose,
+                            audit_context_sha256=args.audit_context_sha256,
+                            protected_commit_sha=args.protected_commit_sha,
+                            repo_root=args.repo_root,
+                        )
+
+                snapshots = _retry_transient_snapshot_collection(
+                    collect_workflow_snapshot
+                )
             else:
                 client = GhReadOnlyClient(api_version=desired.github_api_version)
                 snapshots = collect_live_snapshot(
