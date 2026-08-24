@@ -33,6 +33,7 @@ from scripts.audit_catalog_github_controls import (
     _paginate_list_rows,
     _paginate_object_rows,
     _reported_shared_storage_evidence,
+    _retry_transient_snapshot_collection,
 )
 
 
@@ -578,6 +579,37 @@ def test_auditor_provider_permissions_match_the_created_github_app() -> None:
         "organization_administration": "read",
         "packages": "read",
     }
+
+
+def test_live_snapshot_retries_only_bounded_transient_pagination_drift() -> None:
+    attempts = 0
+    sleeps: list[float] = []
+
+    def collect() -> dict[str, object]:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise ValueError("CATALOG_GITHUB_PAGINATION_UNSTABLE")
+        return {"stable": True}
+
+    assert _retry_transient_snapshot_collection(
+        collect, sleep=sleeps.append
+    ) == {"stable": True}
+    assert attempts == 3
+    assert sleeps == [2.0, 2.0]
+
+
+def test_live_snapshot_does_not_retry_non_transient_errors() -> None:
+    attempts = 0
+
+    def collect() -> dict[str, object]:
+        nonlocal attempts
+        attempts += 1
+        raise ValueError("CATALOG_AUDITOR_PERMISSIONS_INVALID")
+
+    with pytest.raises(ValueError, match="CATALOG_AUDITOR_PERMISSIONS_INVALID"):
+        _retry_transient_snapshot_collection(collect, sleep=lambda _: None)
+    assert attempts == 1
 
 
 def test_bootstrap_controls_mode_defers_only_identity_and_live_capacity() -> None:
