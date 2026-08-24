@@ -7,10 +7,12 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import importlib
 
 import jsonschema
 import pytest
 
+from scripts import audit_catalog_github_controls as github_audit_runner
 from aurora.infra.sp500_megarun.catalog_github_controls import (
     CatalogGithubAuditorV1,
     CatalogGithubControlsV1,
@@ -574,6 +576,105 @@ def test_bootstrap_controls_mode_defers_only_identity_and_live_capacity() -> Non
     drifted = mutated_protection_snapshots("admins_not_enforced")
     drifted_receipt = audit_catalog_github_controls(**drifted)
     assert not bootstrap_controls_prepared(drifted_receipt)
+
+
+def test_storage_pagination_is_complete_when_only_optional_telemetry_is_missing() -> None:
+    storage = {
+        "telemetry_complete": False,
+        "artifacts_pagination_complete": True,
+        "packages_pagination_complete": True,
+        "caches_pagination_complete": True,
+        "writer_inventory_complete": True,
+    }
+
+    assert github_audit_runner._storage_pagination_complete(storage)
+
+
+def test_final_observation_uses_the_last_github_response_time() -> None:
+    github_date = datetime(2026, 8, 24, 16, 7, 22, tzinfo=UTC)
+
+    observed_at, github_api_observed_at = (
+        github_audit_runner._final_observation_timestamps(github_date)
+    )
+
+    assert observed_at == "2026-08-24T16:07:22Z"
+    assert github_api_observed_at == observed_at
+
+
+def test_verified_zero_mutation_dry_run_needs_only_one_fresh_snapshot(
+    tmp_path: Path, monkeypatch, request
+) -> None:
+    original_aurora_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "aurora" or name.startswith("aurora.")
+    }
+
+    def restore_import_identity() -> None:
+        for name in tuple(sys.modules):
+            if name == "aurora" or name.startswith("aurora."):
+                del sys.modules[name]
+        sys.modules.update(original_aurora_modules)
+        sys.modules.pop("scripts.apply_catalog_github_controls", None)
+
+    request.addfinalizer(restore_import_identity)
+    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
+    github_apply_runner = importlib.import_module(
+        "scripts.apply_catalog_github_controls"
+    )
+    inputs = protected_snapshots()
+    receipt = audit_catalog_github_controls(**inputs)
+    plan = build_github_controls_mutation_plan(
+        desired=inputs["desired"],
+        receipt=receipt,
+    )
+    assert not plan.mutations
+    dry_run = {
+        "schema_version": "1",
+        "mode": "dry_run",
+        "repository": "trading-optimizer-lab-org/aurora",
+        "before_receipt": receipt.model_dump(mode="json"),
+        "current_receipt_sha256": receipt.receipt_sha256,
+        "current_state_sha256": github_controls_state_sha256(receipt),
+        "plan_sha256": plan.plan_sha256,
+        "mutations": [],
+        "api_responses": [],
+        "after_receipt": None,
+    }
+    dry_path = tmp_path / "dry.json"
+    github_audit_runner.write_json(dry_path, dry_run)
+    output = tmp_path / "apply.json"
+    calls = 0
+
+    def fresh_snapshot(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return deepcopy(inputs["snapshots"])
+
+    monkeypatch.setattr(github_apply_runner, "_live_snapshot", fresh_snapshot)
+
+    result = github_apply_runner.main(
+        [
+            "--repo-root",
+            str(ROOT),
+            "--output",
+            str(output),
+            "--apply",
+            "--bootstrap-controls-only",
+            "--verified-dry-run",
+            str(dry_path),
+            "--expected-current-state-sha",
+            dry_run["current_state_sha256"],
+            "--confirm",
+            "CATALOG_GITHUB_CONTROLS_V1",
+        ]
+    )
+
+    applied = json.loads(output.read_text("utf-8"))
+    assert result == 0
+    assert calls == 1
+    assert applied["mutations"] == []
+    assert applied["after_receipt"]["status"] == "ready"
 
 
 def test_apply_tool_binds_live_audit_to_observed_default_branch() -> None:

@@ -11,6 +11,8 @@ import re
 import subprocess
 import sys
 
+from pydantic import TypeAdapter
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -41,6 +43,7 @@ def _pin_aurora_source_checkout() -> None:
 _pin_aurora_source_checkout()
 
 from aurora.infra.sp500_megarun.catalog_github_controls import (
+    CatalogGithubControlsReceiptV1,
     audit_catalog_github_controls,
     bootstrap_controls_prepared,
     build_github_controls_mutation_plan,
@@ -60,6 +63,7 @@ from audit_catalog_github_controls import (
 
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 CONFIRMATION = "CATALOG_GITHUB_CONTROLS_V1"
+_RECEIPT_ADAPTER = TypeAdapter(CatalogGithubControlsReceiptV1)
 
 
 def _canonical_json(value: object) -> str:
@@ -70,6 +74,39 @@ def _canonical_json(value: object) -> str:
         ensure_ascii=False,
         allow_nan=False,
     )
+
+
+def _load_verified_zero_mutation_dry_run(
+    path: Path,
+    *,
+    repository: str,
+    expected_state_sha: str,
+    desired: object,
+) -> object:
+    text = path.read_text("utf-8")
+    value = json.loads(text)
+    if text != _canonical_json(value) + "\n":
+        raise ValueError("CATALOG_GITHUB_VERIFIED_DRY_RUN_INVALID")
+    if (
+        not isinstance(value, dict)
+        or value.get("schema_version") != "1"
+        or value.get("mode") != "dry_run"
+        or value.get("repository") != repository
+        or value.get("current_state_sha256") != expected_state_sha
+        or value.get("mutations") != []
+        or value.get("after_receipt") is not None
+    ):
+        raise ValueError("CATALOG_GITHUB_VERIFIED_DRY_RUN_INVALID")
+    receipt = _RECEIPT_ADAPTER.validate_python(value.get("before_receipt"))
+    plan = build_github_controls_mutation_plan(desired=desired, receipt=receipt)
+    if (
+        plan.mutations
+        or value.get("current_receipt_sha256") != receipt.receipt_sha256
+        or github_controls_state_sha256(receipt) != expected_state_sha
+        or value.get("plan_sha256") != plan.plan_sha256
+    ):
+        raise ValueError("CATALOG_GITHUB_VERIFIED_DRY_RUN_INVALID")
+    return receipt
 
 
 class GhMutationClient:
@@ -148,6 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--bootstrap-controls-only", action="store_true")
+    parser.add_argument("--verified-dry-run", type=Path)
     parser.add_argument("--expected-current-state-sha")
     parser.add_argument("--confirm")
     return parser
@@ -187,6 +225,64 @@ def main(argv: list[str] | None = None) -> int:
         auditor = load_catalog_github_auditor(args.auditor)
         if args.repository != desired.repository_identity.full_name:
             raise ValueError("CATALOG_REPOSITORY_UNEXPECTED")
+        if args.verified_dry_run is not None and (
+            not args.apply or not args.bootstrap_controls_only
+        ):
+            raise ValueError("CATALOG_GITHUB_VERIFIED_DRY_RUN_MODE_INVALID")
+        if args.apply:
+            if args.confirm != CONFIRMATION:
+                raise ValueError("CATALOG_GITHUB_CONTROLS_CONFIRMATION_REQUIRED")
+            if not isinstance(args.expected_current_state_sha, str) or not re.fullmatch(
+                r"[0-9a-f]{64}", args.expected_current_state_sha
+            ):
+                raise ValueError("CATALOG_GITHUB_CONTROLS_EXPECTED_SHA_REQUIRED")
+        if args.verified_dry_run is not None:
+            prior = _load_verified_zero_mutation_dry_run(
+                args.verified_dry_run,
+                repository=args.repository,
+                expected_state_sha=args.expected_current_state_sha,
+                desired=desired,
+            )
+            fresh_snapshots = _live_snapshot(args, desired, auditor)
+            fresh = audit_catalog_github_controls(
+                desired=desired,
+                auditor=auditor,
+                snapshots=fresh_snapshots,
+            )
+            fresh_plan = build_github_controls_mutation_plan(
+                desired=desired,
+                receipt=fresh,
+            )
+            if fresh_plan.mutations:
+                raise ValueError("CATALOG_GITHUB_CONTROLS_STALE")
+            prepared = bootstrap_controls_prepared(fresh)
+            if fresh.status != "ready" and not prepared:
+                raise ValueError("CATALOG_GITHUB_CONTROLS_RECONCILIATION_INCOMPLETE")
+            result = {
+                "schema_version": "1",
+                "mode": "apply",
+                "repository": args.repository,
+                "before_receipt": prior.model_dump(mode="json"),
+                "current_receipt_sha256": fresh.receipt_sha256,
+                "current_state_sha256": github_controls_state_sha256(fresh),
+                "plan_sha256": fresh_plan.plan_sha256,
+                "mutations": [],
+                "api_responses": [],
+                "after_receipt": fresh.model_dump(mode="json"),
+                "bootstrap_controls_prepared": prepared,
+            }
+            write_json(args.output, result)
+            print(
+                _canonical_json(
+                    {
+                        "mode": "bootstrap_prepared" if prepared else "apply",
+                        "mutation_count": 0,
+                        "receipt_sha256": fresh.receipt_sha256,
+                        "output": str(args.output),
+                    }
+                )
+            )
+            return 0
         snapshots = (
             load_snapshot_directory(args.snapshot_dir)
             if args.snapshot_dir is not None
@@ -229,13 +325,6 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 0
-        if args.confirm != CONFIRMATION:
-            raise ValueError("CATALOG_GITHUB_CONTROLS_CONFIRMATION_REQUIRED")
-        if not isinstance(args.expected_current_state_sha, str) or not re.fullmatch(
-            r"[0-9a-f]{64}", args.expected_current_state_sha
-        ):
-            raise ValueError("CATALOG_GITHUB_CONTROLS_EXPECTED_SHA_REQUIRED")
-
         fresh_snapshots = (
             load_snapshot_directory(args.snapshot_dir)
             if args.snapshot_dir is not None
