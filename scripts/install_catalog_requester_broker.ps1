@@ -85,7 +85,13 @@ function Assert-ClosedAcl {
 
 function New-SecretPassword {
     $bytes = [byte[]]::new(48)
-    [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $Generator = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $Generator.GetBytes($bytes)
+    }
+    finally {
+        $Generator.Dispose()
+    }
     $plain = [Convert]::ToBase64String($bytes) + "!aA7"
     try {
         return ConvertTo-SecureString -String $plain -AsPlainText -Force

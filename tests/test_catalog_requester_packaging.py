@@ -834,6 +834,15 @@ def test_installers_reject_apply_without_exact_confirmation() -> None:
         assert "CONFIRMATION_REQUIRED" in result.stderr
 
 
+def test_installers_generate_passwords_with_windows_powershell_51_api() -> None:
+    for path in (AGENT_INSTALLER, BROKER_INSTALLER):
+        source = path.read_text(encoding="utf-8")
+        assert "[Security.Cryptography.RandomNumberGenerator]::Fill" not in source
+        assert "[Security.Cryptography.RandomNumberGenerator]::Create()" in source
+        assert "$Generator.GetBytes($bytes)" in source
+        assert "$Generator.Dispose()" in source
+
+
 def test_broker_installer_finishes_read_only_preflight_before_stopping_service() -> None:
     source = BROKER_INSTALLER.read_text(encoding="utf-8")
     stop = source.index("Stop-ScheduledTask -TaskName $TaskName")
