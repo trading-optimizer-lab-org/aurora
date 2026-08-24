@@ -26,6 +26,7 @@ from aurora.infra.sp500_megarun.catalog_github_controls import (
 from scripts.audit_catalog_github_controls import (
     AppReadOnlyClient,
     _active_artifact_inventory,
+    _auditor_provider_permissions,
     _billing_actions_storage_evidence,
     _billing_usage_endpoint,
     _campaign_storage_projection,
@@ -563,6 +564,20 @@ def test_auditor_routes_enterprise_billing_to_a_separate_token() -> None:
     ) == "enterprise-token"
     with pytest.raises(ValueError, match="CATALOG_AUDITOR_ENDPOINT_INVALID"):
         client._token_for_endpoint("/enterprises/other/settings/billing/budgets")
+
+
+def test_auditor_provider_permissions_match_the_created_github_app() -> None:
+    assert _auditor_provider_permissions(load_desired_auditor()) == {
+        "actions": "read",
+        "actions_variables": "read",
+        "administration": "read",
+        "contents": "read",
+        "environments": "read",
+        "issues": "read",
+        "metadata": "read",
+        "organization_administration": "read",
+        "packages": "read",
+    }
 
 
 def test_bootstrap_controls_mode_defers_only_identity_and_live_capacity() -> None:

@@ -153,6 +153,22 @@ class GhReadOnlyClient:
         self.github_date = parsedate_to_datetime(raw_date).astimezone(UTC)
 
 
+def _auditor_provider_permissions(
+    auditor: CatalogGithubAuditorV1,
+) -> dict[str, str]:
+    """Translate the checked logical contract to GitHub's provider keys."""
+
+    provider = dict(auditor.required_repository_permissions)
+    variables = provider.pop("variables", None)
+    if variables is not None:
+        provider["actions_variables"] = variables
+    for name, permission in auditor.required_organization_permissions.items():
+        if name != "administration":
+            raise ValueError("CATALOG_AUDITOR_ORGANIZATION_PERMISSION_INVALID")
+        provider["organization_administration"] = permission
+    return provider
+
+
 class AppReadOnlyClient:
     """One-process GitHub App reader; no token or key leaves this process."""
 
@@ -213,11 +229,8 @@ class AppReadOnlyClient:
         ):
             raise ValueError("CATALOG_AUDITOR_INSTALLATION_INVALID")
         permissions = installation.get("permissions")
-        expected_repository_permissions = {
-            **dict(self.auditor.required_repository_permissions),
-            "organization_administration": "read",
-        }
-        if permissions != expected_repository_permissions:
+        provider_permissions = _auditor_provider_permissions(self.auditor)
+        if permissions != provider_permissions:
             raise ValueError("CATALOG_AUDITOR_PERMISSIONS_INVALID")
         token_payload = self._request(
             "POST",
@@ -225,7 +238,7 @@ class AppReadOnlyClient:
             bearer=jwt,
             body={
                 "repositories": [self.repository.split("/", maxsplit=1)[1]],
-                "permissions": expected_repository_permissions,
+                "permissions": provider_permissions,
             },
         )
         if not isinstance(token_payload, dict) or not isinstance(
