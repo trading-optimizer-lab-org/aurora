@@ -185,7 +185,7 @@ def test_live_audit_is_one_read_only_protected_reusable_job() -> None:
     workflow = _workflow(LIVE_AUDIT)
     assert set(workflow["on"]) == {"workflow_call"}
     call = workflow["on"]["workflow_call"]
-    assert set(call) == {"inputs", "outputs"}
+    assert set(call) == {"inputs", "outputs", "secrets"}
     assert set(call["inputs"]) == {
         "purpose",
         "caller_workflow",
@@ -197,6 +197,10 @@ def test_live_audit_is_one_read_only_protected_reusable_job() -> None:
         "receipt_artifact_name",
         "receipt_sha256",
         "receipt_status",
+    }
+    assert call["secrets"] == {
+        "AURORA_CATALOG_AUDITOR_PRIVATE_KEY": {"required": False},
+        "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN": {"required": False},
     }
     assert workflow["permissions"] == {"actions": "read", "contents": "read"}
     jobs = workflow["jobs"]
@@ -235,17 +239,27 @@ def test_live_audit_is_one_read_only_protected_reusable_job() -> None:
     )
 
 
-def test_auditor_secret_has_exactly_one_workflow_consumer() -> None:
-    for secret_name in (
-        "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
-        "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
-    ):
-        consumers = {
-            path.relative_to(ROOT).as_posix()
-            for path in WORKFLOWS.glob("*.y*ml")
-            if secret_name in path.read_text("utf-8")
-        }
-        assert consumers == {AUDITOR_SECRET_CONSUMER}
+def test_auditor_private_key_has_exactly_one_workflow_consumer() -> None:
+    consumers = {
+        path.relative_to(ROOT).as_posix()
+        for path in WORKFLOWS.glob("*.y*ml")
+        if "AURORA_CATALOG_AUDITOR_PRIVATE_KEY" in path.read_text("utf-8")
+    }
+    assert consumers == {AUDITOR_SECRET_CONSUMER}
+
+
+def test_enterprise_billing_token_is_only_forwarded_to_the_auditor() -> None:
+    consumers = {
+        path.relative_to(ROOT).as_posix()
+        for path in WORKFLOWS.glob("*.y*ml")
+        if "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN" in path.read_text("utf-8")
+    }
+    assert consumers == {
+        AUDITOR_SECRET_CONSUMER,
+        ".github/workflows/catalog-artifact-keeper.yml",
+        ".github/workflows/catalog-live-controls-qualification.yml",
+        ".github/workflows/catalog-run-controller.yml",
+    }
 
 
 def test_live_qualification_has_two_pure_calls_and_one_tiny_finalizer() -> None:
@@ -268,8 +282,13 @@ def test_live_qualification_has_two_pure_calls_and_one_tiny_finalizer() -> None:
     assert admission["with"]["purpose"] == "admission"
     assert terminal["with"]["purpose"] == "terminal"
     assert terminal["needs"] == "qualify_live_admission_controls"
-    assert "secrets" not in admission
-    assert "secrets" not in terminal
+    expected_secrets = {
+        "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN": (
+            "${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}"
+        )
+    }
+    assert admission["secrets"] == expected_secrets
+    assert terminal["secrets"] == expected_secrets
     final = jobs["verify_qualification_receipt"]
     assert final["runs-on"] == "ubuntu-24.04"
     assert final["timeout-minutes"] == 5
@@ -711,7 +730,11 @@ def test_controller_privileged_audits_are_two_exact_pure_local_calls() -> None:
         )
         assert job["with"]["caller_job"] == job_id
         assert "steps" not in job
-        assert "secrets" not in job
+        assert job["secrets"] == {
+            "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN": (
+                "${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}"
+            )
+        }
         assert "concurrency" not in job
 
 

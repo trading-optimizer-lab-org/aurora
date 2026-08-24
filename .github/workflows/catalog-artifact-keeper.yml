@@ -21,6 +21,8 @@ jobs:
     permissions:
       actions: read
       contents: read
+    secrets:
+      AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
     with:
       purpose: maintenance
       caller_workflow: .github/workflows/catalog-artifact-keeper.yml

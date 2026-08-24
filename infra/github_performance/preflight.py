@@ -992,13 +992,18 @@ def validate_catalog_workflow_topology(
                     "protected_commit_sha": "${{ github.sha }}",
                     "audit_context_sha256": CATALOG_KEEPER_AUDIT_CONTEXT_SHA256,
                 }
+                expected_audit_secrets = {
+                    "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN": (
+                        "${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}"
+                    )
+                }
                 if (
                     not isinstance(audit, Mapping)
                     or audit.get("uses")
                     != "./.github/workflows/catalog-live-controls-audit.yml"
                     or audit.get("with") != expected_audit_inputs
                     or "steps" in audit
-                    or "secrets" in audit
+                    or audit.get("secrets") != expected_audit_secrets
                     or audit.get("permissions")
                     != {"actions": "read", "contents": "read"}
                 ):
