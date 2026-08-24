@@ -11,8 +11,8 @@ from .catalog_campaign_registry import CatalogCampaignEntryV1
 
 
 PROTOCOL_COMMON_PATHS = (
+    ".github/actions/catalog-live-controls-audit/action.yml",
     ".github/workflows/catalog-ledger-guard.yml",
-    ".github/workflows/catalog-live-controls-audit.yml",
     ".github/workflows/catalog-request-reconciler.yml",
     ".github/workflows/catalog-run-controller.yml",
     ".github/workflows/catalog-run-watchdog.yml",

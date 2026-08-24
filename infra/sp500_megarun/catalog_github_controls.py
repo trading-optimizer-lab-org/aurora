@@ -28,7 +28,7 @@ RepositoryName = Annotated[
     StringConstraints(pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"),
 ]
 
-AUDITOR_SECRET_CONSUMER = ".github/workflows/catalog-live-controls-audit.yml"
+AUDITOR_SECRET_CONSUMER = ".github/actions/catalog-live-controls-audit/action.yml"
 AUDITOR_CALLER_TOPOLOGY = (
     (
         ".github/workflows/catalog-run-controller.yml",

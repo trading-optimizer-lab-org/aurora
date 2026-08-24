@@ -247,7 +247,7 @@
           "const": "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"
         },
         "only_token_consumer_workflow": {
-          "const": ".github/workflows/catalog-live-controls-audit.yml"
+          "const": ".github/actions/catalog-live-controls-audit/action.yml"
         }
       }
     },
