@@ -854,6 +854,21 @@ def test_broker_retry_uses_boolean_set_local_user_parameters() -> None:
     )
 
 
+def test_broker_runs_inline_python_verifiers_from_protected_files() -> None:
+    source = BROKER_INSTALLER.read_text(encoding="utf-8")
+    assert "-c $DependencyInventoryVerifier" not in source
+    assert "-c $FingerprintVerifier" not in source
+    assert "$DependencyVerifierPath" in source
+    assert "$FingerprintVerifierPath" in source
+    assert "BLOCKED_REQUESTER_VERIFIER_ACL_APPLY_FAILED" in source
+    assert source.count(
+        "Remove-Item -LiteralPath $DependencyVerifierPath"
+    ) == 1
+    assert source.count(
+        "Remove-Item -LiteralPath $FingerprintVerifierPath"
+    ) == 1
+
+
 def test_broker_installer_finishes_read_only_preflight_before_stopping_service() -> None:
     source = BROKER_INSTALLER.read_text(encoding="utf-8")
     stop = source.index("Stop-ScheduledTask -TaskName $TaskName")
