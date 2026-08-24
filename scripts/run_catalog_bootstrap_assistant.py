@@ -59,6 +59,7 @@ EXPECTED_ROOT = Path("C:/ProgramData/AURORA/CatalogBootstrap")
 REPOSITORY = "trading-optimizer-lab-org/aurora"
 BROKER_ROOT = Path("C:/ProgramData/AURORA/CatalogRequester")
 AGENT_ROOT = Path("C:/ProgramData/AURORA/CatalogAgent")
+BOOTSTRAP_STAGING_ROOT = Path("C:/ProgramData/AURORA/BootstrapStaging")
 CONTROLLER_VARIABLE = "CATALOG_CONTROLLER_ENABLED"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -85,6 +86,14 @@ _PUBLIC_BINDING_PATHS = (
     "config/catalog_github_auditor_v1.json",
     "config/catalog_requester_app_permissions_v1.json",
     "config/catalog_requester_public_key_v1.pem",
+)
+_LOCAL_INSTALL_REPAIR_PATHS = (
+    "infra/sp500_megarun/catalog_bootstrap_state.py",
+    "scripts/build_catalog_requester_apps.py",
+    "scripts/run_catalog_bootstrap_assistant.py",
+    "tests/fixtures/catalog_controller_qualification/simulator.py",
+    "tests/test_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_requester_packaging.py",
 )
 _BOOTSTRAP_REQUIRED_CHECK_NAMES = frozenset({"GTBI V7 stage-two required"})
 _EXACT_REPOSITORY_REMOTES = frozenset(
@@ -1078,7 +1087,7 @@ def _validated_binding_review(
 
 def _resume_transient_merge_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
-    if state.phase != "BLOCKED":
+    if state.phase != "BLOCKED" or state.sequence != 7:
         return False
     blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
     blocked = _read_json(blocked_path)
@@ -1219,6 +1228,401 @@ def _resume_transient_merge_block(root: Path) -> bool:
     return True
 
 
+def _local_install_repair_patch_sha256(
+    source: Path,
+    base_commit: str,
+    head_commit: str,
+) -> str:
+    result = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--binary",
+            "--full-index",
+            f"{base_commit}..{head_commit}",
+            "--",
+            *_LOCAL_INSTALL_REPAIR_PATHS,
+        ],
+        cwd=source,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_PATCH_INVALID")
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
+def _validated_local_install_repair(
+    root: Path,
+    binding: dict[str, object],
+) -> dict[str, object]:
+    repair_path = root / "local-install-repair-operation-v1.json"
+    repair = _read_json(repair_path)
+    changed_paths = repair.get("changed_paths")
+    if (
+        set(repair)
+        != {
+            "base_commit_sha",
+            "branch",
+            "changed_paths",
+            "head_commit_sha",
+            "merge_commit_sha",
+            "patch_sha256",
+            "pr_number",
+            "repository",
+            "required_check",
+            "schema_version",
+        }
+        or repair_path.read_bytes() != _canonical(repair) + b"\n"
+        or repair.get("schema_version") != "1"
+        or repair.get("repository") != REPOSITORY
+        or repair.get("base_commit_sha") != binding.get("merge_commit_sha")
+        or not isinstance(repair.get("branch"), str)
+        or not re.fullmatch(
+            r"codex/catalog-local-install-recovery-[0-9a-f]{12}",
+            str(repair.get("branch")),
+        )
+        or not isinstance(changed_paths, list)
+        or tuple(changed_paths) != _LOCAL_INSTALL_REPAIR_PATHS
+        or not isinstance(repair.get("head_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(repair.get("head_commit_sha")))
+        or not isinstance(repair.get("merge_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(repair.get("merge_commit_sha")))
+        or not _SHA256.fullmatch(str(repair.get("patch_sha256", "")))
+        or not isinstance(repair.get("pr_number"), int)
+        or int(repair["pr_number"]) < 1
+        or repair.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_INVALID")
+    return repair
+
+
+def _runtime_commit(root: Path) -> str:
+    binding_path = root / "public-binding-operation-v1.json"
+    binding = _read_json(binding_path)
+    binding_merge = binding.get("merge_commit_sha")
+    if (
+        binding_path.read_bytes() != _canonical(binding) + b"\n"
+        or not isinstance(binding_merge, str)
+        or not _COMMIT.fullmatch(binding_merge)
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_PUBLIC_BINDING_INVALID")
+    retry_path = root / "receipts/controller-bootstrap-local-install-retry-v1.json"
+    if not retry_path.exists():
+        return binding_merge
+    if retry_path.is_symlink() or retry_path.is_junction():
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_RECEIPT_INVALID")
+    retry = _read_json(retry_path)
+    repair = _validated_local_install_repair(root, binding)
+    repair_merge = repair["merge_commit_sha"]
+    if (
+        set(retry)
+        != {
+            "activity_baseline_sha256",
+            "blocked_state_sha256",
+            "bootstrap_source_commit_sha",
+            "installations",
+            "public_binding_merge_commit_sha",
+            "repair_merge_commit_sha",
+            "repair_operation_sha256",
+            "repair_pr_number",
+            "schema_version",
+        }
+        or retry_path.read_bytes() != _canonical(retry) + b"\n"
+        or retry.get("schema_version") != "1"
+        or retry.get("public_binding_merge_commit_sha") != binding_merge
+        or retry.get("repair_merge_commit_sha") != repair_merge
+        or retry.get("repair_pr_number") != repair.get("pr_number")
+        or retry.get("repair_operation_sha256")
+        != hashlib.sha256(_canonical(repair)).hexdigest()
+        or not _SHA256.fullmatch(str(retry.get("activity_baseline_sha256", "")))
+        or not _SHA256.fullmatch(str(retry.get("blocked_state_sha256", "")))
+        or not _COMMIT.fullmatch(str(retry.get("bootstrap_source_commit_sha", "")))
+        or not isinstance(retry.get("installations"), dict)
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_RECEIPT_INVALID")
+    return str(repair_merge)
+
+
+def _resume_transient_local_install_block(root: Path) -> bool:
+    state = load_bootstrap_state(_state_path(root))
+    if state.phase != "BLOCKED" or state.sequence != 10:
+        return False
+    blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
+    blocked = _read_json(blocked_path)
+    expected_block = {
+        "controller_enabled_readback": False,
+        "phase": "LOCAL_INSTALL_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    if blocked != expected_block:
+        return False
+    if blocked_path.read_bytes() != _canonical(blocked) + b"\n":
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_BLOCK_RECEIPT_INVALID")
+    if root.resolve() != EXPECTED_ROOT.resolve():
+        raise ValueError("CATALOG_BOOTSTRAP_ROOT_INVALID")
+
+    context_path = root / "install-context-v1.json"
+    context = _context(root)
+    source_commit = context.get("source_commit_sha")
+    if (
+        context_path.read_bytes() != _canonical(context) + b"\n"
+        or not isinstance(source_commit, str)
+        or not _COMMIT.fullmatch(source_commit)
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_CONTEXT_INVALID")
+    source = Path(str(context["source_root"]))
+    if source.is_symlink() or source.is_junction():
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_SOURCE_INVALID")
+    source = source.resolve(strict=True)
+
+    operation_path = root / "public-binding-operation-v1.json"
+    operation = _read_json(operation_path)
+    binding_branch = operation.get("branch")
+    binding_pr_number = operation.get("pr_number")
+    binding_commit = operation.get("binding_commit_sha")
+    binding_merge = operation.get("merge_commit_sha")
+    if (
+        set(operation)
+        != {
+            "binding_commit_sha",
+            "branch",
+            "merge_commit_sha",
+            "pr_number",
+            "review_rounds_sha256",
+        }
+        or operation_path.read_bytes() != _canonical(operation) + b"\n"
+        or not isinstance(binding_branch, str)
+        or not re.fullmatch(
+            r"catalog/bootstrap-binding-[0-9a-f]{12}",
+            binding_branch,
+        )
+        or not isinstance(binding_pr_number, int)
+        or binding_pr_number < 1
+        or not isinstance(binding_commit, str)
+        or not _COMMIT.fullmatch(binding_commit)
+        or not isinstance(binding_merge, str)
+        or not _COMMIT.fullmatch(binding_merge)
+        or not _SHA256.fullmatch(str(operation.get("review_rounds_sha256", "")))
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_OPERATION_INVALID")
+
+    repair = _validated_local_install_repair(root, operation)
+    repair_branch = str(repair["branch"])
+    repair_head = str(repair["head_commit_sha"])
+    repair_merge = str(repair["merge_commit_sha"])
+    repair_pr_number = int(repair["pr_number"])
+    if source_commit != repair_merge:
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_CONTEXT_INVALID")
+
+    for installed_root in (AGENT_ROOT, BROKER_ROOT):
+        if (
+            installed_root.exists()
+            or installed_root.is_symlink()
+            or installed_root.is_junction()
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_PARTIAL_INSTALL")
+    staging = BOOTSTRAP_STAGING_ROOT
+    if staging.is_symlink() or staging.is_junction():
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_PARTIAL_INSTALL")
+    if staging.exists() and (not staging.is_dir() or any(staging.iterdir())):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_PARTIAL_INSTALL")
+    pending_key = root / "secrets/requester-pending.pem"
+    if (
+        not pending_key.is_file()
+        or pending_key.is_symlink()
+        or pending_key.is_junction()
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_KEY_INVALID")
+
+    _run(["git", "fetch", "origin", "main"], cwd=source)
+    current_commit = _run(["git", "rev-parse", "HEAD"], cwd=source)
+    remote = _run(["git", "remote", "get-url", "origin"], cwd=source)
+    if (
+        current_commit != repair_merge
+        or current_commit != _run(["git", "rev-parse", "origin/main"], cwd=source)
+        or not _repository_remote_is_exact(remote)
+        or _run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=no"],
+            cwd=source,
+        )
+        or _run(["git", "branch", "--show-current"], cwd=source) != "main"
+        or _run(["git", "rev-parse", f"{repair_merge}^1"], cwd=source)
+        != binding_merge
+        or _run(["git", "rev-parse", f"{repair_merge}^2"], cwd=source)
+        != repair_head
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_SOURCE_INVALID")
+
+    for revision in (
+        f"{binding_merge}..{repair_head}",
+        f"{binding_merge}..{repair_merge}",
+    ):
+        changed = tuple(
+            line
+            for line in _run(
+                ["git", "diff", "--name-only", revision, "--"],
+                cwd=source,
+            ).splitlines()
+            if line
+        )
+        if changed != _LOCAL_INSTALL_REPAIR_PATHS:
+            raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_PATHS_INVALID")
+    if (
+        _local_install_repair_patch_sha256(
+            source,
+            binding_merge,
+            repair_head,
+        )
+        != repair["patch_sha256"]
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_PATCH_INVALID")
+
+    ancestry = subprocess.run(
+        [
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            state.protected_commit_sha,
+            binding_merge,
+        ],
+        cwd=source,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if ancestry.returncode != 0:
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_SOURCE_INVALID")
+    if _run(
+        ["gh", "variable", "get", CONTROLLER_VARIABLE, "--repo", REPOSITORY]
+    ) != "false":
+        raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_NOT_DISABLED")
+
+    observed_binding = json.loads(
+        _run(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(binding_pr_number),
+                "--repo",
+                REPOSITORY,
+                "--json",
+                "state,baseRefName,headRefName,mergeCommit",
+            ],
+            cwd=source,
+        )
+    )
+    observed_binding_merge = (
+        observed_binding.get("mergeCommit")
+        if isinstance(observed_binding, dict)
+        else None
+    )
+    if (
+        not isinstance(observed_binding, dict)
+        or set(observed_binding)
+        != {"baseRefName", "headRefName", "mergeCommit", "state"}
+        or observed_binding.get("state") != "MERGED"
+        or observed_binding.get("baseRefName") != "main"
+        or observed_binding.get("headRefName") != binding_branch
+        or not isinstance(observed_binding_merge, dict)
+        or set(observed_binding_merge) != {"oid"}
+        or observed_binding_merge.get("oid") != binding_merge
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_PR_INVALID")
+
+    observed_repair = json.loads(
+        _run(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(repair_pr_number),
+                "--repo",
+                REPOSITORY,
+                "--json",
+                "state,baseRefName,headRefName,headRefOid,mergeCommit",
+            ],
+            cwd=source,
+        )
+    )
+    observed_repair_merge = (
+        observed_repair.get("mergeCommit")
+        if isinstance(observed_repair, dict)
+        else None
+    )
+    if (
+        not isinstance(observed_repair, dict)
+        or set(observed_repair)
+        != {"baseRefName", "headRefName", "headRefOid", "mergeCommit", "state"}
+        or observed_repair.get("state") != "MERGED"
+        or observed_repair.get("baseRefName") != "main"
+        or observed_repair.get("headRefName") != repair_branch
+        or observed_repair.get("headRefOid") != repair_head
+        or not isinstance(observed_repair_merge, dict)
+        or set(observed_repair_merge) != {"oid"}
+        or observed_repair_merge.get("oid") != repair_merge
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_PR_INVALID")
+    observed_paths = tuple(
+        line
+        for line in _run(
+            [
+                "gh",
+                "pr",
+                "diff",
+                str(repair_pr_number),
+                "--repo",
+                REPOSITORY,
+                "--name-only",
+            ],
+            cwd=source,
+        ).splitlines()
+        if line
+    )
+    if observed_paths != _LOCAL_INSTALL_REPAIR_PATHS:
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_PATHS_INVALID")
+    _wait_for_required_checks(str(repair_pr_number), source)
+
+    installations = _verify_existing_installations(root)
+    baseline_path = root / "github-activity-baseline-v1.json"
+    baseline = _read_json(baseline_path)
+    if (
+        baseline_path.read_bytes() != _canonical(baseline) + b"\n"
+        or set(baseline) != {"heavy_run_ids", "request_issue_numbers"}
+        or not isinstance(baseline["heavy_run_ids"], list)
+        or not isinstance(baseline["request_issue_numbers"], list)
+        or _github_activity_snapshot() != baseline
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_ACTIVITY_INVALID")
+
+    recovery = {
+        "activity_baseline_sha256": hashlib.sha256(_canonical(baseline)).hexdigest(),
+        "blocked_state_sha256": hashlib.sha256(
+            (root / "state/catalog-bootstrap-state-v1.json").read_bytes()
+        ).hexdigest(),
+        "bootstrap_source_commit_sha": state.protected_commit_sha,
+        "installations": installations,
+        "public_binding_merge_commit_sha": binding_merge,
+        "repair_merge_commit_sha": repair_merge,
+        "repair_operation_sha256": hashlib.sha256(_canonical(repair)).hexdigest(),
+        "repair_pr_number": repair_pr_number,
+        "schema_version": "1",
+    }
+    _write_canonical(
+        root / "receipts/controller-bootstrap-local-install-retry-v1.json",
+        recovery,
+    )
+    _advance(root, state, "local_install_retry_authorized", recovery)
+    return True
+
+
 def merge_public_binding(root: Path) -> None:
     state = load_bootstrap_state(_state_path(root))
     context = _context(root)
@@ -1337,10 +1741,9 @@ def install_local_components(root: Path) -> None:
     state = load_bootstrap_state(_state_path(root))
     context = _context(root)
     source = Path(str(context["source_root"]))
-    binding = _read_json(root / "public-binding-operation-v1.json")
-    merge_sha = str(binding["merge_commit_sha"])
+    merge_sha = _runtime_commit(root)
     _run(["git", "switch", "--detach", merge_sha], cwd=source)
-    staging = Path("C:/ProgramData/AURORA/BootstrapStaging")
+    staging = BOOTSTRAP_STAGING_ROOT
     apps = staging / "requester-apps"
     staging.mkdir(parents=True, exist_ok=True)
     _run(
@@ -1447,8 +1850,7 @@ def apply_github_controls(root: Path) -> None:
     state = load_bootstrap_state(_state_path(root))
     context = _context(root)
     source = Path(str(context["source_root"]))
-    binding = _read_json(root / "public-binding-operation-v1.json")
-    protected_commit_sha = str(binding["merge_commit_sha"])
+    protected_commit_sha = _runtime_commit(root)
     authority = _read_json(source / "config/catalog_authority_anchor_v1.json")
     auditor = _read_json(root / "auditor-public-v1.json")
     if (
@@ -1685,8 +2087,7 @@ def run_qualifications(root: Path) -> None:
     state = load_bootstrap_state(_state_path(root))
     context = _context(root)
     source = Path(str(context["source_root"]))
-    binding = _read_json(root / "public-binding-operation-v1.json")
-    protected_commit_sha = str(binding["merge_commit_sha"])
+    protected_commit_sha = _runtime_commit(root)
     controls = _read_json(root / "github-controls-operation-v1.json")
     live_receipts = [controls["first_live_qualification"]]
     for _ in range(2):
@@ -1851,8 +2252,7 @@ def _production_seal(
 
 def perform_final_audit(root: Path) -> None:
     state = load_bootstrap_state(_state_path(root))
-    binding = _read_json(root / "public-binding-operation-v1.json")
-    protected_commit_sha = str(binding["merge_commit_sha"])
+    protected_commit_sha = _runtime_commit(root)
     qualification = _read_json(root / "qualification-operation-v1.json")
     applied_controls = _read_json(root / "receipts/github-controls-apply-v1.json")
     after_controls = applied_controls.get("after_receipt")
@@ -2067,7 +2467,12 @@ def main() -> int:
             return 0
         if state.phase == "BLOCKED":
             try:
-                if not _resume_transient_merge_block(args.installed_root):
+                recovered = _resume_transient_merge_block(args.installed_root)
+                if not recovered:
+                    recovered = _resume_transient_local_install_block(
+                        args.installed_root
+                    )
+                if not recovered:
                     return 2
             except Exception as exc:
                 try:
@@ -2079,13 +2484,27 @@ def main() -> int:
                     marker in reason.casefold()
                     for marker in ("private", "secret", "token", "password", "jwt")
                 ):
-                    reason = "CATALOG_BOOTSTRAP_MERGE_RETRY_FAILED"
+                    reason = "CATALOG_BOOTSTRAP_RECOVERY_FAILED"
+                recovery_phase = "BLOCKED"
+                blocked_path = (
+                    args.installed_root
+                    / "receipts/controller-bootstrap-blocked-v1.json"
+                )
+                try:
+                    blocked_receipt = _read_json(blocked_path)
+                    if blocked_path.read_bytes() != _canonical(blocked_receipt) + b"\n":
+                        raise ValueError("CATALOG_BOOTSTRAP_RECOVERY_RECEIPT_INVALID")
+                    observed_phase = blocked_receipt.get("phase")
+                    if observed_phase in {"MERGE_PENDING", "LOCAL_INSTALL_PENDING"}:
+                        recovery_phase = observed_phase
+                except (OSError, TypeError, ValueError):
+                    pass
                 _write_canonical(
                     args.installed_root
                     / "receipts/controller-bootstrap-recovery-blocked-v1.json",
                     {
                         "controller_enabled_readback": False,
-                        "phase": "MERGE_PENDING",
+                        "phase": recovery_phase,
                         "reason_code": reason,
                         "result": "BLOCKED",
                         "schema_version": "1",
