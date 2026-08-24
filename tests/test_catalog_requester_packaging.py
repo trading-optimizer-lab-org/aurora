@@ -594,6 +594,64 @@ def test_builder_rejects_dirty_source_before_creating_output(tmp_path: Path) -> 
     assert not output.exists()
 
 
+def test_builder_accepts_clean_windows_checkout_and_uses_committed_bytes(
+    tmp_path: Path,
+) -> None:
+    source, commit = _isolated_source_tree(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(source), "config", "core.autocrlf", "false"],
+        check=True,
+        capture_output=True,
+    )
+    for path in source.rglob("*"):
+        if path.is_file() and ".git" not in path.parts:
+            path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n"))
+    relative = "requirements/catalog-requester-client.in"
+    target = source / relative
+    _git(source, "add", "--all")
+    _git(source, "commit", "--amend", "--no-edit")
+    commit = _git(source, "rev-parse", "HEAD")
+    baseline = tmp_path / "baseline"
+    baseline_result = _build_apps(source, baseline, commit)
+    assert baseline_result.returncode == 0, baseline_result.stderr
+
+    subprocess.run(
+        ["git", "-C", str(source), "config", "core.autocrlf", "true"],
+        check=True,
+        capture_output=True,
+    )
+    target.unlink()
+    subprocess.run(
+        ["git", "-C", str(source), "checkout", "HEAD", "--", relative],
+        check=True,
+        capture_output=True,
+    )
+    assert b"\r\n" in target.read_bytes()
+    status = subprocess.run(
+        ["git", "-C", str(source), "status", "--porcelain=v1"],
+        check=True,
+        capture_output=True,
+    )
+    assert status.stdout == b""
+
+    windows_output = tmp_path / "windows-output"
+    result = _build_apps(source, windows_output, commit)
+
+    assert result.returncode == 0, result.stderr
+    for name in (
+        "catalog-requester-client.pyz",
+        "catalog-requester-client.manifest.json",
+        "catalog-requester-broker.pyz",
+        "catalog-requester-broker.manifest.json",
+    ):
+        assert (windows_output / name).read_bytes() == (baseline / name).read_bytes()
+
+
+def test_repository_forces_pem_files_to_lf() -> None:
+    attributes = (Path(__file__).parents[1] / ".gitattributes").read_text("utf-8")
+    assert "*.pem text eol=lf" in attributes.splitlines()
+
+
 def test_builder_ignores_unrelated_untracked_user_files(tmp_path: Path) -> None:
     source, commit = _isolated_source_tree(tmp_path)
     (source / "unrelated-user-note.md").write_text(

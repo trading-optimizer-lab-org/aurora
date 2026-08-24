@@ -146,9 +146,11 @@ def _read_verified_file(root: Path, relative: str, commit: str) -> bytes:
         raise ValueError("REQUESTER_BUILD_UNTRACKED_INPUT")
     data = resolved.read_bytes()
     committed = _run_git(root, "show", f"{commit}:{checked}")
-    if data != committed:
+    if data != committed and data.replace(b"\r\n", b"\n") != committed.replace(
+        b"\r\n", b"\n"
+    ):
         raise ValueError("REQUESTER_BUILD_SOURCE_MISMATCH")
-    return data
+    return committed
 
 
 def _file_digest(path: str, data: bytes) -> dict[str, object]:

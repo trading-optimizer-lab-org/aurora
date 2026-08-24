@@ -146,6 +146,15 @@ def _blocked_local_install_state():
     return advance_bootstrap_state(state, event("blocked", 10))
 
 
+def _blocked_second_local_install_state():
+    state = _blocked_local_install_state()
+    state = advance_bootstrap_state(
+        state,
+        event("local_install_retry_authorized", 11),
+    )
+    return advance_bootstrap_state(state, event("blocked", 12))
+
+
 def test_only_exact_merge_retry_can_leave_terminal_blocked_state() -> None:
     blocked = _blocked_merge_state()
     assert blocked.phase == "BLOCKED"
@@ -179,6 +188,28 @@ def _local_install_repair_operation(
     }
 
 
+def _local_install_followup_repair_operation(
+    *,
+    repair_merge: str,
+    followup_head: str,
+    followup_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": repair_merge,
+        "branch": "codex/catalog-local-install-followup-abcdef123456",
+        "changed_paths": list(
+            bootstrap_runner._LOCAL_INSTALL_FOLLOWUP_REPAIR_PATHS
+        ),
+        "head_commit_sha": followup_head,
+        "merge_commit_sha": followup_merge,
+        "patch_sha256": "8" * 64,
+        "pr_number": 166,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+
+
 def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None:
     blocked = _blocked_local_install_state()
 
@@ -189,6 +220,39 @@ def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None
 
     assert resumed.phase == "LOCAL_INSTALL_PENDING"
     assert resumed.sequence == 11
+
+    blocked_again = advance_bootstrap_state(resumed, event("blocked", 12))
+    resumed_again = advance_bootstrap_state(
+        blocked_again,
+        event("local_install_retry_authorized", 13),
+    )
+    assert resumed_again.phase == "LOCAL_INSTALL_PENDING"
+    assert resumed_again.sequence == 13
+
+
+def test_second_local_install_block_enters_protected_recovery(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_second_local_install_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "LOCAL_INSTALL_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+
+    with pytest.raises(FileNotFoundError):
+        bootstrap_runner._resume_transient_local_install_block(root)
 
 
 def test_local_install_recovery_rejects_context_not_bound_to_repair(
@@ -534,6 +598,83 @@ def test_runtime_commit_uses_the_verified_repair_receipt(tmp_path: Path) -> None
     )
 
     assert bootstrap_runner._runtime_commit(root) == repair_merge
+
+
+def test_runtime_commit_uses_the_verified_followup_repair_receipt(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "protected"
+    (root / "receipts").mkdir(parents=True)
+    binding_merge = "b" * 40
+    repair_head = "e" * 40
+    repair_merge = "f" * 40
+    followup_head = "1" * 40
+    followup_merge = "2" * 40
+    binding = {
+        "binding_commit_sha": "c" * 40,
+        "branch": "catalog/bootstrap-binding-123456789abc",
+        "merge_commit_sha": binding_merge,
+        "pr_number": 163,
+        "review_rounds_sha256": "d" * 64,
+    }
+    (root / "public-binding-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(binding) + b"\n"
+    )
+    repair = _local_install_repair_operation(
+        binding_merge=binding_merge,
+        repair_head=repair_head,
+        repair_merge=repair_merge,
+    )
+    repair_path = root / "local-install-repair-operation-v1.json"
+    repair_path.write_bytes(bootstrap_runner._canonical(repair) + b"\n")
+    first_retry = {
+        "activity_baseline_sha256": "1" * 64,
+        "blocked_state_sha256": "2" * 64,
+        "bootstrap_source_commit_sha": COMMIT,
+        "installations": {"auditor": 2, "requester": 1},
+        "public_binding_merge_commit_sha": binding_merge,
+        "repair_merge_commit_sha": repair_merge,
+        "repair_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(repair)
+        ).hexdigest(),
+        "repair_pr_number": 165,
+        "schema_version": "1",
+    }
+    first_retry_path = (
+        root / "receipts/controller-bootstrap-local-install-retry-v1.json"
+    )
+    first_retry_path.write_bytes(
+        bootstrap_runner._canonical(first_retry) + b"\n"
+    )
+    followup = _local_install_followup_repair_operation(
+        repair_merge=repair_merge,
+        followup_head=followup_head,
+        followup_merge=followup_merge,
+    )
+    (root / "local-install-followup-repair-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(followup) + b"\n"
+    )
+    second_retry = {
+        "activity_baseline_sha256": "3" * 64,
+        "blocked_state_sha256": "4" * 64,
+        "bootstrap_source_commit_sha": COMMIT,
+        "followup_merge_commit_sha": followup_merge,
+        "followup_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(followup)
+        ).hexdigest(),
+        "followup_pr_number": 166,
+        "installations": {"auditor": 2, "requester": 1},
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            first_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": repair_merge,
+        "schema_version": "1",
+    }
+    (
+        root / "receipts/controller-bootstrap-local-install-retry-2-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(second_retry) + b"\n")
+
+    assert bootstrap_runner._runtime_commit(root) == followup_merge
 
 
 def test_post_repair_phases_all_use_the_runtime_commit() -> None:
