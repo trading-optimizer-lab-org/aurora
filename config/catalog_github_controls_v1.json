@@ -40,7 +40,8 @@
   },
   "billing": {
     "budget_control_plane": {
-      "scope": "organization",
+      "scope": "enterprise",
+      "enterprise": "trading-optimizer-lab",
       "organization": "trading-optimizer-lab-org",
       "repository_entity_name": "trading-optimizer-lab-org/aurora"
     },

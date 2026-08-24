@@ -168,7 +168,8 @@ class AppReadOnlyClient:
         self.auditor = auditor
         self.github_date: datetime | None = None
         self._session = requests.Session()
-        self._token: str | None = None
+        self._repository_token: str | None = None
+        self._enterprise_token: str | None = None
         self.installation_proof: dict[str, object] | None = None
 
     def __enter__(self) -> "AppReadOnlyClient":
@@ -208,12 +209,11 @@ class AppReadOnlyClient:
         ):
             raise ValueError("CATALOG_AUDITOR_INSTALLATION_INVALID")
         permissions = installation.get("permissions")
-        expected_token_permissions = {
+        expected_repository_permissions = {
             **dict(self.auditor.required_repository_permissions),
             "organization_administration": "read",
-            **dict(self.auditor.required_enterprise_permissions),
         }
-        if permissions != expected_token_permissions:
+        if permissions != expected_repository_permissions:
             raise ValueError("CATALOG_AUDITOR_PERMISSIONS_INVALID")
         token_payload = self._request(
             "POST",
@@ -221,14 +221,42 @@ class AppReadOnlyClient:
             bearer=jwt,
             body={
                 "repositories": [self.repository.split("/", maxsplit=1)[1]],
-                "permissions": expected_token_permissions,
+                "permissions": expected_repository_permissions,
             },
         )
         if not isinstance(token_payload, dict) or not isinstance(
             token_payload.get("token"), str
         ):
             raise ValueError("CATALOG_AUDITOR_TOKEN_MINT_FAILED")
-        self._token = token_payload["token"]
+        self._repository_token = token_payload["token"]
+        enterprise_installation = self._request(
+            "GET",
+            f"/enterprises/{self.auditor.enterprise}/installation",
+            bearer=jwt,
+        )
+        if (
+            not isinstance(enterprise_installation, dict)
+            or not isinstance(enterprise_installation.get("id"), int)
+            or enterprise_installation.get("target_type") != "Enterprise"
+            or enterprise_installation.get("permissions")
+            != dict(self.auditor.required_enterprise_permissions)
+            or enterprise_installation.get("app_slug") != installation.get("app_slug")
+        ):
+            raise ValueError("CATALOG_AUDITOR_ENTERPRISE_INSTALLATION_INVALID")
+        enterprise_token_payload = self._request(
+            "POST",
+            f"/app/installations/{enterprise_installation['id']}/access_tokens",
+            bearer=jwt,
+            body={},
+        )
+        if (
+            not isinstance(enterprise_token_payload, dict)
+            or not isinstance(enterprise_token_payload.get("token"), str)
+            or enterprise_token_payload.get("permissions")
+            != dict(self.auditor.required_enterprise_permissions)
+        ):
+            raise ValueError("CATALOG_AUDITOR_ENTERPRISE_TOKEN_MINT_FAILED")
+        self._enterprise_token = enterprise_token_payload["token"]
         self.installation_proof = {
             "repository_permissions": dict(self.auditor.required_repository_permissions),
             "organization_permissions": dict(self.auditor.required_organization_permissions),
@@ -236,7 +264,8 @@ class AppReadOnlyClient:
             "repositories": [self.repository],
             "token_minted_in_process": True,
             "fixed_get_endpoints_only": True,
-            "installation_id": installation["id"],
+            "repository_installation_id": installation["id"],
+            "enterprise_installation_id": enterprise_installation["id"],
             "app_slug": installation.get("app_slug"),
             "public_key_sha256": fingerprint,
         }
@@ -246,14 +275,25 @@ class AppReadOnlyClient:
         return self
 
     def __exit__(self, *_: object) -> None:
-        self._token = None
+        self._repository_token = None
+        self._enterprise_token = None
         self._session.headers.clear()
         self._session.close()
 
     def get(self, endpoint: str) -> object:
-        if self._token is None:
+        return self._request("GET", endpoint, bearer=self._token_for_endpoint(endpoint))
+
+    def _token_for_endpoint(self, endpoint: str) -> str:
+        enterprise_prefix = f"/enterprises/{self.auditor.enterprise}/settings/billing/"
+        if endpoint.startswith(enterprise_prefix):
+            if self._enterprise_token is None:
+                raise ValueError("CATALOG_AUDITOR_ENTERPRISE_TOKEN_UNAVAILABLE")
+            return self._enterprise_token
+        if endpoint.startswith("/enterprises/"):
+            raise ValueError("CATALOG_AUDITOR_ENDPOINT_INVALID")
+        if self._repository_token is None:
             raise ValueError("CATALOG_AUDITOR_TOKEN_UNAVAILABLE")
-        return self._request("GET", endpoint, bearer=self._token)
+        return self._repository_token
 
     def get_optional(self, endpoint: str) -> object | None:
         try:
@@ -1072,9 +1112,10 @@ def collect_live_snapshot(
         )
     )
     organization = desired.billing.budget_control_plane.organization
+    enterprise = desired.billing.budget_control_plane.enterprise
     budgets, budgets_complete = _paginate_object_rows(
         client,
-        f"/organizations/{organization}/settings/billing/budgets?scope=repository",
+        f"/enterprises/{enterprise}/settings/billing/budgets?scope=repository",
         root="budgets",
         max_pages=10,
     )
@@ -1086,7 +1127,7 @@ def collect_live_snapshot(
             raise ValueError("CATALOG_BUDGET_ID_INVALID")
         budget_details.append(
             client.get(
-                f"/organizations/{organization}/settings/billing/budgets/{budget['id']}"
+                f"/enterprises/{enterprise}/settings/billing/budgets/{budget['id']}"
             )
         )
     cache_retention = _dict(

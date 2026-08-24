@@ -156,9 +156,10 @@
     "budget_control_plane": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["scope", "organization", "repository_entity_name"],
+      "required": ["scope", "enterprise", "organization", "repository_entity_name"],
       "properties": {
-        "scope": {"const": "organization"},
+        "scope": {"const": "enterprise"},
+        "enterprise": {"const": "trading-optimizer-lab"},
         "organization": {"const": "trading-optimizer-lab-org"},
         "repository_entity_name": {
           "const": "trading-optimizer-lab-org/aurora"

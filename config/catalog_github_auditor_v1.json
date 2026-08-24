@@ -1,6 +1,7 @@
 {
   "schema_version": "1",
   "repository": "trading-optimizer-lab-org/aurora",
+  "enterprise": "trading-optimizer-lab",
   "expected_app_slug": "aurora-catalog-audit-cf479d98fb",
   "public_key_sha256": "486509e8b18b3d1a58924d29c34877dfe42651e054f6e3e58bc2426558d8358f",
   "required_repository_permissions": {
@@ -16,7 +17,9 @@
   "required_organization_permissions": {
     "administration": "read"
   },
-  "required_enterprise_permissions": {},
+  "required_enterprise_permissions": {
+    "enterprise_billing": "read"
+  },
   "forbidden_write_permissions": [
     "actions",
     "administration",
