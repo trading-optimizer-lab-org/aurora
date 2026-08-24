@@ -200,6 +200,16 @@ def _blocked_seventh_local_install_state():
     return advance_bootstrap_state(state, event("blocked", 22))
 
 
+def _blocked_github_controls_state():
+    state = _blocked_seventh_local_install_state()
+    state = advance_bootstrap_state(
+        state,
+        event("local_install_retry_authorized", 23),
+    )
+    state = advance_bootstrap_state(state, event("local_install_verified", 24))
+    return advance_bootstrap_state(state, event("blocked", 25))
+
+
 def test_only_exact_merge_retry_can_leave_terminal_blocked_state() -> None:
     blocked = _blocked_merge_state()
     assert blocked.phase == "BLOCKED"
@@ -385,6 +395,26 @@ def _local_install_task_identity_followup_repair_operation(
     }
 
 
+def _github_controls_repair_operation(
+    *,
+    prior_merge: str,
+    repair_head: str,
+    repair_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": prior_merge,
+        "branch": "codex/catalog-github-controls-recovery-abcdef123456",
+        "changed_paths": list(bootstrap_runner._GITHUB_CONTROLS_REPAIR_PATHS),
+        "head_commit_sha": repair_head,
+        "merge_commit_sha": repair_merge,
+        "patch_sha256": "1" * 64,
+        "pr_number": 173,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+
+
 def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None:
     blocked = _blocked_local_install_state()
 
@@ -458,6 +488,21 @@ def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None
     )
     assert resumed_seventh.phase == "LOCAL_INSTALL_PENDING"
     assert resumed_seventh.sequence == 23
+
+    controls_pending = advance_bootstrap_state(
+        resumed_seventh,
+        event("local_install_verified", 24),
+    )
+    controls_blocked = advance_bootstrap_state(
+        controls_pending,
+        event("blocked", 25),
+    )
+    controls_resumed = advance_bootstrap_state(
+        controls_blocked,
+        event("github_controls_retry_authorized", 26),
+    )
+    assert controls_resumed.phase == "GITHUB_CONTROLS_PENDING"
+    assert controls_resumed.sequence == 26
 
 
 def test_second_local_install_block_enters_protected_recovery(
@@ -608,6 +653,124 @@ def test_seventh_local_install_block_enters_protected_recovery(
 
     with pytest.raises(FileNotFoundError):
         bootstrap_runner._resume_transient_local_install_block(root)
+
+
+def test_github_controls_block_waits_for_protected_recovery_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_github_controls_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "GITHUB_CONTROLS_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+
+    assert bootstrap_runner._resume_transient_github_controls_block(root) is False
+
+
+def test_github_controls_recovery_rejects_any_other_install_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_github_controls_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "GITHUB_CONTROLS_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", tmp_path / "other")
+
+    with pytest.raises(ValueError, match="CATALOG_BOOTSTRAP_ROOT_INVALID"):
+        bootstrap_runner._resume_transient_github_controls_block(root)
+
+
+def test_github_controls_recovery_binds_receipt_to_exact_blocked_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_github_controls_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "GITHUB_CONTROLS_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    retry = {
+        "blocked_state_sha256": "0" * 64,
+        "github_controls_merge_commit_sha": "a" * 40,
+    }
+    (root / "receipts/controller-bootstrap-github-controls-retry-v1.json").write_bytes(
+        bootstrap_runner._canonical(retry) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(bootstrap_runner, "_runtime_commit", lambda _root: "a" * 40)
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_GITHUB_CONTROLS_BLOCK_STATE_INVALID",
+    ):
+        bootstrap_runner._resume_transient_github_controls_block(root)
+
+
+def test_github_controls_repair_graph_rejects_wrong_patch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    operation = _github_controls_repair_operation(
+        prior_merge="a" * 40,
+        repair_head="b" * 40,
+        repair_merge="c" * 40,
+    )
+
+    def fake_run(arguments: list[str], *, cwd: Path) -> str:
+        assert cwd == tmp_path
+        if arguments[-1] == "c" * 40 + "^1":
+            return "a" * 40
+        if arguments[-1] == "c" * 40 + "^2":
+            return "b" * 40
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_github_controls_repair_patch_sha256",
+        lambda *_args: "f" * 64,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_PATCH_INVALID",
+    ):
+        bootstrap_runner._verify_github_controls_repair_graph(
+            tmp_path, operation
+        )
 
 
 def test_local_install_recovery_rejects_context_not_bound_to_repair(
@@ -1294,6 +1457,41 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     ).write_bytes(bootstrap_runner._canonical(seventh_retry) + b"\n")
 
     assert bootstrap_runner._runtime_commit(root) == task_identity_followup_merge
+
+    github_controls_head = "f" * 40
+    github_controls_merge = "1" * 40
+    github_controls = _github_controls_repair_operation(
+        prior_merge=task_identity_followup_merge,
+        repair_head=github_controls_head,
+        repair_merge=github_controls_merge,
+    )
+    (root / "github-controls-repair-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(github_controls) + b"\n"
+    )
+    seventh_retry_path = (
+        root / "receipts/controller-bootstrap-local-install-retry-7-v1.json"
+    )
+    github_controls_retry = {
+        "activity_baseline_sha256": "2" * 64,
+        "blocked_state_sha256": "3" * 64,
+        "bootstrap_source_commit_sha": COMMIT,
+        "github_controls_merge_commit_sha": github_controls_merge,
+        "github_controls_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(github_controls)
+        ).hexdigest(),
+        "github_controls_pr_number": 173,
+        "installations": {"auditor": 2, "requester": 1},
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            seventh_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": task_identity_followup_merge,
+        "schema_version": "1",
+    }
+    (
+        root / "receipts/controller-bootstrap-github-controls-retry-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(github_controls_retry) + b"\n")
+
+    assert bootstrap_runner._runtime_commit(root) == github_controls_merge
 
 
 def test_post_repair_phases_all_use_the_runtime_commit() -> None:
