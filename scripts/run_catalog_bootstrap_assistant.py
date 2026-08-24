@@ -198,6 +198,10 @@ _GITHUB_CONTROLS_AUDIT_THROUGHPUT_REPAIR_PATHS = (
     "tests/test_catalog_bootstrap_assistant.py",
     "tests/test_catalog_github_controls.py",
 )
+_GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS = (
+    "scripts/run_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_bootstrap_assistant.py",
+)
 _BOOTSTRAP_REQUIRED_CHECK_NAMES = frozenset({"GTBI V7 stage-two required"})
 _EXACT_REPOSITORY_REMOTES = frozenset(
     {
@@ -2268,6 +2272,47 @@ def _validated_github_controls_audit_throughput_repair(
     return operation
 
 
+def _validated_github_controls_package_token_repair(
+    root: Path,
+    prior_repair: dict[str, object],
+) -> dict[str, object]:
+    path = root / "github-controls-package-token-repair-operation-v1.json"
+    operation = _read_json(path)
+    changed_paths = operation.get("changed_paths")
+    if (
+        set(operation)
+        != {
+            "base_commit_sha", "branch", "changed_paths", "head_commit_sha",
+            "merge_commit_sha", "patch_sha256", "pr_number",
+            "prior_runtime_commit_sha", "repository", "required_check",
+            "schema_version",
+        }
+        or path.read_bytes() != _canonical(operation) + b"\n"
+        or operation.get("schema_version") != "1"
+        or operation.get("repository") != REPOSITORY
+        or operation.get("prior_runtime_commit_sha")
+        != prior_repair.get("merge_commit_sha")
+        or operation.get("branch")
+        != "codex/catalog-package-token-bootstrap-recovery"
+        or not isinstance(changed_paths, list)
+        or tuple(changed_paths) != _GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS
+        or not isinstance(operation.get("base_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("base_commit_sha")))
+        or not isinstance(operation.get("head_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("head_commit_sha")))
+        or not isinstance(operation.get("merge_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
+        or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
+        or not isinstance(operation.get("pr_number"), int)
+        or int(operation["pr_number"]) < 1
+        or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
+    ):
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_PACKAGE_TOKEN_INVALID"
+        )
+    return operation
+
+
 def _runtime_commit(root: Path) -> str:
     binding_path = root / "public-binding-operation-v1.json"
     binding = _read_json(binding_path)
@@ -2968,7 +3013,61 @@ def _runtime_commit(root: Path) -> str:
         raise ValueError(
             "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_AUDIT_THROUGHPUT_RETRY_INVALID"
         )
-    return str(throughput_merge)
+    package_token_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-9-v1.json"
+    )
+    if not package_token_retry_path.exists():
+        return str(throughput_merge)
+    if (
+        package_token_retry_path.is_symlink()
+        or package_token_retry_path.is_junction()
+    ):
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_PACKAGE_TOKEN_RETRY_INVALID"
+        )
+    package_token = _validated_github_controls_package_token_repair(
+        root, throughput
+    )
+    package_token_retry = _read_json(package_token_retry_path)
+    package_token_merge = package_token["merge_commit_sha"]
+    if (
+        set(package_token_retry)
+        != {
+            "activity_baseline_sha256", "blocked_state_sha256",
+            "bootstrap_source_commit_sha", "installations",
+            "package_token_merge_commit_sha",
+            "package_token_operation_sha256", "package_token_pr_number",
+            "prior_retry_receipt_sha256", "prior_runtime_commit_sha",
+            "schema_version",
+        }
+        or package_token_retry_path.read_bytes()
+        != _canonical(package_token_retry) + b"\n"
+        or package_token_retry.get("schema_version") != "1"
+        or package_token_retry.get("prior_runtime_commit_sha")
+        != throughput_merge
+        or package_token_retry.get("package_token_merge_commit_sha")
+        != package_token_merge
+        or package_token_retry.get("package_token_pr_number")
+        != package_token.get("pr_number")
+        or package_token_retry.get("package_token_operation_sha256")
+        != hashlib.sha256(_canonical(package_token)).hexdigest()
+        or package_token_retry.get("prior_retry_receipt_sha256")
+        != hashlib.sha256(throughput_retry_path.read_bytes()).hexdigest()
+        or not _SHA256.fullmatch(
+            str(package_token_retry.get("activity_baseline_sha256", ""))
+        )
+        or not _SHA256.fullmatch(
+            str(package_token_retry.get("blocked_state_sha256", ""))
+        )
+        or not _COMMIT.fullmatch(
+            str(package_token_retry.get("bootstrap_source_commit_sha", ""))
+        )
+        or not isinstance(package_token_retry.get("installations"), dict)
+    ):
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_PACKAGE_TOKEN_RETRY_INVALID"
+        )
+    return str(package_token_merge)
 
 
 def _resume_transient_local_install_block(root: Path) -> bool:
@@ -3870,7 +3969,9 @@ def _resume_transient_local_install_block(root: Path) -> bool:
 
 def _resume_transient_github_controls_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
-    if state.phase != "BLOCKED" or state.sequence not in {25, 27, 29, 31, 33, 35}:
+    if state.phase != "BLOCKED" or state.sequence not in {
+        25, 27, 29, 31, 33, 35, 37,
+    }:
         return False
     blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
     blocked = _read_json(blocked_path)
@@ -3878,9 +3979,13 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
         "controller_enabled_readback": False,
         "phase": "GITHUB_CONTROLS_PENDING",
         "reason_code": (
-            "CATALOG_BOOTSTRAP_PHASE_FAILED"
-            if state.sequence == 35
-            else "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED"
+            "CATALOG_BOOTSTRAP_WORKFLOW_FAILED"
+            if state.sequence == 37
+            else (
+                "CATALOG_BOOTSTRAP_PHASE_FAILED"
+                if state.sequence == 35
+                else "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED"
+            )
         ),
         "result": "BLOCKED",
         "schema_version": "1",
@@ -3917,10 +4022,30 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     throughput_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-8-v1.json"
     )
+    package_token_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-9-v1.json"
+    )
     followup_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-2-v1.json"
     )
-    if state.sequence == 35:
+    if state.sequence == 37:
+        if not package_token_retry_path.exists():
+            return False
+        if (
+            package_token_retry_path.is_symlink()
+            or package_token_retry_path.is_junction()
+        ):
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_PACKAGE_TOKEN_RETRY_INVALID"
+            )
+        retry_path = package_token_retry_path
+        evidence = _read_json(retry_path)
+        operation_path = (
+            root / "github-controls-package-token-repair-operation-v1.json"
+        )
+        merge_field = "package_token_merge_commit_sha"
+        expected_paths = _GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS
+    elif state.sequence == 35:
         if not throughput_retry_path.exists():
             return False
         if (
@@ -4064,6 +4189,28 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     ):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_PR_INVALID")
     _verify_github_controls_repair_graph(source, operation)
+    prior_runtime = operation.get("prior_runtime_commit_sha")
+    if prior_runtime is not None:
+        if prior_runtime != evidence.get("prior_runtime_commit_sha"):
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_PACKAGE_TOKEN_ANCESTRY_INVALID"
+            )
+        ancestry = subprocess.run(
+            [
+                "git", "merge-base", "--is-ancestor", str(prior_runtime),
+                str(operation["base_commit_sha"]),
+            ],
+            cwd=source,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=120,
+        )
+        if ancestry.returncode != 0:
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_PACKAGE_TOKEN_ANCESTRY_INVALID"
+            )
     observed_paths = tuple(
         line
         for line in _run(
