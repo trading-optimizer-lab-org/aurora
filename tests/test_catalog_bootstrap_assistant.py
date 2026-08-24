@@ -235,6 +235,14 @@ def _blocked_github_controls_fourth_state():
     return advance_bootstrap_state(state, event("blocked", 31))
 
 
+def _blocked_github_controls_fifth_state():
+    state = advance_bootstrap_state(
+        _blocked_github_controls_fourth_state(),
+        event("github_controls_retry_authorized", 32),
+    )
+    return advance_bootstrap_state(state, event("blocked", 33))
+
+
 def test_only_exact_merge_retry_can_leave_terminal_blocked_state() -> None:
     blocked = _blocked_merge_state()
     assert blocked.phase == "BLOCKED"
@@ -544,6 +552,28 @@ def _github_controls_cache_retention_repair_operation(
         "merge_commit_sha": repair_merge,
         "patch_sha256": "5" * 64,
         "pr_number": 178,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+
+
+def _github_controls_storage_audit_repair_operation(
+    *,
+    prior_merge: str,
+    repair_head: str,
+    repair_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": prior_merge,
+        "branch": "codex/catalog-storage-audit-recovery",
+        "changed_paths": list(
+            bootstrap_runner._GITHUB_CONTROLS_STORAGE_AUDIT_REPAIR_PATHS
+        ),
+        "head_commit_sha": repair_head,
+        "merge_commit_sha": repair_merge,
+        "patch_sha256": "4" * 64,
+        "pr_number": 179,
         "repository": bootstrap_runner.REPOSITORY,
         "required_check": "GTBI V7 stage-two required",
         "schema_version": "1",
@@ -869,6 +899,30 @@ def test_fourth_github_controls_block_waits_for_cache_retention_receipt(
     persist_bootstrap_state(
         root / "state/catalog-bootstrap-state-v1.json",
         _blocked_github_controls_fourth_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "GITHUB_CONTROLS_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+
+    assert bootstrap_runner._resume_transient_github_controls_block(root) is False
+
+
+def test_fifth_github_controls_block_waits_for_storage_audit_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_github_controls_fifth_state(),
     )
     (root / "receipts").mkdir(parents=True)
     blocked = {
@@ -1953,6 +2007,41 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     ).write_bytes(bootstrap_runner._canonical(cache_retry) + b"\n")
 
     assert bootstrap_runner._runtime_commit(root) == cache_merge
+
+    storage_head = "c" * 40
+    storage_merge = "d" * 40
+    storage_operation = _github_controls_storage_audit_repair_operation(
+        prior_merge=cache_merge,
+        repair_head=storage_head,
+        repair_merge=storage_merge,
+    )
+    (
+        root / "github-controls-storage-audit-repair-operation-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(storage_operation) + b"\n")
+    cache_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-6-v1.json"
+    )
+    storage_retry = {
+        "activity_baseline_sha256": "e" * 64,
+        "blocked_state_sha256": "f" * 64,
+        "bootstrap_source_commit_sha": COMMIT,
+        "installations": {"auditor": 2, "requester": 1},
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            cache_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": cache_merge,
+        "schema_version": "1",
+        "storage_audit_merge_commit_sha": storage_merge,
+        "storage_audit_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(storage_operation)
+        ).hexdigest(),
+        "storage_audit_pr_number": 179,
+    }
+    (
+        root / "receipts/controller-bootstrap-github-controls-retry-7-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(storage_retry) + b"\n")
+
+    assert bootstrap_runner._runtime_commit(root) == storage_merge
 
 
 def test_post_repair_phases_all_use_the_runtime_commit() -> None:

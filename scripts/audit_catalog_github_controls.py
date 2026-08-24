@@ -842,6 +842,102 @@ def _billing_actions_storage_evidence(
     }
 
 
+def _active_artifact_inventory(
+    artifacts: tuple[dict[str, object], ...],
+) -> tuple[tuple[dict[str, object], ...], bool]:
+    """Return only live artifacts and reject telemetry with an unknown shape."""
+
+    active: list[dict[str, object]] = []
+    for row in artifacts:
+        expired = row.get("expired")
+        size = row.get("size_in_bytes")
+        if (
+            not isinstance(expired, bool)
+            or isinstance(size, bool)
+            or not isinstance(size, int)
+            or size < 0
+        ):
+            return (), False
+        if not expired:
+            active.append(row)
+    return tuple(active), True
+
+
+def _reported_shared_storage_evidence(
+    *,
+    explicit_shared: int | None,
+    billing_fresh: bool,
+    billing_period_complete: bool,
+    inventory_complete: bool,
+    artifact_inventory_bytes: int,
+    package_inventory_bytes: int,
+) -> dict[str, object]:
+    """Select a current-use value without mislabelling period-average billing."""
+
+    if explicit_shared is not None and billing_fresh:
+        return {
+            "reported_shared_use_bytes": explicit_shared,
+            "billing_snapshot_complete": True,
+            "reported_shared_use_source": "explicit_billing_current_use",
+        }
+    if billing_fresh and billing_period_complete and inventory_complete:
+        return {
+            "reported_shared_use_bytes": (
+                artifact_inventory_bytes + package_inventory_bytes
+            ),
+            "billing_snapshot_complete": True,
+            "reported_shared_use_source": "complete_active_inventory",
+        }
+    return {
+        "reported_shared_use_bytes": 0,
+        "billing_snapshot_complete": False,
+        "reported_shared_use_source": "unavailable",
+    }
+
+
+def _campaign_storage_projection(
+    *,
+    qualification: dict[str, object],
+    caller_workflow: str,
+    caller_job: str,
+    purpose: str,
+) -> tuple[int, int, bool]:
+    """Require campaign projections for production, but not zero-work checks."""
+
+    projected_artifact = qualification.get("projected_artifact_storage_bytes")
+    projected_cache = qualification.get("projected_cache_storage_bytes")
+    if (
+        qualification.get("status") == "ready"
+        and isinstance(projected_artifact, int)
+        and not isinstance(projected_artifact, bool)
+        and projected_artifact >= 0
+        and isinstance(projected_cache, int)
+        and not isinstance(projected_cache, bool)
+        and projected_cache >= 0
+    ):
+        return projected_artifact, projected_cache, True
+    zero_work_callers = {
+        (
+            ".github/workflows/catalog-live-controls-qualification.yml",
+            "qualify_live_admission_controls",
+            "admission",
+        ),
+        (
+            ".github/workflows/catalog-live-controls-qualification.yml",
+            "qualify_live_terminal_controls",
+            "terminal",
+        ),
+        (
+            ".github/workflows/catalog-artifact-keeper.yml",
+            "live_controls_audit_before_maintenance",
+            "maintenance",
+        ),
+    }
+    if (caller_workflow, caller_job, purpose) in zero_work_callers:
+        return 0, 0, True
+    return 0, 0, False
+
+
 def _collect_storage_snapshot(
     *,
     client: GhReadOnlyClient | AppReadOnlyClient,
@@ -852,12 +948,15 @@ def _collect_storage_snapshot(
     github_date: datetime,
     repo_root: Path,
     writer_inventory_complete: bool,
+    caller_workflow: str,
+    caller_job: str,
+    purpose: str,
 ) -> tuple[dict[str, object], bool]:
     artifacts, artifacts_complete = _paginate_object_rows(
         client,
         f"/repos/{repository}/actions/artifacts",
         root="artifacts",
-        max_pages=25,
+        max_pages=2_000,
     )
     caches, caches_complete = _paginate_object_rows(
         client,
@@ -875,12 +974,7 @@ def _collect_storage_snapshot(
         )
         package_rows.extend(rows)
         packages_complete = packages_complete and complete
-    artifact_sizes_valid = all(
-        isinstance(row.get("size_in_bytes"), int)
-        and not isinstance(row.get("size_in_bytes"), bool)
-        and int(row["size_in_bytes"]) >= 0
-        for row in artifacts
-    )
+    active_artifacts, artifact_sizes_valid = _active_artifact_inventory(artifacts)
     package_sizes_valid = not package_rows or all(
         isinstance(row.get("size_in_bytes"), int)
         and not isinstance(row.get("size_in_bytes"), bool)
@@ -938,16 +1032,13 @@ def _collect_storage_snapshot(
     qualification = _load_closed_json(
         repo_root / "config/catalog_operational_qualification_v1.json"
     )
-    projected_artifact = qualification.get("projected_artifact_storage_bytes")
-    projected_cache = qualification.get("projected_cache_storage_bytes")
-    projection_valid = (
-        qualification.get("status") == "ready"
-        and isinstance(projected_artifact, int)
-        and not isinstance(projected_artifact, bool)
-        and projected_artifact >= 0
-        and isinstance(projected_cache, int)
-        and not isinstance(projected_cache, bool)
-        and projected_cache >= 0
+    projected_artifact, projected_cache, projection_valid = (
+        _campaign_storage_projection(
+            qualification=qualification,
+            caller_workflow=caller_workflow,
+            caller_job=caller_job,
+            purpose=purpose,
+        )
     )
     artifact_cutoff = github_date - timedelta(
         hours=desired.billing.artifact_and_packages_reporting_lag_hours
@@ -957,7 +1048,7 @@ def _collect_storage_snapshot(
     )
     unreflected = sum(
         int(row["size_in_bytes"])
-        for row in artifacts
+        for row in active_artifacts
         if artifact_sizes_valid
         and (created := _parse_utc(row.get("created_at"))) is not None
         and created >= artifact_cutoff
@@ -969,7 +1060,35 @@ def _collect_storage_snapshot(
         and (created := _parse_utc(row.get("created_at"))) is not None
         and created >= cache_cutoff
     )
-    billing_complete = billing_fresh and explicit_shared is not None
+    artifact_inventory_bytes = (
+        sum(int(row["size_in_bytes"]) for row in active_artifacts)
+        if artifact_sizes_valid
+        else 0
+    )
+    package_inventory_bytes = (
+        sum(int(row["size_in_bytes"]) for row in package_rows)
+        if package_sizes_valid
+        else 0
+    )
+    shared_evidence = _reported_shared_storage_evidence(
+        explicit_shared=int(explicit_shared) if explicit_shared is not None else None,
+        billing_fresh=billing_fresh,
+        billing_period_complete=(
+            billing_storage_evidence["billing_storage_period_evidence_complete"]
+            is True
+        ),
+        inventory_complete=(
+            artifacts_complete
+            and packages_complete
+            and artifact_sizes_valid
+            and package_sizes_valid
+        ),
+        artifact_inventory_bytes=artifact_inventory_bytes,
+        package_inventory_bytes=package_inventory_bytes,
+    )
+    billing_complete = shared_evidence["billing_snapshot_complete"] is True
+    if shared_evidence["reported_shared_use_source"] == "complete_active_inventory":
+        unreflected = 0
     telemetry_complete = (
         artifacts_complete
         and packages_complete
@@ -989,17 +1108,12 @@ def _collect_storage_snapshot(
         "caches_pagination_complete": caches_complete,
         "writer_inventory_complete": writer_inventory_complete,
         "shared_allowance_bytes": desired.billing.included_shared_storage_bytes,
-        "reported_shared_use_bytes": int(explicit_shared or 0),
-        "artifact_inventory_bytes": sum(
-            int(row["size_in_bytes"]) for row in artifacts
-        )
-        if artifact_sizes_valid
-        else 0,
-        "package_inventory_bytes": sum(
-            int(row["size_in_bytes"]) for row in package_rows
-        )
-        if package_sizes_valid
-        else 0,
+        "reported_shared_use_bytes": shared_evidence["reported_shared_use_bytes"],
+        "reported_shared_use_source": shared_evidence[
+            "reported_shared_use_source"
+        ],
+        "artifact_inventory_bytes": artifact_inventory_bytes,
+        "package_inventory_bytes": package_inventory_bytes,
         "unreflected_upload_bytes": unreflected,
         "reported_cache_use_bytes": int(reported_cache or 0),
         "cache_inventory_bytes": sum(int(row["size_in_bytes"]) for row in caches)
@@ -1169,6 +1283,9 @@ def collect_live_snapshot(
         github_date=github_date,
         repo_root=repo_root,
         writer_inventory_complete=runs_complete and jobs_complete,
+        caller_workflow=caller_workflow,
+        caller_job=caller_job,
+        purpose=purpose,
     )
     github_date = client.github_date
     if github_date is None:
