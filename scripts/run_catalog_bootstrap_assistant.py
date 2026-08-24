@@ -134,6 +134,10 @@ _GITHUB_CONTROLS_REPAIR_PATHS = (
     "tests/test_catalog_bootstrap_assistant.py",
     "tests/test_catalog_github_controls.py",
 )
+_GITHUB_CONTROLS_FOLLOWUP_REPAIR_PATHS = (
+    "scripts/run_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_bootstrap_assistant.py",
+)
 _BOOTSTRAP_REQUIRED_CHECK_NAMES = frozenset({"GTBI V7 stage-two required"})
 _EXACT_REPOSITORY_REMOTES = frozenset(
     {
@@ -1091,6 +1095,44 @@ def _verify_existing_installations(root: Path) -> dict[str, int]:
     return dict(sorted(observed.items()))
 
 
+def _verify_post_install_installations(root: Path) -> dict[str, int]:
+    observed: dict[str, int] = {}
+    manifests = _manifests()
+    key_paths = {
+        "requester": BROKER_ROOT / "secrets/requester-private-key.pem",
+        "auditor": root / "secrets/auditor-pending.pem",
+    }
+    for kind in ("requester", "auditor"):
+        public = _read_json(root / f"{kind}-public-v1.json")
+        installation_id = public.get("installation_id")
+        app_id = public.get("app_id")
+        key_path = key_paths[kind]
+        if (
+            not isinstance(installation_id, int)
+            or not isinstance(app_id, int)
+            or not key_path.is_file()
+            or key_path.is_symlink()
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_RETRY_INSTALLATION_INVALID")
+        key_buffer = bytearray(key_path.read_bytes())
+        client: CatalogBootstrapGitHubClient | None = None
+        try:
+            client = CatalogBootstrapGitHubClient(
+                app_id=app_id,
+                private_key_pem=key_buffer,
+            )
+            access = client.find_exact_installation(getattr(manifests, kind))
+        finally:
+            if client is None:
+                clear_private_material(key_buffer)
+            else:
+                client.close()
+        if access.installation_id != installation_id:
+            raise ValueError("CATALOG_BOOTSTRAP_RETRY_INSTALLATION_INVALID")
+        observed[kind] = installation_id
+    return dict(sorted(observed.items()))
+
+
 def _validated_binding_review(
     root: Path,
     operation: dict[str, object],
@@ -1485,11 +1527,12 @@ def _github_controls_repair_patch_sha256(
     source: Path,
     base_commit: str,
     head_commit: str,
+    changed_paths: tuple[str, ...] = _GITHUB_CONTROLS_REPAIR_PATHS,
 ) -> str:
     result = subprocess.run(
         [
             "git", "diff", "--binary", "--full-index",
-            f"{base_commit}..{head_commit}", "--", *_GITHUB_CONTROLS_REPAIR_PATHS,
+            f"{base_commit}..{head_commit}", "--", *changed_paths,
         ],
         cwd=source,
         check=False,
@@ -1520,6 +1563,7 @@ def _verify_github_controls_repair_graph(
             source,
             str(operation["base_commit_sha"]),
             str(operation["head_commit_sha"]),
+            tuple(str(path) for path in operation["changed_paths"]),
         )
         != operation["patch_sha256"]
     ):
@@ -1906,6 +1950,44 @@ def _validated_github_controls_repair(
     return operation
 
 
+def _validated_github_controls_followup_repair(
+    root: Path,
+    prior_repair: dict[str, object],
+) -> dict[str, object]:
+    path = root / "github-controls-followup-repair-operation-v1.json"
+    operation = _read_json(path)
+    changed_paths = operation.get("changed_paths")
+    if (
+        set(operation)
+        != {
+            "base_commit_sha", "branch", "changed_paths", "head_commit_sha",
+            "merge_commit_sha", "patch_sha256", "pr_number", "repository",
+            "required_check", "schema_version",
+        }
+        or path.read_bytes() != _canonical(operation) + b"\n"
+        or operation.get("schema_version") != "1"
+        or operation.get("repository") != REPOSITORY
+        or operation.get("base_commit_sha") != prior_repair.get("merge_commit_sha")
+        or not isinstance(operation.get("branch"), str)
+        or not re.fullmatch(
+            r"codex/catalog-github-controls-followup-[0-9a-f]{12}",
+            str(operation.get("branch")),
+        )
+        or not isinstance(changed_paths, list)
+        or tuple(changed_paths) != _GITHUB_CONTROLS_FOLLOWUP_REPAIR_PATHS
+        or not isinstance(operation.get("head_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("head_commit_sha")))
+        or not isinstance(operation.get("merge_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
+        or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
+        or not isinstance(operation.get("pr_number"), int)
+        or int(operation["pr_number"]) < 1
+        or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_FOLLOWUP_INVALID")
+    return operation
+
+
 def _runtime_commit(root: Path) -> str:
     binding_path = root / "public-binding-operation-v1.json"
     binding = _read_json(binding_path)
@@ -2275,7 +2357,55 @@ def _runtime_commit(root: Path) -> str:
         or not isinstance(github_controls_retry.get("installations"), dict)
     ):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_RETRY_RECEIPT_INVALID")
-    return str(github_controls_merge)
+    followup_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-2-v1.json"
+    )
+    if not followup_retry_path.exists():
+        return str(github_controls_merge)
+    if followup_retry_path.is_symlink() or followup_retry_path.is_junction():
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_FOLLOWUP_RETRY_INVALID"
+        )
+    followup = _validated_github_controls_followup_repair(
+        root, github_controls
+    )
+    followup_retry = _read_json(followup_retry_path)
+    followup_merge = followup["merge_commit_sha"]
+    if (
+        set(followup_retry)
+        != {
+            "activity_baseline_sha256", "blocked_state_sha256",
+            "bootstrap_source_commit_sha", "followup_merge_commit_sha",
+            "followup_operation_sha256", "followup_pr_number",
+            "installations", "prior_retry_receipt_sha256",
+            "prior_runtime_commit_sha", "schema_version",
+        }
+        or followup_retry_path.read_bytes()
+        != _canonical(followup_retry) + b"\n"
+        or followup_retry.get("schema_version") != "1"
+        or followup_retry.get("prior_runtime_commit_sha")
+        != github_controls_merge
+        or followup_retry.get("followup_merge_commit_sha") != followup_merge
+        or followup_retry.get("followup_pr_number") != followup.get("pr_number")
+        or followup_retry.get("followup_operation_sha256")
+        != hashlib.sha256(_canonical(followup)).hexdigest()
+        or followup_retry.get("prior_retry_receipt_sha256")
+        != hashlib.sha256(github_controls_retry_path.read_bytes()).hexdigest()
+        or not _SHA256.fullmatch(
+            str(followup_retry.get("activity_baseline_sha256", ""))
+        )
+        or not _SHA256.fullmatch(
+            str(followup_retry.get("blocked_state_sha256", ""))
+        )
+        or not _COMMIT.fullmatch(
+            str(followup_retry.get("bootstrap_source_commit_sha", ""))
+        )
+        or not isinstance(followup_retry.get("installations"), dict)
+    ):
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_FOLLOWUP_RETRY_INVALID"
+        )
+    return str(followup_merge)
 
 
 def _resume_transient_local_install_block(root: Path) -> bool:
@@ -3194,24 +3324,44 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_BLOCK_INVALID")
     if root.resolve() != EXPECTED_ROOT.resolve():
         raise ValueError("CATALOG_BOOTSTRAP_ROOT_INVALID")
-    retry_path = root / "receipts/controller-bootstrap-github-controls-retry-v1.json"
-    if not retry_path.exists():
+    first_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-v1.json"
+    )
+    if not first_retry_path.exists():
         return False
-    if retry_path.is_symlink() or retry_path.is_junction():
+    if first_retry_path.is_symlink() or first_retry_path.is_junction():
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_RETRY_RECEIPT_INVALID")
-    evidence = _read_json(retry_path)
     runtime_commit = _runtime_commit(root)
-    if runtime_commit != evidence.get("github_controls_merge_commit_sha"):
+    followup_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-2-v1.json"
+    )
+    if followup_retry_path.exists():
+        if followup_retry_path.is_symlink() or followup_retry_path.is_junction():
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_FOLLOWUP_RETRY_INVALID"
+        )
+        retry_path = followup_retry_path
+        evidence = _read_json(retry_path)
+        operation_path = root / "github-controls-followup-repair-operation-v1.json"
+        merge_field = "followup_merge_commit_sha"
+        expected_paths = _GITHUB_CONTROLS_FOLLOWUP_REPAIR_PATHS
+    else:
+        retry_path = first_retry_path
+        evidence = _read_json(retry_path)
+        operation_path = root / "github-controls-repair-operation-v1.json"
+        merge_field = "github_controls_merge_commit_sha"
+        expected_paths = _GITHUB_CONTROLS_REPAIR_PATHS
+    if runtime_commit != evidence.get(merge_field):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_RETRY_RECEIPT_INVALID")
     if evidence.get("blocked_state_sha256") != hashlib.sha256(
         _state_path(root).read_bytes()
     ).hexdigest():
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_BLOCK_STATE_INVALID")
+    operation = _read_json(operation_path)
     context = _context(root)
     source = Path(str(context["source_root"])).resolve(strict=True)
     if context.get("source_commit_sha") != runtime_commit:
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_CONTEXT_INVALID")
-    operation = _read_json(root / "github-controls-repair-operation-v1.json")
     if (
         _run(["git", "rev-parse", "HEAD"], cwd=source) != runtime_commit
         or _run(["git", "rev-parse", "origin/main"], cwd=source)
@@ -3251,10 +3401,10 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
         ).splitlines()
         if line
     )
-    if observed_paths != _GITHUB_CONTROLS_REPAIR_PATHS:
+    if observed_paths != expected_paths:
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_PATHS_INVALID")
     _wait_for_required_checks(str(operation["pr_number"]), source)
-    if _verify_existing_installations(root) != evidence.get("installations"):
+    if _verify_post_install_installations(root) != evidence.get("installations"):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_INSTALLATIONS_INVALID")
     baseline_path = root / "github-activity-baseline-v1.json"
     baseline = _read_json(baseline_path)

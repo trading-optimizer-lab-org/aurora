@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -415,6 +416,28 @@ def _github_controls_repair_operation(
     }
 
 
+def _github_controls_followup_repair_operation(
+    *,
+    prior_merge: str,
+    repair_head: str,
+    repair_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": prior_merge,
+        "branch": "codex/catalog-github-controls-followup-123456abcdef",
+        "changed_paths": list(
+            bootstrap_runner._GITHUB_CONTROLS_FOLLOWUP_REPAIR_PATHS
+        ),
+        "head_commit_sha": repair_head,
+        "merge_commit_sha": repair_merge,
+        "patch_sha256": "9" * 64,
+        "pr_number": 174,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+
+
 def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None:
     blocked = _blocked_local_install_state()
 
@@ -771,6 +794,54 @@ def test_github_controls_repair_graph_rejects_wrong_patch(
         bootstrap_runner._verify_github_controls_repair_graph(
             tmp_path, operation
         )
+
+
+def test_post_install_verification_uses_installed_requester_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    broker = tmp_path / "broker"
+    (root / "secrets").mkdir(parents=True)
+    (broker / "secrets").mkdir(parents=True)
+    (root / "requester-public-v1.json").write_text(
+        '{"app_id":11,"installation_id":101}\n', encoding="utf-8"
+    )
+    (root / "auditor-public-v1.json").write_text(
+        '{"app_id":22,"installation_id":202}\n', encoding="utf-8"
+    )
+    (broker / "secrets/requester-private-key.pem").write_bytes(b"requester")
+    (root / "secrets/auditor-pending.pem").write_bytes(b"auditor")
+    manifests = SimpleNamespace(requester=object(), auditor=object())
+    observed_keys: list[bytes] = []
+
+    class FakeClient:
+        def __init__(self, *, app_id: int, private_key_pem: bytearray) -> None:
+            self.app_id = app_id
+            observed_keys.append(bytes(private_key_pem))
+
+        def find_exact_installation(self, _manifest: object) -> object:
+            return SimpleNamespace(
+                installation_id=101 if self.app_id == 11 else 202
+            )
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(bootstrap_runner, "BROKER_ROOT", broker)
+    monkeypatch.setattr(bootstrap_runner, "_manifests", lambda: manifests)
+    monkeypatch.setattr(
+        bootstrap_runner, "CatalogBootstrapGitHubClient", FakeClient
+    )
+
+    assert bootstrap_runner._verify_post_install_installations(root) == {
+        "auditor": 202,
+        "requester": 101,
+    }
+    assert observed_keys == [b"requester", b"auditor"]
+    assert (
+        "_verify_post_install_installations"
+        in bootstrap_runner._resume_transient_github_controls_block.__code__.co_names
+    )
 
 
 def test_local_install_recovery_rejects_context_not_bound_to_repair(
@@ -1492,6 +1563,43 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     ).write_bytes(bootstrap_runner._canonical(github_controls_retry) + b"\n")
 
     assert bootstrap_runner._runtime_commit(root) == github_controls_merge
+
+    followup_head = "2" * 40
+    followup_merge = "3" * 40
+    github_controls_followup = _github_controls_followup_repair_operation(
+        prior_merge=github_controls_merge,
+        repair_head=followup_head,
+        repair_merge=followup_merge,
+    )
+    (root / "github-controls-followup-repair-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(github_controls_followup) + b"\n"
+    )
+    github_controls_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-v1.json"
+    )
+    github_controls_followup_retry = {
+        "activity_baseline_sha256": "4" * 64,
+        "blocked_state_sha256": "5" * 64,
+        "bootstrap_source_commit_sha": COMMIT,
+        "followup_merge_commit_sha": followup_merge,
+        "followup_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(github_controls_followup)
+        ).hexdigest(),
+        "followup_pr_number": 174,
+        "installations": {"auditor": 2, "requester": 1},
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            github_controls_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": github_controls_merge,
+        "schema_version": "1",
+    }
+    (
+        root / "receipts/controller-bootstrap-github-controls-retry-2-v1.json"
+    ).write_bytes(
+        bootstrap_runner._canonical(github_controls_followup_retry) + b"\n"
+    )
+
+    assert bootstrap_runner._runtime_commit(root) == followup_merge
 
 
 def test_post_repair_phases_all_use_the_runtime_commit() -> None:
