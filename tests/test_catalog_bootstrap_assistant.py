@@ -227,6 +227,14 @@ def _blocked_github_controls_third_state():
     return advance_bootstrap_state(state, event("blocked", 29))
 
 
+def _blocked_github_controls_fourth_state():
+    state = advance_bootstrap_state(
+        _blocked_github_controls_third_state(),
+        event("github_controls_retry_authorized", 30),
+    )
+    return advance_bootstrap_state(state, event("blocked", 31))
+
+
 def test_only_exact_merge_retry_can_leave_terminal_blocked_state() -> None:
     blocked = _blocked_merge_state()
     assert blocked.phase == "BLOCKED"
@@ -514,6 +522,28 @@ def _github_controls_stable_precondition_repair_operation(
         "merge_commit_sha": repair_merge,
         "patch_sha256": "6" * 64,
         "pr_number": 177,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+
+
+def _github_controls_cache_retention_repair_operation(
+    *,
+    prior_merge: str,
+    repair_head: str,
+    repair_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": prior_merge,
+        "branch": "codex/catalog-cache-retention-limit-recovery",
+        "changed_paths": list(
+            bootstrap_runner._GITHUB_CONTROLS_CACHE_RETENTION_REPAIR_PATHS
+        ),
+        "head_commit_sha": repair_head,
+        "merge_commit_sha": repair_merge,
+        "patch_sha256": "5" * 64,
+        "pr_number": 178,
         "repository": bootstrap_runner.REPOSITORY,
         "required_check": "GTBI V7 stage-two required",
         "schema_version": "1",
@@ -832,6 +862,30 @@ def test_third_github_controls_block_waits_for_stable_precondition_receipt(
     assert bootstrap_runner._resume_transient_github_controls_block(root) is False
 
 
+def test_fourth_github_controls_block_waits_for_cache_retention_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_github_controls_fourth_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "GITHUB_CONTROLS_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+
+    assert bootstrap_runner._resume_transient_github_controls_block(root) is False
+
+
 def test_github_controls_recovery_rejects_any_other_install_root(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -904,10 +958,10 @@ def test_github_controls_repair_graph_rejects_wrong_patch(
 
     def fake_run(arguments: list[str], *, cwd: Path) -> str:
         assert cwd == tmp_path
-        if arguments[-1] == "c" * 40 + "^1":
-            return "a" * 40
-        if arguments[-1] == "c" * 40 + "^2":
-            return "b" * 40
+        if arguments == [
+            "git", "rev-list", "--parents", "-n", "1", "c" * 40
+        ]:
+            return " ".join(("c" * 40, "a" * 40, "b" * 40))
         raise AssertionError(arguments)
 
     monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
@@ -924,6 +978,36 @@ def test_github_controls_repair_graph_rejects_wrong_patch(
         bootstrap_runner._verify_github_controls_repair_graph(
             tmp_path, operation
         )
+
+
+def test_github_controls_repair_graph_accepts_verified_linear_merge(
+    tmp_path: Path, monkeypatch
+) -> None:
+    operation = _github_controls_cache_retention_repair_operation(
+        prior_merge="a" * 40,
+        repair_head="b" * 40,
+        repair_merge="c" * 40,
+    )
+
+    def fake_run(arguments: list[str], *, cwd: Path) -> str:
+        assert cwd == tmp_path
+        assert arguments == [
+            "git", "rev-list", "--parents", "-n", "1", "c" * 40
+        ]
+        return " ".join(("c" * 40, "a" * 40))
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_github_controls_repair_patch_sha256",
+        lambda _source, base, target, _paths: (
+            "5" * 64
+            if base == "a" * 40 and target in {"b" * 40, "c" * 40}
+            else "0" * 64
+        ),
+    )
+
+    bootstrap_runner._verify_github_controls_repair_graph(tmp_path, operation)
 
 
 def test_post_install_verification_uses_installed_requester_key(
@@ -1834,6 +1918,41 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     ).write_bytes(bootstrap_runner._canonical(stable_retry) + b"\n")
 
     assert bootstrap_runner._runtime_commit(root) == stable_merge
+
+    cache_head = "a" * 40
+    cache_merge = "b" * 40
+    cache_operation = _github_controls_cache_retention_repair_operation(
+        prior_merge=stable_merge,
+        repair_head=cache_head,
+        repair_merge=cache_merge,
+    )
+    (
+        root / "github-controls-cache-retention-repair-operation-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(cache_operation) + b"\n")
+    stable_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-5-v1.json"
+    )
+    cache_retry = {
+        "activity_baseline_sha256": "c" * 64,
+        "blocked_state_sha256": "d" * 64,
+        "bootstrap_source_commit_sha": COMMIT,
+        "cache_retention_merge_commit_sha": cache_merge,
+        "cache_retention_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(cache_operation)
+        ).hexdigest(),
+        "cache_retention_pr_number": 178,
+        "installations": {"auditor": 2, "requester": 1},
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            stable_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": stable_merge,
+        "schema_version": "1",
+    }
+    (
+        root / "receipts/controller-bootstrap-github-controls-retry-6-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(cache_retry) + b"\n")
+
+    assert bootstrap_runner._runtime_commit(root) == cache_merge
 
 
 def test_post_repair_phases_all_use_the_runtime_commit() -> None:
