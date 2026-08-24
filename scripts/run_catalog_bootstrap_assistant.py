@@ -41,6 +41,8 @@ from infra.sp500_megarun.catalog_bootstrap_manifest import (
     start_manifest_session,
 )
 from infra.sp500_megarun.catalog_bootstrap_secrets import (
+    AUDITOR_SECRET,
+    ENVIRONMENT,
     clear_private_material,
     store_requester_key_once,
     upload_auditor_key_once,
@@ -1159,7 +1161,25 @@ def _verify_existing_installations(root: Path) -> dict[str, int]:
     return dict(sorted(observed.items()))
 
 
-def _verify_post_install_installations(root: Path) -> dict[str, int]:
+def _protected_environment_secret_exists() -> bool:
+    raw = _run(
+        [
+            "gh", "secret", "list", "--env", ENVIRONMENT, "--repo",
+            REPOSITORY, "--json", "name",
+        ]
+    )
+    rows = json.loads(raw)
+    return isinstance(rows, list) and sum(
+        isinstance(row, dict) and row.get("name") == AUDITOR_SECRET
+        for row in rows
+    ) == 1
+
+
+def _verify_post_install_installations(
+    root: Path,
+    *,
+    allow_uploaded_auditor: bool = False,
+) -> dict[str, int]:
     observed: dict[str, int] = {}
     manifests = _manifests()
     key_paths = {
@@ -1171,6 +1191,16 @@ def _verify_post_install_installations(root: Path) -> dict[str, int]:
         installation_id = public.get("installation_id")
         app_id = public.get("app_id")
         key_path = key_paths[kind]
+        if (
+            kind == "auditor"
+            and allow_uploaded_auditor
+            and isinstance(installation_id, int)
+            and isinstance(app_id, int)
+            and not key_path.exists()
+            and _protected_environment_secret_exists()
+        ):
+            observed[kind] = installation_id
+            continue
         if (
             not isinstance(installation_id, int)
             or not isinstance(app_id, int)
@@ -2293,7 +2323,7 @@ def _validated_github_controls_package_token_repair(
         or operation.get("prior_runtime_commit_sha")
         != prior_repair.get("merge_commit_sha")
         or operation.get("branch")
-        != "codex/catalog-package-token-bootstrap-recovery"
+        != "codex/catalog-uploaded-auditor-recovery"
         or not isinstance(changed_paths, list)
         or tuple(changed_paths) != _GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS
         or not isinstance(operation.get("base_commit_sha"), str)
@@ -4225,7 +4255,10 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     if observed_paths != expected_paths:
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_PATHS_INVALID")
     _wait_for_required_checks(str(operation["pr_number"]), source)
-    if _verify_post_install_installations(root) != evidence.get("installations"):
+    if _verify_post_install_installations(
+        root,
+        allow_uploaded_auditor=state.sequence == 37,
+    ) != evidence.get("installations"):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_INSTALLATIONS_INVALID")
     baseline_path = root / "github-activity-baseline-v1.json"
     baseline = _read_json(baseline_path)
@@ -4462,6 +4495,30 @@ def install_local_components(root: Path) -> None:
     _advance(root, state, "local_install_verified", receipt)
 
 
+def _prepare_auditor_secret(root: Path) -> dict[str, object]:
+    pending = root / "secrets/auditor-pending.pem"
+    staging = root / "secrets/auditor-upload-once.pem"
+    if pending.is_file() and not pending.is_symlink():
+        proof = upload_auditor_key_once(staging, bytearray(pending.read_bytes()))
+        pending.unlink()
+        if pending.exists() or staging.exists():
+            raise ValueError("CATALOG_BOOTSTRAP_AUDITOR_STAGING_NOT_CLEARED")
+        return proof
+    retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-9-v1.json"
+    )
+    if (
+        pending.exists()
+        or staging.exists()
+        or not retry_path.is_file()
+        or retry_path.is_symlink()
+        or retry_path.is_junction()
+        or not _protected_environment_secret_exists()
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_AUDITOR_SECRET_NOT_PROVEN")
+    return {"name": AUDITOR_SECRET, "status": "preserved"}
+
+
 def apply_github_controls(root: Path) -> None:
     state = load_bootstrap_state(_state_path(root))
     context = _context(root)
@@ -4525,12 +4582,7 @@ def apply_github_controls(root: Path) -> None:
     ):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_NOT_PREPARED")
     _set_repository_variable("AURORA_CATALOG_AUDITOR_APP_ID", str(auditor["app_id"]))
-    pending = root / "secrets/auditor-pending.pem"
-    staging = root / "secrets/auditor-upload-once.pem"
-    proof = upload_auditor_key_once(staging, bytearray(pending.read_bytes()))
-    pending.unlink()
-    if pending.exists() or staging.exists():
-        raise ValueError("CATALOG_BOOTSTRAP_AUDITOR_STAGING_NOT_CLEARED")
+    proof = _prepare_auditor_secret(root)
     live = _run_live_qualification(root, protected_commit_sha)
     receipt = {
         "protected_commit_sha": protected_commit_sha,
