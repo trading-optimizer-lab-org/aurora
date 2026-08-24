@@ -166,6 +166,13 @@ _GITHUB_CONTROLS_BILLING_TOKEN_REPAIR_PATHS = (
     "tests/test_catalog_github_controls.py",
     "tests/test_catalog_requester_packaging.py",
 )
+_GITHUB_CONTROLS_STABLE_PRECONDITION_REPAIR_PATHS = (
+    "infra/sp500_megarun/catalog_github_controls.py",
+    "scripts/apply_catalog_github_controls.py",
+    "scripts/run_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_github_controls.py",
+)
 _BOOTSTRAP_REQUIRED_CHECK_NAMES = frozenset({"GTBI V7 stage-two required"})
 _EXACT_REPOSITORY_REMOTES = frozenset(
     {
@@ -2085,6 +2092,43 @@ def _validated_github_controls_billing_token_repair(
     return operation
 
 
+def _validated_github_controls_stable_precondition_repair(
+    root: Path,
+    prior_repair: dict[str, object],
+) -> dict[str, object]:
+    path = root / "github-controls-stable-precondition-repair-operation-v1.json"
+    operation = _read_json(path)
+    changed_paths = operation.get("changed_paths")
+    if (
+        set(operation)
+        != {
+            "base_commit_sha", "branch", "changed_paths", "head_commit_sha",
+            "merge_commit_sha", "patch_sha256", "pr_number", "repository",
+            "required_check", "schema_version",
+        }
+        or path.read_bytes() != _canonical(operation) + b"\n"
+        or operation.get("schema_version") != "1"
+        or operation.get("repository") != REPOSITORY
+        or operation.get("base_commit_sha") != prior_repair.get("merge_commit_sha")
+        or operation.get("branch")
+        != "codex/catalog-controls-stable-state-precondition"
+        or not isinstance(changed_paths, list)
+        or tuple(changed_paths) != _GITHUB_CONTROLS_STABLE_PRECONDITION_REPAIR_PATHS
+        or not isinstance(operation.get("head_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("head_commit_sha")))
+        or not isinstance(operation.get("merge_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
+        or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
+        or not isinstance(operation.get("pr_number"), int)
+        or int(operation["pr_number"]) < 1
+        or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
+    ):
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_STABLE_PRECONDITION_INVALID"
+        )
+    return operation
+
+
 def _runtime_commit(root: Path) -> str:
     binding_path = root / "public-binding-operation-v1.json"
     binding = _read_json(binding_path)
@@ -2602,7 +2646,56 @@ def _runtime_commit(root: Path) -> str:
         raise ValueError(
             "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_BILLING_TOKEN_RETRY_INVALID"
         )
-    return str(billing_token_merge)
+    stable_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-5-v1.json"
+    )
+    if not stable_retry_path.exists():
+        return str(billing_token_merge)
+    if stable_retry_path.is_symlink() or stable_retry_path.is_junction():
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_STABLE_PRECONDITION_RETRY_INVALID"
+        )
+    stable = _validated_github_controls_stable_precondition_repair(
+        root, billing_token
+    )
+    stable_retry = _read_json(stable_retry_path)
+    stable_merge = stable["merge_commit_sha"]
+    if (
+        set(stable_retry)
+        != {
+            "activity_baseline_sha256", "blocked_state_sha256",
+            "bootstrap_source_commit_sha", "installations",
+            "prior_retry_receipt_sha256", "prior_runtime_commit_sha",
+            "schema_version", "stable_precondition_merge_commit_sha",
+            "stable_precondition_operation_sha256",
+            "stable_precondition_pr_number",
+        }
+        or stable_retry_path.read_bytes() != _canonical(stable_retry) + b"\n"
+        or stable_retry.get("schema_version") != "1"
+        or stable_retry.get("prior_runtime_commit_sha") != billing_token_merge
+        or stable_retry.get("stable_precondition_merge_commit_sha")
+        != stable_merge
+        or stable_retry.get("stable_precondition_pr_number")
+        != stable.get("pr_number")
+        or stable_retry.get("stable_precondition_operation_sha256")
+        != hashlib.sha256(_canonical(stable)).hexdigest()
+        or stable_retry.get("prior_retry_receipt_sha256")
+        != hashlib.sha256(billing_token_retry_path.read_bytes()).hexdigest()
+        or not _SHA256.fullmatch(
+            str(stable_retry.get("activity_baseline_sha256", ""))
+        )
+        or not _SHA256.fullmatch(
+            str(stable_retry.get("blocked_state_sha256", ""))
+        )
+        or not _COMMIT.fullmatch(
+            str(stable_retry.get("bootstrap_source_commit_sha", ""))
+        )
+        or not isinstance(stable_retry.get("installations"), dict)
+    ):
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_STABLE_PRECONDITION_RETRY_INVALID"
+        )
+    return str(stable_merge)
 
 
 def _resume_transient_local_install_block(root: Path) -> bool:
@@ -3504,7 +3597,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
 
 def _resume_transient_github_controls_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
-    if state.phase != "BLOCKED" or state.sequence not in {25, 27}:
+    if state.phase != "BLOCKED" or state.sequence not in {25, 27, 29}:
         return False
     blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
     blocked = _read_json(blocked_path)
@@ -3535,10 +3628,27 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     billing_token_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-4-v1.json"
     )
+    stable_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-5-v1.json"
+    )
     followup_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-2-v1.json"
     )
-    if state.sequence == 27:
+    if state.sequence == 29:
+        if not stable_retry_path.exists():
+            return False
+        if stable_retry_path.is_symlink() or stable_retry_path.is_junction():
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_STABLE_PRECONDITION_RETRY_INVALID"
+            )
+        retry_path = stable_retry_path
+        evidence = _read_json(retry_path)
+        operation_path = (
+            root / "github-controls-stable-precondition-repair-operation-v1.json"
+        )
+        merge_field = "stable_precondition_merge_commit_sha"
+        expected_paths = _GITHUB_CONTROLS_STABLE_PRECONDITION_REPAIR_PATHS
+    elif state.sequence == 27:
         if billing_token_retry_path.exists():
             if (
                 billing_token_retry_path.is_symlink()
@@ -3906,7 +4016,7 @@ def apply_github_controls(root: Path) -> None:
         timeout_seconds=900,
     )
     dry = _read_json(dry_path)
-    current_sha = str(dry.get("current_receipt_sha256", ""))
+    current_sha = str(dry.get("current_state_sha256", ""))
     if not _SHA256.fullmatch(current_sha):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_DRY_RUN_INVALID")
     apply_path = root / "receipts/github-controls-apply-v1.json"
@@ -3920,7 +4030,7 @@ def apply_github_controls(root: Path) -> None:
             str(apply_path),
             "--apply",
             "--bootstrap-controls-only",
-            "--expected-current-sha",
+            "--expected-current-state-sha",
             current_sha,
             "--confirm",
             "CATALOG_GITHUB_CONTROLS_V1",

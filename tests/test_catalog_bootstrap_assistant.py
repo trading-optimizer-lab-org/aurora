@@ -219,6 +219,14 @@ def _blocked_github_controls_second_state():
     return advance_bootstrap_state(state, event("blocked", 27))
 
 
+def _blocked_github_controls_third_state():
+    state = advance_bootstrap_state(
+        _blocked_github_controls_second_state(),
+        event("github_controls_retry_authorized", 28),
+    )
+    return advance_bootstrap_state(state, event("blocked", 29))
+
+
 def test_only_exact_merge_retry_can_leave_terminal_blocked_state() -> None:
     blocked = _blocked_merge_state()
     assert blocked.phase == "BLOCKED"
@@ -484,6 +492,28 @@ def _github_controls_billing_token_repair_operation(
         "merge_commit_sha": repair_merge,
         "patch_sha256": "7" * 64,
         "pr_number": 176,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+
+
+def _github_controls_stable_precondition_repair_operation(
+    *,
+    prior_merge: str,
+    repair_head: str,
+    repair_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": prior_merge,
+        "branch": "codex/catalog-controls-stable-state-precondition",
+        "changed_paths": list(
+            bootstrap_runner._GITHUB_CONTROLS_STABLE_PRECONDITION_REPAIR_PATHS
+        ),
+        "head_commit_sha": repair_head,
+        "merge_commit_sha": repair_merge,
+        "patch_sha256": "6" * 64,
+        "pr_number": 177,
         "repository": bootstrap_runner.REPOSITORY,
         "required_check": "GTBI V7 stage-two required",
         "schema_version": "1",
@@ -761,6 +791,30 @@ def test_second_github_controls_block_waits_for_enterprise_repair_receipt(
     persist_bootstrap_state(
         root / "state/catalog-bootstrap-state-v1.json",
         _blocked_github_controls_second_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "GITHUB_CONTROLS_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+
+    assert bootstrap_runner._resume_transient_github_controls_block(root) is False
+
+
+def test_third_github_controls_block_waits_for_stable_precondition_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_github_controls_third_state(),
     )
     (root / "receipts").mkdir(parents=True)
     blocked = {
@@ -1745,6 +1799,41 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     ).write_bytes(bootstrap_runner._canonical(billing_token_retry) + b"\n")
 
     assert bootstrap_runner._runtime_commit(root) == billing_token_merge
+
+    stable_head = "8" * 40
+    stable_merge = "9" * 40
+    stable_operation = _github_controls_stable_precondition_repair_operation(
+        prior_merge=billing_token_merge,
+        repair_head=stable_head,
+        repair_merge=stable_merge,
+    )
+    (
+        root / "github-controls-stable-precondition-repair-operation-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(stable_operation) + b"\n")
+    billing_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-4-v1.json"
+    )
+    stable_retry = {
+        "activity_baseline_sha256": "a" * 64,
+        "blocked_state_sha256": "b" * 64,
+        "bootstrap_source_commit_sha": COMMIT,
+        "installations": {"auditor": 2, "requester": 1},
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            billing_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": billing_token_merge,
+        "schema_version": "1",
+        "stable_precondition_merge_commit_sha": stable_merge,
+        "stable_precondition_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(stable_operation)
+        ).hexdigest(),
+        "stable_precondition_pr_number": 177,
+    }
+    (
+        root / "receipts/controller-bootstrap-github-controls-retry-5-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(stable_retry) + b"\n")
+
+    assert bootstrap_runner._runtime_commit(root) == stable_merge
 
 
 def test_post_repair_phases_all_use_the_runtime_commit() -> None:

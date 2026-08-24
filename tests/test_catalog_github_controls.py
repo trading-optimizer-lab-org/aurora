@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
 import re
@@ -17,6 +17,7 @@ from aurora.infra.sp500_megarun.catalog_github_controls import (
     audit_catalog_github_controls,
     bootstrap_controls_prepared,
     build_github_controls_mutation_plan,
+    github_controls_state_sha256,
     load_catalog_github_auditor,
     load_catalog_github_controls,
 )
@@ -478,6 +479,47 @@ def test_apply_plan_is_deterministic_and_dry_run_data_only() -> None:
     assert all(mutation.method in {"PUT", "POST", "PATCH"} for mutation in first.mutations)
 
 
+def test_controls_state_sha_ignores_observation_envelope_but_detects_drift() -> None:
+    inputs = mutated_protection_snapshots("admins_not_enforced")
+    snapshot = inputs["snapshots"]
+    assert isinstance(snapshot, dict)
+    storage = snapshot["storage"]
+    assert isinstance(storage, dict)
+    storage["billing_storage_period_average_bytes"] = 1_000
+    storage["billing_storage_period_elapsed_seconds"] = 10
+    first = audit_catalog_github_controls(**inputs)
+
+    shifted = deepcopy(inputs)
+    shifted_snapshot = shifted["snapshots"]
+    assert isinstance(shifted_snapshot, dict)
+    later = NOW + timedelta(seconds=30)
+    shifted_snapshot["observed_at"] = later.isoformat().replace("+00:00", "Z")
+    shifted_snapshot["github_api_observed_at"] = later.isoformat().replace(
+        "+00:00", "Z"
+    )
+    shifted_storage = shifted_snapshot["storage"]
+    assert isinstance(shifted_storage, dict)
+    shifted_storage["billing_storage_period_average_bytes"] = 900
+    shifted_storage["billing_storage_period_elapsed_seconds"] = 20
+    second = audit_catalog_github_controls(**shifted)
+
+    assert first.receipt_sha256 != second.receipt_sha256
+    assert github_controls_state_sha256(first) == github_controls_state_sha256(
+        second
+    )
+
+    drifted = deepcopy(shifted)
+    drifted_snapshot = drifted["snapshots"]
+    assert isinstance(drifted_snapshot, dict)
+    cache_settings = drifted_snapshot["cache_settings"]
+    assert isinstance(cache_settings, dict)
+    cache_settings["retention_days"] = 89
+    changed = audit_catalog_github_controls(**drifted)
+    assert github_controls_state_sha256(first) != github_controls_state_sha256(
+        changed
+    )
+
+
 def test_budget_mutations_use_the_enterprise_endpoint_only() -> None:
     inputs = mutated_protection_snapshots("zero_actions_budget_missing")
     receipt = audit_catalog_github_controls(**inputs)
@@ -531,6 +573,8 @@ def test_apply_tool_binds_live_audit_to_observed_default_branch() -> None:
     assert 'protected_commit_sha="0" * 40' not in source
     assert 'protected_commit_sha=observed_default_sha' in source
     assert '"--bootstrap-controls-only"' in source
+    assert '"current_state_sha256"' in source
+    assert '"--expected-current-state-sha"' in source
 
 
 def test_apply_tool_pins_imports_to_its_exact_source_checkout() -> None:
@@ -662,7 +706,7 @@ def test_apply_cli_rejects_stale_expected_state_before_mutation(
             "--output",
             str(output),
             "--apply",
-            "--expected-current-sha",
+            "--expected-current-state-sha",
             "0" * 64,
             "--confirm",
             "CATALOG_GITHUB_CONTROLS_V1",

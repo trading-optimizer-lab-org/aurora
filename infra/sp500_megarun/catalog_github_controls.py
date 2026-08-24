@@ -384,6 +384,27 @@ CatalogGithubControlsReceiptV1 = (
 )
 
 
+def github_controls_state_sha256(
+    receipt: CatalogGithubControlsReceiptV1,
+) -> Sha256:
+    """Hash control state while excluding the per-observation receipt envelope."""
+
+    payload = receipt.model_dump(
+        mode="json",
+        exclude={
+            "receipt_sha256",
+            "observed_at",
+            "github_api_observed_at",
+            "source_snapshot_sha256",
+        },
+    )
+    billing = dict(payload["actions_billing_usage_snapshot"])
+    billing.pop("billing_storage_period_average_bytes", None)
+    billing.pop("billing_storage_period_elapsed_seconds", None)
+    payload["actions_billing_usage_snapshot"] = billing
+    return _sha256(payload)
+
+
 class GithubControlMutationV1(FrozenModel):
     order: int = Field(ge=1)
     method: Literal["PUT", "POST", "PATCH"]
