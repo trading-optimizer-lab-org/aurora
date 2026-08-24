@@ -864,6 +864,25 @@ def test_broker_runs_inline_python_verifiers_from_protected_files() -> None:
     assert source.count(
         "Remove-Item -LiteralPath $DependencyVerifierPath"
     ) == 1
+
+
+def test_broker_read_only_acl_check_rejects_only_mutating_rights() -> None:
+    source = BROKER_INSTALLER.read_text(encoding="utf-8")
+    block = source.split("$ForbiddenReadOnlyRights = (", 1)[1].split(")", 1)[0]
+    for right in (
+        "WriteData",
+        "AppendData",
+        "WriteExtendedAttributes",
+        "WriteAttributes",
+        "Delete",
+        "DeleteSubdirectoriesAndFiles",
+        "ChangePermissions",
+        "TakeOwnership",
+    ):
+        assert f"FileSystemRights]::{right}" in block
+    assert "FileSystemRights]::FullControl" not in block
+    assert "FileSystemRights]::Modify" not in block
+    assert "FileSystemRights]::Write -bor" not in block
     assert source.count(
         "Remove-Item -LiteralPath $FingerprintVerifierPath"
     ) == 1
