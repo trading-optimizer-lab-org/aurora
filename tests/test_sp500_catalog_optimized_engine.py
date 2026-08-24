@@ -1128,7 +1128,10 @@ def test_weekly_keeper_is_read_only_and_cannot_launch_science() -> None:
 
     keeper_path = Path(".github/workflows/catalog-artifact-keeper.yml")
     keeper = load_github_yaml(keeper_path)
-    assert keeper["on"] == {"schedule": [{"cron": "17 3 * * 0"}]}
+    assert keeper["on"] == {
+        "schedule": [{"cron": "17 3 * * 0"}],
+        "workflow_dispatch": {},
+    }
     assert keeper["permissions"] == {
         "actions": "read",
         "contents": "read",
@@ -1146,7 +1149,6 @@ def test_weekly_keeper_is_read_only_and_cannot_launch_science() -> None:
     assert "secrets" not in preservation
     text = keeper_path.read_text("utf-8").lower()
     for forbidden in (
-        "workflow_dispatch",
         "catalog-optimized-run.yml",
         "catalog-component-worker.yml",
         "catalog-optimized-worker.yml",

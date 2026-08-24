@@ -205,7 +205,7 @@ def test_live_audit_is_one_read_only_protected_reusable_job() -> None:
     job = jobs["audit"]
     assert job["environment"] == "catalog-production"
     assert job["runs-on"] == "ubuntu-24.04"
-    assert job["timeout-minutes"] == 5
+    assert job["timeout-minutes"] == 20
     assert job["permissions"] == {"actions": "read", "contents": "read"}
     assert "strategy" not in json.dumps(workflow).casefold()
     rendered = json.dumps(workflow, sort_keys=True)

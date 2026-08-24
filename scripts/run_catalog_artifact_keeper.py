@@ -199,7 +199,7 @@ def _validate_controls_receipt(
             raise KeeperError("KEEPER_ZERO_SPEND_BUDGETS_INVALID")
     if (
         receipt.get("repository_cache_storage_limit_gb") != 10
-        or receipt.get("repository_cache_retention_days") != 90
+        or receipt.get("repository_cache_retention_days") != 7
     ):
         raise KeeperError("KEEPER_CACHE_CONTROLS_INVALID")
     return receipt

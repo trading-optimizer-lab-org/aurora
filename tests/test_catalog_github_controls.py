@@ -23,10 +23,13 @@ from aurora.infra.sp500_megarun.catalog_github_controls import (
 )
 from scripts.audit_catalog_github_controls import (
     AppReadOnlyClient,
+    _active_artifact_inventory,
     _billing_actions_storage_evidence,
     _billing_usage_endpoint,
+    _campaign_storage_projection,
     _paginate_list_rows,
     _paginate_object_rows,
+    _reported_shared_storage_evidence,
 )
 
 
@@ -860,6 +863,138 @@ def test_billing_usage_endpoint_is_bound_to_the_observed_month() -> None:
         "/organizations/trading-optimizer-lab-org/settings/billing/usage"
         "?year=2026&month=8"
     )
+
+
+def test_active_artifact_inventory_excludes_expired_objects() -> None:
+    rows, complete = _active_artifact_inventory(
+        (
+            {"id": 1, "size_in_bytes": 10, "expired": False},
+            {"id": 2, "size_in_bytes": 999, "expired": True},
+        )
+    )
+
+    assert complete is True
+    assert rows == ({"id": 1, "size_in_bytes": 10, "expired": False},)
+
+
+@pytest.mark.parametrize(
+    "row",
+    (
+        {"id": 1, "size_in_bytes": 10},
+        {"id": 1, "size_in_bytes": 10, "expired": "false"},
+        {"id": 1, "size_in_bytes": True, "expired": False},
+        {"id": 1, "size_in_bytes": -1, "expired": False},
+    ),
+)
+def test_active_artifact_inventory_fails_closed_on_unknown_shape(
+    row: dict[str, object],
+) -> None:
+    rows, complete = _active_artifact_inventory((row,))
+
+    assert rows == ()
+    assert complete is False
+
+
+def test_complete_active_inventory_is_safe_current_storage_fallback() -> None:
+    evidence = _reported_shared_storage_evidence(
+        explicit_shared=None,
+        billing_fresh=True,
+        billing_period_complete=True,
+        inventory_complete=True,
+        artifact_inventory_bytes=39_000,
+        package_inventory_bytes=1_000,
+    )
+
+    assert evidence == {
+        "reported_shared_use_bytes": 40_000,
+        "billing_snapshot_complete": True,
+        "reported_shared_use_source": "complete_active_inventory",
+    }
+
+
+def test_current_storage_fallback_requires_fresh_billing_and_complete_inventory() -> None:
+    for updates in (
+        {"billing_fresh": False},
+        {"billing_period_complete": False},
+        {"inventory_complete": False},
+    ):
+        values = {
+            "explicit_shared": None,
+            "billing_fresh": True,
+            "billing_period_complete": True,
+            "inventory_complete": True,
+            "artifact_inventory_bytes": 39_000,
+            "package_inventory_bytes": 1_000,
+            **updates,
+        }
+        evidence = _reported_shared_storage_evidence(**values)
+        assert evidence["billing_snapshot_complete"] is False
+        assert evidence["reported_shared_use_source"] == "unavailable"
+
+
+def test_bootstrap_qualification_uses_zero_campaign_projection() -> None:
+    projection = _campaign_storage_projection(
+        qualification={"status": "blocked"},
+        caller_workflow=(
+            ".github/workflows/catalog-live-controls-qualification.yml"
+        ),
+        caller_job="qualify_live_admission_controls",
+        purpose="admission",
+    )
+
+    assert projection == (0, 0, True)
+
+
+def test_controller_admission_requires_promoted_campaign_projection() -> None:
+    projection = _campaign_storage_projection(
+        qualification={"status": "blocked"},
+        caller_workflow=".github/workflows/catalog-run-controller.yml",
+        caller_job="live_controls_audit_before_reserve",
+        purpose="admission",
+    )
+
+    assert projection == (0, 0, False)
+
+
+def test_keeper_accepts_the_protected_seven_day_cache_policy() -> None:
+    from scripts.run_catalog_artifact_keeper import _validate_controls_receipt
+
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    snapshots["observer_context"] = "github_auditor"
+    snapshots["local_agent"] = {}
+    snapshots["runtime_provenance"].update(
+        {
+            "caller_workflow": ".github/workflows/catalog-artifact-keeper.yml",
+            "caller_job": "live_controls_audit_before_maintenance",
+            "purpose": "maintenance",
+        }
+    )
+    auditor = inputs["auditor"]
+    assert isinstance(auditor, CatalogGithubAuditorV1)
+    snapshots["auditor_installation"] = {
+        "repository_permissions": dict(auditor.required_repository_permissions),
+        "organization_permissions": dict(auditor.required_organization_permissions),
+        "enterprise_permissions": dict(auditor.required_enterprise_permissions),
+        "repositories": [auditor.repository],
+        "token_minted_in_process": True,
+        "fixed_get_endpoints_only": True,
+        "enterprise_credential_kind": "classic_pat",
+        "enterprise_credential_scopes": list(
+            auditor.required_enterprise_token_scopes
+        ),
+        "enterprise_write_blocked_by_client": True,
+    }
+    receipt = audit_catalog_github_controls(**inputs).model_dump(mode="json")
+
+    checked = _validate_controls_receipt(
+        receipt,
+        repository="trading-optimizer-lab-org/aurora",
+        protected_commit_sha="a" * 40,
+    )
+
+    assert checked["repository_cache_retention_days"] == 7
 
 
 class _PagedClient:
