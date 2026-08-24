@@ -191,7 +191,7 @@
         },
         "included_shared_storage_bytes": {"const": 53687091200},
         "repository_cache_storage_limit_gb": {"const": 10},
-        "repository_cache_retention_days": {"const": 90},
+        "repository_cache_retention_days": {"const": 7},
         "artifact_and_packages_reporting_lag_hours": {"const": 12},
         "cache_reporting_lag_minutes": {"const": 5},
         "artifact_storage_safety_fraction": {"const": 0.2},

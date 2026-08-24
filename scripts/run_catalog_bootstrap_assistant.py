@@ -173,6 +173,13 @@ _GITHUB_CONTROLS_STABLE_PRECONDITION_REPAIR_PATHS = (
     "tests/test_catalog_bootstrap_assistant.py",
     "tests/test_catalog_github_controls.py",
 )
+_GITHUB_CONTROLS_CACHE_RETENTION_REPAIR_PATHS = (
+    "config/catalog_github_controls_v1.json",
+    "schemas/catalog_github_controls_v1.schema.json",
+    "scripts/run_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_github_controls.py",
+)
 _BOOTSTRAP_REQUIRED_CHECK_NAMES = frozenset({"GTBI V7 stage-two required"})
 _EXACT_REPOSITORY_REMOTES = frozenset(
     {
@@ -2129,6 +2136,43 @@ def _validated_github_controls_stable_precondition_repair(
     return operation
 
 
+def _validated_github_controls_cache_retention_repair(
+    root: Path,
+    prior_repair: dict[str, object],
+) -> dict[str, object]:
+    path = root / "github-controls-cache-retention-repair-operation-v1.json"
+    operation = _read_json(path)
+    changed_paths = operation.get("changed_paths")
+    if (
+        set(operation)
+        != {
+            "base_commit_sha", "branch", "changed_paths", "head_commit_sha",
+            "merge_commit_sha", "patch_sha256", "pr_number", "repository",
+            "required_check", "schema_version",
+        }
+        or path.read_bytes() != _canonical(operation) + b"\n"
+        or operation.get("schema_version") != "1"
+        or operation.get("repository") != REPOSITORY
+        or operation.get("base_commit_sha") != prior_repair.get("merge_commit_sha")
+        or operation.get("branch")
+        != "codex/catalog-cache-retention-limit-recovery"
+        or not isinstance(changed_paths, list)
+        or tuple(changed_paths) != _GITHUB_CONTROLS_CACHE_RETENTION_REPAIR_PATHS
+        or not isinstance(operation.get("head_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("head_commit_sha")))
+        or not isinstance(operation.get("merge_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
+        or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
+        or not isinstance(operation.get("pr_number"), int)
+        or int(operation["pr_number"]) < 1
+        or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
+    ):
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_CACHE_RETENTION_INVALID"
+        )
+    return operation
+
+
 def _runtime_commit(root: Path) -> str:
     binding_path = root / "public-binding-operation-v1.json"
     binding = _read_json(binding_path)
@@ -2695,7 +2739,51 @@ def _runtime_commit(root: Path) -> str:
         raise ValueError(
             "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_STABLE_PRECONDITION_RETRY_INVALID"
         )
-    return str(stable_merge)
+    cache_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-6-v1.json"
+    )
+    if not cache_retry_path.exists():
+        return str(stable_merge)
+    if cache_retry_path.is_symlink() or cache_retry_path.is_junction():
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_CACHE_RETENTION_RETRY_INVALID"
+        )
+    cache = _validated_github_controls_cache_retention_repair(root, stable)
+    cache_retry = _read_json(cache_retry_path)
+    cache_merge = cache["merge_commit_sha"]
+    if (
+        set(cache_retry)
+        != {
+            "activity_baseline_sha256", "blocked_state_sha256",
+            "bootstrap_source_commit_sha", "cache_retention_merge_commit_sha",
+            "cache_retention_operation_sha256", "cache_retention_pr_number",
+            "installations", "prior_retry_receipt_sha256",
+            "prior_runtime_commit_sha", "schema_version",
+        }
+        or cache_retry_path.read_bytes() != _canonical(cache_retry) + b"\n"
+        or cache_retry.get("schema_version") != "1"
+        or cache_retry.get("prior_runtime_commit_sha") != stable_merge
+        or cache_retry.get("cache_retention_merge_commit_sha") != cache_merge
+        or cache_retry.get("cache_retention_pr_number") != cache.get("pr_number")
+        or cache_retry.get("cache_retention_operation_sha256")
+        != hashlib.sha256(_canonical(cache)).hexdigest()
+        or cache_retry.get("prior_retry_receipt_sha256")
+        != hashlib.sha256(stable_retry_path.read_bytes()).hexdigest()
+        or not _SHA256.fullmatch(
+            str(cache_retry.get("activity_baseline_sha256", ""))
+        )
+        or not _SHA256.fullmatch(
+            str(cache_retry.get("blocked_state_sha256", ""))
+        )
+        or not _COMMIT.fullmatch(
+            str(cache_retry.get("bootstrap_source_commit_sha", ""))
+        )
+        or not isinstance(cache_retry.get("installations"), dict)
+    ):
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_CACHE_RETENTION_RETRY_INVALID"
+        )
+    return str(cache_merge)
 
 
 def _resume_transient_local_install_block(root: Path) -> bool:
@@ -3597,7 +3685,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
 
 def _resume_transient_github_controls_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
-    if state.phase != "BLOCKED" or state.sequence not in {25, 27, 29}:
+    if state.phase != "BLOCKED" or state.sequence not in {25, 27, 29, 31}:
         return False
     blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
     blocked = _read_json(blocked_path)
@@ -3631,10 +3719,27 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     stable_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-5-v1.json"
     )
+    cache_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-6-v1.json"
+    )
     followup_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-2-v1.json"
     )
-    if state.sequence == 29:
+    if state.sequence == 31:
+        if not cache_retry_path.exists():
+            return False
+        if cache_retry_path.is_symlink() or cache_retry_path.is_junction():
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_CACHE_RETENTION_RETRY_INVALID"
+            )
+        retry_path = cache_retry_path
+        evidence = _read_json(retry_path)
+        operation_path = (
+            root / "github-controls-cache-retention-repair-operation-v1.json"
+        )
+        merge_field = "cache_retention_merge_commit_sha"
+        expected_paths = _GITHUB_CONTROLS_CACHE_RETENTION_REPAIR_PATHS
+    elif state.sequence == 29:
         if not stable_retry_path.exists():
             return False
         if stable_retry_path.is_symlink() or stable_retry_path.is_junction():

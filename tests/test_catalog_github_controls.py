@@ -105,7 +105,7 @@ def protected_snapshots() -> dict[str, object]:
         "budget_details": deepcopy(budgets),
         "cache_settings": {
             "storage_limit_gb": 10,
-            "retention_days": 90,
+            "retention_days": desired.billing.repository_cache_retention_days,
         },
         "storage": {
             "telemetry_complete": True,
@@ -237,8 +237,8 @@ def mutated_protection_snapshots(mutation: str) -> dict[str, object]:
         snapshot["budgets"][0]["prevent_further_usage"] = False
     elif mutation == "cache_limit_above_10_gb":
         snapshot["cache_settings"]["storage_limit_gb"] = 20
-    elif mutation == "cache_retention_below_90_days":
-        snapshot["cache_settings"]["retention_days"] = 30
+    elif mutation == "cache_retention_not_7_days":
+        snapshot["cache_settings"]["retention_days"] = 6
     elif mutation == "request_actor_admin":
         snapshot["request_actor_permissions"]["repository_administration"] = "write"
     elif mutation == "local_agent_admin":
@@ -259,6 +259,11 @@ def test_exact_protected_state_passes() -> None:
     assert len(receipt.receipt_sha256) == 64
     assert receipt.observer_context == "bootstrap_local"
     assert receipt.audit_use_context == "controller_admission"
+
+
+def test_cache_retention_matches_github_repository_limit() -> None:
+    desired = load_desired_controls()
+    assert desired.billing.repository_cache_retention_days == 7
 
 
 @pytest.mark.parametrize(
@@ -291,7 +296,7 @@ def test_exact_protected_state_passes() -> None:
         ("budget_wrong_repository", "ZERO_BUDGET_REPOSITORY_SCOPE_EXACT"),
         ("actions_budget_does_not_stop", "ZERO_ACTIONS_SPEND_STOP_REQUIRED"),
         ("cache_limit_above_10_gb", "FREE_CACHE_STORAGE_LIMIT_REQUIRED"),
-        ("cache_retention_below_90_days", "CACHE_RETENTION_POLICY_REQUIRED"),
+        ("cache_retention_not_7_days", "CACHE_RETENTION_POLICY_REQUIRED"),
         ("request_actor_admin", "REQUEST_ACTOR_NON_ADMIN"),
         ("local_agent_admin", "AGENT_ADMIN_CREDENTIAL_EXPOSED"),
         ("local_agent_requester_key", "AGENT_REQUESTER_CREDENTIAL_EXPOSED"),
