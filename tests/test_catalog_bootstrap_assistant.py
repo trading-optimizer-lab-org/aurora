@@ -191,6 +191,15 @@ def _blocked_sixth_local_install_state():
     return advance_bootstrap_state(state, event("blocked", 20))
 
 
+def _blocked_seventh_local_install_state():
+    state = _blocked_sixth_local_install_state()
+    state = advance_bootstrap_state(
+        state,
+        event("local_install_retry_authorized", 21),
+    )
+    return advance_bootstrap_state(state, event("blocked", 22))
+
+
 def test_only_exact_merge_retry_can_leave_terminal_blocked_state() -> None:
     blocked = _blocked_merge_state()
     assert blocked.phase == "BLOCKED"
@@ -332,6 +341,28 @@ def _local_install_acl_repair_operation(
     }
 
 
+def _local_install_task_identity_repair_operation(
+    *,
+    acl_merge: str,
+    task_identity_head: str,
+    task_identity_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": acl_merge,
+        "branch": "codex/catalog-local-install-task-identity-fedcba654321",
+        "changed_paths": list(
+            bootstrap_runner._LOCAL_INSTALL_TASK_IDENTITY_REPAIR_PATHS
+        ),
+        "head_commit_sha": task_identity_head,
+        "merge_commit_sha": task_identity_merge,
+        "patch_sha256": "3" * 64,
+        "pr_number": 171,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+
+
 def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None:
     blocked = _blocked_local_install_state()
 
@@ -394,6 +425,17 @@ def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None
     )
     assert resumed_sixth.phase == "LOCAL_INSTALL_PENDING"
     assert resumed_sixth.sequence == 21
+
+    blocked_seventh = advance_bootstrap_state(
+        resumed_sixth,
+        event("blocked", 22),
+    )
+    resumed_seventh = advance_bootstrap_state(
+        blocked_seventh,
+        event("local_install_retry_authorized", 23),
+    )
+    assert resumed_seventh.phase == "LOCAL_INSTALL_PENDING"
+    assert resumed_seventh.sequence == 23
 
 
 def test_second_local_install_block_enters_protected_recovery(
@@ -503,6 +545,31 @@ def test_sixth_local_install_block_enters_protected_recovery(
     persist_bootstrap_state(
         root / "state/catalog-bootstrap-state-v1.json",
         _blocked_sixth_local_install_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "LOCAL_INSTALL_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+
+    with pytest.raises(FileNotFoundError):
+        bootstrap_runner._resume_transient_local_install_block(root)
+
+
+def test_seventh_local_install_block_enters_protected_recovery(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_seventh_local_install_state(),
     )
     (root / "receipts").mkdir(parents=True)
     blocked = {
@@ -1156,6 +1223,41 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     ).write_bytes(bootstrap_runner._canonical(sixth_retry) + b"\n")
 
     assert bootstrap_runner._runtime_commit(root) == acl_merge
+
+    task_identity_head = "b" * 40
+    task_identity_merge = "c" * 40
+    task_identity = _local_install_task_identity_repair_operation(
+        acl_merge=acl_merge,
+        task_identity_head=task_identity_head,
+        task_identity_merge=task_identity_merge,
+    )
+    (
+        root / "local-install-task-identity-repair-operation-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(task_identity) + b"\n")
+    sixth_retry_path = (
+        root / "receipts/controller-bootstrap-local-install-retry-6-v1.json"
+    )
+    seventh_retry = {
+        "activity_baseline_sha256": "d" * 64,
+        "blocked_state_sha256": "e" * 64,
+        "bootstrap_source_commit_sha": COMMIT,
+        "installations": {"auditor": 2, "requester": 1},
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            sixth_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": acl_merge,
+        "schema_version": "1",
+        "task_identity_merge_commit_sha": task_identity_merge,
+        "task_identity_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(task_identity)
+        ).hexdigest(),
+        "task_identity_pr_number": 171,
+    }
+    (
+        root / "receipts/controller-bootstrap-local-install-retry-7-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(seventh_retry) + b"\n")
+
+    assert bootstrap_runner._runtime_commit(root) == task_identity_merge
 
 
 def test_post_repair_phases_all_use_the_runtime_commit() -> None:
