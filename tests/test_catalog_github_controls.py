@@ -403,6 +403,10 @@ def test_auditor_app_is_read_only() -> None:
     }
     assert desired.required_organization_permissions == {"administration": "read"}
     assert desired.required_enterprise_permissions == {"enterprise_billing": "read"}
+    assert desired.enterprise_billing_token_environment_secret == (
+        "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"
+    )
+    assert desired.required_enterprise_token_scopes == ("manage_billing:enterprise",)
     assert not any(value == "write" for value in desired.required_repository_permissions.values())
 
 
@@ -695,6 +699,11 @@ def test_github_auditor_receipt_requires_exact_read_only_installation() -> None:
         "repositories": [auditor.repository],
         "token_minted_in_process": True,
         "fixed_get_endpoints_only": True,
+        "enterprise_credential_kind": "classic_pat",
+        "enterprise_credential_scopes": list(
+            auditor.required_enterprise_token_scopes
+        ),
+        "enterprise_write_blocked_by_client": True,
     }
     receipt = audit_catalog_github_controls(**inputs)
     assert receipt.status == "ready"

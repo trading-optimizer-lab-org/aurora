@@ -468,6 +468,28 @@ def _github_controls_enterprise_repair_operation(
     }
 
 
+def _github_controls_billing_token_repair_operation(
+    *,
+    prior_merge: str,
+    repair_head: str,
+    repair_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": prior_merge,
+        "branch": "codex/catalog-billing-audit-token-recovery",
+        "changed_paths": list(
+            bootstrap_runner._GITHUB_CONTROLS_BILLING_TOKEN_REPAIR_PATHS
+        ),
+        "head_commit_sha": repair_head,
+        "merge_commit_sha": repair_merge,
+        "patch_sha256": "7" * 64,
+        "pr_number": 176,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+
+
 def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None:
     blocked = _blocked_local_install_state()
 
@@ -1688,6 +1710,41 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     ).write_bytes(bootstrap_runner._canonical(enterprise_retry) + b"\n")
 
     assert bootstrap_runner._runtime_commit(root) == enterprise_merge
+
+    billing_token_head = "6" * 40
+    billing_token_merge = "7" * 40
+    billing_token_operation = _github_controls_billing_token_repair_operation(
+        prior_merge=enterprise_merge,
+        repair_head=billing_token_head,
+        repair_merge=billing_token_merge,
+    )
+    (
+        root / "github-controls-billing-token-repair-operation-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(billing_token_operation) + b"\n")
+    enterprise_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-3-v1.json"
+    )
+    billing_token_retry = {
+        "activity_baseline_sha256": "8" * 64,
+        "billing_token_merge_commit_sha": billing_token_merge,
+        "billing_token_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(billing_token_operation)
+        ).hexdigest(),
+        "billing_token_pr_number": 176,
+        "blocked_state_sha256": "9" * 64,
+        "bootstrap_source_commit_sha": COMMIT,
+        "installations": {"auditor": 2, "requester": 1},
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            enterprise_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": enterprise_merge,
+        "schema_version": "1",
+    }
+    (
+        root / "receipts/controller-bootstrap-github-controls-retry-4-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(billing_token_retry) + b"\n")
+
+    assert bootstrap_runner._runtime_commit(root) == billing_token_merge
 
 
 def test_post_repair_phases_all_use_the_runtime_commit() -> None:

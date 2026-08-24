@@ -361,6 +361,7 @@ def _broker_main() -> int:
             "AURORA_CATALOG_AUDITOR_PRIVATE_KEY_PATH",
             "AURORA_CATALOG_AUDITOR_JWT",
             "AURORA_CATALOG_AUDITOR_TOKEN",
+            "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
         )
     ):
         raise RuntimeError("AGENT_AUDITOR_CREDENTIAL_EXPOSED")

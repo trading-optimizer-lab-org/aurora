@@ -108,6 +108,7 @@
     "config_path": "config/catalog_github_auditor_v1.json",
     "app_id_variable": "AURORA_CATALOG_AUDITOR_APP_ID",
     "private_key_environment_secret": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+    "enterprise_billing_token_environment_secret": "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
     "only_token_consumer_workflow": ".github/workflows/catalog-live-controls-audit.yml"
   },
   "entrypoints": {

@@ -221,6 +221,7 @@ class AuditorReferenceV1(FrozenModel):
     config_path: str
     app_id_variable: str
     private_key_environment_secret: str
+    enterprise_billing_token_environment_secret: str
     only_token_consumer_workflow: str
 
 
@@ -276,8 +277,10 @@ class CatalogGithubAuditorV1(FrozenModel):
     required_repository_permissions: Mapping[str, Literal["read"]]
     required_organization_permissions: Mapping[str, Literal["read"]]
     required_enterprise_permissions: Mapping[str, Literal["read"]]
+    required_enterprise_token_scopes: tuple[str, ...]
     forbidden_write_permissions: tuple[str, ...]
     private_key_environment_secret: str
+    enterprise_billing_token_environment_secret: str
     app_id_variable: str
 
     @model_validator(mode="after")
@@ -598,6 +601,14 @@ def _auditor_proof_is_exact(
     if proof.get("token_minted_in_process") is not True:
         return False
     if proof.get("fixed_get_endpoints_only") is not True:
+        return False
+    if proof.get("enterprise_credential_kind") != "classic_pat":
+        return False
+    if proof.get("enterprise_credential_scopes") != list(
+        auditor.required_enterprise_token_scopes
+    ):
+        return False
+    if proof.get("enterprise_write_blocked_by_client") is not True:
         return False
     permissions = {
         **_mapping(repository_permissions),
