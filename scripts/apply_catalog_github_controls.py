@@ -4,11 +4,41 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import re
 import subprocess
 import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _pin_aurora_source_checkout() -> None:
+    sys.meta_path[:] = [
+        finder
+        for finder in sys.meta_path
+        if not getattr(finder, "__module__", "").startswith(
+            "__editable___aurora_"
+        )
+    ]
+    for name in tuple(sys.modules):
+        if name.startswith("aurora."):
+            del sys.modules[name]
+    source_init = ROOT / "__init__.py"
+    spec = importlib.util.spec_from_file_location(
+        "aurora",
+        source_init,
+        submodule_search_locations=[str(ROOT)],
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("AURORA_SOURCE_IMPORT_FAILED")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["aurora"] = module
+    spec.loader.exec_module(module)
+
+
+_pin_aurora_source_checkout()
 
 from aurora.infra.sp500_megarun.catalog_github_controls import (
     audit_catalog_github_controls,
@@ -27,7 +57,6 @@ from audit_catalog_github_controls import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 CONFIRMATION = "CATALOG_GITHUB_CONTROLS_V1"
 

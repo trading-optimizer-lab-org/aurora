@@ -509,6 +509,19 @@ def test_apply_tool_binds_live_audit_to_observed_default_branch() -> None:
     assert '"--bootstrap-controls-only"' in source
 
 
+def test_apply_tool_pins_imports_to_its_exact_source_checkout() -> None:
+    source = (ROOT / "scripts/apply_catalog_github_controls.py").read_text("utf-8")
+    pin = source.index("\n_pin_aurora_source_checkout()\n")
+    catalog_import = source.index(
+        "from aurora.infra.sp500_megarun.catalog_github_controls import"
+    )
+    assert pin < catalog_import
+    assert '"__editable___aurora_"' in source
+    assert 'name.startswith("aurora.")' in source
+    assert 'spec_from_file_location(\n        "aurora"' in source
+    assert "submodule_search_locations=[str(ROOT)]" in source
+
+
 def test_branch_mutation_uses_the_github_rest_shape() -> None:
     inputs = mutated_protection_snapshots("admins_not_enforced")
     receipt = audit_catalog_github_controls(**inputs)
