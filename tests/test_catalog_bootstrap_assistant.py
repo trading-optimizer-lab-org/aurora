@@ -243,6 +243,14 @@ def _blocked_github_controls_fifth_state():
     return advance_bootstrap_state(state, event("blocked", 33))
 
 
+def _blocked_github_controls_sixth_state():
+    state = advance_bootstrap_state(
+        _blocked_github_controls_fifth_state(),
+        event("github_controls_retry_authorized", 34),
+    )
+    return advance_bootstrap_state(state, event("blocked", 35))
+
+
 def test_only_exact_merge_retry_can_leave_terminal_blocked_state() -> None:
     blocked = _blocked_merge_state()
     assert blocked.phase == "BLOCKED"
@@ -574,6 +582,28 @@ def _github_controls_storage_audit_repair_operation(
         "merge_commit_sha": repair_merge,
         "patch_sha256": "4" * 64,
         "pr_number": 179,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+
+
+def _github_controls_audit_throughput_repair_operation(
+    *,
+    prior_merge: str,
+    repair_head: str,
+    repair_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": prior_merge,
+        "branch": "codex/catalog-controls-audit-throughput",
+        "changed_paths": list(
+            bootstrap_runner._GITHUB_CONTROLS_AUDIT_THROUGHPUT_REPAIR_PATHS
+        ),
+        "head_commit_sha": repair_head,
+        "merge_commit_sha": repair_merge,
+        "patch_sha256": "3" * 64,
+        "pr_number": 180,
         "repository": bootstrap_runner.REPOSITORY,
         "required_check": "GTBI V7 stage-two required",
         "schema_version": "1",
@@ -938,6 +968,49 @@ def test_fifth_github_controls_block_waits_for_storage_audit_receipt(
     monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
 
     assert bootstrap_runner._resume_transient_github_controls_block(root) is False
+
+
+def test_sixth_github_controls_block_waits_for_audit_throughput_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        _blocked_github_controls_sixth_state(),
+    )
+    (root / "receipts").mkdir(parents=True)
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "GITHUB_CONTROLS_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_PHASE_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-blocked-v1.json").write_bytes(
+        bootstrap_runner._canonical(blocked) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+
+    assert bootstrap_runner._resume_transient_github_controls_block(root) is False
+
+
+def test_audit_throughput_repair_operation_is_validated(tmp_path: Path) -> None:
+    prior = {"merge_commit_sha": "a" * 40}
+    operation = _github_controls_audit_throughput_repair_operation(
+        prior_merge="a" * 40,
+        repair_head="b" * 40,
+        repair_merge="c" * 40,
+    )
+    path = tmp_path / "github-controls-audit-throughput-repair-operation-v1.json"
+    path.write_bytes(bootstrap_runner._canonical(operation) + b"\n")
+
+    assert (
+        bootstrap_runner._validated_github_controls_audit_throughput_repair(
+            tmp_path,
+            prior,
+        )
+        == operation
+    )
 
 
 def test_github_controls_recovery_rejects_any_other_install_root(
@@ -2042,6 +2115,41 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     ).write_bytes(bootstrap_runner._canonical(storage_retry) + b"\n")
 
     assert bootstrap_runner._runtime_commit(root) == storage_merge
+
+    throughput_head = "e" * 40
+    throughput_merge = "f" * 40
+    throughput_operation = _github_controls_audit_throughput_repair_operation(
+        prior_merge=storage_merge,
+        repair_head=throughput_head,
+        repair_merge=throughput_merge,
+    )
+    (
+        root / "github-controls-audit-throughput-repair-operation-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(throughput_operation) + b"\n")
+    storage_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-7-v1.json"
+    )
+    throughput_retry = {
+        "activity_baseline_sha256": "1" * 64,
+        "audit_throughput_merge_commit_sha": throughput_merge,
+        "audit_throughput_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(throughput_operation)
+        ).hexdigest(),
+        "audit_throughput_pr_number": 180,
+        "blocked_state_sha256": "2" * 64,
+        "bootstrap_source_commit_sha": COMMIT,
+        "installations": {"auditor": 2, "requester": 1},
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            storage_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": storage_merge,
+        "schema_version": "1",
+    }
+    (
+        root / "receipts/controller-bootstrap-github-controls-retry-8-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(throughput_retry) + b"\n")
+
+    assert bootstrap_runner._runtime_commit(root) == throughput_merge
 
 
 def test_post_repair_phases_all_use_the_runtime_commit() -> None:

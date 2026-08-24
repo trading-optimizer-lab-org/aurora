@@ -191,6 +191,13 @@ _GITHUB_CONTROLS_STORAGE_AUDIT_REPAIR_PATHS = (
     "tests/test_catalog_github_controls.py",
     "tests/test_sp500_catalog_optimized_engine.py",
 )
+_GITHUB_CONTROLS_AUDIT_THROUGHPUT_REPAIR_PATHS = (
+    "scripts/apply_catalog_github_controls.py",
+    "scripts/audit_catalog_github_controls.py",
+    "scripts/run_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_bootstrap_assistant.py",
+    "tests/test_catalog_github_controls.py",
+)
 _BOOTSTRAP_REQUIRED_CHECK_NAMES = frozenset({"GTBI V7 stage-two required"})
 _EXACT_REPOSITORY_REMOTES = frozenset(
     {
@@ -2225,6 +2232,42 @@ def _validated_github_controls_storage_audit_repair(
     return operation
 
 
+def _validated_github_controls_audit_throughput_repair(
+    root: Path,
+    prior_repair: dict[str, object],
+) -> dict[str, object]:
+    path = root / "github-controls-audit-throughput-repair-operation-v1.json"
+    operation = _read_json(path)
+    changed_paths = operation.get("changed_paths")
+    if (
+        set(operation)
+        != {
+            "base_commit_sha", "branch", "changed_paths", "head_commit_sha",
+            "merge_commit_sha", "patch_sha256", "pr_number", "repository",
+            "required_check", "schema_version",
+        }
+        or path.read_bytes() != _canonical(operation) + b"\n"
+        or operation.get("schema_version") != "1"
+        or operation.get("repository") != REPOSITORY
+        or operation.get("base_commit_sha") != prior_repair.get("merge_commit_sha")
+        or operation.get("branch") != "codex/catalog-controls-audit-throughput"
+        or not isinstance(changed_paths, list)
+        or tuple(changed_paths) != _GITHUB_CONTROLS_AUDIT_THROUGHPUT_REPAIR_PATHS
+        or not isinstance(operation.get("head_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("head_commit_sha")))
+        or not isinstance(operation.get("merge_commit_sha"), str)
+        or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
+        or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
+        or not isinstance(operation.get("pr_number"), int)
+        or int(operation["pr_number"]) < 1
+        or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
+    ):
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_AUDIT_THROUGHPUT_INVALID"
+        )
+    return operation
+
+
 def _runtime_commit(root: Path) -> str:
     binding_path = root / "public-binding-operation-v1.json"
     binding = _read_json(binding_path)
@@ -2879,7 +2922,53 @@ def _runtime_commit(root: Path) -> str:
         raise ValueError(
             "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_STORAGE_AUDIT_RETRY_INVALID"
         )
-    return str(storage_merge)
+    throughput_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-8-v1.json"
+    )
+    if not throughput_retry_path.exists():
+        return str(storage_merge)
+    if throughput_retry_path.is_symlink() or throughput_retry_path.is_junction():
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_AUDIT_THROUGHPUT_RETRY_INVALID"
+        )
+    throughput = _validated_github_controls_audit_throughput_repair(root, storage)
+    throughput_retry = _read_json(throughput_retry_path)
+    throughput_merge = throughput["merge_commit_sha"]
+    if (
+        set(throughput_retry)
+        != {
+            "activity_baseline_sha256", "audit_throughput_merge_commit_sha",
+            "audit_throughput_operation_sha256", "audit_throughput_pr_number",
+            "blocked_state_sha256", "bootstrap_source_commit_sha", "installations",
+            "prior_retry_receipt_sha256", "prior_runtime_commit_sha", "schema_version",
+        }
+        or throughput_retry_path.read_bytes()
+        != _canonical(throughput_retry) + b"\n"
+        or throughput_retry.get("schema_version") != "1"
+        or throughput_retry.get("prior_runtime_commit_sha") != storage_merge
+        or throughput_retry.get("audit_throughput_merge_commit_sha")
+        != throughput_merge
+        or throughput_retry.get("audit_throughput_pr_number")
+        != throughput.get("pr_number")
+        or throughput_retry.get("audit_throughput_operation_sha256")
+        != hashlib.sha256(_canonical(throughput)).hexdigest()
+        or throughput_retry.get("prior_retry_receipt_sha256")
+        != hashlib.sha256(storage_retry_path.read_bytes()).hexdigest()
+        or not _SHA256.fullmatch(
+            str(throughput_retry.get("activity_baseline_sha256", ""))
+        )
+        or not _SHA256.fullmatch(
+            str(throughput_retry.get("blocked_state_sha256", ""))
+        )
+        or not _COMMIT.fullmatch(
+            str(throughput_retry.get("bootstrap_source_commit_sha", ""))
+        )
+        or not isinstance(throughput_retry.get("installations"), dict)
+    ):
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_AUDIT_THROUGHPUT_RETRY_INVALID"
+        )
+    return str(throughput_merge)
 
 
 def _resume_transient_local_install_block(root: Path) -> bool:
@@ -3781,14 +3870,18 @@ def _resume_transient_local_install_block(root: Path) -> bool:
 
 def _resume_transient_github_controls_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
-    if state.phase != "BLOCKED" or state.sequence not in {25, 27, 29, 31, 33}:
+    if state.phase != "BLOCKED" or state.sequence not in {25, 27, 29, 31, 33, 35}:
         return False
     blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
     blocked = _read_json(blocked_path)
     expected_block = {
         "controller_enabled_readback": False,
         "phase": "GITHUB_CONTROLS_PENDING",
-        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "reason_code": (
+            "CATALOG_BOOTSTRAP_PHASE_FAILED"
+            if state.sequence == 35
+            else "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED"
+        ),
         "result": "BLOCKED",
         "schema_version": "1",
     }
@@ -3821,10 +3914,30 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     storage_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-7-v1.json"
     )
+    throughput_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-8-v1.json"
+    )
     followup_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-2-v1.json"
     )
-    if state.sequence == 33:
+    if state.sequence == 35:
+        if not throughput_retry_path.exists():
+            return False
+        if (
+            throughput_retry_path.is_symlink()
+            or throughput_retry_path.is_junction()
+        ):
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_AUDIT_THROUGHPUT_RETRY_INVALID"
+            )
+        retry_path = throughput_retry_path
+        evidence = _read_json(retry_path)
+        operation_path = (
+            root / "github-controls-audit-throughput-repair-operation-v1.json"
+        )
+        merge_field = "audit_throughput_merge_commit_sha"
+        expected_paths = _GITHUB_CONTROLS_AUDIT_THROUGHPUT_REPAIR_PATHS
+    elif state.sequence == 33:
         if not storage_retry_path.exists():
             return False
         if storage_retry_path.is_symlink() or storage_retry_path.is_junction():
@@ -4231,7 +4344,7 @@ def apply_github_controls(root: Path) -> None:
             str(dry_path),
         ],
         cwd=source,
-        timeout_seconds=900,
+        timeout_seconds=1800,
     )
     dry = _read_json(dry_path)
     current_sha = str(dry.get("current_state_sha256", ""))
@@ -4248,13 +4361,15 @@ def apply_github_controls(root: Path) -> None:
             str(apply_path),
             "--apply",
             "--bootstrap-controls-only",
+            "--verified-dry-run",
+            str(dry_path),
             "--expected-current-state-sha",
             current_sha,
             "--confirm",
             "CATALOG_GITHUB_CONTROLS_V1",
         ],
         cwd=source,
-        timeout_seconds=900,
+        timeout_seconds=1800,
     )
     applied = _read_json(apply_path)
     if applied.get("bootstrap_controls_prepared") is not True and (

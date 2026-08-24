@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Mapping
 
 import requests
 import yaml
@@ -1132,7 +1132,30 @@ def _collect_storage_snapshot(
         ),
         **billing_storage_evidence,
     }
-    return storage, telemetry_complete
+    return storage, _storage_pagination_complete(storage)
+
+
+def _storage_pagination_complete(storage: Mapping[str, object]) -> bool:
+    """Keep collection completeness independent from optional billing telemetry."""
+
+    return all(
+        storage.get(key) is True
+        for key in (
+            "artifacts_pagination_complete",
+            "packages_pagination_complete",
+            "caches_pagination_complete",
+            "writer_inventory_complete",
+        )
+    )
+
+
+def _final_observation_timestamps(github_date: datetime) -> tuple[str, str]:
+    """Seal both freshness timestamps from the final GitHub response."""
+
+    if github_date.tzinfo is None or github_date.utcoffset() is None:
+        raise ValueError("CATALOG_GITHUB_DATE_HEADER_INVALID")
+    stamp = github_date.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return stamp, stamp
 
 
 def _paginate_list_rows(
@@ -1270,7 +1293,6 @@ def collect_live_snapshot(
         authority_records=authority_records,
     )
     request_actor = _request_actor_permissions(client=client, repo_root=repo_root)
-    now = datetime.now(tz=UTC)
     github_date = client.github_date
     if github_date is None:
         raise ValueError("CATALOG_GITHUB_DATE_HEADER_MISSING")
@@ -1313,6 +1335,13 @@ def collect_live_snapshot(
     else:
         assert isinstance(client, AppReadOnlyClient)
         installation = client.installation_proof
+    observed_default_sha = _dict(
+        client.get(f"/repos/{repository}/commits/{desired.default_branch}")
+    ).get("sha")
+    github_date = client.github_date
+    if github_date is None:
+        raise ValueError("CATALOG_GITHUB_DATE_HEADER_MISSING")
+    observed_at, github_api_observed_at = _final_observation_timestamps(github_date)
     return {
         "observer_context": observer_context,
         "runtime_provenance": {
@@ -1323,8 +1352,8 @@ def collect_live_snapshot(
             "protected_commit_sha": protected_commit_sha,
             "verified": True,
         },
-        "observed_at": now.isoformat().replace("+00:00", "Z"),
-        "github_api_observed_at": github_date.isoformat().replace("+00:00", "Z"),
+        "observed_at": observed_at,
+        "github_api_observed_at": github_api_observed_at,
         "repository": {
             "id": repo.get("id"),
             "node_id": repo.get("node_id"),
@@ -1333,9 +1362,7 @@ def collect_live_snapshot(
             "visibility": repo.get("visibility"),
             "private": repo.get("private"),
             "default_branch": repo.get("default_branch"),
-            "default_branch_sha": _dict(
-                client.get(f"/repos/{repository}/commits/{desired.default_branch}")
-            ).get("sha"),
+            "default_branch_sha": observed_default_sha,
         },
         "branch_protection": _normalize_branch_protection(branch),
         "actions_permissions": {
