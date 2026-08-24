@@ -170,12 +170,16 @@ class AppReadOnlyClient:
         self._session = requests.Session()
         self._repository_token: str | None = None
         self._enterprise_token: str | None = None
+        self._last_oauth_scopes: tuple[str, ...] = ()
         self.installation_proof: dict[str, object] | None = None
 
     def __enter__(self) -> "AppReadOnlyClient":
         app_id = os.environ.get(self.auditor.app_id_variable)
         private_key = os.environ.get(self.auditor.private_key_environment_secret)
-        if not app_id or not private_key:
+        enterprise_token = os.environ.get(
+            self.auditor.enterprise_billing_token_environment_secret
+        )
+        if not app_id or not private_key or not enterprise_token:
             raise ValueError("CATALOG_AUDITOR_CREDENTIAL_MISSING")
         key_bytes = private_key.encode("utf-8")
         key = serialization.load_pem_private_key(key_bytes, password=None)
@@ -229,34 +233,12 @@ class AppReadOnlyClient:
         ):
             raise ValueError("CATALOG_AUDITOR_TOKEN_MINT_FAILED")
         self._repository_token = token_payload["token"]
-        enterprise_installation = self._request(
-            "GET",
-            f"/enterprises/{self.auditor.enterprise}/installation",
-            bearer=jwt,
-        )
-        if (
-            not isinstance(enterprise_installation, dict)
-            or not isinstance(enterprise_installation.get("id"), int)
-            or enterprise_installation.get("target_type") != "Enterprise"
-            or enterprise_installation.get("permissions")
-            != dict(self.auditor.required_enterprise_permissions)
-            or enterprise_installation.get("app_slug") != installation.get("app_slug")
+        self._enterprise_token = enterprise_token
+        self._request("GET", "/user", bearer=enterprise_token)
+        if self._last_oauth_scopes != tuple(
+            sorted(self.auditor.required_enterprise_token_scopes)
         ):
-            raise ValueError("CATALOG_AUDITOR_ENTERPRISE_INSTALLATION_INVALID")
-        enterprise_token_payload = self._request(
-            "POST",
-            f"/app/installations/{enterprise_installation['id']}/access_tokens",
-            bearer=jwt,
-            body={},
-        )
-        if (
-            not isinstance(enterprise_token_payload, dict)
-            or not isinstance(enterprise_token_payload.get("token"), str)
-            or enterprise_token_payload.get("permissions")
-            != dict(self.auditor.required_enterprise_permissions)
-        ):
-            raise ValueError("CATALOG_AUDITOR_ENTERPRISE_TOKEN_MINT_FAILED")
-        self._enterprise_token = enterprise_token_payload["token"]
+            raise ValueError("CATALOG_AUDITOR_ENTERPRISE_TOKEN_SCOPES_INVALID")
         self.installation_proof = {
             "repository_permissions": dict(self.auditor.required_repository_permissions),
             "organization_permissions": dict(self.auditor.required_organization_permissions),
@@ -265,9 +247,11 @@ class AppReadOnlyClient:
             "token_minted_in_process": True,
             "fixed_get_endpoints_only": True,
             "repository_installation_id": installation["id"],
-            "enterprise_installation_id": enterprise_installation["id"],
             "app_slug": installation.get("app_slug"),
             "public_key_sha256": fingerprint,
+            "enterprise_credential_kind": "classic_pat",
+            "enterprise_credential_scopes": list(self._last_oauth_scopes),
+            "enterprise_write_blocked_by_client": True,
         }
         private_key = ""
         key_bytes = b""
@@ -277,6 +261,7 @@ class AppReadOnlyClient:
     def __exit__(self, *_: object) -> None:
         self._repository_token = None
         self._enterprise_token = None
+        self._last_oauth_scopes = ()
         self._session.headers.clear()
         self._session.close()
 
@@ -335,6 +320,10 @@ class AppReadOnlyClient:
         if raw_date is None:
             raise ValueError("CATALOG_GITHUB_DATE_HEADER_MISSING")
         self.github_date = parsedate_to_datetime(raw_date).astimezone(UTC)
+        raw_scopes = response.headers.get("X-OAuth-Scopes")
+        self._last_oauth_scopes = tuple(
+            sorted(scope.strip() for scope in raw_scopes.split(",") if scope.strip())
+        ) if raw_scopes is not None else ()
         return response.json()
 
 

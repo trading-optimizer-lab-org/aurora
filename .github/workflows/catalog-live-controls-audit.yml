@@ -99,6 +99,7 @@ jobs:
         env:
           AURORA_CATALOG_AUDITOR_APP_ID: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
           AURORA_CATALOG_AUDITOR_PRIVATE_KEY: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
+          AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
         run: >-
           python scripts/audit_catalog_github_controls.py
           --repository trading-optimizer-lab-org/aurora

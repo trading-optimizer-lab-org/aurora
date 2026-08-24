@@ -225,6 +225,7 @@ def test_live_audit_is_one_read_only_protected_reusable_job() -> None:
         if "AURORA_CATALOG_AUDITOR_PRIVATE_KEY" in json.dumps(step)
     ]
     assert len(secret_steps) == 1
+    assert "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN" in json.dumps(secret_steps[0])
     assert "--workflow-auditor" in json.dumps(secret_steps[0])
     assert "--github-output" in json.dumps(secret_steps[0])
     assert all(FULL_ACTION_SHA.fullmatch(value) for value in _external_action_uses(workflow))
@@ -235,12 +236,16 @@ def test_live_audit_is_one_read_only_protected_reusable_job() -> None:
 
 
 def test_auditor_secret_has_exactly_one_workflow_consumer() -> None:
-    consumers = {
-        path.relative_to(ROOT).as_posix()
-        for path in WORKFLOWS.glob("*.y*ml")
-        if "AURORA_CATALOG_AUDITOR_PRIVATE_KEY" in path.read_text("utf-8")
-    }
-    assert consumers == {AUDITOR_SECRET_CONSUMER}
+    for secret_name in (
+        "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+        "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+    ):
+        consumers = {
+            path.relative_to(ROOT).as_posix()
+            for path in WORKFLOWS.glob("*.y*ml")
+            if secret_name in path.read_text("utf-8")
+        }
+        assert consumers == {AUDITOR_SECRET_CONSUMER}
 
 
 def test_live_qualification_has_two_pure_calls_and_one_tiny_finalizer() -> None:

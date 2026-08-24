@@ -234,6 +234,7 @@
         "config_path",
         "app_id_variable",
         "private_key_environment_secret",
+        "enterprise_billing_token_environment_secret",
         "only_token_consumer_workflow"
       ],
       "properties": {
@@ -241,6 +242,9 @@
         "app_id_variable": {"const": "AURORA_CATALOG_AUDITOR_APP_ID"},
         "private_key_environment_secret": {
           "const": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY"
+        },
+        "enterprise_billing_token_environment_secret": {
+          "const": "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"
         },
         "only_token_consumer_workflow": {
           "const": ".github/workflows/catalog-live-controls-audit.yml"

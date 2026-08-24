@@ -13,8 +13,10 @@
     "required_repository_permissions",
     "required_organization_permissions",
     "required_enterprise_permissions",
+    "required_enterprise_token_scopes",
     "forbidden_write_permissions",
     "private_key_environment_secret",
+    "enterprise_billing_token_environment_secret",
     "app_id_variable"
   ],
   "properties": {
@@ -69,6 +71,9 @@
       "required": ["enterprise_billing"],
       "properties": {"enterprise_billing": {"const": "read"}}
     },
+    "required_enterprise_token_scopes": {
+      "const": ["manage_billing:enterprise"]
+    },
     "forbidden_write_permissions": {
       "type": "array",
       "minItems": 10,
@@ -90,6 +95,9 @@
     },
     "private_key_environment_secret": {
       "const": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY"
+    },
+    "enterprise_billing_token_environment_secret": {
+      "const": "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"
     },
     "app_id_variable": {"const": "AURORA_CATALOG_AUDITOR_APP_ID"}
   }

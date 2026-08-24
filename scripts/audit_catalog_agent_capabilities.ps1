@@ -33,7 +33,7 @@ $groups=(whoami.exe /groups /fo csv | Out-String)
 $integrity=(($groups -match 'S-1-16-4096') -or ($groups -match 'S-1-16-8192')) -and -not (($groups -match 'S-1-16-12288') -or ($groups -match 'S-1-16-16384'))
 $priv=(whoami.exe /priv /fo csv | Out-String)
 $danger=@('SeDebugPrivilege','SeTakeOwnershipPrivilege') | Where-Object {$priv -match [Regex]::Escape($_)}
-$forbiddenEnv=@('GH_TOKEN','GITHUB_TOKEN','GH_ENTERPRISE_TOKEN','GITHUB_ENTERPRISE_TOKEN','GH_CONFIG_DIR','AURORA_CATALOG_REQUESTER_PRIVATE_KEY','AURORA_CATALOG_AUDITOR_PRIVATE_KEY') | Where-Object {Test-Path ("Env:"+$_)}
+$forbiddenEnv=@('GH_TOKEN','GITHUB_TOKEN','GH_ENTERPRISE_TOKEN','GITHUB_ENTERPRISE_TOKEN','GH_CONFIG_DIR','AURORA_CATALOG_REQUESTER_PRIVATE_KEY','AURORA_CATALOG_AUDITOR_PRIVATE_KEY','AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN') | Where-Object {Test-Path ("Env:"+$_)}
 $r=[ordered]@{
 schema_version='1'; identity=$id.Name.Split('\')[-1]; is_admin=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 medium_or_lower_integrity=$integrity; enabled_dangerous_privileges=@($danger).Count
