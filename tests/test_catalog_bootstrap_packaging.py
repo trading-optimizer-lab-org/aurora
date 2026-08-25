@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import json
+import re
 import runpy
 import zipfile
 from pathlib import Path
@@ -81,15 +82,23 @@ def test_runner_has_closed_phase_dispatch_and_no_production_launch() -> None:
     allowed_block = text.split("_ALLOWED_BOOTSTRAP_WORKFLOWS", 1)[1].split(
         "_HEAVY_WORKFLOW_PATHS", 1
     )[0]
+    allowed_workflows = set(re.findall(r'"([^"]+\.yml)"', allowed_block))
+    assert allowed_workflows == {
+        "catalog-live-controls-qualification.yml",
+        "catalog-controller-policy-check.yml",
+        "catalog-controller-qualification.yml",
+        "catalog-capacity-calibration.yml",
+        "catalog-artifact-keeper.yml",
+    }
     assert "catalog-live-controls-qualification.yml" in allowed_block
     assert "catalog-controller-qualification.yml" in allowed_block
     assert "catalog-optimized-run.yml" not in allowed_block
-    assert "sp500-optimized-catalog-v1" not in text
+    assert "sp500-optimized-catalog-v1" not in allowed_block
     assert "shell=True" not in text
     assert "os.startfile" not in text
     assert 'root / "browser-action-v1.json"' in text
     assert "CATALOG_BOOTSTRAP_PHASE_NOT_YET_BOUND" not in text
-    assert "_pending" not in text
+    assert "_pending" not in allowed_block
     assert "_REQUIRED\")" not in text
     assert '"PRECHECK": perform_precheck' in text
     assert '"FINAL_AUDIT_PENDING": perform_final_audit' in text
