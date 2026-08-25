@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from aurora.infra.github_performance.preflight import (
+    CATALOG_LIVE_AUDIT_CREDENTIAL_NAMES,
     load_github_yaml,
     validate_catalog_workflow_topology,
 )
@@ -494,6 +495,7 @@ def test_live_audit_preflight_accepts_only_the_documented_nested_relaunches() ->
 
 
 def test_catalog_audit_credentials_have_one_reusable_consumer_only() -> None:
+    assert CATALOG_LIVE_AUDIT_CREDENTIAL_NAMES == AUDIT_CREDENTIAL_NAMES
     consumers = {
         path.relative_to(ROOT).as_posix()
         for path in WORKFLOWS.glob("*.y*ml")

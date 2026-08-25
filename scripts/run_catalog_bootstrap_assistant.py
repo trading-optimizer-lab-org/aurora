@@ -840,6 +840,28 @@ def _disable_controller() -> None:
         raise CatalogControllerShutdownError(errors)
 
 
+def _disable_controller_for_failure_receipt(
+    root: Path,
+    *,
+    phase: str,
+) -> bool:
+    try:
+        _disable_controller()
+    except Exception:
+        _write_canonical(
+            root / "receipts/controller-bootstrap-shutdown-failed-v1.json",
+            {
+                "controller_enabled_readback": True,
+                "phase": phase,
+                "reason_code": "CATALOG_BOOTSTRAP_CONTROLLER_SHUTDOWN_FAILED",
+                "result": "FAILED",
+                "schema_version": "1",
+            },
+        )
+        return False
+    return True
+
+
 def _controller_is_ready() -> bool:
     return (
         _read_repository_variable(CONTROLLER_VARIABLE) == "true"
@@ -7143,9 +7165,6 @@ def perform_final_audit(root: Path) -> None:
         _write_canonical(ready_path, ready.model_dump(mode="json"))
         if ready_path.read_bytes() != ready_bytes:
             raise ValueError("CATALOG_BOOTSTRAP_READY_RECEIPT_READBACK_INVALID")
-        _set_repository_variable(ARMED_VARIABLE, "true")
-        if not _controller_is_ready():
-            raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_NOT_READY")
         seal = _production_seal(protected_commit_sha, ready_bytes)
         seal_path = BROKER_ROOT / "config/production-enabled-v1.seal.json"
         _write_canonical(seal_path, seal.model_dump(mode="json"))
@@ -7186,6 +7205,9 @@ def perform_final_audit(root: Path) -> None:
             != seal.requester_broker_application_sha256
         ):
             raise ValueError("CATALOG_BOOTSTRAP_BROKER_FINAL_AUDIT_INVALID")
+        _set_repository_variable(ARMED_VARIABLE, "true")
+        if not _controller_is_ready():
+            raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_NOT_READY")
         final_activity = _github_activity_snapshot()
         final_production_requests = set(final_activity["request_issue_numbers"]) - set(  # type: ignore[arg-type]
             baseline["request_issue_numbers"]  # type: ignore[arg-type]
@@ -7199,17 +7221,7 @@ def perform_final_audit(root: Path) -> None:
             or final_production_runs
             or not final_owners
             or any(row.get("user") != "AURORAAgent" for row in final_owners)
-            or _run(
-                [
-                    "gh",
-                    "variable",
-                    "get",
-                    CONTROLLER_VARIABLE,
-                    "--repo",
-                    REPOSITORY,
-                ]
-            )
-            != "true"
+            or not _controller_is_ready()
         ):
             raise ValueError("CATALOG_BOOTSTRAP_POST_ENABLE_DRIFT")
         final = {
@@ -7220,6 +7232,8 @@ def perform_final_audit(root: Path) -> None:
             "post_enable_live_run_id": post_enable["run_id"],
             "production_ticket_campaign_keys": sorted(tickets),
             "broker_self_audit_sha256": self_audit.get("self_audit_sha256"),
+            "controller_enabled_readback": True,
+            "controller_armed_readback": True,
         }
         _write_canonical(root / "final-audit-operation-v1.json", final)
         _advance(root, state, "final_audit_passed", final)
@@ -7278,10 +7292,11 @@ def main() -> int:
                 if not recovered:
                     return 2
             except Exception as exc:
-                try:
-                    _disable_controller()
-                except Exception:
-                    pass
+                if not _disable_controller_for_failure_receipt(
+                    args.installed_root,
+                    phase="BLOCKED",
+                ):
+                    return 3
                 reason = _safe_blocked_reason(
                     exc, "CATALOG_BOOTSTRAP_RECOVERY_FAILED"
                 )
@@ -7315,10 +7330,11 @@ def main() -> int:
         try:
             run_phase(state.phase, args.installed_root)
         except Exception as exc:
-            try:
-                _disable_controller()
-            except Exception:
-                pass
+            if not _disable_controller_for_failure_receipt(
+                args.installed_root,
+                phase=state.phase,
+            ):
+                return 3
             reason = _safe_blocked_reason(exc, "CATALOG_BOOTSTRAP_PHASE_FAILED")
             blocked = {
                 "schema_version": "1",

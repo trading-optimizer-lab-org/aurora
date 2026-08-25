@@ -4855,6 +4855,36 @@ def test_controller_double_shutdown_aggregates_failures_in_fixed_order(
     ]
 
 
+def test_failed_shutdown_writes_truthful_emergency_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_disable_controller",
+        lambda: (_ for _ in ()).throw(ValueError("secret must not escape")),
+    )
+
+    assert (
+        bootstrap_runner._disable_controller_for_failure_receipt(
+            tmp_path,
+            phase="FINAL_AUDIT_PENDING",
+        )
+        is False
+    )
+    receipt = json.loads(
+        (
+            tmp_path / "receipts/controller-bootstrap-shutdown-failed-v1.json"
+        ).read_text("utf-8")
+    )
+    assert receipt == {
+        "controller_enabled_readback": True,
+        "phase": "FINAL_AUDIT_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_CONTROLLER_SHUTDOWN_FAILED",
+        "result": "FAILED",
+        "schema_version": "1",
+    }
+
+
 @pytest.mark.parametrize("armed", ("", "TRUE", " true ", "yes", None))
 def test_controller_ready_is_fail_closed_for_missing_or_malformed_values(
     armed: str | None, monkeypatch: pytest.MonkeyPatch
@@ -4881,9 +4911,13 @@ def test_final_activation_sequence_is_exactly_ordered() -> None:
         'post_enable = _run_live_qualification',
         '_write_canonical(ready_path, ready.model_dump(mode="json"))',
         'if ready_path.read_bytes() != ready_bytes:',
-        '_set_repository_variable(ARMED_VARIABLE, "true")',
         'seal = _production_seal',
         'deadline = time.monotonic() + 300',
+        'self_audit.get("status") != "production_sealed"',
+        '_set_repository_variable(ARMED_VARIABLE, "true")',
+        'if not _controller_is_ready():',
+        'final_activity = _github_activity_snapshot()',
+        '"controller_armed_readback": True',
     )
     positions = [source.index(marker) for marker in ordered_markers]
     assert positions == sorted(positions)
