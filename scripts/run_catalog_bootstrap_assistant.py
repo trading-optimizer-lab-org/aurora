@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -12,51 +13,79 @@ import subprocess
 import sys
 import time
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
-from infra.sp500_megarun.catalog_bootstrap_contract import (
-    CatalogBootstrapAppManifestV1,
-    CatalogBootstrapManifestSetV1,
-)
-from infra.sp500_megarun.catalog_bootstrap_binding import (
-    build_public_binding_patch,
-    create_or_verify_authority_anchor,
-)
-from infra.sp500_megarun.catalog_bootstrap_github import (
-    CatalogAppPublicBinding,
-    CatalogBootstrapGitHubClient,
-    derive_public_binding,
-)
-from infra.sp500_megarun.catalog_bootstrap_finalizer import (
-    CatalogBootstrapFinalEvidenceV1,
-    CatalogBootstrapObservedProductionSealV1,
-    canonical_ready_receipt_bytes,
-    complete_sealed_bootstrap,
-    finalize_bootstrap,
-)
-from infra.sp500_megarun.catalog_bootstrap_manifest import (
-    ManifestLoopbackServer,
-    exchange_manifest_code,
-    start_manifest_session,
-)
-from infra.sp500_megarun.catalog_bootstrap_secrets import (
-    AUDITOR_SECRET,
-    ENVIRONMENT,
-    clear_private_material,
-    store_requester_key_once,
-    upload_auditor_key_once,
-)
-from infra.sp500_megarun.catalog_bootstrap_state import (
-    CatalogBootstrapEventV1,
-    CatalogBootstrapStateV1,
-    advance_bootstrap_state,
-    initial_bootstrap_state,
-    load_bootstrap_state,
-    persist_bootstrap_state,
-)
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - Windows uses msvcrt instead.
+    _fcntl = None
+
+try:
+    import msvcrt as _msvcrt
+except ImportError:  # pragma: no cover - POSIX uses fcntl instead.
+    _msvcrt = None
+
+
+if TYPE_CHECKING:
+    from infra.sp500_megarun.catalog_bootstrap_contract import (
+        CatalogBootstrapAppManifestV1,
+        CatalogBootstrapManifestSetV1,
+    )
+    from infra.sp500_megarun.catalog_bootstrap_github import CatalogAppPublicBinding
+    from infra.sp500_megarun.catalog_bootstrap_finalizer import (
+        CatalogBootstrapObservedProductionSealV1,
+    )
+    from infra.sp500_megarun.catalog_bootstrap_state import (
+        CatalogBootstrapEventV1,
+        CatalogBootstrapStateV1,
+    )
+
+
+def load_bootstrap_state(path: Path) -> CatalogBootstrapStateV1:
+    from infra.sp500_megarun.catalog_bootstrap_state import load_bootstrap_state as load
+
+    return load(path)
+
+
+def persist_bootstrap_state(path: Path, state: CatalogBootstrapStateV1) -> None:
+    from infra.sp500_megarun.catalog_bootstrap_state import (
+        persist_bootstrap_state as persist,
+    )
+
+    persist(path, state)
+
+
+def advance_bootstrap_state(
+    state: CatalogBootstrapStateV1, event: CatalogBootstrapEventV1
+) -> CatalogBootstrapStateV1:
+    from infra.sp500_megarun.catalog_bootstrap_state import (
+        advance_bootstrap_state as advance,
+    )
+
+    return advance(state, event)
+
+
+def initial_bootstrap_state(
+    bootstrap_id: str, protected_commit_sha: str
+) -> CatalogBootstrapStateV1:
+    from infra.sp500_megarun.catalog_bootstrap_state import (
+        initial_bootstrap_state as initial,
+    )
+
+    return initial(bootstrap_id, protected_commit_sha)
+
+
+def CatalogBootstrapGitHubClient(*args: object, **kwargs: object) -> object:
+    """Construct the GitHub client lazily while preserving the patchable API."""
+
+    from infra.sp500_megarun.catalog_bootstrap_github import (
+        CatalogBootstrapGitHubClient as client_type,
+    )
+
+    return client_type(*args, **kwargs)
 
 
 EXPECTED_ROOT = Path("C:/ProgramData/AURORA/CatalogBootstrap")
@@ -65,6 +94,8 @@ BROKER_ROOT = Path("C:/ProgramData/AURORA/CatalogRequester")
 AGENT_ROOT = Path("C:/ProgramData/AURORA/CatalogAgent")
 BOOTSTRAP_STAGING_ROOT = Path("C:/ProgramData/AURORA/BootstrapStaging")
 CONTROLLER_VARIABLE = "CATALOG_CONTROLLER_ENABLED"
+ENVIRONMENT = "catalog-production"
+AUDITOR_SECRET = "AURORA_CATALOG_AUDITOR_PRIVATE_KEY"
 QUALIFICATION_CHECKPOINT_FILENAME = "qualification-substeps-v1.checkpoint.json"
 REQUESTER_TERMINAL_CHECKPOINT_FILENAME = "requester-qualification-terminal-v1.json"
 REQUESTER_COMPLETE_CHECKPOINT_FILENAME = "requester-qualification-complete-v1.json"
@@ -93,6 +124,15 @@ _QUALIFICATION_STEP_WORKFLOWS = {
     "controller_qualification_3": "catalog-controller-qualification.yml",
     "capacity": "catalog-capacity-calibration.yml",
     "keeper": "catalog-artifact-keeper.yml",
+}
+_QUALIFICATION_WORKFLOW_DISPLAY_NAMES = {
+    "catalog-live-controls-qualification.yml": "Catalog live controls qualification",
+    "catalog-controller-policy-check.yml": "Catalog controller policy",
+    "catalog-controller-qualification.yml": (
+        "AURORA catalog controller synthetic qualification"
+    ),
+    "catalog-capacity-calibration.yml": "Catalog capacity calibration",
+    "catalog-artifact-keeper.yml": "Catalog artifact keeper",
 }
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -309,44 +349,201 @@ def _read_canonical_document(path: Path, error_code: str) -> dict[str, object]:
     return value
 
 
-def _write_exact_canonical_checkpoint(path: Path, value: object) -> str:
-    """Create one immutable canonical evidence file, or accept identical bytes."""
+def _checkpoint_lock_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.lock")
 
-    data = _canonical(value) + b"\n"
-    if path.exists() or path.is_symlink():
-        _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID")
+
+def _safe_unlink_checkpoint_temp(path: Path) -> None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+    if (
+        _is_reparse_path(path)
+        or not stat.S_ISREG(info.st_mode)
+        or getattr(info, "st_nlink", 1) != 1
+    ):
+        return
+    try:
+        path.unlink()
+    except OSError:
+        return
+
+
+def _cleanup_checkpoint_temps(path: Path) -> None:
+    try:
+        candidates = tuple(path.parent.glob(f".{path.name}.*.tmp"))
+    except OSError:
+        return
+    for candidate in candidates:
+        _safe_unlink_checkpoint_temp(candidate)
+
+
+def _validate_lock_descriptor(path: Path, descriptor: int) -> None:
+    _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_LOCK_INVALID")
+    try:
+        observed = path.lstat()
+        opened = os.fstat(descriptor)
+    except OSError as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_LOCK_INVALID") from exc
+    if (
+        getattr(observed, "st_nlink", 1) != 1
+        or not stat.S_ISREG(opened.st_mode)
+        or getattr(opened, "st_nlink", 1) != 1
+        or (
+            getattr(observed, "st_ino", 0)
+            and getattr(opened, "st_ino", 0)
+            and (
+                observed.st_ino != opened.st_ino
+                or observed.st_dev != opened.st_dev
+            )
+        )
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_LOCK_INVALID")
+
+
+def _try_lock_descriptor(descriptor: int) -> bool:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    if _msvcrt is not None:
         try:
-            observed = path.read_bytes()
-        except OSError as exc:
-            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_READBACK_INVALID") from exc
-        if observed != data:
-            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_CONFLICT")
-        return hashlib.sha256(observed).hexdigest()
+            nonblocking = getattr(_msvcrt, "LK_NBRLCK", _msvcrt.LK_NBLCK)
+            _msvcrt.locking(descriptor, nonblocking, 1)
+        except OSError:
+            return False
+        return True
+    if _fcntl is not None:
+        try:
+            _fcntl.flock(descriptor, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        except OSError:
+            return False
+        return True
+    raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_LOCK_UNSUPPORTED")
 
+
+def _unlock_descriptor(descriptor: int) -> None:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    if _msvcrt is not None:
+        _msvcrt.locking(descriptor, _msvcrt.LK_UNLCK, 1)
+    elif _fcntl is not None:
+        _fcntl.flock(descriptor, _fcntl.LOCK_UN)
+
+
+@contextmanager
+def _exclusive_checkpoint_lock(
+    path: Path, *, timeout_seconds: float = 30.0
+) -> Iterator[None]:
+    """Hold a validated cross-process lock for a checkpoint read/validate/write."""
+
+    if timeout_seconds < 0:
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_LOCKED")
     path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = _checkpoint_lock_path(path)
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    deadline: float | None = None
+    descriptor: int | None = None
+    acquired = False
+    try:
+        while not acquired:
+            try:
+                if lock_path.exists() or lock_path.is_symlink():
+                    _validate_exact_file_path(
+                        lock_path, "CATALOG_BOOTSTRAP_CHECKPOINT_LOCK_INVALID"
+                    )
+                    descriptor = os.open(str(lock_path), os.O_RDWR)
+                else:
+                    descriptor = os.open(str(lock_path), flags, 0o600)
+                    if os.fstat(descriptor).st_size == 0:
+                        os.write(descriptor, b"0")
+                    os.fsync(descriptor)
+                _validate_lock_descriptor(lock_path, descriptor)
+                acquired = _try_lock_descriptor(descriptor)
+            except FileExistsError:
+                acquired = False
+            except ValueError:
+                raise
+            except OSError:
+                acquired = False
+            if acquired:
+                break
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+                descriptor = None
+            if deadline is None:
+                deadline = time.monotonic() + timeout_seconds
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_LOCKED")
+            time.sleep(min(0.05, remaining))
+
+        if os.fstat(descriptor).st_size == 0:
+            os.write(descriptor, b"0")
+            os.fsync(descriptor)
+        yield
+    finally:
+        if descriptor is not None:
+            if acquired:
+                try:
+                    _unlock_descriptor(descriptor)
+                except OSError:
+                    pass
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _write_checkpoint_bytes_locked(
+    path: Path, data: bytes, *, replace_existing: bool
+) -> str:
+    temporary = path.with_name(
+        f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    )
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_BINARY"):
         flags |= os.O_BINARY
+    descriptor: int | None = None
+    published = False
     try:
-        descriptor = os.open(str(path), flags)
-    except FileExistsError as exc:
-        if _is_reparse_path(path):
-            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID") from exc
-        _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID")
-        if path.read_bytes() != data:
-            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_CONFLICT") from None
-        return hashlib.sha256(data).hexdigest()
-    except OSError as exc:
-        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_WRITE_FAILED") from exc
-
-    try:
+        descriptor = os.open(str(temporary), flags, 0o600)
         with os.fdopen(descriptor, "wb", closefd=True) as handle:
+            descriptor = None
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-    except OSError as exc:
-        path.unlink(missing_ok=True)
+        _validate_exact_file_path(
+            temporary, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID"
+        )
+        if replace_existing:
+            os.replace(temporary, path)
+        else:
+            if path.exists() or path.is_symlink():
+                _validate_exact_file_path(
+                    path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID"
+                )
+                if path.read_bytes() != data:
+                    raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_CONFLICT")
+                _safe_unlink_checkpoint_temp(temporary)
+                return hashlib.sha256(data).hexdigest()
+            os.rename(temporary, path)
+        published = True
+    except Exception as exc:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        _safe_unlink_checkpoint_temp(temporary)
+        if isinstance(exc, ValueError):
+            raise
         raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_WRITE_FAILED") from exc
+
     _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID")
     try:
         observed = path.read_bytes()
@@ -354,7 +551,30 @@ def _write_exact_canonical_checkpoint(path: Path, value: object) -> str:
         raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_READBACK_INVALID") from exc
     if observed != data:
         raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_READBACK_INVALID")
+    if not published:
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_WRITE_FAILED")
+    _cleanup_checkpoint_temps(path)
     return hashlib.sha256(observed).hexdigest()
+
+
+def _write_exact_canonical_checkpoint(path: Path, value: object) -> str:
+    """Create one immutable canonical evidence file, or accept identical bytes."""
+
+    data = _canonical(value) + b"\n"
+    with _exclusive_checkpoint_lock(path):
+        _cleanup_checkpoint_temps(path)
+        if path.exists() or path.is_symlink():
+            _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID")
+            try:
+                observed = path.read_bytes()
+            except OSError as exc:
+                raise ValueError(
+                    "CATALOG_BOOTSTRAP_CHECKPOINT_READBACK_INVALID"
+                ) from exc
+            if observed != data:
+                raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_CONFLICT")
+            return hashlib.sha256(observed).hexdigest()
+        return _write_checkpoint_bytes_locked(path, data, replace_existing=False)
 
 
 def _repository_remote_is_exact(remote: str) -> bool:
@@ -369,6 +589,10 @@ def _read_json(path: Path) -> dict[str, object]:
 
 
 def _manifests() -> CatalogBootstrapManifestSetV1:
+    from infra.sp500_megarun.catalog_bootstrap_contract import (
+        CatalogBootstrapManifestSetV1,
+    )
+
     with zipfile.ZipFile(Path(sys.argv[0])) as archive:
         data = archive.read("config/catalog_bootstrap_app_manifests_v1.json")
     return CatalogBootstrapManifestSetV1.model_validate_json(data)
@@ -517,24 +741,135 @@ def _list_workflow_runs(workflow: str) -> list[dict[str, object]]:
     raw = _run(
         [
             "gh",
-            "run",
-            "list",
-            "--repo",
-            REPOSITORY,
-            "--workflow",
-            workflow,
-            "--branch",
-            "main",
-            "--limit",
-            "50",
-            "--json",
-            "databaseId,headSha,event,status,conclusion,createdAt,url",
+            "api",
+            "--paginate",
+            "--slurp",
+            f"/repos/{REPOSITORY}/actions/workflows/{workflow}/runs"
+            "?branch=main&per_page=100",
         ]
     )
-    value = json.loads(raw)
-    if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
+    try:
+        pages = json.loads(
+            raw,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_nonfinite_json,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_LIST_INVALID") from exc
+    if not isinstance(pages, list):
         raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_LIST_INVALID")
-    return value
+    normalized: list[dict[str, object]] = []
+    for page in pages:
+        rows = page.get("workflow_runs") if isinstance(page, dict) else None
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_LIST_INVALID")
+        for row in rows:
+            normalized.append(
+                {
+                    "databaseId": row.get("id"),
+                    "headSha": row.get("head_sha"),
+                    "event": row.get("event"),
+                    "status": row.get("status"),
+                    "conclusion": row.get("conclusion"),
+                    "createdAt": row.get("created_at"),
+                    "url": row.get("html_url"),
+                    "path": row.get("path"),
+                }
+            )
+    return normalized
+
+
+def _read_workflow_run_by_id(
+    workflow: str,
+    run_id: int,
+    *,
+    protected_commit_sha: str,
+) -> dict[str, object]:
+    if (
+        workflow not in _ALLOWED_BOOTSTRAP_WORKFLOWS
+        or isinstance(run_id, bool)
+        or run_id < 1
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID")
+    raw = _run(
+        [
+            "gh",
+            "run",
+            "view",
+            str(run_id),
+            "--repo",
+            REPOSITORY,
+            "--json",
+            "databaseId,headSha,event,status,conclusion,url,workflowName,path",
+        ]
+    )
+    try:
+        observed = json.loads(
+            raw,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_nonfinite_json,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID") from exc
+    expected_name = _QUALIFICATION_WORKFLOW_DISPLAY_NAMES[workflow]
+    expected_path = f".github/workflows/{workflow}"
+    if (
+        not isinstance(observed, dict)
+        or observed.get("workflowName") != expected_name
+        or (
+            "path" in observed
+            and observed.get("path") is not None
+            and observed.get("path") != expected_path
+        )
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID")
+    normalized = {
+        key: observed.get(key)
+        for key in ("databaseId", "headSha", "event", "status", "conclusion", "url")
+    }
+    _validate_workflow_run_result(normalized, protected_commit_sha=protected_commit_sha)
+    if normalized["databaseId"] != run_id:
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID")
+    return normalized
+
+
+def _watch_workflow_run(run_id: int) -> None:
+    watched = subprocess.run(
+        ["gh", "run", "watch", str(run_id), "--repo", REPOSITORY, "--exit-status"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=3600,
+    )
+    if watched.returncode != 0:
+        raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_FAILED")
+
+
+def _new_workflow_run_candidates(
+    rows: list[dict[str, object]],
+    *,
+    baseline_run_ids: set[int],
+) -> list[dict[str, object]]:
+    return [
+        row
+        for row in rows
+        if isinstance(row.get("databaseId"), int)
+        and not isinstance(row.get("databaseId"), bool)
+        and int(row["databaseId"]) not in baseline_run_ids
+    ]
+
+
+def _workflow_run_matches_dispatch(
+    row: dict[str, object],
+    *,
+    workflow: str,
+    protected_commit_sha: str,
+) -> bool:
+    return (
+        row.get("event") == "workflow_dispatch"
+        and row.get("headSha") == protected_commit_sha
+        and row.get("path") == f".github/workflows/{workflow}"
+    )
 
 
 def _list_recent_heavy_workflow_runs(
@@ -583,16 +918,22 @@ def _dispatch_workflow(workflow: str, protected_commit_sha: str) -> dict[str, ob
     deadline = time.monotonic() + 300
     selected: dict[str, object] | None = None
     while time.monotonic() < deadline:
+        new_runs = _new_workflow_run_candidates(
+            _list_workflow_runs(workflow), baseline_run_ids=before
+        )
         candidates = [
             row
-            for row in _list_workflow_runs(workflow)
-            if isinstance(row.get("databaseId"), int)
-            and int(row["databaseId"]) not in before
-            and row.get("event") == "workflow_dispatch"
-            and row.get("headSha") == protected_commit_sha
+            for row in new_runs
+            if _workflow_run_matches_dispatch(
+                row,
+                workflow=workflow,
+                protected_commit_sha=protected_commit_sha,
+            )
         ]
-        if len(candidates) > 1:
+        if len(new_runs) > 1 or len(candidates) > 1:
             raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_RUN_AMBIGUOUS")
+        if new_runs and not candidates:
+            raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_RUN_IDENTITY_AMBIGUOUS")
         if candidates:
             selected = candidates[0]
             break
@@ -600,39 +941,152 @@ def _dispatch_workflow(workflow: str, protected_commit_sha: str) -> dict[str, ob
     if selected is None:
         raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_RUN_NOT_FOUND")
     run_id = int(selected["databaseId"])
-    watched = subprocess.run(
-        ["gh", "run", "watch", str(run_id), "--repo", REPOSITORY, "--exit-status"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=3600,
+    _watch_workflow_run(run_id)
+    return _read_workflow_run_by_id(
+        workflow,
+        run_id,
+        protected_commit_sha=protected_commit_sha,
     )
-    if watched.returncode != 0:
-        raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_FAILED")
-    observed = json.loads(
-        _run(
-            [
-                "gh",
-                "run",
-                "view",
-                str(run_id),
-                "--repo",
-                REPOSITORY,
-                "--json",
-                "databaseId,headSha,event,status,conclusion,url",
-            ]
-        )
+
+
+def _qualification_dispatch_intent_path(root: Path, step_name: str) -> Path:
+    if step_name not in _QUALIFICATION_STEP_WORKFLOWS:
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID")
+    return root / f"qualification-dispatch-{step_name}-v1.intent.json"
+
+
+def _new_qualification_dispatch_intent(
+    *,
+    step_name: str,
+    workflow: str,
+    protected_commit_sha: str,
+    baseline_run_ids: set[int],
+) -> dict[str, object]:
+    value: dict[str, object] = {
+        "schema_version": "1",
+        "campaign_key": _BOOTSTRAP_QUALIFICATION_CAMPAIGN,
+        "step_name": step_name,
+        "workflow": workflow,
+        "protected_commit_sha": protected_commit_sha,
+        "baseline_run_ids": sorted(baseline_run_ids),
+        "correlation_key_sha256": "0" * 64,
+    }
+    value["correlation_key_sha256"] = _seal_hash(
+        value, "correlation_key_sha256"
     )
+    return value
+
+
+def _validate_qualification_dispatch_intent(
+    value: dict[str, object],
+    *,
+    step_name: str,
+    protected_commit_sha: str,
+) -> None:
+    workflow = _QUALIFICATION_STEP_WORKFLOWS.get(step_name)
+    baseline = value.get("baseline_run_ids")
     if (
-        not isinstance(observed, dict)
-        or observed.get("databaseId") != run_id
-        or observed.get("headSha") != protected_commit_sha
-        or observed.get("event") != "workflow_dispatch"
-        or observed.get("status") != "completed"
-        or observed.get("conclusion") != "success"
+        set(value)
+        != {
+            "schema_version",
+            "campaign_key",
+            "step_name",
+            "workflow",
+            "protected_commit_sha",
+            "baseline_run_ids",
+            "correlation_key_sha256",
+        }
+        or value.get("schema_version") != "1"
+        or value.get("campaign_key") != _BOOTSTRAP_QUALIFICATION_CAMPAIGN
+        or value.get("step_name") != step_name
+        or value.get("workflow") != workflow
+        or value.get("protected_commit_sha") != protected_commit_sha
+        or not isinstance(baseline, list)
+        or any(
+            isinstance(run_id, bool) or not isinstance(run_id, int) or run_id < 1
+            for run_id in baseline
+        )
+        or baseline != sorted(set(baseline))
+        or not _SHA256.fullmatch(str(value.get("correlation_key_sha256", "")))
+        or _seal_hash(value, "correlation_key_sha256")
+        != value.get("correlation_key_sha256")
     ):
-        raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_READBACK_INVALID")
-    return observed
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID")
+
+
+def _reconcile_qualification_dispatch_intent(
+    intent: dict[str, object],
+) -> dict[str, object]:
+    workflow = str(intent["workflow"])
+    protected_commit_sha = str(intent["protected_commit_sha"])
+    baseline_run_ids = {int(run_id) for run_id in intent["baseline_run_ids"]}  # type: ignore[union-attr]
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        new_runs = _new_workflow_run_candidates(
+            _list_workflow_runs(workflow), baseline_run_ids=baseline_run_ids
+        )
+        candidates = [
+            row
+            for row in new_runs
+            if _workflow_run_matches_dispatch(
+                row,
+                workflow=workflow,
+                protected_commit_sha=protected_commit_sha,
+            )
+        ]
+        if len(new_runs) > 1 or len(candidates) > 1:
+            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_AMBIGUOUS")
+        if new_runs and not candidates:
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_QUALIFICATION_RUN_IDENTITY_AMBIGUOUS"
+            )
+        if candidates:
+            run_id = int(candidates[0]["databaseId"])
+            _watch_workflow_run(run_id)
+            return _read_workflow_run_by_id(
+                workflow,
+                run_id,
+                protected_commit_sha=protected_commit_sha,
+            )
+        time.sleep(3)
+    raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_NOT_FOUND")
+
+
+def _run_qualification_workflow_step(
+    root: Path,
+    step_name: str,
+    protected_commit_sha: str,
+) -> dict[str, object]:
+    workflow = _QUALIFICATION_STEP_WORKFLOWS.get(step_name)
+    if workflow is None or not _COMMIT.fullmatch(protected_commit_sha):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID")
+    intent_path = _qualification_dispatch_intent_path(root, step_name)
+    if intent_path.exists() or intent_path.is_symlink():
+        intent = _read_canonical_document(
+            intent_path,
+            "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID",
+        )
+        _validate_qualification_dispatch_intent(
+            intent,
+            step_name=step_name,
+            protected_commit_sha=protected_commit_sha,
+        )
+        return _reconcile_qualification_dispatch_intent(intent)
+
+    baseline_run_ids = {
+        int(row["databaseId"])
+        for row in _list_workflow_runs(workflow)
+        if isinstance(row.get("databaseId"), int)
+        and not isinstance(row.get("databaseId"), bool)
+    }
+    intent = _new_qualification_dispatch_intent(
+        step_name=step_name,
+        workflow=workflow,
+        protected_commit_sha=protected_commit_sha,
+        baseline_run_ids=baseline_run_ids,
+    )
+    _write_exact_canonical_checkpoint(intent_path, intent)
+    return _dispatch_workflow(workflow, protected_commit_sha)
 
 
 def _download_live_qualification(
@@ -697,10 +1151,20 @@ def _download_live_qualification(
     }
 
 
-def _run_live_qualification(root: Path, protected_commit_sha: str) -> dict[str, object]:
-    run = _dispatch_workflow(
-        "catalog-live-controls-qualification.yml", protected_commit_sha
-    )
+def _run_live_qualification(
+    root: Path,
+    protected_commit_sha: str,
+    *,
+    step_name: str | None = None,
+) -> dict[str, object]:
+    if step_name is None:
+        run = _dispatch_workflow(
+            "catalog-live-controls-qualification.yml", protected_commit_sha
+        )
+    else:
+        if step_name not in {"live_2", "live_3"}:
+            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID")
+        run = _run_qualification_workflow_step(root, step_name, protected_commit_sha)
     return _download_live_qualification(root, run, protected_commit_sha)
 
 
@@ -813,6 +1277,8 @@ def _event(
     name: str,
     evidence: object,
 ) -> CatalogBootstrapEventV1:
+    from infra.sp500_megarun.catalog_bootstrap_state import CatalogBootstrapEventV1
+
     return CatalogBootstrapEventV1(
         schema_version="1",
         bootstrap_id=state.bootstrap_id,
@@ -890,6 +1356,14 @@ def _stop_hp_codex_processes() -> None:
 
 
 def _create_app(root: Path, kind: str) -> None:
+    from infra.sp500_megarun.catalog_bootstrap_github import derive_public_binding
+    from infra.sp500_megarun.catalog_bootstrap_manifest import (
+        ManifestLoopbackServer,
+        exchange_manifest_code,
+        start_manifest_session,
+    )
+    from infra.sp500_megarun.catalog_bootstrap_secrets import store_requester_key_once
+
     state = load_bootstrap_state(_state_path(root))
     app: CatalogBootstrapAppManifestV1 = getattr(_manifests(), kind)
     session = start_manifest_session(kind, now=datetime.now(tz=UTC))  # type: ignore[arg-type]
@@ -987,6 +1461,8 @@ def verify_auditor_installation(root: Path) -> None:
 
 
 def _public_binding(root: Path, kind: str) -> CatalogAppPublicBinding:
+    from infra.sp500_megarun.catalog_bootstrap_github import CatalogAppPublicBinding
+
     value = _read_json(root / f"{kind}-public-v1.json")
     return CatalogAppPublicBinding(
         kind=kind,
@@ -998,6 +1474,10 @@ def _public_binding(root: Path, kind: str) -> CatalogAppPublicBinding:
 
 
 def _authority_issue() -> dict[str, object]:
+    from infra.sp500_megarun.catalog_bootstrap_binding import (
+        create_or_verify_authority_anchor,
+    )
+
     raw = _run(
         [
             "gh",
@@ -1069,6 +1549,8 @@ def _authority_issue() -> dict[str, object]:
 
 
 def apply_public_binding(root: Path) -> None:
+    from infra.sp500_megarun.catalog_bootstrap_binding import build_public_binding_patch
+
     state = load_bootstrap_state(_state_path(root))
     context = _context(root)
     source = Path(str(context["source_root"]))
@@ -1267,6 +1749,8 @@ def _wait_for_required_checks(
 
 
 def _verify_existing_installations(root: Path) -> dict[str, int]:
+    from infra.sp500_megarun.catalog_bootstrap_secrets import clear_private_material
+
     observed: dict[str, int] = {}
     manifests = _manifests()
     for kind in ("requester", "auditor"):
@@ -1282,7 +1766,7 @@ def _verify_existing_installations(root: Path) -> dict[str, int]:
         ):
             raise ValueError("CATALOG_BOOTSTRAP_RETRY_INSTALLATION_INVALID")
         key_buffer = bytearray(key_path.read_bytes())
-        client: CatalogBootstrapGitHubClient | None = None
+        client: object | None = None
         try:
             client = CatalogBootstrapGitHubClient(
                 app_id=app_id,
@@ -1319,6 +1803,8 @@ def _verify_post_install_installations(
     *,
     allow_uploaded_auditor: bool = False,
 ) -> dict[str, int]:
+    from infra.sp500_megarun.catalog_bootstrap_secrets import clear_private_material
+
     observed: dict[str, int] = {}
     manifests = _manifests()
     key_paths = {
@@ -1348,7 +1834,7 @@ def _verify_post_install_installations(
         ):
             raise ValueError("CATALOG_BOOTSTRAP_RETRY_INSTALLATION_INVALID")
         key_buffer = bytearray(key_path.read_bytes())
-        client: CatalogBootstrapGitHubClient | None = None
+        client: object | None = None
         try:
             client = CatalogBootstrapGitHubClient(
                 app_id=app_id,
@@ -4639,6 +5125,8 @@ def install_local_components(root: Path) -> None:
 
 
 def _prepare_auditor_secret(root: Path) -> dict[str, object]:
+    from infra.sp500_megarun.catalog_bootstrap_secrets import upload_auditor_key_once
+
     pending = root / "secrets/auditor-pending.pem"
     staging = root / "secrets/auditor-upload-once.pem"
     if pending.is_file() and not pending.is_symlink():
@@ -5340,6 +5828,8 @@ def _terminal_checkpoint_payload(
         "requester_receipt_sha256": receipt["receipt_sha256"],
         "requester_receipt_file_sha256": receipt_file_sha256,
         "request_id": status["request_id"],
+        "request_sha256": status["request_sha256"],
+        "submission_key_sha256": status["submission_key_sha256"],
         "launch_ticket_sha256": status["launch_ticket_sha256"],
         "issue_number": status["issue_number"],
         "issue_identity": identity,
@@ -5378,6 +5868,8 @@ def _validate_terminal_checkpoint(value: dict[str, object]) -> None:
         "requester_receipt_sha256",
         "requester_receipt_file_sha256",
         "request_id",
+        "request_sha256",
+        "submission_key_sha256",
         "launch_ticket_sha256",
         "issue_number",
         "issue_identity",
@@ -5414,6 +5906,9 @@ def _validate_terminal_checkpoint(value: dict[str, object]) -> None:
         or not _SHA256.fullmatch(str(value.get("duplicate_call_proof_sha256", "")))
         or not _SHA256.fullmatch(str(value.get("terminal_checkpoint_sha256", "")))
         or value.get("request_id") != status.get("request_id")
+        or value.get("request_sha256") != status.get("request_sha256")
+        or value.get("submission_key_sha256")
+        != status.get("submission_key_sha256")
         or value.get("launch_ticket_sha256") != status.get("launch_ticket_sha256")
         or value.get("issue_number") != status.get("issue_number")
         or value.get("status_sha256") != status.get("status_sha256")
@@ -5466,6 +5961,8 @@ def _validate_complete_checkpoint(value: dict[str, object]) -> None:
         "requester_receipt_sha256",
         "requester_receipt_file_sha256",
         "request_id",
+        "request_sha256",
+        "submission_key_sha256",
         "launch_ticket_sha256",
         "issue_number",
         "issue_identity",
@@ -5490,10 +5987,31 @@ def _validate_complete_checkpoint(value: dict[str, object]) -> None:
 
 def _revalidate_requester_evidence(
     root: Path,
+    source: Path,
     evidence: dict[str, object],
     *,
     protected_commit_sha: str,
 ) -> None:
+    if evidence.get("protected_commit_sha") != protected_commit_sha:
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_PROTECTED_COMMIT_MISMATCH")
+    checkpoint_receipt = evidence.get("requester_receipt")
+    checkpoint_status = evidence.get("status")
+    if not isinstance(checkpoint_receipt, dict) or not isinstance(
+        checkpoint_status, dict
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_EVIDENCE_IDENTITY_MISMATCH")
+    identity_fields = (
+        "request_id",
+        "request_sha256",
+        "submission_key_sha256",
+        "issue_number",
+    )
+    if any(
+        evidence.get(field) != checkpoint_status.get(field)
+        or evidence.get(field) != checkpoint_receipt.get(field)
+        for field in identity_fields
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_EVIDENCE_IDENTITY_MISMATCH")
     status = _load_requester_status()
     if status is None or status != evidence.get("status"):
         raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_STATUS_CHANGED")
@@ -5532,13 +6050,20 @@ def _revalidate_requester_evidence(
     if seal["bootstrap_seal_sha256"] != evidence.get("bootstrap_seal_sha256"):
         raise ValueError("CATALOG_BOOTSTRAP_SEAL_CHANGED")
     local = _load_local_requester_receipt(status)
-    if local is not None:
-        receipt, file_sha256 = local
-        if (
-            receipt != evidence.get("requester_receipt")
-            or file_sha256 != evidence.get("requester_receipt_file_sha256")
-        ):
+    if local is None:
+        recovered = _invoke_bootstrap_request(source)
+        _validate_requester_receipt(recovered)
+        if recovered != checkpoint_receipt:
             raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_CHANGED")
+        local = _load_local_requester_receipt(status)
+        if local is None:
+            raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_MISSING")
+    receipt, file_sha256 = local
+    if (
+        receipt != checkpoint_receipt
+        or file_sha256 != evidence.get("requester_receipt_file_sha256")
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_CHANGED")
 
 
 def _run_requester_qualification(
@@ -5560,7 +6085,7 @@ def _run_requester_qualification(
         )
         _validate_complete_checkpoint(complete)
         _revalidate_requester_evidence(
-            root, complete, protected_commit_sha=protected_commit_sha
+            root, source, complete, protected_commit_sha=protected_commit_sha
         )
         return dict(complete["requester_qualification"])
 
@@ -5570,7 +6095,7 @@ def _run_requester_qualification(
         )
         _validate_terminal_checkpoint(terminal)
         _revalidate_requester_evidence(
-            root, terminal, protected_commit_sha=protected_commit_sha
+            root, source, terminal, protected_commit_sha=protected_commit_sha
         )
         complete = _complete_checkpoint_payload(terminal)
         _write_exact_canonical_checkpoint(complete_path, complete)
@@ -5908,30 +6433,20 @@ def _write_qualification_checkpoint_revision(
     data = _canonical(value) + b"\n"
     if previous is None:
         return _write_exact_canonical_checkpoint(path, value)
-    _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID")
     previous_data = _canonical(previous) + b"\n"
-    try:
-        if path.read_bytes() != previous_data:
-            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_CONFLICT")
-    except OSError as exc:
-        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID") from exc
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.revision")
-    try:
-        with temporary.open("xb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    except FileExistsError as exc:
-        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_WRITE_FAILED") from exc
-    except OSError as exc:
-        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_WRITE_FAILED") from exc
-    finally:
-        temporary.unlink(missing_ok=True)
-    _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID")
-    if path.read_bytes() != data:
-        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_READBACK_INVALID")
-    return hashlib.sha256(data).hexdigest()
+    with _exclusive_checkpoint_lock(path):
+        _cleanup_checkpoint_temps(path)
+        _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID")
+        try:
+            if path.read_bytes() != previous_data:
+                raise ValueError(
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_CONFLICT"
+                )
+        except OSError as exc:
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID"
+            ) from exc
+        return _write_checkpoint_bytes_locked(path, data, replace_existing=True)
 
 
 def _append_qualification_checkpoint_step(
@@ -5986,52 +6501,14 @@ def _read_stored_workflow_run(
 ) -> dict[str, object]:
     _validate_workflow_run_result(stored, protected_commit_sha=protected_commit_sha)
     run_id = int(stored["databaseId"])
-    candidates = [
-        row
-        for row in _list_workflow_runs(workflow)
-        if isinstance(row, dict) and row.get("databaseId") == run_id
-    ]
-    if len(candidates) != 1:
-        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID")
-    raw = _run(
-        [
-            "gh",
-            "run",
-            "view",
-            str(run_id),
-            "--repo",
-            REPOSITORY,
-            "--json",
-            "databaseId,headSha,event,status,conclusion,url,workflowName,path",
-        ]
+    observed = _read_workflow_run_by_id(
+        workflow,
+        run_id,
+        protected_commit_sha=protected_commit_sha,
     )
-    try:
-        observed = json.loads(
-            raw,
-            object_pairs_hook=_reject_duplicate_json_keys,
-            parse_constant=_reject_nonfinite_json,
-        )
-    except (ValueError, json.JSONDecodeError) as exc:
-        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID") from exc
-    if not isinstance(observed, dict):
-        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID")
-    if "workflowName" in observed and "path" in observed:
-        workflow_name = observed.get("workflowName")
-        workflow_path = observed.get("path")
-        if (
-            not isinstance(workflow_name, str)
-            or not isinstance(workflow_path, str)
-            or Path(workflow_path).name != workflow
-        ):
-            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID")
-    normalized = {
-        key: observed.get(key)
-        for key in ("databaseId", "headSha", "event", "status", "conclusion", "url")
-    }
-    _validate_workflow_run_result(normalized, protected_commit_sha=protected_commit_sha)
-    if normalized != stored:
+    if observed != stored:
         raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_CHANGED")
-    return normalized
+    return observed
 
 
 def _revalidate_qualification_step(
@@ -6138,14 +6615,20 @@ def run_qualifications(root: Path) -> None:
         if step_name in steps_by_name:
             continue
         if step_name in {"live_2", "live_3"}:
-            receipt = _run_live_qualification(root, protected_commit_sha)
+            receipt = _run_live_qualification(
+                root,
+                protected_commit_sha,
+                step_name=step_name,
+            )
         elif step_name == "requester":
             receipt = _run_requester_qualification(
                 root, source, protected_commit_sha
             )
         else:
-            receipt = _dispatch_workflow(
-                _QUALIFICATION_STEP_WORKFLOWS[step_name], protected_commit_sha
+            receipt = _run_qualification_workflow_step(
+                root,
+                step_name,
+                protected_commit_sha,
             )
         if not isinstance(receipt, dict):
             raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RECEIPT_INVALID")
@@ -6325,6 +6808,10 @@ def _production_seal(
     protected_commit_sha: str,
     ready_receipt_bytes: bytes,
 ) -> CatalogBootstrapObservedProductionSealV1:
+    from infra.sp500_megarun.catalog_bootstrap_finalizer import (
+        CatalogBootstrapObservedProductionSealV1,
+    )
+
     payload: dict[str, object] = {
         "schema_version": "1",
         "production_enabled": True,
@@ -6342,6 +6829,13 @@ def _production_seal(
 
 
 def perform_final_audit(root: Path) -> None:
+    from infra.sp500_megarun.catalog_bootstrap_finalizer import (
+        CatalogBootstrapFinalEvidenceV1,
+        canonical_ready_receipt_bytes,
+        complete_sealed_bootstrap,
+        finalize_bootstrap,
+    )
+
     state = load_bootstrap_state(_state_path(root))
     protected_commit_sha = _runtime_commit(root)
     qualification = _read_json(root / "qualification-operation-v1.json")
