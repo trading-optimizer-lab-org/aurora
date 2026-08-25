@@ -296,6 +296,16 @@ def test_q041_key_is_ephemeral_in_memory_and_never_a_fixture_or_secret() -> None
     assert "secrets:" not in SIMULATOR.read_text(encoding="utf-8") if SIMULATOR.exists() else True
 
 
+def test_q041_stays_blocked_before_any_execution_stage() -> None:
+    result = _run("Q-041")
+    assert result["outcome"] == "BLOCKED"
+    assert result["reason_code"] == "CATALOG_CONTROLLER_DISABLED"
+    assert result["authority_record_count"] == 0
+    assert result["component_execution_count"] == 0
+    assert result["unit_execution_count"] == 0
+    assert result["production_data_accesses"] == []
+
+
 def test_simulator_imports_in_the_standalone_workflow_process() -> None:
     code = (
         "import importlib.util,sys;"

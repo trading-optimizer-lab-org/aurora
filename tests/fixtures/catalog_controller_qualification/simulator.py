@@ -1696,12 +1696,20 @@ def _prove_controls_capacity_or_requester(
         if "CONTROLLER_ENABLED: ${{ vars.CATALOG_CONTROLLER_ENABLED }}" not in workflow:
             raise AssertionError("DISABLED_CONTROLLER_VARIABLE_NOT_BOUND")
         if (
+            "CONTROLLER_ARMED: ${{ vars.CATALOG_CONTROLLER_PRODUCTION_ARMED }}" not in workflow
+        ):
+            raise AssertionError("DISABLED_CONTROLLER_ARMED_VARIABLE_NOT_BOUND")
+        if (
             'controller_enabled = os.environ.get("CONTROLLER_ENABLED") == "true"'
             not in workflow
         ):
             raise AssertionError("DISABLED_CONTROLLER_VARIABLE_NOT_READ")
         if (
-            'if actors.get("production_enabled") is True and controller_enabled:'
+            'controller_armed = os.environ.get("CONTROLLER_ARMED") == "true"' not in workflow
+        ):
+            raise AssertionError("DISABLED_CONTROLLER_ARMED_VARIABLE_NOT_READ")
+        if (
+            'if actors.get("production_enabled") is True and controller_enabled and controller_armed:'
             not in workflow
         ):
             raise AssertionError("DISABLED_CONTROLLER_GATE_NOT_QUALIFIED")

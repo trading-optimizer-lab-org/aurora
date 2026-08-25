@@ -140,6 +140,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_ISSUE_NUMBER: ${{ inputs.issue_number || github.event.issue.number }}
           CONTROLLER_ENABLED: ${{ vars.CATALOG_CONTROLLER_ENABLED }}
+          CONTROLLER_ARMED: ${{ vars.CATALOG_CONTROLLER_PRODUCTION_ARMED }}
         shell: bash
         run: |
           python - <<'PY'
@@ -167,7 +168,8 @@ jobs:
           reason = "CATALOG_CONTROLLER_DISABLED"
           request_sha = hashlib.sha256(raw).hexdigest()
           controller_enabled = os.environ.get("CONTROLLER_ENABLED") == "true"
-          if actors.get("production_enabled") is True and controller_enabled:
+          controller_armed = os.environ.get("CONTROLLER_ARMED") == "true"
+          if actors.get("production_enabled") is True and controller_enabled and controller_armed:
               allowed = set(actors.get("request_actors", ()))
               key_path = actors.get("requester_public_key_path")
               if issue.get("user", {}).get("login") not in allowed:
