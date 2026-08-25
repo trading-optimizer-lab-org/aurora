@@ -1132,9 +1132,15 @@ def test_apply_cli_rejects_stale_expected_state_before_mutation(
         check=False,
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert result.returncode != 0
     assert "CATALOG_GITHUB_CONTROLS_STALE" in result.stderr
+    failure = json.loads(output.read_text("utf-8"))
+    assert failure["mode"] == "failed"
+    assert failure["error_code"] == "CATALOG_GITHUB_CONTROLS_STALE"
+    assert failure["failure_after_receipt"]["status"] == "ready"
+    assert failure["failure_snapshot_error"] is None
 
 
 def test_github_auditor_receipt_requires_exact_read_only_installation() -> None:

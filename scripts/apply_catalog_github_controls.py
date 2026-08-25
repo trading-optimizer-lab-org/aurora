@@ -548,7 +548,11 @@ def main(argv: list[str] | None = None) -> int:
             failure["error_code"] = str(exc).split(":", maxsplit=1)[0]
             failure["api_responses"] = list(locals().get("responses", []))
             try:
-                failure_snapshots = _live_snapshot(args, desired, auditor)
+                failure_snapshots = (
+                    load_snapshot_directory(args.snapshot_dir)
+                    if args.snapshot_dir is not None
+                    else _live_snapshot(args, desired, auditor)
+                )
                 failure_after = audit_catalog_github_controls(
                     desired=desired,
                     auditor=auditor,
