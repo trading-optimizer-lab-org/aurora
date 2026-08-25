@@ -1191,7 +1191,7 @@ def test_github_controls_recovery_rejects_any_other_install_root(
 
 
 def test_github_controls_recovery_binds_receipt_to_exact_blocked_state(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
