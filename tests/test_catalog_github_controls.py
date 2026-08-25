@@ -1591,13 +1591,35 @@ def test_retention_transaction_uses_exact_get_put_get_order() -> None:
         ("GET", endpoints[0]),
         ("GET", endpoints[1]),
         ("GET", endpoints[2]),
+        ("GET", endpoints[0]),
         ("PUT", endpoints[0]),
         ("GET", endpoints[0]),
+        ("GET", endpoints[1]),
         ("PUT", endpoints[1]),
         ("GET", endpoints[1]),
+        ("GET", endpoints[2]),
         ("PUT", endpoints[2]),
         ("GET", endpoints[2]),
     ]
+
+
+def test_retention_transaction_rejects_a_mixed_plan_before_any_api_call() -> None:
+    inputs = mutated_protection_snapshots("admins_not_enforced")
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    _set_cache_retention(snapshots, 89, 89, 89)
+    receipt = audit_catalog_github_controls(**inputs)
+    plan = build_github_controls_mutation_plan(
+        desired=inputs["desired"], receipt=receipt
+    )
+    client = _RetentionTransactionClient({})
+
+    with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_PLAN_INVALID"):
+        apply_cache_retention_transaction(
+            client, desired=inputs["desired"], receipt=receipt, plan=plan
+        )
+
+    assert client.calls == []
 
 
 def test_retention_transaction_is_get_put_get_and_rolls_back_level_one_on_level_two_failure() -> None:
@@ -1608,9 +1630,12 @@ def test_retention_transaction_is_get_put_get_and_rolls_back_level_one_on_level_
     with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_TRANSACTION_FAILED"):
         apply_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
     assert client.values[endpoints[0]] == 89
+    assert client.values[endpoints[1]] == 89
     assert [(c[0], c[1]) for c in client.calls] == [
         ("GET", endpoints[0]), ("GET", endpoints[1]), ("GET", endpoints[2]),
-        ("PUT", endpoints[0]), ("GET", endpoints[0]), ("PUT", endpoints[1]),
+        ("GET", endpoints[0]), ("PUT", endpoints[0]), ("GET", endpoints[0]),
+        ("GET", endpoints[1]), ("PUT", endpoints[1]),
+        ("PUT", endpoints[1]), ("GET", endpoints[1]),
         ("PUT", endpoints[0]), ("GET", endpoints[0]),
     ]
 
@@ -1643,7 +1668,47 @@ def test_retention_transaction_reports_rollback_failure_and_attempts_remaining_r
         and isinstance(call[2], dict)
         and call[2]["max_cache_retention_days"] == 89
     ]
-    assert [call[1] for call in rollback_puts] == [endpoints[1], endpoints[0]]
+    assert [call[1] for call in rollback_puts] == [
+        endpoints[2],
+        endpoints[1],
+        endpoints[0],
+    ]
+
+
+def test_retention_transaction_detects_concurrent_raise_before_put() -> None:
+    desired, receipt = _retention_receipt((89, 89, 89))
+    plan = build_github_controls_mutation_plan(desired=desired, receipt=receipt)
+    endpoints = [
+        mutation.endpoint
+        for mutation in plan.mutations
+        if "cache/retention-limit" in mutation.endpoint
+    ]
+
+    class ConcurrentRaiseClient(_RetentionTransactionClient):
+        def get(self, endpoint: str) -> object:
+            if endpoint == endpoints[1] and sum(
+                call[0] == "GET" and call[1] == endpoint for call in self.calls
+            ) == 1:
+                self.values[endpoint] = 120
+            return super().get(endpoint)
+
+    client = ConcurrentRaiseClient({endpoint: 89 for endpoint in endpoints})
+
+    with pytest.raises(
+        ValueError, match="CATALOG_CACHE_RETENTION_TRANSACTION_FAILED"
+    ):
+        apply_cache_retention_transaction(
+            client, desired=desired, receipt=receipt, plan=plan
+        )
+
+    assert client.values[endpoints[0]] == 89
+    assert client.values[endpoints[1]] == 120
+    assert not any(
+        call[0] == "PUT"
+        and call[1] == endpoints[1]
+        and call[2]["max_cache_retention_days"] == 90
+        for call in client.calls
+    )
 
 
 class _PagedClient:

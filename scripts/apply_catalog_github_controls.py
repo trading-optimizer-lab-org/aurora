@@ -229,6 +229,7 @@ def apply_cache_retention_transaction(
         return []
     if (
         len(retention_mutations) != 3
+        or len(plan.mutations) != 3  # type: ignore[attr-defined]
         or tuple(mutation.endpoint for mutation in retention_mutations) != endpoints
         or any(mutation.method != "PUT" for mutation in retention_mutations)
     ):
@@ -261,12 +262,18 @@ def apply_cache_retention_transaction(
         for mutation, target, original in zip(
             retention_mutations, targets, originals, strict=True
         ):
+            latest = _cache_retention_value(client, mutation.endpoint)
+            if latest != original:
+                raise ValueError("CATALOG_CACHE_RETENTION_CONCURRENT_CHANGE")
+            target = max(target, latest, minimum)
+            # A failed PUT can be ambiguous, so treat the level as possibly
+            # mutated and prove its rollback before returning an error.
+            mutated.append((mutation.endpoint, original))
             response = client.mutate(  # type: ignore[attr-defined]
                 method="PUT",
                 endpoint=mutation.endpoint,
                 body={"max_cache_retention_days": target},
             )
-            mutated.append((mutation.endpoint, original))
             observed = _cache_retention_value(client, mutation.endpoint)
             if observed != target:
                 raise ValueError("CATALOG_CACHE_RETENTION_READBACK_INVALID")
@@ -487,27 +494,28 @@ def main(argv: list[str] | None = None) -> int:
 
         mutation_client = GhMutationClient(api_version=desired.github_api_version)
         responses: list[object] = []
-        retention_applied = False
-        for mutation in plan.mutations:
-            if "CACHE_RETENTION_POLICY_REQUIRED" in mutation.reason_codes:
-                if not retention_applied:
-                    responses.extend(
-                        apply_cache_retention_transaction(
-                            mutation_client,
-                            desired=desired,
-                            receipt=fresh,
-                            plan=plan,
-                        )
-                    )
-                    retention_applied = True
-                continue
-            responses.append(
-                mutation_client.mutate(
-                    method=mutation.method,
-                    endpoint=mutation.endpoint,
-                    body=dict(mutation.body),
+        retention_present = any(
+            "CACHE_RETENTION_POLICY_REQUIRED" in mutation.reason_codes
+            for mutation in plan.mutations
+        )
+        if retention_present:
+            responses.extend(
+                apply_cache_retention_transaction(
+                    mutation_client,
+                    desired=desired,
+                    receipt=fresh,
+                    plan=plan,
                 )
             )
+        else:
+            for mutation in plan.mutations:
+                responses.append(
+                    mutation_client.mutate(
+                        method=mutation.method,
+                        endpoint=mutation.endpoint,
+                        body=dict(mutation.body),
+                    )
+                )
         after_snapshots = _live_snapshot(args, desired, auditor)
         after = audit_catalog_github_controls(
             desired=desired,
@@ -533,6 +541,32 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     except Exception as exc:
+        failure_result = locals().get("result")
+        if args.apply and isinstance(failure_result, dict):
+            failure = dict(failure_result)
+            failure["mode"] = "failed"
+            failure["error_code"] = str(exc).split(":", maxsplit=1)[0]
+            failure["api_responses"] = list(locals().get("responses", []))
+            try:
+                failure_snapshots = _live_snapshot(args, desired, auditor)
+                failure_after = audit_catalog_github_controls(
+                    desired=desired,
+                    auditor=auditor,
+                    snapshots=failure_snapshots,
+                )
+                failure["failure_after_receipt"] = failure_after.model_dump(
+                    mode="json"
+                )
+                failure["failure_snapshot_error"] = None
+            except Exception as snapshot_error:
+                failure["failure_after_receipt"] = None
+                failure["failure_snapshot_error"] = str(snapshot_error).split(
+                    ":", maxsplit=1
+                )[0]
+            try:
+                write_json(args.output, failure)
+            except Exception:
+                pass
         print(str(exc), file=sys.stderr)
         return 2
 
