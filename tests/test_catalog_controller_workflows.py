@@ -1254,31 +1254,18 @@ def test_watchdog_can_only_reenter_controller_for_existing_authority() -> None:
         assert forbidden not in text
     assert "ref: main" in text
     assert "issue_number: ${{ matrix.issue_number }}" in text
-    assert "extract_authority_comment_records" in text
-    assert "workflow_runs" in text
-    assert 'in {"queued", "in_progress"}' in text
-    assert "CATALOG_WATCHDOG_ACTIVE_AUTHORITY_CONFLICT" in text
+    assert "python -m aurora.infra.sp500_megarun.catalog_watchdog snapshot" in text
+    assert "python -m aurora.infra.sp500_megarun.catalog_watchdog select" in text
+    assert "extract_authority_comment_records" not in text
+    assert "python - <<'PY'" not in text
 
 
 def test_watchdog_uses_two_stable_nonterminal_run_inventories() -> None:
     text = (WORKFLOWS / "catalog-run-watchdog.yml").read_text("utf-8")
-    assert "for snapshot in 1 2; do" in text
-    assert (
-        '"repos/$GITHUB_REPOSITORY/actions/runs?status=queued&per_page=100"'
-        in text
-    )
-    assert (
-        '"repos/$GITHUB_REPOSITORY/actions/runs?status=in_progress&per_page=100"'
-        in text
-    )
-    assert "actions-runs-queued-$snapshot.json" in text
-    assert "actions-runs-in_progress-$snapshot.json" in text
-    assert "actions-runs-queued-1.json" in text
-    assert "actions-runs-in_progress-1.json" in text
-    assert 'for expected_status in ("queued", "in_progress"):' in text
-    assert "status != expected_status" in text
-    assert "if run_id in run_states:" in text
-    assert "CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_UNSTABLE" in text
+    assert text.count("python -m aurora.infra.sp500_megarun.catalog_watchdog") == 2
+    assert "gh api" not in text
+    assert "for snapshot in 1 2; do" not in text
+    assert "actions-runs-queued-1.json" not in text
     assert "actions/runs?per_page=100" not in text
     assert '"completed"' not in text
 
