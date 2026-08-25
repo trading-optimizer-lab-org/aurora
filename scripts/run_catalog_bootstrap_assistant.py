@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 import ctypes
+from builtins import ExceptionGroup
 import hashlib
 import json
 import os
@@ -95,6 +96,7 @@ BROKER_ROOT = Path("C:/ProgramData/AURORA/CatalogRequester")
 AGENT_ROOT = Path("C:/ProgramData/AURORA/CatalogAgent")
 BOOTSTRAP_STAGING_ROOT = Path("C:/ProgramData/AURORA/BootstrapStaging")
 CONTROLLER_VARIABLE = "CATALOG_CONTROLLER_ENABLED"
+ARMED_VARIABLE = "CATALOG_CONTROLLER_PRODUCTION_ARMED"
 ENVIRONMENT = "catalog-production"
 AUDITOR_SECRET = "AURORA_CATALOG_AUDITOR_PRIVATE_KEY"
 QUALIFICATION_CHECKPOINT_FILENAME = "qualification-substeps-v1.checkpoint.json"
@@ -757,17 +759,50 @@ def _write_canonical(path: Path, value: object) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _set_repository_variable(name: str, value: str) -> None:
+def _read_repository_variable(name: str) -> str:
     if name not in {
         CONTROLLER_VARIABLE,
+        ARMED_VARIABLE,
+        "CATALOG_AUTHORITY_ISSUE_NUMBER",
+        "AURORA_CATALOG_AUDITOR_APP_ID",
+    }:
+        raise ValueError("CATALOG_BOOTSTRAP_VARIABLE_FORBIDDEN")
+    return _run(["gh", "variable", "get", name, "--repo", REPOSITORY])
+
+
+def _set_repository_variable(name: str, value: str) -> str:
+    if name not in {
+        CONTROLLER_VARIABLE,
+        ARMED_VARIABLE,
         "CATALOG_AUTHORITY_ISSUE_NUMBER",
         "AURORA_CATALOG_AUDITOR_APP_ID",
     }:
         raise ValueError("CATALOG_BOOTSTRAP_VARIABLE_FORBIDDEN")
     _run(["gh", "variable", "set", name, "--body", value, "--repo", REPOSITORY])
-    observed = _run(["gh", "variable", "get", name, "--repo", REPOSITORY])
+    observed = _read_repository_variable(name)
     if observed != value:
         raise ValueError("CATALOG_BOOTSTRAP_VARIABLE_READBACK_INVALID")
+    return observed
+
+
+def _disable_controller() -> None:
+    errors: list[Exception] = []
+    for name in (ARMED_VARIABLE, CONTROLLER_VARIABLE):
+        try:
+            _set_repository_variable(name, "false")
+        except Exception as exc:
+            errors.append(exc)
+    if errors:
+        raise ExceptionGroup(
+            "CATALOG_BOOTSTRAP_CONTROLLER_SHUTDOWN_FAILED", errors
+        )
+
+
+def _controller_is_ready() -> bool:
+    return (
+        _read_repository_variable(CONTROLLER_VARIABLE) == "true"
+        and _read_repository_variable(ARMED_VARIABLE) == "true"
+    )
 
 
 def _list_workflow_runs(workflow: str) -> list[dict[str, object]]:
@@ -1343,6 +1378,7 @@ def _advance(
 def perform_precheck(root: Path) -> None:
     if root.resolve() != EXPECTED_ROOT.resolve():
         raise ValueError("CATALOG_BOOTSTRAP_ROOT_INVALID")
+    _disable_controller()
     context = _context(root)
     source = Path(str(context["source_root"]))
     head = _run(["git", "rev-parse", "HEAD"], cwd=source)
@@ -1350,11 +1386,8 @@ def perform_precheck(root: Path) -> None:
         raise ValueError("CATALOG_BOOTSTRAP_SOURCE_COMMIT_CHANGED")
     if _run(["git", "status", "--porcelain=v1", "--untracked-files=no"], cwd=source):
         raise ValueError("CATALOG_BOOTSTRAP_SOURCE_DIRTY")
-    enabled = _run(
-        ["gh", "variable", "get", "CATALOG_CONTROLLER_ENABLED", "--repo", REPOSITORY]
-    )
-    if enabled != "false":
-        raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_NOT_DISABLED")
+    enabled = "false"
+    armed = "false"
     baseline = _github_activity_snapshot()
     _write_canonical(root / "github-activity-baseline-v1.json", baseline)
     state = initial_bootstrap_state(
@@ -1366,7 +1399,7 @@ def perform_precheck(root: Path) -> None:
         root,
         state,
         "precheck_passed",
-        {"head": head, "enabled": enabled, "activity": baseline},
+        {"head": head, "enabled": enabled, "armed": armed, "activity": baseline},
     )
 
 
@@ -1942,6 +1975,7 @@ def _resume_transient_merge_block(root: Path) -> bool:
         raise ValueError("CATALOG_BOOTSTRAP_RETRY_BLOCK_RECEIPT_INVALID")
     if root.resolve() != EXPECTED_ROOT.resolve():
         raise ValueError("CATALOG_BOOTSTRAP_ROOT_INVALID")
+    _disable_controller()
     context = _context(root)
     source = Path(str(context["source_root"]))
     if source.is_symlink():
@@ -3782,6 +3816,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_BLOCK_RECEIPT_INVALID")
     if root.resolve() != EXPECTED_ROOT.resolve():
         raise ValueError("CATALOG_BOOTSTRAP_ROOT_INVALID")
+    _disable_controller()
     followup_retry_path = (
         root / "receipts/controller-bootstrap-local-install-retry-2-v1.json"
     )
@@ -4693,6 +4728,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_BLOCK_INVALID")
     if root.resolve() != EXPECTED_ROOT.resolve():
         raise ValueError("CATALOG_BOOTSTRAP_ROOT_INVALID")
+    _disable_controller()
     first_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-v1.json"
     )
@@ -5240,7 +5276,7 @@ def apply_github_controls(root: Path) -> None:
         or not isinstance(auditor.get("app_id"), int)
     ):
         raise ValueError("CATALOG_BOOTSTRAP_PUBLIC_BINDING_INVALID")
-    _set_repository_variable(CONTROLLER_VARIABLE, "false")
+    _disable_controller()
     _set_repository_variable(
         "CATALOG_AUTHORITY_ISSUE_NUMBER", str(authority["issue_number"])
     )
@@ -6948,11 +6984,12 @@ def perform_final_audit(root: Path) -> None:
         raise ValueError("CATALOG_BOOTSTRAP_AGENT_CAPABILITY_INVALID")
     if not owners or any(row.get("user") != "AURORAAgent" for row in owners):
         raise ValueError("CATALOG_BOOTSTRAP_AGENT_PROCESS_OWNER_INVALID")
-    pre_enable = _run_live_qualification(
-        root, protected_commit_sha, step_name="final_pre_enable_live"
-    )
-    _set_repository_variable(CONTROLLER_VARIABLE, "true")
     try:
+        _set_repository_variable(ARMED_VARIABLE, "false")
+        pre_enable = _run_live_qualification(
+            root, protected_commit_sha, step_name="final_pre_enable_live"
+        )
+        _set_repository_variable(CONTROLLER_VARIABLE, "true")
         post_enable = _run_live_qualification(
             root, protected_commit_sha, step_name="final_post_enable_live"
         )
@@ -7019,6 +7056,9 @@ def perform_final_audit(root: Path) -> None:
         _write_canonical(ready_path, ready.model_dump(mode="json"))
         if ready_path.read_bytes() != ready_bytes:
             raise ValueError("CATALOG_BOOTSTRAP_READY_RECEIPT_READBACK_INVALID")
+        _set_repository_variable(ARMED_VARIABLE, "true")
+        if not _controller_is_ready():
+            raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_NOT_READY")
         seal = _production_seal(protected_commit_sha, ready_bytes)
         seal_path = BROKER_ROOT / "config/production-enabled-v1.seal.json"
         _write_canonical(seal_path, seal.model_dump(mode="json"))
@@ -7097,7 +7137,7 @@ def perform_final_audit(root: Path) -> None:
         _write_canonical(root / "final-audit-operation-v1.json", final)
         _advance(root, state, "final_audit_passed", final)
     except Exception:
-        _set_repository_variable(CONTROLLER_VARIABLE, "false")
+        _disable_controller()
         raise
 
 
@@ -7152,7 +7192,7 @@ def main() -> int:
                     return 2
             except Exception as exc:
                 try:
-                    _set_repository_variable(CONTROLLER_VARIABLE, "false")
+                    _disable_controller()
                 except Exception:
                     pass
                 reason = str(exc)
@@ -7192,7 +7232,7 @@ def main() -> int:
             run_phase(state.phase, args.installed_root)
         except Exception as exc:
             try:
-                _set_repository_variable(CONTROLLER_VARIABLE, "false")
+                _disable_controller()
             except Exception:
                 pass
             reason = str(exc)

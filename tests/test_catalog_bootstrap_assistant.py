@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from builtins import ExceptionGroup
 import hashlib
 import inspect
 import json
@@ -4565,3 +4566,82 @@ def test_load_rejects_noncanonical_json_and_links(tmp_path: Path) -> None:
         pytest.skip("symlink creation unavailable")
     with pytest.raises(ValueError, match="STATE_LINK_FORBIDDEN"):
         load_bootstrap_state(link)
+
+
+def test_controller_double_shutdown_is_ordered_and_attempts_enabled_after_armed_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_set(name: str, value: str) -> None:
+        calls.append((name, value))
+        if name == bootstrap_runner.ARMED_VARIABLE:
+            raise ValueError("armed readback failed")
+
+    monkeypatch.setattr(bootstrap_runner, "_set_repository_variable", fake_set)
+
+    with pytest.raises(ExceptionGroup) as raised:
+        bootstrap_runner._disable_controller()
+
+    assert calls == [
+        (bootstrap_runner.ARMED_VARIABLE, "false"),
+        (bootstrap_runner.CONTROLLER_VARIABLE, "false"),
+    ]
+    assert [str(error) for error in raised.value.exceptions] == [
+        "armed readback failed"
+    ]
+
+
+def test_controller_double_shutdown_aggregates_failures_in_fixed_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_set(name: str, _value: str) -> None:
+        calls.append(name)
+        raise ValueError(f"failure:{name}")
+
+    monkeypatch.setattr(bootstrap_runner, "_set_repository_variable", fake_set)
+
+    with pytest.raises(ExceptionGroup) as raised:
+        bootstrap_runner._disable_controller()
+
+    assert calls == [bootstrap_runner.ARMED_VARIABLE, bootstrap_runner.CONTROLLER_VARIABLE]
+    assert [str(error) for error in raised.value.exceptions] == [
+        f"failure:{bootstrap_runner.ARMED_VARIABLE}",
+        f"failure:{bootstrap_runner.CONTROLLER_VARIABLE}",
+    ]
+
+
+@pytest.mark.parametrize("armed", ("", "TRUE", " true ", "yes", None))
+def test_controller_ready_is_fail_closed_for_missing_or_malformed_values(
+    armed: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    values = {
+        bootstrap_runner.CONTROLLER_VARIABLE: "true",
+        bootstrap_runner.ARMED_VARIABLE: armed,
+    }
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_read_repository_variable",
+        lambda name: values[name],
+    )
+
+    assert bootstrap_runner._controller_is_ready() is False
+
+
+def test_final_activation_sequence_is_exactly_ordered() -> None:
+    source = inspect.getsource(bootstrap_runner.perform_final_audit)
+    ordered_markers = (
+        '_set_repository_variable(ARMED_VARIABLE, "false")',
+        'pre_enable = _run_live_qualification',
+        '_set_repository_variable(CONTROLLER_VARIABLE, "true")',
+        'post_enable = _run_live_qualification',
+        '_write_canonical(ready_path, ready.model_dump(mode="json"))',
+        'if ready_path.read_bytes() != ready_bytes:',
+        '_set_repository_variable(ARMED_VARIABLE, "true")',
+        'seal = _production_seal',
+        'deadline = time.monotonic() + 300',
+    )
+    positions = [source.index(marker) for marker in ordered_markers]
+    assert positions == sorted(positions)
