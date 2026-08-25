@@ -34,7 +34,9 @@ from scripts.audit_catalog_github_controls import (
     _billing_usage_endpoint,
     _campaign_storage_projection,
     _paginate_list_rows,
+    _paginate_list_rows_stable,
     _paginate_object_rows,
+    _paginate_object_rows_stable,
     _package_inventory_endpoint,
     _reported_shared_storage_evidence,
     _retry_transient_snapshot_collection,
@@ -1725,6 +1727,108 @@ class _PagedClient:
     def get(self, endpoint: str) -> object:
         self.requested.append(endpoint)
         return deepcopy(self.pages[endpoint])
+
+
+class _SequentialPagedClient:
+    def __init__(self, pages: dict[str, list[object]]) -> None:
+        self.pages = pages
+        self.positions = {endpoint: 0 for endpoint in pages}
+        self.requested: list[str] = []
+
+    def get(self, endpoint: str) -> object:
+        self.requested.append(endpoint)
+        position = self.positions[endpoint]
+        self.positions[endpoint] = position + 1
+        return deepcopy(self.pages[endpoint][position])
+
+
+def test_stable_object_pagination_requires_two_identical_complete_scans() -> None:
+    client = _PagedClient(
+        {
+            "/items?per_page=100&page=1": {
+                "total_count": 2,
+                "items": [{"id": 1}, {"id": 2}],
+            }
+        }
+    )
+
+    rows, complete = _paginate_object_rows_stable(
+        client,
+        "/items",
+        root="items",
+        max_pages=1,
+    )
+
+    assert rows == ({"id": 1}, {"id": 2})
+    assert complete is True
+    assert len(client.requested) == 2
+
+
+def test_stable_object_pagination_rejects_change_with_same_total() -> None:
+    first_page = {
+        "total_count": 101,
+        "items": [{"id": value} for value in range(1, 101)],
+    }
+    client = _SequentialPagedClient(
+        {
+            "/items?per_page=100&page=1": [first_page, first_page],
+            "/items?per_page=100&page=2": [
+                {"total_count": 101, "items": [{"id": 101}]},
+                {"total_count": 101, "items": [{"id": 102}]},
+            ],
+        }
+    )
+
+    with pytest.raises(ValueError, match="CATALOG_GITHUB_PAGINATION_UNSTABLE"):
+        _paginate_object_rows_stable(
+            client,
+            "/items",
+            root="items",
+            max_pages=2,
+        )
+
+
+def test_stable_object_pagination_never_completes_after_incomplete_second_scan() -> None:
+    first_page = {
+        "total_count": 101,
+        "items": [{"id": value} for value in range(1, 101)],
+    }
+    client = _SequentialPagedClient(
+        {
+            "/items?per_page=100&page=1": [first_page, first_page],
+            "/items?per_page=100&page=2": [
+                {"total_count": 101, "items": [{"id": 101}]},
+                {
+                    "total_count": 101,
+                    "items": [{"id": value} for value in range(101, 201)],
+                },
+            ],
+        }
+    )
+
+    rows, complete = _paginate_object_rows_stable(
+        client,
+        "/items",
+        root="items",
+        max_pages=2,
+    )
+
+    assert len(rows) in (101, 200)
+    assert complete is False
+
+
+def test_stable_list_pagination_requires_two_identical_complete_scans() -> None:
+    client = _PagedClient(
+        {
+            "/rows?per_page=100&page=1": [{"id": 1}, {"id": 2}],
+        }
+    )
+
+    rows, complete = _paginate_list_rows_stable(client, "/rows", max_pages=1)
+
+    assert rows == ({"id": 1}, {"id": 2})
+    assert complete is True
+    assert len(client.requested) == 2
 
 
 def test_live_auditor_fully_paginates_object_rows_without_duplicates() -> None:

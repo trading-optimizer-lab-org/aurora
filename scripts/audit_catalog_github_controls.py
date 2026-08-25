@@ -572,6 +572,36 @@ def _paginate_object_rows(
     return tuple(rows), False
 
 
+def _paginate_object_rows_stable(
+    client: GhReadOnlyClient | AppReadOnlyClient | object,
+    endpoint: str,
+    *,
+    root: str,
+    max_pages: int = 100,
+) -> tuple[tuple[dict[str, object], ...], bool]:
+    """Require two complete, identical consecutive object-collection scans."""
+
+    first_rows, first_complete = _paginate_object_rows(
+        client,
+        endpoint,
+        root=root,
+        max_pages=max_pages,
+    )
+    second_rows, second_complete = _paginate_object_rows(
+        client,
+        endpoint,
+        root=root,
+        max_pages=max_pages,
+    )
+    if (
+        first_complete
+        and second_complete
+        and _canonical_json(first_rows) != _canonical_json(second_rows)
+    ):
+        raise ValueError("CATALOG_GITHUB_PAGINATION_UNSTABLE")
+    return first_rows, first_complete and second_complete
+
+
 def _parse_utc(value: object) -> datetime | None:
     if not isinstance(value, str):
         return None
@@ -617,7 +647,7 @@ def _authority_anchor_status(
             repository_snapshot=repository_snapshot,
             issue_snapshot=issue,
         )
-        comments, complete = _paginate_list_rows(
+        comments, complete = _paginate_list_rows_stable(
             client,
             f"/repos/{repository}/issues/{anchor.issue_number}/comments",
             max_pages=100,
@@ -707,7 +737,7 @@ def _collect_active_run_inventory(
         latest_by_authority[record.authority_id] = record
     latest_records = tuple(latest_by_authority.values())
     for status in ("queued", "in_progress"):
-        rows, complete = _paginate_object_rows(
+        rows, complete = _paginate_object_rows_stable(
             client,
             f"/repos/{repository}/actions/runs?status={status}",
             root="workflow_runs",
@@ -719,7 +749,7 @@ def _collect_active_run_inventory(
             if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id in seen:
                 raise ValueError("CATALOG_ACTIVE_RUN_INVENTORY_INVALID")
             seen.add(run_id)
-            jobs, complete_jobs = _paginate_object_rows(
+            jobs, complete_jobs = _paginate_object_rows_stable(
                 client,
                 f"/repos/{repository}/actions/runs/{run_id}/jobs",
                 root="jobs",
@@ -1046,13 +1076,13 @@ def _collect_storage_snapshot(
     caller_job: str,
     purpose: str,
 ) -> tuple[dict[str, object], bool]:
-    artifacts, artifacts_complete = _paginate_object_rows(
+    artifacts, artifacts_complete = _paginate_object_rows_stable(
         client,
         f"/repos/{repository}/actions/artifacts",
         root="artifacts",
         max_pages=2_000,
     )
-    caches, caches_complete = _paginate_object_rows(
+    caches, caches_complete = _paginate_object_rows_stable(
         client,
         f"/repos/{repository}/actions/caches",
         root="actions_caches",
@@ -1061,7 +1091,7 @@ def _collect_storage_snapshot(
     package_rows: list[dict[str, object]] = []
     packages_complete = True
     for package_type in ("container", "maven", "npm", "nuget", "rubygems"):
-        rows, complete = _paginate_list_rows(
+        rows, complete = _paginate_list_rows_stable(
             client,
             _package_inventory_endpoint(organization_id, package_type),
             max_pages=10,
@@ -1281,6 +1311,33 @@ def _paginate_list_rows(
     return tuple(rows), False
 
 
+def _paginate_list_rows_stable(
+    client: GhReadOnlyClient | AppReadOnlyClient | object,
+    endpoint: str,
+    *,
+    max_pages: int = 100,
+) -> tuple[tuple[dict[str, object], ...], bool]:
+    """Require two complete, identical consecutive plain-list scans."""
+
+    first_rows, first_complete = _paginate_list_rows(
+        client,
+        endpoint,
+        max_pages=max_pages,
+    )
+    second_rows, second_complete = _paginate_list_rows(
+        client,
+        endpoint,
+        max_pages=max_pages,
+    )
+    if (
+        first_complete
+        and second_complete
+        and _canonical_json(first_rows) != _canonical_json(second_rows)
+    ):
+        raise ValueError("CATALOG_GITHUB_PAGINATION_UNSTABLE")
+    return first_rows, first_complete and second_complete
+
+
 def collect_live_snapshot(
     *,
     client: GhReadOnlyClient | AppReadOnlyClient,
@@ -1314,13 +1371,13 @@ def collect_live_snapshot(
         f"/repos/{repository}/branches/{desired.default_branch}/protection"
     )
     actions = _dict(client.get(f"/repos/{repository}/actions/permissions/workflow"))
-    larger_runners, larger_runners_complete = _paginate_object_rows(
+    larger_runners, larger_runners_complete = _paginate_object_rows_stable(
         client,
         f"/orgs/{owner}/actions/hosted-runners",
         root="runners",
         max_pages=10,
     )
-    self_hosted_runners, self_hosted_runners_complete = _paginate_object_rows(
+    self_hosted_runners, self_hosted_runners_complete = _paginate_object_rows_stable(
         client,
         f"/repos/{repository}/actions/runners",
         root="runners",
@@ -1340,7 +1397,7 @@ def collect_live_snapshot(
     )
     organization = desired.billing.budget_control_plane.organization
     enterprise = desired.billing.budget_control_plane.enterprise
-    budgets, budgets_complete = _paginate_object_rows(
+    budgets, budgets_complete = _paginate_object_rows_stable(
         client,
         f"/enterprises/{enterprise}/settings/billing/budgets?scope=repository",
         root="budgets",
