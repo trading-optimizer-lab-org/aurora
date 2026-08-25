@@ -861,7 +861,8 @@ def _validate_catalog_live_audit_topology(
     required_provenance_markers = {
         'repository="trading-optimizer-lab-org/aurora"',
         '[[ "$ACTUAL_REPOSITORY" == "$repository" ]]',
-        "=~ ^[0-9a-f]{64}$",
+        '[[ "$EXPECTED_PROTECTED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]',
+        '[[ "$EXPECTED_AUDIT_CONTEXT_SHA256" =~ ^[0-9a-f]{64}$ ]]',
         '[[ "$ACTUAL_WORKFLOW_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]',
         '[[ "$ACTUAL_REF" == "refs/heads/main" ]]',
         '[[ "$ACTUAL_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]',

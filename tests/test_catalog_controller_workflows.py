@@ -310,6 +310,7 @@ def test_live_audit_validates_real_provenance_before_the_credential_step() -> No
     )
     assert provenance_step_index == 0
     assert provenance_step_index < credential_step_index
+    provenance_run = steps[provenance_step_index]["run"]
     provenance = json.dumps(steps[provenance_step_index], sort_keys=True)
     for value in (
         "trading-optimizer-lab-org/aurora",
@@ -326,6 +327,8 @@ def test_live_audit_validates_real_provenance_before_the_credential_step() -> No
     ):
         assert value in provenance
     assert '[[ "$ACTUAL_EVENT_NAME" == "workflow_call" ]]' not in provenance
+    assert '[[ "$EXPECTED_PROTECTED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]' in provenance_run
+    assert '[[ "$EXPECTED_AUDIT_CONTEXT_SHA256" =~ ^[0-9a-f]{64}$ ]]' in provenance_run
     assert "CATALOG_AUDIT_CALLER_EVENT_INVALID" in provenance
     for allowed_event in ("issues", "workflow_dispatch", "schedule"):
         assert allowed_event in provenance

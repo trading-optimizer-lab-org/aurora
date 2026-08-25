@@ -74,7 +74,7 @@ jobs:
           [[ "$ACTUAL_REPOSITORY" == "$repository" ]] || {
             echo "CATALOG_AUDIT_REPOSITORY_INVALID" >&2; exit 1;
           }
-          [[ "$EXPECTED_PROTECTED_COMMIT_SHA" =~ ^[0-9a-f]{64}$ ]] || {
+          [[ "$EXPECTED_PROTECTED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || {
             echo "CATALOG_AUDIT_PROTECTED_COMMIT_INVALID" >&2; exit 1;
           }
           [[ "$EXPECTED_AUDIT_CONTEXT_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
