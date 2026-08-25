@@ -39,6 +39,7 @@ from scripts.audit_catalog_github_controls import (
     _reported_shared_storage_evidence,
     _retry_transient_snapshot_collection,
 )
+from scripts.apply_catalog_github_controls import apply_cache_retention_transaction
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -132,7 +133,9 @@ def protected_snapshots() -> dict[str, object]:
         "budget_details": deepcopy(budgets),
         "cache_settings": {
             "storage_limit_gb": 10,
-            "retention_days": desired.billing.repository_cache_retention_days,
+            "enterprise_retention_days": desired.billing.repository_cache_retention_days,
+            "organization_retention_days": desired.billing.repository_cache_retention_days,
+            "repository_retention_days": desired.billing.repository_cache_retention_days,
         },
         "storage": {
             "telemetry_complete": True,
@@ -306,8 +309,8 @@ def mutated_protection_snapshots(mutation: str) -> dict[str, object]:
         snapshot["budgets"][0]["prevent_further_usage"] = False
     elif mutation == "cache_limit_above_10_gb":
         snapshot["cache_settings"]["storage_limit_gb"] = 20
-    elif mutation == "cache_retention_not_7_days":
-        snapshot["cache_settings"]["retention_days"] = 6
+    elif mutation == "cache_retention_below_90_days":
+        snapshot["cache_settings"]["repository_retention_days"] = 89
     elif mutation == "request_actor_admin":
         snapshot["request_actor_permissions"]["repository_administration"] = "write"
     elif mutation == "local_agent_admin":
@@ -425,9 +428,9 @@ def test_controller_writer_allowlist_has_exactly_six_schema_items() -> None:
     assert schema_node["maxItems"] == 6
 
 
-def test_cache_retention_matches_github_repository_limit() -> None:
+def test_cache_retention_matches_the_90_day_hierarchy_minimum() -> None:
     desired = load_desired_controls()
-    assert desired.billing.repository_cache_retention_days == 7
+    assert desired.billing.repository_cache_retention_days == 90
 
 
 @pytest.mark.parametrize(
@@ -460,7 +463,7 @@ def test_cache_retention_matches_github_repository_limit() -> None:
         ("budget_wrong_repository", "ZERO_BUDGET_REPOSITORY_SCOPE_EXACT"),
         ("actions_budget_does_not_stop", "ZERO_ACTIONS_SPEND_STOP_REQUIRED"),
         ("cache_limit_above_10_gb", "FREE_CACHE_STORAGE_LIMIT_REQUIRED"),
-        ("cache_retention_not_7_days", "CACHE_RETENTION_POLICY_REQUIRED"),
+        ("cache_retention_below_90_days", "CACHE_RETENTION_POLICY_REQUIRED"),
         ("request_actor_admin", "REQUEST_ACTOR_NON_ADMIN"),
         ("local_agent_admin", "AGENT_ADMIN_CREDENTIAL_EXPOSED"),
         ("local_agent_requester_key", "AGENT_REQUESTER_CREDENTIAL_EXPOSED"),
@@ -686,28 +689,25 @@ def test_controls_state_sha_ignores_observation_envelope_but_detects_drift() -> 
     assert isinstance(drifted_snapshot, dict)
     cache_settings = drifted_snapshot["cache_settings"]
     assert isinstance(cache_settings, dict)
-    cache_settings["retention_days"] = 89
+    cache_settings["repository_retention_days"] = 89
     changed = audit_catalog_github_controls(**drifted)
     assert github_controls_state_sha256(first) != github_controls_state_sha256(
         changed
     )
 
 
-def test_budget_mutations_use_the_enterprise_endpoint_only() -> None:
+def test_budget_drift_blocks_without_creating_or_changing_budgets() -> None:
     inputs = mutated_protection_snapshots("zero_actions_budget_missing")
     receipt = audit_catalog_github_controls(**inputs)
     plan = build_github_controls_mutation_plan(
         desired=inputs["desired"],
         receipt=receipt,
     )
-    endpoints = {
-        mutation.endpoint
+    assert receipt.status == "blocked"
+    assert not any(
+        mutation.method == "POST" or "/settings/billing/budgets" in mutation.endpoint
         for mutation in plan.mutations
-        if "/settings/billing/budgets" in mutation.endpoint
-    }
-    assert endpoints == {
-        "/enterprises/trading-optimizer-lab/settings/billing/budgets"
-    }
+    )
 
 
 def test_auditor_routes_enterprise_billing_to_a_separate_token() -> None:
@@ -1300,7 +1300,7 @@ def test_controller_admission_requires_promoted_campaign_projection() -> None:
     assert projection == (0, 0, False)
 
 
-def test_keeper_accepts_the_protected_seven_day_cache_policy() -> None:
+def test_keeper_accepts_the_protected_90_day_cache_policy() -> None:
     from scripts.run_catalog_artifact_keeper import _validate_controls_receipt
 
     inputs = protected_snapshots()
@@ -1343,7 +1343,223 @@ def test_keeper_accepts_the_protected_seven_day_cache_policy() -> None:
         protected_commit_sha="a" * 40,
     )
 
-    assert checked["repository_cache_retention_days"] == 7
+    assert checked["enterprise_cache_retention_days"] == 90
+    assert checked["organization_cache_retention_days"] == 90
+    assert checked["repository_cache_retention_days"] == 90
+
+
+def _set_cache_retention(snapshot: dict[str, object], *values: object) -> None:
+    settings = snapshot["cache_settings"]
+    assert isinstance(settings, dict)
+    settings["enterprise_retention_days"] = values[0]
+    settings["organization_retention_days"] = values[1]
+    settings["repository_retention_days"] = values[2]
+
+
+def test_cache_config_uses_validated_organization_id_and_90_days() -> None:
+    desired = load_desired_controls()
+    assert desired.billing.budget_control_plane.organization_id == 287229438
+    assert desired.billing.repository_cache_storage_limit_gb == 10
+    assert desired.billing.repository_cache_retention_days == 90
+
+
+def test_cache_retention_hierarchy_at_or_above_90_is_ready() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    _set_cache_retention(snapshots, 90, 91, 100)
+    receipt = audit_catalog_github_controls(**inputs)
+    assert receipt.status == "ready"
+    assert receipt.enterprise_cache_retention_days == 90
+    assert receipt.organization_cache_retention_days == 91
+    assert receipt.repository_cache_retention_days == 100
+
+
+def test_cache_retention_below_minimum_plans_exactly_three_puts_in_order() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    _set_cache_retention(snapshots, 89, 90, 90)
+    receipt = audit_catalog_github_controls(**inputs)
+    plan = build_github_controls_mutation_plan(
+        desired=inputs["desired"], receipt=receipt
+    )
+    retention = [m for m in plan.mutations if "cache/retention-limit" in m.endpoint]
+    assert [(m.method, m.endpoint.rsplit("/actions", 1)[0]) for m in retention] == [
+        ("PUT", "/enterprises/trading-optimizer-lab"),
+        ("PUT", "/organizations/287229438"),
+        ("PUT", "/repos/trading-optimizer-lab-org/aurora"),
+    ]
+    assert len(retention) == 3
+
+
+def test_cache_retention_above_minimum_is_preserved_in_plan_bodies() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    _set_cache_retention(snapshots, 91, 89, 120)
+    receipt = audit_catalog_github_controls(**inputs)
+    plan = build_github_controls_mutation_plan(
+        desired=inputs["desired"], receipt=receipt
+    )
+    retention = [m for m in plan.mutations if "cache/retention-limit" in m.endpoint]
+    assert [m.body["max_cache_retention_days"] for m in retention] == [91, 90, 120]
+
+
+@pytest.mark.parametrize("unknown", [True, None, "90", 0])
+def test_unknown_cache_retention_blocks_without_retention_mutations(unknown: object) -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    _set_cache_retention(snapshots, unknown, 90, 90)
+    receipt = audit_catalog_github_controls(**inputs)
+    plan = build_github_controls_mutation_plan(
+        desired=inputs["desired"], receipt=receipt
+    )
+    assert receipt.status == "blocked"
+    assert "CACHE_RETENTION_UNKNOWN" in receipt.failed_controls
+    assert not [m for m in plan.mutations if "cache/retention-limit" in m.endpoint]
+
+
+def test_storage_limit_drift_never_plans_storage_put() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    snapshots["cache_settings"]["storage_limit_gb"] = 20
+    _set_cache_retention(snapshots, 89, 89, 89)
+    plan = build_github_controls_mutation_plan(
+        desired=inputs["desired"],
+        receipt=audit_catalog_github_controls(**inputs),
+    )
+    assert not any("cache/storage-limit" in m.endpoint for m in plan.mutations)
+
+
+class _RetentionTransactionClient:
+    def __init__(
+        self,
+        values: dict[str, int],
+        *,
+        fail_readback: str | None = None,
+        fail_put: set[str] | None = None,
+        fail_rollback: set[str] | None = None,
+    ) -> None:
+        self.values = dict(values)
+        self.originals = dict(values)
+        self.calls: list[tuple[str, str, object]] = []
+        self.fail_readback = fail_readback
+        self.readback_failed = False
+        self.fail_put = fail_put or set()
+        self.fail_rollback = fail_rollback or set()
+
+    def get(self, endpoint: str) -> object:
+        self.calls.append(("GET", endpoint, None))
+        if (
+            self.fail_readback == endpoint
+            and not self.readback_failed
+            and sum(call[0] == "GET" and call[1] == endpoint for call in self.calls) > 1
+        ):
+            self.readback_failed = True
+            raise ValueError("readback failed")
+        return {"max_cache_retention_days": self.values[endpoint]}
+
+    def mutate(self, *, method: str, endpoint: str, body: dict[str, object]) -> object:
+        self.calls.append((method, endpoint, body))
+        target = int(body["max_cache_retention_days"])
+        if endpoint in self.fail_put and target != self.originals[endpoint]:
+            raise ValueError("put failed")
+        if (
+            endpoint in self.fail_rollback
+            and target == self.originals[endpoint]
+            and self.values[endpoint] != self.originals[endpoint]
+        ):
+            raise ValueError("rollback failed")
+        self.values[endpoint] = target
+        return {}
+
+
+def _retention_receipt(values: tuple[int, int, int]):
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    _set_cache_retention(snapshots, *values)
+    return inputs["desired"], audit_catalog_github_controls(**inputs)
+
+
+def test_retention_transaction_uses_exact_get_put_get_order() -> None:
+    desired, receipt = _retention_receipt((89, 90, 120))
+    plan = build_github_controls_mutation_plan(desired=desired, receipt=receipt)
+    endpoints = [
+        mutation.endpoint
+        for mutation in plan.mutations
+        if "cache/retention-limit" in mutation.endpoint
+    ]
+    client = _RetentionTransactionClient(
+        dict(zip(endpoints, (89, 90, 120), strict=True))
+    )
+
+    responses = apply_cache_retention_transaction(
+        client, desired=desired, receipt=receipt, plan=plan
+    )
+
+    assert [client.values[endpoint] for endpoint in endpoints] == [90, 90, 120]
+    assert [response["readback"] for response in responses] == [90, 90, 120]
+    assert [(call[0], call[1]) for call in client.calls] == [
+        ("GET", endpoints[0]),
+        ("GET", endpoints[1]),
+        ("GET", endpoints[2]),
+        ("PUT", endpoints[0]),
+        ("GET", endpoints[0]),
+        ("PUT", endpoints[1]),
+        ("GET", endpoints[1]),
+        ("PUT", endpoints[2]),
+        ("GET", endpoints[2]),
+    ]
+
+
+def test_retention_transaction_is_get_put_get_and_rolls_back_level_one_on_level_two_failure() -> None:
+    desired, receipt = _retention_receipt((89, 89, 89))
+    plan = build_github_controls_mutation_plan(desired=desired, receipt=receipt)
+    endpoints = [m.endpoint for m in plan.mutations if "cache/retention-limit" in m.endpoint]
+    client = _RetentionTransactionClient({endpoint: 89 for endpoint in endpoints}, fail_put={endpoints[1]})
+    with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_TRANSACTION_FAILED"):
+        apply_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
+    assert client.values[endpoints[0]] == 89
+    assert [(c[0], c[1]) for c in client.calls] == [
+        ("GET", endpoints[0]), ("GET", endpoints[1]), ("GET", endpoints[2]),
+        ("PUT", endpoints[0]), ("GET", endpoints[0]), ("PUT", endpoints[1]),
+        ("PUT", endpoints[0]), ("GET", endpoints[0]),
+    ]
+
+
+def test_retention_transaction_readback_failure_rolls_back_all_mutated_levels() -> None:
+    desired, receipt = _retention_receipt((89, 89, 89))
+    plan = build_github_controls_mutation_plan(desired=desired, receipt=receipt)
+    endpoints = [m.endpoint for m in plan.mutations if "cache/retention-limit" in m.endpoint]
+    client = _RetentionTransactionClient({endpoint: 89 for endpoint in endpoints}, fail_readback=endpoints[1])
+    with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_TRANSACTION_FAILED"):
+        apply_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
+    assert all(client.values[endpoint] == 89 for endpoint in endpoints)
+
+
+def test_retention_transaction_reports_rollback_failure_and_attempts_remaining_rollbacks() -> None:
+    desired, receipt = _retention_receipt((89, 89, 89))
+    plan = build_github_controls_mutation_plan(desired=desired, receipt=receipt)
+    endpoints = [m.endpoint for m in plan.mutations if "cache/retention-limit" in m.endpoint]
+    client = _RetentionTransactionClient(
+        {endpoint: 89 for endpoint in endpoints},
+        fail_put={endpoints[2]},
+        fail_rollback={endpoints[0]},
+    )
+    with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_ROLLBACK_FAILED"):
+        apply_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
+    rollback_puts = [
+        call
+        for call in client.calls
+        if call[0] == "PUT"
+        and isinstance(call[2], dict)
+        and call[2]["max_cache_retention_days"] == 89
+    ]
+    assert [call[1] for call in rollback_puts] == [endpoints[1], endpoints[0]]
 
 
 class _PagedClient:

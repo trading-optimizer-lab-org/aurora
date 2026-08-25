@@ -1273,7 +1273,11 @@ def collect_live_snapshot(
     owner, _ = repository.split("/", maxsplit=1)
     repo = _dict(client.get(f"/repos/{repository}"))
     organization_id = _dict(repo.get("owner")).get("id")
-    if isinstance(organization_id, bool) or not isinstance(organization_id, int):
+    if (
+        isinstance(organization_id, bool)
+        or not isinstance(organization_id, int)
+        or organization_id != desired.billing.budget_control_plane.organization_id
+    ):
         raise ValueError("CATALOG_GITHUB_ORGANIZATION_ID_INVALID")
     branch = client.get(
         f"/repos/{repository}/branches/{desired.default_branch}/protection"
@@ -1322,7 +1326,13 @@ def collect_live_snapshot(
                 f"/enterprises/{enterprise}/settings/billing/budgets/{budget['id']}"
             )
         )
-    cache_retention = _dict(
+    enterprise_cache_retention = _dict(
+        client.get(f"/enterprises/{enterprise}/actions/cache/retention-limit")
+    )
+    organization_cache_retention = _dict(
+        client.get(f"/organizations/{organization_id}/actions/cache/retention-limit")
+    )
+    repository_cache_retention = _dict(
         client.get(f"/repos/{repository}/actions/cache/retention-limit")
     )
     cache_storage = _dict(
@@ -1330,7 +1340,15 @@ def collect_live_snapshot(
     )
     cache_settings = {
         "storage_limit_gb": cache_storage.get("max_cache_size_gb"),
-        "retention_days": cache_retention.get("max_cache_retention_days"),
+        "enterprise_retention_days": enterprise_cache_retention.get(
+            "max_cache_retention_days"
+        ),
+        "organization_retention_days": organization_cache_retention.get(
+            "max_cache_retention_days"
+        ),
+        "repository_retention_days": repository_cache_retention.get(
+            "max_cache_retention_days"
+        ),
     }
     billing_observed_at = client.github_date
     if billing_observed_at is None:

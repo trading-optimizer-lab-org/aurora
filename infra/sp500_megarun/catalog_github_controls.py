@@ -185,6 +185,7 @@ class BudgetControlPlaneV1(FrozenModel):
     scope: Literal["enterprise"]
     enterprise: str
     organization: str
+    organization_id: int = Field(ge=1)
     repository_entity_name: RepositoryName
 
 
@@ -326,6 +327,8 @@ class _CatalogGithubControlsReceiptBaseV1(FrozenModel):
     free_artifact_storage_headroom: int | None = Field(ge=0)
     free_cache_storage_headroom: int | None = Field(ge=0)
     repository_cache_storage_limit_gb: int | None = Field(ge=0)
+    enterprise_cache_retention_days: int | None = Field(ge=1)
+    organization_cache_retention_days: int | None = Field(ge=1)
     repository_cache_retention_days: int | None = Field(ge=0)
     projected_campaign_artifact_bytes: int | None = Field(ge=0)
     projected_campaign_cache_bytes: int | None = Field(ge=0)
@@ -863,14 +866,30 @@ def audit_catalog_github_controls(
 
     cache = _mapping(snapshots.get("cache_settings"))
     cache_limit = cache.get("storage_limit_gb")
-    cache_retention = cache.get("retention_days")
+    enterprise_cache_retention = cache.get("enterprise_retention_days")
+    organization_cache_retention = cache.get("organization_retention_days")
+    repository_cache_retention = cache.get("repository_retention_days")
+    cache_retentions = (
+        enterprise_cache_retention,
+        organization_cache_retention,
+        repository_cache_retention,
+    )
+    cache_retention_known = all(
+        isinstance(value, int) and not isinstance(value, bool) and value >= 1
+        for value in cache_retentions
+    )
     check(
         "FREE_CACHE_STORAGE_LIMIT_REQUIRED",
         cache_limit == desired.billing.repository_cache_storage_limit_gb,
     )
+    check("CACHE_RETENTION_UNKNOWN", cache_retention_known)
     check(
         "CACHE_RETENTION_POLICY_REQUIRED",
-        cache_retention == desired.billing.repository_cache_retention_days,
+        cache_retention_known
+        and all(
+            int(value) >= desired.billing.repository_cache_retention_days
+            for value in cache_retentions
+        ),
     )
 
     storage = _mapping(snapshots.get("storage"))
@@ -1175,7 +1194,9 @@ def audit_catalog_github_controls(
         "free_artifact_storage_headroom": artifact_headroom,
         "free_cache_storage_headroom": cache_headroom,
         "repository_cache_storage_limit_gb": cache_limit if isinstance(cache_limit, int) else None,
-        "repository_cache_retention_days": cache_retention if isinstance(cache_retention, int) else None,
+        "enterprise_cache_retention_days": enterprise_cache_retention if isinstance(enterprise_cache_retention, int) and not isinstance(enterprise_cache_retention, bool) and enterprise_cache_retention >= 1 else None,
+        "organization_cache_retention_days": organization_cache_retention if isinstance(organization_cache_retention, int) and not isinstance(organization_cache_retention, bool) and organization_cache_retention >= 1 else None,
+        "repository_cache_retention_days": repository_cache_retention if isinstance(repository_cache_retention, int) and not isinstance(repository_cache_retention, bool) and repository_cache_retention >= 1 else None,
         "projected_campaign_artifact_bytes": storage.get("projected_campaign_artifact_bytes") if numeric_storage else None,
         "projected_campaign_cache_bytes": storage.get("projected_campaign_cache_bytes") if numeric_storage else None,
         "local_agent_actor": local_actor,
@@ -1324,57 +1345,39 @@ def build_github_controls_mutation_plan(
                 reason_codes=("CATALOG_TERMINAL_LABEL_EXACT",),
             )
         )
-    if "FREE_CACHE_STORAGE_LIMIT_REQUIRED" in failures:
-        mutations.append(
-            GithubControlMutationV1(
-                order=len(mutations) + 1,
-                method="PUT",
-                endpoint=f"/repos/{repository}/actions/cache/storage-limit",
-                body={
-                    "max_cache_size_gb": (
-                        desired.billing.repository_cache_storage_limit_gb
-                    )
-                },
-                reason_codes=("FREE_CACHE_STORAGE_LIMIT_REQUIRED",),
-            )
+    if (
+        "CACHE_RETENTION_POLICY_REQUIRED" in failures
+        and "CACHE_RETENTION_UNKNOWN" not in failures
+    ):
+        observed_retentions = (
+            receipt.enterprise_cache_retention_days,
+            receipt.organization_cache_retention_days,
+            receipt.repository_cache_retention_days,
         )
-    if "CACHE_RETENTION_POLICY_REQUIRED" in failures:
-        mutations.append(
-            GithubControlMutationV1(
-                order=len(mutations) + 1,
-                method="PUT",
-                endpoint=f"/repos/{repository}/actions/cache/retention-limit",
-                body={
-                    "max_cache_retention_days": (
-                        desired.billing.repository_cache_retention_days
-                    )
-                },
-                reason_codes=("CACHE_RETENTION_POLICY_REQUIRED",),
-            )
+        retention_endpoints = (
+            f"/enterprises/{desired.billing.budget_control_plane.enterprise}/actions/cache/retention-limit",
+            f"/organizations/{desired.billing.budget_control_plane.organization_id}/actions/cache/retention-limit",
+            f"/repos/{repository}/actions/cache/retention-limit",
         )
-    budget_failures = {
-        "ZERO_ACTIONS_SPEND_BUDGET_REQUIRED",
-        "ZERO_ACTIONS_STORAGE_BUDGET_REQUIRED",
-        "ZERO_CACHE_STORAGE_BUDGET_REQUIRED",
-        "ZERO_BUDGET_REPOSITORY_SCOPE_EXACT",
-        "ZERO_ACTIONS_SPEND_STOP_REQUIRED",
-        "ZERO_BUDGET_DETAIL_CROSSCHECK_REQUIRED",
-    }
-    if failures & budget_failures:
-        for budget in desired.billing.required_zero_budgets:
+        if any(value is None for value in observed_retentions):
+            raise ValueError("CATALOG_CACHE_RETENTION_PLAN_UNKNOWN")
+        for endpoint, observed in zip(
+            retention_endpoints, observed_retentions, strict=True
+        ):
             mutations.append(
                 GithubControlMutationV1(
                     order=len(mutations) + 1,
-                    method="POST",
-                    endpoint=(
-                        f"/enterprises/{desired.billing.budget_control_plane.enterprise}/"
-                        "settings/billing/budgets"
-                    ),
-                    body=budget.model_dump(mode="json"),
-                    reason_codes=tuple(sorted(failures & budget_failures)),
+                    method="PUT",
+                    endpoint=endpoint,
+                    body={
+                        "max_cache_retention_days": max(
+                            int(observed),
+                            desired.billing.repository_cache_retention_days,
+                        )
+                    },
+                    reason_codes=("CACHE_RETENTION_POLICY_REQUIRED",),
                 )
             )
-
     plan_payload = {
         "schema_version": "1",
         "repository": repository,

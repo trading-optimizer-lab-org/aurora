@@ -58,6 +58,8 @@ def _auditor_receipt(**updates: object) -> AuditorCatalogGithubControlsReceiptV1
         "free_artifact_storage_headroom": 8_000_000_000,
         "free_cache_storage_headroom": 4_000_000_000,
         "repository_cache_storage_limit_gb": 10,
+        "enterprise_cache_retention_days": 90,
+        "organization_cache_retention_days": 90,
         "repository_cache_retention_days": 90,
         "projected_campaign_artifact_bytes": 2_000_000_000,
         "projected_campaign_cache_bytes": 500_000_000,

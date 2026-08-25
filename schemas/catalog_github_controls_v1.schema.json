@@ -156,11 +156,12 @@
     "budget_control_plane": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["scope", "enterprise", "organization", "repository_entity_name"],
+      "required": ["scope", "enterprise", "organization", "organization_id", "repository_entity_name"],
       "properties": {
         "scope": {"const": "enterprise"},
         "enterprise": {"const": "trading-optimizer-lab"},
         "organization": {"const": "trading-optimizer-lab-org"},
+        "organization_id": {"const": 287229438},
         "repository_entity_name": {
           "const": "trading-optimizer-lab-org/aurora"
         }
@@ -191,7 +192,7 @@
         },
         "included_shared_storage_bytes": {"const": 53687091200},
         "repository_cache_storage_limit_gb": {"const": 10},
-        "repository_cache_retention_days": {"const": 7},
+        "repository_cache_retention_days": {"const": 90},
         "artifact_and_packages_reporting_lag_hours": {"const": 12},
         "cache_reporting_lag_minutes": {"const": 5},
         "artifact_storage_safety_fraction": {"const": 0.2},

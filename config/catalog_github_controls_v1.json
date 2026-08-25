@@ -43,6 +43,7 @@
       "scope": "enterprise",
       "enterprise": "trading-optimizer-lab",
       "organization": "trading-optimizer-lab-org",
+      "organization_id": 287229438,
       "repository_entity_name": "trading-optimizer-lab-org/aurora"
     },
     "required_zero_budgets": [
@@ -85,7 +86,7 @@
     ],
     "included_shared_storage_bytes": 53687091200,
     "repository_cache_storage_limit_gb": 10,
-    "repository_cache_retention_days": 7,
+    "repository_cache_retention_days": 90,
     "artifact_and_packages_reporting_lag_hours": 12,
     "cache_reporting_lag_minutes": 5,
     "artifact_storage_safety_fraction": 0.2,
