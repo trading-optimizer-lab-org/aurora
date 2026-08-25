@@ -17,6 +17,8 @@ jobs:
   discover:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    env:
+      PYTHONPATH: ${{ github.workspace }}/..
     permissions:
       actions: read
       contents: read
@@ -73,14 +75,21 @@ jobs:
               "repos/$GITHUB_REPOSITORY/issues/$authority_number/comments?per_page=100" \
               > "authority-comments-$snapshot.json"
             gh api --paginate --slurp \
-              "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100" \
-              > "actions-runs-$snapshot.json"
+              "repos/$GITHUB_REPOSITORY/actions/runs?status=queued&per_page=100" \
+              > "actions-runs-queued-$snapshot.json"
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/actions/runs?status=in_progress&per_page=100" \
+              > "actions-runs-in_progress-$snapshot.json"
           done
           cmp --silent authority-comments-1.json authority-comments-2.json || {
             echo "CATALOG_WATCHDOG_LEDGER_SNAPSHOT_UNSTABLE" >&2
             exit 1
           }
-          cmp --silent actions-runs-1.json actions-runs-2.json || {
+          cmp --silent actions-runs-queued-1.json actions-runs-queued-2.json || {
+            echo "CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_UNSTABLE" >&2
+            exit 1
+          }
+          cmp --silent actions-runs-in_progress-1.json actions-runs-in_progress-2.json || {
             echo "CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_UNSTABLE" >&2
             exit 1
           }
@@ -113,23 +122,24 @@ jobs:
               latest = {}
               for record in records:
                   latest[str(record.authority_id)] = record
-              run_pages = json.loads(Path("actions-runs-1.json").read_text("utf-8"))
-              runs = [
-                  run
-                  for page in run_pages
-                  for run in (page.get("workflow_runs") or [])
-              ]
               run_states = {}
-              for run in runs:
-                  run_id = run.get("id")
-                  status = run.get("status")
-                  if not isinstance(run_id, int) or status not in {
-                      "queued", "in_progress", "completed"
-                  }:
-                      raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
-                  if run_id in run_states:
-                      raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
-                  run_states[run_id] = status
+              for expected_status in ("queued", "in_progress"):
+                  run_pages = json.loads(
+                      Path(f"actions-runs-{expected_status}-1.json").read_text("utf-8")
+                  )
+                  for page in run_pages:
+                      for run in (page.get("workflow_runs") or []):
+                          run_id = run.get("id")
+                          status = run.get("status")
+                          if not isinstance(run_id, int) or status != expected_status:
+                              raise SystemExit(
+                                  "CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID"
+                              )
+                          if run_id in run_states:
+                              raise SystemExit(
+                                  "CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID"
+                              )
+                          run_states[run_id] = status
               nonterminal = {"reserved", "running", "recovering", "waiting_retry"}
               include = []
               for authority_id, record in sorted(latest.items()):

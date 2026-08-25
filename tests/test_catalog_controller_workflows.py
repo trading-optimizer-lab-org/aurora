@@ -851,6 +851,9 @@ def test_request_reconciler_replays_only_existing_requests() -> None:
         "contents": "read",
         "issues": "read",
     }
+    assert workflow["jobs"]["discover"]["env"] == {
+        "PYTHONPATH": "${{ github.workspace }}/..",
+    }
     text = (WORKFLOWS / "catalog-request-reconciler.yml").read_text("utf-8")
     for forbidden in (
         "workflow_dispatch",
@@ -1226,6 +1229,9 @@ def test_watchdog_can_only_reenter_controller_for_existing_authority() -> None:
     }
     jobs = workflow["jobs"]
     assert set(jobs) == {"discover", "call_controller"}
+    assert jobs["discover"]["env"] == {
+        "PYTHONPATH": "${{ github.workspace }}/..",
+    }
     call = jobs["call_controller"]
     assert call["uses"] == "./.github/workflows/catalog-run-controller.yml"
     assert "steps" not in call
@@ -1252,6 +1258,29 @@ def test_watchdog_can_only_reenter_controller_for_existing_authority() -> None:
     assert "workflow_runs" in text
     assert 'in {"queued", "in_progress"}' in text
     assert "CATALOG_WATCHDOG_ACTIVE_AUTHORITY_CONFLICT" in text
+
+
+def test_watchdog_uses_two_stable_nonterminal_run_inventories() -> None:
+    text = (WORKFLOWS / "catalog-run-watchdog.yml").read_text("utf-8")
+    assert "for snapshot in 1 2; do" in text
+    assert (
+        '"repos/$GITHUB_REPOSITORY/actions/runs?status=queued&per_page=100"'
+        in text
+    )
+    assert (
+        '"repos/$GITHUB_REPOSITORY/actions/runs?status=in_progress&per_page=100"'
+        in text
+    )
+    assert "actions-runs-queued-$snapshot.json" in text
+    assert "actions-runs-in_progress-$snapshot.json" in text
+    assert "actions-runs-queued-1.json" in text
+    assert "actions-runs-in_progress-1.json" in text
+    assert 'for expected_status in ("queued", "in_progress"):' in text
+    assert "status != expected_status" in text
+    assert "if run_id in run_states:" in text
+    assert "CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_UNSTABLE" in text
+    assert "actions/runs?per_page=100" not in text
+    assert '"completed"' not in text
 
 
 def test_catalog_reusable_workflow_graph_stays_below_github_limits() -> None:

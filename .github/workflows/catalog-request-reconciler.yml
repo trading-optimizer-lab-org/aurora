@@ -13,6 +13,8 @@ jobs:
   discover:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    env:
+      PYTHONPATH: ${{ github.workspace }}/..
     outputs:
       matrix: ${{ steps.queue.outputs.matrix }}
       has_candidates: ${{ steps.queue.outputs.has_candidates }}
