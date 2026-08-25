@@ -1338,6 +1338,83 @@ def test_prepare_auditor_secret_reuses_only_proven_protected_secret(
     }
 
 
+def test_protected_environment_secret_names_require_exact_unique_rows(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda _args: json.dumps(
+            [
+                {"name": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY"},
+                {"name": "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"},
+            ]
+        ),
+    )
+
+    assert bootstrap_runner._protected_environment_secret_names() == frozenset(
+        {
+            "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+            "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+        }
+    )
+
+    for invalid in (
+        {"name": "not-a-list"},
+        [{"name": "duplicate"}, {"name": "duplicate"}],
+        [{"name": "valid", "value": "must-not-be-returned"}],
+        [{"name": ""}],
+    ):
+        monkeypatch.setattr(
+            bootstrap_runner, "_run", lambda _args, value=invalid: json.dumps(value)
+        )
+        with pytest.raises(
+            ValueError,
+            match="^CATALOG_BOOTSTRAP_ENVIRONMENT_SECRET_LIST_INVALID$",
+        ):
+            bootstrap_runner._protected_environment_secret_names()
+
+
+def test_required_environment_secrets_fail_closed_with_exact_missing_names(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_protected_environment_secret_names",
+        lambda: frozenset({"AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"}),
+    )
+
+    with pytest.raises(ValueError) as error:
+        bootstrap_runner._require_protected_environment_secrets(
+            frozenset(
+                {
+                    "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+                    "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN",
+                    "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN",
+                }
+            )
+        )
+
+    assert str(error.value) == (
+        "CATALOG_BOOTSTRAP_AUDITOR_ENVIRONMENT_SECRETS_MISSING:"
+        "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN,"
+        "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN"
+    )
+
+
+def test_github_controls_require_environment_secrets_before_mutation_and_live_run() -> None:
+    source = inspect.getsource(bootstrap_runner.apply_github_controls)
+
+    first_requirement = source.index("_require_protected_environment_secrets(")
+    mutation = source.index("_disable_controller()")
+    auditor_preparation = source.index("_prepare_auditor_secret(root)")
+    final_requirement = source.rindex("_require_protected_environment_secrets(")
+    live_qualification = source.index("_run_live_qualification(")
+
+    assert first_requirement < mutation
+    assert auditor_preparation < final_requirement < live_qualification
+
+
 def test_existing_bootstrap_control_receipts_are_reused_only_when_canonical(
     tmp_path: Path,
 ) -> None:
@@ -1457,14 +1534,31 @@ def test_local_install_recovery_rejects_context_not_bound_to_repair(
         bootstrap_runner._canonical(repair) + b"\n"
     )
     monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
-    monkeypatch.setattr(
-        bootstrap_runner,
-        "_run",
-        lambda *_args, **_kwargs: pytest.fail("external command must not run"),
-    )
+    calls: list[list[str]] = []
+
+    def allow_only_controller_shutdown(args: list[str], **_kwargs: object) -> str:
+        calls.append(args)
+        assert args[:2] == ["gh", "variable"]
+        assert args[2] in {"get", "set"}
+        assert args[3] in {
+            bootstrap_runner.ARMED_VARIABLE,
+            bootstrap_runner.CONTROLLER_VARIABLE,
+        }
+        if args[2] == "set":
+            assert args[4:6] == ["--body", "false"]
+            return ""
+        return "false"
+
+    monkeypatch.setattr(bootstrap_runner, "_run", allow_only_controller_shutdown)
 
     with pytest.raises(ValueError, match="LOCAL_RETRY_CONTEXT_INVALID"):
         bootstrap_runner._resume_transient_local_install_block(root)
+    assert [(args[2], args[3]) for args in calls] == [
+        ("set", bootstrap_runner.ARMED_VARIABLE),
+        ("get", bootstrap_runner.ARMED_VARIABLE),
+        ("set", bootstrap_runner.CONTROLLER_VARIABLE),
+        ("get", bootstrap_runner.CONTROLLER_VARIABLE),
+    ]
 
 
 def test_recover_exact_clean_local_install_block_through_protected_repair(
@@ -1532,6 +1626,13 @@ def test_recover_exact_clean_local_install_block_through_protected_repair(
 
     def fake_fixed_run(args: list[str], **_kwargs: object) -> str:
         calls.append(args)
+        if args[:3] == ["gh", "variable", "set"]:
+            assert args[3] in {
+                bootstrap_runner.ARMED_VARIABLE,
+                bootstrap_runner.CONTROLLER_VARIABLE,
+            }
+            assert args[4:6] == ["--body", "false"]
+            return ""
         if args == ["git", "fetch", "origin", "main"]:
             return ""
         if args == ["git", "rev-parse", "HEAD"]:
@@ -1680,14 +1781,31 @@ def test_local_install_recovery_rejects_partial_staging_before_any_command(
     monkeypatch.setattr(bootstrap_runner, "BOOTSTRAP_STAGING_ROOT", staging)
     monkeypatch.setattr(bootstrap_runner, "AGENT_ROOT", tmp_path / "agent")
     monkeypatch.setattr(bootstrap_runner, "BROKER_ROOT", tmp_path / "broker")
-    monkeypatch.setattr(
-        bootstrap_runner,
-        "_run",
-        lambda *_args, **_kwargs: pytest.fail("external command must not run"),
-    )
+    calls: list[list[str]] = []
+
+    def allow_only_controller_shutdown(args: list[str], **_kwargs: object) -> str:
+        calls.append(args)
+        assert args[:2] == ["gh", "variable"]
+        assert args[2] in {"get", "set"}
+        assert args[3] in {
+            bootstrap_runner.ARMED_VARIABLE,
+            bootstrap_runner.CONTROLLER_VARIABLE,
+        }
+        if args[2] == "set":
+            assert args[4:6] == ["--body", "false"]
+            return ""
+        return "false"
+
+    monkeypatch.setattr(bootstrap_runner, "_run", allow_only_controller_shutdown)
 
     with pytest.raises(ValueError, match="LOCAL_RETRY_PARTIAL_INSTALL"):
         bootstrap_runner._resume_transient_local_install_block(root)
+    assert [(args[2], args[3]) for args in calls] == [
+        ("set", bootstrap_runner.ARMED_VARIABLE),
+        ("get", bootstrap_runner.ARMED_VARIABLE),
+        ("set", bootstrap_runner.CONTROLLER_VARIABLE),
+        ("get", bootstrap_runner.CONTROLLER_VARIABLE),
+    ]
 
 
 def test_runtime_commit_defaults_to_the_public_binding(tmp_path: Path) -> None:
@@ -4344,6 +4462,13 @@ def test_recover_exact_merge_block_without_replaying_prior_phases(
     )
 
     def fake_fixed_run(args: list[str], **_kwargs: object) -> str:
+        if args[:3] == ["gh", "variable", "set"]:
+            assert args[3] in {
+                bootstrap_runner.ARMED_VARIABLE,
+                bootstrap_runner.CONTROLLER_VARIABLE,
+            }
+            assert args[4:6] == ["--body", "false"]
+            return ""
         if args[:3] == ["git", "status", "--porcelain=v1"]:
             return ""
         if args == ["git", "rev-parse", "HEAD"]:

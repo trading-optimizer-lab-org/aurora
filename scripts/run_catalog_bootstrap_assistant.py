@@ -99,6 +99,22 @@ CONTROLLER_VARIABLE = "CATALOG_CONTROLLER_ENABLED"
 ARMED_VARIABLE = "CATALOG_CONTROLLER_PRODUCTION_ARMED"
 ENVIRONMENT = "catalog-production"
 AUDITOR_SECRET = "AURORA_CATALOG_AUDITOR_PRIVATE_KEY"
+ENTERPRISE_BILLING_SECRET = "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"
+ENTERPRISE_CACHE_VERIFIER_SECRET = (
+    "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN"
+)
+PACKAGE_INVENTORY_SECRET = "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN"
+PROTECTED_ENVIRONMENT_REQUIRED_SECRETS = frozenset(
+    {
+        AUDITOR_SECRET,
+        ENTERPRISE_BILLING_SECRET,
+        ENTERPRISE_CACHE_VERIFIER_SECRET,
+        PACKAGE_INVENTORY_SECRET,
+    }
+)
+PROTECTED_ENVIRONMENT_EXTERNAL_SECRETS = (
+    PROTECTED_ENVIRONMENT_REQUIRED_SECRETS - {AUDITOR_SECRET}
+)
 QUALIFICATION_CHECKPOINT_FILENAME = "qualification-substeps-v1.checkpoint.json"
 
 
@@ -1862,7 +1878,7 @@ def _verify_existing_installations(root: Path) -> dict[str, int]:
     return dict(sorted(observed.items()))
 
 
-def _protected_environment_secret_exists() -> bool:
+def _protected_environment_secret_names() -> frozenset[str]:
     raw = _run(
         [
             "gh", "secret", "list", "--env", ENVIRONMENT, "--repo",
@@ -1870,10 +1886,38 @@ def _protected_environment_secret_exists() -> bool:
         ]
     )
     rows = json.loads(raw)
-    return isinstance(rows, list) and sum(
-        isinstance(row, dict) and row.get("name") == AUDITOR_SECRET
-        for row in rows
-    ) == 1
+    if not isinstance(rows, list):
+        raise ValueError("CATALOG_BOOTSTRAP_ENVIRONMENT_SECRET_LIST_INVALID")
+    names: list[str] = []
+    for row in rows:
+        if (
+            not isinstance(row, dict)
+            or set(row) != {"name"}
+            or not isinstance(row.get("name"), str)
+            or not row["name"]
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_ENVIRONMENT_SECRET_LIST_INVALID")
+        names.append(row["name"])
+    if len(names) != len(set(names)):
+        raise ValueError("CATALOG_BOOTSTRAP_ENVIRONMENT_SECRET_LIST_INVALID")
+    return frozenset(names)
+
+
+def _require_protected_environment_secrets(
+    required: frozenset[str],
+) -> dict[str, object]:
+    names = _protected_environment_secret_names()
+    missing = sorted(required - names)
+    if missing:
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_AUDITOR_ENVIRONMENT_SECRETS_MISSING:"
+            + ",".join(missing)
+        )
+    return {"environment": ENVIRONMENT, "present": sorted(required)}
+
+
+def _protected_environment_secret_exists() -> bool:
+    return AUDITOR_SECRET in _protected_environment_secret_names()
 
 
 def _verify_post_install_installations(
@@ -5283,6 +5327,9 @@ def apply_github_controls(root: Path) -> None:
         or not isinstance(auditor.get("app_id"), int)
     ):
         raise ValueError("CATALOG_BOOTSTRAP_PUBLIC_BINDING_INVALID")
+    external_secret_proof = _require_protected_environment_secrets(
+        PROTECTED_ENVIRONMENT_EXTERNAL_SECRETS
+    )
     _disable_controller()
     _set_repository_variable(
         "CATALOG_AUTHORITY_ISSUE_NUMBER", str(authority["issue_number"])
@@ -5336,6 +5383,9 @@ def apply_github_controls(root: Path) -> None:
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_NOT_PREPARED")
     _set_repository_variable("AURORA_CATALOG_AUDITOR_APP_ID", str(auditor["app_id"]))
     proof = _prepare_auditor_secret(root)
+    all_secret_proof = _require_protected_environment_secrets(
+        PROTECTED_ENVIRONMENT_REQUIRED_SECRETS
+    )
     live = _run_live_qualification(
         root, protected_commit_sha, step_name="github_controls_live_1"
     )
@@ -5343,6 +5393,8 @@ def apply_github_controls(root: Path) -> None:
         "protected_commit_sha": protected_commit_sha,
         "apply_receipt_sha256": hashlib.sha256(apply_path.read_bytes()).hexdigest(),
         "auditor_secret_name": proof.get("name"),
+        "external_environment_secrets": external_secret_proof,
+        "qualified_environment_secrets": all_secret_proof,
         "first_live_qualification": live,
     }
     _write_canonical(root / "github-controls-operation-v1.json", receipt)
