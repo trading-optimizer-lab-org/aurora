@@ -63,6 +63,11 @@ def _append_and_get_last(items: list[_ItemT], item: _ItemT) -> _ItemT:
     return items[-1]
 
 
+@pytest.fixture
+def isolated_controller_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bootstrap_runner, "_disable_controller", lambda: None)
+
+
 def test_review_environment_loads_the_selected_checkout_in_child_process(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -690,6 +695,30 @@ def _github_controls_package_token_repair_operation(
     }
 
 
+def _idempotent_resume_repair_operation(
+    *,
+    prior_merge: str,
+    repair_head: str,
+    repair_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": prior_merge,
+        "branch": "codex/catalog-bootstrap-idempotent-resume",
+        "changed_paths": [
+            "scripts/run_catalog_bootstrap_assistant.py",
+            "tests/test_catalog_bootstrap_assistant.py",
+        ],
+        "head_commit_sha": repair_head,
+        "merge_commit_sha": repair_merge,
+        "patch_sha256": "1" * 64,
+        "pr_number": 194,
+        "prior_runtime_commit_sha": prior_merge,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "catalog-controller-policy",
+        "schema_version": "1",
+    }
+
+
 def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None:
     blocked = _blocked_local_install_state()
 
@@ -781,7 +810,7 @@ def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None
 
 
 def test_second_local_install_block_enters_protected_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -806,7 +835,7 @@ def test_second_local_install_block_enters_protected_recovery(
 
 
 def test_third_local_install_block_enters_protected_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -831,7 +860,7 @@ def test_third_local_install_block_enters_protected_recovery(
 
 
 def test_fourth_local_install_block_enters_protected_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -856,7 +885,7 @@ def test_fourth_local_install_block_enters_protected_recovery(
 
 
 def test_fifth_local_install_block_enters_protected_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -881,7 +910,7 @@ def test_fifth_local_install_block_enters_protected_recovery(
 
 
 def test_sixth_local_install_block_enters_protected_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -906,7 +935,7 @@ def test_sixth_local_install_block_enters_protected_recovery(
 
 
 def test_seventh_local_install_block_enters_protected_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -931,7 +960,7 @@ def test_seventh_local_install_block_enters_protected_recovery(
 
 
 def test_github_controls_block_waits_for_protected_recovery_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -955,7 +984,7 @@ def test_github_controls_block_waits_for_protected_recovery_receipt(
 
 
 def test_second_github_controls_block_waits_for_enterprise_repair_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -979,7 +1008,7 @@ def test_second_github_controls_block_waits_for_enterprise_repair_receipt(
 
 
 def test_third_github_controls_block_waits_for_stable_precondition_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -1003,7 +1032,7 @@ def test_third_github_controls_block_waits_for_stable_precondition_receipt(
 
 
 def test_fourth_github_controls_block_waits_for_cache_retention_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -1027,7 +1056,7 @@ def test_fourth_github_controls_block_waits_for_cache_retention_receipt(
 
 
 def test_fifth_github_controls_block_waits_for_storage_audit_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -1051,7 +1080,7 @@ def test_fifth_github_controls_block_waits_for_storage_audit_receipt(
 
 
 def test_sixth_github_controls_block_waits_for_audit_throughput_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -1113,7 +1142,7 @@ def test_package_token_repair_operation_is_validated(tmp_path: Path) -> None:
 
 
 def test_seventh_github_controls_block_waits_for_package_token_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -1610,7 +1639,7 @@ def test_existing_bootstrap_control_receipts_are_reused_only_when_canonical(
 
 
 def test_eighth_github_controls_block_waits_for_idempotent_retry(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -1634,7 +1663,7 @@ def test_eighth_github_controls_block_waits_for_idempotent_retry(
 
 
 def test_ninth_github_controls_block_waits_for_windows_receipt_retry(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -2701,6 +2730,341 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     ).write_bytes(bootstrap_runner._canonical(package_token_retry) + b"\n")
 
     assert bootstrap_runner._runtime_commit(root) == package_token_merge
+
+    resume_head = "4" * 40
+    resume_merge = "5" * 40
+    resume_operation = _idempotent_resume_repair_operation(
+        prior_merge=package_token_merge,
+        repair_head=resume_head,
+        repair_merge=resume_merge,
+    )
+    (root / "github-controls-idempotent-resume-repair-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(resume_operation) + b"\n"
+    )
+    package_token_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-9-v1.json"
+    )
+    resume_retry = {
+        "activity_baseline_sha256": "6" * 64,
+        "bootstrap_id": BOOTSTRAP_ID,
+        "bootstrap_source_commit_sha": COMMIT,
+        "idempotent_resume_merge_commit_sha": resume_merge,
+        "idempotent_resume_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(resume_operation)
+        ).hexdigest(),
+        "idempotent_resume_pr_number": 194,
+        "installations": {"auditor": 2, "requester": 1},
+        "interrupted_phase": "QUALIFICATION_PENDING",
+        "interrupted_sequence": 43,
+        "interrupted_state_sha256": "7" * 64,
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            package_token_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": package_token_merge,
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json").write_bytes(
+        bootstrap_runner._canonical(resume_retry) + b"\n"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID",
+    ):
+        bootstrap_runner._runtime_commit(root)
+
+    prior_controls = {"protected_commit_sha": package_token_merge}
+    refreshed_controls = {"protected_commit_sha": resume_merge}
+    prior_controls_path = root / "github-controls-operation-before-runtime-upgrade-v1.json"
+    controls_path = root / "github-controls-operation-v1.json"
+    prior_controls_path.write_bytes(bootstrap_runner._canonical(prior_controls) + b"\n")
+    controls_path.write_bytes(bootstrap_runner._canonical(refreshed_controls) + b"\n")
+    refresh = {
+        "bootstrap_id": BOOTSTRAP_ID,
+        "prior_controls_operation_sha256": hashlib.sha256(
+            prior_controls_path.read_bytes()
+        ).hexdigest(),
+        "protected_commit_sha": resume_merge,
+        "refreshed_controls_operation_sha256": hashlib.sha256(
+            controls_path.read_bytes()
+        ).hexdigest(),
+        "runtime_upgrade_operation_sha256": hashlib.sha256(
+            (root / "github-controls-idempotent-resume-repair-operation-v1.json").read_bytes()
+        ).hexdigest(),
+        "schema_version": "1",
+    }
+    (root / "runtime-upgrade-controls-refresh-v1.json").write_bytes(
+        bootstrap_runner._canonical(refresh) + b"\n"
+    )
+
+    assert bootstrap_runner._runtime_commit(root) == resume_merge
+
+    resume_retry["prior_retry_receipt_sha256"] = "0" * 64
+    (root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json").write_bytes(
+        bootstrap_runner._canonical(resume_retry) + b"\n"
+    )
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_RETRY_INVALID",
+    ):
+        bootstrap_runner._runtime_commit(root)
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        ["../escape.py"],
+        ["scripts\\escape.py"],
+        ["scripts/ok.py", "scripts/ok.py"],
+        ["outside/file.py"],
+        ["tests/z.py", "scripts/a.py"],
+    ],
+)
+def test_idempotent_resume_paths_fail_closed(paths: list[str]) -> None:
+    assert bootstrap_runner._valid_idempotent_resume_paths(paths) is False
+
+
+def test_idempotent_resume_github_authorization_binds_pr_check_paths_and_graph(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    operation = _idempotent_resume_repair_operation(
+        prior_merge="3" * 40,
+        repair_head="4" * 40,
+        repair_merge="5" * 40,
+    )
+    observed_paths = tuple(cast(list[str], operation["changed_paths"]))
+    graph_calls: list[dict[str, object]] = []
+
+    def fake_run(command: list[str], *, cwd: Path, **_kwargs: object) -> str:
+        assert cwd == tmp_path
+        if command[:3] == ["gh", "pr", "view"]:
+            return json.dumps(
+                {
+                    "baseRefName": "main",
+                    "baseRefOid": operation["base_commit_sha"],
+                    "headRefName": operation["branch"],
+                    "headRefOid": operation["head_commit_sha"],
+                    "isDraft": False,
+                    "mergeCommit": {"oid": operation["merge_commit_sha"]},
+                    "number": operation["pr_number"],
+                    "state": "MERGED",
+                }
+            )
+        if command[:3] == ["gh", "pr", "checks"]:
+            return json.dumps(
+                [
+                    {
+                        "bucket": "pass",
+                        "name": "catalog-controller-policy",
+                        "state": "SUCCESS",
+                    }
+                ]
+            )
+        if command == ["git", "rev-parse", "origin/main"]:
+            return str(operation["merge_commit_sha"])
+        raise AssertionError(command)
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_git_changed_paths",
+        lambda *_args: observed_paths,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_verify_github_controls_repair_graph",
+        lambda _source, value: graph_calls.append(value),
+    )
+
+    bootstrap_runner._verify_idempotent_resume_github_authorization(tmp_path, operation)
+
+    assert graph_calls == [operation]
+
+    operation["changed_paths"] = ["config/unrelated.json"]
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_PATHS_INVALID",
+    ):
+        bootstrap_runner._verify_idempotent_resume_github_authorization(tmp_path, operation)
+
+
+def test_idempotent_resume_github_authorization_rejects_unmerged_pr(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    operation = _idempotent_resume_repair_operation(
+        prior_merge="3" * 40,
+        repair_head="4" * 40,
+        repair_merge="5" * 40,
+    )
+
+    def fake_run(command: list[str], *, cwd: Path, **_kwargs: object) -> str:
+        assert cwd == tmp_path
+        if command[:3] == ["gh", "pr", "view"]:
+            return json.dumps(
+                {
+                    "baseRefName": "main",
+                    "baseRefOid": operation["base_commit_sha"],
+                    "headRefName": operation["branch"],
+                    "headRefOid": operation["head_commit_sha"],
+                    "isDraft": False,
+                    "mergeCommit": None,
+                    "number": operation["pr_number"],
+                    "state": "OPEN",
+                }
+            )
+        if command[:3] == ["gh", "pr", "checks"]:
+            return "[]"
+        raise AssertionError(command)
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_GITHUB_INVALID",
+    ):
+        bootstrap_runner._verify_idempotent_resume_github_authorization(tmp_path, operation)
+
+
+def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "installed"
+    (root / "state").mkdir(parents=True)
+    (root / "receipts").mkdir()
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    state_document = {
+        "bootstrap_id": BOOTSTRAP_ID,
+        "phase": "QUALIFICATION_PENDING",
+        "sequence": 43,
+    }
+    state_path.write_bytes(bootstrap_runner._canonical(state_document) + b"\n")
+    original_state = state_path.read_bytes()
+    baseline: dict[str, object] = {
+        "heavy_run_ids": [],
+        "request_issue_numbers": [],
+    }
+    (root / "github-activity-baseline-v1.json").write_bytes(
+        bootstrap_runner._canonical(baseline) + b"\n"
+    )
+    prior_runtime = "3" * 40
+    protected_commit = "5" * 40
+    retry = {
+        "activity_baseline_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(baseline)
+        ).hexdigest(),
+        "bootstrap_id": BOOTSTRAP_ID,
+        "interrupted_state_sha256": hashlib.sha256(original_state).hexdigest(),
+    }
+    (root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json").write_bytes(
+        bootstrap_runner._canonical(retry) + b"\n"
+    )
+    upgrade_operation = {
+        "prior_runtime_commit_sha": prior_runtime,
+    }
+    (root / "github-controls-idempotent-resume-repair-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(upgrade_operation) + b"\n"
+    )
+    old_controls = {"protected_commit_sha": prior_runtime}
+    controls_path = root / "github-controls-operation-v1.json"
+    controls_path.write_bytes(bootstrap_runner._canonical(old_controls) + b"\n")
+    source = tmp_path / "source"
+    source.mkdir()
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "load_bootstrap_state",
+        lambda _path: SimpleNamespace(
+            phase="QUALIFICATION_PENDING",
+            sequence=43,
+        ),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_runtime_commit",
+        lambda _root, **_kwargs: protected_commit,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_context",
+        lambda _root: {
+            "repository": bootstrap_runner.REPOSITORY,
+            "source_commit_sha": protected_commit,
+            "source_root": str(source),
+        },
+    )
+
+    def fake_run(command: list[str], **_kwargs: object) -> str:
+        if command[1:3] == ["rev-parse", "origin/main"]:
+            return protected_commit
+        if command[1:3] == ["status", "--porcelain=v1"]:
+            return ""
+        return protected_commit
+
+    def fake_prepare(
+        installed_root: Path,
+        commit: str,
+        *,
+        live_step_name: str,
+    ) -> dict[str, object]:
+        calls.append(live_step_name)
+        receipt: dict[str, object] = {"protected_commit_sha": commit}
+        (installed_root / "github-controls-operation-v1.json").write_bytes(
+            bootstrap_runner._canonical(receipt) + b"\n"
+        )
+        return receipt
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+
+    rejected_authorizations: list[tuple[Path, dict[str, object]]] = []
+
+    def reject_authorization(
+        checkout: Path,
+        operation: dict[str, object],
+    ) -> None:
+        rejected_authorizations.append((checkout, operation))
+        raise ValueError("authorization-rejected")
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_verify_idempotent_resume_github_authorization",
+        reject_authorization,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_prepare_github_controls_operation",
+        fake_prepare,
+    )
+
+    with pytest.raises(ValueError, match="authorization-rejected"):
+        bootstrap_runner._refresh_interrupted_runtime_controls(root)
+
+    assert rejected_authorizations == [(source, upgrade_operation)]
+    assert calls == []
+    assert controls_path.read_bytes() == bootstrap_runner._canonical(old_controls) + b"\n"
+    assert not (root / "github-controls-operation-before-runtime-upgrade-v1.json").exists()
+    assert not (root / "runtime-upgrade-controls-refresh-v1.json").exists()
+    assert state_path.read_bytes() == original_state
+
+    verified_authorizations: list[tuple[Path, dict[str, object]]] = []
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_verify_idempotent_resume_github_authorization",
+        lambda checkout, operation: verified_authorizations.append((checkout, operation)),
+    )
+    bootstrap_runner._refresh_interrupted_runtime_controls(root)
+    bootstrap_runner._refresh_interrupted_runtime_controls(root)
+
+    assert verified_authorizations == [
+        (source, upgrade_operation),
+        (source, upgrade_operation),
+    ]
+    assert calls == ["github_controls_runtime_upgrade_live_1"]
+    assert state_path.read_bytes() == original_state
+    assert (root / "runtime-upgrade-controls-refresh-v1.json").is_file()
 
 
 def test_post_repair_phases_all_use_the_runtime_commit() -> None:

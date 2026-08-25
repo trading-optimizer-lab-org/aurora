@@ -16,7 +16,7 @@ import time
 import zipfile
 from collections.abc import Iterator, Mapping
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Callable, Literal, Protocol, cast
 
 
@@ -350,6 +350,12 @@ _GITHUB_CONTROLS_AUDIT_THROUGHPUT_REPAIR_PATHS = (
 _GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS = (
     "scripts/run_catalog_bootstrap_assistant.py",
     "tests/test_catalog_bootstrap_assistant.py",
+)
+_IDEMPOTENT_RESUME_BRANCH = "codex/catalog-bootstrap-idempotent-resume"
+_IDEMPOTENT_RESUME_PR_NUMBER = 194
+_IDEMPOTENT_RESUME_REQUIRED_CHECK = "catalog-controller-policy"
+_IDEMPOTENT_RESUME_ALLOWED_ROOTS = frozenset(
+    {".github", "config", "docs", "infra", "schemas", "scripts", "tests"}
 )
 _BOOTSTRAP_REQUIRED_CHECK_NAMES = frozenset({"GTBI V7 stage-two required"})
 _EXACT_REPOSITORY_REMOTES = frozenset(
@@ -2525,6 +2531,118 @@ def _verify_github_controls_repair_graph(
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_PATCH_INVALID")
 
 
+def _git_changed_paths(source: Path, base_commit: str, head_commit: str) -> tuple[str, ...]:
+    result = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--name-only",
+            "-z",
+            f"{base_commit}..{head_commit}",
+            "--",
+        ],
+        cwd=source,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_GIT_DIFF_INVALID")
+    raw_paths = result.stdout.split(b"\0")
+    if raw_paths[-1:] == [b""]:
+        raw_paths.pop()
+    try:
+        paths = tuple(path.decode("utf-8") for path in raw_paths)
+    except UnicodeDecodeError as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_GIT_DIFF_INVALID") from exc
+    if not _valid_idempotent_resume_paths(list(paths)):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_PATHS_INVALID")
+    return paths
+
+
+def _verify_idempotent_resume_github_authorization(
+    source: Path,
+    operation: dict[str, object],
+) -> None:
+    try:
+        pull_request = json.loads(
+            _run(
+                [
+                    "gh",
+                    "pr",
+                    "view",
+                    str(_IDEMPOTENT_RESUME_PR_NUMBER),
+                    "--repo",
+                    REPOSITORY,
+                    "--json",
+                    (
+                        "number,state,isDraft,baseRefName,baseRefOid,headRefName,"
+                        "headRefOid,mergeCommit"
+                    ),
+                ],
+                cwd=source,
+            )
+        )
+        checks = json.loads(
+            _run(
+                [
+                    "gh",
+                    "pr",
+                    "checks",
+                    str(_IDEMPOTENT_RESUME_PR_NUMBER),
+                    "--repo",
+                    REPOSITORY,
+                    "--json",
+                    "name,state,bucket",
+                ],
+                cwd=source,
+            )
+        )
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_GITHUB_INVALID") from exc
+
+    merge_commit = pull_request.get("mergeCommit") if isinstance(pull_request, dict) else None
+    merge_oid = merge_commit.get("oid") if isinstance(merge_commit, dict) else None
+    if (
+        not isinstance(pull_request, dict)
+        or pull_request.get("number") != _IDEMPOTENT_RESUME_PR_NUMBER
+        or pull_request.get("state") != "MERGED"
+        or pull_request.get("isDraft") is not False
+        or pull_request.get("baseRefName") != "main"
+        or pull_request.get("baseRefOid") != operation.get("base_commit_sha")
+        or pull_request.get("headRefName") != _IDEMPOTENT_RESUME_BRANCH
+        or pull_request.get("headRefOid") != operation.get("head_commit_sha")
+        or merge_oid != operation.get("merge_commit_sha")
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_GITHUB_INVALID")
+
+    if not isinstance(checks, list):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CHECK_INVALID")
+    required_checks = [
+        check
+        for check in checks
+        if isinstance(check, dict) and check.get("name") == _IDEMPOTENT_RESUME_REQUIRED_CHECK
+    ]
+    if (
+        len(required_checks) != 1
+        or required_checks[0].get("bucket") != "pass"
+        or not isinstance(required_checks[0].get("state"), str)
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CHECK_INVALID")
+
+    base_commit = str(operation["base_commit_sha"])
+    head_commit = str(operation["head_commit_sha"])
+    merge_commit_sha = str(operation["merge_commit_sha"])
+    if _run(["git", "rev-parse", "origin/main"], cwd=source) != merge_commit_sha:
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_MAIN_INVALID")
+    changed_paths = tuple(cast(list[str], operation["changed_paths"]))
+    if _git_changed_paths(source, base_commit, head_commit) != changed_paths:
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_PATHS_INVALID")
+    _verify_github_controls_repair_graph(source, operation)
+
+
 def _validated_local_install_repair(
     root: Path,
     binding: dict[str, object],
@@ -3199,7 +3317,117 @@ def _validated_github_controls_package_token_repair(
     return operation
 
 
-def _runtime_commit(root: Path) -> str:
+def _valid_idempotent_resume_paths(value: object) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    if any(not isinstance(item, str) for item in value):
+        return False
+    paths = cast(list[str], value)
+    if paths != sorted(paths) or len(paths) != len(set(paths)):
+        return False
+    for raw_path in paths:
+        path = PurePosixPath(raw_path)
+        if (
+            not raw_path
+            or "\\" in raw_path
+            or ":" in raw_path
+            or path.is_absolute()
+            or raw_path != path.as_posix()
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
+            return False
+        if raw_path == "pyproject.toml":
+            continue
+        if not path.parts or path.parts[0] not in _IDEMPOTENT_RESUME_ALLOWED_ROOTS:
+            return False
+    return True
+
+
+def _validated_idempotent_resume_repair(
+    root: Path,
+    prior_repair: dict[str, object],
+) -> dict[str, object]:
+    path = root / "github-controls-idempotent-resume-repair-operation-v1.json"
+    operation = _read_json(path)
+    prior_merge = prior_repair.get("merge_commit_sha")
+    if (
+        set(operation)
+        != {
+            "base_commit_sha",
+            "branch",
+            "changed_paths",
+            "head_commit_sha",
+            "merge_commit_sha",
+            "patch_sha256",
+            "pr_number",
+            "prior_runtime_commit_sha",
+            "repository",
+            "required_check",
+            "schema_version",
+        }
+        or path.read_bytes() != _canonical(operation) + b"\n"
+        or operation.get("schema_version") != "1"
+        or operation.get("repository") != REPOSITORY
+        or operation.get("base_commit_sha") != prior_merge
+        or operation.get("prior_runtime_commit_sha") != prior_merge
+        or operation.get("branch") != _IDEMPOTENT_RESUME_BRANCH
+        or operation.get("pr_number") != _IDEMPOTENT_RESUME_PR_NUMBER
+        or operation.get("required_check") != _IDEMPOTENT_RESUME_REQUIRED_CHECK
+        or not _valid_idempotent_resume_paths(operation.get("changed_paths"))
+        or not _COMMIT.fullmatch(str(operation.get("head_commit_sha", "")))
+        or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha", "")))
+        or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REPAIR_INVALID")
+    return operation
+
+
+def _validated_runtime_upgrade_refresh(
+    root: Path,
+    operation: dict[str, object],
+    retry: dict[str, object],
+    prior_runtime_commit: object,
+) -> dict[str, object]:
+    refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
+    controls_path = root / "github-controls-operation-v1.json"
+    backup_path = root / "github-controls-operation-before-runtime-upgrade-v1.json"
+    error_code = "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID"
+    refresh = _read_canonical_document(refresh_path, error_code)
+    controls = _read_canonical_document(controls_path, error_code)
+    backup = _read_canonical_document(backup_path, error_code)
+    if (
+        set(refresh)
+        != {
+            "bootstrap_id",
+            "prior_controls_operation_sha256",
+            "protected_commit_sha",
+            "refreshed_controls_operation_sha256",
+            "runtime_upgrade_operation_sha256",
+            "schema_version",
+        }
+        or refresh.get("schema_version") != "1"
+        or refresh.get("bootstrap_id") != retry.get("bootstrap_id")
+        or refresh.get("protected_commit_sha") != operation.get("merge_commit_sha")
+        or refresh.get("runtime_upgrade_operation_sha256")
+        != hashlib.sha256(
+            (root / "github-controls-idempotent-resume-repair-operation-v1.json").read_bytes()
+        ).hexdigest()
+        or refresh.get("prior_controls_operation_sha256")
+        != hashlib.sha256(backup_path.read_bytes()).hexdigest()
+        or refresh.get("refreshed_controls_operation_sha256")
+        != hashlib.sha256(controls_path.read_bytes()).hexdigest()
+        or backup.get("protected_commit_sha") != prior_runtime_commit
+        or controls.get("protected_commit_sha") != operation.get("merge_commit_sha")
+    ):
+        raise ValueError(error_code)
+    return refresh
+
+
+def _runtime_commit(
+    root: Path,
+    *,
+    allow_pending_idempotent_resume: bool = False,
+) -> str:
     binding_path = root / "public-binding-operation-v1.json"
     binding = _read_json(binding_path)
     binding_merge = binding.get("merge_commit_sha")
@@ -3935,10 +4163,60 @@ def _runtime_commit(root: Path) -> str:
         )
         or not isinstance(package_token_retry.get("installations"), dict)
     ):
-        raise ValueError(
-            "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_PACKAGE_TOKEN_RETRY_INVALID"
+        raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_PACKAGE_TOKEN_RETRY_INVALID")
+    resume_retry_path = root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json"
+    if not resume_retry_path.exists():
+        return str(package_token_merge)
+    if _is_reparse_path(resume_retry_path):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_RETRY_INVALID")
+    resume_operation = _validated_idempotent_resume_repair(root, package_token)
+    resume_retry = _read_json(resume_retry_path)
+    resume_merge = resume_operation["merge_commit_sha"]
+    if (
+        set(resume_retry)
+        != {
+            "activity_baseline_sha256",
+            "bootstrap_id",
+            "bootstrap_source_commit_sha",
+            "idempotent_resume_merge_commit_sha",
+            "idempotent_resume_operation_sha256",
+            "idempotent_resume_pr_number",
+            "installations",
+            "interrupted_phase",
+            "interrupted_sequence",
+            "interrupted_state_sha256",
+            "prior_retry_receipt_sha256",
+            "prior_runtime_commit_sha",
+            "schema_version",
+        }
+        or resume_retry_path.read_bytes() != _canonical(resume_retry) + b"\n"
+        or resume_retry.get("schema_version") != "1"
+        or not isinstance(resume_retry.get("bootstrap_id"), str)
+        or not str(resume_retry.get("bootstrap_id")).startswith("bootstrap-")
+        or resume_retry.get("interrupted_phase") != "QUALIFICATION_PENDING"
+        or resume_retry.get("interrupted_sequence") != 43
+        or resume_retry.get("prior_runtime_commit_sha") != package_token_merge
+        or resume_retry.get("idempotent_resume_merge_commit_sha") != resume_merge
+        or resume_retry.get("idempotent_resume_pr_number") != _IDEMPOTENT_RESUME_PR_NUMBER
+        or resume_retry.get("idempotent_resume_operation_sha256")
+        != hashlib.sha256(_canonical(resume_operation)).hexdigest()
+        or resume_retry.get("prior_retry_receipt_sha256")
+        != hashlib.sha256(package_token_retry_path.read_bytes()).hexdigest()
+        or resume_retry.get("bootstrap_source_commit_sha")
+        != package_token_retry.get("bootstrap_source_commit_sha")
+        or resume_retry.get("installations") != package_token_retry.get("installations")
+        or not _SHA256.fullmatch(str(resume_retry.get("activity_baseline_sha256", "")))
+        or not _SHA256.fullmatch(str(resume_retry.get("interrupted_state_sha256", "")))
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_RETRY_INVALID")
+    if not allow_pending_idempotent_resume:
+        _validated_runtime_upgrade_refresh(
+            root,
+            resume_operation,
+            resume_retry,
+            package_token_merge,
         )
-    return str(package_token_merge)
+    return str(resume_merge)
 
 
 def _resume_transient_local_install_block(root: Path) -> bool:
@@ -5405,11 +5683,14 @@ def _validated_existing_github_control_receipts(
     return dry, applied
 
 
-def apply_github_controls(root: Path) -> None:
-    state = load_bootstrap_state(_state_path(root))
+def _prepare_github_controls_operation(
+    root: Path,
+    protected_commit_sha: str,
+    *,
+    live_step_name: str,
+) -> dict[str, object]:
     context = _context(root)
     source = Path(str(context["source_root"]))
-    protected_commit_sha = _runtime_commit(root)
     authority = _read_json(source / "config/catalog_authority_anchor_v1.json")
     auditor = _read_json(root / "auditor-public-v1.json")
     if (
@@ -5475,9 +5756,7 @@ def apply_github_controls(root: Path) -> None:
     _set_repository_variable("AURORA_CATALOG_AUDITOR_APP_ID", str(auditor["app_id"]))
     _prepare_auditor_secret(root)
     _require_protected_environment_secrets(PROTECTED_ENVIRONMENT_REQUIRED_SECRETS)
-    live = _run_live_qualification(
-        root, protected_commit_sha, step_name="github_controls_live_1"
-    )
+    live = _run_live_qualification(root, protected_commit_sha, step_name=live_step_name)
     receipt = {
         "protected_commit_sha": protected_commit_sha,
         "apply_receipt_sha256": hashlib.sha256(apply_path.read_bytes()).hexdigest(),
@@ -5486,7 +5765,103 @@ def apply_github_controls(root: Path) -> None:
         "first_live_qualification": live,
     }
     _write_canonical(root / "github-controls-operation-v1.json", receipt)
+    return receipt
+
+
+def apply_github_controls(root: Path) -> None:
+    state = load_bootstrap_state(_state_path(root))
+    receipt = _prepare_github_controls_operation(
+        root,
+        _runtime_commit(root),
+        live_step_name="github_controls_live_1",
+    )
     _advance(root, state, "github_controls_verified", receipt)
+
+
+def _refresh_interrupted_runtime_controls(root: Path) -> None:
+    state = load_bootstrap_state(_state_path(root))
+    if state.phase != "QUALIFICATION_PENDING" or state.sequence != 43:
+        return
+    retry_path = root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json"
+    if not retry_path.exists():
+        return
+    state_path = _state_path(root)
+    state_document = _read_json(state_path)
+    retry = _read_json(retry_path)
+    baseline_path = root / "github-activity-baseline-v1.json"
+    baseline = _read_json(baseline_path)
+    if (
+        retry.get("bootstrap_id") != state_document.get("bootstrap_id")
+        or retry.get("interrupted_state_sha256")
+        != hashlib.sha256(state_path.read_bytes()).hexdigest()
+        or retry.get("activity_baseline_sha256") != hashlib.sha256(_canonical(baseline)).hexdigest()
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_STATE_INVALID")
+
+    upgrade_operation_path = root / "github-controls-idempotent-resume-repair-operation-v1.json"
+    upgrade_operation = _read_json(upgrade_operation_path)
+    prior_runtime = upgrade_operation.get("prior_runtime_commit_sha")
+    context = _context(root)
+    source = Path(str(context["source_root"]))
+    _run(["git", "fetch", "origin", "main"], cwd=source, timeout_seconds=1800)
+    protected_commit_sha = _runtime_commit(root, allow_pending_idempotent_resume=True)
+    if (
+        context.get("source_commit_sha") != protected_commit_sha
+        or _run(["git", "rev-parse", "HEAD"], cwd=source) != protected_commit_sha
+        or _run(["git", "rev-parse", "origin/main"], cwd=source) != protected_commit_sha
+        or _run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=no"],
+            cwd=source,
+        )
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_SOURCE_INVALID")
+    _verify_idempotent_resume_github_authorization(source, upgrade_operation)
+
+    controls_path = root / "github-controls-operation-v1.json"
+    controls = _read_canonical_document(
+        controls_path, "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CONTROLS_INVALID"
+    )
+    backup_path = root / "github-controls-operation-before-runtime-upgrade-v1.json"
+    refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
+    if controls.get("protected_commit_sha") == prior_runtime:
+        _write_exact_canonical_checkpoint(backup_path, controls)
+        _prepare_github_controls_operation(
+            root,
+            protected_commit_sha,
+            live_step_name="github_controls_runtime_upgrade_live_1",
+        )
+        controls = _read_canonical_document(
+            controls_path,
+            "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CONTROLS_INVALID",
+        )
+    elif controls.get("protected_commit_sha") != protected_commit_sha:
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CONTROLS_INVALID")
+
+    if not backup_path.exists():
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_BACKUP_MISSING")
+    prior_controls = _read_canonical_document(
+        backup_path, "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_BACKUP_INVALID"
+    )
+    if (
+        prior_controls.get("protected_commit_sha") != prior_runtime
+        or controls.get("protected_commit_sha") != protected_commit_sha
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CONTROLS_INVALID")
+    refresh = {
+        "bootstrap_id": state_document["bootstrap_id"],
+        "prior_controls_operation_sha256": hashlib.sha256(backup_path.read_bytes()).hexdigest(),
+        "protected_commit_sha": protected_commit_sha,
+        "refreshed_controls_operation_sha256": hashlib.sha256(
+            controls_path.read_bytes()
+        ).hexdigest(),
+        "runtime_upgrade_operation_sha256": hashlib.sha256(
+            upgrade_operation_path.read_bytes()
+        ).hexdigest(),
+        "schema_version": "1",
+    }
+    _write_exact_canonical_checkpoint(refresh_path, refresh)
+    if _runtime_commit(root) != protected_commit_sha:
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID")
 
 
 def _parse_terminal_controller_receipt(issue_number: int) -> dict[str, object]:
@@ -7395,6 +7770,31 @@ def main() -> int:
                 )
                 return 2
             continue
+        if state.phase == "QUALIFICATION_PENDING":
+            try:
+                _refresh_interrupted_runtime_controls(args.installed_root)
+            except Exception as exc:
+                if not _disable_controller_for_failure_receipt(
+                    args.installed_root,
+                    phase=state.phase,
+                ):
+                    return 3
+                _write_canonical(
+                    args.installed_root
+                    / "receipts/controller-bootstrap-runtime-upgrade-refresh-blocked-v1.json",
+                    {
+                        "controller_enabled_readback": False,
+                        "phase": state.phase,
+                        "reason_code": _safe_blocked_reason(
+                            exc,
+                            "CATALOG_BOOTSTRAP_RUNTIME_UPGRADE_REFRESH_FAILED",
+                        ),
+                        "result": "BLOCKED",
+                        "schema_version": "1",
+                        "state_preserved_for_retry": True,
+                    },
+                )
+                return 2
         try:
             run_phase(state.phase, args.installed_root)
         except Exception as exc:

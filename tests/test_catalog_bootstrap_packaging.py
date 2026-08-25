@@ -5,6 +5,7 @@ import subprocess
 import json
 import re
 import runpy
+import sys
 import zipfile
 from pathlib import Path
 
@@ -19,7 +20,7 @@ BUILDER = ROOT / "scripts/build_catalog_bootstrap_assistant.py"
 
 def _build(destination: Path) -> None:
     subprocess.run(
-        ["C:/Python314/python.exe", str(BUILDER), "--output", str(destination)],
+        [sys.executable, str(BUILDER), "--output", str(destination)],
         cwd=ROOT,
         check=True,
         capture_output=True,
@@ -35,7 +36,7 @@ def test_cli_has_only_installed_root() -> None:
 
 @pytest.mark.skipif(
     os.name != "nt",
-    reason="requires the Windows C:/Python314/python.exe runtime",
+    reason="requires the Windows runtime",
 )
 def test_two_builds_are_identical(tmp_path: Path) -> None:
     first = tmp_path / "one"
