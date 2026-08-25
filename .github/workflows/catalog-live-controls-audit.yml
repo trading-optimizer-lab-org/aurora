@@ -47,9 +47,78 @@ jobs:
       receipt_sha256: ${{ steps.controls.outputs.receipt_sha256 }}
       receipt_status: ${{ steps.controls.outputs.receipt_status }}
     steps:
+      - id: provenance
+        name: Validate the real caller and protected provenance
+        shell: bash
+        env:
+          EXPECTED_PURPOSE: ${{ inputs.purpose }}
+          EXPECTED_CALLER_WORKFLOW: ${{ inputs.caller_workflow }}
+          EXPECTED_CALLER_JOB: ${{ inputs.caller_job }}
+          EXPECTED_PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          EXPECTED_AUDIT_CONTEXT_SHA256: ${{ inputs.audit_context_sha256 }}
+          ACTUAL_WORKFLOW_REF: ${{ github.workflow_ref }}
+          ACTUAL_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          ACTUAL_EVENT_NAME: ${{ github.event_name }}
+          ACTUAL_REF: ${{ github.ref }}
+          ACTUAL_SHA: ${{ github.sha }}
+          ACTUAL_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          repository="trading-optimizer-lab-org/aurora"
+          controller="trading-optimizer-lab-org/aurora/.github/workflows/catalog-run-controller.yml@refs/heads/main"
+          qualification="trading-optimizer-lab-org/aurora/.github/workflows/catalog-live-controls-qualification.yml@refs/heads/main"
+          keeper="trading-optimizer-lab-org/aurora/.github/workflows/catalog-artifact-keeper.yml@refs/heads/main"
+          watchdog="trading-optimizer-lab-org/aurora/.github/workflows/catalog-run-watchdog.yml@refs/heads/main"
+          reconciler="trading-optimizer-lab-org/aurora/.github/workflows/catalog-request-reconciler.yml@refs/heads/main"
+
+          [[ "$ACTUAL_REPOSITORY" == "$repository" ]] || {
+            echo "CATALOG_AUDIT_REPOSITORY_INVALID" >&2; exit 1;
+          }
+          [[ "$EXPECTED_PROTECTED_COMMIT_SHA" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "CATALOG_AUDIT_PROTECTED_COMMIT_INVALID" >&2; exit 1;
+          }
+          [[ "$EXPECTED_AUDIT_CONTEXT_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "CATALOG_AUDIT_CONTEXT_INVALID" >&2; exit 1;
+          }
+          [[ "$ACTUAL_WORKFLOW_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]
+          [[ "$ACTUAL_REF" == "refs/heads/main" ]]
+          [[ "$ACTUAL_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]
+
+          case "$EXPECTED_PURPOSE:$EXPECTED_CALLER_WORKFLOW:$EXPECTED_CALLER_JOB" in
+            admission:.github/workflows/catalog-run-controller.yml:live_controls_audit_before_reserve|\
+            terminal:.github/workflows/catalog-run-controller.yml:live_controls_audit_before_terminal|\
+            admission:.github/workflows/catalog-live-controls-qualification.yml:qualify_live_admission_controls|\
+            terminal:.github/workflows/catalog-live-controls-qualification.yml:qualify_live_terminal_controls|\
+            maintenance:.github/workflows/catalog-artifact-keeper.yml:live_controls_audit_before_maintenance) ;;
+            *) echo "CATALOG_AUDIT_LOGICAL_CALLER_INVALID" >&2; exit 1 ;;
+          esac
+
+          case "$EXPECTED_CALLER_WORKFLOW" in
+            .github/workflows/catalog-run-controller.yml)
+              case "$ACTUAL_WORKFLOW_REF:$ACTUAL_EVENT_NAME" in
+                "$controller":issues|"$controller":schedule|\
+                "$watchdog":schedule|"$reconciler":schedule) ;;
+                *) echo "CATALOG_AUDIT_CALLER_EVENT_INVALID" >&2; exit 1 ;;
+              esac
+              ;;
+            .github/workflows/catalog-live-controls-qualification.yml)
+              [[ "$ACTUAL_WORKFLOW_REF:$ACTUAL_EVENT_NAME" == "$qualification:workflow_dispatch" ]] || {
+                echo "CATALOG_AUDIT_CALLER_EVENT_INVALID" >&2; exit 1;
+              }
+              ;;
+            .github/workflows/catalog-artifact-keeper.yml)
+              case "$ACTUAL_WORKFLOW_REF:$ACTUAL_EVENT_NAME" in
+                "$keeper":schedule|"$keeper":workflow_dispatch) ;;
+                *) echo "CATALOG_AUDIT_CALLER_EVENT_INVALID" >&2; exit 1 ;;
+              esac
+              ;;
+            *) echo "CATALOG_AUDIT_CALLER_EVENT_INVALID" >&2; exit 1 ;;
+          esac
+
       - name: Check out the exact protected commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          repository: trading-optimizer-lab-org/aurora
           ref: ${{ inputs.protected_commit_sha }}
           persist-credentials: false
 
@@ -68,41 +137,6 @@ jobs:
           --require-hashes
           -r requirements/catalog-controller-linux-py311.lock
 
-      - id: provenance
-        name: Validate the real caller and protected provenance
-        shell: bash
-        env:
-          EXPECTED_CALLER_WORKFLOW: ${{ inputs.caller_workflow }}
-          EXPECTED_PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
-          EXPECTED_PURPOSE: ${{ inputs.purpose }}
-          ACTUAL_WORKFLOW_REF: ${{ github.workflow_ref }}
-          ACTUAL_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          ACTUAL_EVENT_NAME: ${{ github.event_name }}
-          ACTUAL_REF: ${{ github.ref }}
-          ACTUAL_SHA: ${{ github.sha }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          case "$EXPECTED_PURPOSE" in
-            admission|terminal|maintenance) ;;
-            *) echo "CATALOG_AUDIT_PURPOSE_INVALID" >&2; exit 1 ;;
-          esac
-          [[ "$ACTUAL_WORKFLOW_REF" == "$REPOSITORY/$EXPECTED_CALLER_WORKFLOW@"* ]]
-          [[ "$ACTUAL_WORKFLOW_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]
-          [[ "$ACTUAL_REF" == "refs/heads/main" ]]
-          [[ "$ACTUAL_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]
-          case "$EXPECTED_CALLER_WORKFLOW:$EXPECTED_PURPOSE:$ACTUAL_EVENT_NAME" in
-            .github/workflows/catalog-run-controller.yml:admission:issues|\
-            .github/workflows/catalog-run-controller.yml:admission:workflow_call|\
-            .github/workflows/catalog-run-controller.yml:terminal:issues|\
-            .github/workflows/catalog-run-controller.yml:terminal:workflow_call|\
-            .github/workflows/catalog-live-controls-qualification.yml:admission:workflow_dispatch|\
-            .github/workflows/catalog-live-controls-qualification.yml:terminal:workflow_dispatch|\
-            .github/workflows/catalog-artifact-keeper.yml:maintenance:schedule|\
-            .github/workflows/catalog-artifact-keeper.yml:maintenance:workflow_dispatch) ;;
-            *) echo "CATALOG_AUDIT_CALLER_EVENT_INVALID" >&2; exit 1 ;;
-          esac
-
       - name: Mint, audit, emit the secret-free receipt, and discard credentials
         id: controls
         shell: bash
@@ -111,27 +145,37 @@ jobs:
           AURORA_CATALOG_AUDITOR_PRIVATE_KEY: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
           AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
           AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
+          AUDIT_PURPOSE: ${{ inputs.purpose }}
+          AUDIT_CALLER_WORKFLOW: ${{ inputs.caller_workflow }}
+          AUDIT_CALLER_JOB: ${{ inputs.caller_job }}
+          AUDIT_PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          AUDIT_CONTEXT_SHA256: ${{ inputs.audit_context_sha256 }}
           PYTHONPATH: ${{ github.workspace }}/..
-        run: >-
-          python scripts/audit_catalog_github_controls.py
-          --repository trading-optimizer-lab-org/aurora
-          --desired config/catalog_github_controls_v1.json
-          --auditor config/catalog_github_auditor_v1.json
-          --workflow-auditor
-          --purpose "${{ inputs.purpose }}"
-          --caller-workflow "${{ inputs.caller_workflow }}"
-          --caller-job "${{ inputs.caller_job }}"
-          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
-          --audit-context-sha256 "${{ inputs.audit_context_sha256 }}"
-          --output catalog_github_controls_receipt_v1.json
-          --github-output "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          python scripts/audit_catalog_github_controls.py \
+            --repository trading-optimizer-lab-org/aurora \
+            --desired config/catalog_github_controls_v1.json \
+            --auditor config/catalog_github_auditor_v1.json \
+            --workflow-auditor \
+            --purpose "$AUDIT_PURPOSE" \
+            --caller-workflow "$AUDIT_CALLER_WORKFLOW" \
+            --caller-job "$AUDIT_CALLER_JOB" \
+            --protected-commit-sha "$AUDIT_PROTECTED_COMMIT_SHA" \
+            --audit-context-sha256 "$AUDIT_CONTEXT_SHA256" \
+            --output catalog_github_controls_receipt_v1.json \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Freeze the bounded receipt artifact name
         id: receipt_artifact
         shell: bash
-        run: >-
-          echo "name=catalog-live-controls-${{ inputs.purpose }}-${{ inputs.audit_context_sha256 }}"
-          >> "$GITHUB_OUTPUT"
+        env:
+          AUDIT_PURPOSE: ${{ inputs.purpose }}
+          AUDIT_CONTEXT_SHA256: ${{ inputs.audit_context_sha256 }}
+        run: |
+          set -euo pipefail
+          printf 'name=catalog-live-controls-%s-%s\n' \
+            "$AUDIT_PURPOSE" "$AUDIT_CONTEXT_SHA256" >> "$GITHUB_OUTPUT"
 
       - name: Publish the secret-free controls receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

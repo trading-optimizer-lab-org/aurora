@@ -523,6 +523,21 @@ def test_repository_live_audit_and_keeper_topology_is_closed() -> None:
     assert relevant == set()
 
 
+def test_catalog_workflow_inventory_runbook_matches_sealed_topology() -> None:
+    root = Path(__file__).resolve().parents[1]
+    registry = load_catalog_campaign_registry(
+        root / "config/catalog_campaign_registry_v1.json"
+    )
+    receipt = validate_catalog_workflow_topology(repo_root=root, registry=registry)
+    runbook = (root / "docs/runbooks/CATALOG_WORKFLOW_INVENTORY.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert receipt.status == "ready"
+    assert f"Workflows inventariados: **{len(receipt.inventory)}**." in runbook
+    assert f"Hash canónico del inventario final: `{receipt.inventory_sha256}`." in runbook
+
+
 def _write_topology_fixture(
     root: Path,
     *,

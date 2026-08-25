@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import shutil
 import textwrap
 
 import pytest
+import yaml
 
 from aurora.infra.github_performance.preflight import (
     load_github_yaml,
+    validate_catalog_workflow_topology,
 )
 from aurora.infra.sp500_megarun.catalog_campaign_registry import (
     load_catalog_campaign_registry,
@@ -294,6 +297,7 @@ def test_live_audit_is_one_reusable_workflow_with_exact_contract() -> None:
 def test_live_audit_validates_real_provenance_before_the_credential_step() -> None:
     workflow = _workflow(LIVE_AUDIT)
     steps = workflow["jobs"]["audit"]["steps"]
+    assert steps[0]["id"] == "provenance"
     credential_step_index = next(
         index
         for index, step in enumerate(steps)
@@ -304,24 +308,56 @@ def test_live_audit_validates_real_provenance_before_the_credential_step() -> No
         for index, step in enumerate(steps)
         if step.get("id") == "provenance"
     )
+    assert provenance_step_index == 0
     assert provenance_step_index < credential_step_index
     provenance = json.dumps(steps[provenance_step_index], sort_keys=True)
     for value in (
+        "trading-optimizer-lab-org/aurora",
         "github.workflow_ref",
         "github.workflow_sha",
         "github.event_name",
         "github.ref",
         "github.sha",
+        "inputs.caller_job",
         "inputs.caller_workflow",
         "inputs.protected_commit_sha",
+        "inputs.audit_context_sha256",
         "inputs.purpose",
     ):
         assert value in provenance
-    assert "inputs.caller_job" not in provenance
     assert '[[ "$ACTUAL_EVENT_NAME" == "workflow_call" ]]' not in provenance
     assert "CATALOG_AUDIT_CALLER_EVENT_INVALID" in provenance
-    for allowed_event in ("issues", "workflow_call", "workflow_dispatch", "schedule"):
+    for allowed_event in ("issues", "workflow_dispatch", "schedule"):
         assert allowed_event in provenance
+    for workflow_ref in (
+        "catalog-run-controller.yml@refs/heads/main",
+        "catalog-live-controls-qualification.yml@refs/heads/main",
+        "catalog-artifact-keeper.yml@refs/heads/main",
+        "catalog-run-watchdog.yml@refs/heads/main",
+        "catalog-request-reconciler.yml@refs/heads/main",
+    ):
+        assert workflow_ref in provenance
+    for caller_workflow, jobs in AUDIT_CALLER_WORKFLOWS.items():
+        for job_id, values in jobs.items():
+            assert (
+                f'{values["purpose"]}:{caller_workflow}:{job_id}'
+                in provenance
+            )
+    assert '"$REPOSITORY/$EXPECTED_CALLER_WORKFLOW@"*' not in provenance
+
+    assert steps[0]["env"] == {
+        "EXPECTED_PURPOSE": "${{ inputs.purpose }}",
+        "EXPECTED_CALLER_WORKFLOW": "${{ inputs.caller_workflow }}",
+        "EXPECTED_CALLER_JOB": "${{ inputs.caller_job }}",
+        "EXPECTED_PROTECTED_COMMIT_SHA": "${{ inputs.protected_commit_sha }}",
+        "EXPECTED_AUDIT_CONTEXT_SHA256": "${{ inputs.audit_context_sha256 }}",
+        "ACTUAL_WORKFLOW_REF": "${{ github.workflow_ref }}",
+        "ACTUAL_WORKFLOW_SHA": "${{ github.workflow_sha }}",
+        "ACTUAL_EVENT_NAME": "${{ github.event_name }}",
+        "ACTUAL_REF": "${{ github.ref }}",
+        "ACTUAL_SHA": "${{ github.sha }}",
+        "ACTUAL_REPOSITORY": "${{ github.repository }}",
+    }
 
     controls = next(
         step
@@ -333,11 +369,123 @@ def test_live_audit_validates_real_provenance_before_the_credential_step() -> No
         "AURORA_CATALOG_AUDITOR_PRIVATE_KEY": "${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}",
         "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN": "${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}",
         "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN": "${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}",
+        "AUDIT_PURPOSE": "${{ inputs.purpose }}",
+        "AUDIT_CALLER_WORKFLOW": "${{ inputs.caller_workflow }}",
+        "AUDIT_CALLER_JOB": "${{ inputs.caller_job }}",
+        "AUDIT_PROTECTED_COMMIT_SHA": "${{ inputs.protected_commit_sha }}",
+        "AUDIT_CONTEXT_SHA256": "${{ inputs.audit_context_sha256 }}",
         "PYTHONPATH": "${{ github.workspace }}/..",
     }
-    assert '--caller-job "${{ inputs.caller_job }}"' in controls["run"]
+    assert '--caller-job "$AUDIT_CALLER_JOB"' in controls["run"]
+    assert '--purpose "$AUDIT_PURPOSE"' in controls["run"]
+    assert '--caller-workflow "$AUDIT_CALLER_WORKFLOW"' in controls["run"]
+    assert '--protected-commit-sha "$AUDIT_PROTECTED_COMMIT_SHA"' in controls["run"]
+    assert '--audit-context-sha256 "$AUDIT_CONTEXT_SHA256"' in controls["run"]
     assert "inputs.caller_job" not in controls.get("if", "")
     assert "--github-output \"$GITHUB_OUTPUT\"" in controls["run"]
+
+    artifact = next(step for step in steps if step.get("id") == "receipt_artifact")
+    assert artifact["env"] == {
+        "AUDIT_PURPOSE": "${{ inputs.purpose }}",
+        "AUDIT_CONTEXT_SHA256": "${{ inputs.audit_context_sha256 }}",
+    }
+    assert "inputs." not in artifact["run"]
+    assert all(
+        "inputs." not in step.get("run", "")
+        for step in steps
+        if isinstance(step, dict)
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation, expected_code",
+    [
+        ("caller_job_injection", "CATALOG_LIVE_AUDIT_INPUT_IN_SHELL"),
+        ("audit_context_injection", "CATALOG_LIVE_AUDIT_INPUT_IN_SHELL"),
+        ("wrong_repository", "CATALOG_LIVE_AUDIT_CHECKOUT_INVALID"),
+        ("invalid_caller_job", "CATALOG_LIVE_AUDIT_CALLER_JOB_NOT_VALIDATED"),
+        ("strange_workflow", "CATALOG_LIVE_AUDIT_PROVENANCE_INCOMPLETE"),
+    ],
+)
+def test_live_audit_preflight_rejects_critical_mutations(
+    tmp_path: Path, mutation: str, expected_code: str
+) -> None:
+    fixture_root = tmp_path
+    fixture_workflows = fixture_root / ".github/workflows"
+    shutil.copytree(WORKFLOWS, fixture_workflows)
+    workflow_path = fixture_workflows / LIVE_AUDIT.name
+    workflow = _workflow(workflow_path)
+    steps = workflow["jobs"]["audit"]["steps"]
+    provenance = next(step for step in steps if step.get("id") == "provenance")
+    controls = next(
+        step
+        for step in steps
+        if "scripts/audit_catalog_github_controls.py" in step.get("run", "")
+    )
+    checkout = next(
+        step
+        for step in steps
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    )
+    if mutation == "caller_job_injection":
+        controls["run"] = controls["run"].replace(
+            '"$AUDIT_CALLER_JOB"', '"${{ inputs.caller_job }}"'
+        )
+    elif mutation == "audit_context_injection":
+        controls["run"] = controls["run"].replace(
+            '"$AUDIT_CONTEXT_SHA256"',
+            '"${{ inputs.audit_context_sha256 }}"',
+        )
+    elif mutation == "wrong_repository":
+        checkout["with"]["repository"] = "evil/repository"
+    elif mutation == "invalid_caller_job":
+        provenance["run"] = provenance["run"].replace(
+            "admission:.github/workflows/catalog-run-controller.yml:live_controls_audit_before_reserve",
+            "admission:.github/workflows/catalog-run-controller.yml:evil_job",
+        )
+    elif mutation == "strange_workflow":
+        provenance["run"] = provenance["run"].replace(
+            "trading-optimizer-lab-org/aurora/.github/workflows/catalog-run-controller.yml@refs/heads/main",
+            "trading-optimizer-lab-org/aurora/.github/workflows/strange.yml@refs/heads/main",
+        )
+    else:
+        raise AssertionError(mutation)
+    workflow_path.write_text(
+        yaml.safe_dump(workflow, sort_keys=False), encoding="utf-8"
+    )
+    registry = load_catalog_campaign_registry(
+        ROOT / "config/catalog_campaign_registry_v1.json"
+    )
+    receipt = validate_catalog_workflow_topology(
+        repo_root=fixture_root,
+        registry=registry,
+    )
+    assert expected_code in {item.code for item in receipt.violations}
+
+
+def test_live_audit_preflight_accepts_only_the_documented_nested_relaunches() -> None:
+    workflow = _workflow(LIVE_AUDIT)
+    preflight = next(
+        step["run"]
+        for step in workflow["jobs"]["audit"]["steps"]
+        if step.get("id") == "provenance"
+    )
+    assert (
+        "trading-optimizer-lab-org/aurora/.github/workflows/catalog-run-watchdog.yml@refs/heads/main"
+        in preflight
+    )
+    assert (
+        "trading-optimizer-lab-org/aurora/.github/workflows/catalog-request-reconciler.yml@refs/heads/main"
+        in preflight
+    )
+    assert "schedule" in preflight
+    registry = load_catalog_campaign_registry(
+        ROOT / "config/catalog_campaign_registry_v1.json"
+    )
+    receipt = validate_catalog_workflow_topology(repo_root=ROOT, registry=registry)
+    assert "CATALOG_LIVE_AUDIT_PROVENANCE_INCOMPLETE" not in {
+        item.code for item in receipt.violations
+    }
 
 
 def test_catalog_audit_credentials_have_one_reusable_consumer_only() -> None:

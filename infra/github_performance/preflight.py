@@ -836,6 +836,111 @@ def _validate_catalog_live_audit_topology(
             )
         )
 
+    steps = audit_job.get("steps") if isinstance(audit_job, Mapping) else None
+    step_rows = (
+        list(steps)
+        if isinstance(steps, Sequence) and not isinstance(steps, (str, bytes))
+        else []
+    )
+    provenance = step_rows[0] if step_rows and isinstance(step_rows[0], Mapping) else None
+    provenance_run = str(provenance.get("run", "")) if provenance else ""
+    provenance_env = provenance.get("env") if provenance else None
+    required_provenance_env = {
+        "EXPECTED_PURPOSE": "${{ inputs.purpose }}",
+        "EXPECTED_CALLER_WORKFLOW": "${{ inputs.caller_workflow }}",
+        "EXPECTED_CALLER_JOB": "${{ inputs.caller_job }}",
+        "EXPECTED_PROTECTED_COMMIT_SHA": "${{ inputs.protected_commit_sha }}",
+        "EXPECTED_AUDIT_CONTEXT_SHA256": "${{ inputs.audit_context_sha256 }}",
+        "ACTUAL_WORKFLOW_REF": "${{ github.workflow_ref }}",
+        "ACTUAL_WORKFLOW_SHA": "${{ github.workflow_sha }}",
+        "ACTUAL_EVENT_NAME": "${{ github.event_name }}",
+        "ACTUAL_REF": "${{ github.ref }}",
+        "ACTUAL_SHA": "${{ github.sha }}",
+        "ACTUAL_REPOSITORY": "${{ github.repository }}",
+    }
+    required_provenance_markers = {
+        'repository="trading-optimizer-lab-org/aurora"',
+        '[[ "$ACTUAL_REPOSITORY" == "$repository" ]]',
+        "=~ ^[0-9a-f]{64}$",
+        '[[ "$ACTUAL_WORKFLOW_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]',
+        '[[ "$ACTUAL_REF" == "refs/heads/main" ]]',
+        '[[ "$ACTUAL_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]',
+        "catalog-run-controller.yml@refs/heads/main",
+        "catalog-live-controls-qualification.yml@refs/heads/main",
+        "catalog-artifact-keeper.yml@refs/heads/main",
+        "catalog-run-watchdog.yml@refs/heads/main",
+        "catalog-request-reconciler.yml@refs/heads/main",
+        "CATALOG_AUDIT_CALLER_EVENT_INVALID",
+    }
+    if (
+        not isinstance(provenance, Mapping)
+        or provenance.get("id") != "provenance"
+        or provenance.get("shell") != "bash"
+        or provenance_env != required_provenance_env
+        or not all(marker in provenance_run for marker in required_provenance_markers)
+    ):
+        violations.append(
+            _catalog_violation(
+                "CATALOG_LIVE_AUDIT_PROVENANCE_INCOMPLETE",
+                CATALOG_LIVE_AUDIT_WORKFLOW,
+                "caller repository, commit, event, and nested provenance are not closed",
+            )
+        )
+
+    required_logical_callers = {
+        "admission:.github/workflows/catalog-run-controller.yml:live_controls_audit_before_reserve",
+        "terminal:.github/workflows/catalog-run-controller.yml:live_controls_audit_before_terminal",
+        "admission:.github/workflows/catalog-live-controls-qualification.yml:qualify_live_admission_controls",
+        "terminal:.github/workflows/catalog-live-controls-qualification.yml:qualify_live_terminal_controls",
+        "maintenance:.github/workflows/catalog-artifact-keeper.yml:live_controls_audit_before_maintenance",
+    }
+    if not all(marker in provenance_run for marker in required_logical_callers):
+        violations.append(
+            _catalog_violation(
+                "CATALOG_LIVE_AUDIT_CALLER_JOB_NOT_VALIDATED",
+                CATALOG_LIVE_AUDIT_WORKFLOW,
+                "purpose, logical caller workflow, and caller job are not bound exactly",
+            )
+        )
+
+    if any(
+        "${{ inputs." in str(step.get("run", ""))
+        for step in step_rows
+        if isinstance(step, Mapping)
+    ):
+        violations.append(
+            _catalog_violation(
+                "CATALOG_LIVE_AUDIT_INPUT_IN_SHELL",
+                CATALOG_LIVE_AUDIT_WORKFLOW,
+                "workflow-call inputs must enter shell only through the environment",
+            )
+        )
+
+    checkout = next(
+        (
+            step
+            for step in step_rows
+            if isinstance(step, Mapping)
+            and str(step.get("uses", "")).startswith("actions/checkout@")
+        ),
+        None,
+    )
+    checkout_with = checkout.get("with") if isinstance(checkout, Mapping) else None
+    if (
+        not isinstance(checkout_with, Mapping)
+        or checkout_with.get("repository") != "trading-optimizer-lab-org/aurora"
+        or checkout_with.get("ref") != "${{ inputs.protected_commit_sha }}"
+        or checkout_with.get("persist-credentials") is not False
+        or step_rows.index(checkout) <= 0
+    ):
+        violations.append(
+            _catalog_violation(
+                "CATALOG_LIVE_AUDIT_CHECKOUT_INVALID",
+                CATALOG_LIVE_AUDIT_WORKFLOW,
+                "checkout must follow provenance and pin the authorized repository and commit",
+            )
+        )
+
     observed_callers: set[tuple[str, str, str]] = set()
     allowed_call_keys = {
         "name",
