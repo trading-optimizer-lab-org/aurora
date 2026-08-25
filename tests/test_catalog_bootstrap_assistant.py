@@ -4580,7 +4580,7 @@ def test_controller_double_shutdown_is_ordered_and_attempts_enabled_after_armed_
 
     monkeypatch.setattr(bootstrap_runner, "_set_repository_variable", fake_set)
 
-    with pytest.raises(ExceptionGroup) as raised:
+    with pytest.raises(bootstrap_runner.CatalogControllerShutdownError) as raised:
         bootstrap_runner._disable_controller()
 
     assert calls == [
@@ -4603,7 +4603,7 @@ def test_controller_double_shutdown_aggregates_failures_in_fixed_order(
 
     monkeypatch.setattr(bootstrap_runner, "_set_repository_variable", fake_set)
 
-    with pytest.raises(ExceptionGroup) as raised:
+    with pytest.raises(bootstrap_runner.CatalogControllerShutdownError) as raised:
         bootstrap_runner._disable_controller()
 
     assert calls == [bootstrap_runner.ARMED_VARIABLE, bootstrap_runner.CONTROLLER_VARIABLE]

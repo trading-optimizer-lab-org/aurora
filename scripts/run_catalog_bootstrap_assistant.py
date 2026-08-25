@@ -100,6 +100,15 @@ ARMED_VARIABLE = "CATALOG_CONTROLLER_PRODUCTION_ARMED"
 ENVIRONMENT = "catalog-production"
 AUDITOR_SECRET = "AURORA_CATALOG_AUDITOR_PRIVATE_KEY"
 QUALIFICATION_CHECKPOINT_FILENAME = "qualification-substeps-v1.checkpoint.json"
+
+
+class CatalogControllerShutdownError(RuntimeError):
+    """Ordered controller-shutdown failures, compatible with Python 3.10."""
+
+    def __init__(self, errors: list[Exception]) -> None:
+        self.exceptions = tuple(errors)
+        detail = "|".join(str(error) for error in errors)
+        super().__init__(f"CATALOG_BOOTSTRAP_CONTROLLER_SHUTDOWN_FAILED:{detail}")
 REQUESTER_TERMINAL_CHECKPOINT_FILENAME = "requester-qualification-terminal-v1.json"
 REQUESTER_COMPLETE_CHECKPOINT_FILENAME = "requester-qualification-complete-v1.json"
 _BOOTSTRAP_QUALIFICATION_CAMPAIGN = "controller-bootstrap-qualification-v1"
@@ -793,9 +802,7 @@ def _disable_controller() -> None:
         except Exception as exc:
             errors.append(exc)
     if errors:
-        raise ExceptionGroup(
-            "CATALOG_BOOTSTRAP_CONTROLLER_SHUTDOWN_FAILED", errors
-        )
+        raise CatalogControllerShutdownError(errors)
 
 
 def _controller_is_ready() -> bool:
