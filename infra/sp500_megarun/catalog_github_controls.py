@@ -279,11 +279,13 @@ class CatalogGithubAuditorV1(FrozenModel):
     required_repository_permissions: Mapping[str, Literal["read"]]
     required_organization_permissions: Mapping[str, Literal["read"]]
     required_enterprise_permissions: Mapping[str, Literal["read"]]
-    required_enterprise_token_scopes: tuple[str, ...]
+    required_enterprise_billing_token_scopes: tuple[str, ...]
+    required_enterprise_cache_verifier_token_scopes: tuple[str, ...]
     required_package_inventory_token_scopes: tuple[str, ...]
     forbidden_write_permissions: tuple[str, ...]
     private_key_environment_secret: str
     enterprise_billing_token_environment_secret: str
+    enterprise_cache_verifier_token_environment_secret: str
     package_inventory_token_environment_secret: str
     app_id_variable: str
 
@@ -298,6 +300,14 @@ class CatalogGithubAuditorV1(FrozenModel):
             )
         ):
             raise ValueError("auditor permissions must be read-only")
+        if self.required_enterprise_billing_token_scopes != (
+            "manage_billing:enterprise",
+        ):
+            raise ValueError("billing token scope contract must be exact")
+        if self.required_enterprise_cache_verifier_token_scopes != (
+            "admin:enterprise",
+        ):
+            raise ValueError("cache verifier token scope contract must be exact")
         return self
 
 
@@ -629,13 +639,25 @@ def _auditor_proof_is_exact(
         return False
     if proof.get("fixed_get_endpoints_only") is not True:
         return False
-    if proof.get("enterprise_credential_kind") != "classic_pat":
+    if proof.get("enterprise_billing_credential_kind") != "classic_pat":
         return False
-    if proof.get("enterprise_credential_scopes") != list(
-        auditor.required_enterprise_token_scopes
+    if proof.get("enterprise_billing_credential_scopes") != list(
+        auditor.required_enterprise_billing_token_scopes
     ):
         return False
-    if proof.get("enterprise_write_blocked_by_client") is not True:
+    if proof.get("enterprise_billing_get_only") is not True:
+        return False
+    if proof.get("enterprise_billing_write_blocked_by_client") is not True:
+        return False
+    if proof.get("enterprise_cache_verifier_credential_kind") != "classic_pat":
+        return False
+    if proof.get("enterprise_cache_verifier_credential_scopes") != list(
+        auditor.required_enterprise_cache_verifier_token_scopes
+    ):
+        return False
+    if proof.get("enterprise_cache_verifier_get_only") is not True:
+        return False
+    if proof.get("enterprise_cache_verifier_write_blocked_by_client") is not True:
         return False
     if proof.get("package_credential_kind") != "oauth_device_token":
         return False

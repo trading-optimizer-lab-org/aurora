@@ -194,7 +194,8 @@ class AppReadOnlyClient:
         self.github_date: datetime | None = None
         self._session = requests.Session()
         self._repository_token: str | None = None
-        self._enterprise_token: str | None = None
+        self._enterprise_billing_token: str | None = None
+        self._enterprise_cache_verifier_token: str | None = None
         self._package_token: str | None = None
         self._last_oauth_scopes: tuple[str, ...] = ()
         self.installation_proof: dict[str, object] | None = None
@@ -205,10 +206,19 @@ class AppReadOnlyClient:
         enterprise_token = os.environ.get(
             self.auditor.enterprise_billing_token_environment_secret
         )
+        cache_verifier_token = os.environ.get(
+            self.auditor.enterprise_cache_verifier_token_environment_secret
+        )
         package_token = os.environ.get(
             self.auditor.package_inventory_token_environment_secret
         )
-        if not app_id or not private_key or not enterprise_token or not package_token:
+        if (
+            not app_id
+            or not private_key
+            or not enterprise_token
+            or not cache_verifier_token
+            or not package_token
+        ):
             raise ValueError("CATALOG_AUDITOR_CREDENTIAL_MISSING")
         key_bytes = private_key.encode("utf-8")
         key = serialization.load_pem_private_key(key_bytes, password=None)
@@ -256,14 +266,21 @@ class AppReadOnlyClient:
         ):
             raise ValueError("CATALOG_AUDITOR_TOKEN_MINT_FAILED")
         self._repository_token = token_payload["token"]
-        self._enterprise_token = enterprise_token
+        self._enterprise_billing_token = enterprise_token
+        self._enterprise_cache_verifier_token = cache_verifier_token
         self._package_token = package_token
         self._request("GET", "/user", bearer=enterprise_token)
         enterprise_scopes = self._last_oauth_scopes
         if enterprise_scopes != tuple(
-            sorted(self.auditor.required_enterprise_token_scopes)
+            sorted(self.auditor.required_enterprise_billing_token_scopes)
         ):
             raise ValueError("CATALOG_AUDITOR_ENTERPRISE_TOKEN_SCOPES_INVALID")
+        self._request("GET", "/user", bearer=cache_verifier_token)
+        cache_verifier_scopes = self._last_oauth_scopes
+        if cache_verifier_scopes != tuple(
+            sorted(self.auditor.required_enterprise_cache_verifier_token_scopes)
+        ):
+            raise ValueError("CATALOG_AUDITOR_ENTERPRISE_CACHE_VERIFIER_TOKEN_SCOPES_INVALID")
         self._request("GET", "/user", bearer=package_token)
         package_scopes = self._last_oauth_scopes
         if package_scopes != tuple(
@@ -280,15 +297,21 @@ class AppReadOnlyClient:
             "repository_installation_id": installation["id"],
             "app_slug": installation.get("app_slug"),
             "public_key_sha256": fingerprint,
-            "enterprise_credential_kind": "classic_pat",
-            "enterprise_credential_scopes": list(enterprise_scopes),
-            "enterprise_write_blocked_by_client": True,
+            "enterprise_billing_credential_kind": "classic_pat",
+            "enterprise_billing_credential_scopes": list(enterprise_scopes),
+            "enterprise_billing_get_only": True,
+            "enterprise_billing_write_blocked_by_client": True,
+            "enterprise_cache_verifier_credential_kind": "classic_pat",
+            "enterprise_cache_verifier_credential_scopes": list(cache_verifier_scopes),
+            "enterprise_cache_verifier_get_only": True,
+            "enterprise_cache_verifier_write_blocked_by_client": True,
             "package_credential_kind": "oauth_device_token",
             "package_credential_scopes": list(package_scopes),
             "package_write_blocked_by_client": True,
         }
         private_key = ""
         enterprise_token = ""
+        cache_verifier_token = ""
         package_token = ""
         key_bytes = b""
         jwt = ""
@@ -296,7 +319,8 @@ class AppReadOnlyClient:
 
     def __exit__(self, *_: object) -> None:
         self._repository_token = None
-        self._enterprise_token = None
+        self._enterprise_billing_token = None
+        self._enterprise_cache_verifier_token = None
         self._package_token = None
         self._last_oauth_scopes = ()
         self._session.headers.clear()
@@ -306,11 +330,18 @@ class AppReadOnlyClient:
         return self._request("GET", endpoint, bearer=self._token_for_endpoint(endpoint))
 
     def _token_for_endpoint(self, endpoint: str) -> str:
-        enterprise_prefix = f"/enterprises/{self.auditor.enterprise}/settings/billing/"
-        if endpoint.startswith(enterprise_prefix):
-            if self._enterprise_token is None:
+        enterprise_billing_prefix = f"/enterprises/{self.auditor.enterprise}/settings/billing/"
+        enterprise_cache_verifier_endpoint = (
+            f"/enterprises/{self.auditor.enterprise}/actions/cache/retention-limit"
+        )
+        if endpoint.startswith(enterprise_billing_prefix):
+            if self._enterprise_billing_token is None:
                 raise ValueError("CATALOG_AUDITOR_ENTERPRISE_TOKEN_UNAVAILABLE")
-            return self._enterprise_token
+            return self._enterprise_billing_token
+        if endpoint == enterprise_cache_verifier_endpoint:
+            if self._enterprise_cache_verifier_token is None:
+                raise ValueError("CATALOG_AUDITOR_ENTERPRISE_CACHE_VERIFIER_TOKEN_UNAVAILABLE")
+            return self._enterprise_cache_verifier_token
         if endpoint.startswith("/enterprises/"):
             raise ValueError("CATALOG_AUDITOR_ENDPOINT_INVALID")
         owner = self.repository.split("/", maxsplit=1)[0]

@@ -579,12 +579,57 @@ def test_auditor_app_is_read_only() -> None:
     assert desired.enterprise_billing_token_environment_secret == (
         "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"
     )
-    assert desired.required_enterprise_token_scopes == ("manage_billing:enterprise",)
+    assert desired.enterprise_cache_verifier_token_environment_secret == (
+        "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN"
+    )
+    assert desired.required_enterprise_billing_token_scopes == (
+        "manage_billing:enterprise",
+    )
+    assert desired.required_enterprise_cache_verifier_token_scopes == (
+        "admin:enterprise",
+    )
+    assert set(
+        (
+            desired.private_key_environment_secret,
+            desired.enterprise_billing_token_environment_secret,
+            desired.enterprise_cache_verifier_token_environment_secret,
+            desired.package_inventory_token_environment_secret,
+        )
+    ) == {
+        "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+        "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+        "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN",
+        "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN",
+    }
     assert desired.package_inventory_token_environment_secret == (
         "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN"
     )
     assert desired.required_package_inventory_token_scopes == ("read:packages",)
     assert not any(value == "write" for value in desired.required_repository_permissions.values())
+
+
+@pytest.mark.parametrize(
+    ("scope_field", "wrong_scope"),
+    [
+        ("required_enterprise_billing_token_scopes", ["admin:enterprise"]),
+        (
+            "required_enterprise_cache_verifier_token_scopes",
+            ["manage_billing:enterprise"],
+        ),
+    ],
+)
+def test_auditor_rejects_cross_assigned_enterprise_scopes(
+    scope_field: str, wrong_scope: list[str]
+) -> None:
+    payload = json.loads(AUDITOR.read_text("utf-8"))
+    payload[scope_field] = wrong_scope
+    schema = json.loads(
+        (ROOT / "schemas/catalog_github_auditor_v1.schema.json").read_text("utf-8")
+    )
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(payload, schema)
+    with pytest.raises(ValueError, match="scope contract must be exact"):
+        CatalogGithubAuditorV1.model_validate(payload)
 
 
 def test_schemas_are_closed_and_validate_checked_contracts() -> None:
@@ -717,14 +762,18 @@ def test_auditor_routes_enterprise_billing_to_a_separate_token() -> None:
         auditor=load_desired_auditor(),
     )
     client._repository_token = "repository-token"
-    client._enterprise_token = "enterprise-token"
+    client._enterprise_billing_token = "enterprise-billing-token"
+    client._enterprise_cache_verifier_token = "enterprise-cache-verifier-token"
     client._package_token = "package-token"
     assert client._token_for_endpoint("/repos/trading-optimizer-lab-org/aurora") == (
         "repository-token"
     )
     assert client._token_for_endpoint(
         "/enterprises/trading-optimizer-lab/settings/billing/budgets"
-    ) == "enterprise-token"
+    ) == "enterprise-billing-token"
+    assert client._token_for_endpoint(
+        "/enterprises/trading-optimizer-lab/actions/cache/retention-limit"
+    ) == "enterprise-cache-verifier-token"
     assert client._token_for_endpoint(
         "/organizations/287229438/packages?package_type=container"
     ) == "package-token"
@@ -740,6 +789,27 @@ def test_auditor_routes_enterprise_billing_to_a_separate_token() -> None:
         )
     with pytest.raises(ValueError, match="CATALOG_AUDITOR_ENDPOINT_INVALID"):
         client._token_for_endpoint("/enterprises/other/settings/billing/budgets")
+    for endpoint in (
+        "/enterprises/trading-optimizer-lab/actions/cache/retention-limit/",
+        "/enterprises/trading-optimizer-lab/actions/cache/retention-limit?x=1",
+        "/enterprises/trading-optimizer-lab/actions/runners",
+        "/enterprises/trading-optimizer-lab/settings/secret",
+    ):
+        with pytest.raises(ValueError, match="CATALOG_AUDITOR_ENDPOINT_INVALID"):
+            client._token_for_endpoint(endpoint)
+
+
+def test_auditor_clears_both_enterprise_tokens_on_exit() -> None:
+    client = AppReadOnlyClient(
+        api_version="2026-03-10",
+        repository="trading-optimizer-lab-org/aurora",
+        auditor=load_desired_auditor(),
+    )
+    client._enterprise_billing_token = "enterprise-billing-token"
+    client._enterprise_cache_verifier_token = "enterprise-cache-verifier-token"
+    client.__exit__()
+    assert client._enterprise_billing_token is None
+    assert client._enterprise_cache_verifier_token is None
 
 
 def test_auditor_provider_permissions_match_the_created_github_app() -> None:
@@ -1090,11 +1160,18 @@ def test_github_auditor_receipt_requires_exact_read_only_installation() -> None:
         "repositories": [auditor.repository],
         "token_minted_in_process": True,
         "fixed_get_endpoints_only": True,
-        "enterprise_credential_kind": "classic_pat",
-        "enterprise_credential_scopes": list(
-            auditor.required_enterprise_token_scopes
+        "enterprise_billing_credential_kind": "classic_pat",
+        "enterprise_billing_credential_scopes": list(
+            auditor.required_enterprise_billing_token_scopes
         ),
-        "enterprise_write_blocked_by_client": True,
+        "enterprise_billing_get_only": True,
+        "enterprise_billing_write_blocked_by_client": True,
+        "enterprise_cache_verifier_credential_kind": "classic_pat",
+        "enterprise_cache_verifier_credential_scopes": list(
+            auditor.required_enterprise_cache_verifier_token_scopes
+        ),
+        "enterprise_cache_verifier_get_only": True,
+        "enterprise_cache_verifier_write_blocked_by_client": True,
         "package_credential_kind": "oauth_device_token",
         "package_credential_scopes": list(
             auditor.required_package_inventory_token_scopes
@@ -1324,11 +1401,18 @@ def test_keeper_accepts_the_protected_90_day_cache_policy() -> None:
         "repositories": [auditor.repository],
         "token_minted_in_process": True,
         "fixed_get_endpoints_only": True,
-        "enterprise_credential_kind": "classic_pat",
-        "enterprise_credential_scopes": list(
-            auditor.required_enterprise_token_scopes
+        "enterprise_billing_credential_kind": "classic_pat",
+        "enterprise_billing_credential_scopes": list(
+            auditor.required_enterprise_billing_token_scopes
         ),
-        "enterprise_write_blocked_by_client": True,
+        "enterprise_billing_get_only": True,
+        "enterprise_billing_write_blocked_by_client": True,
+        "enterprise_cache_verifier_credential_kind": "classic_pat",
+        "enterprise_cache_verifier_credential_scopes": list(
+            auditor.required_enterprise_cache_verifier_token_scopes
+        ),
+        "enterprise_cache_verifier_get_only": True,
+        "enterprise_cache_verifier_write_blocked_by_client": True,
         "package_credential_kind": "oauth_device_token",
         "package_credential_scopes": list(
             auditor.required_package_inventory_token_scopes
