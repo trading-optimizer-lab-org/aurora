@@ -89,7 +89,7 @@ def snapshot() -> None:
 
 
 def select() -> None:
-    empty = {"include": []}
+    empty: dict[str, list[dict[str, int | str]]] = {"include": []}
     if _DISABLED_PATH.is_file():
         matrix = empty
     else:
@@ -133,7 +133,7 @@ def select() -> None:
                         raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
                     run_states[run_id] = status
 
-        include = []
+        include: list[dict[str, int | str]] = []
         for authority_id, record in sorted(latest.items()):
             if record.state.value not in _NONTERMINAL_STATES:
                 continue

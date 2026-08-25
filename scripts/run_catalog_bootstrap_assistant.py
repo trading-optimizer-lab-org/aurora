@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 import ctypes
-from builtins import ExceptionGroup
 import hashlib
 import json
 import os
@@ -16,17 +15,46 @@ import sys
 import time
 import zipfile
 from collections.abc import Iterator, Mapping
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Literal, Protocol, cast
+
+
+UTC = timezone.utc
+
+
+class _Fcntl(Protocol):
+    LOCK_EX: int
+    LOCK_NB: int
+    LOCK_UN: int
+
+    def flock(self, descriptor: int, operation: int) -> None: ...
+
+
+class _Msvcrt(Protocol):
+    LK_NBLCK: int
+    LK_NBRLCK: int
+    LK_UNLCK: int
+
+    def locking(self, descriptor: int, mode: int, nbytes: int) -> None: ...
+
+
+_fcntl: _Fcntl | None
+_msvcrt: _Msvcrt | None
+
+
+def _as_int(value: object) -> int:
+    return int(cast(int | str | float | bytes | bytearray, value))
 
 try:
-    import fcntl as _fcntl
+        import fcntl as _fcntl_module
+        _fcntl = cast(_Fcntl, _fcntl_module)
 except ImportError:  # pragma: no cover - Windows uses msvcrt instead.
     _fcntl = None
 
 try:
-    import msvcrt as _msvcrt
+        import msvcrt as _msvcrt_module
+        _msvcrt = cast(_Msvcrt, _msvcrt_module)
 except ImportError:  # pragma: no cover - POSIX uses fcntl instead.
     _msvcrt = None
 
@@ -37,6 +65,7 @@ if TYPE_CHECKING:
         CatalogBootstrapManifestSetV1,
     )
     from infra.sp500_megarun.catalog_bootstrap_github import CatalogAppPublicBinding
+    from infra.sp500_megarun.catalog_bootstrap_github import VerifiedCatalogAppAccess
     from infra.sp500_megarun.catalog_bootstrap_finalizer import (
         CatalogBootstrapObservedProductionSealV1,
     )
@@ -80,14 +109,24 @@ def initial_bootstrap_state(
     return initial(bootstrap_id, protected_commit_sha)
 
 
-def CatalogBootstrapGitHubClient(*args: object, **kwargs: object) -> object:
+class _CatalogBootstrapGitHubClient(Protocol):
+    def find_exact_installation(
+        self, expected: CatalogBootstrapAppManifestV1
+    ) -> VerifiedCatalogAppAccess: ...
+
+    def close(self) -> None: ...
+
+
+def CatalogBootstrapGitHubClient(
+    *, app_id: int, private_key_pem: bytearray
+) -> _CatalogBootstrapGitHubClient:
     """Construct the GitHub client lazily while preserving the patchable API."""
 
     from infra.sp500_megarun.catalog_bootstrap_github import (
         CatalogBootstrapGitHubClient as client_type,
     )
 
-    return client_type(*args, **kwargs)
+    return client_type(app_id=app_id, private_key_pem=private_key_pem)
 
 
 EXPECTED_ROOT = Path("C:/ProgramData/AURORA/CatalogBootstrap")
@@ -535,9 +574,10 @@ def _exclusive_checkpoint_lock(
                 raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_LOCKED")
             time.sleep(min(0.05, remaining))
 
-        if os.fstat(descriptor).st_size == 0:
-            os.write(descriptor, b"0")
-            os.fsync(descriptor)
+        locked_descriptor = cast(int, descriptor)
+        if os.fstat(locked_descriptor).st_size == 0:
+            os.write(locked_descriptor, b"0")
+            os.fsync(locked_descriptor)
         yield
     finally:
         if descriptor is not None:
@@ -834,7 +874,7 @@ def _disable_controller() -> None:
     for name in (ARMED_VARIABLE, CONTROLLER_VARIABLE):
         try:
             _set_repository_variable(name, "false")
-        except Exception as exc:
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
             errors.append(exc)
     if errors:
         raise CatalogControllerShutdownError(errors)
@@ -982,7 +1022,7 @@ def _new_workflow_run_candidates(
         for row in rows
         if isinstance(row.get("databaseId"), int)
         and not isinstance(row.get("databaseId"), bool)
-        and int(row["databaseId"]) not in baseline_run_ids
+        and _as_int(row["databaseId"]) not in baseline_run_ids
     ]
 
 
@@ -1034,7 +1074,7 @@ def _dispatch_workflow(
         set(baseline_run_ids)
         if baseline_run_ids is not None
         else {
-            int(row["databaseId"])
+            _as_int(row["databaseId"])
             for row in _list_workflow_runs(workflow)
             if isinstance(row.get("databaseId"), int)
         }
@@ -1076,7 +1116,7 @@ def _dispatch_workflow(
         time.sleep(3)
     if selected is None:
         raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_RUN_NOT_FOUND")
-    run_id = int(selected["databaseId"])
+    run_id = _as_int(selected["databaseId"])
     _watch_workflow_run(run_id)
     return _read_workflow_run_by_id(
         workflow,
@@ -1155,7 +1195,10 @@ def _reconcile_qualification_dispatch_intent(
 ) -> dict[str, object]:
     workflow = str(intent["workflow"])
     protected_commit_sha = str(intent["protected_commit_sha"])
-    baseline_run_ids = {int(run_id) for run_id in intent["baseline_run_ids"]}  # type: ignore[union-attr]
+    baseline_run_ids = {
+        _as_int(run_id)
+        for run_id in cast(list[object], intent["baseline_run_ids"])
+    }
     deadline = time.monotonic() + 300
     while time.monotonic() < deadline:
         new_runs = _new_workflow_run_candidates(
@@ -1177,7 +1220,7 @@ def _reconcile_qualification_dispatch_intent(
                 "CATALOG_BOOTSTRAP_QUALIFICATION_RUN_IDENTITY_AMBIGUOUS"
             )
         if candidates:
-            run_id = int(candidates[0]["databaseId"])
+            run_id = _as_int(candidates[0]["databaseId"])
             _watch_workflow_run(run_id)
             return _read_workflow_run_by_id(
                 workflow,
@@ -1212,7 +1255,7 @@ def _run_qualification_workflow_step(
             return _reconcile_qualification_dispatch_intent(intent)
 
         baseline_run_ids = {
-            int(row["databaseId"])
+            _as_int(row["databaseId"])
             for row in _list_workflow_runs(workflow)
             if isinstance(row.get("databaseId"), int)
             and not isinstance(row.get("databaseId"), bool)
@@ -1236,7 +1279,7 @@ def _download_live_qualification(
     run: dict[str, object],
     protected_commit_sha: str,
 ) -> dict[str, object]:
-    run_id = int(run["databaseId"])
+    run_id = _as_int(run["databaseId"])
     destination = root / f"receipts/live-controls-{run_id}"
     if not destination.exists():
         destination.mkdir(parents=True)
@@ -1319,7 +1362,7 @@ def _github_activity_snapshot() -> dict[str, object]:
     )
     issues = [row for page in issue_pages for row in page]
     requests = [
-        int(row["number"])
+        _as_int(row["number"])
         for row in issues
         if isinstance(row, dict)
         and "pull_request" not in row
@@ -1327,7 +1370,7 @@ def _github_activity_snapshot() -> dict[str, object]:
         and str(row.get("title", "")).startswith("[AURORA CATALOG RUN REQUEST] ")
     ]
     heavy = {
-        int(row["id"])
+        _as_int(row["id"])
         for workflow_path in _HEAVY_WORKFLOW_PATHS
         for row in _list_recent_heavy_workflow_runs(workflow_path)
         if isinstance(row.get("id"), int) and row.get("path") == workflow_path
@@ -1404,7 +1447,7 @@ def _run_binding_review_rounds(root: Path, source: Path) -> dict[str, object]:
             _canonical(round_receipt)
         ).hexdigest()
         rounds.append(round_receipt)
-    result = {"staged_tree_sha": staged_tree, "rounds": rounds}
+    result: dict[str, object] = {"staged_tree_sha": staged_tree, "rounds": rounds}
     _write_canonical(root / "binding-review-rounds-v1.json", result)
     return result
 
@@ -1420,7 +1463,7 @@ def _event(
         schema_version="1",
         bootstrap_id=state.bootstrap_id,
         sequence=state.sequence + 1,
-        name=name,  # type: ignore[arg-type]
+        name=name,
         protected_commit_sha=state.protected_commit_sha,
         observed_at=datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
         evidence_sha256=hashlib.sha256(_canonical(evidence)).hexdigest(),
@@ -1501,7 +1544,10 @@ def _create_app(root: Path, kind: str) -> None:
 
     state = load_bootstrap_state(_state_path(root))
     app: CatalogBootstrapAppManifestV1 = getattr(_manifests(), kind)
-    session = start_manifest_session(kind, now=datetime.now(tz=UTC))  # type: ignore[arg-type]
+    session = start_manifest_session(
+        cast(Literal["requester", "auditor"], kind),
+        now=datetime.now(tz=UTC),
+    )
     with ManifestLoopbackServer(session, app) as server:
         _write_canonical(
             root / "browser-action-v1.json",
@@ -1557,7 +1603,7 @@ def _verify_installation(root: Path, kind: str) -> None:
     public = _read_json(public_path)
     key_buffer = bytearray((root / f"secrets/{kind}-pending.pem").read_bytes())
     client = CatalogBootstrapGitHubClient(
-        app_id=int(public["app_id"]),
+        app_id=_as_int(public["app_id"]),
         private_key_pem=key_buffer,
     )
     install_url = f"https://github.com/apps/{public['app_slug']}/installations/new"
@@ -1601,7 +1647,7 @@ def _public_binding(root: Path, kind: str) -> CatalogAppPublicBinding:
     value = _read_json(root / f"{kind}-public-v1.json")
     return CatalogAppPublicBinding(
         kind=kind,
-        app_id=int(value["app_id"]),
+        app_id=_as_int(value["app_id"]),
         app_slug=str(value["app_slug"]),
         public_key_pem=str(value["public_key_pem"]).encode("ascii"),
         public_key_sha256=str(value["public_key_sha256"]),
@@ -1901,7 +1947,7 @@ def _verify_existing_installations(root: Path) -> dict[str, int]:
         ):
             raise ValueError("CATALOG_BOOTSTRAP_RETRY_INSTALLATION_INVALID")
         key_buffer = bytearray(key_path.read_bytes())
-        client: object | None = None
+        client: _CatalogBootstrapGitHubClient | None = None
         try:
             client = CatalogBootstrapGitHubClient(
                 app_id=app_id,
@@ -2005,7 +2051,7 @@ def _verify_post_install_installations(
         ):
             raise ValueError("CATALOG_BOOTSTRAP_RETRY_INSTALLATION_INVALID")
         key_buffer = bytearray(key_path.read_bytes())
-        client: object | None = None
+        client: _CatalogBootstrapGitHubClient | None = None
         try:
             client = CatalogBootstrapGitHubClient(
                 app_id=app_id,
@@ -2454,7 +2500,9 @@ def _verify_github_controls_repair_graph(
     )
     if not merge_graph_valid:
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_GRAPH_INVALID")
-    changed_paths = tuple(str(path) for path in operation["changed_paths"])
+    changed_paths = tuple(
+        str(path) for path in cast(list[object], operation["changed_paths"])
+    )
     expected_patch = operation["patch_sha256"]
     if _github_controls_repair_patch_sha256(
         source, base_commit, head_commit, changed_paths
@@ -2504,7 +2552,7 @@ def _validated_local_install_repair(
         or not _COMMIT.fullmatch(str(repair.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(repair.get("patch_sha256", "")))
         or not isinstance(repair.get("pr_number"), int)
-        or int(repair["pr_number"]) < 1
+        or _as_int(repair["pr_number"]) < 1
         or repair.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_INVALID")
@@ -2549,7 +2597,7 @@ def _validated_local_install_followup_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_FOLLOWUP_REPAIR_INVALID")
@@ -2594,7 +2642,7 @@ def _validated_local_install_compat_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_COMPAT_REPAIR_INVALID")
@@ -2639,7 +2687,7 @@ def _validated_local_install_account_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACCOUNT_REPAIR_INVALID")
@@ -2684,7 +2732,7 @@ def _validated_local_install_verifier_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_VERIFIER_REPAIR_INVALID")
@@ -2722,7 +2770,7 @@ def _validated_local_install_acl_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACL_REPAIR_INVALID")
@@ -2760,7 +2808,7 @@ def _validated_local_install_task_identity_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_TASK_IDENTITY_REPAIR_INVALID")
@@ -2799,7 +2847,7 @@ def _validated_local_install_task_identity_followup_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError(
@@ -2839,7 +2887,7 @@ def _validated_github_controls_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_INVALID")
@@ -2877,7 +2925,7 @@ def _validated_github_controls_followup_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_FOLLOWUP_INVALID")
@@ -2911,7 +2959,7 @@ def _validated_github_controls_enterprise_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_ENTERPRISE_INVALID")
@@ -2946,7 +2994,7 @@ def _validated_github_controls_billing_token_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_BILLING_TOKEN_INVALID")
@@ -2981,7 +3029,7 @@ def _validated_github_controls_stable_precondition_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError(
@@ -3018,7 +3066,7 @@ def _validated_github_controls_cache_retention_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError(
@@ -3054,7 +3102,7 @@ def _validated_github_controls_storage_audit_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError(
@@ -3090,7 +3138,7 @@ def _validated_github_controls_audit_throughput_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError(
@@ -3131,7 +3179,7 @@ def _validated_github_controls_package_token_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or int(operation["pr_number"]) < 1
+        or _as_int(operation["pr_number"]) < 1
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError(
@@ -3153,7 +3201,7 @@ def _runtime_commit(root: Path) -> str:
     retry_path = root / "receipts/controller-bootstrap-local-install-retry-v1.json"
     if not retry_path.exists():
         return binding_merge
-    if retry_path.is_symlink() or retry_path.is_junction():
+    if _is_reparse_path(retry_path):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_RECEIPT_INVALID")
     retry = _read_json(retry_path)
     repair = _validated_local_install_repair(root, binding)
@@ -3189,7 +3237,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not followup_retry_path.exists():
         return str(repair_merge)
-    if followup_retry_path.is_symlink() or followup_retry_path.is_junction():
+    if _is_reparse_path(followup_retry_path):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_FOLLOWUP_RETRY_RECEIPT_INVALID")
     followup = _validated_local_install_followup_repair(root, repair)
     followup_retry = _read_json(followup_retry_path)
@@ -3234,7 +3282,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not compat_retry_path.exists():
         return str(followup_merge)
-    if compat_retry_path.is_symlink() or compat_retry_path.is_junction():
+    if _is_reparse_path(compat_retry_path):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_COMPAT_RETRY_RECEIPT_INVALID")
     compat = _validated_local_install_compat_repair(root, followup)
     compat_retry = _read_json(compat_retry_path)
@@ -3279,7 +3327,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not account_retry_path.exists():
         return str(compat_merge)
-    if account_retry_path.is_symlink() or account_retry_path.is_junction():
+    if _is_reparse_path(account_retry_path):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACCOUNT_RETRY_RECEIPT_INVALID")
     account = _validated_local_install_account_repair(root, compat)
     account_retry = _read_json(account_retry_path)
@@ -3324,7 +3372,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not verifier_retry_path.exists():
         return str(account_merge)
-    if verifier_retry_path.is_symlink() or verifier_retry_path.is_junction():
+    if _is_reparse_path(verifier_retry_path):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_VERIFIER_RETRY_RECEIPT_INVALID")
     verifier = _validated_local_install_verifier_repair(root, account)
     verifier_retry = _read_json(verifier_retry_path)
@@ -3369,7 +3417,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not acl_retry_path.exists():
         return str(verifier_merge)
-    if acl_retry_path.is_symlink() or acl_retry_path.is_junction():
+    if _is_reparse_path(acl_retry_path):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACL_RETRY_RECEIPT_INVALID")
     acl = _validated_local_install_acl_repair(root, verifier)
     acl_retry = _read_json(acl_retry_path)
@@ -3406,19 +3454,13 @@ def _runtime_commit(root: Path) -> str:
     )
     if not task_identity_operation_path.exists():
         return str(acl_merge)
-    if (
-        task_identity_operation_path.is_symlink()
-        or task_identity_operation_path.is_junction()
-    ):
+    if _is_reparse_path(task_identity_operation_path):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_TASK_IDENTITY_REPAIR_INVALID")
     task_identity = _validated_local_install_task_identity_repair(root, acl)
     task_identity_merge = task_identity["merge_commit_sha"]
     if not task_identity_retry_path.exists():
         return str(task_identity_merge)
-    if (
-        task_identity_retry_path.is_symlink()
-        or task_identity_retry_path.is_junction()
-    ):
+    if _is_reparse_path(task_identity_retry_path):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_TASK_IDENTITY_RETRY_RECEIPT_INVALID")
     task_identity_followup = (
         _validated_local_install_task_identity_followup_repair(root, task_identity)
@@ -3465,10 +3507,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not github_controls_retry_path.exists():
         return str(task_identity_followup_merge)
-    if (
-        github_controls_retry_path.is_symlink()
-        or github_controls_retry_path.is_junction()
-    ):
+    if _is_reparse_path(github_controls_retry_path):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_RETRY_RECEIPT_INVALID")
     github_controls = _validated_github_controls_repair(
         root, task_identity_followup
@@ -3514,7 +3553,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not followup_retry_path.exists():
         return str(github_controls_merge)
-    if followup_retry_path.is_symlink() or followup_retry_path.is_junction():
+    if _is_reparse_path(followup_retry_path):
         raise ValueError(
             "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_FOLLOWUP_RETRY_INVALID"
         )
@@ -3562,7 +3601,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not enterprise_retry_path.exists():
         return str(followup_merge)
-    if enterprise_retry_path.is_symlink() or enterprise_retry_path.is_junction():
+    if _is_reparse_path(enterprise_retry_path):
         raise ValueError(
             "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_ENTERPRISE_RETRY_INVALID"
         )
@@ -3609,10 +3648,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not billing_token_retry_path.exists():
         return str(enterprise_merge)
-    if (
-        billing_token_retry_path.is_symlink()
-        or billing_token_retry_path.is_junction()
-    ):
+    if _is_reparse_path(billing_token_retry_path):
         raise ValueError(
             "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_BILLING_TOKEN_RETRY_INVALID"
         )
@@ -3662,7 +3698,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not stable_retry_path.exists():
         return str(billing_token_merge)
-    if stable_retry_path.is_symlink() or stable_retry_path.is_junction():
+    if _is_reparse_path(stable_retry_path):
         raise ValueError(
             "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_STABLE_PRECONDITION_RETRY_INVALID"
         )
@@ -3711,7 +3747,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not cache_retry_path.exists():
         return str(stable_merge)
-    if cache_retry_path.is_symlink() or cache_retry_path.is_junction():
+    if _is_reparse_path(cache_retry_path):
         raise ValueError(
             "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_CACHE_RETENTION_RETRY_INVALID"
         )
@@ -3755,7 +3791,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not storage_retry_path.exists():
         return str(cache_merge)
-    if storage_retry_path.is_symlink() or storage_retry_path.is_junction():
+    if _is_reparse_path(storage_retry_path):
         raise ValueError(
             "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_STORAGE_AUDIT_RETRY_INVALID"
         )
@@ -3799,7 +3835,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not throughput_retry_path.exists():
         return str(storage_merge)
-    if throughput_retry_path.is_symlink() or throughput_retry_path.is_junction():
+    if _is_reparse_path(throughput_retry_path):
         raise ValueError(
             "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_AUDIT_THROUGHPUT_RETRY_INVALID"
         )
@@ -3845,10 +3881,7 @@ def _runtime_commit(root: Path) -> str:
     )
     if not package_token_retry_path.exists():
         return str(throughput_merge)
-    if (
-        package_token_retry_path.is_symlink()
-        or package_token_retry_path.is_junction()
-    ):
+    if _is_reparse_path(package_token_retry_path):
         raise ValueError(
             "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_PACKAGE_TOKEN_RETRY_INVALID"
         )
@@ -3986,7 +4019,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_CONTEXT_INVALID")
     source = Path(str(context["source_root"]))
-    if source.is_symlink() or source.is_junction():
+    if _is_reparse_path(source):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_SOURCE_INVALID")
     source = source.resolve(strict=True)
 
@@ -4025,7 +4058,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
     repair_branch = str(repair["branch"])
     repair_head = str(repair["head_commit_sha"])
     repair_merge = str(repair["merge_commit_sha"])
-    repair_pr_number = int(repair["pr_number"])
+    repair_pr_number = _as_int(repair["pr_number"])
     followup: dict[str, object] | None = None
     compat: dict[str, object] | None = None
     account: dict[str, object] | None = None
@@ -4033,6 +4066,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
     acl: dict[str, object] | None = None
     task_identity: dict[str, object] | None = None
     task_identity_followup: dict[str, object] | None = None
+    runtime_paths: tuple[str, ...]
     if state.sequence == 22:
         followup = _validated_local_install_followup_repair(root, repair)
         compat = _validated_local_install_compat_repair(root, followup)
@@ -4126,20 +4160,18 @@ def _resume_transient_local_install_block(root: Path) -> bool:
     for installed_root in (AGENT_ROOT, BROKER_ROOT):
         if (
             installed_root.exists()
-            or installed_root.is_symlink()
-            or installed_root.is_junction()
+            or _is_reparse_path(installed_root)
         ):
             raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_PARTIAL_INSTALL")
     staging = BOOTSTRAP_STAGING_ROOT
-    if staging.is_symlink() or staging.is_junction():
+    if _is_reparse_path(staging):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_PARTIAL_INSTALL")
     if staging.exists() and (not staging.is_dir() or any(staging.iterdir())):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_PARTIAL_INSTALL")
     pending_key = root / "secrets/requester-pending.pem"
     if (
         not pending_key.is_file()
-        or pending_key.is_symlink()
-        or pending_key.is_junction()
+        or _is_reparse_path(pending_key)
     ):
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_RETRY_KEY_INVALID")
 
@@ -4302,7 +4334,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         raise ValueError("CATALOG_BOOTSTRAP_LOCAL_REPAIR_PATHS_INVALID")
     _wait_for_required_checks(str(repair_pr_number), source)
     if followup is not None:
-        followup_pr_number = int(followup["pr_number"])
+        followup_pr_number = _as_int(followup["pr_number"])
         observed_followup = json.loads(
             _run(
                 [
@@ -4356,7 +4388,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
             raise ValueError("CATALOG_BOOTSTRAP_LOCAL_FOLLOWUP_REPAIR_PATHS_INVALID")
         _wait_for_required_checks(str(followup_pr_number), source)
     if compat is not None:
-        compat_pr_number = int(compat["pr_number"])
+        compat_pr_number = _as_int(compat["pr_number"])
         observed_compat = json.loads(
             _run(
                 [
@@ -4410,7 +4442,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
             raise ValueError("CATALOG_BOOTSTRAP_LOCAL_COMPAT_REPAIR_PATHS_INVALID")
         _wait_for_required_checks(str(compat_pr_number), source)
     if account is not None:
-        account_pr_number = int(account["pr_number"])
+        account_pr_number = _as_int(account["pr_number"])
         observed_account = json.loads(
             _run(
                 [
@@ -4464,7 +4496,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
             raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACCOUNT_REPAIR_PATHS_INVALID")
         _wait_for_required_checks(str(account_pr_number), source)
     if verifier is not None:
-        verifier_pr_number = int(verifier["pr_number"])
+        verifier_pr_number = _as_int(verifier["pr_number"])
         observed_verifier = json.loads(
             _run(
                 [
@@ -4518,7 +4550,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
             raise ValueError("CATALOG_BOOTSTRAP_LOCAL_VERIFIER_REPAIR_PATHS_INVALID")
         _wait_for_required_checks(str(verifier_pr_number), source)
     if acl is not None:
-        acl_pr_number = int(acl["pr_number"])
+        acl_pr_number = _as_int(acl["pr_number"])
         observed_acl = json.loads(
             _run(
                 [
@@ -4559,7 +4591,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
             raise ValueError("CATALOG_BOOTSTRAP_LOCAL_ACL_REPAIR_PATHS_INVALID")
         _wait_for_required_checks(str(acl_pr_number), source)
     if task_identity is not None:
-        task_identity_pr_number = int(task_identity["pr_number"])
+        task_identity_pr_number = _as_int(task_identity["pr_number"])
         observed_task_identity = json.loads(
             _run(
                 [
@@ -4612,7 +4644,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
             )
         _wait_for_required_checks(str(task_identity_pr_number), source)
     if task_identity_followup is not None:
-        task_identity_followup_pr_number = int(task_identity_followup["pr_number"])
+        task_identity_followup_pr_number = _as_int(task_identity_followup["pr_number"])
         observed_task_identity_followup = json.loads(
             _run(
                 [
@@ -4688,6 +4720,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         "schema_version": "1",
     }
     if task_identity_followup is not None:
+        assert task_identity is not None
         prior_retry_path = acl_retry_path
         recovery = {
             **common_recovery,
@@ -4705,6 +4738,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         }
         recovery_path = task_identity_retry_path
     elif acl is not None:
+        assert verifier is not None
         prior_retry_path = verifier_retry_path
         recovery = {
             **common_recovery,
@@ -4718,6 +4752,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         }
         recovery_path = acl_retry_path
     elif verifier is not None:
+        assert account is not None
         prior_retry_path = account_retry_path
         recovery = {
             **common_recovery,
@@ -4733,6 +4768,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         }
         recovery_path = verifier_retry_path
     elif account is not None:
+        assert compat is not None
         prior_retry_path = compat_retry_path
         recovery = {
             **common_recovery,
@@ -4748,6 +4784,7 @@ def _resume_transient_local_install_block(root: Path) -> bool:
         }
         recovery_path = account_retry_path
     elif compat is not None:
+        assert followup is not None
         prior_retry_path = followup_retry_path
         recovery = {
             **common_recovery,
@@ -4834,7 +4871,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     )
     if not first_retry_path.exists():
         return False
-    if first_retry_path.is_symlink() or first_retry_path.is_junction():
+    if _is_reparse_path(first_retry_path):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_RETRY_RECEIPT_INVALID")
     runtime_commit = _runtime_commit(root)
     enterprise_retry_path = (
@@ -4861,13 +4898,15 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     followup_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-2-v1.json"
     )
+    retry_path: Path
+    evidence: dict[str, object]
+    operation_path: Path
+    merge_field: str
+    expected_paths: tuple[str, ...]
     if state.sequence in {37, 39, 41}:
         if not package_token_retry_path.exists():
             return False
-        if (
-            package_token_retry_path.is_symlink()
-            or package_token_retry_path.is_junction()
-        ):
+        if _is_reparse_path(package_token_retry_path):
             raise ValueError(
                 "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_PACKAGE_TOKEN_RETRY_INVALID"
             )
@@ -4881,10 +4920,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     elif state.sequence == 35:
         if not throughput_retry_path.exists():
             return False
-        if (
-            throughput_retry_path.is_symlink()
-            or throughput_retry_path.is_junction()
-        ):
+        if _is_reparse_path(throughput_retry_path):
             raise ValueError(
                 "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_AUDIT_THROUGHPUT_RETRY_INVALID"
             )
@@ -4898,7 +4934,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     elif state.sequence == 33:
         if not storage_retry_path.exists():
             return False
-        if storage_retry_path.is_symlink() or storage_retry_path.is_junction():
+        if _is_reparse_path(storage_retry_path):
             raise ValueError(
                 "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_STORAGE_AUDIT_RETRY_INVALID"
             )
@@ -4912,7 +4948,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     elif state.sequence == 31:
         if not cache_retry_path.exists():
             return False
-        if cache_retry_path.is_symlink() or cache_retry_path.is_junction():
+        if _is_reparse_path(cache_retry_path):
             raise ValueError(
                 "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_CACHE_RETENTION_RETRY_INVALID"
             )
@@ -4926,7 +4962,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
     elif state.sequence == 29:
         if not stable_retry_path.exists():
             return False
-        if stable_retry_path.is_symlink() or stable_retry_path.is_junction():
+        if _is_reparse_path(stable_retry_path):
             raise ValueError(
                 "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_STABLE_PRECONDITION_RETRY_INVALID"
             )
@@ -4939,10 +4975,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
         expected_paths = _GITHUB_CONTROLS_STABLE_PRECONDITION_REPAIR_PATHS
     elif state.sequence == 27:
         if billing_token_retry_path.exists():
-            if (
-                billing_token_retry_path.is_symlink()
-                or billing_token_retry_path.is_junction()
-            ):
+            if _is_reparse_path(billing_token_retry_path):
                 raise ValueError(
                     "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_BILLING_TOKEN_RETRY_INVALID"
                 )
@@ -4955,7 +4988,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
             expected_paths = _GITHUB_CONTROLS_BILLING_TOKEN_REPAIR_PATHS
         elif not enterprise_retry_path.exists():
             return False
-        elif enterprise_retry_path.is_symlink() or enterprise_retry_path.is_junction():
+        elif _is_reparse_path(enterprise_retry_path):
             raise ValueError(
                 "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_ENTERPRISE_RETRY_INVALID"
             )
@@ -4968,7 +5001,7 @@ def _resume_transient_github_controls_block(root: Path) -> bool:
             merge_field = "enterprise_merge_commit_sha"
             expected_paths = _GITHUB_CONTROLS_ENTERPRISE_REPAIR_PATHS
     elif followup_retry_path.exists():
-        if followup_retry_path.is_symlink() or followup_retry_path.is_junction():
+        if _is_reparse_path(followup_retry_path):
             raise ValueError(
                 "CATALOG_BOOTSTRAP_GITHUB_CONTROLS_FOLLOWUP_RETRY_INVALID"
         )
@@ -5084,6 +5117,7 @@ def merge_public_binding(root: Path) -> None:
     binding_commit = receipt.get("binding_commit_sha")
     if not isinstance(binding_commit, str) or not _COMMIT.fullmatch(binding_commit):
         raise ValueError("BOOTSTRAP_PR_HEAD_MISMATCH")
+    expected_head: str
     if state.sequence == 6:
         expected_head = binding_commit
     elif state.sequence == 8:
@@ -5099,7 +5133,7 @@ def merge_public_binding(root: Path) -> None:
             "review_rounds_sha256",
             "source_commit_sha",
         }
-        expected_head = retry.get("head_commit_sha")
+        retry_head = retry.get("head_commit_sha")
         if (
             set(retry) != expected_retry_keys
             or retry_path.read_bytes() != _canonical(retry) + b"\n"
@@ -5107,10 +5141,11 @@ def merge_public_binding(root: Path) -> None:
             or retry.get("pr_number") != receipt.get("pr_number")
             or retry.get("review_rounds_sha256")
             != receipt.get("review_rounds_sha256")
-            or not isinstance(expected_head, str)
-            or not _COMMIT.fullmatch(expected_head)
+            or not isinstance(retry_head, str)
+            or not _COMMIT.fullmatch(retry_head)
         ):
             raise ValueError("BOOTSTRAP_PR_HEAD_MISMATCH")
+        expected_head = retry_head
     else:
         raise ValueError("BOOTSTRAP_PR_HEAD_MISMATCH")
     _wait_for_required_checks(pr_number, source)
@@ -5316,8 +5351,7 @@ def _prepare_auditor_secret(root: Path) -> dict[str, object]:
         pending.exists()
         or staging.exists()
         or not retry_path.is_file()
-        or retry_path.is_symlink()
-        or retry_path.is_junction()
+        or _is_reparse_path(retry_path)
         or not _protected_environment_secret_exists()
     ):
         raise ValueError("CATALOG_BOOTSTRAP_AUDITOR_SECRET_NOT_PROVEN")
@@ -5331,18 +5365,16 @@ def _validated_existing_github_control_receipts(
     apply_path = root / "receipts/github-controls-apply-v1.json"
     if (
         not dry_path.is_file()
-        or dry_path.is_symlink()
-        or dry_path.is_junction()
+        or _is_reparse_path(dry_path)
         or not apply_path.is_file()
-        or apply_path.is_symlink()
-        or apply_path.is_junction()
+        or _is_reparse_path(apply_path)
     ):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_RECEIPTS_INVALID")
     dry = _read_json(dry_path)
     applied = _read_json(apply_path)
+    after_receipt = applied.get("after_receipt")
     prepared = applied.get("bootstrap_controls_prepared") is True or (
-        isinstance(applied.get("after_receipt"), dict)
-        and applied["after_receipt"].get("status") == "ready"  # type: ignore[index]
+        isinstance(after_receipt, dict) and after_receipt.get("status") == "ready"
     )
     if (
         dry_path.read_bytes() not in {
@@ -5423,9 +5455,10 @@ def apply_github_controls(root: Path) -> None:
             timeout_seconds=1800,
         )
         applied = _read_json(apply_path)
+    after_receipt = applied.get("after_receipt")
     if applied.get("bootstrap_controls_prepared") is not True and (
-        not isinstance(applied.get("after_receipt"), dict)
-        or applied["after_receipt"].get("status") != "ready"  # type: ignore[index]
+        not isinstance(after_receipt, dict)
+        or after_receipt.get("status") != "ready"
     ):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_NOT_PREPARED")
     _set_repository_variable("AURORA_CATALOG_AUDITOR_APP_ID", str(auditor["app_id"]))
@@ -5572,7 +5605,7 @@ def _validate_requester_receipt(value: dict[str, object]) -> None:
     has_issue = (
         isinstance(value.get("issue_number"), int)
         and not isinstance(value.get("issue_number"), bool)
-        and int(value["issue_number"]) > 0
+        and _as_int(value["issue_number"]) > 0
     )
     has_request = _SHA256.fullmatch(str(value.get("request_sha256", ""))) is not None
     if submitted != has_issue or submitted != has_request:
@@ -5623,7 +5656,7 @@ def _validate_requester_status(value: dict[str, object]) -> None:
             )
         )
         or (github_known != (_SHA256.fullmatch(str(value.get("request_sha256", ""))) is not None))
-        or (github_known != (isinstance(value.get("issue_number"), int) and not isinstance(value.get("issue_number"), bool) and int(value["issue_number"]) > 0))
+        or (github_known != (isinstance(value.get("issue_number"), int) and not isinstance(value.get("issue_number"), bool) and _as_int(value["issue_number"]) > 0))
         or not isinstance(value.get("updated_at"), str)
         or not _SHA256.fullmatch(str(value.get("status_sha256", "")))
     ):
@@ -5690,7 +5723,7 @@ def _wait_for_requester_ticket() -> None:
             str(value.get("request_id")),
         ) is None
         or hashlib.sha256(_canonical(value)).hexdigest()
-        != str(_load_requester_status() or {}).get("launch_ticket_sha256", "")
+        != str((_load_requester_status() or {}).get("launch_ticket_sha256", ""))
     ):
         raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_TICKET_INVALID")
 
@@ -6159,7 +6192,7 @@ def _validate_terminal_checkpoint(value: dict[str, object]) -> None:
     _validate_requester_receipt(receipt)
     _validate_controller_receipt(
         controller,
-        issue_number=int(value["issue_number"]),
+        issue_number=_as_int(value["issue_number"]),
         request_sha256=str(status["request_sha256"]),
     )
 
@@ -6243,7 +6276,7 @@ def _revalidate_requester_evidence(
         raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_STATUS_CHANGED")
     requester = _load_requester_public_binding(root)
     issue, identity, issue_sha256 = _load_remote_requester_issue(
-        int(status["issue_number"]), status=status, requester=requester
+        _as_int(status["issue_number"]), status=status, requester=requester
     )
     if (
         identity != evidence.get("issue_identity")
@@ -6253,10 +6286,10 @@ def _revalidate_requester_evidence(
     ):
         raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_ISSUE_CHANGED")
     del issue
-    controller = _parse_terminal_controller_receipt(int(status["issue_number"]))
+    controller = _parse_terminal_controller_receipt(_as_int(status["issue_number"]))
     _validate_controller_receipt(
         controller,
-        issue_number=int(status["issue_number"]),
+        issue_number=_as_int(status["issue_number"]),
         request_sha256=str(status["request_sha256"]),
     )
     if controller != evidence.get("controller_receipt"):
@@ -6308,7 +6341,7 @@ def _run_requester_qualification(
         _revalidate_requester_evidence(
             root, source, complete, protected_commit_sha=protected_commit_sha
         )
-        return dict(complete["requester_qualification"])
+        return cast(dict[str, object], complete["requester_qualification"])
 
     if terminal_path.exists() or terminal_path.is_symlink():
         terminal = _read_canonical_document(
@@ -6324,7 +6357,7 @@ def _run_requester_qualification(
             complete_path, "CATALOG_BOOTSTRAP_REQUESTER_COMPLETE_CHECKPOINT_INVALID"
         )
         _validate_complete_checkpoint(observed)
-        return dict(observed["requester_qualification"])
+        return cast(dict[str, object], observed["requester_qualification"])
 
     status_before = _load_requester_status()
     seal_path = BROKER_ROOT / "config/bootstrap-qualified-v1.seal.json"
@@ -6367,12 +6400,12 @@ def _run_requester_qualification(
     first, first_file_sha256 = _ensure_local_requester_receipt(status, first)
     requester = _load_requester_public_binding(root)
     _, identity, issue_sha256 = _load_remote_requester_issue(
-        int(status["issue_number"]), status=status, requester=requester
+        _as_int(status["issue_number"]), status=status, requester=requester
     )
-    controller = _parse_terminal_controller_receipt(int(status["issue_number"]))
+    controller = _parse_terminal_controller_receipt(_as_int(status["issue_number"]))
     _validate_controller_receipt(
         controller,
-        issue_number=int(status["issue_number"]),
+        issue_number=_as_int(status["issue_number"]),
         request_sha256=str(status["request_sha256"]),
     )
     seal = _load_or_create_bootstrap_seal(
@@ -6417,7 +6450,7 @@ def _run_requester_qualification(
         complete_path, "CATALOG_BOOTSTRAP_REQUESTER_COMPLETE_CHECKPOINT_INVALID"
     )
     _validate_complete_checkpoint(observed_complete)
-    return dict(observed_complete["requester_qualification"])
+    return cast(dict[str, object], observed_complete["requester_qualification"])
 
 
 def _qualification_checkpoint_path(root: Path) -> Path:
@@ -6435,11 +6468,12 @@ def _validate_live_qualification_result(
     protected_commit_sha: str,
 ) -> None:
     receipt = value.get("receipt")
+    run_id = value.get("run_id")
     if (
         set(value) != {"run_id", "run_url", "file_sha256", "receipt"}
-        or isinstance(value.get("run_id"), bool)
-        or not isinstance(value.get("run_id"), int)
-        or value.get("run_id", 0) < 1
+        or isinstance(run_id, bool)
+        or not isinstance(run_id, int)
+        or run_id < 1
         or not _SHA256.fullmatch(str(value.get("file_sha256", "")))
         or not isinstance(receipt, dict)
         or set(receipt)
@@ -6484,11 +6518,12 @@ def _validate_workflow_run_result(
     protected_commit_sha: str,
 ) -> None:
     expected = {"databaseId", "headSha", "event", "status", "conclusion", "url"}
+    database_id = value.get("databaseId")
     if (
         set(value) != expected
-        or isinstance(value.get("databaseId"), bool)
-        or not isinstance(value.get("databaseId"), int)
-        or value.get("databaseId", 0) < 1
+        or isinstance(database_id, bool)
+        or not isinstance(database_id, int)
+        or database_id < 1
         or value.get("headSha") != protected_commit_sha
         or value.get("event") != "workflow_dispatch"
         or value.get("status") != "completed"
@@ -6515,11 +6550,12 @@ def _validate_requester_qualification_result(value: dict[str, object]) -> None:
         "bootstrap_seal_sha256",
         "duplicate_call_proof_sha256",
     }
+    issue_number = value.get("issue_number")
     if (
         set(value) != expected
-        or isinstance(value.get("issue_number"), bool)
-        or not isinstance(value.get("issue_number"), int)
-        or value.get("issue_number", 0) < 1
+        or isinstance(issue_number, bool)
+        or not isinstance(issue_number, int)
+        or issue_number < 1
         or not isinstance(value.get("request_id"), str)
         or any(
             not _SHA256.fullmatch(str(value.get(name, "")))
@@ -6681,14 +6717,18 @@ def _append_qualification_checkpoint_step(
     github_controls_operation_sha256: str,
     activity_baseline_sha256: str,
 ) -> dict[str, object]:
-    current_steps = [] if checkpoint is None else list(checkpoint["steps"])
+    current_steps: list[dict[str, object]] = (
+        []
+        if checkpoint is None
+        else list(cast(list[dict[str, object]], checkpoint["steps"]))
+    )
     if current_steps and current_steps[-1]["name"] == step_name:
         if current_steps[-1]["receipt"] != receipt:
             raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_CONFLICT")
         return checkpoint if checkpoint is not None else {}
     if len(current_steps) != _QUALIFICATION_STEP_ORDER.index(step_name):
         raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ORDER_INVALID")
-    entry = {
+    entry: dict[str, object] = {
         "name": step_name,
         "receipt": receipt,
         "receipt_sha256": hashlib.sha256(_canonical(receipt)).hexdigest(),
@@ -6722,7 +6762,7 @@ def _read_stored_workflow_run(
     protected_commit_sha: str,
 ) -> dict[str, object]:
     _validate_workflow_run_result(stored, protected_commit_sha=protected_commit_sha)
-    run_id = int(stored["databaseId"])
+    run_id = _as_int(stored["databaseId"])
     observed = _read_workflow_run_by_id(
         workflow,
         run_id,
@@ -6799,15 +6839,16 @@ def run_qualifications(root: Path) -> None:
     baseline = _read_canonical_document(
         baseline_path, "CATALOG_BOOTSTRAP_QUALIFICATION_CONTEXT_INVALID"
     )
+    first_live_qualification = controls.get("first_live_qualification")
     if (
         controls.get("protected_commit_sha") != protected_commit_sha
-        or not isinstance(controls.get("first_live_qualification"), dict)
+        or not isinstance(first_live_qualification, dict)
         or not isinstance(baseline.get("request_issue_numbers"), list)
         or not isinstance(baseline.get("heavy_run_ids"), list)
     ):
         raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CONTEXT_INVALID")
     _validate_live_qualification_result(
-        controls["first_live_qualification"],
+        first_live_qualification,
         protected_commit_sha=protected_commit_sha,
     )
     controls_hash = hashlib.sha256(controls_path.read_bytes()).hexdigest()
@@ -6818,8 +6859,10 @@ def run_qualifications(root: Path) -> None:
         github_controls_operation_sha256=controls_hash,
         activity_baseline_sha256=baseline_hash,
     )
+    checkpoint_steps: list[object] = []
     if checkpoint is not None:
-        for entry in checkpoint["steps"]:
+        checkpoint_steps = cast(list[object], checkpoint["steps"])
+        for entry in checkpoint_steps:
             if not isinstance(entry, dict):
                 raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
             _revalidate_qualification_step(
@@ -6828,9 +6871,9 @@ def run_qualifications(root: Path) -> None:
                 protected_commit_sha=protected_commit_sha,
             )
 
-    steps_by_name = {
+    steps_by_name: dict[str, dict[str, object]] = {
         str(entry["name"]): entry
-        for entry in (checkpoint["steps"] if checkpoint is not None else [])
+        for entry in checkpoint_steps
         if isinstance(entry, dict)
     }
     for step_name in _QUALIFICATION_STEP_ORDER:
@@ -6871,7 +6914,10 @@ def run_qualifications(root: Path) -> None:
             github_controls_operation_sha256=controls_hash,
             activity_baseline_sha256=baseline_hash,
         )
-        steps_by_name[step_name] = checkpoint["steps"][-1]
+        steps_by_name[step_name] = cast(
+            dict[str, object],
+            cast(list[object], checkpoint["steps"])[-1],
+        )
 
     if checkpoint is None:
         raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
@@ -6881,26 +6927,33 @@ def run_qualifications(root: Path) -> None:
         github_controls_operation_sha256=controls_hash,
         activity_baseline_sha256=baseline_hash,
     )
-    live_receipts = [
-        controls["first_live_qualification"],
-        steps_by_name["live_2"]["receipt"],
-        steps_by_name["live_3"]["receipt"],
+    live_receipts: list[dict[str, object]] = [
+        cast(dict[str, object], first_live_qualification),
+        cast(dict[str, object], steps_by_name["live_2"]["receipt"]),
+        cast(dict[str, object], steps_by_name["live_3"]["receipt"]),
     ]
-    file_hashes = [str(item["file_sha256"]) for item in live_receipts]  # type: ignore[index]
+    file_hashes = [str(item["file_sha256"]) for item in live_receipts]
     if len(set(file_hashes)) != 3 or any(
         not _SHA256.fullmatch(value) for value in file_hashes
     ):
         raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATIONS_NOT_INDEPENDENT")
-    requester = steps_by_name["requester"]["receipt"]
-    capacity = steps_by_name["capacity"]["receipt"]
-    keeper = steps_by_name["keeper"]["receipt"]
-    if not isinstance(requester, dict) or not isinstance(capacity, dict) or not isinstance(keeper, dict):
+    requester_value = steps_by_name["requester"]["receipt"]
+    capacity_value = steps_by_name["capacity"]["receipt"]
+    keeper_value = steps_by_name["keeper"]["receipt"]
+    requester = cast(dict[str, object], requester_value)
+    capacity = cast(dict[str, object], capacity_value)
+    keeper = cast(dict[str, object], keeper_value)
+    if (
+        not isinstance(requester_value, dict)
+        or not isinstance(capacity_value, dict)
+        or not isinstance(keeper_value, dict)
+    ):
         raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RECEIPT_INVALID")
     current = _github_activity_snapshot()
-    baseline_requests = set(baseline["request_issue_numbers"])  # type: ignore[arg-type]
-    current_requests = set(current["request_issue_numbers"])  # type: ignore[arg-type]
-    baseline_heavy = set(baseline["heavy_run_ids"])  # type: ignore[arg-type]
-    current_heavy = set(current["heavy_run_ids"])  # type: ignore[arg-type]
+    baseline_requests = set(cast(list[int], baseline["request_issue_numbers"]))
+    current_requests = set(cast(list[int], current["request_issue_numbers"]))
+    baseline_heavy = set(cast(list[int], baseline["heavy_run_ids"]))
+    current_heavy = set(cast(list[int], current["heavy_run_ids"]))
     if current_requests - baseline_requests != {requester["issue_number"]}:
         raise ValueError("CATALOG_BOOTSTRAP_PRODUCTION_REQUEST_OBSERVED")
     if current_heavy - baseline_heavy:
@@ -7068,7 +7121,9 @@ def perform_final_audit(root: Path) -> None:
     zero_budgets = after_controls.get("actions_zero_spend_budgets")
     if not isinstance(zero_budgets, list) or len(zero_budgets) != 3:
         raise ValueError("CATALOG_BOOTSTRAP_ZERO_BUDGETS_INVALID")
-    hashes = tuple(qualification["qualification_receipt_sha256s"])
+    hashes: tuple[str, ...] = tuple(
+        cast(list[str], qualification["qualification_receipt_sha256s"])
+    )
     owners = _codex_process_owners()
     agent_operation = _read_json(root / "agent-restart-operation-v1.json")
     capability = agent_operation.get("capability_audit")
@@ -7098,13 +7153,18 @@ def perform_final_audit(root: Path) -> None:
         )
         baseline = _read_json(root / "github-activity-baseline-v1.json")
         current = _github_activity_snapshot()
-        requester = qualification["requester_qualification"]
-        production_requests = set(current["request_issue_numbers"]) - set(  # type: ignore[arg-type]
-            baseline["request_issue_numbers"]  # type: ignore[arg-type]
-        ) - {requester["issue_number"]}  # type: ignore[index]
-        production_runs = set(current["heavy_run_ids"]) - set(  # type: ignore[arg-type]
-            baseline["heavy_run_ids"]  # type: ignore[arg-type]
+        requester = cast(
+            dict[str, object], qualification["requester_qualification"]
         )
+        production_requests = set(
+            cast(list[int], current["request_issue_numbers"])
+        ) - set(cast(list[int], baseline["request_issue_numbers"])) - {
+            _as_int(requester["issue_number"])
+        }
+        production_runs = set(cast(list[int], current["heavy_run_ids"])) - set(
+            cast(list[int], baseline["heavy_run_ids"])
+        )
+        post_enable_receipt = cast(dict[str, object], post_enable["receipt"])
         evidence = CatalogBootstrapFinalEvidenceV1(
             schema_version="1",
             repository=REPOSITORY,
@@ -7148,7 +7208,7 @@ def perform_final_audit(root: Path) -> None:
             ),
             post_enable_controls_status=(
                 "ready"
-                if post_enable["receipt"]["protected_commit_sha"]  # type: ignore[index]
+                if post_enable_receipt["protected_commit_sha"]
                 == protected_commit_sha
                 else "blocked"
             ),
@@ -7169,9 +7229,10 @@ def perform_final_audit(root: Path) -> None:
         )
         deadline = time.monotonic() + 300
         registry = _read_json(BROKER_ROOT / "config/catalog_campaign_registry_v1.json")
+        campaigns = cast(list[object], registry.get("campaigns", []))
         active = {
             row["campaign_key"]
-            for row in registry.get("campaigns", [])
+            for row in campaigns
             if isinstance(row, dict) and row.get("active") is True
         }
         while time.monotonic() < deadline:
@@ -7203,12 +7264,14 @@ def perform_final_audit(root: Path) -> None:
         if not _controller_is_ready():
             raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_NOT_READY")
         final_activity = _github_activity_snapshot()
-        final_production_requests = set(final_activity["request_issue_numbers"]) - set(  # type: ignore[arg-type]
-            baseline["request_issue_numbers"]  # type: ignore[arg-type]
-        ) - {requester["issue_number"]}  # type: ignore[index]
-        final_production_runs = set(final_activity["heavy_run_ids"]) - set(  # type: ignore[arg-type]
-            baseline["heavy_run_ids"]  # type: ignore[arg-type]
-        )
+        final_production_requests = set(
+            cast(list[int], final_activity["request_issue_numbers"])
+        ) - set(cast(list[int], baseline["request_issue_numbers"])) - {
+            _as_int(requester["issue_number"])
+        }
+        final_production_runs = set(
+            cast(list[int], final_activity["heavy_run_ids"])
+        ) - set(cast(list[int], baseline["heavy_run_ids"]))
         final_owners = _codex_process_owners()
         if (
             final_production_requests

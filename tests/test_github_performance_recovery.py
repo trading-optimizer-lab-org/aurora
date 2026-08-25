@@ -23,11 +23,14 @@ from aurora.infra.github_performance.merge_planner import (
     write_unit_attempt_manifest,
 )
 from aurora.infra.github_performance.recovery import (
+    FailureClass,
+    RecoveryEvidenceError,
     RecoveryLoopStatus,
     build_recovery_plan,
     build_recovery_plan_from_paths,
     build_recovery_loop,
     build_terminal_unit_evidence_from_paths,
+    failure_fingerprint,
     write_recovery_plan,
 )
 from aurora.infra.github_performance.shard_planner import sha256_file
@@ -99,6 +102,74 @@ def test_retry_budget_exhaustion_stops_retry() -> None:
     )
     assert plan.decisions[0].action == "do_not_retry"
     assert plan.decisions[0].reason_code == "RETRY_BUDGET_EXHAUSTED"
+
+
+def test_retry_budget_is_not_reset_by_another_reason_in_same_transient_class() -> None:
+    attempts = [
+        failed_attempt("s001", "a001", "CONNECTION_RESET"),
+        failed_attempt("s001", "a002", "NETWORK_TIMEOUT"),
+        failed_attempt("s001", "a003", "CONNECTION_RESET"),
+    ]
+
+    plan = build_recovery_plan(
+        [make_shard(1)],
+        attempts,
+        [],
+        {"transient_network": 2},
+    )
+
+    assert plan.decisions[0].action == "do_not_retry"
+    assert plan.decisions[0].reason_code == "RETRY_BUDGET_EXHAUSTED"
+
+
+def test_duplicate_transient_attempt_evidence_is_not_counted_twice() -> None:
+    attempt = failed_attempt("s001", "a001", "GITHUB_5XX")
+
+    plan = build_recovery_plan(
+        [make_shard(1)],
+        [attempt, attempt],
+        [],
+        {"github_5xx": 1},
+    )
+
+    assert plan.decisions[0].action == "retry"
+    assert plan.failure_occurrence_count == 1
+
+
+def test_recovery_never_reuses_an_existing_transient_attempt_id() -> None:
+    fingerprint = failure_fingerprint(
+        failure_class=FailureClass.GITHUB_5XX,
+        reason_code="GITHUB_5XX",
+        stage="recipe_worker",
+        logical_scope_id="s001",
+    )
+    prior_id = f"recovery-2-{fingerprint[:20]}"
+
+    plan = build_recovery_plan(
+        [make_shard(1)],
+        [failed_attempt("s001", prior_id, "GITHUB_5XX")],
+        [],
+        {"github_5xx": 2},
+    )
+
+    assert plan.decisions[0].next_attempt_id not in {prior_id}
+
+
+def test_recovery_blocks_when_one_shard_is_hard_failed_even_if_another_retries() -> None:
+    result = build_recovery_loop(
+        [make_shard(1), make_shard(2)],
+        [
+            failed_attempt("s001", "a001", "GITHUB_5XX"),
+            failed_attempt("s002", "a001", "DETERMINISTIC_CODE_ERROR"),
+        ],
+        [],
+        {"github_5xx": 2, "code": 2},
+        current_wave=0,
+        max_waves=4,
+    )
+
+    assert result.status is RecoveryLoopStatus.BLOCKED_HARD_FAILURE
+    assert result.retry_count == 0
 
 
 def test_corrupt_checkpoint_is_rejected(tmp_path: Path) -> None:

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +23,10 @@ def _parameters(path: Path) -> set[str]:
     return set(re.findall(r"\$(\w+)", block.group(1)))
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="requires powershell.exe",
+)
 def test_installer_is_nonmutating_by_default() -> None:
     result = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(INSTALLER)],

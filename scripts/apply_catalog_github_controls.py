@@ -43,6 +43,8 @@ def _pin_aurora_source_checkout() -> None:
 _pin_aurora_source_checkout()
 
 from aurora.infra.sp500_megarun.catalog_github_controls import (
+    CatalogGithubAuditorV1,
+    CatalogGithubControlsV1,
     CatalogGithubControlsReceiptV1,
     audit_catalog_github_controls,
     bootstrap_controls_prepared,
@@ -90,8 +92,8 @@ def _load_verified_zero_mutation_dry_run(
     *,
     repository: str,
     expected_state_sha: str,
-    desired: object,
-) -> object:
+    desired: CatalogGithubControlsV1,
+) -> CatalogGithubControlsReceiptV1:
     text = path.read_text("utf-8")
     value = json.loads(text)
     if text != _canonical_json(value) + "\n":
@@ -339,7 +341,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _live_snapshot(args: argparse.Namespace, desired: object, auditor: object) -> dict[str, object]:
+def _live_snapshot(
+    args: argparse.Namespace,
+    desired: CatalogGithubControlsV1,
+    auditor: CatalogGithubAuditorV1,
+) -> dict[str, object]:
     client = GhReadOnlyClient(api_version=desired.github_api_version)
     observed_commit = client.get(
         f"/repos/{args.repository}/commits/{desired.default_branch}"
@@ -406,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
             prepared = bootstrap_controls_prepared(fresh)
             if fresh.status != "ready" and not prepared:
                 raise ValueError("CATALOG_GITHUB_CONTROLS_RECONCILIATION_INCOMPLETE")
-            result = {
+            result: dict[str, object] = {
                 "schema_version": "1",
                 "mode": "apply",
                 "repository": args.repository,
@@ -446,7 +452,7 @@ def main(argv: list[str] | None = None) -> int:
             desired=desired,
             receipt=before,
         )
-        result: dict[str, object] = {
+        result = {
             "schema_version": "1",
             "mode": "apply" if args.apply else "dry_run",
             "repository": args.repository,

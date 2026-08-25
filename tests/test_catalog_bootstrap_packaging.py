@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import json
 import re
@@ -8,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 import jsonschema
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +33,10 @@ def test_cli_has_only_installed_root() -> None:
     assert "--url" not in text and "--repository" not in text
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="requires the Windows C:/Python314/python.exe runtime",
+)
 def test_two_builds_are_identical(tmp_path: Path) -> None:
     first = tmp_path / "one"
     second = tmp_path / "two"

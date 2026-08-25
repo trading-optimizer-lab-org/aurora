@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from copy import deepcopy
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
 import subprocess
 import sys
 import importlib
+from typing import Protocol, TypedDict, cast
 
 import jsonschema
 import pytest
@@ -41,14 +44,74 @@ from scripts.audit_catalog_github_controls import (
     _reported_shared_storage_evidence,
     _retry_transient_snapshot_collection,
 )
-from scripts.apply_catalog_github_controls import apply_cache_retention_transaction
-
-
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLS = ROOT / "config/catalog_github_controls_v1.json"
 AUDITOR = ROOT / "config/catalog_github_auditor_v1.json"
+UTC = timezone.utc
 NOW = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
 HEAVY_PATH = ".github/workflows/synthetic-catalog-engine.yml"
+_APPLY_RUNNER_MODULE = "scripts.apply_catalog_github_controls"
+
+
+class _ApplyRunner(Protocol):
+    def main(self, argv: list[str]) -> int: ...
+
+    def apply_cache_retention_transaction(
+        self,
+        client: object,
+        *,
+        desired: object,
+        receipt: object,
+        plan: object,
+    ) -> list[object]: ...
+
+
+@contextmanager
+def _isolated_apply_runner() -> Iterator[_ApplyRunner]:
+    """Load the apply script without leaking its source-pinned modules."""
+    original_modules = dict(sys.modules)
+    original_meta_path = list(sys.meta_path)
+    sys.modules.pop(_APPLY_RUNNER_MODULE, None)
+    try:
+        yield cast(
+            _ApplyRunner,
+            importlib.import_module(_APPLY_RUNNER_MODULE),
+        )
+    finally:
+        sys.meta_path[:] = original_meta_path
+        sys.modules.clear()
+        sys.modules.update(original_modules)
+
+
+def _run_cache_retention_transaction(
+    client: object,
+    *,
+    desired: CatalogGithubControlsV1,
+    receipt: object,
+    plan: object,
+) -> list[object]:
+    with _isolated_apply_runner() as runner:
+        return runner.apply_cache_retention_transaction(
+            client,
+            desired=desired,
+            receipt=receipt,
+            plan=plan,
+        )
+
+
+class _AuditInputs(TypedDict):
+    desired: CatalogGithubControlsV1
+    auditor: CatalogGithubAuditorV1
+    snapshots: dict[str, object]
+
+
+class _ReportedSharedStorageArgs(TypedDict):
+    explicit_shared: int | None
+    billing_fresh: bool
+    billing_period_complete: bool
+    inventory_complete: bool
+    artifact_inventory_bytes: int
+    package_inventory_bytes: int
 
 
 def load_desired_controls() -> CatalogGithubControlsV1:
@@ -98,7 +161,7 @@ def _safe_issue_writer_workflow(job_ids: tuple[str, ...]) -> dict[str, object]:
     }
 
 
-def protected_snapshots() -> dict[str, object]:
+def protected_snapshots() -> _AuditInputs:
     desired = load_desired_controls()
     auditor = load_desired_auditor()
     budgets = _budget_rows(desired)
@@ -249,7 +312,7 @@ def protected_snapshots() -> dict[str, object]:
     return {"desired": desired, "auditor": auditor, "snapshots": snapshot}
 
 
-def mutated_protection_snapshots(mutation: str) -> dict[str, object]:
+def mutated_protection_snapshots(mutation: str) -> _AuditInputs:
     inputs = protected_snapshots()
     snapshot = inputs["snapshots"]
     assert isinstance(snapshot, dict)
@@ -277,50 +340,63 @@ def mutated_protection_snapshots(mutation: str) -> dict[str, object]:
     elif mutation == "actions_can_approve":
         actions["can_approve_pull_request_reviews"] = True
     elif mutation == "repository_private":
-        snapshot["repository"]["visibility"] = "private"
-        snapshot["repository"]["private"] = True
+        repository = cast(dict[str, object], snapshot["repository"])
+        repository["visibility"] = "private"
+        repository["private"] = True
     elif mutation == "environment_missing":
         snapshot["environment"] = None
     elif mutation == "environment_any_branch":
-        snapshot["environment"]["protected_branches_only"] = False
+        environment = cast(dict[str, object], snapshot["environment"])
+        environment["protected_branches_only"] = False
     elif mutation == "terminal_label_missing":
         snapshot["labels"] = []
     elif mutation == "terminal_label_drift":
-        snapshot["labels"][0]["color"] = "ffffff"
+        labels = cast(list[dict[str, object]], snapshot["labels"])
+        labels[0]["color"] = "ffffff"
     elif mutation == "paid_runner_allowed":
         actions["larger_runners_allowed"] = True
     elif mutation == "zero_actions_budget_missing":
         snapshot["budgets"] = [
-            row for row in snapshot["budgets"] if row["budget_product_sku"] != "actions"
+            row
+            for row in cast(list[dict[str, object]], snapshot["budgets"])
+            if row["budget_product_sku"] != "actions"
         ]
     elif mutation == "zero_actions_storage_budget_missing":
         snapshot["budgets"] = [
             row
-            for row in snapshot["budgets"]
+            for row in cast(list[dict[str, object]], snapshot["budgets"])
             if row["budget_product_sku"] != "actions_storage"
         ]
     elif mutation == "zero_cache_storage_budget_missing":
         snapshot["budgets"] = [
             row
-            for row in snapshot["budgets"]
+            for row in cast(list[dict[str, object]], snapshot["budgets"])
             if row["budget_product_sku"] != "actions_cache_storage"
         ]
     elif mutation == "budget_wrong_repository":
-        snapshot["budgets"][0]["budget_entity_name"] = "aurora-copy"
+        budgets = cast(list[dict[str, object]], snapshot["budgets"])
+        budgets[0]["budget_entity_name"] = "aurora-copy"
     elif mutation == "actions_budget_does_not_stop":
-        snapshot["budgets"][0]["prevent_further_usage"] = False
+        budgets = cast(list[dict[str, object]], snapshot["budgets"])
+        budgets[0]["prevent_further_usage"] = False
     elif mutation == "cache_limit_above_10_gb":
-        snapshot["cache_settings"]["storage_limit_gb"] = 20
+        cache_settings = cast(dict[str, object], snapshot["cache_settings"])
+        cache_settings["storage_limit_gb"] = 20
     elif mutation == "cache_retention_below_90_days":
-        snapshot["cache_settings"]["repository_retention_days"] = 89
+        cache_settings = cast(dict[str, object], snapshot["cache_settings"])
+        cache_settings["repository_retention_days"] = 89
     elif mutation == "request_actor_admin":
-        snapshot["request_actor_permissions"]["repository_administration"] = "write"
+        request_actor = cast(dict[str, object], snapshot["request_actor_permissions"])
+        request_actor["repository_administration"] = "write"
     elif mutation == "local_agent_admin":
-        snapshot["local_agent"]["has_admin"] = True
+        local_agent = cast(dict[str, object], snapshot["local_agent"])
+        local_agent["has_admin"] = True
     elif mutation == "local_agent_requester_key":
-        snapshot["local_agent"]["can_read_requester_credential"] = True
+        local_agent = cast(dict[str, object], snapshot["local_agent"])
+        local_agent["can_read_requester_credential"] = True
     elif mutation == "local_agent_auditor_key":
-        snapshot["local_agent"]["can_read_auditor_credential"] = True
+        local_agent = cast(dict[str, object], snapshot["local_agent"])
+        local_agent["can_read_auditor_credential"] = True
     else:
         raise AssertionError(mutation)
     return inputs
@@ -484,14 +560,14 @@ def test_every_control_drift_blocks(mutation: str, control: str) -> None:
 def test_documented_budget_repository_forms_are_canonicalized(entity: str) -> None:
     inputs = protected_snapshots()
     for collection in ("budgets", "budget_details"):
-        for row in inputs["snapshots"][collection]:
+        for row in cast(list[dict[str, object]], inputs["snapshots"][collection]):
             row["budget_entity_name"] = entity
     assert audit_catalog_github_controls(**inputs).status == "ready"
 
 
 def test_similarly_named_budget_repository_is_rejected() -> None:
     inputs = protected_snapshots()
-    for row in inputs["snapshots"]["budgets"]:
+    for row in cast(list[dict[str, object]], inputs["snapshots"]["budgets"]):
         row["budget_entity_name"] = "trading-optimizer-lab-org/aurora-copy"
     receipt = audit_catalog_github_controls(**inputs)
     assert "ZERO_BUDGET_REPOSITORY_SCOPE_EXACT" in receipt.failed_controls
@@ -526,7 +602,7 @@ def test_active_heavy_run_inventory_is_complete_and_authority_bound() -> None:
     assert receipt.status == "ready"
     assert receipt.unmanaged_active_heavy_run_ids == ()
 
-    snapshot["active_runs"].append(
+    cast(list[dict[str, object]], snapshot["active_runs"]).append(
         {
             "run_id": 101,
             "workflow_path": HEAVY_PATH,
@@ -878,8 +954,9 @@ def test_package_inventory_uses_githubs_canonical_organization_route() -> None:
 def test_bootstrap_controls_mode_defers_only_identity_and_live_capacity() -> None:
     inputs = protected_snapshots()
     snapshot = inputs["snapshots"]
-    snapshot["local_agent"]["has_admin"] = True
-    snapshot["local_agent"]["broker_acl_verified"] = False
+    local_agent = cast(dict[str, object], snapshot["local_agent"])
+    local_agent["has_admin"] = True
+    local_agent["broker_acl_verified"] = False
     receipt = audit_catalog_github_controls(**inputs)
     assert bootstrap_controls_prepared(receipt)
 
@@ -912,26 +989,9 @@ def test_final_observation_uses_the_last_github_response_time() -> None:
 
 
 def test_verified_zero_mutation_dry_run_needs_only_one_fresh_snapshot(
-    tmp_path: Path, monkeypatch, request
+    tmp_path: Path, monkeypatch
 ) -> None:
-    original_aurora_modules = {
-        name: module
-        for name, module in sys.modules.items()
-        if name == "aurora" or name.startswith("aurora.")
-    }
-
-    def restore_import_identity() -> None:
-        for name in tuple(sys.modules):
-            if name == "aurora" or name.startswith("aurora."):
-                del sys.modules[name]
-        sys.modules.update(original_aurora_modules)
-        sys.modules.pop("scripts.apply_catalog_github_controls", None)
-
-    request.addfinalizer(restore_import_identity)
     monkeypatch.syspath_prepend(str(ROOT / "scripts"))
-    github_apply_runner = importlib.import_module(
-        "scripts.apply_catalog_github_controls"
-    )
     inputs = protected_snapshots()
     receipt = audit_catalog_github_controls(**inputs)
     plan = build_github_controls_mutation_plan(
@@ -961,30 +1021,48 @@ def test_verified_zero_mutation_dry_run_needs_only_one_fresh_snapshot(
         calls += 1
         return deepcopy(inputs["snapshots"])
 
-    monkeypatch.setattr(github_apply_runner, "_live_snapshot", fresh_snapshot)
-
-    result = github_apply_runner.main(
-        [
-            "--repo-root",
-            str(ROOT),
-            "--output",
-            str(output),
-            "--apply",
-            "--bootstrap-controls-only",
-            "--verified-dry-run",
-            str(dry_path),
-            "--expected-current-state-sha",
-            dry_run["current_state_sha256"],
-            "--confirm",
-            "CATALOG_GITHUB_CONTROLS_V1",
-        ]
-    )
+    original_modules = dict(sys.modules)
+    original_meta_path = tuple(sys.meta_path)
+    with _isolated_apply_runner() as github_apply_runner:
+        monkeypatch.setattr(github_apply_runner, "_live_snapshot", fresh_snapshot)
+        result = github_apply_runner.main(
+            [
+                "--repo-root",
+                str(ROOT),
+                "--output",
+                str(output),
+                "--apply",
+                "--bootstrap-controls-only",
+                "--verified-dry-run",
+                str(dry_path),
+                "--expected-current-state-sha",
+                dry_run["current_state_sha256"],
+                "--confirm",
+                "CATALOG_GITHUB_CONTROLS_V1",
+            ]
+        )
 
     applied = json.loads(output.read_text("utf-8"))
+    assert sys.modules == original_modules
+    assert tuple(sys.meta_path) == original_meta_path
     assert result == 0
     assert calls == 1
     assert applied["mutations"] == []
     assert applied["after_receipt"]["status"] == "ready"
+
+
+def test_apply_tool_import_restores_exact_aurora_module_identity() -> None:
+    module_name = "aurora.infra.sp500_megarun.catalog_github_controls"
+    original_modules = dict(sys.modules)
+    original_meta_path = tuple(sys.meta_path)
+    original_catalog_module = sys.modules[module_name]
+
+    with _isolated_apply_runner():
+        assert sys.modules[module_name] is not original_catalog_module
+
+    assert sys.modules == original_modules
+    assert tuple(sys.meta_path) == original_meta_path
+    assert sys.modules[module_name] is original_catalog_module
 
 
 def test_apply_tool_binds_live_audit_to_observed_default_branch() -> None:
@@ -1203,7 +1281,8 @@ def test_incomplete_storage_telemetry_blocks_without_estimating_headroom() -> No
     inputs = protected_snapshots()
     snapshot = inputs["snapshots"]
     assert isinstance(snapshot, dict)
-    snapshot["storage"]["packages_pagination_complete"] = False
+    storage = cast(dict[str, object], snapshot["storage"])
+    storage["packages_pagination_complete"] = False
     receipt = audit_catalog_github_controls(**inputs)
     assert "CATALOG_FREE_STORAGE_TELEMETRY_UNAVAILABLE" in receipt.failed_controls
     assert receipt.free_artifact_storage_headroom is None
@@ -1240,7 +1319,7 @@ def test_billing_storage_evidence_uses_the_current_daily_repository_period() -> 
     }
 
     evidence = _billing_actions_storage_evidence(
-        payload,
+        cast(dict[str, object], payload),
         repository_name="aurora",
         observed_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
         included_shared_storage_bytes=50 * 1024**3,
@@ -1272,7 +1351,12 @@ def test_billing_storage_evidence_never_pretends_an_old_or_malformed_row_is_curr
     malformed = deepcopy(stale)
     malformed["usageItems"][0]["date"] = "not-a-date"
 
-    for payload in (stale, malformed, {"usageItems": []}):
+    payloads: tuple[dict[str, object], ...] = (
+        cast(dict[str, object], stale),
+        cast(dict[str, object], malformed),
+        {"usageItems": []},
+    )
+    for payload in payloads:
         evidence = _billing_actions_storage_evidence(
             payload,
             repository_name="aurora",
@@ -1347,15 +1431,18 @@ def test_current_storage_fallback_requires_fresh_billing_and_complete_inventory(
         {"billing_period_complete": False},
         {"inventory_complete": False},
     ):
-        values = {
-            "explicit_shared": None,
-            "billing_fresh": True,
-            "billing_period_complete": True,
-            "inventory_complete": True,
-            "artifact_inventory_bytes": 39_000,
-            "package_inventory_bytes": 1_000,
-            **updates,
-        }
+        values = cast(
+            _ReportedSharedStorageArgs,
+            {
+                "explicit_shared": None,
+                "billing_fresh": True,
+                "billing_period_complete": True,
+                "inventory_complete": True,
+                "artifact_inventory_bytes": 39_000,
+                "package_inventory_bytes": 1_000,
+                **updates,
+            },
+        )
         evidence = _reported_shared_storage_evidence(**values)
         assert evidence["billing_snapshot_complete"] is False
         assert evidence["reported_shared_use_source"] == "unavailable"
@@ -1393,7 +1480,8 @@ def test_keeper_accepts_the_protected_90_day_cache_policy() -> None:
     assert isinstance(snapshots, dict)
     snapshots["observer_context"] = "github_auditor"
     snapshots["local_agent"] = {}
-    snapshots["runtime_provenance"].update(
+    runtime_provenance = cast(dict[str, object], snapshots["runtime_provenance"])
+    runtime_provenance.update(
         {
             "caller_workflow": ".github/workflows/catalog-artifact-keeper.yml",
             "caller_job": "live_controls_audit_before_maintenance",
@@ -1517,7 +1605,8 @@ def test_storage_limit_drift_never_plans_storage_put() -> None:
     inputs = protected_snapshots()
     snapshots = inputs["snapshots"]
     assert isinstance(snapshots, dict)
-    snapshots["cache_settings"]["storage_limit_gb"] = 20
+    cache_settings = cast(dict[str, object], snapshots["cache_settings"])
+    cache_settings["storage_limit_gb"] = 20
     _set_cache_retention(snapshots, 89, 89, 89)
     plan = build_github_controls_mutation_plan(
         desired=inputs["desired"],
@@ -1556,7 +1645,7 @@ class _RetentionTransactionClient:
 
     def mutate(self, *, method: str, endpoint: str, body: dict[str, object]) -> object:
         self.calls.append((method, endpoint, body))
-        target = int(body["max_cache_retention_days"])
+        target = int(cast(int, body["max_cache_retention_days"]))
         if endpoint in self.fail_put and target != self.originals[endpoint]:
             raise ValueError("put failed")
         if (
@@ -1589,12 +1678,12 @@ def test_retention_transaction_uses_exact_get_put_get_order() -> None:
         dict(zip(endpoints, (89, 90, 120), strict=True))
     )
 
-    responses = apply_cache_retention_transaction(
+    responses = _run_cache_retention_transaction(
         client, desired=desired, receipt=receipt, plan=plan
     )
 
     assert [client.values[endpoint] for endpoint in endpoints] == [90, 90, 120]
-    assert [response["readback"] for response in responses] == [90, 90, 120]
+    assert [cast(dict[str, object], response)["readback"] for response in responses] == [90, 90, 120]
     assert [(call[0], call[1]) for call in client.calls] == [
         ("GET", endpoints[0]),
         ("GET", endpoints[1]),
@@ -1623,7 +1712,7 @@ def test_retention_transaction_rejects_a_mixed_plan_before_any_api_call() -> Non
     client = _RetentionTransactionClient({})
 
     with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_PLAN_INVALID"):
-        apply_cache_retention_transaction(
+        _run_cache_retention_transaction(
             client, desired=inputs["desired"], receipt=receipt, plan=plan
         )
 
@@ -1636,7 +1725,7 @@ def test_retention_transaction_is_get_put_get_and_rolls_back_level_one_on_level_
     endpoints = [m.endpoint for m in plan.mutations if "cache/retention-limit" in m.endpoint]
     client = _RetentionTransactionClient({endpoint: 89 for endpoint in endpoints}, fail_put={endpoints[1]})
     with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_TRANSACTION_FAILED"):
-        apply_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
+        _run_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
     assert client.values[endpoints[0]] == 89
     assert client.values[endpoints[1]] == 89
     assert [(c[0], c[1]) for c in client.calls] == [
@@ -1654,7 +1743,7 @@ def test_retention_transaction_readback_failure_rolls_back_all_mutated_levels() 
     endpoints = [m.endpoint for m in plan.mutations if "cache/retention-limit" in m.endpoint]
     client = _RetentionTransactionClient({endpoint: 89 for endpoint in endpoints}, fail_readback=endpoints[1])
     with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_TRANSACTION_FAILED"):
-        apply_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
+        _run_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
     assert all(client.values[endpoint] == 89 for endpoint in endpoints)
 
 
@@ -1668,13 +1757,13 @@ def test_retention_transaction_reports_rollback_failure_and_attempts_remaining_r
         fail_rollback={endpoints[0]},
     )
     with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_ROLLBACK_FAILED"):
-        apply_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
+        _run_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
     rollback_puts = [
         call
         for call in client.calls
         if call[0] == "PUT"
         and isinstance(call[2], dict)
-        and call[2]["max_cache_retention_days"] == 89
+        and cast(dict[str, object], call[2])["max_cache_retention_days"] == 89
     ]
     assert [call[1] for call in rollback_puts] == [
         endpoints[2],
@@ -1705,7 +1794,7 @@ def test_retention_transaction_detects_concurrent_raise_before_put() -> None:
     with pytest.raises(
         ValueError, match="CATALOG_CACHE_RETENTION_TRANSACTION_FAILED"
     ):
-        apply_cache_retention_transaction(
+        _run_cache_retention_transaction(
             client, desired=desired, receipt=receipt, plan=plan
         )
 
@@ -1714,7 +1803,8 @@ def test_retention_transaction_detects_concurrent_raise_before_put() -> None:
     assert not any(
         call[0] == "PUT"
         and call[1] == endpoints[1]
-        and call[2]["max_cache_retention_days"] == 90
+        and isinstance(call[2], dict)
+        and cast(dict[str, object], call[2])["max_cache_retention_days"] == 90
         for call in client.calls
     )
 

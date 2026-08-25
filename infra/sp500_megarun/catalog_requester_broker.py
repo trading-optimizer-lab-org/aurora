@@ -64,6 +64,27 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def _uuid7() -> uuid.UUID:
+    native_uuid7 = getattr(uuid, "uuid7", None)
+    if native_uuid7 is not None:
+        return native_uuid7()
+
+    timestamp_ms = time.time_ns() // 1_000_000
+    if not 0 <= timestamp_ms < (1 << 48):
+        raise ValueError("REQUESTER_UUID7_TIMESTAMP_OUT_OF_RANGE")
+    random_bits = int.from_bytes(os.urandom(10), "big") & ((1 << 74) - 1)
+    random_a = random_bits >> 62
+    random_b = random_bits & ((1 << 62) - 1)
+    value = (
+        (timestamp_ms << 80)
+        | (0x7 << 76)
+        | (random_a << 64)
+        | (0b10 << 62)
+        | random_b
+    )
+    return uuid.UUID(int=value)
+
+
 CatalogRequesterBrokerConfigV1 = CatalogRequesterConfigV1
 
 
@@ -540,7 +561,7 @@ def quarantine_one_invalid_catalog_broker_entry(
     with os.scandir(inbox) as iterator:
         for item in iterator:
             inspected += 1
-            if inspected > config.broker.maximum_pending_entries + 1:
+            if inspected > config.broker.maximum_pending_entries:
                 break
             try:
                 metadata = os.lstat(item.path)
@@ -1068,12 +1089,9 @@ def _new_launch_ticket(
     campaign_definition_sha256: str,
     prompt_sha256: str,
 ) -> CatalogLaunchTicketV1:
-    uuid7 = getattr(uuid, "uuid7", None)
-    if uuid7 is None:
-        raise ValueError("REQUESTER_UUID7_RUNTIME_UNAVAILABLE")
     return CatalogLaunchTicketV1(
         schema_version="1",
-        request_id=str(uuid7()),
+        request_id=str(_uuid7()),
         campaign_key=campaign_key,
         launch_generation=1,
         campaign_definition_sha256=campaign_definition_sha256,
@@ -2834,7 +2852,7 @@ def reconstruct_catalog_campaign_journal_from_github(
 
     next_ticket = CatalogLaunchTicketV1(
         schema_version="1",
-        request_id=str(uuid.uuid7()),
+        request_id=str(_uuid7()),
         campaign_key=campaign_key,
         launch_generation=latest.request.launch_generation + 1,
         campaign_definition_sha256=campaign_definition_sha256,
@@ -3361,12 +3379,9 @@ def advance_catalog_ticket_after_verified_terminal(
         )
         return None
 
-    uuid7 = getattr(uuid, "uuid7", None)
-    if uuid7 is None:
-        raise ValueError("REQUESTER_UUID7_RUNTIME_UNAVAILABLE")
     next_ticket = CatalogLaunchTicketV1(
         schema_version="1",
-        request_id=str(uuid7()),
+        request_id=str(_uuid7()),
         campaign_key=journal.campaign_key,
         launch_generation=journal.launch_generation + 1,
         campaign_definition_sha256=journal.ticket.campaign_definition_sha256,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -9,6 +9,9 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+
+
+UTC = timezone.utc
 
 from aurora.infra.sp500_megarun.catalog_authority_ledger import (
     AuthorityState,

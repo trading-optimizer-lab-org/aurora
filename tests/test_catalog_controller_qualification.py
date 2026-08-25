@@ -399,6 +399,10 @@ def test_cat_017_enforced() -> None:
     _assert_scenario("Q-024")
 
 
+def test_q028_conflicting_success_is_verified() -> None:
+    _assert_scenario("Q-028")
+
+
 def test_cat_018_enforced() -> None:
     _assert_scenario("Q-062")
 

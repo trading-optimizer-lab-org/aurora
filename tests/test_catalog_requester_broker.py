@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import time
+from uuid import RFC_4122, UUID
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -1041,7 +1043,37 @@ def test_invalid_entry_scan_is_strictly_bounded(
         broker_root=root,
         config=config,
     ) is None
-    assert calls <= config.broker.maximum_pending_entries + 1
+    assert calls <= config.broker.maximum_pending_entries
+
+
+def test_uuid7_fallback_is_rfc4122_and_uses_current_utc_milliseconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aurora.infra.sp500_megarun import catalog_requester_broker as broker_module
+
+    monkeypatch.delattr(broker_module.uuid, "uuid7", raising=False)
+    before_ms = time.time_ns() // 1_000_000
+    first = broker_module._new_launch_ticket(
+        campaign_key="sp500-optimized-catalog-v1",
+        campaign_definition_sha256="2" * 64,
+        prompt_sha256="3" * 64,
+    )
+    second = broker_module._new_launch_ticket(
+        campaign_key="sp500-optimized-catalog-v1",
+        campaign_definition_sha256="2" * 64,
+        prompt_sha256="3" * 64,
+    )
+    after_ms = time.time_ns() // 1_000_000
+
+    first_uuid = UUID(first.request_id)
+    second_uuid = UUID(second.request_id)
+    for parsed in (first_uuid, second_uuid):
+        assert parsed.version == 7
+        assert parsed.variant == RFC_4122
+        assert before_ms <= parsed.int >> 80 <= after_ms
+        assert (parsed.int >> 76) & 0xF == 0x7
+        assert (parsed.int >> 62) & 0x3 == 0b10
+    assert first.request_id != second.request_id
 
 
 def test_restart_reuses_exact_persisted_signature_without_resigning(

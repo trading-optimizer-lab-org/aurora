@@ -23,7 +23,14 @@ class _RunResult(Protocol):
 
 
 class _Runner(Protocol):
-    def __call__(self, args: list[str], **kwargs: object) -> _RunResult: ...
+    def __call__(
+        self,
+        args: list[str],
+        *,
+        input: bytes | None,
+        check: bool,
+        capture_output: bool,
+    ) -> _RunResult: ...
 
 
 def clear_private_material(*values: bytearray) -> None:

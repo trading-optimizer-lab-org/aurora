@@ -11,14 +11,21 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
-from datetime import UTC, datetime
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from .catalog_request_contract import FrozenModel
+
+
+UTC = timezone.utc
+
+
+def _as_int(value: object) -> int:
+    return int(cast(int | str | float | bytes | bytearray, value))
 
 
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
@@ -729,7 +736,7 @@ def audit_catalog_github_controls(
         ("MAIN_STRICT_STATUS_CHECKS_REQUIRED", branch.get("strict_status_checks") is True),
         (
             "MAIN_STATUS_CHECKS_EXACT",
-            tuple(branch.get("required_status_checks", ()))
+            tuple(cast(Iterable[str], branch.get("required_status_checks", ())))
             == desired.branch_protection.required_status_checks,
         ),
         (
@@ -774,7 +781,7 @@ def audit_catalog_github_controls(
         "CATALOG_ENVIRONMENT_MAIN_ONLY",
         environment_map.get("name") == desired.environment.name
         and environment_map.get("protected_branches_only") is True
-        and tuple(environment_map.get("required_reviewers", ()))
+        and tuple(cast(Iterable[str], environment_map.get("required_reviewers", ())))
         == desired.environment.required_reviewers,
     )
 
@@ -909,7 +916,7 @@ def audit_catalog_github_controls(
         "CACHE_RETENTION_POLICY_REQUIRED",
         cache_retention_known
         and all(
-            int(value) >= desired.billing.repository_cache_retention_days
+            _as_int(value) >= desired.billing.repository_cache_retention_days
             for value in cache_retentions
         ),
     )
@@ -941,7 +948,7 @@ def audit_catalog_github_controls(
     numeric_storage = all(
         isinstance(storage.get(key), int)
         and not isinstance(storage.get(key), bool)
-        and int(storage[key]) >= 0
+        and _as_int(storage[key]) >= 0
         for key in numeric_keys
     )
     allowance_exact = (
@@ -960,29 +967,29 @@ def audit_catalog_github_controls(
         and allowance_exact
         and isinstance(cache_limit, int)
     ):
-        allowance = int(storage["shared_allowance_bytes"])
+        allowance = _as_int(storage["shared_allowance_bytes"])
         reconciled = max(
-            int(storage["reported_shared_use_bytes"]),
-            int(storage["artifact_inventory_bytes"])
-            + int(storage["package_inventory_bytes"]),
+            _as_int(storage["reported_shared_use_bytes"]),
+            _as_int(storage["artifact_inventory_bytes"])
+            + _as_int(storage["package_inventory_bytes"]),
         )
         artifact_headroom = int(
             allowance
             - reconciled
-            - int(storage["unreflected_upload_bytes"])
+            - _as_int(storage["unreflected_upload_bytes"])
             - allowance * desired.billing.artifact_storage_safety_fraction
-            - int(storage["projected_campaign_artifact_bytes"])
+            - _as_int(storage["projected_campaign_artifact_bytes"])
         )
         cache_limit_bytes = cache_limit * 1_000_000_000
         cache_headroom = int(
             cache_limit_bytes
             - max(
-                int(storage["reported_cache_use_bytes"]),
-                int(storage["cache_inventory_bytes"]),
+                _as_int(storage["reported_cache_use_bytes"]),
+                _as_int(storage["cache_inventory_bytes"]),
             )
-            - int(storage["pending_cache_bytes"])
+            - _as_int(storage["pending_cache_bytes"])
             - cache_limit_bytes * desired.billing.cache_storage_safety_fraction
-            - int(storage["projected_campaign_cache_bytes"])
+            - _as_int(storage["projected_campaign_cache_bytes"])
         )
     check(
         "CATALOG_ARTIFACT_STORAGE_HEADROOM_SUFFICIENT",
@@ -1010,7 +1017,7 @@ def audit_catalog_github_controls(
         and all(isinstance(value, Mapping) for value in workflow_documents_raw.values())
         else {}
     )
-    heavy_inventory = inventory_heavy_workflows(workflow_documents)  # type: ignore[arg-type]
+    heavy_inventory = inventory_heavy_workflows(workflow_documents)
     heavy_paths = {
         str(row["path"]) for row in heavy_inventory if row.get("heavy") is True
     }
@@ -1022,13 +1029,15 @@ def audit_catalog_github_controls(
         desired.entrypoints.fixed_nonproduction_trigger_exemptions
     )
     direct_dispatch = any(
-        "workflow_dispatch" in row.get("direct_heavy_triggers", ())
+        "workflow_dispatch"
+        in cast(Iterable[str], row.get("direct_heavy_triggers", ()))
         for row in heavy_inventory
         if row.get("heavy") is True
         and row.get("path") not in exempt_heavy_triggers
     )
     other_direct = any(
-        set(row.get("direct_heavy_triggers", ())) - {"workflow_dispatch"}
+        set(cast(Iterable[str], row.get("direct_heavy_triggers", ())))
+        - {"workflow_dispatch"}
         for row in heavy_inventory
         if row.get("heavy") is True
         and row.get("path") not in public_heavy_entrypoints
@@ -1038,7 +1047,7 @@ def audit_catalog_github_controls(
     check("HEAVY_DIRECT_DISPATCH_FORBIDDEN", not direct_dispatch)
     check("HEAVY_DIRECT_TRIGGER_FORBIDDEN", not other_direct)
 
-    writers = jobs_with_issues_write(workflow_documents)  # type: ignore[arg-type]
+    writers = jobs_with_issues_write(workflow_documents)
     allowed_writers = {
         (path, job)
         for path, jobs in desired.entrypoints.issues_write_job_allowlist.items()
@@ -1072,7 +1081,7 @@ def audit_catalog_github_controls(
             )
         )
         if not bound and isinstance(run.get("run_id"), int):
-            unmanaged_ids.append(int(run["run_id"]))
+            unmanaged_ids.append(_as_int(run["run_id"]))
     check(
         "CATALOG_UNMANAGED_HEAVY_RUN_ACTIVE",
         not unmanaged_ids
@@ -1098,10 +1107,13 @@ def audit_catalog_github_controls(
         check("CATALOG_OBSERVER_CONTEXT_VALID", True)
 
     provenance = _mapping(snapshots.get("runtime_provenance"))
-    caller = (
-        provenance.get("caller_workflow"),
-        provenance.get("caller_job"),
-        provenance.get("purpose"),
+    caller = cast(
+        tuple[str, str, str],
+        (
+            provenance.get("caller_workflow"),
+            provenance.get("caller_job"),
+            provenance.get("purpose"),
+        ),
     )
     audit_context = _AUDIT_CONTEXT_BY_CALLER.get(caller)
     audit_context_sha256 = provenance.get("audit_context_sha256")
@@ -1185,7 +1197,7 @@ def audit_catalog_github_controls(
     observed_at = _parse_time(snapshots.get("observed_at"))
     github_at = _parse_time(snapshots.get("github_api_observed_at"))
     freshness_valid = observed_at is not None and github_at is not None
-    if freshness_valid:
+    if observed_at is not None and github_at is not None:
         delta = (observed_at - github_at).total_seconds()
         freshness_valid = (
             delta <= desired.audit_freshness.maximum_age_seconds
@@ -1393,7 +1405,7 @@ def build_github_controls_mutation_plan(
                     endpoint=endpoint,
                     body={
                         "max_cache_retention_days": max(
-                            int(observed),
+                            _as_int(observed),
                             desired.billing.repository_cache_retention_days,
                         )
                     },

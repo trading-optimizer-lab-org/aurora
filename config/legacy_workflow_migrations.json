@@ -51,8 +51,8 @@
     {
       "path": ".github/workflows/typecheck.yml",
       "previous_sha256": "b8fedf60ca30643f72cf9d74e4699ea6e921c5c127a01f4a74935854bbde8316",
-      "reason": "freeze existing mypy debt and reject every new type error",
-      "replacement_sha256": "2446b8ac7c176ae1307648471bec5822573e83a2e2e48698144c64afd745fd09"
+        "reason": "compare base and head with one pinned mypy environment and reject every new diagnostic",
+        "replacement_sha256": "e02d5c2fe878d9cbc20bdbc6258efeffa2ab9827d8f45ed71d86f54b5438c334"
     }
   ],
   "schema_version": "1"

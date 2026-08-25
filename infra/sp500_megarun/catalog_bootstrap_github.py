@@ -6,13 +6,16 @@ import hashlib
 import base64
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Mapping, Protocol
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from .catalog_bootstrap_contract import CatalogBootstrapAppManifestV1
+
+
+UTC = timezone.utc
 
 
 @dataclass(frozen=True, slots=True)

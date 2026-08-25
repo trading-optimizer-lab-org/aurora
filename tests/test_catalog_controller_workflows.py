@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import shutil
 import textwrap
+from typing import TypedDict, cast
 
 import pytest
 import yaml
@@ -108,18 +109,87 @@ LEGACY_CATALOG_WORKFLOWS = {
 }
 
 
-def _workflow(path: Path) -> dict[str, object]:
-    return dict(load_github_yaml(path))
+_WorkflowStep = TypedDict(
+    "_WorkflowStep",
+    {
+        "id": str,
+        "name": str,
+        "uses": str,
+        "run": str,
+        "with": dict[str, object],
+        "env": dict[str, object],
+        "if": str,
+        "shell": str,
+        "working-directory": str,
+    },
+    total=False,
+)
+_WorkflowJob = TypedDict(
+    "_WorkflowJob",
+    {
+        "name": str,
+        "runs-on": str,
+        "timeout-minutes": int,
+        "environment": str,
+        "permissions": dict[str, object],
+        "concurrency": dict[str, object],
+        "outputs": dict[str, object],
+        "needs": str | list[str],
+        "uses": str,
+        "with": dict[str, object],
+        "if": str,
+        "env": dict[str, object],
+        "steps": list[_WorkflowStep],
+        "strategy": dict[str, object],
+    },
+    total=False,
+)
+_WorkflowCall = TypedDict(
+    "_WorkflowCall",
+    {"inputs": dict[str, object], "outputs": dict[str, object], "secrets": dict[str, object]},
+    total=False,
+)
+_WorkflowOn = TypedDict(
+    "_WorkflowOn",
+    {
+        "workflow_call": _WorkflowCall,
+        "workflow_dispatch": dict[str, object],
+        "issues": dict[str, object],
+        "issue_comment": dict[str, object],
+        "schedule": list[dict[str, object]],
+        "push": dict[str, object],
+        "pull_request": dict[str, object],
+        "merge_group": dict[str, object],
+        "workflow_run": dict[str, object],
+    },
+    total=False,
+)
+_Workflow = TypedDict(
+    "_Workflow",
+    {
+        "name": str,
+        "on": _WorkflowOn,
+        "permissions": dict[str, object],
+        "jobs": dict[str, _WorkflowJob],
+        "concurrency": dict[str, object],
+        "env": dict[str, object],
+    },
+    total=False,
+)
 
 
-def _all_workflows() -> dict[str, dict[str, object]]:
+def _workflow(path: Path) -> _Workflow:
+    return cast(_Workflow, dict(load_github_yaml(path)))
+
+
+def _all_workflows() -> dict[str, _Workflow]:
     return {
         path.relative_to(ROOT).as_posix(): _workflow(path)
         for path in sorted(WORKFLOWS.glob("*.y*ml"))
     }
 
 
-def _external_action_uses(workflow: dict[str, object]) -> list[str]:
+def _external_action_uses(workflow: _Workflow) -> list[str]:
     found: list[str] = []
     jobs = workflow.get("jobs", {})
     assert isinstance(jobs, dict)
@@ -975,7 +1045,7 @@ def test_controller_has_no_untrusted_or_mutable_escape(forbidden: str) -> None:
 
 
 def test_catalog_live_controls_has_exactly_five_valid_job_level_callers() -> None:
-    discovered: dict[str, dict[str, dict[str, object]]] = {}
+    discovered: dict[str, dict[str, _WorkflowJob]] = {}
     for workflow_path, expected_jobs in AUDIT_CALLER_WORKFLOWS.items():
         workflow = _workflow(ROOT / workflow_path)
         jobs = workflow["jobs"]
@@ -1143,8 +1213,10 @@ def test_request_reconciler_replays_only_existing_requests() -> None:
         "contents": "read",
         "issues": "write",
     }
-    assert call["strategy"]["max-parallel"] == 4
-    assert set(call["strategy"]["matrix"]) == {"include"}
+    strategy = call["strategy"]
+    assert strategy["max-parallel"] == 4
+    matrix = cast(dict[str, object], strategy["matrix"])
+    assert set(matrix) == {"include"}
     assert call["with"] == {"issue_number": "${{ matrix.issue_number }}"}
     assert "concurrency" not in call
 

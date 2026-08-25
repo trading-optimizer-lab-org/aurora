@@ -9,7 +9,7 @@ import re
 import secrets
 import threading
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Callable, Literal, Mapping, Protocol
 from urllib.parse import parse_qs, quote, urlsplit
@@ -18,6 +18,9 @@ from .catalog_bootstrap_contract import (
     CatalogBootstrapAppManifestV1,
     github_manifest_payload,
 )
+
+
+UTC = timezone.utc
 
 
 _CODE = re.compile(r"^[A-Za-z0-9_-]{20,256}$")

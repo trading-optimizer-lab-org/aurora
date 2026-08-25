@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import hashlib
 import json
@@ -16,7 +16,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping, cast
 
 import requests
 import yaml
@@ -41,6 +41,9 @@ from aurora.infra.sp500_megarun.catalog_github_controls import (
     load_catalog_github_auditor,
     load_catalog_github_controls,
 )
+
+
+UTC = timezone.utc
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -445,8 +448,10 @@ def _encode_jwt(
     return f"{unsigned}.{_base64url(signature)}"
 
 
-def _workflow_documents(root: Path) -> tuple[dict[str, object], dict[str, str]]:
-    documents: dict[str, object] = {}
+def _workflow_documents(
+    root: Path,
+) -> tuple[dict[str, Mapping[str, object]], dict[str, str]]:
+    documents: dict[str, Mapping[str, object]] = {}
     hashes_by_path: dict[str, str] = {}
     workflow_root = root / ".github" / "workflows"
     for path in sorted((*workflow_root.glob("*.yml"), *workflow_root.glob("*.yaml"))):
@@ -498,6 +503,10 @@ def _normalize_branch_protection(payload: object) -> dict[str, object]:
 
 def _dict(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
+
+
+def _as_int(value: object) -> int:
+    return int(cast(int | str | float | bytes | bytearray, value))
 
 
 def _page_endpoint(endpoint: str, page: int) -> str:
@@ -806,14 +815,14 @@ def _collect_active_run_inventory(
                     "writer_provenance_verified": writer_matches,
                     "current_engine_owner": nonterminal,
                     "active_heavy_job_database_ids": sorted(
-                        int(job["id"])
+                        _as_int(job["id"])
                         for job in active_heavy_jobs
                         if isinstance(job.get("id"), int)
                         and not isinstance(job.get("id"), bool)
                     ),
                 }
             )
-    return tuple(sorted(runs, key=lambda row: int(row["run_id"]))), runs_complete, jobs_complete
+    return tuple(sorted(runs, key=lambda row: _as_int(row["run_id"]))), runs_complete, jobs_complete
 
 
 def _billing_paid_usage(
@@ -1102,13 +1111,13 @@ def _collect_storage_snapshot(
     package_sizes_valid = not package_rows or all(
         isinstance(row.get("size_in_bytes"), int)
         and not isinstance(row.get("size_in_bytes"), bool)
-        and int(row["size_in_bytes"]) >= 0
+        and _as_int(row["size_in_bytes"]) >= 0
         for row in package_rows
     )
     cache_sizes_valid = all(
         isinstance(row.get("size_in_bytes"), int)
         and not isinstance(row.get("size_in_bytes"), bool)
-        and int(row["size_in_bytes"]) >= 0
+        and _as_int(row["size_in_bytes"]) >= 0
         for row in caches
     )
     org_cache = _dict(client.get(f"/orgs/{owner}/actions/cache/usage"))
@@ -1139,7 +1148,7 @@ def _collect_storage_snapshot(
             )
             if isinstance(billing.get(key), int)
             and not isinstance(billing.get(key), bool)
-            and int(billing[key]) >= 0
+            and _as_int(billing[key]) >= 0
         ),
         None,
     )
@@ -1171,31 +1180,31 @@ def _collect_storage_snapshot(
         minutes=desired.billing.cache_reporting_lag_minutes
     )
     unreflected = sum(
-        int(row["size_in_bytes"])
+        _as_int(row["size_in_bytes"])
         for row in active_artifacts
         if artifact_sizes_valid
         and (created := _parse_utc(row.get("created_at"))) is not None
         and created >= artifact_cutoff
     )
     pending_cache = sum(
-        int(row["size_in_bytes"])
+        _as_int(row["size_in_bytes"])
         for row in caches
         if cache_sizes_valid
         and (created := _parse_utc(row.get("created_at"))) is not None
         and created >= cache_cutoff
     )
     artifact_inventory_bytes = (
-        sum(int(row["size_in_bytes"]) for row in active_artifacts)
+        sum(_as_int(row["size_in_bytes"]) for row in active_artifacts)
         if artifact_sizes_valid
         else 0
     )
     package_inventory_bytes = (
-        sum(int(row["size_in_bytes"]) for row in package_rows)
+        sum(_as_int(row["size_in_bytes"]) for row in package_rows)
         if package_sizes_valid
         else 0
     )
     shared_evidence = _reported_shared_storage_evidence(
-        explicit_shared=int(explicit_shared) if explicit_shared is not None else None,
+        explicit_shared=_as_int(explicit_shared) if explicit_shared is not None else None,
         billing_fresh=billing_fresh,
         billing_period_complete=(
             billing_storage_evidence["billing_storage_period_evidence_complete"]
@@ -1239,8 +1248,8 @@ def _collect_storage_snapshot(
         "artifact_inventory_bytes": artifact_inventory_bytes,
         "package_inventory_bytes": package_inventory_bytes,
         "unreflected_upload_bytes": unreflected,
-        "reported_cache_use_bytes": int(reported_cache or 0),
-        "cache_inventory_bytes": sum(int(row["size_in_bytes"]) for row in caches)
+        "reported_cache_use_bytes": _as_int(reported_cache or 0),
+        "cache_inventory_bytes": sum(_as_int(row["size_in_bytes"]) for row in caches)
         if cache_sizes_valid
         else 0,
         "pending_cache_bytes": pending_cache,
@@ -1447,7 +1456,7 @@ def collect_live_snapshot(
     workflows, workflow_hashes = _workflow_documents(repo_root)
     heavy_paths = {
         str(row["path"])
-        for row in inventory_heavy_workflows(workflows)  # type: ignore[arg-type]
+        for row in inventory_heavy_workflows(workflows)
         if row.get("heavy") is True
     }
     authority_anchor_verified, authority_records, authority_comments_complete = (
@@ -1554,10 +1563,12 @@ def collect_live_snapshot(
             is True,
             "required_reviewers": sorted(
                 str(reviewer.get("login"))
-                for rule in environment.get("protection_rules", ())
+                for rule in cast(
+                    Iterable[object], environment.get("protection_rules", ())
+                )
                 if isinstance(rule, dict)
                 and isinstance(rule.get("reviewers"), list)
-                for reviewer in rule["reviewers"]
+                for reviewer in cast(list[object], rule["reviewers"])
                 if isinstance(reviewer, dict) and reviewer.get("login")
             ),
         },

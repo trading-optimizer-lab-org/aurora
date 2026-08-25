@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from builtins import ExceptionGroup
 import hashlib
 import inspect
 import json
@@ -10,6 +9,7 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
+from typing import TypedDict, TypeVar, cast
 
 import pytest
 
@@ -17,6 +17,7 @@ from scripts import run_catalog_bootstrap_assistant as bootstrap_runner
 
 from infra.sp500_megarun.catalog_bootstrap_state import (
     CatalogBootstrapEventV1,
+    EventName,
     advance_bootstrap_state,
     canonical_state_bytes,
     initial_bootstrap_state,
@@ -34,6 +35,32 @@ PUBLIC_BINDING_PATHS = (
     "config/catalog_requester_app_permissions_v1.json",
     "config/catalog_requester_public_key_v1.pem",
 )
+
+
+class _RequesterRecoveryFixture(TypedDict):
+    root: Path
+    broker_root: Path
+    source: Path
+    first: dict[str, object]
+    status: dict[str, object]
+    issue: dict[str, object]
+    controller: dict[str, object]
+
+
+_ItemT = TypeVar("_ItemT")
+_ResultT = TypeVar("_ResultT")
+
+
+def _append_then_return(
+    items: list[_ItemT], item: _ItemT, result: _ResultT
+) -> _ResultT:
+    items.append(item)
+    return result
+
+
+def _append_and_get_last(items: list[_ItemT], item: _ItemT) -> _ItemT:
+    items.append(item)
+    return items[-1]
 
 
 def test_review_environment_loads_the_selected_checkout_in_child_process(
@@ -78,7 +105,9 @@ def test_review_environment_loads_the_selected_checkout_in_child_process(
     assert environment["PYTHONPATH"] != str(stale)
 
 
-def event(name: str, sequence: int, *, bootstrap_id: str = BOOTSTRAP_ID):
+def event(
+    name: EventName, sequence: int, *, bootstrap_id: str = BOOTSTRAP_ID
+) -> CatalogBootstrapEventV1:
     return CatalogBootstrapEventV1(
         schema_version="1",
         bootstrap_id=bootstrap_id,
@@ -99,7 +128,7 @@ def test_only_closed_forward_transitions_are_allowed() -> None:
 
 
 def test_complete_transition_graph_reaches_ready() -> None:
-    names = (
+    names: tuple[EventName, ...] = (
         "precheck_passed",
         "requester_created",
         "requester_installed",
@@ -121,7 +150,7 @@ def test_complete_transition_graph_reaches_ready() -> None:
 
 
 def _merge_pending_state():
-    names = (
+    names: tuple[EventName, ...] = (
         "precheck_passed",
         "requester_created",
         "requester_installed",
@@ -1046,7 +1075,7 @@ def test_sixth_github_controls_block_waits_for_audit_throughput_receipt(
 
 
 def test_audit_throughput_repair_operation_is_validated(tmp_path: Path) -> None:
-    prior = {"merge_commit_sha": "a" * 40}
+    prior: dict[str, object] = {"merge_commit_sha": "a" * 40}
     operation = _github_controls_audit_throughput_repair_operation(
         prior_merge="a" * 40,
         repair_head="b" * 40,
@@ -1065,7 +1094,7 @@ def test_audit_throughput_repair_operation_is_validated(tmp_path: Path) -> None:
 
 
 def test_package_token_repair_operation_is_validated(tmp_path: Path) -> None:
-    prior = {"merge_commit_sha": "a" * 40}
+    prior: dict[str, object] = {"merge_commit_sha": "a" * 40}
     operation = _github_controls_package_token_repair_operation(
         prior_merge="a" * 40,
         repair_head="b" * 40,
@@ -1428,7 +1457,10 @@ def test_required_environment_secret_gate_returns_no_sensitive_metadata(
         lambda: required,
     )
 
-    assert bootstrap_runner._require_protected_environment_secrets(required) is None
+    assert cast(
+        object,
+        bootstrap_runner._require_protected_environment_secrets(required),
+    ) is None
 
 
 def test_github_controls_receipt_source_does_not_persist_secret_names() -> None:
@@ -1757,7 +1789,10 @@ def test_recover_exact_clean_local_install_block_through_protected_repair(
     (root / "local-install-repair-operation-v1.json").write_bytes(
         bootstrap_runner._canonical(repair) + b"\n"
     )
-    baseline = {"heavy_run_ids": [], "request_issue_numbers": []}
+    baseline: dict[str, list[int]] = {
+        "heavy_run_ids": [],
+        "request_issue_numbers": [],
+    }
     (root / "github-activity-baseline-v1.json").write_bytes(
         bootstrap_runner._canonical(baseline) + b"\n"
     )
@@ -2709,12 +2744,12 @@ def test_main_tries_local_recovery_after_merge_recovery_declines(
     monkeypatch.setattr(
         bootstrap_runner,
         "_resume_transient_merge_block",
-        lambda _root: recoveries.append("merge") or False,
+        lambda _root: _append_then_return(recoveries, "merge", False),
     )
     monkeypatch.setattr(
         bootstrap_runner,
         "_resume_transient_local_install_block",
-        lambda _root: recoveries.append("local") or True,
+        lambda _root: _append_then_return(recoveries, "local", True),
     )
     monkeypatch.setattr(
         sys,
@@ -3215,7 +3250,7 @@ def test_requester_qualification_uses_terminal_status_without_ticket(
     monkeypatch.setattr(
         bootstrap_runner,
         "_invoke_bootstrap_request",
-        lambda _source: calls.append(first) or first,
+        lambda _source: _append_then_return(calls, first, first),
     )
     monkeypatch.setattr(
         bootstrap_runner,
@@ -3248,7 +3283,7 @@ def _qualification_pending_root(tmp_path: Path) -> Path:
     source = tmp_path / "source"
     source.mkdir()
     state = initial_bootstrap_state(BOOTSTRAP_ID, COMMIT)
-    names = (
+    names: tuple[EventName, ...] = (
         "precheck_passed",
         "requester_created",
         "requester_installed",
@@ -3268,7 +3303,10 @@ def _qualification_pending_root(tmp_path: Path) -> Path:
         "auditor_secret_name": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
         "first_live_qualification": _fake_live_receipt(100),
     }
-    baseline = {"request_issue_numbers": [], "heavy_run_ids": []}
+    baseline: dict[str, list[int]] = {
+        "request_issue_numbers": [],
+        "heavy_run_ids": [],
+    }
     (root / "github-controls-operation-v1.json").write_bytes(
         bootstrap_runner._canonical(controls) + b"\n"
     )
@@ -3367,7 +3405,7 @@ def test_dispatch_intent_recovers_accepted_run_without_redispatch(
             f"/actions/runs/{run['id']}"
         ):
             return _fake_qualification_view(run, workflow)
-        pytest.fail(f"unexpected command: {args}")
+        raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
     monkeypatch.setattr(
@@ -3437,7 +3475,7 @@ def test_dispatch_intent_fails_closed_when_reconciliation_is_not_unique(
             elif scenario == "wrong_identity":
                 runs.append(wrong)
             raise RuntimeError("FAULT_AFTER_WORKFLOW_DISPATCH_ACCEPTED")
-        pytest.fail(f"unexpected command: {args}")
+        raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
     with pytest.raises(RuntimeError, match="DISPATCH_ACCEPTED"):
@@ -3616,7 +3654,7 @@ def test_stored_workflow_receipt_must_bind_exact_commit_and_success(
         "conclusion": "failure" if mutation == "conclusion" else "success",
         "url": "https://example.test/runs/901",
     }
-    entry = {
+    entry: dict[str, object] = {
         "name": "policy_1",
         "receipt": receipt,
         "receipt_sha256": hashlib.sha256(
@@ -3731,7 +3769,7 @@ def test_stored_live_receipt_rejects_changed_artifact(
     tmp_path: Path, monkeypatch
 ) -> None:
     receipt = _fake_live_receipt(903)
-    entry = {
+    entry: dict[str, object] = {
         "name": "live_2",
         "receipt": receipt,
         "receipt_sha256": hashlib.sha256(
@@ -3765,7 +3803,7 @@ def test_stored_live_receipt_rejects_changed_artifact(
         )
 
 
-def _requester_recovery_fixture(tmp_path: Path) -> dict[str, object]:
+def _requester_recovery_fixture(tmp_path: Path) -> _RequesterRecoveryFixture:
     broker_root = tmp_path / "requester-broker"
     (broker_root / "campaign-status").mkdir(parents=True)
     (broker_root / "receipts").mkdir(parents=True)
@@ -3878,7 +3916,7 @@ def _requester_recovery_fixture(tmp_path: Path) -> dict[str, object]:
 
 
 def _patch_requester_recovery_fakes(
-    fixture: dict[str, object], monkeypatch: pytest.MonkeyPatch
+    fixture: _RequesterRecoveryFixture, monkeypatch: pytest.MonkeyPatch
 ) -> list[dict[str, object]]:
     root = fixture["root"]
     broker_root = fixture["broker_root"]
@@ -3900,7 +3938,7 @@ def _patch_requester_recovery_fakes(
     monkeypatch.setattr(
         bootstrap_runner,
         "_invoke_bootstrap_request",
-        lambda _source: calls.append(dict(first)) or dict(first),
+        lambda _source: _append_then_return(calls, dict(first), dict(first)),
     )
     monkeypatch.setattr(
         bootstrap_runner,
@@ -4123,7 +4161,9 @@ def test_all_one_shot_live_qualifications_use_persistent_dispatch_intents(
     monkeypatch.setattr(
         bootstrap_runner,
         "_run_qualification_workflow_step",
-        lambda _root, observed_step, _commit: calls.append(observed_step) or run,
+        lambda _root, observed_step, _commit: _append_then_return(
+            calls, observed_step, run
+        ),
     )
     monkeypatch.setattr(
         bootstrap_runner,
@@ -4235,7 +4275,7 @@ def test_requester_initial_response_rejects_cross_identity_before_checkpoint(
     monkeypatch.setattr(
         bootstrap_runner,
         "_invoke_bootstrap_request",
-        lambda _source: calls.append(mismatched) or mismatched,
+        lambda _source: _append_then_return(calls, mismatched, mismatched),
     )
 
     with pytest.raises(ValueError, match="QUALIFICATION_NOT_TERMINAL"):
@@ -4415,7 +4455,7 @@ def test_second_requester_receipt_with_any_field_difference_blocks(
     monkeypatch.setattr(
         bootstrap_runner,
         "_invoke_bootstrap_request",
-        lambda _source: calls.append(dict(next(responses))) or calls[-1],
+        lambda _source: _append_and_get_last(calls, dict(next(responses))),
     )
 
     with pytest.raises(ValueError, match="REQUESTER_REPLAY_INVALID"):
@@ -4597,7 +4637,10 @@ def test_recover_exact_merge_block_without_replaying_prior_phases(
             json.dumps(operation, sort_keys=True, separators=(",", ":")) + "\n"
         ).encode("utf-8")
     )
-    baseline = {"heavy_run_ids": [], "request_issue_numbers": []}
+    baseline: dict[str, list[int]] = {
+        "heavy_run_ids": [],
+        "request_issue_numbers": [],
+    }
     (root / "github-activity-baseline-v1.json").write_text(
         json.dumps(baseline, sort_keys=True, separators=(",", ":")) + "\n",
         encoding="utf-8",
