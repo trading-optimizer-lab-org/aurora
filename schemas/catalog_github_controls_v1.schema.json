@@ -267,8 +267,8 @@
       "properties": {
         ".github/workflows/catalog-run-controller.yml": {
           "type": "array",
-          "minItems": 7,
-          "maxItems": 7,
+          "minItems": 6,
+          "maxItems": 6,
           "uniqueItems": true,
           "items": {"type": "string"}
         },

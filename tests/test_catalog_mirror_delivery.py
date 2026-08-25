@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from scripts import reconcile_catalog_mirror_delivery as mirror_reconciler
 from aurora.infra.sp500_megarun.catalog_authority_ledger import (
     AuthorityState,
     CatalogAuthorityRecordV1,
@@ -12,6 +13,7 @@ from aurora.infra.sp500_megarun.catalog_authority_ledger import (
 from aurora.infra.sp500_megarun.catalog_authority_writer import (
     CatalogAuthorityWriterContextV1,
 )
+from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.catalog_mirror_delivery import (
     CatalogMirrorArtifactV1,
     CatalogMirrorRepairClaimV1,
@@ -129,6 +131,24 @@ def _repair_writer(
     )
 
 
+def _historical_repair_writer(
+    *,
+    run_id: int,
+    database_id: int,
+    observed_at: datetime = NOW,
+) -> CatalogMirrorRepairWriterContextV1:
+    return CatalogMirrorRepairWriterContextV1(
+        run_id=run_id,
+        run_attempt=1,
+        writer_job_id="repair_request_receipt_orphan",
+        writer_job_database_id=database_id,
+        workflow_path=".github/workflows/catalog-run-controller.yml",
+        repository="trading-optimizer-lab-org/aurora",
+        protected_commit_sha=COMMIT,
+        observed_at=observed_at,
+    )
+
+
 def _mirror(*, artifact_id: int, name: str, payload: object) -> CatalogMirrorArtifactV1:
     return CatalogMirrorArtifactV1.create(
         artifact_id=artifact_id,
@@ -194,6 +214,132 @@ def test_request_orphan_mirror_repairs_the_old_exact_receipt_once() -> None:
     assert decision.artifact_id == 51
     assert decision.payload_sha256 == original.receipt_sha256
     assert decision.stop_after_repair is True
+
+
+def test_historical_orphan_claim_still_parses_and_verifies(monkeypatch) -> None:
+    original = _receipt(run_id=9001, database_id=9101)
+    decision = decide_request_receipt_mirror_delivery(
+        candidate=_receipt(run_id=9002, database_id=9201),
+        artifacts=(_mirror(artifact_id=51, name=original.artifact_name, payload=original),),
+        comment_receipts=(),
+        writer_evidence=(
+            _evidence(
+                run_id=9001,
+                database_id=9101,
+                job_id="report_nonexecuting_decision",
+                post_conclusion="failure",
+            ),
+        ),
+        now=NOW + timedelta(minutes=1),
+    )
+    identity = {
+        "schema_version": "1",
+        "target_kind": "request",
+        "target_artifact_name": decision.artifact_name,
+        "target_artifact_id": 51,
+        "target_payload_sha256": decision.payload_sha256,
+        "repair_sequence": 0,
+        "previous_claim_sha256": None,
+        "writer": _historical_repair_writer(
+            run_id=9002,
+            database_id=9201,
+        ).model_dump(mode="json"),
+    }
+    historical = CatalogMirrorRepairClaimV1.model_validate(
+        {**identity, "claim_sha256": canonical_sha256(identity)}
+    )
+
+    parsed = CatalogMirrorRepairClaimV1.model_validate(
+        historical.model_dump(mode="json")
+    )
+    run = {
+        "repository": {"full_name": "trading-optimizer-lab-org/aurora"},
+        "path": ".github/workflows/catalog-run-controller.yml",
+        "head_sha": COMMIT,
+        "status": "completed",
+    }
+    job = {
+        "id": 9201,
+        "name": "repair_request_receipt_orphan",
+        "status": "completed",
+        "steps": [
+            {
+                "name": "Claim one mirror-comment repair attempt",
+                "conclusion": "success",
+            },
+            {
+                "name": "Append the exact missing comment once",
+                "conclusion": "failure",
+            },
+        ],
+    }
+    monkeypatch.setattr(mirror_reconciler, "_gh_json", lambda endpoint: run)
+    monkeypatch.setattr(
+        mirror_reconciler,
+        "_completed_run_jobs",
+        lambda run_id, run_attempt: (job,),
+    )
+    evidence = mirror_reconciler._repair_claim_writer_evidence(parsed)
+
+    assert parsed.claim_sha256 == historical.claim_sha256
+    assert parsed.writer.writer_job_id == "repair_request_receipt_orphan"
+    assert evidence.post_step_conclusion == "failure"
+
+
+def test_new_claim_rejects_obsolete_orphan_writer() -> None:
+    original = _receipt(run_id=9001, database_id=9101)
+    decision = decide_request_receipt_mirror_delivery(
+        candidate=_receipt(run_id=9002, database_id=9201),
+        artifacts=(_mirror(artifact_id=51, name=original.artifact_name, payload=original),),
+        comment_receipts=(),
+        writer_evidence=(
+            _evidence(
+                run_id=9001,
+                database_id=9101,
+                job_id="report_nonexecuting_decision",
+                post_conclusion="failure",
+            ),
+        ),
+        now=NOW + timedelta(minutes=1),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_MIRROR_REPAIR_CURRENT_WRITER_INVALID",
+    ):
+        prepare_catalog_mirror_repair_claim(
+            decision=decision,
+            prior_claims=(),
+            prior_writer_evidence=(),
+            current_writer=_historical_repair_writer(run_id=9002, database_id=9201),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_MIRROR_REPAIR_CURRENT_WRITER_INVALID",
+    ):
+        CatalogMirrorRepairClaimV1.create(
+            target_kind="request",
+            target_artifact_name=decision.artifact_name,
+            target_artifact_id=51,
+            target_payload_sha256=decision.payload_sha256,
+            repair_sequence=0,
+            previous_claim_sha256=None,
+            writer=_historical_repair_writer(run_id=9002, database_id=9201),
+        )
+
+
+def test_obsolete_github_job_fails_closed_before_creating_a_claim(monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_RUN_ID", "9002")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("GITHUB_JOB", "repair_request_receipt_orphan")
+    monkeypatch.setenv("GITHUB_SHA", COMMIT)
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_MIRROR_REPAIR_WRITER_INVALID",
+    ):
+        mirror_reconciler._current_repair_writer(kind="request")
 
 
 def test_authority_orphan_reuses_old_writer_record_and_stops_before_compute() -> None:

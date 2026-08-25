@@ -1003,7 +1003,7 @@ def audit_catalog_github_controls(
         for path, jobs in desired.entrypoints.issues_write_job_allowlist.items()
         for job in jobs
     }
-    check("ISSUES_WRITE_TOPOLOGY_EXACT", set(writers) <= allowed_writers)
+    check("ISSUES_WRITE_TOPOLOGY_EXACT", set(writers) == allowed_writers)
 
     source_hashes = _mapping(snapshots.get("workflow_source_sha256s"))
     check(

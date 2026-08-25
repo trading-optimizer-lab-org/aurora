@@ -77,6 +77,22 @@ def _safe_heavy_workflow() -> dict[str, object]:
     }
 
 
+def _safe_issue_writer_workflow(job_ids: tuple[str, ...]) -> dict[str, object]:
+    return {
+        "name": "Synthetic bounded issue writers",
+        "on": {"workflow_call": {"inputs": {}}},
+        "permissions": {"contents": "read"},
+        "jobs": {
+            job_id: {
+                "runs-on": "ubuntu-24.04",
+                "permissions": {"issues": "write"},
+                "steps": [],
+            }
+            for job_id in job_ids
+        },
+    }
+
+
 def protected_snapshots() -> dict[str, object]:
     desired = load_desired_controls()
     auditor = load_desired_auditor()
@@ -136,8 +152,35 @@ def protected_snapshots() -> dict[str, object]:
             "estimated_paid_actions_cost": 0,
             "billing_snapshot_complete": True,
         },
-        "workflow_documents": {HEAVY_PATH: _safe_heavy_workflow()},
-        "workflow_source_sha256s": {HEAVY_PATH: "b" * 64},
+        "workflow_documents": {
+            HEAVY_PATH: _safe_heavy_workflow(),
+            ".github/workflows/catalog-run-controller.yml": _safe_issue_writer_workflow(
+                (
+                    "issue_tamper_guard",
+                    "reserve",
+                    "report_nonexecuting_decision",
+                    "record_running",
+                    "record_nonterminal_wait",
+                    "finalize",
+                )
+            ),
+            ".github/workflows/catalog-request-reconciler.yml": _safe_issue_writer_workflow(
+                ("call_controller",)
+            ),
+            ".github/workflows/catalog-ledger-guard.yml": _safe_issue_writer_workflow(
+                ("record_tamper_incident",)
+            ),
+            ".github/workflows/catalog-run-watchdog.yml": _safe_issue_writer_workflow(
+                ("call_controller",)
+            ),
+        },
+        "workflow_source_sha256s": {
+            HEAVY_PATH: "b" * 64,
+            ".github/workflows/catalog-run-controller.yml": "b" * 64,
+            ".github/workflows/catalog-request-reconciler.yml": "b" * 64,
+            ".github/workflows/catalog-ledger-guard.yml": "b" * 64,
+            ".github/workflows/catalog-run-watchdog.yml": "b" * 64,
+        },
         "active_runs": [],
         "runs_pagination_complete": True,
         "jobs_pagination_complete": True,
@@ -268,6 +311,48 @@ def test_exact_protected_state_passes() -> None:
     assert len(receipt.receipt_sha256) == 64
     assert receipt.observer_context == "bootstrap_local"
     assert receipt.audit_use_context == "controller_admission"
+
+
+def test_missing_permitted_writer_blocks_closed_topology() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    workflows = snapshots["workflow_documents"]
+    assert isinstance(workflows, dict)
+    controller = workflows[".github/workflows/catalog-run-controller.yml"]
+    assert isinstance(controller, dict)
+    jobs = controller["jobs"]
+    assert isinstance(jobs, dict)
+    del jobs["finalize"]
+
+    receipt = audit_catalog_github_controls(**inputs)
+
+    assert receipt.status == "blocked"
+    assert "ISSUES_WRITE_TOPOLOGY_EXACT" in receipt.failed_controls
+
+
+def test_controller_writer_allowlist_has_exactly_six_schema_items() -> None:
+    payload = json.loads(CONTROLS.read_text("utf-8"))
+    schema = json.loads(
+        (ROOT / "schemas/catalog_github_controls_v1.schema.json").read_text("utf-8")
+    )
+    expected = [
+        "issue_tamper_guard",
+        "reserve",
+        "report_nonexecuting_decision",
+        "record_running",
+        "record_nonterminal_wait",
+        "finalize",
+    ]
+    observed = payload["entrypoints"]["issues_write_job_allowlist"][
+        ".github/workflows/catalog-run-controller.yml"
+    ]
+    schema_node = schema["$defs"]["issues_write_job_allowlist"]["properties"][
+        ".github/workflows/catalog-run-controller.yml"
+    ]
+    assert observed == expected
+    assert schema_node["minItems"] == 6
+    assert schema_node["maxItems"] == 6
 
 
 def test_cache_retention_matches_github_repository_limit() -> None:

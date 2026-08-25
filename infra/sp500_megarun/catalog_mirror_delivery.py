@@ -153,7 +153,7 @@ class CatalogMirrorWriterEvidenceV1(FrozenModel):
 
 
 class CatalogMirrorRepairWriterContextV1(FrozenModel):
-    """Current protected job that may claim one bounded comment repair."""
+    """Historical or current protected job recorded with a repair claim."""
 
     schema_version: Literal["1"] = "1"
     run_id: int = Field(ge=1)
@@ -161,6 +161,35 @@ class CatalogMirrorRepairWriterContextV1(FrozenModel):
     writer_job_id: Literal[
         "report_nonexecuting_decision",
         "repair_request_receipt_orphan",
+        "reserve",
+        "record_running",
+        "record_nonterminal_wait",
+        "finalize",
+    ]
+    writer_job_database_id: int = Field(ge=1)
+    workflow_path: Literal[
+        ".github/workflows/catalog-run-controller.yml",
+        ".github/workflows/catalog-request-reconciler.yml",
+        ".github/workflows/catalog-run-watchdog.yml",
+    ]
+    repository: Literal["trading-optimizer-lab-org/aurora"]
+    protected_commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    observed_at: datetime
+
+    @field_validator("observed_at")
+    @classmethod
+    def _validate_observed_at(cls, value: datetime) -> datetime:
+        return _utc(value, field="repair writer timestamp")
+
+
+class CatalogMirrorCurrentRepairWriterContextV1(FrozenModel):
+    """Current protected job that may create one bounded comment-repair claim."""
+
+    schema_version: Literal["1"] = "1"
+    run_id: int = Field(ge=1)
+    run_attempt: int = Field(ge=1)
+    writer_job_id: Literal[
+        "report_nonexecuting_decision",
         "reserve",
         "record_running",
         "record_nonterminal_wait",
@@ -225,6 +254,8 @@ class CatalogMirrorRepairClaimV1(FrozenModel):
         previous_claim_sha256: str | None,
         writer: CatalogMirrorRepairWriterContextV1,
     ) -> "CatalogMirrorRepairClaimV1":
+        if writer.writer_job_id == "repair_request_receipt_orphan":
+            raise ValueError("CATALOG_MIRROR_REPAIR_CURRENT_WRITER_INVALID")
         identity = {
             "schema_version": "1",
             "target_kind": target_kind,
@@ -520,16 +551,19 @@ def prepare_catalog_mirror_repair_claim(
     decision: CatalogMirrorDeliveryDecisionV1,
     prior_claims: Sequence[CatalogMirrorRepairClaimV1],
     prior_writer_evidence: Sequence[CatalogMirrorWriterEvidenceV1],
-    current_writer: CatalogMirrorRepairWriterContextV1,
+    current_writer: CatalogMirrorCurrentRepairWriterContextV1,
 ) -> CatalogMirrorRepairClaimV1:
     """Claim one repair before POST, retrying only proven failed attempts."""
 
     decision = CatalogMirrorDeliveryDecisionV1.model_validate(
         decision.model_dump(mode="json")
     )
-    current_writer = CatalogMirrorRepairWriterContextV1.model_validate(
-        current_writer.model_dump(mode="json")
-    )
+    try:
+        current_writer = CatalogMirrorCurrentRepairWriterContextV1.model_validate(
+            current_writer.model_dump(mode="json")
+        )
+    except ValueError:
+        raise ValueError("CATALOG_MIRROR_REPAIR_CURRENT_WRITER_INVALID") from None
     claims = tuple(
         CatalogMirrorRepairClaimV1.model_validate(row.model_dump(mode="json"))
         for row in prior_claims
@@ -593,6 +627,7 @@ __all__ = [
     "CatalogMirrorArtifactV1",
     "CatalogMirrorDeliveryDecisionV1",
     "CatalogMirrorRepairClaimV1",
+    "CatalogMirrorCurrentRepairWriterContextV1",
     "CatalogMirrorRepairWriterContextV1",
     "CatalogMirrorWriterEvidenceV1",
     "catalog_mirror_repair_claim_artifact_name",

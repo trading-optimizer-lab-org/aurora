@@ -170,10 +170,10 @@ def test_policy_workflow_is_lightweight_read_only_and_exactly_named() -> None:
 
 def test_every_controller_mirror_write_reconciles_orphans_before_upload() -> None:
     rendered = (WORKFLOWS / "catalog-run-controller.yml").read_text("utf-8")
-    assert rendered.count("python scripts/reconcile_catalog_mirror_delivery.py") == 8
-    assert rendered.count("name: Claim one mirror-comment repair attempt") == 8
-    assert rendered.count("name: Read back the repair claim before any repaired comment") == 8
-    assert rendered.count("catalog-mirror-repair-claim.zip") == 16
+    assert rendered.count("python scripts/reconcile_catalog_mirror_delivery.py") == 7
+    assert rendered.count("name: Claim one mirror-comment repair attempt") == 7
+    assert rendered.count("name: Read back the repair claim before any repaired comment") == 7
+    assert rendered.count("catalog-mirror-repair-claim.zip") == 14
     assert rendered.count("outputs.action == 'upload_new'") >= 7
     assert rendered.count("outputs.existing_artifact_id ||") == 7
     assert "CATALOG_MIRROR_POST_OUTCOME_AMBIGUOUS" in (
@@ -487,13 +487,13 @@ def test_controller_has_only_request_lifecycle_and_reconciler_triggers() -> None
 
     expected_writers = {
         "issue_tamper_guard",
-        "repair_request_receipt_orphan",
         "reserve",
         "report_nonexecuting_decision",
         "record_running",
         "record_nonterminal_wait",
         "finalize",
     }
+    assert len(expected_writers) == 6
     writers = {
         job
         for path, job in jobs_with_issues_write(
@@ -544,7 +544,6 @@ def test_controller_job_order_and_authority_gates_are_explicit() -> None:
         "issue_tamper_guard",
         "filter",
         "routing_snapshot",
-        "repair_request_receipt_orphan",
         "route_without_privileged_audit",
         "prepare_admission_candidates",
         "live_controls_audit_before_reserve",
@@ -936,10 +935,6 @@ def test_issues_write_is_job_scoped_to_the_exact_governance_jobs() -> None:
     )
     assert set(jobs_with_issues_write(workflows)) == {
         (".github/workflows/catalog-run-controller.yml", "issue_tamper_guard"),
-        (
-            ".github/workflows/catalog-run-controller.yml",
-            "repair_request_receipt_orphan",
-        ),
         (".github/workflows/catalog-run-controller.yml", "reserve"),
         (
             ".github/workflows/catalog-run-controller.yml",
@@ -1055,13 +1050,13 @@ def test_only_request_receipt_writers_can_apply_fixed_atomic_terminal_patches() 
     path = WORKFLOWS / "catalog-run-controller.yml"
     workflow = _workflow(path)
     text = path.read_text("utf-8")
-    assert text.count("--method PATCH") == 2
+    assert text.count("--method PATCH") == 1
     reporter = json.dumps(
         workflow["jobs"]["report_nonexecuting_decision"], sort_keys=True
     )
     finalizer = json.dumps(workflow["jobs"]["finalize"], sort_keys=True)
-    assert "--method PATCH" in reporter
-    assert "terminal-issue-patch.json" in reporter
+    assert "--method PATCH" not in reporter
+    assert "terminal-issue-patch.json" not in reporter
     assert "--method PATCH" in finalizer
     assert "terminal-issue-patch.json" in finalizer
     receipt_script = ROOT / "scripts/prepare_catalog_terminal_request_receipt.py"
@@ -1069,9 +1064,78 @@ def test_only_request_receipt_writers_can_apply_fixed_atomic_terminal_patches() 
     assert '"labels": ["catalog-run-terminal-v1"]' in receipt_text
     assert '"state": "closed"' in receipt_text
     assert '"state_reason": "completed"' in receipt_text
-    assert text.count("CATALOG_REQUEST_TERMINAL_READBACK_INVALID") == 2
-    assert text.count('(issue.get("closed_by") or {}).get("login")') == 2
-    assert text.count('gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER"') >= 2
+    assert text.count("CATALOG_REQUEST_TERMINAL_READBACK_INVALID") == 1
+    assert text.count('(issue.get("closed_by") or {}).get("login")') == 1
+    assert text.count('gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER"') >= 1
+
+
+def test_orphan_repair_is_admitted_only_by_report_and_is_mirror_first() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    jobs = workflow["jobs"]
+    route = jobs["route_without_privileged_audit"]
+    report = jobs["report_nonexecuting_decision"]
+    assert "request_receipt_orphan != 'true'" in route["if"]
+    assert "request_receipt_orphan == 'true'" in report["if"]
+    assert report["needs"] == [
+        "filter",
+        "routing_snapshot",
+        "route_without_privileged_audit",
+        "admission",
+    ]
+
+    steps = report["steps"]
+    rendered = json.dumps(steps, sort_keys=True)
+    assert "request-receipt-orphan.json" in rendered
+    assert "request-receipt-orphan-comment.md" in rendered
+    assert "prepare_catalog_request_receipt.py" in rendered
+    assert "engine_optimized_catalog_v1" not in rendered
+    assert "--method PATCH" not in rendered
+
+    download = next(
+        step
+        for step in steps
+        if step.get("uses", "").startswith("actions/download-artifact@")
+        and step.get("with", {}).get("name") == "catalog-routing-snapshot"
+    )
+    assert download["if"] == "${{ needs.routing_snapshot.result == 'success' }}"
+    receipt = next(step for step in steps if step.get("id") == "receipt")
+    assert "request_receipt_orphan != 'true'" in receipt["if"]
+    orphan_reconcile = next(step for step in steps if step.get("id") == "reconcile_mirror")
+    assert "request-receipt-orphan.json" in orphan_reconcile["run"]
+    orphan_mirror_readback = next(
+        step for step in steps if step.get("id") == "orphan_mirror_readback"
+    )
+    claim = next(step for step in steps if step.get("id") == "repair_claim")
+    claim_readback = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("name") == "Read back the repair claim before any repaired comment"
+    )
+    publication = next(step for step in steps if step.get("name") == "Read back, append exactly once")
+    fresh = next(step for step in steps if step.get("id") == "orphan_readback")
+    assert steps.index(orphan_reconcile) < steps.index(orphan_mirror_readback)
+    assert steps.index(claim) < claim_readback < steps.index(publication) < steps.index(fresh)
+    assert "test ! -f" in fresh["run"]
+    assert "request-receipt-orphan.json" in fresh["run"]
+
+
+def test_controller_has_exactly_six_active_public_writer_jobs() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    writers = {
+        job
+        for path, job in jobs_with_issues_write(
+            {".github/workflows/catalog-run-controller.yml": workflow}
+        )
+    }
+    assert writers == {
+        "issue_tamper_guard",
+        "reserve",
+        "report_nonexecuting_decision",
+        "record_running",
+        "record_nonterminal_wait",
+        "finalize",
+    }
+    assert "repair_request_receipt_orphan" not in writers
 
 
 def test_repository_catalog_topology_is_closed_and_content_hashed() -> None:
