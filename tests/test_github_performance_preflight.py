@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -357,6 +358,86 @@ def test_legacy_migration_loader_verifies_authorization_receipt(
         load_legacy_workflow_migrations(migration, tmp_path)
 
 
+def test_authorized_adoption_loader_binds_receipt_commit_and_rows(
+    tmp_path: Path,
+) -> None:
+    receipt = tmp_path / "docs/readiness/workflow-adoption.json"
+    receipt.parent.mkdir(parents=True)
+    adopted = [
+        {
+            "path": ".github/workflows/adopted.yml",
+            "sha256": "1" * 64,
+        }
+    ]
+    adopted_bytes = json.dumps(
+        adopted,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    adopted_sha256 = hashlib.sha256(adopted_bytes).hexdigest()
+    receipt_payload = {
+        "accepted": True,
+        "adopted_workflow_count": 1,
+        "adopted_workflows_sha256": adopted_sha256,
+        "authorization_scope": ["adopt_baseline"],
+        "baseline_commit_sha": "b" * 40,
+        "owner_actor_id": "github-user:1",
+        "preserves_future_framework_enforcement": True,
+    }
+    receipt.write_text(
+        json.dumps(
+            receipt_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    allowlist_path = tmp_path / "config/allowlist.json"
+    allowlist_path.parent.mkdir(parents=True)
+    allowlist_path.write_text(
+        json.dumps(
+            {
+                "adoption_commit": "a" * 40,
+                "authorized_adoptions": [
+                    {
+                        "adoption_commit": "b" * 40,
+                        "authorization_receipt": {
+                            "actor_id": "github-user:1",
+                            "path": "docs/readiness/workflow-adoption.json",
+                            "scope": "adopt_baseline",
+                            "sha256": hashlib.sha256(
+                                receipt.read_bytes()
+                                .replace(b"\r\n", b"\n")
+                                .replace(b"\r", b"\n")
+                            ).hexdigest(),
+                        },
+                        "workflow_count": 1,
+                        "workflows_sha256": adopted_sha256,
+                    }
+                ],
+                "schema_version": "2",
+                "workflows": [
+                    {
+                        "adoption_commit": "b" * 40,
+                        **adopted[0],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_legacy_workflow_allowlist(allowlist_path, tmp_path) == {
+        ".github/workflows/adopted.yml": "1" * 64
+    }
+    receipt.write_text('{"accepted":false}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="receipt digest mismatches"):
+        load_legacy_workflow_allowlist(allowlist_path, tmp_path)
+
+
 def test_new_heavy_workflow_must_call_framework(tmp_path: Path) -> None:
     workflow = write_yaml(
         tmp_path / ".github/workflows/new-backtest.yml",
@@ -472,9 +553,12 @@ def test_internal_helper_exception_is_path_scoped(tmp_path: Path) -> None:
 
 
 def test_repository_allowlist_has_frozen_adoption_metadata() -> None:
-    allowlist = load_legacy_workflow_allowlist()
-    assert len(allowlist) == 99
+    repo_root = Path(__file__).resolve().parents[1]
+    allowlist = load_legacy_workflow_allowlist(repo_root=repo_root)
+    assert len(allowlist) == 130
     assert ".github/workflows/tests.yml" in allowlist
+    assert ".github/workflows/catalog-run-controller.yml" in allowlist
+    assert ".github/workflows/sp500-atlas-run.yml" in allowlist
 
 
 def _topology_registry() -> CatalogCampaignRegistryV1:

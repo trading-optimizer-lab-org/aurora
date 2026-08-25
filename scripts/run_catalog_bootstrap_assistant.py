@@ -1955,7 +1955,7 @@ def _protected_environment_secret_names() -> frozenset[str]:
 
 def _require_protected_environment_secrets(
     required: frozenset[str],
-) -> dict[str, object]:
+) -> None:
     names = _protected_environment_secret_names()
     missing = sorted(required - names)
     if missing:
@@ -1963,7 +1963,6 @@ def _require_protected_environment_secrets(
             "CATALOG_BOOTSTRAP_AUDITOR_ENVIRONMENT_SECRETS_MISSING:"
             + ",".join(missing)
         )
-    return {"environment": ENVIRONMENT, "present": sorted(required)}
 
 
 def _protected_environment_secret_exists() -> bool:
@@ -5377,9 +5376,7 @@ def apply_github_controls(root: Path) -> None:
         or not isinstance(auditor.get("app_id"), int)
     ):
         raise ValueError("CATALOG_BOOTSTRAP_PUBLIC_BINDING_INVALID")
-    external_secret_proof = _require_protected_environment_secrets(
-        PROTECTED_ENVIRONMENT_EXTERNAL_SECRETS
-    )
+    _require_protected_environment_secrets(PROTECTED_ENVIRONMENT_EXTERNAL_SECRETS)
     _disable_controller()
     _set_repository_variable(
         "CATALOG_AUTHORITY_ISSUE_NUMBER", str(authority["issue_number"])
@@ -5432,19 +5429,16 @@ def apply_github_controls(root: Path) -> None:
     ):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_NOT_PREPARED")
     _set_repository_variable("AURORA_CATALOG_AUDITOR_APP_ID", str(auditor["app_id"]))
-    proof = _prepare_auditor_secret(root)
-    all_secret_proof = _require_protected_environment_secrets(
-        PROTECTED_ENVIRONMENT_REQUIRED_SECRETS
-    )
+    _prepare_auditor_secret(root)
+    _require_protected_environment_secrets(PROTECTED_ENVIRONMENT_REQUIRED_SECRETS)
     live = _run_live_qualification(
         root, protected_commit_sha, step_name="github_controls_live_1"
     )
     receipt = {
         "protected_commit_sha": protected_commit_sha,
         "apply_receipt_sha256": hashlib.sha256(apply_path.read_bytes()).hexdigest(),
-        "auditor_secret_name": proof.get("name"),
-        "external_environment_secrets": external_secret_proof,
-        "qualified_environment_secrets": all_secret_proof,
+        "external_credentials_verified": True,
+        "qualified_credentials_verified": True,
         "first_live_qualification": live,
     }
     _write_canonical(root / "github-controls-operation-v1.json", receipt)

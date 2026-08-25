@@ -1620,14 +1620,23 @@ def validate_catalog_workflow_topology(
 
 def load_legacy_workflow_allowlist(
     path: Path | None = None,
+    repo_root: Path | None = None,
 ) -> dict[str, str]:
-    """Load and validate the immutable adoption-time workflow hashes."""
+    """Load immutable workflow hashes from original and authorized adoptions."""
 
     if path is None:
         payload = _package_json("config/legacy_workflow_allowlist.json")
+        root = Path.cwd() if repo_root is None else Path(repo_root)
     else:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if payload.get("schema_version") != "1":
+        allowlist_path = Path(path)
+        payload = json.loads(allowlist_path.read_text(encoding="utf-8"))
+        root = (
+            Path(repo_root)
+            if repo_root is not None
+            else allowlist_path.resolve().parents[1]
+        )
+    schema_version = payload.get("schema_version")
+    if schema_version not in {"1", "2"}:
         raise ValueError("legacy workflow allowlist schema is unsupported")
     adoption_commit = payload.get("adoption_commit")
     if (
@@ -1635,25 +1644,112 @@ def load_legacy_workflow_allowlist(
         or not FULL_SHA_RE.fullmatch(adoption_commit)
     ):
         raise ValueError("legacy workflow adoption commit is invalid")
+    authorized_adoptions: dict[str, tuple[int, str]] = {}
+    if schema_version == "2":
+        adoption_rows = payload.get("authorized_adoptions")
+        if not isinstance(adoption_rows, list) or not adoption_rows:
+            raise ValueError("authorized workflow adoptions are missing")
+        for adoption in adoption_rows:
+            if not isinstance(adoption, Mapping):
+                raise ValueError("authorized workflow adoption is invalid")
+            commit = adoption.get("adoption_commit")
+            workflow_count = adoption.get("workflow_count")
+            workflows_sha256 = adoption.get("workflows_sha256")
+            authorization = adoption.get("authorization_receipt")
+            if (
+                not isinstance(commit, str)
+                or not FULL_SHA_RE.fullmatch(commit)
+                or commit == adoption_commit
+                or not isinstance(workflow_count, int)
+                or isinstance(workflow_count, bool)
+                or workflow_count <= 0
+                or not isinstance(workflows_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", workflows_sha256)
+                or not isinstance(authorization, Mapping)
+                or commit in authorized_adoptions
+            ):
+                raise ValueError("authorized workflow adoption is invalid")
+            receipt_path = authorization.get("path")
+            receipt_sha256 = authorization.get("sha256")
+            actor_id = authorization.get("actor_id")
+            scope = authorization.get("scope")
+            if (
+                not isinstance(receipt_path, str)
+                or not receipt_path.startswith("docs/readiness/")
+                or not isinstance(receipt_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", receipt_sha256)
+                or not isinstance(actor_id, str)
+                or not actor_id
+                or not isinstance(scope, str)
+                or not scope
+            ):
+                raise ValueError("workflow adoption authorization is invalid")
+            receipt = (root.resolve() / receipt_path).resolve()
+            if not receipt.is_relative_to(root.resolve()) or not receipt.is_file():
+                raise ValueError("workflow adoption receipt is unavailable")
+            receipt_bytes = receipt.read_bytes().replace(b"\r\n", b"\n").replace(
+                b"\r", b"\n"
+            )
+            if hashlib.sha256(receipt_bytes).hexdigest() != receipt_sha256:
+                raise ValueError("workflow adoption receipt digest mismatches")
+            receipt_payload = json.loads(receipt_bytes)
+            scopes = receipt_payload.get("authorization_scope")
+            if (
+                receipt_payload.get("accepted") is not True
+                or receipt_payload.get("baseline_commit_sha") != commit
+                or receipt_payload.get("owner_actor_id") != actor_id
+                or receipt_payload.get("adopted_workflow_count") != workflow_count
+                or receipt_payload.get("adopted_workflows_sha256")
+                != workflows_sha256
+                or receipt_payload.get("preserves_future_framework_enforcement")
+                is not True
+                or not isinstance(scopes, list)
+                or scope not in scopes
+            ):
+                raise ValueError("workflow adoption receipt binding is invalid")
+            authorized_adoptions[commit] = (workflow_count, workflows_sha256)
+    elif "authorized_adoptions" in payload:
+        raise ValueError("authorized workflow adoptions require schema 2")
     rows = payload.get("workflows")
     if not isinstance(rows, list):
         raise ValueError("legacy workflow allowlist rows are missing")
     allowlist: dict[str, str] = {}
+    adopted_rows: dict[str, list[dict[str, str]]] = {}
     for row in rows:
         if not isinstance(row, Mapping):
             raise ValueError("legacy workflow allowlist row is invalid")
         workflow_path = row.get("path")
         digest = row.get("sha256")
+        row_adoption_commit = row.get("adoption_commit", adoption_commit)
         if (
             not isinstance(workflow_path, str)
             or not workflow_path.startswith(GITHUB_WORKFLOW_DIRECTORY_PREFIX)
             or not isinstance(digest, str)
             or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or not isinstance(row_adoption_commit, str)
+            or not FULL_SHA_RE.fullmatch(row_adoption_commit)
+            or (
+                row_adoption_commit != adoption_commit
+                and row_adoption_commit not in authorized_adoptions
+            )
         ):
             raise ValueError("legacy workflow allowlist entry is invalid")
         if workflow_path in allowlist:
             raise ValueError("duplicate legacy workflow allowlist path")
         allowlist[workflow_path] = digest
+        if row_adoption_commit != adoption_commit:
+            adopted_rows.setdefault(row_adoption_commit, []).append(
+                {"path": workflow_path, "sha256": digest}
+            )
+    if set(adopted_rows) != set(authorized_adoptions):
+        raise ValueError("authorized workflow adoption rows mismatch")
+    for commit, (expected_count, expected_digest) in authorized_adoptions.items():
+        adopted = sorted(adopted_rows[commit], key=lambda item: item["path"])
+        if (
+            len(adopted) != expected_count
+            or _catalog_canonical_hash(adopted) != expected_digest
+        ):
+            raise ValueError("authorized workflow adoption digest mismatches")
     return allowlist
 
 
@@ -1816,6 +1912,9 @@ FRAMEWORK_INTERNAL_WORKFLOW_PATHS = frozenset(
         # Serial read-only control-plane inventory. It is intentionally not a
         # scientific workload and cannot use the sharded research framework.
         ".github/workflows/aurora-maintenance-inventory.yml",
+        # Protected reusable catalog control-plane auditor. It performs no
+        # scientific workload and cannot use the sharded research framework.
+        ".github/workflows/catalog-live-controls-audit.yml",
     }
 )
 

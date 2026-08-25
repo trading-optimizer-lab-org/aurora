@@ -1413,6 +1413,31 @@ def test_required_environment_secrets_fail_closed_with_exact_missing_names(
     )
 
 
+def test_required_environment_secret_gate_returns_no_sensitive_metadata(
+    monkeypatch,
+) -> None:
+    required = frozenset(
+        {
+            "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+            "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+        }
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_protected_environment_secret_names",
+        lambda: required,
+    )
+
+    assert bootstrap_runner._require_protected_environment_secrets(required) is None
+
+
+def test_github_controls_receipt_source_does_not_persist_secret_names() -> None:
+    source = inspect.getsource(bootstrap_runner.apply_github_controls)
+
+    assert '"auditor_secret_name"' not in source
+    assert 'proof.get("name")' not in source
+
+
 def test_safe_blocked_reason_preserves_only_allowlisted_missing_secret_names() -> None:
     safe = ValueError(
         "CATALOG_BOOTSTRAP_AUDITOR_ENVIRONMENT_SECRETS_MISSING:"
