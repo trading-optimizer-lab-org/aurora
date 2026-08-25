@@ -22,6 +22,7 @@ NOW = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
 BOT = "github-actions[bot]"
 REPOSITORY = "trading-optimizer-lab-org/aurora"
 HEAD = "a" * 40
+_MISSING = object()
 
 FAKE_GH_SOURCE = r'''
 from __future__ import annotations
@@ -360,14 +361,61 @@ def test_select_rejects_run_with_wrong_status(tmp_path: Path, monkeypatch: pytes
 
 
 @pytest.mark.parametrize(
-    "queued",
+    "workflow_runs",
     [
-        pytest.param([{}], id="missing"),
-        pytest.param([{"workflow_runs": None}], id="null"),
+        pytest.param(_MISSING, id="missing"),
+        pytest.param(None, id="null"),
+        pytest.param({}, id="dict"),
+        pytest.param("not-a-list", id="string"),
+        pytest.param(1, id="number"),
     ],
 )
-def test_select_rejects_missing_or_null_workflow_runs(
-    queued: list[dict[str, object]],
+@pytest.mark.parametrize("snapshot_status", ["queued", "in_progress"])
+def test_select_rejects_invalid_workflow_runs_for_each_status(
+    workflow_runs: object,
+    snapshot_status: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = _record_chain(1)[0]
+    page = {} if workflow_runs is _MISSING else {"workflow_runs": workflow_runs}
+    snapshots = {
+        "queued": _run_pages(),
+        "in_progress": _run_pages(),
+    }
+    snapshots[snapshot_status] = [page]
+    _write_anchor(tmp_path, production_enabled=True)
+    _install_fake_gh(
+        tmp_path,
+        monkeypatch,
+        _stable_responses(
+            comments=[[_comment(record, 1)]],
+            queued=snapshots["queued"],
+            in_progress=snapshots["in_progress"],
+        ),
+    )
+    _run_cli(monkeypatch, tmp_path, "snapshot")
+
+    with pytest.raises(SystemExit) as exc_info:
+        _run_cli(monkeypatch, tmp_path, "select")
+
+    assert exc_info.value.code == "CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID"
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    [
+        pytest.param(True, id="true"),
+        pytest.param(False, id="false"),
+        pytest.param(None, id="null"),
+        pytest.param("1", id="string"),
+        pytest.param(1.0, id="float"),
+        pytest.param(0, id="zero"),
+        pytest.param(-1, id="negative"),
+    ],
+)
+def test_select_rejects_non_positive_or_non_integer_run_ids(
+    run_id: object,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -378,7 +426,7 @@ def test_select_rejects_missing_or_null_workflow_runs(
         monkeypatch,
         _stable_responses(
             comments=[[_comment(record, 1)]],
-            queued=queued,
+            queued=_run_pages([{"id": run_id, "status": "queued"}]),
             in_progress=_run_pages(),
         ),
     )

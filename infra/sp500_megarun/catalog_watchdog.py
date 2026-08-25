@@ -122,7 +122,12 @@ def select() -> None:
                         raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
                     run_id = run.get("id")
                     status = run.get("status")
-                    if not isinstance(run_id, int) or status != expected_status:
+                    if (
+                        isinstance(run_id, bool)
+                        or not isinstance(run_id, int)
+                        or run_id <= 0
+                        or status != expected_status
+                    ):
                         raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
                     if run_id in run_states:
                         raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
