@@ -10,68 +10,30 @@ permissions:
 jobs:
   qualify_live_admission_controls:
     name: Qualify admission controls
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    environment: catalog-production
+    uses: ./.github/workflows/catalog-live-controls-audit.yml
+    with:
+      purpose: admission
+      caller_workflow: .github/workflows/catalog-live-controls-qualification.yml
+      caller_job: qualify_live_admission_controls
+      protected_commit_sha: ${{ github.sha }}
+      audit_context_sha256: 188a007b5b956430175492a1016026214d71c4ba4af0f7afc2f5dea6d8aecbe4
     permissions:
       actions: read
       contents: read
-    outputs:
-      receipt_artifact_name: ${{ steps.audit.outputs.receipt_artifact_name }}
-      receipt_sha256: ${{ steps.audit.outputs.receipt_sha256 }}
-      receipt_status: ${{ steps.audit.outputs.receipt_status }}
-    steps:
-      - name: Check out the exact protected commit
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Run the protected read-only audit
-        id: audit
-        uses: ./.github/actions/catalog-live-controls-audit
-        with:
-          purpose: admission
-          caller_workflow: .github/workflows/catalog-live-controls-qualification.yml
-          caller_job: qualify_live_admission_controls
-          protected_commit_sha: ${{ github.sha }}
-          audit_context_sha256: 188a007b5b956430175492a1016026214d71c4ba4af0f7afc2f5dea6d8aecbe4
-          auditor_app_id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
-          auditor_private_key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
-          enterprise_billing_token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
-          package_inventory_token: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
 
   qualify_live_terminal_controls:
     name: Qualify terminal controls
     needs: qualify_live_admission_controls
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    environment: catalog-production
+    uses: ./.github/workflows/catalog-live-controls-audit.yml
+    with:
+      purpose: terminal
+      caller_workflow: .github/workflows/catalog-live-controls-qualification.yml
+      caller_job: qualify_live_terminal_controls
+      protected_commit_sha: ${{ github.sha }}
+      audit_context_sha256: c32c0915943952c27734fcb52279556e3cc814a2fd6ef3d500335ceca7c0bcb3
     permissions:
       actions: read
       contents: read
-    outputs:
-      receipt_artifact_name: ${{ steps.audit.outputs.receipt_artifact_name }}
-      receipt_sha256: ${{ steps.audit.outputs.receipt_sha256 }}
-      receipt_status: ${{ steps.audit.outputs.receipt_status }}
-    steps:
-      - name: Check out the exact protected commit
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Run the protected read-only audit
-        id: audit
-        uses: ./.github/actions/catalog-live-controls-audit
-        with:
-          purpose: terminal
-          caller_workflow: .github/workflows/catalog-live-controls-qualification.yml
-          caller_job: qualify_live_terminal_controls
-          protected_commit_sha: ${{ github.sha }}
-          audit_context_sha256: c32c0915943952c27734fcb52279556e3cc814a2fd6ef3d500335ceca7c0bcb3
-          auditor_app_id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
-          auditor_private_key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
-          enterprise_billing_token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
-          package_inventory_token: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
 
   verify_qualification_receipt:
     name: Verify controls qualification receipt

@@ -1,0 +1,131 @@
+name: Catalog live controls audit
+
+on:
+  workflow_call:
+    inputs:
+      purpose:
+        required: true
+        type: string
+      caller_workflow:
+        required: true
+        type: string
+      caller_job:
+        required: true
+        type: string
+      protected_commit_sha:
+        required: true
+        type: string
+      audit_context_sha256:
+        required: true
+        type: string
+    outputs:
+      receipt_artifact_name:
+        description: Secret-free controls receipt artifact name.
+        value: ${{ jobs.audit.outputs.receipt_artifact_name }}
+      receipt_sha256:
+        description: Secret-free controls receipt SHA-256.
+        value: ${{ jobs.audit.outputs.receipt_sha256 }}
+      receipt_status:
+        description: Controls receipt status.
+        value: ${{ jobs.audit.outputs.receipt_status }}
+
+jobs:
+  audit:
+    name: Run protected read-only audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: catalog-production
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: catalog-live-controls-audit-v1
+      cancel-in-progress: false
+    outputs:
+      receipt_artifact_name: ${{ steps.receipt_artifact.outputs.name }}
+      receipt_sha256: ${{ steps.controls.outputs.receipt_sha256 }}
+      receipt_status: ${{ steps.controls.outputs.receipt_status }}
+    steps:
+      - name: Check out the exact protected commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.protected_commit_sha }}
+          persist-credentials: false
+
+      - name: Use Python 3.11
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+
+      - name: Install the locked read-only audit runtime
+        shell: bash
+        run: >-
+          python -m pip install
+          --only-binary=:all:
+          --no-deps
+          --require-hashes
+          -r requirements/catalog-controller-linux-py311.lock
+
+      - id: provenance
+        name: Validate the real caller and protected provenance
+        shell: bash
+        env:
+          EXPECTED_CALLER_WORKFLOW: ${{ inputs.caller_workflow }}
+          EXPECTED_PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          EXPECTED_PURPOSE: ${{ inputs.purpose }}
+          ACTUAL_WORKFLOW_REF: ${{ github.workflow_ref }}
+          ACTUAL_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          ACTUAL_EVENT_NAME: ${{ github.event_name }}
+          ACTUAL_REF: ${{ github.ref }}
+          ACTUAL_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          case "$EXPECTED_PURPOSE" in
+            admission|terminal|maintenance) ;;
+            *) echo "CATALOG_AUDIT_PURPOSE_INVALID" >&2; exit 1 ;;
+          esac
+          [[ "$ACTUAL_EVENT_NAME" == "workflow_call" ]]
+          [[ "$ACTUAL_WORKFLOW_REF" == "$REPOSITORY/$EXPECTED_CALLER_WORKFLOW@"* ]]
+          [[ "$ACTUAL_WORKFLOW_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]
+          [[ "$ACTUAL_REF" == "refs/heads/main" ]]
+          [[ "$ACTUAL_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]
+
+      - name: Mint, audit, emit the secret-free receipt, and discard credentials
+        id: controls
+        shell: bash
+        env:
+          AURORA_CATALOG_AUDITOR_APP_ID: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
+          AURORA_CATALOG_AUDITOR_PRIVATE_KEY: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
+          AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
+          AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
+          PYTHONPATH: ${{ github.workspace }}/..
+        run: >-
+          python scripts/audit_catalog_github_controls.py
+          --repository trading-optimizer-lab-org/aurora
+          --desired config/catalog_github_controls_v1.json
+          --auditor config/catalog_github_auditor_v1.json
+          --workflow-auditor
+          --purpose "${{ inputs.purpose }}"
+          --caller-workflow "${{ inputs.caller_workflow }}"
+          --caller-job "${{ inputs.caller_job }}"
+          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --audit-context-sha256 "${{ inputs.audit_context_sha256 }}"
+          --output catalog_github_controls_receipt_v1.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Freeze the bounded receipt artifact name
+        id: receipt_artifact
+        shell: bash
+        run: >-
+          echo "name=catalog-live-controls-${{ inputs.purpose }}-${{ inputs.audit_context_sha256 }}"
+          >> "$GITHUB_OUTPUT"
+
+      - name: Publish the secret-free controls receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.receipt_artifact.outputs.name }}
+          path: catalog_github_controls_receipt_v1.json
+          if-no-files-found: error
+          retention-days: 90

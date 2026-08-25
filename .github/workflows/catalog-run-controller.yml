@@ -369,35 +369,16 @@ jobs:
   live_controls_audit_before_reserve:
     needs: prepare_admission_candidates
     if: ${{ needs.prepare_admission_candidates.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    environment: catalog-production
+    uses: ./.github/workflows/catalog-live-controls-audit.yml
+    with:
+      purpose: admission
+      caller_workflow: .github/workflows/catalog-run-controller.yml
+      caller_job: live_controls_audit_before_reserve
+      protected_commit_sha: ${{ needs.prepare_admission_candidates.outputs.controls_commit_sha }}
+      audit_context_sha256: ${{ needs.prepare_admission_candidates.outputs.audit_context_sha256 }}
     permissions:
       actions: read
       contents: read
-    outputs:
-      receipt_artifact_name: ${{ steps.audit.outputs.receipt_artifact_name }}
-      receipt_sha256: ${{ steps.audit.outputs.receipt_sha256 }}
-      receipt_status: ${{ steps.audit.outputs.receipt_status }}
-    steps:
-      - name: Check out the exact protected commit
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ needs.prepare_admission_candidates.outputs.controls_commit_sha }}
-          persist-credentials: false
-      - name: Run the protected read-only audit
-        id: audit
-        uses: ./.github/actions/catalog-live-controls-audit
-        with:
-          purpose: admission
-          caller_workflow: .github/workflows/catalog-run-controller.yml
-          caller_job: live_controls_audit_before_reserve
-          protected_commit_sha: ${{ needs.prepare_admission_candidates.outputs.controls_commit_sha }}
-          audit_context_sha256: ${{ needs.prepare_admission_candidates.outputs.audit_context_sha256 }}
-          auditor_app_id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
-          auditor_private_key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
-          enterprise_billing_token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
-          package_inventory_token: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
 
   admission:
     needs: [routing_snapshot, prepare_admission_candidates, live_controls_audit_before_reserve]
@@ -1548,35 +1529,16 @@ jobs:
   live_controls_audit_before_terminal:
     needs: prepare_terminal_evidence
     if: ${{ needs.prepare_terminal_evidence.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    environment: catalog-production
+    uses: ./.github/workflows/catalog-live-controls-audit.yml
+    with:
+      purpose: terminal
+      caller_workflow: .github/workflows/catalog-run-controller.yml
+      caller_job: live_controls_audit_before_terminal
+      protected_commit_sha: ${{ needs.prepare_terminal_evidence.outputs.controls_commit_sha }}
+      audit_context_sha256: ${{ needs.prepare_terminal_evidence.outputs.audit_context_sha256 }}
     permissions:
       actions: read
       contents: read
-    outputs:
-      receipt_artifact_name: ${{ steps.audit.outputs.receipt_artifact_name }}
-      receipt_sha256: ${{ steps.audit.outputs.receipt_sha256 }}
-      receipt_status: ${{ steps.audit.outputs.receipt_status }}
-    steps:
-      - name: Check out the exact protected commit
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ needs.prepare_terminal_evidence.outputs.controls_commit_sha }}
-          persist-credentials: false
-      - name: Run the protected read-only audit
-        id: audit
-        uses: ./.github/actions/catalog-live-controls-audit
-        with:
-          purpose: terminal
-          caller_workflow: .github/workflows/catalog-run-controller.yml
-          caller_job: live_controls_audit_before_terminal
-          protected_commit_sha: ${{ needs.prepare_terminal_evidence.outputs.controls_commit_sha }}
-          audit_context_sha256: ${{ needs.prepare_terminal_evidence.outputs.audit_context_sha256 }}
-          auditor_app_id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
-          auditor_private_key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
-          enterprise_billing_token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
-          package_inventory_token: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
 
   prepare_terminal_decision:
     needs: [prepare_terminal_evidence, live_controls_audit_before_terminal]
