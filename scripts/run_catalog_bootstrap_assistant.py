@@ -323,6 +323,25 @@ def _canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
+def _safe_blocked_reason(exc: Exception, fallback: str) -> str:
+    reason = str(exc)
+    missing_prefix = "CATALOG_BOOTSTRAP_AUDITOR_ENVIRONMENT_SECRETS_MISSING:"
+    if reason.startswith(missing_prefix):
+        missing = reason.removeprefix(missing_prefix).split(",")
+        if (
+            missing
+            and missing == sorted(set(missing))
+            and set(missing) <= PROTECTED_ENVIRONMENT_REQUIRED_SECRETS
+        ):
+            return reason
+    if not reason or len(reason) > 160 or any(
+        marker in reason.casefold()
+        for marker in ("private", "secret", "token", "password", "jwt")
+    ):
+        return fallback
+    return reason
+
+
 def _reject_duplicate_json_keys(
     pairs: list[tuple[str, object]],
 ) -> dict[str, object]:
@@ -1885,7 +1904,16 @@ def _protected_environment_secret_names() -> frozenset[str]:
             REPOSITORY, "--json", "name",
         ]
     )
-    rows = json.loads(raw)
+    try:
+        rows = json.loads(
+            raw,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_nonfinite_json,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_ENVIRONMENT_SECRET_LIST_INVALID"
+        ) from exc
     if not isinstance(rows, list):
         raise ValueError("CATALOG_BOOTSTRAP_ENVIRONMENT_SECRET_LIST_INVALID")
     names: list[str] = []
@@ -7254,12 +7282,9 @@ def main() -> int:
                     _disable_controller()
                 except Exception:
                     pass
-                reason = str(exc)
-                if not reason or len(reason) > 160 or any(
-                    marker in reason.casefold()
-                    for marker in ("private", "secret", "token", "password", "jwt")
-                ):
-                    reason = "CATALOG_BOOTSTRAP_RECOVERY_FAILED"
+                reason = _safe_blocked_reason(
+                    exc, "CATALOG_BOOTSTRAP_RECOVERY_FAILED"
+                )
                 recovery_phase = "BLOCKED"
                 blocked_path = (
                     args.installed_root
@@ -7294,12 +7319,7 @@ def main() -> int:
                 _disable_controller()
             except Exception:
                 pass
-            reason = str(exc)
-            if not reason or len(reason) > 160 or any(
-                marker in reason.casefold()
-                for marker in ("private", "secret", "token", "password", "jwt")
-            ):
-                reason = "CATALOG_BOOTSTRAP_PHASE_FAILED"
+            reason = _safe_blocked_reason(exc, "CATALOG_BOOTSTRAP_PHASE_FAILED")
             blocked = {
                 "schema_version": "1",
                 "result": "BLOCKED",

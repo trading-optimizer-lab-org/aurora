@@ -1374,6 +1374,17 @@ def test_protected_environment_secret_names_require_exact_unique_rows(
         ):
             bootstrap_runner._protected_environment_secret_names()
 
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda _args: '[{"name":"first","name":"second"}]',
+    )
+    with pytest.raises(
+        ValueError,
+        match="^CATALOG_BOOTSTRAP_ENVIRONMENT_SECRET_LIST_INVALID$",
+    ):
+        bootstrap_runner._protected_environment_secret_names()
+
 
 def test_required_environment_secrets_fail_closed_with_exact_missing_names(
     monkeypatch,
@@ -1402,17 +1413,123 @@ def test_required_environment_secrets_fail_closed_with_exact_missing_names(
     )
 
 
-def test_github_controls_require_environment_secrets_before_mutation_and_live_run() -> None:
-    source = inspect.getsource(bootstrap_runner.apply_github_controls)
+def test_safe_blocked_reason_preserves_only_allowlisted_missing_secret_names() -> None:
+    safe = ValueError(
+        "CATALOG_BOOTSTRAP_AUDITOR_ENVIRONMENT_SECRETS_MISSING:"
+        "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN,"
+        "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN"
+    )
 
-    first_requirement = source.index("_require_protected_environment_secrets(")
-    mutation = source.index("_disable_controller()")
-    auditor_preparation = source.index("_prepare_auditor_secret(root)")
-    final_requirement = source.rindex("_require_protected_environment_secrets(")
-    live_qualification = source.index("_run_live_qualification(")
+    assert bootstrap_runner._safe_blocked_reason(safe, "fallback") == str(safe)
+    assert (
+        bootstrap_runner._safe_blocked_reason(
+            ValueError(
+                "CATALOG_BOOTSTRAP_AUDITOR_ENVIRONMENT_SECRETS_MISSING:"
+                "ATTACKER_TOKEN"
+            ),
+            "fallback",
+        )
+        == "fallback"
+    )
+    assert (
+        bootstrap_runner._safe_blocked_reason(
+            ValueError("password=do-not-persist"), "fallback"
+        )
+        == "fallback"
+    )
 
-    assert first_requirement < mutation
-    assert auditor_preparation < final_requirement < live_qualification
+
+def test_github_controls_require_external_secrets_before_mutation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    source = tmp_path / "source"
+    (source / "config").mkdir(parents=True)
+    (source / "config/catalog_authority_anchor_v1.json").write_text(
+        '{"issue_number":1,"production_enabled":true}\n', encoding="utf-8"
+    )
+    root.mkdir(exist_ok=True)
+    (root / "auditor-public-v1.json").write_text(
+        '{"app_id":2}\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(bootstrap_runner, "load_bootstrap_state", lambda _path: object())
+    monkeypatch.setattr(
+        bootstrap_runner, "_context", lambda _root: {"source_root": str(source)}
+    )
+    monkeypatch.setattr(bootstrap_runner, "_runtime_commit", lambda _root: "a" * 40)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_require_protected_environment_secrets",
+        lambda _required: (_ for _ in ()).throw(ValueError("missing")),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_disable_controller",
+        lambda: pytest.fail("controller must not be mutated"),
+    )
+
+    with pytest.raises(ValueError, match="^missing$"):
+        bootstrap_runner.apply_github_controls(root)
+
+
+def test_github_controls_require_all_secrets_before_live_qualification(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    source = tmp_path / "source"
+    receipts = root / "receipts"
+    (source / "config").mkdir(parents=True)
+    receipts.mkdir(parents=True)
+    (source / "config/catalog_authority_anchor_v1.json").write_text(
+        '{"issue_number":1,"production_enabled":true}\n', encoding="utf-8"
+    )
+    (root / "auditor-public-v1.json").write_text(
+        '{"app_id":2}\n', encoding="utf-8"
+    )
+    dry = {"current_state_sha256": "b" * 64, "mode": "dry_run"}
+    applied = {"bootstrap_controls_prepared": True, "mode": "apply"}
+    (receipts / "github-controls-dry-run-v1.json").write_bytes(
+        bootstrap_runner._canonical(dry) + b"\n"
+    )
+    (receipts / "github-controls-apply-v1.json").write_bytes(
+        bootstrap_runner._canonical(applied) + b"\n"
+    )
+    requirements: list[frozenset[str]] = []
+
+    def require(required: frozenset[str]) -> dict[str, object]:
+        requirements.append(required)
+        if len(requirements) == 2:
+            raise ValueError("missing-final")
+        return {"environment": "catalog-production", "present": sorted(required)}
+
+    monkeypatch.setattr(bootstrap_runner, "load_bootstrap_state", lambda _path: object())
+    monkeypatch.setattr(
+        bootstrap_runner, "_context", lambda _root: {"source_root": str(source)}
+    )
+    monkeypatch.setattr(bootstrap_runner, "_runtime_commit", lambda _root: "a" * 40)
+    monkeypatch.setattr(bootstrap_runner, "_disable_controller", lambda: None)
+    monkeypatch.setattr(bootstrap_runner, "_set_repository_variable", lambda *_args: None)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_prepare_auditor_secret",
+        lambda _root: {"name": bootstrap_runner.AUDITOR_SECRET},
+    )
+    monkeypatch.setattr(
+        bootstrap_runner, "_require_protected_environment_secrets", require
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run_live_qualification",
+        lambda *_args, **_kwargs: pytest.fail("live qualification must not run"),
+    )
+
+    with pytest.raises(ValueError, match="^missing-final$"):
+        bootstrap_runner.apply_github_controls(root)
+
+    assert requirements == [
+        bootstrap_runner.PROTECTED_ENVIRONMENT_EXTERNAL_SECRETS,
+        bootstrap_runner.PROTECTED_ENVIRONMENT_REQUIRED_SECRETS,
+    ]
 
 
 def test_existing_bootstrap_control_receipts_are_reused_only_when_canonical(
