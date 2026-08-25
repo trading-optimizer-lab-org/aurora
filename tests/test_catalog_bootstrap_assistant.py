@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -2667,7 +2669,7 @@ def test_first_checkpoint_write_recovers_crash_before_atomic_publication(
 ) -> None:
     path = tmp_path / "first-checkpoint.json"
     value = {"schema_version": "1", "value": "sealed"}
-    original_rename = bootstrap_runner.os.rename
+    original_publish = bootstrap_runner._publish_checkpoint_temp
     original_fsync = bootstrap_runner.os.fsync
     flushed = False
 
@@ -2676,19 +2678,24 @@ def test_first_checkpoint_write_recovers_crash_before_atomic_publication(
         original_fsync(descriptor)
         flushed = True
 
-    def crash_before_publish(source: str | bytes, destination: str | bytes) -> None:
+    def crash_before_publish(
+        source: Path, destination: Path, *, replace_existing: bool
+    ) -> None:
         source_path = Path(source)
         destination_path = Path(destination)
         assert source_path.parent == destination_path.parent == path.parent
         assert destination_path == path
         assert source_path != path
         assert source_path.read_bytes() == bootstrap_runner._canonical(value) + b"\n"
+        assert replace_existing is False
         assert flushed is True
         assert not path.exists()
         raise SystemExit("FAULT_AFTER_TEMP_FSYNC")
 
     monkeypatch.setattr(bootstrap_runner.os, "fsync", record_fsync)
-    monkeypatch.setattr(bootstrap_runner.os, "rename", crash_before_publish)
+    monkeypatch.setattr(
+        bootstrap_runner, "_publish_checkpoint_temp", crash_before_publish
+    )
 
     with pytest.raises(SystemExit, match="FAULT_AFTER_TEMP_FSYNC"):
         bootstrap_runner._write_exact_canonical_checkpoint(path, value)
@@ -2697,7 +2704,9 @@ def test_first_checkpoint_write_recovers_crash_before_atomic_publication(
     assert len(temporary) == 1
     assert temporary[0].read_bytes() == bootstrap_runner._canonical(value) + b"\n"
 
-    monkeypatch.setattr(bootstrap_runner.os, "rename", original_rename)
+    monkeypatch.setattr(
+        bootstrap_runner, "_publish_checkpoint_temp", original_publish
+    )
     monkeypatch.setattr(bootstrap_runner.os, "fsync", original_fsync)
     digest = bootstrap_runner._write_exact_canonical_checkpoint(path, value)
 
@@ -2712,10 +2721,13 @@ def test_first_checkpoint_write_cleans_safe_temp_after_publish_error(
     path = tmp_path / "failed-checkpoint.json"
     value = {"schema_version": "1", "value": "sealed"}
 
-    def fail_publish(_source: str | bytes, _destination: str | bytes) -> None:
+    def fail_publish(
+        _source: Path, _destination: Path, *, replace_existing: bool
+    ) -> None:
+        assert replace_existing is False
         raise OSError("publication failed")
 
-    monkeypatch.setattr(bootstrap_runner.os, "rename", fail_publish)
+    monkeypatch.setattr(bootstrap_runner, "_publish_checkpoint_temp", fail_publish)
 
     with pytest.raises(ValueError, match="CHECKPOINT_WRITE_FAILED"):
         bootstrap_runner._write_exact_canonical_checkpoint(path, value)
@@ -3060,17 +3072,7 @@ def _fake_qualification_api_run(
 
 
 def _fake_qualification_view(run: dict[str, object], workflow: str) -> str:
-    return json.dumps(
-        {
-            "databaseId": run["id"],
-            "headSha": run["head_sha"],
-            "event": run["event"],
-            "status": run["status"],
-            "conclusion": run["conclusion"],
-            "url": run["html_url"],
-            "workflowName": _QUALIFICATION_WORKFLOW_DISPLAY_NAMES[workflow],
-        }
-    )
+    return json.dumps({**run, "path": f".github/workflows/{workflow}"})
 
 
 @pytest.mark.parametrize(
@@ -3100,8 +3102,9 @@ def test_dispatch_intent_recovers_accepted_run_without_redispatch(
             dispatch_calls += 1
             runs.append(run)
             raise RuntimeError("FAULT_AFTER_WORKFLOW_DISPATCH_ACCEPTED")
-        if args[:3] == ["gh", "run", "view"]:
-            assert args[3] == str(run["id"])
+        if args[:2] == ["gh", "api"] and args[2].endswith(
+            f"/actions/runs/{run['id']}"
+        ):
             return _fake_qualification_view(run, workflow)
         pytest.fail(f"unexpected command: {args}")
 
@@ -3206,7 +3209,13 @@ def test_qualification_reentry_does_not_redispatch_a_checkpointed_step(
         live_calls += 1
         return _fake_live_receipt(100 + live_calls)
 
-    def fake_dispatch(workflow: str, _commit: str) -> dict[str, object]:
+    def fake_dispatch(
+        workflow: str,
+        _commit: str,
+        *,
+        baseline_run_ids: set[int] | None = None,
+    ) -> dict[str, object]:
+        assert baseline_run_ids == set()
         dispatched.append(workflow)
         run_id = 200 + len(dispatched)
         return {
@@ -3381,7 +3390,15 @@ def test_stored_workflow_receipt_rejects_wrong_workflow_path(
         bootstrap_runner,
         "_run",
         lambda *_args, **_kwargs: json.dumps(
-            {**receipt, "workflowName": "Other workflow"}
+            {
+                "id": receipt["databaseId"],
+                "head_sha": receipt["headSha"],
+                "event": receipt["event"],
+                "status": receipt["status"],
+                "conclusion": receipt["conclusion"],
+                "html_url": receipt["url"],
+                "path": ".github/workflows/other.yml",
+            }
         ),
     )
     with pytest.raises(ValueError, match="QUALIFICATION_RUN_INVALID"):
@@ -3420,8 +3437,13 @@ def test_stored_workflow_run_is_revalidated_directly_by_run_id(
         commands.append(args)
         return json.dumps(
             {
-                **receipt,
-                "workflowName": "Catalog controller policy",
+                "id": receipt["databaseId"],
+                "head_sha": receipt["headSha"],
+                "event": receipt["event"],
+                "status": receipt["status"],
+                "conclusion": receipt["conclusion"],
+                "html_url": receipt["url"],
+                "path": ".github/workflows/catalog-controller-policy-check.yml",
             }
         )
 
@@ -3435,7 +3457,13 @@ def test_stored_workflow_run_is_revalidated_directly_by_run_id(
 
     assert observed == receipt
     assert len(commands) == 1
-    assert commands[0][:4] == ["gh", "run", "view", "904"]
+    assert commands == [
+        [
+            "gh",
+            "api",
+            f"/repos/{bootstrap_runner.REPOSITORY}/actions/runs/904",
+        ]
+    ]
 
 
 def test_stored_live_receipt_rejects_changed_artifact(
@@ -3769,23 +3797,24 @@ def test_requester_complete_recovers_missing_local_receipt_deterministically(
     assert receipt_path.read_bytes() == receipt_bytes
 
 
-def test_requester_complete_blocks_if_client_does_not_restore_missing_receipt(
+def test_requester_complete_restores_receipt_from_authoritative_client_response(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fixture = _requester_recovery_fixture(tmp_path)
     calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
     root = fixture["root"]
     source = fixture["source"]
-    bootstrap_runner._run_requester_qualification(root, source, COMMIT)
+    first_result = bootstrap_runner._run_requester_qualification(root, source, COMMIT)
     receipt_path = (
         fixture["broker_root"] / "receipts" / ("1" * 64 + ".receipt.json")
     )
     receipt_path.unlink()
     calls.clear()
 
-    with pytest.raises(ValueError, match="REQUESTER_RECEIPT_MISSING"):
-        bootstrap_runner._run_requester_qualification(root, source, COMMIT)
+    recovered = bootstrap_runner._run_requester_qualification(root, source, COMMIT)
+    assert recovered == first_result
     assert calls == [fixture["first"]]
+    assert json.loads(receipt_path.read_bytes()) == fixture["first"]
 
 
 def test_requester_complete_checkpoint_revalidates_without_new_client_call(
@@ -3808,6 +3837,238 @@ def test_requester_complete_checkpoint_revalidates_without_new_client_call(
     assert (
         root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
     ).read_bytes() == complete_bytes
+
+
+@pytest.mark.parametrize(
+    "step_name",
+    (
+        "github_controls_live_1",
+        "final_pre_enable_live",
+        "final_post_enable_live",
+    ),
+)
+def test_all_one_shot_live_qualifications_use_persistent_dispatch_intents(
+    step_name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = {
+        "databaseId": 999,
+        "headSha": COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://example.test/runs/999",
+    }
+    calls: list[str] = []
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run_qualification_workflow_step",
+        lambda _root, observed_step, _commit: calls.append(observed_step) or run,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_download_live_qualification",
+        lambda *_args: {"run_id": 999},
+    )
+
+    observed = bootstrap_runner._run_live_qualification(
+        tmp_path, COMMIT, step_name=step_name
+    )
+
+    assert observed == {"run_id": 999}
+    assert calls == [step_name]
+
+
+def test_live_call_sites_bind_distinct_persistent_intent_names() -> None:
+    apply_source = inspect.getsource(bootstrap_runner.apply_github_controls)
+    final_source = inspect.getsource(bootstrap_runner.perform_final_audit)
+
+    assert 'step_name="github_controls_live_1"' in apply_source
+    assert 'step_name="final_pre_enable_live"' in final_source
+    assert 'step_name="final_post_enable_live"' in final_source
+
+
+def test_dispatch_guard_serializes_two_concurrent_callers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir()
+    entered = threading.Event()
+    release = threading.Event()
+    run = {
+        "databaseId": 1201,
+        "headSha": COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://example.test/runs/1201",
+    }
+    dispatch_count = 0
+    results: list[dict[str, object]] = []
+    errors: list[BaseException] = []
+
+    monkeypatch.setattr(bootstrap_runner, "_list_workflow_runs", lambda _workflow: [])
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_reconcile_qualification_dispatch_intent",
+        lambda _intent: dict(run),
+    )
+
+    def fake_dispatch(
+        _workflow: str,
+        _commit: str,
+        *,
+        baseline_run_ids: set[int] | None = None,
+    ) -> dict[str, object]:
+        nonlocal dispatch_count
+        assert baseline_run_ids == set()
+        dispatch_count += 1
+        entered.set()
+        assert release.wait(timeout=5)
+        return dict(run)
+
+    monkeypatch.setattr(bootstrap_runner, "_dispatch_workflow", fake_dispatch)
+
+    def invoke() -> None:
+        try:
+            results.append(
+                bootstrap_runner._run_qualification_workflow_step(
+                    root, "policy_1", COMMIT
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below.
+            errors.append(exc)
+
+    first = threading.Thread(target=invoke)
+    second = threading.Thread(target=invoke)
+    first.start()
+    assert entered.wait(timeout=5)
+    second.start()
+    time.sleep(0.1)
+    assert dispatch_count == 1
+    release.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
+    assert results == [run, run]
+    assert dispatch_count == 1
+
+
+def test_requester_initial_response_rejects_cross_identity_before_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    receipt_path = (
+        fixture["broker_root"] / "receipts" / ("1" * 64 + ".receipt.json")
+    )
+    receipt_path.unlink()
+    mismatched = dict(fixture["first"])
+    mismatched["request_id"] = "018f47a2-6e91-7c34-8000-000000000002"
+    mismatched["receipt_sha256"] = "0" * 64
+    mismatched["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(mismatched)
+    ).hexdigest()
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_invoke_bootstrap_request",
+        lambda _source: calls.append(mismatched) or mismatched,
+    )
+
+    with pytest.raises(ValueError, match="QUALIFICATION_NOT_TERMINAL"):
+        bootstrap_runner._run_requester_qualification(
+            root, fixture["source"], COMMIT
+        )
+    assert not (
+        root / bootstrap_runner.REQUESTER_TERMINAL_CHECKPOINT_FILENAME
+    ).exists()
+
+
+def test_requester_initial_response_restores_missing_local_receipt_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    _patch_requester_recovery_fakes(fixture, monkeypatch)
+    receipt_path = (
+        fixture["broker_root"] / "receipts" / ("1" * 64 + ".receipt.json")
+    )
+    receipt_path.unlink()
+
+    bootstrap_runner._run_requester_qualification(
+        fixture["root"], fixture["source"], COMMIT
+    )
+
+    assert receipt_path.read_bytes() == (
+        bootstrap_runner._canonical(fixture["first"]) + b"\n"
+    )
+
+
+def test_requester_blocked_receipt_preserves_exact_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    blocked = {
+        "schema_version": "1",
+        "status": "blocked",
+        "reason_code": "REQUESTER_PRODUCTION_SEAL_MISSING",
+        "submission_key_sha256": "1" * 64,
+        "request_id": "018f47a2-6e91-7c34-8000-000000000001",
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "launch_generation": 1,
+        "issue_number": None,
+        "request_sha256": None,
+        "observed_at": "2026-08-25T10:01:00Z",
+        "receipt_sha256": "0" * 64,
+    }
+    blocked["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(blocked)
+    ).hexdigest()
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda *_args, **_kwargs: json.dumps(blocked),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="REQUESTER_BLOCKED:REQUESTER_PRODUCTION_SEAL_MISSING",
+    ):
+        bootstrap_runner._invoke_bootstrap_request(tmp_path)
+
+
+def test_windows_checkpoint_publication_requests_write_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if bootstrap_runner.os.name != "nt":
+        pytest.skip("Windows durability contract")
+    temporary = tmp_path / "temporary"
+    destination = tmp_path / "destination"
+    temporary.write_bytes(b"sealed")
+    observed_flags: list[int] = []
+
+    class FakeMove:
+        argtypes: object = None
+        restype: object = None
+
+        def __call__(self, source: str, target: str, flags: int) -> int:
+            observed_flags.append(flags)
+            bootstrap_runner.os.replace(source, target)
+            return 1
+
+    fake_move = FakeMove()
+    monkeypatch.setattr(
+        bootstrap_runner.ctypes,
+        "WinDLL",
+        lambda *_args, **_kwargs: SimpleNamespace(MoveFileExW=fake_move),
+    )
+
+    bootstrap_runner._publish_checkpoint_temp(
+        temporary, destination, replace_existing=False
+    )
+
+    assert destination.read_bytes() == b"sealed"
+    assert observed_flags == [0x8]
 
 
 def test_existing_seal_without_complete_reuses_bytes_and_performs_one_replay(
