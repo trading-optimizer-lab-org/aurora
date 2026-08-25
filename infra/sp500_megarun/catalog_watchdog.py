@@ -109,8 +109,17 @@ def select() -> None:
             ("in_progress", _IN_PROGRESS_SNAPSHOT_PATHS[0]),
         ):
             run_pages = json.loads(snapshot_path.read_text("utf-8"))
+            if not isinstance(run_pages, list) or not run_pages:
+                raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
             for page in run_pages:
-                for run in (page.get("workflow_runs") or []):
+                if not isinstance(page, dict):
+                    raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
+                workflow_runs = page.get("workflow_runs")
+                if not isinstance(workflow_runs, list):
+                    raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
+                for run in workflow_runs:
+                    if not isinstance(run, dict):
+                        raise SystemExit("CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID")
                     run_id = run.get("id")
                     status = run.get("status")
                     if not isinstance(run_id, int) or status != expected_status:

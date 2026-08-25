@@ -101,7 +101,7 @@ def _comment(record, comment_id: int) -> dict[str, object]:
 
 
 def _run_pages(*pages: list[dict[str, object]]) -> list[dict[str, object]]:
-    return [{"workflow_runs": page} for page in pages]
+    return [{"workflow_runs": page} for page in pages] or [{"workflow_runs": []}]
 
 
 def _stable_responses(
@@ -348,6 +348,37 @@ def test_select_rejects_run_with_wrong_status(tmp_path: Path, monkeypatch: pytes
         _stable_responses(
             comments=[[_comment(record, 1)]],
             queued=_run_pages([{"id": record.run_id, "status": "in_progress"}]),
+            in_progress=_run_pages(),
+        ),
+    )
+    _run_cli(monkeypatch, tmp_path, "snapshot")
+
+    with pytest.raises(SystemExit) as exc_info:
+        _run_cli(monkeypatch, tmp_path, "select")
+
+    assert exc_info.value.code == "CATALOG_WATCHDOG_ACTIONS_SNAPSHOT_INVALID"
+
+
+@pytest.mark.parametrize(
+    "queued",
+    [
+        pytest.param([{}], id="missing"),
+        pytest.param([{"workflow_runs": None}], id="null"),
+    ],
+)
+def test_select_rejects_missing_or_null_workflow_runs(
+    queued: list[dict[str, object]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = _record_chain(1)[0]
+    _write_anchor(tmp_path, production_enabled=True)
+    _install_fake_gh(
+        tmp_path,
+        monkeypatch,
+        _stable_responses(
+            comments=[[_comment(record, 1)]],
+            queued=queued,
             in_progress=_run_pages(),
         ),
     )
