@@ -2,12 +2,55 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tarfile
 from collections import Counter
 from pathlib import Path
 
 import pytest
 
 import scripts.check_mypy_baseline as baseline
+
+
+def test_extract_base_tree_uses_tar_data_filter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    observed_filters: list[object] = []
+
+    def fake_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[bytes]:
+        output = kwargs["stdout"]
+        with tarfile.open(fileobj=output, mode="w"):
+            pass
+        return subprocess.CompletedProcess(command, 0, stderr=b"")
+
+    original_extractall = tarfile.TarFile.extractall
+
+    def guarded_extractall(
+        archive: tarfile.TarFile,
+        path: str | Path = ".",
+        members: object = None,
+        *,
+        numeric_owner: bool = False,
+        filter: object = None,
+    ) -> None:
+        observed_filters.append(filter)
+        original_extractall(
+            archive,
+            path,
+            members=members,
+            numeric_owner=numeric_owner,
+            filter=filter,
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(tarfile.TarFile, "extractall", guarded_extractall)
+
+    baseline._extract_base_tree(tmp_path, "a" * 40, tmp_path / "base")
+
+    assert observed_filters == ["data"]
 
 
 def test_parse_mypy_errors_ignores_line_numbers() -> None:

@@ -290,7 +290,7 @@ def _extract_base_tree(
                     raise MypyInfrastructureError(
                         f"base archive contains an unsafe path: {member.name}"
                     )
-            archive.extractall(destination)
+            archive.extractall(destination, filter="data")
     except (OSError, tarfile.TarError) as exc:
         raise MypyInfrastructureError(
             f"could not extract base SHA {base_sha}: {exc}"
