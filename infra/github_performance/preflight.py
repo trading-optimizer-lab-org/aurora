@@ -520,8 +520,46 @@ CATALOG_CONTROLLER_WORKFLOW = ".github/workflows/catalog-run-controller.yml"
 CATALOG_RECOVERY_WORKFLOW = ".github/workflows/catalog-recovery-wave.yml"
 CATALOG_WATCHDOG_WORKFLOW = ".github/workflows/catalog-run-watchdog.yml"
 CATALOG_KEEPER_WORKFLOW = ".github/workflows/catalog-artifact-keeper.yml"
+CATALOG_LIVE_AUDIT_WORKFLOW = ".github/workflows/catalog-live-controls-audit.yml"
 CATALOG_KEEPER_AUDIT_CONTEXT_SHA256 = (
     "0b90c2b50f081b48eb3b173b907eab0015973e536db2e8e195ff8f95b69bec42"
+)
+CATALOG_LIVE_AUDIT_CALLERS = frozenset(
+    {
+        (
+            ".github/workflows/catalog-run-controller.yml",
+            "live_controls_audit_before_reserve",
+            "admission",
+        ),
+        (
+            ".github/workflows/catalog-run-controller.yml",
+            "live_controls_audit_before_terminal",
+            "terminal",
+        ),
+        (
+            ".github/workflows/catalog-live-controls-qualification.yml",
+            "qualify_live_admission_controls",
+            "admission",
+        ),
+        (
+            ".github/workflows/catalog-live-controls-qualification.yml",
+            "qualify_live_terminal_controls",
+            "terminal",
+        ),
+        (
+            CATALOG_KEEPER_WORKFLOW,
+            "live_controls_audit_before_maintenance",
+            "maintenance",
+        ),
+    }
+)
+CATALOG_LIVE_AUDIT_CREDENTIAL_NAMES = frozenset(
+    {
+        "AURORA_CATALOG_AUDITOR_APP_ID",
+        "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+        "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+        "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN",
+    }
 )
 CATALOG_ACTIVE_ENGINE_WORKFLOWS = {
     "optimized_catalog_v1": ".github/workflows/catalog-optimized-run.yml",
@@ -725,6 +763,137 @@ def _catalog_job_needs(job: Mapping[str, Any]) -> set[str]:
     return set()
 
 
+def _validate_catalog_live_audit_topology(
+    documents: Mapping[str, Mapping[str, Any]],
+) -> list[Violation]:
+    governed_callers = {
+        path for path, _job, _purpose in CATALOG_LIVE_AUDIT_CALLERS
+    }
+    if not governed_callers.intersection(documents):
+        return []
+
+    violations: list[Violation] = []
+    reusable = documents.get(CATALOG_LIVE_AUDIT_WORKFLOW)
+    if not isinstance(reusable, Mapping):
+        return [
+            _catalog_violation(
+                "CATALOG_LIVE_AUDIT_WORKFLOW_MISSING",
+                CATALOG_LIVE_AUDIT_WORKFLOW,
+                "the protected reusable live-controls auditor is missing",
+            )
+        ]
+
+    event = reusable.get("on")
+    call = event.get("workflow_call") if isinstance(event, Mapping) else None
+    expected_inputs = {
+        "purpose",
+        "caller_workflow",
+        "caller_job",
+        "protected_commit_sha",
+        "audit_context_sha256",
+    }
+    expected_outputs = {
+        "receipt_artifact_name",
+        "receipt_sha256",
+        "receipt_status",
+    }
+    if (
+        not isinstance(event, Mapping)
+        or set(event) != {"workflow_call"}
+        or not isinstance(call, Mapping)
+        or set(call.get("inputs", {})) != expected_inputs
+        or set(call.get("outputs", {})) != expected_outputs
+        or "secrets" in call
+    ):
+        violations.append(
+            _catalog_violation(
+                "CATALOG_LIVE_AUDIT_CONTRACT_INVALID",
+                CATALOG_LIVE_AUDIT_WORKFLOW,
+                "the reusable auditor must expose only its closed inputs and outputs",
+            )
+        )
+
+    reusable_jobs = reusable.get("jobs")
+    audit_job = (
+        reusable_jobs.get("audit") if isinstance(reusable_jobs, Mapping) else None
+    )
+    concurrency = audit_job.get("concurrency") if isinstance(audit_job, Mapping) else None
+    if (
+        not isinstance(reusable_jobs, Mapping)
+        or set(reusable_jobs) != {"audit"}
+        or not isinstance(audit_job, Mapping)
+        or audit_job.get("environment") != "catalog-production"
+        or audit_job.get("permissions") != {"actions": "read", "contents": "read"}
+        or not isinstance(concurrency, Mapping)
+        or concurrency.get("queue") != "max"
+        or concurrency.get("cancel-in-progress") is not False
+    ):
+        violations.append(
+            _catalog_violation(
+                "CATALOG_LIVE_AUDIT_JOB_INVALID",
+                CATALOG_LIVE_AUDIT_WORKFLOW,
+                "the reusable auditor job is outside its fixed protected envelope",
+            )
+        )
+
+    observed_callers: set[tuple[str, str, str]] = set()
+    allowed_call_keys = {
+        "name",
+        "uses",
+        "with",
+        "needs",
+        "if",
+        "strategy",
+        "concurrency",
+        "permissions",
+    }
+    target = f"./{CATALOG_LIVE_AUDIT_WORKFLOW}"
+    for workflow_path, workflow in documents.items():
+        jobs = workflow.get("jobs")
+        if not isinstance(jobs, Mapping):
+            continue
+        for job_id, job in jobs.items():
+            if not isinstance(job, Mapping) or job.get("uses") != target:
+                continue
+            inputs = job.get("with")
+            purpose = inputs.get("purpose") if isinstance(inputs, Mapping) else None
+            observed_callers.add((workflow_path, str(job_id), str(purpose)))
+            if set(job) - allowed_call_keys or "secrets" in job:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_LIVE_AUDIT_CALLER_PRIVILEGED",
+                        workflow_path,
+                        f"caller job {job_id} is not a pure reusable-workflow call",
+                    )
+                )
+    if observed_callers != set(CATALOG_LIVE_AUDIT_CALLERS):
+        violations.append(
+            _catalog_violation(
+                "CATALOG_LIVE_AUDIT_CALLERS_INVALID",
+                CATALOG_LIVE_AUDIT_WORKFLOW,
+                "the reusable auditor must have exactly the five protected callers",
+            )
+        )
+
+    credential_consumers = {
+        path
+        for path, workflow in documents.items()
+        if any(
+            name in json.dumps(workflow, sort_keys=True)
+            for name in CATALOG_LIVE_AUDIT_CREDENTIAL_NAMES
+        )
+    }
+    if credential_consumers != {CATALOG_LIVE_AUDIT_WORKFLOW}:
+        violations.append(
+            _catalog_violation(
+                "CATALOG_LIVE_AUDIT_SECRET_FANOUT",
+                CATALOG_LIVE_AUDIT_WORKFLOW,
+                "auditor credentials must be referenced only by the reusable workflow",
+            )
+        )
+    return violations
+
+
 def validate_catalog_workflow_topology(
     *, repo_root: Path, registry: CatalogCampaignRegistryV1
 ) -> CatalogWorkflowTopologyReceiptV1:
@@ -749,6 +918,8 @@ def validate_catalog_workflow_topology(
                     "CATALOG_WORKFLOW_PARSE_FAILED", relative, str(exc)
                 )
             )
+
+    violations.extend(_validate_catalog_live_audit_topology(documents))
 
     active_engine_ids = {
         campaign.engine_id for campaign in registry.campaigns if campaign.active
@@ -991,34 +1162,16 @@ def validate_catalog_workflow_topology(
                     "caller_job": "live_controls_audit_before_maintenance",
                     "protected_commit_sha": "${{ github.sha }}",
                     "audit_context_sha256": CATALOG_KEEPER_AUDIT_CONTEXT_SHA256,
-                    "auditor_app_id": "${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}",
-                    "auditor_private_key": (
-                        "${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}"
-                    ),
-                    "enterprise_billing_token": (
-                        "${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}"
-                    ),
-                    "package_inventory_token": (
-                        "${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}"
-                    ),
                 }
-                audit_steps = audit.get("steps") if isinstance(audit, Mapping) else None
-                action_step = (
-                    audit_steps[1]
-                    if isinstance(audit_steps, list) and len(audit_steps) == 2
-                    else None
-                )
                 if (
                     not isinstance(audit, Mapping)
-                    or audit.get("runs-on") != "ubuntu-24.04"
-                    or audit.get("timeout-minutes") != 20
-                    or audit.get("environment") != "catalog-production"
+                    or audit.get("uses")
+                    != "./.github/workflows/catalog-live-controls-audit.yml"
+                    or audit.get("with") != expected_audit_inputs
                     or audit.get("permissions")
                     != {"actions": "read", "contents": "read"}
-                    or not isinstance(action_step, Mapping)
-                    or action_step.get("uses")
-                    != "./.github/actions/catalog-live-controls-audit"
-                    or action_step.get("with") != expected_audit_inputs
+                    or set(audit)
+                    - {"name", "uses", "with", "permissions"}
                 ):
                     violations.append(
                         _catalog_violation(

@@ -47,7 +47,7 @@ Este documento registra **todos** los workflows presentes durante la migración 
 | .github/workflows/catalog-equivalence-diagnostic.yml | workflow_call | yes | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
 | .github/workflows/catalog-future-architecture.yml | workflow_call, workflow_dispatch | yes | - | - | workflow_call | removed direct dispatch; internal synthetic helper only | repository topology receipt |
 | .github/workflows/catalog-ledger-guard.yml | not present | no | - | - | issue_comment | created as edit/delete tamper guard | tamper guard topology test |
-| .github/actions/catalog-live-controls-audit/action.yml | composite action | no | - | - | only five fixed protected jobs | added immutable secret-free receipt artifact | repository topology receipt |
+| .github/workflows/catalog-live-controls-audit.yml | workflow_call only | no | - | - | exactly five fixed protected job-level callers | sole protected consumer of auditor credentials; emits an immutable secret-free receipt artifact | repository topology receipt |
 | .github/workflows/catalog-live-controls-qualification.yml | workflow_dispatch | no | - | - | workflow_dispatch | audited; retained closed/lightweight or internal-only role | repository topology receipt |
 | .github/workflows/catalog-optimized-run.yml | workflow_call, workflow_dispatch | yes | optimized_catalog_v1 | sp500-optimized-catalog-v1 | workflow_call | removed direct dispatch; sealed active engine | sealed heavy engine and environment tests |
 | .github/workflows/catalog-optimized-verify-only.yml | workflow_call | no | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |

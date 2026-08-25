@@ -134,7 +134,7 @@ def _external_action_uses(workflow: dict[str, object]) -> list[str]:
 
 
 def test_all_concurrency_blocks_use_only_supported_github_actions_keys() -> None:
-    allowed = {"group", "cancel-in-progress"}
+    allowed = {"group", "queue", "cancel-in-progress"}
     for path, workflow in _all_workflows().items():
         blocks: list[tuple[str, object]] = [("workflow", workflow.get("concurrency"))]
         jobs = workflow.get("jobs", {})
@@ -149,6 +149,9 @@ def test_all_concurrency_blocks_use_only_supported_github_actions_keys() -> None
                 continue
             assert isinstance(block, dict)
             assert set(block) <= allowed, f"{path} {location}: {set(block) - allowed}"
+            if "queue" in block:
+                assert block["queue"] == "max"
+                assert block.get("cancel-in-progress") is not True
 
 
 def test_step_ids_are_unique_case_insensitively_within_each_job() -> None:
@@ -273,6 +276,7 @@ def test_live_audit_is_one_reusable_workflow_with_exact_contract() -> None:
     assert job["permissions"] == {"actions": "read", "contents": "read"}
     assert job["concurrency"] == {
         "group": "catalog-live-controls-audit-v1",
+        "queue": "max",
         "cancel-in-progress": False,
     }
     assert job["outputs"] == {
@@ -314,6 +318,10 @@ def test_live_audit_validates_real_provenance_before_the_credential_step() -> No
     ):
         assert value in provenance
     assert "inputs.caller_job" not in provenance
+    assert '[[ "$ACTUAL_EVENT_NAME" == "workflow_call" ]]' not in provenance
+    assert "CATALOG_AUDIT_CALLER_EVENT_INVALID" in provenance
+    for allowed_event in ("issues", "workflow_call", "workflow_dispatch", "schedule"):
+        assert allowed_event in provenance
 
     controls = next(
         step

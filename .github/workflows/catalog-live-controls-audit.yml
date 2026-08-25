@@ -40,6 +40,7 @@ jobs:
       contents: read
     concurrency:
       group: catalog-live-controls-audit-v1
+      queue: max
       cancel-in-progress: false
     outputs:
       receipt_artifact_name: ${{ steps.receipt_artifact.outputs.name }}
@@ -86,11 +87,21 @@ jobs:
             admission|terminal|maintenance) ;;
             *) echo "CATALOG_AUDIT_PURPOSE_INVALID" >&2; exit 1 ;;
           esac
-          [[ "$ACTUAL_EVENT_NAME" == "workflow_call" ]]
           [[ "$ACTUAL_WORKFLOW_REF" == "$REPOSITORY/$EXPECTED_CALLER_WORKFLOW@"* ]]
           [[ "$ACTUAL_WORKFLOW_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]
           [[ "$ACTUAL_REF" == "refs/heads/main" ]]
           [[ "$ACTUAL_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]
+          case "$EXPECTED_CALLER_WORKFLOW:$EXPECTED_PURPOSE:$ACTUAL_EVENT_NAME" in
+            .github/workflows/catalog-run-controller.yml:admission:issues|\
+            .github/workflows/catalog-run-controller.yml:admission:workflow_call|\
+            .github/workflows/catalog-run-controller.yml:terminal:issues|\
+            .github/workflows/catalog-run-controller.yml:terminal:workflow_call|\
+            .github/workflows/catalog-live-controls-qualification.yml:admission:workflow_dispatch|\
+            .github/workflows/catalog-live-controls-qualification.yml:terminal:workflow_dispatch|\
+            .github/workflows/catalog-artifact-keeper.yml:maintenance:schedule|\
+            .github/workflows/catalog-artifact-keeper.yml:maintenance:workflow_dispatch) ;;
+            *) echo "CATALOG_AUDIT_CALLER_EVENT_INVALID" >&2; exit 1 ;;
+          esac
 
       - name: Mint, audit, emit the secret-free receipt, and discard credentials
         id: controls

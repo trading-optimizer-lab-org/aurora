@@ -23,6 +23,7 @@ from aurora.infra.github_performance.preflight import (
 )
 from aurora.infra.sp500_megarun.catalog_campaign_registry import (
     CatalogCampaignRegistryV1,
+    load_catalog_campaign_registry,
 )
 from github_performance_helpers import (
     complete_runtime_evidence,
@@ -505,6 +506,21 @@ def _topology_registry() -> CatalogCampaignRegistryV1:
             ],
         }
     )
+
+
+def test_repository_live_audit_and_keeper_topology_is_closed() -> None:
+    root = Path(__file__).resolve().parents[1]
+    registry = load_catalog_campaign_registry(
+        root / "config/catalog_campaign_registry_v1.json"
+    )
+    receipt = validate_catalog_workflow_topology(repo_root=root, registry=registry)
+    relevant = {
+        item.code
+        for item in receipt.violations
+        if item.code.startswith("CATALOG_LIVE_AUDIT")
+        or item.code == "CATALOG_KEEPER_AUDIT_CALL_INVALID"
+    }
+    assert relevant == set()
 
 
 def _write_topology_fixture(
