@@ -2635,6 +2635,764 @@ def test_required_check_cannot_be_substituted(monkeypatch) -> None:
         bootstrap_runner._wait_for_required_checks("163", Path("C:/source"))
 
 
+def test_qualification_checkpoint_write_is_exclusive_and_exact(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "qualification-substeps-v1.checkpoint.json"
+    first = {"schema_version": "1", "value": "first"}
+    second = {"schema_version": "1", "value": "second"}
+
+    digest = bootstrap_runner._write_exact_canonical_checkpoint(path, first)
+
+    assert digest == hashlib.sha256(path.read_bytes()).hexdigest()
+    original = path.read_bytes()
+    with pytest.raises(ValueError, match="CHECKPOINT_CONFLICT"):
+        bootstrap_runner._write_exact_canonical_checkpoint(path, second)
+    assert path.read_bytes() == original
+
+    linked = tmp_path / "linked-checkpoint.json"
+    linked.write_bytes(original)
+    path.unlink()
+    try:
+        path.hardlink_to(linked)
+    except (OSError, NotImplementedError):
+        pytest.skip("hard links are unavailable in this Windows test environment")
+    with pytest.raises(ValueError, match="CHECKPOINT_PATH_INVALID"):
+        bootstrap_runner._write_exact_canonical_checkpoint(path, first)
+
+
+def test_requester_qualification_uses_terminal_status_without_ticket(
+    tmp_path: Path, monkeypatch
+) -> None:
+    broker_root = tmp_path / "broker"
+    status_dir = broker_root / "campaign-status"
+    status_dir.mkdir(parents=True)
+    request_id = "018f47a2-6e91-7c34-8000-000000000001"
+    request_payload = {
+        "schema_version": "1",
+        "request_id": request_id,
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "launch_generation": 1,
+        "launch_ticket_sha256": "3" * 64,
+        "previous_terminal_request_sha256": None,
+        "campaign_definition_sha256": "a" * 64,
+        "prompt_sha256": "b" * 64,
+        "authorization": "USER_EXPLICITLY_REQUESTED_NEW_CATALOG_RUN",
+        "free_resources_only": True,
+        "automatic_recovery": True,
+        "max_same_failure_count": 3,
+        "requester_public_key_sha256": "c" * 64,
+        "requester_attestation_algorithm": "rsa-pss-sha256-v1",
+        "requester_attestation_b64": "A" * 300,
+    }
+    request_sha256 = hashlib.sha256(
+        bootstrap_runner._canonical(request_payload)
+    ).hexdigest()
+    status = {
+        "schema_version": "1",
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "state": "terminal",
+        "launch_generation": 1,
+        "launch_ticket_sha256": "3" * 64,
+        "submission_key_sha256": "1" * 64,
+        "request_id": request_id,
+        "request_sha256": request_sha256,
+        "issue_number": 123,
+        "last_github_checked_at": "2026-08-25T10:00:00Z",
+        "updated_at": "2026-08-25T10:00:00Z",
+        "status_sha256": "0" * 64,
+    }
+    status["status_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(status)
+    ).hexdigest()
+    (status_dir / "controller-bootstrap-qualification-v1.status.json").write_bytes(
+        bootstrap_runner._canonical(status) + b"\n"
+    )
+    root = tmp_path / "installed"
+    root.mkdir()
+    (root / "requester-public-v1.json").write_bytes(
+        bootstrap_runner._canonical(
+            {"app_slug": "aurora-catalog-request-f10c7b40e1"}
+        )
+        + b"\n"
+    )
+    first = {
+        "schema_version": "1",
+        "status": "existing",
+        "reason_code": "REQUEST_ALREADY_EXISTS",
+        "submission_key_sha256": "1" * 64,
+        "request_id": request_id,
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "launch_generation": 1,
+        "issue_number": 123,
+        "request_sha256": request_sha256,
+        "observed_at": "2026-08-25T10:01:00Z",
+        "receipt_sha256": "0" * 64,
+    }
+    first["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(first)
+    ).hexdigest()
+    issue = {
+        "number": 123,
+        "state": "closed",
+        "state_reason": "completed",
+        "html_url": f"https://github.com/{bootstrap_runner.REPOSITORY}/issues/123",
+        "title": f"[AURORA CATALOG RUN REQUEST] {request_id}",
+        "body": "```json\n"
+        + bootstrap_runner._canonical(request_payload).decode()
+        + "\n```\n",
+        "user": {"login": "aurora-catalog-request-f10c7b40e1[bot]"},
+        "closed_by": {"login": "github-actions[bot]"},
+    }
+    controller = {
+        "schema_version": "1",
+        "issue_number": 123,
+        "state": "BLOCKED",
+        "reason_code": "CATALOG_CONTROLLER_DISABLED",
+        "writer_job_id": "report_nonexecuting_decision",
+        "request_sha256": request_sha256,
+        "receipt_sha256": "0" * 64,
+    }
+    controller["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(
+            {key: value for key, value in controller.items() if key != "receipt_sha256"}
+        )
+    ).hexdigest()
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(bootstrap_runner, "BROKER_ROOT", broker_root)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_context",
+        lambda _root: {
+            "repository": bootstrap_runner.REPOSITORY,
+            "source_commit_sha": COMMIT,
+            "source_root": str(tmp_path / "source"),
+        },
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_invoke_bootstrap_request",
+        lambda _source: calls.append(first) or first,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_parse_terminal_controller_receipt",
+        lambda _issue: controller,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+            lambda args, **_kwargs: json.dumps(issue)
+            if args[:2] == ["gh", "api"]
+            and args[2] == f"/repos/{bootstrap_runner.REPOSITORY}/issues/123"
+            else pytest.fail(f"unexpected command: {args}"),
+    )
+    clock = iter((0.0, 301.0))
+    monkeypatch.setattr(bootstrap_runner.time, "monotonic", lambda: next(clock))
+
+    result = bootstrap_runner._run_requester_qualification(
+        root, tmp_path / "source"
+    )
+
+    assert result["issue_number"] == 123
+    assert len(calls) == 2
+    assert not (broker_root / "launch-tickets").exists()
+
+
+def _qualification_pending_root(tmp_path: Path) -> Path:
+    root = tmp_path / "qualification-root"
+    root.mkdir()
+    source = tmp_path / "source"
+    source.mkdir()
+    state = initial_bootstrap_state(BOOTSTRAP_ID, COMMIT)
+    names = (
+        "precheck_passed",
+        "requester_created",
+        "requester_installed",
+        "auditor_created",
+        "auditor_installed",
+        "public_binding_committed",
+        "protected_merge_observed",
+        "local_install_verified",
+        "github_controls_verified",
+    )
+    for sequence, name in enumerate(names, 1):
+        state = advance_bootstrap_state(state, event(name, sequence))
+    persist_bootstrap_state(root / "state/catalog-bootstrap-state-v1.json", state)
+    controls = {
+        "protected_commit_sha": COMMIT,
+        "apply_receipt_sha256": "1" * 64,
+        "auditor_secret_name": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+        "first_live_qualification": _fake_live_receipt(100),
+    }
+    baseline = {"request_issue_numbers": [], "heavy_run_ids": []}
+    (root / "github-controls-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(controls) + b"\n"
+    )
+    (root / "github-activity-baseline-v1.json").write_bytes(
+        bootstrap_runner._canonical(baseline) + b"\n"
+    )
+    return root
+
+
+def _fake_live_receipt(run_id: int) -> dict[str, object]:
+    identity = {
+        "schema_version": "1",
+        "observer_context": "live_qualification",
+        "protected_commit_sha": COMMIT,
+        "admission_receipt_sha256": f"{run_id:064x}",
+        "terminal_receipt_sha256": f"{run_id + 1:064x}",
+    }
+    receipt = {
+        **identity,
+        "receipt_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(identity)
+        ).hexdigest(),
+    }
+    return {
+        "run_id": run_id,
+        "run_url": f"https://example.test/runs/{run_id}",
+        "file_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(receipt) + b"\n"
+        ).hexdigest(),
+        "receipt": receipt,
+    }
+
+
+def test_qualification_reentry_does_not_redispatch_a_checkpointed_step(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _qualification_pending_root(tmp_path)
+    source = tmp_path / "source"
+    dispatched: list[str] = []
+    requester_calls = 0
+    live_calls = 0
+
+    def fake_live(_root: Path, _commit: str) -> dict[str, object]:
+        nonlocal live_calls
+        live_calls += 1
+        return _fake_live_receipt(100 + live_calls)
+
+    def fake_dispatch(workflow: str, _commit: str) -> dict[str, object]:
+        dispatched.append(workflow)
+        run_id = 200 + len(dispatched)
+        return {
+            "databaseId": run_id,
+            "headSha": COMMIT,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "success",
+            "url": f"https://example.test/runs/{run_id}",
+        }
+
+    def fake_requester(*_args: object, **_kwargs: object) -> dict[str, object]:
+        nonlocal requester_calls
+        requester_calls += 1
+        return {
+            "issue_number": 777,
+            "submission_key_sha256": "1" * 64,
+            "request_sha256": "2" * 64,
+            "request_id": "018f47a2-6e91-7c34-8000-000000000001",
+            "launch_ticket_sha256": "3" * 64,
+            "status_sha256": "4" * 64,
+            "requester_receipt_sha256": "5" * 64,
+            "requester_receipt_file_sha256": "6" * 64,
+            "issue_identity_sha256": "7" * 64,
+            "issue_sha256": "8" * 64,
+            "controller_receipt_sha256": "9" * 64,
+            "bootstrap_seal_sha256": "a" * 64,
+            "duplicate_call_proof_sha256": "3" * 64,
+        }
+
+    monkeypatch.setattr(bootstrap_runner, "_runtime_commit", lambda _root: COMMIT)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_context",
+        lambda _root: {
+            "repository": bootstrap_runner.REPOSITORY,
+            "source_commit_sha": COMMIT,
+            "source_root": str(source),
+        },
+    )
+    monkeypatch.setattr(bootstrap_runner, "_run_live_qualification", fake_live)
+    monkeypatch.setattr(bootstrap_runner, "_dispatch_workflow", fake_dispatch)
+    monkeypatch.setattr(bootstrap_runner, "_run_requester_qualification", fake_requester)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_github_activity_snapshot",
+        lambda: {"request_issue_numbers": [777], "heavy_run_ids": []},
+    )
+    monkeypatch.setattr(bootstrap_runner, "_advance", lambda *_args: None)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_revalidate_qualification_step",
+        lambda *_args, **_kwargs: None,
+        raising=False,
+    )
+    original_writer = bootstrap_runner._write_exact_canonical_checkpoint
+    faulted = False
+
+    def fail_after_live_2(path: Path, value: object) -> str:
+        nonlocal faulted
+        digest = original_writer(path, value)
+        if (
+            not faulted
+            and path.name == bootstrap_runner.QUALIFICATION_CHECKPOINT_FILENAME
+            and isinstance(value, dict)
+            and value.get("steps", [{}])[-1].get("name") == "live_2"
+        ):
+            faulted = True
+            raise RuntimeError("FAULT_AFTER_CHECKPOINT_WRITE")
+        return digest
+
+    monkeypatch.setattr(
+        bootstrap_runner, "_write_exact_canonical_checkpoint", fail_after_live_2
+    )
+    with pytest.raises(RuntimeError, match="FAULT_AFTER_CHECKPOINT_WRITE"):
+        bootstrap_runner.run_qualifications(root)
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_write_exact_canonical_checkpoint",
+        original_writer,
+    )
+    bootstrap_runner.run_qualifications(root)
+
+    assert live_calls == 2
+    assert requester_calls == 1
+    assert dispatched.count("catalog-controller-policy-check.yml") == 3
+    assert dispatched.count("catalog-controller-qualification.yml") == 3
+    assert dispatched.count("catalog-capacity-calibration.yml") == 1
+    assert dispatched.count("catalog-artifact-keeper.yml") == 1
+
+
+def test_corrupt_qualification_checkpoint_blocks_before_any_dispatch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _qualification_pending_root(tmp_path)
+    checkpoint_path = root / bootstrap_runner.QUALIFICATION_CHECKPOINT_FILENAME
+    checkpoint_path.write_bytes(b'{"schema_version":"1"')
+    original = checkpoint_path.read_bytes()
+    monkeypatch.setattr(bootstrap_runner, "_runtime_commit", lambda _root: COMMIT)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_context",
+        lambda _root: {
+            "repository": bootstrap_runner.REPOSITORY,
+            "source_commit_sha": COMMIT,
+            "source_root": str(tmp_path / "source"),
+        },
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run_live_qualification",
+        lambda *_args: pytest.fail("dispatch must not follow a corrupt checkpoint"),
+    )
+
+    with pytest.raises(ValueError, match="QUALIFICATION_CHECKPOINT_INVALID"):
+        bootstrap_runner.run_qualifications(root)
+    assert checkpoint_path.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    (
+        ("commit", "QUALIFICATION_RUN_INVALID"),
+        ("conclusion", "QUALIFICATION_RUN_INVALID"),
+    ),
+)
+def test_stored_workflow_receipt_must_bind_exact_commit_and_success(
+    mutation: str, expected: str, tmp_path: Path
+) -> None:
+    receipt = {
+        "databaseId": 901,
+        "headSha": "b" * 40 if mutation == "commit" else COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "failure" if mutation == "conclusion" else "success",
+        "url": "https://example.test/runs/901",
+    }
+    entry = {
+        "name": "policy_1",
+        "receipt": receipt,
+        "receipt_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(receipt)
+        ).hexdigest(),
+    }
+    with pytest.raises(ValueError, match=expected):
+        bootstrap_runner._revalidate_qualification_step(
+            tmp_path,
+            entry,
+            protected_commit_sha=COMMIT,
+        )
+
+
+def test_stored_workflow_receipt_rejects_wrong_workflow_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    receipt = {
+        "databaseId": 902,
+        "headSha": COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://example.test/runs/902",
+    }
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_list_workflow_runs",
+        lambda _workflow: [{"databaseId": 902}],
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda *_args, **_kwargs: json.dumps(
+            {**receipt, "workflowName": "other.yml", "path": ".github/workflows/other.yml"}
+        ),
+    )
+    with pytest.raises(ValueError, match="QUALIFICATION_RUN_INVALID"):
+        bootstrap_runner._revalidate_qualification_step(
+            tmp_path,
+            {
+                "name": "policy_1",
+                "receipt": receipt,
+                "receipt_sha256": hashlib.sha256(
+                    bootstrap_runner._canonical(receipt)
+                ).hexdigest(),
+            },
+            protected_commit_sha=COMMIT,
+        )
+
+
+def test_stored_live_receipt_rejects_changed_artifact(
+    tmp_path: Path, monkeypatch
+) -> None:
+    receipt = _fake_live_receipt(903)
+    entry = {
+        "name": "live_2",
+        "receipt": receipt,
+        "receipt_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(receipt)
+        ).hexdigest(),
+    }
+    run = {
+        "databaseId": 903,
+        "headSha": COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "url": receipt["run_url"],
+    }
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_read_stored_workflow_run",
+        lambda *_args, **_kwargs: run,
+    )
+    changed = {**receipt, "file_sha256": "e" * 64}
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_download_live_qualification",
+        lambda *_args, **_kwargs: changed,
+    )
+    with pytest.raises(ValueError, match="LIVE_RECEIPT_CHANGED"):
+        bootstrap_runner._revalidate_qualification_step(
+            tmp_path,
+            entry,
+            protected_commit_sha=COMMIT,
+        )
+
+
+def _requester_recovery_fixture(tmp_path: Path) -> dict[str, object]:
+    broker_root = tmp_path / "requester-broker"
+    (broker_root / "campaign-status").mkdir(parents=True)
+    (broker_root / "receipts").mkdir(parents=True)
+    root = tmp_path / "requester-installed"
+    root.mkdir()
+    request_id = "018f47a2-6e91-7c34-8000-000000000001"
+    request_payload = {
+        "schema_version": "1",
+        "request_id": request_id,
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "launch_generation": 1,
+        "launch_ticket_sha256": "3" * 64,
+        "previous_terminal_request_sha256": None,
+        "campaign_definition_sha256": "a" * 64,
+        "prompt_sha256": "b" * 64,
+        "authorization": "USER_EXPLICITLY_REQUESTED_NEW_CATALOG_RUN",
+        "free_resources_only": True,
+        "automatic_recovery": True,
+        "max_same_failure_count": 3,
+        "requester_public_key_sha256": "c" * 64,
+        "requester_attestation_algorithm": "rsa-pss-sha256-v1",
+        "requester_attestation_b64": "A" * 300,
+    }
+    request_sha256 = hashlib.sha256(
+        bootstrap_runner._canonical(request_payload)
+    ).hexdigest()
+    status = {
+        "schema_version": "1",
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "state": "terminal",
+        "launch_generation": 1,
+        "launch_ticket_sha256": "3" * 64,
+        "submission_key_sha256": "1" * 64,
+        "request_id": request_id,
+        "request_sha256": request_sha256,
+        "issue_number": 123,
+        "last_github_checked_at": "2026-08-25T10:00:00Z",
+        "updated_at": "2026-08-25T10:00:00Z",
+        "status_sha256": "0" * 64,
+    }
+    status["status_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(status)
+    ).hexdigest()
+    (broker_root / "campaign-status/controller-bootstrap-qualification-v1.status.json").write_bytes(
+        bootstrap_runner._canonical(status) + b"\n"
+    )
+    (root / "requester-public-v1.json").write_bytes(
+        bootstrap_runner._canonical(
+            {
+                "app_slug": "aurora-catalog-request-f10c7b40e1",
+                "public_key_sha256": "c" * 64,
+            }
+        )
+        + b"\n"
+    )
+    first = {
+        "schema_version": "1",
+        "status": "existing",
+        "reason_code": "REQUEST_ALREADY_EXISTS",
+        "submission_key_sha256": "1" * 64,
+        "request_id": request_id,
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "launch_generation": 1,
+        "issue_number": 123,
+        "request_sha256": request_sha256,
+        "observed_at": "2026-08-25T10:01:00Z",
+        "receipt_sha256": "0" * 64,
+    }
+    first["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(first)
+    ).hexdigest()
+    (broker_root / "receipts" / ("1" * 64 + ".receipt.json")).write_bytes(
+        bootstrap_runner._canonical(first) + b"\n"
+    )
+    issue = {
+        "number": 123,
+        "state": "closed",
+        "state_reason": "completed",
+        "html_url": f"https://github.com/{bootstrap_runner.REPOSITORY}/issues/123",
+        "title": f"[AURORA CATALOG RUN REQUEST] {request_id}",
+        "body": "```json\n"
+        + bootstrap_runner._canonical(request_payload).decode()
+        + "\n```\n",
+        "user": {"login": "aurora-catalog-request-f10c7b40e1[bot]"},
+        "closed_by": {"login": "github-actions[bot]"},
+    }
+    controller = {
+        "schema_version": "1",
+        "issue_number": 123,
+        "state": "BLOCKED",
+        "reason_code": "CATALOG_CONTROLLER_DISABLED",
+        "writer_job_id": "report_nonexecuting_decision",
+        "request_sha256": request_sha256,
+        "receipt_sha256": "0" * 64,
+    }
+    controller["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(
+            {key: value for key, value in controller.items() if key != "receipt_sha256"}
+        )
+    ).hexdigest()
+    return {
+        "root": root,
+        "broker_root": broker_root,
+        "source": tmp_path / "source",
+        "first": first,
+        "status": status,
+        "issue": issue,
+        "controller": controller,
+    }
+
+
+def _patch_requester_recovery_fakes(
+    fixture: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> list[dict[str, object]]:
+    root = fixture["root"]
+    broker_root = fixture["broker_root"]
+    source = fixture["source"]
+    first = fixture["first"]
+    issue = fixture["issue"]
+    controller = fixture["controller"]
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(bootstrap_runner, "BROKER_ROOT", broker_root)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_context",
+        lambda _root: {
+            "repository": bootstrap_runner.REPOSITORY,
+            "source_commit_sha": COMMIT,
+            "source_root": str(source),
+        },
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_invoke_bootstrap_request",
+        lambda _source: calls.append(dict(first)) or dict(first),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_parse_terminal_controller_receipt",
+        lambda _issue: dict(controller),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda args, **_kwargs: json.dumps(issue)
+        if args[:2] == ["gh", "api"]
+        and args[2] == f"/repos/{bootstrap_runner.REPOSITORY}/issues/123"
+        else pytest.fail(f"unexpected command: {args}"),
+    )
+    return calls
+
+
+def test_requester_complete_checkpoint_revalidates_without_new_client_call(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    source = fixture["source"]
+
+    first_result = bootstrap_runner._run_requester_qualification(root, source)
+    complete_bytes = (
+        root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
+    ).read_bytes()
+    calls.clear()
+    second_result = bootstrap_runner._run_requester_qualification(root, source)
+
+    assert second_result == first_result
+    assert calls == []
+    assert (
+        root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
+    ).read_bytes() == complete_bytes
+
+
+def test_existing_seal_without_complete_reuses_bytes_and_performs_one_replay(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    source = fixture["source"]
+    bootstrap_runner._run_requester_qualification(root, source)
+    seal_path = fixture["broker_root"] / "config/bootstrap-qualified-v1.seal.json"
+    seal_bytes = seal_path.read_bytes()
+    (root / bootstrap_runner.REQUESTER_TERMINAL_CHECKPOINT_FILENAME).unlink()
+    (root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME).unlink()
+    calls.clear()
+
+    bootstrap_runner._run_requester_qualification(root, source)
+
+    assert len(calls) == 1
+    assert seal_path.read_bytes() == seal_bytes
+
+
+@pytest.mark.parametrize(
+    ("fault_file", "expected_replay_calls"),
+    (
+        (bootstrap_runner.REQUESTER_TERMINAL_CHECKPOINT_FILENAME, 0),
+        (bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME, 0),
+        ("bootstrap-qualified-v1.seal.json", 1),
+    ),
+)
+def test_requester_reentry_after_checkpoint_write_does_not_replay(
+    fault_file: str,
+    expected_replay_calls: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    source = fixture["source"]
+    original = bootstrap_runner._write_exact_canonical_checkpoint
+    faulted = False
+
+    def fail_after_write(path: Path, value: object) -> str:
+        nonlocal faulted
+        digest = original(path, value)
+        if not faulted and path.name == fault_file:
+            faulted = True
+            raise RuntimeError("FAULT_AFTER_REQUESTER_CHECKPOINT_WRITE")
+        return digest
+
+    monkeypatch.setattr(
+        bootstrap_runner, "_write_exact_canonical_checkpoint", fail_after_write
+    )
+    with pytest.raises(RuntimeError, match="FAULT_AFTER_REQUESTER_CHECKPOINT_WRITE"):
+        bootstrap_runner._run_requester_qualification(root, source)
+    monkeypatch.setattr(
+        bootstrap_runner, "_write_exact_canonical_checkpoint", original
+    )
+    calls.clear()
+    bootstrap_runner._run_requester_qualification(root, source)
+
+    assert len(calls) == expected_replay_calls
+    assert (
+        root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
+    ).is_file()
+
+
+def test_second_requester_receipt_with_any_field_difference_blocks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    source = fixture["source"]
+    first = fixture["first"]
+    different = {**first, "reason_code": "REQUEST_DIFFERENT"}
+    different["receipt_sha256"] = "0" * 64
+    different["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(different)
+    ).hexdigest()
+    responses = iter((dict(first), different))
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_invoke_bootstrap_request",
+        lambda _source: calls.append(dict(next(responses))) or calls[-1],
+    )
+
+    with pytest.raises(ValueError, match="REQUESTER_REPLAY_INVALID"):
+        bootstrap_runner._run_requester_qualification(root, source)
+    assert not (
+        root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
+    ).exists()
+
+
+def test_controller_receipt_request_hash_mismatch_blocks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    _patch_requester_recovery_fakes(fixture, monkeypatch)
+    bad = {**fixture["controller"], "request_sha256": "d" * 64}
+    bad["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(
+            {key: value for key, value in bad.items() if key != "receipt_sha256"}
+        )
+    ).hexdigest()
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_parse_terminal_controller_receipt",
+        lambda _issue: bad,
+    )
+
+    with pytest.raises(ValueError, match="CONTROLLER_RECEIPT_INVALID"):
+        bootstrap_runner._run_requester_qualification(
+            fixture["root"], fixture["source"]
+        )
+
+
 @pytest.mark.parametrize(
     ("remote", "expected"),
     (

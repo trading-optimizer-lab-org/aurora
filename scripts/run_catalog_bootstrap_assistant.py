@@ -7,10 +7,12 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
 import zipfile
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
@@ -63,6 +65,35 @@ BROKER_ROOT = Path("C:/ProgramData/AURORA/CatalogRequester")
 AGENT_ROOT = Path("C:/ProgramData/AURORA/CatalogAgent")
 BOOTSTRAP_STAGING_ROOT = Path("C:/ProgramData/AURORA/BootstrapStaging")
 CONTROLLER_VARIABLE = "CATALOG_CONTROLLER_ENABLED"
+QUALIFICATION_CHECKPOINT_FILENAME = "qualification-substeps-v1.checkpoint.json"
+REQUESTER_TERMINAL_CHECKPOINT_FILENAME = "requester-qualification-terminal-v1.json"
+REQUESTER_COMPLETE_CHECKPOINT_FILENAME = "requester-qualification-complete-v1.json"
+_BOOTSTRAP_QUALIFICATION_CAMPAIGN = "controller-bootstrap-qualification-v1"
+_QUALIFICATION_STEP_ORDER = (
+    "live_2",
+    "live_3",
+    "policy_1",
+    "policy_2",
+    "policy_3",
+    "controller_qualification_1",
+    "controller_qualification_2",
+    "controller_qualification_3",
+    "capacity",
+    "keeper",
+    "requester",
+)
+_QUALIFICATION_STEP_WORKFLOWS = {
+    "live_2": "catalog-live-controls-qualification.yml",
+    "live_3": "catalog-live-controls-qualification.yml",
+    "policy_1": "catalog-controller-policy-check.yml",
+    "policy_2": "catalog-controller-policy-check.yml",
+    "policy_3": "catalog-controller-policy-check.yml",
+    "controller_qualification_1": "catalog-controller-qualification.yml",
+    "controller_qualification_2": "catalog-controller-qualification.yml",
+    "controller_qualification_3": "catalog-controller-qualification.yml",
+    "capacity": "catalog-capacity-calibration.yml",
+    "keeper": "catalog-artifact-keeper.yml",
+}
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _ALLOWED_BOOTSTRAP_WORKFLOWS = frozenset(
@@ -216,6 +247,114 @@ _EXACT_REPOSITORY_REMOTES = frozenset(
 
 def _canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _reject_duplicate_json_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("CATALOG_BOOTSTRAP_JSON_DUPLICATE_KEY")
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite_json(value: str) -> object:
+    raise ValueError(f"CATALOG_BOOTSTRAP_JSON_NONFINITE:{value}")
+
+
+def _is_reparse_path(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    if callable(is_junction) and is_junction():
+        return True
+    try:
+        info = path.lstat()
+    except OSError:
+        return False
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(getattr(info, "st_file_attributes", 0) & reparse_attribute)
+
+
+def _validate_exact_file_path(path: Path, error_code: str) -> None:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise ValueError(error_code) from exc
+    if (
+        _is_reparse_path(path)
+        or not stat.S_ISREG(info.st_mode)
+        or getattr(info, "st_nlink", 1) != 1
+    ):
+        raise ValueError(error_code)
+
+
+def _read_canonical_document(path: Path, error_code: str) -> dict[str, object]:
+    _validate_exact_file_path(path, error_code)
+    try:
+        data = path.read_bytes()
+        if not data.endswith(b"\n") or data[:-1].endswith(b"\r"):
+            raise ValueError
+        value = json.loads(
+            data[:-1].decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_nonfinite_json,
+        )
+    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(error_code) from exc
+    if not isinstance(value, dict) or _canonical(value) + b"\n" != data:
+        raise ValueError(error_code)
+    return value
+
+
+def _write_exact_canonical_checkpoint(path: Path, value: object) -> str:
+    """Create one immutable canonical evidence file, or accept identical bytes."""
+
+    data = _canonical(value) + b"\n"
+    if path.exists() or path.is_symlink():
+        _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID")
+        try:
+            observed = path.read_bytes()
+        except OSError as exc:
+            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_READBACK_INVALID") from exc
+        if observed != data:
+            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_CONFLICT")
+        return hashlib.sha256(observed).hexdigest()
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    try:
+        descriptor = os.open(str(path), flags)
+    except FileExistsError as exc:
+        if _is_reparse_path(path):
+            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID") from exc
+        _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID")
+        if path.read_bytes() != data:
+            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_CONFLICT") from None
+        return hashlib.sha256(data).hexdigest()
+    except OSError as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_WRITE_FAILED") from exc
+
+    try:
+        with os.fdopen(descriptor, "wb", closefd=True) as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError as exc:
+        path.unlink(missing_ok=True)
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_WRITE_FAILED") from exc
+    _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID")
+    try:
+        observed = path.read_bytes()
+    except OSError as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_READBACK_INVALID") from exc
+    if observed != data:
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_READBACK_INVALID")
+    return hashlib.sha256(observed).hexdigest()
 
 
 def _repository_remote_is_exact(remote: str) -> bool:
@@ -4670,7 +4809,11 @@ def _parse_terminal_controller_receipt(issue_number: int) -> dict[str, object]:
         ):
             raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_RECEIPT_INVALID")
         encoded = body.split(marker, 1)[1][:-5]
-        value = json.loads(encoded)
+        value = json.loads(
+            encoded,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_nonfinite_json,
+        )
         if not isinstance(value, dict) or encoded.encode() != _canonical(value):
             raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_RECEIPT_INVALID")
         receipts.append(value)
@@ -4680,6 +4823,7 @@ def _parse_terminal_controller_receipt(issue_number: int) -> dict[str, object]:
         if row.get("issue_number") == issue_number
         and row.get("state") == "BLOCKED"
         and row.get("reason_code") == "CATALOG_CONTROLLER_DISABLED"
+        and row.get("writer_job_id") == "report_nonexecuting_decision"
         and _SHA256.fullmatch(str(row.get("receipt_sha256", "")))
     ]
     if len(exact) != 1:
@@ -4706,10 +4850,11 @@ def _invoke_bootstrap_request(source: Path) -> dict[str, object]:
     value = json.loads(raw.splitlines()[-1])
     if (
         not isinstance(value, dict)
-        or value.get("campaign_key") != "controller-bootstrap-qualification-v1"
-        or value.get("status") not in {"pending", "submitted"}
+        or value.get("campaign_key") != _BOOTSTRAP_QUALIFICATION_CAMPAIGN
+        or value.get("status") not in {"pending", "submitted", "existing"}
     ):
         raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_INVALID")
+    _validate_requester_receipt(value)
     return value
 
 
@@ -4718,84 +4863,1226 @@ def _seal_hash(payload: dict[str, object], field: str) -> str:
     return hashlib.sha256(_canonical(unsigned)).hexdigest()
 
 
-def _run_requester_qualification(root: Path, source: Path) -> dict[str, object]:
-    ticket = BROKER_ROOT / "launch-tickets/controller-bootstrap-qualification-v1.ticket.json"
-    deadline = time.monotonic() + 300
-    while not ticket.is_file() and time.monotonic() < deadline:
-        time.sleep(2)
-    if not ticket.is_file():
-        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_TICKET_MISSING")
-    first = _invoke_bootstrap_request(source)
-    issue_number = first.get("issue_number")
-    if not isinstance(issue_number, int) or issue_number < 1:
-        deadline = time.monotonic() + 300
-        while time.monotonic() < deadline:
-            time.sleep(2)
-            first = _invoke_bootstrap_request(source)
-            issue_number = first.get("issue_number")
-            if isinstance(issue_number, int) and issue_number > 0:
-                break
-    if not isinstance(issue_number, int) or issue_number < 1:
-        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_ISSUE_MISSING")
-    status_path = (
-        BROKER_ROOT
-        / "campaign-status/controller-bootstrap-qualification-v1.status.json"
-    )
-    deadline = time.monotonic() + 1200
-    status: dict[str, object] = {}
-    while time.monotonic() < deadline:
-        if status_path.is_file():
-            status = _read_json(status_path)
-            if status.get("state") == "terminal":
-                break
-        time.sleep(5)
+def _validate_requester_receipt(value: dict[str, object]) -> None:
+    expected_keys = {
+        "schema_version",
+        "status",
+        "reason_code",
+        "submission_key_sha256",
+        "request_id",
+        "campaign_key",
+        "launch_generation",
+        "issue_number",
+        "request_sha256",
+        "observed_at",
+        "receipt_sha256",
+    }
+    if set(value) != expected_keys:
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_INVALID")
+    status = value.get("status")
+    submitted = status in {"submitted", "existing"}
     if (
-        status.get("state") != "terminal"
-        or status.get("issue_number") != issue_number
-        or not _SHA256.fullmatch(str(status.get("request_sha256", "")))
-        or not _SHA256.fullmatch(str(status.get("submission_key_sha256", "")))
+        value.get("schema_version") != "1"
+        or status not in {"pending", "submitted", "existing", "blocked"}
+        or not isinstance(value.get("reason_code"), str)
+        or not _SHA256.fullmatch(str(value.get("submission_key_sha256", "")))
+        or not isinstance(value.get("request_id"), str)
+        or re.fullmatch(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            str(value.get("request_id")),
+        ) is None
+        or value.get("campaign_key") != _BOOTSTRAP_QUALIFICATION_CAMPAIGN
+        or isinstance(value.get("launch_generation"), bool)
+        or not isinstance(value.get("launch_generation"), int)
+        or value.get("launch_generation") != 1
+        or not isinstance(value.get("observed_at"), str)
+        or not _SHA256.fullmatch(str(value.get("receipt_sha256", "")))
     ):
-        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_NOT_TERMINAL")
-    issue = json.loads(_run(["gh", "api", f"/repos/{REPOSITORY}/issues/{issue_number}"]))
-    requester = _read_json(root / "requester-public-v1.json")
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_INVALID")
+    has_issue = (
+        isinstance(value.get("issue_number"), int)
+        and not isinstance(value.get("issue_number"), bool)
+        and int(value["issue_number"]) > 0
+    )
+    has_request = _SHA256.fullmatch(str(value.get("request_sha256", ""))) is not None
+    if submitted != has_issue or submitted != has_request:
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_INVALID")
+    unsigned = {**value, "receipt_sha256": "0" * 64}
+    if hashlib.sha256(_canonical(unsigned)).hexdigest() != value["receipt_sha256"]:
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_INVALID")
+
+
+def _validate_requester_status(value: dict[str, object]) -> None:
+    expected_keys = {
+        "schema_version",
+        "campaign_key",
+        "state",
+        "launch_generation",
+        "launch_ticket_sha256",
+        "submission_key_sha256",
+        "request_id",
+        "request_sha256",
+        "issue_number",
+        "last_github_checked_at",
+        "updated_at",
+        "status_sha256",
+    }
+    if set(value) != expected_keys:
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_STATUS_INVALID")
+    state = value.get("state")
+    requested = state in {"request_pending", "active", "terminal"}
+    github_known = state in {"active", "terminal"}
     if (
-        not isinstance(issue, dict)
+        value.get("schema_version") != "1"
+        or value.get("campaign_key") != _BOOTSTRAP_QUALIFICATION_CAMPAIGN
+        or state not in {"ticket_available", "request_pending", "active", "terminal"}
+        or isinstance(value.get("launch_generation"), bool)
+        or not isinstance(value.get("launch_generation"), int)
+        or value.get("launch_generation") != 1
+        or not _SHA256.fullmatch(str(value.get("launch_ticket_sha256", "")))
+        or (requested != (_SHA256.fullmatch(str(value.get("submission_key_sha256", ""))) is not None))
+        or (
+            requested
+            != (
+                isinstance(value.get("request_id"), str)
+                and re.fullmatch(
+                    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    str(value.get("request_id")),
+                )
+                is not None
+            )
+        )
+        or (github_known != (_SHA256.fullmatch(str(value.get("request_sha256", ""))) is not None))
+        or (github_known != (isinstance(value.get("issue_number"), int) and not isinstance(value.get("issue_number"), bool) and int(value["issue_number"]) > 0))
+        or not isinstance(value.get("updated_at"), str)
+        or not _SHA256.fullmatch(str(value.get("status_sha256", "")))
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_STATUS_INVALID")
+    if github_known != isinstance(value.get("last_github_checked_at"), str):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_STATUS_INVALID")
+    unsigned = {**value, "status_sha256": "0" * 64}
+    if hashlib.sha256(_canonical(unsigned)).hexdigest() != value["status_sha256"]:
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_STATUS_INVALID")
+
+
+def _requester_status_path() -> Path:
+    return (
+        BROKER_ROOT
+        / "campaign-status"
+        / f"{_BOOTSTRAP_QUALIFICATION_CAMPAIGN}.status.json"
+    )
+
+
+def _load_requester_status() -> dict[str, object] | None:
+    path = _requester_status_path()
+    if not path.exists() and not path.is_symlink():
+        return None
+    status = _read_canonical_document(
+        path, "CATALOG_BOOTSTRAP_REQUESTER_STATUS_INVALID"
+    )
+    _validate_requester_status(status)
+    return status
+
+
+def _wait_for_requester_ticket() -> None:
+    ticket = (
+        BROKER_ROOT
+        / "launch-tickets"
+        / f"{_BOOTSTRAP_QUALIFICATION_CAMPAIGN}.ticket.json"
+    )
+    deadline = time.monotonic() + 300
+    while not ticket.exists() and not ticket.is_symlink() and time.monotonic() < deadline:
+        time.sleep(2)
+    if not ticket.exists() and not ticket.is_symlink():
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_TICKET_MISSING")
+    value = _read_canonical_document(
+        ticket, "CATALOG_BOOTSTRAP_QUALIFICATION_TICKET_INVALID"
+    )
+    expected = {
+        "schema_version",
+        "request_id",
+        "campaign_key",
+        "launch_generation",
+        "campaign_definition_sha256",
+        "prompt_sha256",
+        "previous_terminal_request_sha256",
+    }
+    if (
+        set(value) != expected
+        or value.get("schema_version") != "1"
+        or value.get("campaign_key") != _BOOTSTRAP_QUALIFICATION_CAMPAIGN
+        or value.get("launch_generation") != 1
+        or not _SHA256.fullmatch(str(value.get("campaign_definition_sha256", "")))
+        or not _SHA256.fullmatch(str(value.get("prompt_sha256", "")))
+        or value.get("previous_terminal_request_sha256") is not None
+        or re.fullmatch(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            str(value.get("request_id")),
+        ) is None
+        or hashlib.sha256(_canonical(value)).hexdigest()
+        != str(_load_requester_status() or {}).get("launch_ticket_sha256", "")
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_TICKET_INVALID")
+
+
+def _wait_for_terminal_requester_status(
+    status: dict[str, object] | None,
+) -> dict[str, object]:
+    if status is not None and status.get("state") == "terminal":
+        return status
+    deadline = time.monotonic() + 1200
+    while time.monotonic() < deadline:
+        observed = _load_requester_status()
+        if observed is not None and observed.get("state") == "terminal":
+            return observed
+        time.sleep(5)
+    raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_NOT_TERMINAL")
+
+
+def _load_requester_public_binding(root: Path) -> dict[str, object]:
+    path = root / "requester-public-v1.json"
+    value = _read_canonical_document(
+        path, "CATALOG_BOOTSTRAP_REQUESTER_IDENTITY_INVALID"
+    )
+    if (
+        not isinstance(value.get("app_slug"), str)
+        or not value["app_slug"]
+        or (
+            value.get("public_key_sha256") is not None
+            and not _SHA256.fullmatch(str(value["public_key_sha256"]))
+        )
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_IDENTITY_INVALID")
+    return value
+
+
+def _request_payload_from_issue(
+    issue: dict[str, object],
+    *,
+    status: dict[str, object],
+    requester: dict[str, object],
+) -> dict[str, object]:
+    title = f"[AURORA CATALOG RUN REQUEST] {status['request_id']}"
+    body = issue.get("body")
+    if issue.get("title") != title or not isinstance(body, str):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUEST_SIGNING_INVALID")
+    prefix = "```json\n"
+    suffix = "\n```\n"
+    if not body.startswith(prefix) or not body.endswith(suffix):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUEST_SIGNING_INVALID")
+    encoded = body[len(prefix) : -len(suffix)]
+    try:
+        payload = json.loads(
+            encoded,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_nonfinite_json,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_REQUEST_SIGNING_INVALID") from exc
+    if not isinstance(payload, dict) or encoded.encode() != _canonical(payload):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUEST_SIGNING_INVALID")
+    required = {
+        "schema_version",
+        "request_id",
+        "campaign_key",
+        "launch_generation",
+        "launch_ticket_sha256",
+        "previous_terminal_request_sha256",
+        "campaign_definition_sha256",
+        "prompt_sha256",
+        "authorization",
+        "free_resources_only",
+        "automatic_recovery",
+        "max_same_failure_count",
+        "requester_public_key_sha256",
+        "requester_attestation_algorithm",
+        "requester_attestation_b64",
+    }
+    if (
+        set(payload) != required
+        or payload.get("schema_version") != "1"
+        or payload.get("request_id") != status["request_id"]
+        or payload.get("campaign_key") != _BOOTSTRAP_QUALIFICATION_CAMPAIGN
+        or payload.get("launch_generation") != 1
+        or payload.get("launch_ticket_sha256") != status["launch_ticket_sha256"]
+        or payload.get("previous_terminal_request_sha256") is not None
+        or not _SHA256.fullmatch(str(payload.get("campaign_definition_sha256", "")))
+        or not _SHA256.fullmatch(str(payload.get("prompt_sha256", "")))
+        or payload.get("authorization") != "USER_EXPLICITLY_REQUESTED_NEW_CATALOG_RUN"
+        or payload.get("free_resources_only") is not True
+        or payload.get("automatic_recovery") is not True
+        or payload.get("max_same_failure_count") != 3
+        or (
+            requester.get("public_key_sha256") is not None
+            and payload.get("requester_public_key_sha256")
+            != requester.get("public_key_sha256")
+        )
+        or payload.get("requester_attestation_algorithm")
+        != "rsa-pss-sha256-v1"
+        or not isinstance(payload.get("requester_attestation_b64"), str)
+        or len(str(payload.get("requester_attestation_b64"))) < 300
+        or not _SHA256.fullmatch(str(status.get("request_sha256", "")))
+        or hashlib.sha256(_canonical(payload)).hexdigest() != status["request_sha256"]
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUEST_SIGNING_INVALID")
+    return payload
+
+
+def _load_remote_requester_issue(
+    issue_number: int,
+    *,
+    status: dict[str, object],
+    requester: dict[str, object],
+) -> tuple[dict[str, object], dict[str, object], str]:
+    raw = _run(["gh", "api", f"/repos/{REPOSITORY}/issues/{issue_number}"])
+    try:
+        issue = json.loads(
+            raw,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_nonfinite_json,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_ISSUE_INVALID") from exc
+    if not isinstance(issue, dict):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_ISSUE_INVALID")
+    actor = f"{requester['app_slug']}[bot]"
+    closed_by = issue.get("closed_by")
+    user = issue.get("user")
+    if (
+        issue.get("number") != issue_number
         or issue.get("state") != "closed"
         or issue.get("state_reason") != "completed"
-        or (issue.get("user") or {}).get("login") != f"{requester['app_slug']}[bot]"
-        or (issue.get("closed_by") or {}).get("login") != "github-actions[bot]"
+        or not isinstance(user, Mapping)
+        or user.get("login") != actor
+        or not isinstance(closed_by, Mapping)
+        or closed_by.get("login") != "github-actions[bot]"
+        or issue.get("html_url")
+        != f"https://github.com/{REPOSITORY}/issues/{issue_number}"
     ):
         raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_ISSUE_INVALID")
-    controller = _parse_terminal_controller_receipt(issue_number)
-    now = datetime.now(tz=UTC).isoformat().replace("+00:00", "Z")
+    payload = _request_payload_from_issue(issue, status=status, requester=requester)
+    identity = {
+        "number": issue_number,
+        "html_url": issue["html_url"],
+        "user_login": actor,
+        "closed_by_login": "github-actions[bot]",
+    }
+    return issue, identity, hashlib.sha256(_canonical(issue)).hexdigest()
+
+
+def _validate_controller_receipt(
+    receipt: dict[str, object],
+    *,
+    issue_number: int,
+    request_sha256: str,
+) -> None:
+    if (
+        receipt.get("issue_number") != issue_number
+        or receipt.get("state") != "BLOCKED"
+        or receipt.get("reason_code") != "CATALOG_CONTROLLER_DISABLED"
+        or receipt.get("writer_job_id") != "report_nonexecuting_decision"
+        or receipt.get("request_sha256") != request_sha256
+        or not _SHA256.fullmatch(str(receipt.get("receipt_sha256", "")))
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_RECEIPT_INVALID")
+    identity = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    if hashlib.sha256(_canonical(identity)).hexdigest() != receipt["receipt_sha256"]:
+        raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_RECEIPT_INVALID")
+
+
+def _load_local_requester_receipt(
+    status: dict[str, object],
+) -> tuple[dict[str, object], str] | None:
+    submission = str(status["submission_key_sha256"])
+    path = BROKER_ROOT / "receipts" / f"{submission}.receipt.json"
+    if not path.exists() and not path.is_symlink():
+        return None
+    receipt = _read_canonical_document(
+        path, "CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_INVALID"
+    )
+    _validate_requester_receipt(receipt)
+    if (
+        receipt.get("status") not in {"submitted", "existing"}
+        or receipt.get("submission_key_sha256") != status["submission_key_sha256"]
+        or receipt.get("request_id") != status["request_id"]
+        or receipt.get("request_sha256") != status["request_sha256"]
+        or receipt.get("issue_number") != status["issue_number"]
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_INVALID")
+    return receipt, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _validate_bootstrap_seal(
+    seal: dict[str, object],
+    *,
+    status: dict[str, object],
+    controller: dict[str, object],
+    protected_commit_sha: str,
+) -> None:
+    expected = {
+        "schema_version",
+        "qualification_permanently_sealed",
+        "qualification_submission_key_sha256",
+        "qualification_request_sha256",
+        "qualification_issue_number",
+        "controller_receipt_sha256",
+        "sealed_at",
+        "bootstrap_seal_sha256",
+    }
+    if (
+        set(seal) != expected
+        or seal.get("schema_version") != "1"
+        or seal.get("qualification_permanently_sealed") is not True
+        or seal.get("qualification_submission_key_sha256")
+        != status["submission_key_sha256"]
+        or seal.get("qualification_request_sha256") != status["request_sha256"]
+        or seal.get("qualification_issue_number") != status["issue_number"]
+        or seal.get("controller_receipt_sha256") != controller["receipt_sha256"]
+        or not isinstance(seal.get("sealed_at"), str)
+        or not _SHA256.fullmatch(str(seal.get("bootstrap_seal_sha256", "")))
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_SEAL_INVALID")
+    if protected_commit_sha and not _COMMIT.fullmatch(protected_commit_sha):
+        raise ValueError("CATALOG_BOOTSTRAP_SEAL_INVALID")
+    if _seal_hash(seal, "bootstrap_seal_sha256") != seal["bootstrap_seal_sha256"]:
+        raise ValueError("CATALOG_BOOTSTRAP_SEAL_INVALID")
+
+
+def _load_or_create_bootstrap_seal(
+    *,
+    status: dict[str, object],
+    controller: dict[str, object],
+    protected_commit_sha: str,
+) -> dict[str, object]:
+    path = BROKER_ROOT / "config/bootstrap-qualified-v1.seal.json"
+    if path.exists() or path.is_symlink():
+        seal = _read_canonical_document(path, "CATALOG_BOOTSTRAP_SEAL_INVALID")
+        _validate_bootstrap_seal(
+            seal,
+            status=status,
+            controller=controller,
+            protected_commit_sha=protected_commit_sha,
+        )
+        return seal
     seal = {
         "schema_version": "1",
         "qualification_permanently_sealed": True,
         "qualification_submission_key_sha256": status["submission_key_sha256"],
         "qualification_request_sha256": status["request_sha256"],
-        "qualification_issue_number": issue_number,
+        "qualification_issue_number": status["issue_number"],
         "controller_receipt_sha256": controller["receipt_sha256"],
-        "sealed_at": now,
+        "sealed_at": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
         "bootstrap_seal_sha256": "0" * 64,
     }
     seal["bootstrap_seal_sha256"] = _seal_hash(seal, "bootstrap_seal_sha256")
-    _write_canonical(BROKER_ROOT / "config/bootstrap-qualified-v1.seal.json", seal)
-    second = _invoke_bootstrap_request(source)
-    if (
-        second.get("issue_number") != issue_number
-        or second.get("request_sha256") != first.get("request_sha256")
-    ):
-        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_REPLAY_INVALID")
+    _write_exact_canonical_checkpoint(path, seal)
+    observed = _read_canonical_document(path, "CATALOG_BOOTSTRAP_SEAL_INVALID")
+    _validate_bootstrap_seal(
+        observed,
+        status=status,
+        controller=controller,
+        protected_commit_sha=protected_commit_sha,
+    )
+    return observed
+
+
+def _requester_qualification_from_evidence(
+    *,
+    status: dict[str, object],
+    receipt: dict[str, object],
+    receipt_file_sha256: str,
+    identity: dict[str, object],
+    issue_sha256: str,
+    controller: dict[str, object],
+    seal: dict[str, object],
+    duplicate_call_proof_sha256: str,
+) -> dict[str, object]:
     return {
-        "issue_number": issue_number,
+        "issue_number": status["issue_number"],
         "submission_key_sha256": status["submission_key_sha256"],
         "request_sha256": status["request_sha256"],
+        "request_id": status["request_id"],
+        "launch_ticket_sha256": status["launch_ticket_sha256"],
+        "status_sha256": status["status_sha256"],
+        "requester_receipt_sha256": receipt["receipt_sha256"],
+        "requester_receipt_file_sha256": receipt_file_sha256,
+        "issue_identity_sha256": hashlib.sha256(_canonical(identity)).hexdigest(),
+        "issue_sha256": issue_sha256,
         "controller_receipt_sha256": controller["receipt_sha256"],
         "bootstrap_seal_sha256": seal["bootstrap_seal_sha256"],
-        "duplicate_call_proof_sha256": hashlib.sha256(
-            _canonical({"first": first, "second": second})
-        ).hexdigest(),
+        "duplicate_call_proof_sha256": duplicate_call_proof_sha256,
     }
+
+
+def _requester_checkpoint_hash(value: dict[str, object], field: str) -> str:
+    return _seal_hash(value, field)
+
+
+def _terminal_checkpoint_payload(
+    *,
+    protected_commit_sha: str,
+    status: dict[str, object],
+    receipt: dict[str, object],
+    receipt_file_sha256: str,
+    identity: dict[str, object],
+    issue_sha256: str,
+    controller: dict[str, object],
+    seal: dict[str, object],
+    duplicate_call_proof_sha256: str,
+) -> dict[str, object]:
+    value: dict[str, object] = {
+        "schema_version": "1",
+        "campaign_key": _BOOTSTRAP_QUALIFICATION_CAMPAIGN,
+        "protected_commit_sha": protected_commit_sha,
+        "status": status,
+        "status_sha256": status["status_sha256"],
+        "requester_receipt": receipt,
+        "requester_receipt_sha256": receipt["receipt_sha256"],
+        "requester_receipt_file_sha256": receipt_file_sha256,
+        "request_id": status["request_id"],
+        "launch_ticket_sha256": status["launch_ticket_sha256"],
+        "issue_number": status["issue_number"],
+        "issue_identity": identity,
+        "issue_identity_sha256": hashlib.sha256(_canonical(identity)).hexdigest(),
+        "issue_sha256": issue_sha256,
+        "controller_receipt": controller,
+        "controller_receipt_sha256": controller["receipt_sha256"],
+        "bootstrap_seal_sha256": seal["bootstrap_seal_sha256"],
+        "duplicate_call_proof_sha256": duplicate_call_proof_sha256,
+        "requester_qualification": _requester_qualification_from_evidence(
+            status=status,
+            receipt=receipt,
+            receipt_file_sha256=receipt_file_sha256,
+            identity=identity,
+            issue_sha256=issue_sha256,
+            controller=controller,
+            seal=seal,
+            duplicate_call_proof_sha256=duplicate_call_proof_sha256,
+        ),
+        "terminal_checkpoint_sha256": "0" * 64,
+    }
+    value["terminal_checkpoint_sha256"] = _requester_checkpoint_hash(
+        value, "terminal_checkpoint_sha256"
+    )
+    return value
+
+
+def _validate_terminal_checkpoint(value: dict[str, object]) -> None:
+    expected = {
+        "schema_version",
+        "campaign_key",
+        "protected_commit_sha",
+        "status",
+        "status_sha256",
+        "requester_receipt",
+        "requester_receipt_sha256",
+        "requester_receipt_file_sha256",
+        "request_id",
+        "launch_ticket_sha256",
+        "issue_number",
+        "issue_identity",
+        "issue_identity_sha256",
+        "issue_sha256",
+        "controller_receipt",
+        "controller_receipt_sha256",
+        "bootstrap_seal_sha256",
+        "duplicate_call_proof_sha256",
+        "requester_qualification",
+        "terminal_checkpoint_sha256",
+    }
+    status = value.get("status")
+    receipt = value.get("requester_receipt")
+    controller = value.get("controller_receipt")
+    identity = value.get("issue_identity")
+    if (
+        set(value) != expected
+        or value.get("schema_version") != "1"
+        or value.get("campaign_key") != _BOOTSTRAP_QUALIFICATION_CAMPAIGN
+        or not _COMMIT.fullmatch(str(value.get("protected_commit_sha", "")))
+        or not isinstance(status, dict)
+        or not isinstance(receipt, dict)
+        or not isinstance(controller, dict)
+        or not isinstance(identity, dict)
+        or not _SHA256.fullmatch(str(value.get("status_sha256", "")))
+        or not _SHA256.fullmatch(str(value.get("requester_receipt_sha256", "")))
+        or not _SHA256.fullmatch(str(value.get("requester_receipt_file_sha256", "")))
+        or not _SHA256.fullmatch(str(value.get("launch_ticket_sha256", "")))
+        or not _SHA256.fullmatch(str(value.get("issue_identity_sha256", "")))
+        or not _SHA256.fullmatch(str(value.get("issue_sha256", "")))
+        or not _SHA256.fullmatch(str(value.get("controller_receipt_sha256", "")))
+        or not _SHA256.fullmatch(str(value.get("bootstrap_seal_sha256", "")))
+        or not _SHA256.fullmatch(str(value.get("duplicate_call_proof_sha256", "")))
+        or not _SHA256.fullmatch(str(value.get("terminal_checkpoint_sha256", "")))
+        or value.get("request_id") != status.get("request_id")
+        or value.get("launch_ticket_sha256") != status.get("launch_ticket_sha256")
+        or value.get("issue_number") != status.get("issue_number")
+        or value.get("status_sha256") != status.get("status_sha256")
+        or value.get("requester_receipt_sha256") != receipt.get("receipt_sha256")
+        or value.get("controller_receipt_sha256") != controller.get("receipt_sha256")
+        or value.get("issue_identity_sha256")
+        != hashlib.sha256(_canonical(identity)).hexdigest()
+        or value.get("requester_qualification")
+        != _requester_qualification_from_evidence(
+            status=status,
+            receipt=receipt,
+            receipt_file_sha256=str(value["requester_receipt_file_sha256"]),
+            identity=identity,
+            issue_sha256=str(value["issue_sha256"]),
+            controller=controller,
+            seal={"bootstrap_seal_sha256": value["bootstrap_seal_sha256"]},
+            duplicate_call_proof_sha256=str(value["duplicate_call_proof_sha256"]),
+        )
+        or _requester_checkpoint_hash(value, "terminal_checkpoint_sha256")
+        != value["terminal_checkpoint_sha256"]
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_TERMINAL_CHECKPOINT_INVALID")
+    _validate_requester_status(status)
+    _validate_requester_receipt(receipt)
+    _validate_controller_receipt(
+        controller,
+        issue_number=int(value["issue_number"]),
+        request_sha256=str(status["request_sha256"]),
+    )
+
+
+def _complete_checkpoint_payload(
+    terminal: dict[str, object],
+) -> dict[str, object]:
+    value = {**terminal, "complete_checkpoint_sha256": "0" * 64}
+    value["complete_checkpoint_sha256"] = _requester_checkpoint_hash(
+        value, "complete_checkpoint_sha256"
+    )
+    return value
+
+
+def _validate_complete_checkpoint(value: dict[str, object]) -> None:
+    expected = {
+        "schema_version",
+        "campaign_key",
+        "protected_commit_sha",
+        "status",
+        "status_sha256",
+        "requester_receipt",
+        "requester_receipt_sha256",
+        "requester_receipt_file_sha256",
+        "request_id",
+        "launch_ticket_sha256",
+        "issue_number",
+        "issue_identity",
+        "issue_identity_sha256",
+        "issue_sha256",
+        "controller_receipt",
+        "controller_receipt_sha256",
+        "bootstrap_seal_sha256",
+        "duplicate_call_proof_sha256",
+        "requester_qualification",
+        "terminal_checkpoint_sha256",
+        "complete_checkpoint_sha256",
+    }
+    if set(value) != expected or _requester_checkpoint_hash(
+        value, "complete_checkpoint_sha256"
+    ) != value.get("complete_checkpoint_sha256"):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_COMPLETE_CHECKPOINT_INVALID")
+    _validate_terminal_checkpoint(
+        {key: value[key] for key in expected if key != "complete_checkpoint_sha256"}
+    )
+
+
+def _revalidate_requester_evidence(
+    root: Path,
+    evidence: dict[str, object],
+    *,
+    protected_commit_sha: str,
+) -> None:
+    status = _load_requester_status()
+    if status is None or status != evidence.get("status"):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_STATUS_CHANGED")
+    if status["status_sha256"] != evidence["status_sha256"]:
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_STATUS_CHANGED")
+    requester = _load_requester_public_binding(root)
+    issue, identity, issue_sha256 = _load_remote_requester_issue(
+        int(status["issue_number"]), status=status, requester=requester
+    )
+    if (
+        identity != evidence.get("issue_identity")
+        or hashlib.sha256(_canonical(identity)).hexdigest()
+        != evidence.get("issue_identity_sha256")
+        or issue_sha256 != evidence.get("issue_sha256")
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_ISSUE_CHANGED")
+    del issue
+    controller = _parse_terminal_controller_receipt(int(status["issue_number"]))
+    _validate_controller_receipt(
+        controller,
+        issue_number=int(status["issue_number"]),
+        request_sha256=str(status["request_sha256"]),
+    )
+    if controller != evidence.get("controller_receipt"):
+        raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_RECEIPT_CHANGED")
+    if controller["receipt_sha256"] != evidence.get("controller_receipt_sha256"):
+        raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_RECEIPT_CHANGED")
+    seal_path = BROKER_ROOT / "config/bootstrap-qualified-v1.seal.json"
+    seal = _read_canonical_document(seal_path, "CATALOG_BOOTSTRAP_SEAL_INVALID")
+    _validate_bootstrap_seal(
+        seal,
+        status=status,
+        controller=controller,
+        protected_commit_sha=protected_commit_sha,
+    )
+    if seal["bootstrap_seal_sha256"] != evidence.get("bootstrap_seal_sha256"):
+        raise ValueError("CATALOG_BOOTSTRAP_SEAL_CHANGED")
+    local = _load_local_requester_receipt(status)
+    if local is not None:
+        receipt, file_sha256 = local
+        if (
+            receipt != evidence.get("requester_receipt")
+            or file_sha256 != evidence.get("requester_receipt_file_sha256")
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_CHANGED")
+
+
+def _run_requester_qualification(
+    root: Path,
+    source: Path,
+    protected_commit_sha: str | None = None,
+) -> dict[str, object]:
+    if protected_commit_sha is None:
+        context = _context(root)
+        protected_commit_sha = str(context.get("source_commit_sha", ""))
+    if not _COMMIT.fullmatch(protected_commit_sha):
+        raise ValueError("CATALOG_BOOTSTRAP_PROTECTED_COMMIT_INVALID")
+
+    terminal_path = root / REQUESTER_TERMINAL_CHECKPOINT_FILENAME
+    complete_path = root / REQUESTER_COMPLETE_CHECKPOINT_FILENAME
+    if complete_path.exists() or complete_path.is_symlink():
+        complete = _read_canonical_document(
+            complete_path, "CATALOG_BOOTSTRAP_REQUESTER_COMPLETE_CHECKPOINT_INVALID"
+        )
+        _validate_complete_checkpoint(complete)
+        _revalidate_requester_evidence(
+            root, complete, protected_commit_sha=protected_commit_sha
+        )
+        return dict(complete["requester_qualification"])
+
+    if terminal_path.exists() or terminal_path.is_symlink():
+        terminal = _read_canonical_document(
+            terminal_path, "CATALOG_BOOTSTRAP_REQUESTER_TERMINAL_CHECKPOINT_INVALID"
+        )
+        _validate_terminal_checkpoint(terminal)
+        _revalidate_requester_evidence(
+            root, terminal, protected_commit_sha=protected_commit_sha
+        )
+        complete = _complete_checkpoint_payload(terminal)
+        _write_exact_canonical_checkpoint(complete_path, complete)
+        observed = _read_canonical_document(
+            complete_path, "CATALOG_BOOTSTRAP_REQUESTER_COMPLETE_CHECKPOINT_INVALID"
+        )
+        _validate_complete_checkpoint(observed)
+        return dict(observed["requester_qualification"])
+
+    status_before = _load_requester_status()
+    seal_path = BROKER_ROOT / "config/bootstrap-qualified-v1.seal.json"
+    seal_exists = seal_path.exists() or seal_path.is_symlink()
+    if status_before is None or status_before.get("state") == "ticket_available":
+        _wait_for_requester_ticket()
+    first: dict[str, object]
+    if seal_exists:
+        if status_before is None:
+            raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_STATUS_INVALID")
+        status = _wait_for_terminal_requester_status(status_before)
+        local = _load_local_requester_receipt(status)
+        if local is None:
+            raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_MISSING")
+        first, _ = local
+    else:
+        first = _invoke_bootstrap_request(source)
+        status = _wait_for_terminal_requester_status(_load_requester_status())
+        if first.get("status") not in {"submitted", "existing"}:
+            local = _load_local_requester_receipt(status)
+            if local is None:
+                raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_RECEIPT_MISSING")
+            first, first_file_sha256 = local
+        else:
+            _validate_requester_receipt(first)
+            first_file_sha256 = hashlib.sha256(
+                (_canonical(first) + b"\n")
+            ).hexdigest()
+
+    _validate_requester_receipt(first)
+    if (
+        status.get("state") != "terminal"
+        or first.get("issue_number") != status.get("issue_number")
+        or first.get("request_sha256") != status.get("request_sha256")
+        or first.get("submission_key_sha256") != status.get("submission_key_sha256")
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_NOT_TERMINAL")
+    requester = _load_requester_public_binding(root)
+    _, identity, issue_sha256 = _load_remote_requester_issue(
+        int(status["issue_number"]), status=status, requester=requester
+    )
+    controller = _parse_terminal_controller_receipt(int(status["issue_number"]))
+    _validate_controller_receipt(
+        controller,
+        issue_number=int(status["issue_number"]),
+        request_sha256=str(status["request_sha256"]),
+    )
+    seal = _load_or_create_bootstrap_seal(
+        status=status,
+        controller=controller,
+        protected_commit_sha=protected_commit_sha,
+    )
+
+    second = _invoke_bootstrap_request(source)
+    _validate_requester_receipt(second)
+    if _canonical(second) != _canonical(first):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_REPLAY_INVALID")
+    duplicate_call_proof_sha256 = hashlib.sha256(
+        _canonical({"first": first, "second": second})
+    ).hexdigest()
+    if not _SHA256.fullmatch(duplicate_call_proof_sha256):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_REPLAY_INVALID")
+    if "first_file_sha256" not in locals():
+        local = _load_local_requester_receipt(status)
+        first_file_sha256 = (
+            local[1]
+            if local is not None
+            else hashlib.sha256(_canonical(first) + b"\n").hexdigest()
+        )
+    terminal = _terminal_checkpoint_payload(
+        protected_commit_sha=protected_commit_sha,
+        status=status,
+        receipt=first,
+        receipt_file_sha256=first_file_sha256,
+        identity=identity,
+        issue_sha256=issue_sha256,
+        controller=controller,
+        seal=seal,
+        duplicate_call_proof_sha256=duplicate_call_proof_sha256,
+    )
+    _write_exact_canonical_checkpoint(terminal_path, terminal)
+    observed_terminal = _read_canonical_document(
+        terminal_path, "CATALOG_BOOTSTRAP_REQUESTER_TERMINAL_CHECKPOINT_INVALID"
+    )
+    _validate_terminal_checkpoint(observed_terminal)
+    complete = _complete_checkpoint_payload(observed_terminal)
+    _write_exact_canonical_checkpoint(complete_path, complete)
+    observed_complete = _read_canonical_document(
+        complete_path, "CATALOG_BOOTSTRAP_REQUESTER_COMPLETE_CHECKPOINT_INVALID"
+    )
+    _validate_complete_checkpoint(observed_complete)
+    return dict(observed_complete["requester_qualification"])
+
+
+def _qualification_checkpoint_path(root: Path) -> Path:
+    return root / QUALIFICATION_CHECKPOINT_FILENAME
+
+
+def _qualification_file_sha256(path: Path, error_code: str) -> str:
+    _read_canonical_document(path, error_code)
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _validate_live_qualification_result(
+    value: dict[str, object],
+    *,
+    protected_commit_sha: str,
+) -> None:
+    receipt = value.get("receipt")
+    if (
+        set(value) != {"run_id", "run_url", "file_sha256", "receipt"}
+        or isinstance(value.get("run_id"), bool)
+        or not isinstance(value.get("run_id"), int)
+        or value.get("run_id", 0) < 1
+        or not _SHA256.fullmatch(str(value.get("file_sha256", "")))
+        or not isinstance(receipt, dict)
+        or set(receipt)
+        != {
+            "schema_version",
+            "observer_context",
+            "protected_commit_sha",
+            "admission_receipt_sha256",
+            "terminal_receipt_sha256",
+            "receipt_sha256",
+        }
+        or receipt.get("schema_version") != "1"
+        or receipt.get("observer_context") != "live_qualification"
+        or receipt.get("protected_commit_sha") != protected_commit_sha
+        or any(
+            not _SHA256.fullmatch(str(receipt.get(name, "")))
+            for name in (
+                "admission_receipt_sha256",
+                "terminal_receipt_sha256",
+                "receipt_sha256",
+            )
+        )
+        or hashlib.sha256(
+            _canonical(
+                {
+                    key: item
+                    for key, item in receipt.items()
+                    if key != "receipt_sha256"
+                }
+            )
+        ).hexdigest()
+        != receipt["receipt_sha256"]
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_LIVE_RECEIPT_INVALID")
+    if hashlib.sha256(_canonical(receipt) + b"\n").hexdigest() != value["file_sha256"]:
+        raise ValueError("CATALOG_BOOTSTRAP_LIVE_RECEIPT_INVALID")
+
+
+def _validate_workflow_run_result(
+    value: dict[str, object],
+    *,
+    protected_commit_sha: str,
+) -> None:
+    expected = {"databaseId", "headSha", "event", "status", "conclusion", "url"}
+    if (
+        set(value) != expected
+        or isinstance(value.get("databaseId"), bool)
+        or not isinstance(value.get("databaseId"), int)
+        or value.get("databaseId", 0) < 1
+        or value.get("headSha") != protected_commit_sha
+        or value.get("event") != "workflow_dispatch"
+        or value.get("status") != "completed"
+        or value.get("conclusion") != "success"
+        or not isinstance(value.get("url"), str)
+        or not value["url"]
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID")
+
+
+def _validate_requester_qualification_result(value: dict[str, object]) -> None:
+    expected = {
+        "issue_number",
+        "submission_key_sha256",
+        "request_sha256",
+        "request_id",
+        "launch_ticket_sha256",
+        "status_sha256",
+        "requester_receipt_sha256",
+        "requester_receipt_file_sha256",
+        "issue_identity_sha256",
+        "issue_sha256",
+        "controller_receipt_sha256",
+        "bootstrap_seal_sha256",
+        "duplicate_call_proof_sha256",
+    }
+    if (
+        set(value) != expected
+        or isinstance(value.get("issue_number"), bool)
+        or not isinstance(value.get("issue_number"), int)
+        or value.get("issue_number", 0) < 1
+        or not isinstance(value.get("request_id"), str)
+        or any(
+            not _SHA256.fullmatch(str(value.get(name, "")))
+            for name in expected
+            if name != "issue_number" and name != "request_id"
+        )
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_QUALIFICATION_INVALID")
+
+
+def _validate_qualification_step_entry(
+    entry: dict[str, object],
+    *,
+    protected_commit_sha: str,
+) -> None:
+    if set(entry) != {"name", "receipt", "receipt_sha256"}:
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
+    name = entry.get("name")
+    receipt = entry.get("receipt")
+    if (
+        not isinstance(name, str)
+        or name not in _QUALIFICATION_STEP_ORDER
+        or not isinstance(receipt, dict)
+        or not _SHA256.fullmatch(str(entry.get("receipt_sha256", "")))
+        or hashlib.sha256(_canonical(receipt)).hexdigest()
+        != entry["receipt_sha256"]
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
+    if name == "requester":
+        _validate_requester_qualification_result(receipt)
+    elif name in {"live_2", "live_3"}:
+        _validate_live_qualification_result(
+            receipt, protected_commit_sha=protected_commit_sha
+        )
+    else:
+        _validate_workflow_run_result(receipt, protected_commit_sha=protected_commit_sha)
+
+
+def _qualification_checkpoint_hash(value: dict[str, object]) -> str:
+    return _seal_hash(value, "checkpoint_sha256")
+
+
+def _validate_qualification_checkpoint(
+    value: dict[str, object],
+    *,
+    protected_commit_sha: str,
+    github_controls_operation_sha256: str,
+    activity_baseline_sha256: str,
+) -> None:
+    expected = {
+        "schema_version",
+        "protected_commit_sha",
+        "github_controls_operation_sha256",
+        "activity_baseline_sha256",
+        "step_order",
+        "steps",
+        "checkpoint_sha256",
+    }
+    steps = value.get("steps")
+    if (
+        set(value) != expected
+        or value.get("schema_version") != "1"
+        or value.get("protected_commit_sha") != protected_commit_sha
+        or value.get("github_controls_operation_sha256")
+        != github_controls_operation_sha256
+        or value.get("activity_baseline_sha256") != activity_baseline_sha256
+        or value.get("step_order") != list(_QUALIFICATION_STEP_ORDER)
+        or not isinstance(steps, list)
+        or len(steps) > len(_QUALIFICATION_STEP_ORDER)
+        or not _SHA256.fullmatch(str(value.get("checkpoint_sha256", "")))
+        or _qualification_checkpoint_hash(value) != value["checkpoint_sha256"]
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
+    names: list[str] = []
+    for entry in steps:
+        if not isinstance(entry, dict):
+            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
+        _validate_qualification_step_entry(
+            entry, protected_commit_sha=protected_commit_sha
+        )
+        names.append(str(entry["name"]))
+    if names != list(_QUALIFICATION_STEP_ORDER[: len(names)]):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
+
+
+def _load_qualification_checkpoint(
+    root: Path,
+    *,
+    protected_commit_sha: str,
+    github_controls_operation_sha256: str,
+    activity_baseline_sha256: str,
+) -> dict[str, object] | None:
+    path = _qualification_checkpoint_path(root)
+    if not path.exists() and not path.is_symlink():
+        return None
+    value = _read_canonical_document(
+        path, "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID"
+    )
+    _validate_qualification_checkpoint(
+        value,
+        protected_commit_sha=protected_commit_sha,
+        github_controls_operation_sha256=github_controls_operation_sha256,
+        activity_baseline_sha256=activity_baseline_sha256,
+    )
+    return value
+
+
+def _new_qualification_checkpoint(
+    *,
+    protected_commit_sha: str,
+    github_controls_operation_sha256: str,
+    activity_baseline_sha256: str,
+    steps: list[dict[str, object]],
+) -> dict[str, object]:
+    value: dict[str, object] = {
+        "schema_version": "1",
+        "protected_commit_sha": protected_commit_sha,
+        "github_controls_operation_sha256": github_controls_operation_sha256,
+        "activity_baseline_sha256": activity_baseline_sha256,
+        "step_order": list(_QUALIFICATION_STEP_ORDER),
+        "steps": steps,
+        "checkpoint_sha256": "0" * 64,
+    }
+    value["checkpoint_sha256"] = _qualification_checkpoint_hash(value)
+    return value
+
+
+def _write_qualification_checkpoint_revision(
+    path: Path,
+    value: dict[str, object],
+    previous: dict[str, object] | None,
+) -> str:
+    data = _canonical(value) + b"\n"
+    if previous is None:
+        return _write_exact_canonical_checkpoint(path, value)
+    _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID")
+    previous_data = _canonical(previous) + b"\n"
+    try:
+        if path.read_bytes() != previous_data:
+            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_CONFLICT")
+    except OSError as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID") from exc
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.revision")
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except FileExistsError as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_WRITE_FAILED") from exc
+    except OSError as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_WRITE_FAILED") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+    _validate_exact_file_path(path, "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID")
+    if path.read_bytes() != data:
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_READBACK_INVALID")
+    return hashlib.sha256(data).hexdigest()
+
+
+def _append_qualification_checkpoint_step(
+    root: Path,
+    checkpoint: dict[str, object] | None,
+    *,
+    step_name: str,
+    receipt: dict[str, object],
+    protected_commit_sha: str,
+    github_controls_operation_sha256: str,
+    activity_baseline_sha256: str,
+) -> dict[str, object]:
+    current_steps = [] if checkpoint is None else list(checkpoint["steps"])
+    if current_steps and current_steps[-1]["name"] == step_name:
+        if current_steps[-1]["receipt"] != receipt:
+            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_CONFLICT")
+        return checkpoint if checkpoint is not None else {}
+    if len(current_steps) != _QUALIFICATION_STEP_ORDER.index(step_name):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ORDER_INVALID")
+    entry = {
+        "name": step_name,
+        "receipt": receipt,
+        "receipt_sha256": hashlib.sha256(_canonical(receipt)).hexdigest(),
+    }
+    updated = _new_qualification_checkpoint(
+        protected_commit_sha=protected_commit_sha,
+        github_controls_operation_sha256=github_controls_operation_sha256,
+        activity_baseline_sha256=activity_baseline_sha256,
+        steps=[*current_steps, entry],
+    )
+    _write_qualification_checkpoint_revision(
+        _qualification_checkpoint_path(root), updated, checkpoint
+    )
+    observed = _read_canonical_document(
+        _qualification_checkpoint_path(root),
+        "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID",
+    )
+    _validate_qualification_checkpoint(
+        observed,
+        protected_commit_sha=protected_commit_sha,
+        github_controls_operation_sha256=github_controls_operation_sha256,
+        activity_baseline_sha256=activity_baseline_sha256,
+    )
+    return observed
+
+
+def _read_stored_workflow_run(
+    workflow: str,
+    stored: dict[str, object],
+    *,
+    protected_commit_sha: str,
+) -> dict[str, object]:
+    _validate_workflow_run_result(stored, protected_commit_sha=protected_commit_sha)
+    run_id = int(stored["databaseId"])
+    candidates = [
+        row
+        for row in _list_workflow_runs(workflow)
+        if isinstance(row, dict) and row.get("databaseId") == run_id
+    ]
+    if len(candidates) != 1:
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID")
+    raw = _run(
+        [
+            "gh",
+            "run",
+            "view",
+            str(run_id),
+            "--repo",
+            REPOSITORY,
+            "--json",
+            "databaseId,headSha,event,status,conclusion,url,workflowName,path",
+        ]
+    )
+    try:
+        observed = json.loads(
+            raw,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_nonfinite_json,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID") from exc
+    if not isinstance(observed, dict):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID")
+    if "workflowName" in observed and "path" in observed:
+        workflow_name = observed.get("workflowName")
+        workflow_path = observed.get("path")
+        if (
+            not isinstance(workflow_name, str)
+            or not isinstance(workflow_path, str)
+            or Path(workflow_path).name != workflow
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_INVALID")
+    normalized = {
+        key: observed.get(key)
+        for key in ("databaseId", "headSha", "event", "status", "conclusion", "url")
+    }
+    _validate_workflow_run_result(normalized, protected_commit_sha=protected_commit_sha)
+    if normalized != stored:
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_CHANGED")
+    return normalized
+
+
+def _revalidate_qualification_step(
+    root: Path,
+    entry: dict[str, object],
+    *,
+    protected_commit_sha: str,
+) -> dict[str, object]:
+    name = str(entry["name"])
+    receipt = entry["receipt"]
+    if name == "requester":
+        context = _context(root)
+        result = _run_requester_qualification(
+            root,
+            Path(str(context["source_root"])),
+            protected_commit_sha,
+        )
+        if result != receipt:
+            raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_QUALIFICATION_CHANGED")
+        return result
+    if name in {"live_2", "live_3"}:
+        if not isinstance(receipt, dict):
+            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
+        stored_run = {
+            "databaseId": receipt["run_id"],
+            "headSha": protected_commit_sha,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "success",
+            "url": receipt.get("run_url"),
+        }
+        observed_run = _read_stored_workflow_run(
+            _QUALIFICATION_STEP_WORKFLOWS[name],
+            stored_run,
+            protected_commit_sha=protected_commit_sha,
+        )
+        downloaded = _download_live_qualification(
+            root,
+            observed_run,
+            protected_commit_sha,
+        )
+        if downloaded != receipt:
+            raise ValueError("CATALOG_BOOTSTRAP_LIVE_RECEIPT_CHANGED")
+        return downloaded
+    if not isinstance(receipt, dict):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
+    return _read_stored_workflow_run(
+        _QUALIFICATION_STEP_WORKFLOWS[name],
+        receipt,
+        protected_commit_sha=protected_commit_sha,
+    )
 
 
 def run_qualifications(root: Path) -> None:
@@ -4803,25 +6090,107 @@ def run_qualifications(root: Path) -> None:
     context = _context(root)
     source = Path(str(context["source_root"]))
     protected_commit_sha = _runtime_commit(root)
-    controls = _read_json(root / "github-controls-operation-v1.json")
-    live_receipts = [controls["first_live_qualification"]]
-    for _ in range(2):
-        live_receipts.append(_run_live_qualification(root, protected_commit_sha))
-    file_hashes = [str(item["file_sha256"]) for item in live_receipts]  # type: ignore[index]
-    if len(set(file_hashes)) != 3 or any(not _SHA256.fullmatch(value) for value in file_hashes):
-        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATIONS_NOT_INDEPENDENT")
-    for workflow in (
-        "catalog-controller-policy-check.yml",
-        "catalog-controller-qualification.yml",
-    ):
-        for _ in range(3):
-            _dispatch_workflow(workflow, protected_commit_sha)
-    capacity = _dispatch_workflow(
-        "catalog-capacity-calibration.yml", protected_commit_sha
+    if not _COMMIT.fullmatch(protected_commit_sha):
+        raise ValueError("CATALOG_BOOTSTRAP_PROTECTED_COMMIT_INVALID")
+    controls_path = root / "github-controls-operation-v1.json"
+    baseline_path = root / "github-activity-baseline-v1.json"
+    controls = _read_canonical_document(
+        controls_path, "CATALOG_BOOTSTRAP_QUALIFICATION_CONTEXT_INVALID"
     )
-    keeper = _dispatch_workflow("catalog-artifact-keeper.yml", protected_commit_sha)
-    requester = _run_requester_qualification(root, source)
-    baseline = _read_json(root / "github-activity-baseline-v1.json")
+    baseline = _read_canonical_document(
+        baseline_path, "CATALOG_BOOTSTRAP_QUALIFICATION_CONTEXT_INVALID"
+    )
+    if (
+        controls.get("protected_commit_sha") != protected_commit_sha
+        or not isinstance(controls.get("first_live_qualification"), dict)
+        or not isinstance(baseline.get("request_issue_numbers"), list)
+        or not isinstance(baseline.get("heavy_run_ids"), list)
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CONTEXT_INVALID")
+    _validate_live_qualification_result(
+        controls["first_live_qualification"],
+        protected_commit_sha=protected_commit_sha,
+    )
+    controls_hash = hashlib.sha256(controls_path.read_bytes()).hexdigest()
+    baseline_hash = hashlib.sha256(baseline_path.read_bytes()).hexdigest()
+    checkpoint = _load_qualification_checkpoint(
+        root,
+        protected_commit_sha=protected_commit_sha,
+        github_controls_operation_sha256=controls_hash,
+        activity_baseline_sha256=baseline_hash,
+    )
+    if checkpoint is not None:
+        for entry in checkpoint["steps"]:
+            if not isinstance(entry, dict):
+                raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
+            _revalidate_qualification_step(
+                root,
+                entry,
+                protected_commit_sha=protected_commit_sha,
+            )
+
+    steps_by_name = {
+        str(entry["name"]): entry
+        for entry in (checkpoint["steps"] if checkpoint is not None else [])
+        if isinstance(entry, dict)
+    }
+    for step_name in _QUALIFICATION_STEP_ORDER:
+        if step_name in steps_by_name:
+            continue
+        if step_name in {"live_2", "live_3"}:
+            receipt = _run_live_qualification(root, protected_commit_sha)
+        elif step_name == "requester":
+            receipt = _run_requester_qualification(
+                root, source, protected_commit_sha
+            )
+        else:
+            receipt = _dispatch_workflow(
+                _QUALIFICATION_STEP_WORKFLOWS[step_name], protected_commit_sha
+            )
+        if not isinstance(receipt, dict):
+            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RECEIPT_INVALID")
+        if step_name in {"live_2", "live_3"}:
+            _validate_live_qualification_result(
+                receipt, protected_commit_sha=protected_commit_sha
+            )
+        elif step_name != "requester":
+            _validate_workflow_run_result(
+                receipt, protected_commit_sha=protected_commit_sha
+            )
+        checkpoint = _append_qualification_checkpoint_step(
+            root,
+            checkpoint,
+            step_name=step_name,
+            receipt=receipt,
+            protected_commit_sha=protected_commit_sha,
+            github_controls_operation_sha256=controls_hash,
+            activity_baseline_sha256=baseline_hash,
+        )
+        steps_by_name[step_name] = checkpoint["steps"][-1]
+
+    if checkpoint is None:
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
+    _validate_qualification_checkpoint(
+        checkpoint,
+        protected_commit_sha=protected_commit_sha,
+        github_controls_operation_sha256=controls_hash,
+        activity_baseline_sha256=baseline_hash,
+    )
+    live_receipts = [
+        controls["first_live_qualification"],
+        steps_by_name["live_2"]["receipt"],
+        steps_by_name["live_3"]["receipt"],
+    ]
+    file_hashes = [str(item["file_sha256"]) for item in live_receipts]  # type: ignore[index]
+    if len(set(file_hashes)) != 3 or any(
+        not _SHA256.fullmatch(value) for value in file_hashes
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATIONS_NOT_INDEPENDENT")
+    requester = steps_by_name["requester"]["receipt"]
+    capacity = steps_by_name["capacity"]["receipt"]
+    keeper = steps_by_name["keeper"]["receipt"]
+    if not isinstance(requester, dict) or not isinstance(capacity, dict) or not isinstance(keeper, dict):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RECEIPT_INVALID")
     current = _github_activity_snapshot()
     baseline_requests = set(baseline["request_issue_numbers"])  # type: ignore[arg-type]
     current_requests = set(current["request_issue_numbers"])  # type: ignore[arg-type]
@@ -4838,10 +6207,17 @@ def run_qualifications(root: Path) -> None:
         "capacity_run_id": capacity["databaseId"],
         "keeper_run_id": keeper["databaseId"],
         "requester_qualification": requester,
+        "qualification_checkpoint_sha256": hashlib.sha256(
+            _qualification_checkpoint_path(root).read_bytes()
+        ).hexdigest(),
+        "qualification_step_receipt_sha256s": {
+            name: steps_by_name[name]["receipt_sha256"]
+            for name in _QUALIFICATION_STEP_ORDER
+        },
         "production_request_count": 0,
         "production_run_count": 0,
     }
-    _write_canonical(root / "qualification-operation-v1.json", receipt)
+    _write_exact_canonical_checkpoint(root / "qualification-operation-v1.json", receipt)
     _advance(root, state, "qualification_passed", receipt)
 
 
