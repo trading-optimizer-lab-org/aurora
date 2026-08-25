@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from infra.sp500_megarun.catalog_bootstrap_state import (
         CatalogBootstrapEventV1,
         CatalogBootstrapStateV1,
+        EventName,
     )
 
 
@@ -130,7 +131,9 @@ def CatalogBootstrapGitHubClient(
 
 
 EXPECTED_ROOT = Path("C:/ProgramData/AURORA/CatalogBootstrap")
-REPOSITORY = "trading-optimizer-lab-org/aurora"
+REPOSITORY: Literal["trading-optimizer-lab-org/aurora"] = (
+    "trading-optimizer-lab-org/aurora"
+)
 BROKER_ROOT = Path("C:/ProgramData/AURORA/CatalogRequester")
 AGENT_ROOT = Path("C:/ProgramData/AURORA/CatalogAgent")
 BOOTSTRAP_STAGING_ROOT = Path("C:/ProgramData/AURORA/BootstrapStaging")
@@ -655,13 +658,15 @@ def _publish_checkpoint_temp(
 ) -> None:
     """Publish durable checkpoint bytes, including rename metadata."""
 
-    if os.name == "nt":
-        move_file_ex = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
+    if sys.platform == "win32":
+        from ctypes import WinDLL, get_last_error
+
+        move_file_ex = WinDLL("kernel32", use_last_error=True).MoveFileExW
         move_file_ex.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint)
         move_file_ex.restype = ctypes.c_int
         flags = 0x8 | (0x1 if replace_existing else 0)  # WRITE_THROUGH | REPLACE
         if not move_file_ex(str(temporary), str(path), flags):
-            error = ctypes.get_last_error()
+            error = get_last_error()
             raise OSError(error, "MoveFileExW checkpoint publication failed")
         return
     if replace_existing:
@@ -1454,7 +1459,7 @@ def _run_binding_review_rounds(root: Path, source: Path) -> dict[str, object]:
 
 def _event(
     state: CatalogBootstrapStateV1,
-    name: str,
+    name: EventName,
     evidence: object,
 ) -> CatalogBootstrapEventV1:
     from infra.sp500_megarun.catalog_bootstrap_state import CatalogBootstrapEventV1
@@ -1473,7 +1478,7 @@ def _event(
 def _advance(
     root: Path,
     state: CatalogBootstrapStateV1,
-    name: str,
+    name: EventName,
     evidence: object,
 ) -> None:
     persist_bootstrap_state(
@@ -1533,7 +1538,7 @@ def _stop_hp_codex_processes() -> None:
     )
 
 
-def _create_app(root: Path, kind: str) -> None:
+def _create_app(root: Path, kind: Literal["requester", "auditor"]) -> None:
     from infra.sp500_megarun.catalog_bootstrap_github import derive_public_binding
     from infra.sp500_megarun.catalog_bootstrap_manifest import (
         ManifestLoopbackServer,
@@ -1545,7 +1550,7 @@ def _create_app(root: Path, kind: str) -> None:
     state = load_bootstrap_state(_state_path(root))
     app: CatalogBootstrapAppManifestV1 = getattr(_manifests(), kind)
     session = start_manifest_session(
-        cast(Literal["requester", "auditor"], kind),
+        kind,
         now=datetime.now(tz=UTC),
     )
     with ManifestLoopbackServer(session, app) as server:
@@ -1584,7 +1589,9 @@ def _create_app(root: Path, kind: str) -> None:
     finally:
         conversion.clear()
         (root / "browser-action-v1.json").unlink(missing_ok=True)
-    name = "requester_created" if kind == "requester" else "auditor_created"
+    name: EventName = (
+        "requester_created" if kind == "requester" else "auditor_created"
+    )
     _advance(root, state, name, public)
 
 
@@ -1596,7 +1603,9 @@ def create_auditor(root: Path) -> None:
     _create_app(root, "auditor")
 
 
-def _verify_installation(root: Path, kind: str) -> None:
+def _verify_installation(
+    root: Path, kind: Literal["requester", "auditor"]
+) -> None:
     state = load_bootstrap_state(_state_path(root))
     app = getattr(_manifests(), kind)
     public_path = root / f"{kind}-public-v1.json"
@@ -1629,7 +1638,9 @@ def _verify_installation(root: Path, kind: str) -> None:
     (root / "browser-action-v1.json").unlink(missing_ok=True)
     public["installation_id"] = access.installation_id
     public_path.write_bytes(_canonical(public) + b"\n")
-    name = "requester_installed" if kind == "requester" else "auditor_installed"
+    name: EventName = (
+        "requester_installed" if kind == "requester" else "auditor_installed"
+    )
     _advance(root, state, name, public)
 
 

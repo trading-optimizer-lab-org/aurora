@@ -4,7 +4,9 @@ import json
 import subprocess
 import tarfile
 from collections import Counter
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import BinaryIO, Literal, cast
 
 import pytest
 
@@ -21,7 +23,7 @@ def test_extract_base_tree_uses_tar_data_filter(
         command: list[str],
         **kwargs: object,
     ) -> subprocess.CompletedProcess[bytes]:
-        output = kwargs["stdout"]
+        output = cast(BinaryIO, kwargs["stdout"])
         with tarfile.open(fileobj=output, mode="w"):
             pass
         return subprocess.CompletedProcess(command, 0, stderr=b"")
@@ -31,10 +33,12 @@ def test_extract_base_tree_uses_tar_data_filter(
     def guarded_extractall(
         archive: tarfile.TarFile,
         path: str | Path = ".",
-        members: object = None,
+        members: Iterable[tarfile.TarInfo] | None = None,
         *,
         numeric_owner: bool = False,
-        filter: object = None,
+        filter: Literal["fully_trusted", "tar", "data"]
+        | Callable[[tarfile.TarInfo, str], tarfile.TarInfo | None]
+        | None = None,
     ) -> None:
         observed_filters.append(filter)
         original_extractall(
