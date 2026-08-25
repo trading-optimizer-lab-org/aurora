@@ -251,7 +251,7 @@
           "const": "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN"
         },
         "only_token_consumer_workflow": {
-          "const": ".github/actions/catalog-live-controls-audit/action.yml"
+          "const": ".github/workflows/catalog-live-controls-audit.yml"
         }
       }
     },

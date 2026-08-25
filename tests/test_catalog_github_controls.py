@@ -13,7 +13,9 @@ import jsonschema
 import pytest
 
 from scripts import audit_catalog_github_controls as github_audit_runner
+from aurora.infra.sp500_megarun.catalog_execution_protocol import PROTOCOL_COMMON_PATHS
 from aurora.infra.sp500_megarun.catalog_github_controls import (
+    AUDITOR_SECRET_CONSUMER,
     CatalogGithubAuditorV1,
     CatalogGithubControlsV1,
     audit_catalog_github_controls,
@@ -202,9 +204,24 @@ def protected_snapshots() -> dict[str, object]:
         },
         "auditor_installation": None,
         "auditor_secret_consumer_workflows": [
-            ".github/actions/catalog-live-controls-audit/action.yml"
+            AUDITOR_SECRET_CONSUMER
         ],
         "auditor_runtime_callers": [
+            {
+                "caller_workflow": ".github/workflows/catalog-run-controller.yml",
+                "caller_job": "live_controls_audit_before_reserve",
+                "purpose": "admission",
+            },
+            {
+                "caller_workflow": ".github/workflows/catalog-run-controller.yml",
+                "caller_job": "live_controls_audit_before_terminal",
+                "purpose": "terminal",
+            },
+            {
+                "caller_workflow": ".github/workflows/catalog-artifact-keeper.yml",
+                "caller_job": "live_controls_audit_before_maintenance",
+                "purpose": "maintenance",
+            },
             {
                 "caller_workflow": (
                     ".github/workflows/catalog-live-controls-qualification.yml"
@@ -311,6 +328,59 @@ def test_exact_protected_state_passes() -> None:
     assert len(receipt.receipt_sha256) == 64
     assert receipt.observer_context == "bootstrap_local"
     assert receipt.audit_use_context == "controller_admission"
+
+
+def test_auditor_secret_consumer_is_the_reusable_workflow_without_composite() -> None:
+    expected = ".github/workflows/catalog-live-controls-audit.yml"
+    composite = ".github/actions/catalog-live-controls-audit/action.yml"
+    schema_text = (ROOT / "schemas/catalog_github_controls_v1.schema.json").read_text(
+        "utf-8"
+    )
+    schema = json.loads(schema_text)
+
+    assert AUDITOR_SECRET_CONSUMER == expected
+    assert load_desired_controls().auditor.only_token_consumer_workflow == expected
+    assert schema["$defs"]["auditor"]["properties"][
+        "only_token_consumer_workflow"
+    ]["const"] == expected
+    assert composite not in CONTROLS.read_text("utf-8")
+    assert composite not in schema_text
+    assert composite not in PROTOCOL_COMMON_PATHS
+    assert expected in PROTOCOL_COMMON_PATHS
+
+
+def test_auditor_runtime_topology_requires_exactly_five_callers() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    callers = snapshots["auditor_runtime_callers"]
+    assert isinstance(callers, list)
+    callers.pop()
+
+    receipt = audit_catalog_github_controls(**inputs)
+
+    assert receipt.status == "blocked"
+    assert "CATALOG_AUDITOR_TOPOLOGY_INVALID" in receipt.failed_controls
+
+
+def test_auditor_runtime_topology_rejects_an_extra_caller() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    callers = snapshots["auditor_runtime_callers"]
+    assert isinstance(callers, list)
+    callers.append(
+        {
+            "caller_workflow": ".github/workflows/catalog-run-controller.yml",
+            "caller_job": "unexpected_auditor_call",
+            "purpose": "admission",
+        }
+    )
+
+    receipt = audit_catalog_github_controls(**inputs)
+
+    assert receipt.status == "blocked"
+    assert "CATALOG_AUDITOR_TOPOLOGY_INVALID" in receipt.failed_controls
 
 
 def test_missing_permitted_writer_blocks_closed_topology() -> None:

@@ -28,7 +28,7 @@ RepositoryName = Annotated[
     StringConstraints(pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"),
 ]
 
-AUDITOR_SECRET_CONSUMER = ".github/actions/catalog-live-controls-audit/action.yml"
+AUDITOR_SECRET_CONSUMER = ".github/workflows/catalog-live-controls-audit.yml"
 AUDITOR_CALLER_TOPOLOGY = (
     (
         ".github/workflows/catalog-run-controller.yml",
@@ -1098,7 +1098,7 @@ def audit_catalog_github_controls(
     topology_valid = (
         consumer_workflows == [AUDITOR_SECRET_CONSUMER]
         and len(normalized_callers) == len(callers)
-        and normalized_callers <= set(_AUDIT_CONTEXT_BY_CALLER)
+        and normalized_callers == set(_AUDIT_CONTEXT_BY_CALLER)
     )
     check("CATALOG_AUDITOR_TOPOLOGY_INVALID", topology_valid)
 
