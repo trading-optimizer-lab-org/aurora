@@ -637,6 +637,17 @@ def test_billing_token_repair_receipt_stays_bound_to_pr176_paths(
             tmp_path, prior_repair
         )
 
+    operation["changed_paths"] = legacy_paths
+    operation["pr_number"] = 177
+    path.write_bytes(bootstrap_runner._canonical(operation) + b"\n")
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_GITHUB_CONTROLS_BILLING_TOKEN_INVALID",
+    ):
+        bootstrap_runner._validated_github_controls_billing_token_repair(
+            tmp_path, prior_repair
+        )
+
 
 def _github_controls_stable_precondition_repair_operation(
     *,

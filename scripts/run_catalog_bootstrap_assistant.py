@@ -3201,7 +3201,7 @@ def _validated_github_controls_billing_token_repair(
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
         or not isinstance(operation.get("pr_number"), int)
-        or _as_int(operation["pr_number"]) < 1
+        or operation.get("pr_number") != 176
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_BILLING_TOKEN_INVALID")
