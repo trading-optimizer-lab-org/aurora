@@ -56,21 +56,24 @@ def _default_acl_checker(parent: Path) -> bool:
         if key.casefold() != "psmodulepath"
     }
     environment["AURORA_CATALOG_ACL_PATH"] = str(parent)
-    result = subprocess.run(
-        [
-            "powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "(Get-Acl -LiteralPath $env:AURORA_CATALOG_ACL_PATH).Sddl",
-        ],
-        check=False,
-        capture_output=True,
-        env=environment,
-        text=True,
-        timeout=10,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-Acl -LiteralPath $env:AURORA_CATALOG_ACL_PATH).Sddl",
+            ],
+            check=False,
+            capture_output=True,
+            env=environment,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     if result.returncode != 0:
         return False
     sddl = result.stdout.strip()
