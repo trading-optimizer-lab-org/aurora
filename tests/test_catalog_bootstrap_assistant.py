@@ -719,6 +719,31 @@ def _idempotent_resume_repair_operation(
     }
 
 
+def _idempotent_resume_followup_repair_operation(
+    *,
+    prior_merge: str,
+    base_commit: str,
+    repair_head: str,
+    repair_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": base_commit,
+        "branch": "codex/catalog-bootstrap-runtime-followup",
+        "changed_paths": [
+            "scripts/run_catalog_bootstrap_assistant.py",
+            "tests/test_catalog_bootstrap_assistant.py",
+        ],
+        "head_commit_sha": repair_head,
+        "merge_commit_sha": repair_merge,
+        "patch_sha256": "2" * 64,
+        "pr_number": 196,
+        "prior_runtime_commit_sha": prior_merge,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "catalog-controller-policy",
+        "schema_version": "1",
+    }
+
+
 def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None:
     blocked = _blocked_local_install_state()
 
@@ -2799,6 +2824,77 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
 
     assert bootstrap_runner._runtime_commit(root) == resume_merge
 
+    followup_base = "6" * 40
+    followup_head = "7" * 40
+    followup_merge = "8" * 40
+    followup_operation = _idempotent_resume_followup_repair_operation(
+        prior_merge=resume_merge,
+        base_commit=followup_base,
+        repair_head=followup_head,
+        repair_merge=followup_merge,
+    )
+    followup_operation_path = (
+        root / "github-controls-idempotent-resume-followup-repair-operation-v1.json"
+    )
+    followup_operation_path.write_bytes(
+        bootstrap_runner._canonical(followup_operation) + b"\n"
+    )
+    resume_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json"
+    )
+    followup_retry = {
+        "activity_baseline_sha256": "8" * 64,
+        "bootstrap_id": BOOTSTRAP_ID,
+        "bootstrap_source_commit_sha": COMMIT,
+        "idempotent_resume_followup_merge_commit_sha": followup_merge,
+        "idempotent_resume_followup_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(followup_operation)
+        ).hexdigest(),
+        "idempotent_resume_followup_pr_number": 196,
+        "installations": {"auditor": 2, "requester": 1},
+        "interrupted_phase": "QUALIFICATION_PENDING",
+        "interrupted_sequence": 43,
+        "interrupted_state_sha256": "9" * 64,
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            resume_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": resume_merge,
+        "schema_version": "1",
+    }
+    (
+        root / "receipts/controller-bootstrap-github-controls-retry-11-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(followup_retry) + b"\n")
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_FOLLOWUP_REFRESH_INVALID",
+    ):
+        bootstrap_runner._runtime_commit(root)
+
+    prior_controls = {"protected_commit_sha": resume_merge}
+    refreshed_controls = {"protected_commit_sha": followup_merge}
+    prior_controls_path.write_bytes(bootstrap_runner._canonical(prior_controls) + b"\n")
+    controls_path.write_bytes(bootstrap_runner._canonical(refreshed_controls) + b"\n")
+    followup_refresh = {
+        "bootstrap_id": BOOTSTRAP_ID,
+        "prior_controls_operation_sha256": hashlib.sha256(
+            prior_controls_path.read_bytes()
+        ).hexdigest(),
+        "protected_commit_sha": followup_merge,
+        "refreshed_controls_operation_sha256": hashlib.sha256(
+            controls_path.read_bytes()
+        ).hexdigest(),
+        "runtime_upgrade_operation_sha256": hashlib.sha256(
+            followup_operation_path.read_bytes()
+        ).hexdigest(),
+        "schema_version": "1",
+    }
+    (root / "runtime-upgrade-controls-refresh-v1.json").write_bytes(
+        bootstrap_runner._canonical(followup_refresh) + b"\n"
+    )
+
+    assert bootstrap_runner._runtime_commit(root) == followup_merge
+
     resume_retry["prior_retry_receipt_sha256"] = "0" * 64
     (root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json").write_bytes(
         bootstrap_runner._canonical(resume_retry) + b"\n"
@@ -2889,6 +2985,79 @@ def test_idempotent_resume_github_authorization_binds_pr_check_paths_and_graph(
         bootstrap_runner._verify_idempotent_resume_github_authorization(tmp_path, operation)
 
 
+def test_idempotent_resume_followup_authorization_uses_cumulative_runtime_base(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    operation = _idempotent_resume_followup_repair_operation(
+        prior_merge="3" * 40,
+        base_commit="4" * 40,
+        repair_head="5" * 40,
+        repair_merge="6" * 40,
+    )
+    observed_paths = tuple(cast(list[str], operation["changed_paths"]))
+    path_calls: list[tuple[str, str]] = []
+    graph_calls: list[tuple[dict[str, object], str | None]] = []
+
+    def fake_run(command: list[str], *, cwd: Path, **_kwargs: object) -> str:
+        assert cwd == tmp_path
+        if command[:3] == ["gh", "pr", "view"]:
+            return json.dumps(
+                {
+                    "baseRefName": "main",
+                    "baseRefOid": operation["base_commit_sha"],
+                    "headRefName": operation["branch"],
+                    "headRefOid": operation["head_commit_sha"],
+                    "isDraft": False,
+                    "mergeCommit": {"oid": operation["merge_commit_sha"]},
+                    "number": operation["pr_number"],
+                    "state": "MERGED",
+                }
+            )
+        if command[:3] == ["gh", "pr", "checks"]:
+            return json.dumps(
+                [
+                    {
+                        "bucket": "pass",
+                        "name": "catalog-controller-policy",
+                        "state": "SUCCESS",
+                    }
+                ]
+            )
+        if command == ["git", "rev-parse", "origin/main"]:
+            return str(operation["merge_commit_sha"])
+        raise AssertionError(command)
+
+    def fake_paths(_source: Path, base: str, head: str) -> tuple[str, ...]:
+        path_calls.append((base, head))
+        return observed_paths
+
+    def fake_graph(
+        _source: Path,
+        value: dict[str, object],
+        *,
+        patch_base_commit: str | None = None,
+    ) -> None:
+        graph_calls.append((value, patch_base_commit))
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+    monkeypatch.setattr(bootstrap_runner, "_git_changed_paths", fake_paths)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_verify_github_controls_repair_graph",
+        fake_graph,
+    )
+
+    bootstrap_runner._verify_idempotent_resume_github_authorization(tmp_path, operation)
+
+    assert path_calls == [
+        (str(operation["prior_runtime_commit_sha"]), str(operation["head_commit_sha"]))
+    ]
+    assert graph_calls == [
+        (operation, str(operation["prior_runtime_commit_sha"]))
+    ]
+
+
 def test_idempotent_resume_github_authorization_rejects_unmerged_pr(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -2967,6 +3136,21 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
     (root / "github-controls-idempotent-resume-repair-operation-v1.json").write_bytes(
         bootstrap_runner._canonical(upgrade_operation) + b"\n"
     )
+    followup_operation = {
+        "merge_commit_sha": protected_commit,
+        "prior_runtime_commit_sha": prior_runtime,
+    }
+    (
+        root / "github-controls-idempotent-resume-followup-repair-operation-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(followup_operation) + b"\n")
+    followup_retry = {
+        "activity_baseline_sha256": retry["activity_baseline_sha256"],
+        "bootstrap_id": BOOTSTRAP_ID,
+        "interrupted_state_sha256": retry["interrupted_state_sha256"],
+    }
+    (
+        root / "receipts/controller-bootstrap-github-controls-retry-11-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(followup_retry) + b"\n")
     old_controls = {"protected_commit_sha": prior_runtime}
     controls_path = root / "github-controls-operation-v1.json"
     controls_path.write_bytes(bootstrap_runner._canonical(old_controls) + b"\n")
@@ -3042,7 +3226,7 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
     with pytest.raises(ValueError, match="authorization-rejected"):
         bootstrap_runner._refresh_interrupted_runtime_controls(root)
 
-    assert rejected_authorizations == [(source, upgrade_operation)]
+    assert rejected_authorizations == [(source, followup_operation)]
     assert calls == []
     assert controls_path.read_bytes() == bootstrap_runner._canonical(old_controls) + b"\n"
     assert not (root / "github-controls-operation-before-runtime-upgrade-v1.json").exists()
@@ -3059,8 +3243,8 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
     bootstrap_runner._refresh_interrupted_runtime_controls(root)
 
     assert verified_authorizations == [
-        (source, upgrade_operation),
-        (source, upgrade_operation),
+        (source, followup_operation),
+        (source, followup_operation),
     ]
     assert calls == ["github_controls_runtime_upgrade_live_1"]
     assert state_path.read_bytes() == original_state

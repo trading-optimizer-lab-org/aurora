@@ -357,6 +357,9 @@ _GITHUB_CONTROLS_PACKAGE_TOKEN_REPAIR_PATHS = (
 _IDEMPOTENT_RESUME_BRANCH = "codex/catalog-bootstrap-idempotent-resume"
 _IDEMPOTENT_RESUME_PR_NUMBER = 194
 _IDEMPOTENT_RESUME_REQUIRED_CHECK = "catalog-controller-policy"
+_IDEMPOTENT_RESUME_FOLLOWUP_BRANCH = "codex/catalog-bootstrap-runtime-followup"
+_IDEMPOTENT_RESUME_FOLLOWUP_PR_NUMBER = 196
+_IDEMPOTENT_RESUME_FOLLOWUP_REQUIRED_CHECK = "catalog-controller-policy"
 _IDEMPOTENT_RESUME_ALLOWED_ROOTS = frozenset(
     {".github", "config", "docs", "infra", "schemas", "scripts", "tests"}
 )
@@ -2506,10 +2509,27 @@ def _github_controls_repair_patch_sha256(
 def _verify_github_controls_repair_graph(
     source: Path,
     operation: dict[str, object],
+    *,
+    patch_base_commit: str | None = None,
 ) -> None:
     merge_commit = str(operation["merge_commit_sha"])
     base_commit = str(operation["base_commit_sha"])
     head_commit = str(operation["head_commit_sha"])
+    patch_base = patch_base_commit or base_commit
+    if not _COMMIT.fullmatch(patch_base):
+        raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_GRAPH_INVALID")
+    if patch_base != base_commit:
+        ancestry = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", patch_base, base_commit],
+            cwd=source,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=120,
+        )
+        if ancestry.returncode != 0:
+            raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_GRAPH_INVALID")
     parents = _run(
         ["git", "rev-list", "--parents", "-n", "1", merge_commit],
         cwd=source,
@@ -2525,11 +2545,11 @@ def _verify_github_controls_repair_graph(
     )
     expected_patch = operation["patch_sha256"]
     if _github_controls_repair_patch_sha256(
-        source, base_commit, head_commit, changed_paths
+        source, patch_base, head_commit, changed_paths
     ) != expected_patch:
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_PATCH_INVALID")
     if len(parents) == 2 and _github_controls_repair_patch_sha256(
-        source, base_commit, merge_commit, changed_paths
+        source, patch_base, merge_commit, changed_paths
     ) != expected_patch:
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_PATCH_INVALID")
 
@@ -2569,6 +2589,21 @@ def _verify_idempotent_resume_github_authorization(
     source: Path,
     operation: dict[str, object],
 ) -> None:
+    operation_pr_number = operation.get("pr_number")
+    if operation_pr_number == _IDEMPOTENT_RESUME_PR_NUMBER:
+        expected_branch = _IDEMPOTENT_RESUME_BRANCH
+        required_check = _IDEMPOTENT_RESUME_REQUIRED_CHECK
+        patch_base_commit = str(operation.get("base_commit_sha", ""))
+        graph_patch_base: str | None = None
+    elif operation_pr_number == _IDEMPOTENT_RESUME_FOLLOWUP_PR_NUMBER:
+        expected_branch = _IDEMPOTENT_RESUME_FOLLOWUP_BRANCH
+        required_check = _IDEMPOTENT_RESUME_FOLLOWUP_REQUIRED_CHECK
+        patch_base_commit = str(operation.get("prior_runtime_commit_sha", ""))
+        graph_patch_base = patch_base_commit
+    else:
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_GITHUB_INVALID")
+    if not _COMMIT.fullmatch(patch_base_commit):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_GITHUB_INVALID")
     try:
         pull_request = json.loads(
             _run(
@@ -2576,7 +2611,7 @@ def _verify_idempotent_resume_github_authorization(
                     "gh",
                     "pr",
                     "view",
-                    str(_IDEMPOTENT_RESUME_PR_NUMBER),
+                    str(operation_pr_number),
                     "--repo",
                     REPOSITORY,
                     "--json",
@@ -2594,7 +2629,7 @@ def _verify_idempotent_resume_github_authorization(
                     "gh",
                     "pr",
                     "checks",
-                    str(_IDEMPOTENT_RESUME_PR_NUMBER),
+                    str(operation_pr_number),
                     "--repo",
                     REPOSITORY,
                     "--json",
@@ -2610,12 +2645,12 @@ def _verify_idempotent_resume_github_authorization(
     merge_oid = merge_commit.get("oid") if isinstance(merge_commit, dict) else None
     if (
         not isinstance(pull_request, dict)
-        or pull_request.get("number") != _IDEMPOTENT_RESUME_PR_NUMBER
+        or pull_request.get("number") != operation_pr_number
         or pull_request.get("state") != "MERGED"
         or pull_request.get("isDraft") is not False
         or pull_request.get("baseRefName") != "main"
         or pull_request.get("baseRefOid") != operation.get("base_commit_sha")
-        or pull_request.get("headRefName") != _IDEMPOTENT_RESUME_BRANCH
+        or pull_request.get("headRefName") != expected_branch
         or pull_request.get("headRefOid") != operation.get("head_commit_sha")
         or merge_oid != operation.get("merge_commit_sha")
     ):
@@ -2626,7 +2661,7 @@ def _verify_idempotent_resume_github_authorization(
     required_checks = [
         check
         for check in checks
-        if isinstance(check, dict) and check.get("name") == _IDEMPOTENT_RESUME_REQUIRED_CHECK
+        if isinstance(check, dict) and check.get("name") == required_check
     ]
     if (
         len(required_checks) != 1
@@ -2635,15 +2670,21 @@ def _verify_idempotent_resume_github_authorization(
     ):
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CHECK_INVALID")
 
-    base_commit = str(operation["base_commit_sha"])
     head_commit = str(operation["head_commit_sha"])
     merge_commit_sha = str(operation["merge_commit_sha"])
     if _run(["git", "rev-parse", "origin/main"], cwd=source) != merge_commit_sha:
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_MAIN_INVALID")
     changed_paths = tuple(cast(list[str], operation["changed_paths"]))
-    if _git_changed_paths(source, base_commit, head_commit) != changed_paths:
+    if _git_changed_paths(source, patch_base_commit, head_commit) != changed_paths:
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_PATHS_INVALID")
-    _verify_github_controls_repair_graph(source, operation)
+    if graph_patch_base is None:
+        _verify_github_controls_repair_graph(source, operation)
+    else:
+        _verify_github_controls_repair_graph(
+            source,
+            operation,
+            patch_base_commit=graph_patch_base,
+        )
 
 
 def _validated_local_install_repair(
@@ -3385,16 +3426,60 @@ def _validated_idempotent_resume_repair(
     return operation
 
 
+def _validated_idempotent_resume_followup_repair(
+    root: Path,
+    prior_repair: dict[str, object],
+) -> dict[str, object]:
+    path = root / "github-controls-idempotent-resume-followup-repair-operation-v1.json"
+    operation = _read_json(path)
+    prior_merge = prior_repair.get("merge_commit_sha")
+    if (
+        set(operation)
+        != {
+            "base_commit_sha",
+            "branch",
+            "changed_paths",
+            "head_commit_sha",
+            "merge_commit_sha",
+            "patch_sha256",
+            "pr_number",
+            "prior_runtime_commit_sha",
+            "repository",
+            "required_check",
+            "schema_version",
+        }
+        or path.read_bytes() != _canonical(operation) + b"\n"
+        or operation.get("schema_version") != "1"
+        or operation.get("repository") != REPOSITORY
+        or operation.get("prior_runtime_commit_sha") != prior_merge
+        or operation.get("branch") != _IDEMPOTENT_RESUME_FOLLOWUP_BRANCH
+        or operation.get("pr_number") != _IDEMPOTENT_RESUME_FOLLOWUP_PR_NUMBER
+        or operation.get("required_check")
+        != _IDEMPOTENT_RESUME_FOLLOWUP_REQUIRED_CHECK
+        or not _valid_idempotent_resume_paths(operation.get("changed_paths"))
+        or not _COMMIT.fullmatch(str(operation.get("base_commit_sha", "")))
+        or not _COMMIT.fullmatch(str(operation.get("head_commit_sha", "")))
+        or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha", "")))
+        or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_FOLLOWUP_REPAIR_INVALID")
+    return operation
+
+
 def _validated_runtime_upgrade_refresh(
     root: Path,
     operation: dict[str, object],
     retry: dict[str, object],
     prior_runtime_commit: object,
+    *,
+    operation_path: Path | None = None,
+    error_code: str = "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID",
 ) -> dict[str, object]:
     refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
     controls_path = root / "github-controls-operation-v1.json"
     backup_path = root / "github-controls-operation-before-runtime-upgrade-v1.json"
-    error_code = "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID"
+    if operation_path is None:
+        operation_path = root / "github-controls-idempotent-resume-repair-operation-v1.json"
     refresh = _read_canonical_document(refresh_path, error_code)
     controls = _read_canonical_document(controls_path, error_code)
     backup = _read_canonical_document(backup_path, error_code)
@@ -3412,9 +3497,7 @@ def _validated_runtime_upgrade_refresh(
         or refresh.get("bootstrap_id") != retry.get("bootstrap_id")
         or refresh.get("protected_commit_sha") != operation.get("merge_commit_sha")
         or refresh.get("runtime_upgrade_operation_sha256")
-        != hashlib.sha256(
-            (root / "github-controls-idempotent-resume-repair-operation-v1.json").read_bytes()
-        ).hexdigest()
+        != hashlib.sha256(operation_path.read_bytes()).hexdigest()
         or refresh.get("prior_controls_operation_sha256")
         != hashlib.sha256(backup_path.read_bytes()).hexdigest()
         or refresh.get("refreshed_controls_operation_sha256")
@@ -4212,14 +4295,81 @@ def _runtime_commit(
         or not _SHA256.fullmatch(str(resume_retry.get("interrupted_state_sha256", "")))
     ):
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_RETRY_INVALID")
+    followup_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-11-v1.json"
+    )
+    if not followup_retry_path.exists():
+        if not allow_pending_idempotent_resume:
+            _validated_runtime_upgrade_refresh(
+                root,
+                resume_operation,
+                resume_retry,
+                package_token_merge,
+            )
+        return str(resume_merge)
+    if _is_reparse_path(followup_retry_path):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_FOLLOWUP_RETRY_INVALID")
+    followup_operation = _validated_idempotent_resume_followup_repair(
+        root,
+        resume_operation,
+    )
+    followup_retry = _read_json(followup_retry_path)
+    followup_merge = followup_operation["merge_commit_sha"]
+    followup_operation_path = (
+        root / "github-controls-idempotent-resume-followup-repair-operation-v1.json"
+    )
+    if (
+        set(followup_retry)
+        != {
+            "activity_baseline_sha256",
+            "bootstrap_id",
+            "bootstrap_source_commit_sha",
+            "idempotent_resume_followup_merge_commit_sha",
+            "idempotent_resume_followup_operation_sha256",
+            "idempotent_resume_followup_pr_number",
+            "installations",
+            "interrupted_phase",
+            "interrupted_sequence",
+            "interrupted_state_sha256",
+            "prior_retry_receipt_sha256",
+            "prior_runtime_commit_sha",
+            "schema_version",
+        }
+        or followup_retry_path.read_bytes() != _canonical(followup_retry) + b"\n"
+        or followup_retry.get("schema_version") != "1"
+        or followup_retry.get("bootstrap_id") != resume_retry.get("bootstrap_id")
+        or followup_retry.get("interrupted_phase") != "QUALIFICATION_PENDING"
+        or followup_retry.get("interrupted_sequence") != 43
+        or followup_retry.get("prior_runtime_commit_sha") != resume_merge
+        or followup_retry.get("idempotent_resume_followup_merge_commit_sha")
+        != followup_merge
+        or followup_retry.get("idempotent_resume_followup_pr_number")
+        != _IDEMPOTENT_RESUME_FOLLOWUP_PR_NUMBER
+        or followup_retry.get("idempotent_resume_followup_operation_sha256")
+        != hashlib.sha256(_canonical(followup_operation)).hexdigest()
+        or followup_retry.get("prior_retry_receipt_sha256")
+        != hashlib.sha256(resume_retry_path.read_bytes()).hexdigest()
+        or followup_retry.get("bootstrap_source_commit_sha")
+        != resume_retry.get("bootstrap_source_commit_sha")
+        or followup_retry.get("installations") != resume_retry.get("installations")
+        or not _SHA256.fullmatch(
+            str(followup_retry.get("activity_baseline_sha256", ""))
+        )
+        or not _SHA256.fullmatch(
+            str(followup_retry.get("interrupted_state_sha256", ""))
+        )
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_FOLLOWUP_RETRY_INVALID")
     if not allow_pending_idempotent_resume:
         _validated_runtime_upgrade_refresh(
             root,
-            resume_operation,
-            resume_retry,
-            package_token_merge,
+            followup_operation,
+            followup_retry,
+            resume_merge,
+            operation_path=followup_operation_path,
+            error_code="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_FOLLOWUP_REFRESH_INVALID",
         )
-    return str(resume_merge)
+    return str(followup_merge)
 
 
 def _resume_transient_local_install_block(root: Path) -> bool:
@@ -5785,9 +5935,25 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
     state = load_bootstrap_state(_state_path(root))
     if state.phase != "QUALIFICATION_PENDING" or state.sequence != 43:
         return
-    retry_path = root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json"
-    if not retry_path.exists():
+    resume_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json"
+    )
+    if not resume_retry_path.exists():
         return
+    followup_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-11-v1.json"
+    )
+    if followup_retry_path.exists():
+        retry_path = followup_retry_path
+        upgrade_operation_path = (
+            root
+            / "github-controls-idempotent-resume-followup-repair-operation-v1.json"
+        )
+    else:
+        retry_path = resume_retry_path
+        upgrade_operation_path = (
+            root / "github-controls-idempotent-resume-repair-operation-v1.json"
+        )
     state_path = _state_path(root)
     state_document = _read_json(state_path)
     retry = _read_json(retry_path)
@@ -5801,7 +5967,6 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
     ):
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_STATE_INVALID")
 
-    upgrade_operation_path = root / "github-controls-idempotent-resume-repair-operation-v1.json"
     upgrade_operation = _read_json(upgrade_operation_path)
     prior_runtime = upgrade_operation.get("prior_runtime_commit_sha")
     context = _context(root)
