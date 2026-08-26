@@ -210,6 +210,9 @@ _Workflow = TypedDict(
     {
         "name": str,
         "on": _WorkflowOn,
+        "inputs": dict[str, dict[str, object]],
+        "outputs": dict[str, dict[str, object]],
+        "runs": dict[str, object],
         "permissions": dict[str, object],
         "jobs": dict[str, _WorkflowJob],
         "concurrency": dict[str, object],
