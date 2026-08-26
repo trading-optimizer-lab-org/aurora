@@ -140,6 +140,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_ISSUE_NUMBER: ${{ inputs.issue_number || github.event.issue.number }}
           CONTROLLER_ENABLED: ${{ vars.CATALOG_CONTROLLER_ENABLED }}
+          CONTROLLER_ARMED: ${{ vars.CATALOG_CONTROLLER_PRODUCTION_ARMED }}
         shell: bash
         run: |
           python - <<'PY'
@@ -167,7 +168,8 @@ jobs:
           reason = "CATALOG_CONTROLLER_DISABLED"
           request_sha = hashlib.sha256(raw).hexdigest()
           controller_enabled = os.environ.get("CONTROLLER_ENABLED") == "true"
-          if actors.get("production_enabled") is True and controller_enabled:
+          controller_armed = os.environ.get("CONTROLLER_ARMED") == "true"
+          if actors.get("production_enabled") is True and controller_enabled and controller_armed:
               allowed = set(actors.get("request_actors", ()))
               key_path = actors.get("requester_public_key_path")
               if issue.get("user", {}).get("login") not in allowed:
@@ -273,126 +275,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  repair_request_receipt_orphan:
-    name: repair_request_receipt_orphan
-    needs: [filter, routing_snapshot]
-    if: >-
-      ${{ needs.routing_snapshot.result == 'success' &&
-      needs.routing_snapshot.outputs.request_receipt_orphan == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      actions: read
-      contents: read
-      issues: write
-    concurrency:
-      group: catalog-request-receipt-v1-${{ needs.filter.outputs.issue_number }}
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ needs.filter.outputs.protected_commit_sha }}
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: "3.11"
-          cache: ""
-      - run: >-
-          python -m pip install --only-binary=:all: --no-deps --require-hashes
-          -r requirements/catalog-controller-linux-py311.lock
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: catalog-routing-snapshot
-          path: ${{ runner.temp }}/catalog-routing-snapshot
-      - id: reconcile
-        name: Verify the orphan and its original writer before repair
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python scripts/reconcile_catalog_mirror_delivery.py \
-            --kind request \
-            --candidate "$RUNNER_TEMP/catalog-routing-snapshot/request-receipt-orphan.json" \
-            --candidate-comment "$RUNNER_TEMP/catalog-routing-snapshot/request-receipt-orphan-comment.md" \
-            --output-dir "$RUNNER_TEMP/catalog-request-orphan-delivery" \
-            --github-output "$GITHUB_OUTPUT"
-      - name: Require one bounded orphan-repair outcome
-        env:
-          REPAIR_ACTION: ${{ steps.reconcile.outputs.action }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "$REPAIR_ACTION" in
-            repair_comment|idempotent) ;;
-            *) exit 2 ;;
-          esac
-      - id: repair_claim
-        name: Claim one mirror-comment repair attempt
-        if: ${{ steps.reconcile.outputs.action == 'repair_comment' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ${{ steps.reconcile.outputs.repair_claim_artifact_name }}
-          path: ${{ runner.temp }}/catalog-request-orphan-delivery/repair-claim.json
-          if-no-files-found: error
-          retention-days: 90
-      - name: Read back the repair claim before any repaired comment
-        if: ${{ steps.reconcile.outputs.action == 'repair_comment' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPAIR_CLAIM_ARTIFACT_ID: ${{ steps.repair_claim.outputs.artifact-id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$REPAIR_CLAIM_ARTIFACT_ID" =~ ^[0-9]+$ ]]
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$REPAIR_CLAIM_ARTIFACT_ID/zip" > "$RUNNER_TEMP/catalog-mirror-repair-claim.zip"
-          mkdir "$RUNNER_TEMP/catalog-mirror-repair-claim"
-          unzip -q "$RUNNER_TEMP/catalog-mirror-repair-claim.zip" -d "$RUNNER_TEMP/catalog-mirror-repair-claim"
-          cmp --silent "$RUNNER_TEMP/catalog-request-orphan-delivery/repair-claim.json" "$RUNNER_TEMP/catalog-mirror-repair-claim/repair-claim.json"
-      - name: Append the exact missing comment once
-        if: ${{ steps.reconcile.outputs.action == 'repair_comment' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          issue_number="$(python -c "import json; print(json.load(open(r'$RUNNER_TEMP/catalog-request-orphan-delivery/request-receipt.json', encoding='utf-8'))['issue_number'])")"
-          [[ "$issue_number" =~ ^[0-9]+$ ]]
-          test "$issue_number" = "${{ needs.filter.outputs.issue_number }}"
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          root = Path(os.environ["RUNNER_TEMP"])
-          body = (root / "catalog-request-orphan-delivery" / "comment.md").read_text("utf-8")
-          (root / "catalog-request-orphan-comment-request.json").write_text(
-              json.dumps({"body": body}, sort_keys=True, separators=(",", ":")),
-              encoding="utf-8",
-          )
-          PY
-          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$issue_number/comments" \
-            --input "$RUNNER_TEMP/catalog-request-orphan-comment-request.json" \
-            > "$RUNNER_TEMP/catalog-request-orphan-post-response.json"
-      - name: Verify the repaired receipt through a fresh complete snapshot
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ISSUE_NUMBER: ${{ needs.filter.outputs.issue_number }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python scripts/capture_catalog_routing_snapshot.py \
-            --issue-number "$ISSUE_NUMBER" \
-            --repo-root . \
-            --output-dir "$RUNNER_TEMP/catalog-request-orphan-readback"
-          test ! -f "$RUNNER_TEMP/catalog-request-orphan-readback/request-receipt-orphan.json"
-      - name: Preserve the bounded repair read-back
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: catalog-request-receipt-repair-${{ steps.reconcile.outputs.payload_sha256 }}
-          path: ${{ runner.temp }}/catalog-request-orphan-readback
-          if-no-files-found: error
-          retention-days: 90
-
   route_without_privileged_audit:
     needs: [filter, routing_snapshot]
     if: >-
@@ -489,35 +371,16 @@ jobs:
   live_controls_audit_before_reserve:
     needs: prepare_admission_candidates
     if: ${{ needs.prepare_admission_candidates.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    environment: catalog-production
+    uses: ./.github/workflows/catalog-live-controls-audit.yml
+    with:
+      purpose: admission
+      caller_workflow: .github/workflows/catalog-run-controller.yml
+      caller_job: live_controls_audit_before_reserve
+      protected_commit_sha: ${{ needs.prepare_admission_candidates.outputs.controls_commit_sha }}
+      audit_context_sha256: ${{ needs.prepare_admission_candidates.outputs.audit_context_sha256 }}
     permissions:
       actions: read
       contents: read
-    outputs:
-      receipt_artifact_name: ${{ steps.audit.outputs.receipt_artifact_name }}
-      receipt_sha256: ${{ steps.audit.outputs.receipt_sha256 }}
-      receipt_status: ${{ steps.audit.outputs.receipt_status }}
-    steps:
-      - name: Check out the exact protected commit
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ needs.prepare_admission_candidates.outputs.controls_commit_sha }}
-          persist-credentials: false
-      - name: Run the protected read-only audit
-        id: audit
-        uses: ./.github/actions/catalog-live-controls-audit
-        with:
-          purpose: admission
-          caller_workflow: .github/workflows/catalog-run-controller.yml
-          caller_job: live_controls_audit_before_reserve
-          protected_commit_sha: ${{ needs.prepare_admission_candidates.outputs.controls_commit_sha }}
-          audit_context_sha256: ${{ needs.prepare_admission_candidates.outputs.audit_context_sha256 }}
-          auditor_app_id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
-          auditor_private_key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
-          enterprise_billing_token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
-          package_inventory_token: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
 
   admission:
     needs: [routing_snapshot, prepare_admission_candidates, live_controls_audit_before_reserve]
@@ -775,9 +638,11 @@ jobs:
     if: >-
       ${{ always() && needs.filter.result == 'success' &&
       needs.filter.outputs.relevant == 'true' &&
-      needs.routing_snapshot.outputs.request_receipt_orphan != 'true' &&
+      needs.routing_snapshot.result == 'success' &&
+      (needs.routing_snapshot.outputs.request_receipt_orphan == 'true' ||
+      (needs.routing_snapshot.outputs.request_receipt_orphan != 'true' &&
       needs.admission.outputs.call_engine != 'true' &&
-      needs.route_without_privileged_audit.outputs.reason_code != 'CATALOG_RETRY_NOT_DUE' }}
+      needs.route_without_privileged_audit.outputs.reason_code != 'CATALOG_RETRY_NOT_DUE')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -800,13 +665,14 @@ jobs:
           python -m pip install --only-binary=:all: --no-deps --require-hashes
           -r requirements/catalog-controller-linux-py311.lock
       - name: Download the routing command when routing reached a decision
-        if: ${{ needs.route_without_privileged_audit.result == 'success' }}
+        if: ${{ needs.routing_snapshot.result == 'success' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: catalog-routing-snapshot
           path: ${{ runner.temp }}/catalog-routing-snapshot
       - id: receipt
         name: Prepare one provenance-bound nonexecuting receipt
+        if: ${{ needs.routing_snapshot.outputs.request_receipt_orphan != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -840,15 +706,52 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          candidate="$RUNNER_TEMP/catalog-nonexecuting-request-receipt/request-receipt.json"
+          candidate_comment="$RUNNER_TEMP/catalog-nonexecuting-request-receipt/comment.md"
+          output_dir="$RUNNER_TEMP/catalog-nonexecuting-request-delivery"
+          if [ "${{ needs.routing_snapshot.outputs.request_receipt_orphan }}" = "true" ]; then
+            candidate="$RUNNER_TEMP/catalog-routing-snapshot/request-receipt-orphan.json"
+            candidate_comment="$RUNNER_TEMP/catalog-routing-snapshot/request-receipt-orphan-comment.md"
+            output_dir="$RUNNER_TEMP/catalog-request-orphan-delivery"
+          fi
           python scripts/reconcile_catalog_mirror_delivery.py \
             --kind request \
-            --candidate "$RUNNER_TEMP/catalog-nonexecuting-request-receipt/request-receipt.json" \
-            --candidate-comment "$RUNNER_TEMP/catalog-nonexecuting-request-receipt/comment.md" \
-            --output-dir "$RUNNER_TEMP/catalog-nonexecuting-request-delivery" \
+            --candidate "$candidate" \
+            --candidate-comment "$candidate_comment" \
+            --output-dir "$output_dir" \
             --github-output "$GITHUB_OUTPUT"
+      - name: Require one bounded orphan-repair outcome
+        if: ${{ needs.routing_snapshot.outputs.request_receipt_orphan == 'true' }}
+        env:
+          REPAIR_ACTION: ${{ steps.reconcile_mirror.outputs.action }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$REPAIR_ACTION" in
+            repair_comment|idempotent) ;;
+            *) exit 2 ;;
+          esac
+      - id: orphan_mirror_readback
+        name: Read back the historical orphan mirror before claiming repair
+        if: >-
+          ${{ needs.routing_snapshot.outputs.request_receipt_orphan == 'true' &&
+          steps.reconcile_mirror.outputs.action == 'repair_comment' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.reconcile_mirror.outputs.existing_artifact_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$RUNNER_TEMP/catalog-request-orphan-mirror.zip"
+          mkdir "$RUNNER_TEMP/catalog-request-orphan-mirror"
+          unzip -q "$RUNNER_TEMP/catalog-request-orphan-mirror.zip" -d "$RUNNER_TEMP/catalog-request-orphan-mirror"
+          cmp --silent "$RUNNER_TEMP/catalog-request-orphan-delivery/request-receipt.json" "$RUNNER_TEMP/catalog-request-orphan-mirror/request-receipt.json"
       - id: mirror
         name: Mirror the request receipt first
-        if: ${{ steps.reconcile_mirror.outputs.action == 'upload_new' }}
+        if: >-
+          ${{ needs.routing_snapshot.outputs.request_receipt_orphan != 'true' &&
+          steps.reconcile_mirror.outputs.action == 'upload_new' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.reconcile_mirror.outputs.artifact_name }}
@@ -876,19 +779,51 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$REPAIR_CLAIM_ARTIFACT_ID/zip" > "$RUNNER_TEMP/catalog-mirror-repair-claim.zip"
           mkdir "$RUNNER_TEMP/catalog-mirror-repair-claim"
           unzip -q "$RUNNER_TEMP/catalog-mirror-repair-claim.zip" -d "$RUNNER_TEMP/catalog-mirror-repair-claim"
-          cmp --silent "$RUNNER_TEMP/catalog-nonexecuting-request-delivery/repair-claim.json" "$RUNNER_TEMP/catalog-mirror-repair-claim/repair-claim.json"
-      - name: Read back, append exactly once, and close only terminal states
+          delivery_dir="$RUNNER_TEMP/catalog-nonexecuting-request-delivery"
+          if [ "${{ needs.routing_snapshot.outputs.request_receipt_orphan }}" = "true" ]; then
+            delivery_dir="$RUNNER_TEMP/catalog-request-orphan-delivery"
+          fi
+          cmp --silent "$delivery_dir/repair-claim.json" "$RUNNER_TEMP/catalog-mirror-repair-claim/repair-claim.json"
+      - name: Read back, append exactly once
+        if: ${{ steps.reconcile_mirror.outputs.action != 'idempotent' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          ISSUE_NUMBER: ${{ steps.receipt.outputs.issue_number }}
+          ISSUE_NUMBER: >-
+            ${{ steps.receipt.outputs.issue_number ||
+            needs.filter.outputs.issue_number }}
+          ORPHAN: ${{ needs.routing_snapshot.outputs.request_receipt_orphan }}
           ARTIFACT_ID: >-
             ${{ steps.reconcile_mirror.outputs.existing_artifact_id ||
             steps.mirror.outputs.artifact-id }}
           RECEIPT_SHA256: ${{ steps.reconcile_mirror.outputs.payload_sha256 }}
-          CLOSE_REQUEST: ${{ steps.receipt.outputs.close_request }}
         shell: bash
         run: |
           set -euo pipefail
+          if [ "$ORPHAN" = "true" ]; then
+            [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]
+            [[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]]
+            [[ "$RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+            test "$ISSUE_NUMBER" = "${{ needs.filter.outputs.issue_number }}"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$RUNNER_TEMP/catalog-request-orphan-mirror-final.zip"
+            mkdir "$RUNNER_TEMP/catalog-request-orphan-mirror-final"
+            unzip -q "$RUNNER_TEMP/catalog-request-orphan-mirror-final.zip" -d "$RUNNER_TEMP/catalog-request-orphan-mirror-final"
+            cmp --silent "$RUNNER_TEMP/catalog-request-orphan-delivery/request-receipt.json" "$RUNNER_TEMP/catalog-request-orphan-mirror-final/request-receipt.json"
+            python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"])
+          body = (root / "catalog-request-orphan-delivery" / "comment.md").read_text("utf-8")
+          (root / "catalog-request-orphan-comment-request.json").write_text(
+              json.dumps({"body": body}, sort_keys=True, separators=(",", ":")),
+              encoding="utf-8",
+          )
+          PY
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+              --input "$RUNNER_TEMP/catalog-request-orphan-comment-request.json" \
+              > "$RUNNER_TEMP/catalog-request-orphan-post-response.json"
+            exit 0
+          fi
           [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]
           [[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]]
           [[ "$RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
@@ -942,38 +877,29 @@ jobs:
           if len(exact) != 1:
               raise SystemExit("CATALOG_REQUEST_RECEIPT_READBACK_INVALID")
           PY
-          if [ "$CLOSE_REQUEST" = "true" ]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
-              --input "$RUNNER_TEMP/catalog-nonexecuting-request-receipt/terminal-issue-patch.json" \
-              > "$RUNNER_TEMP/catalog-nonexecuting-issue-patch-response.json"
-            gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
-              > "$RUNNER_TEMP/catalog-nonexecuting-issue-readback.json"
-            python - <<'PY'
-            import json
-            import os
-            from pathlib import Path
-            root = Path(os.environ["RUNNER_TEMP"])
-            expected_number = int(os.environ["ISSUE_NUMBER"])
-            documents = [
-                json.loads((root / name).read_text("utf-8"))
-                for name in (
-                    "catalog-nonexecuting-issue-patch-response.json",
-                    "catalog-nonexecuting-issue-readback.json",
-                )
-            ]
-            for issue in documents:
-                labels = sorted(row.get("name") for row in issue.get("labels", []))
-                if (
-                    issue.get("number") != expected_number
-                    or issue.get("state") != "closed"
-                    or issue.get("state_reason") != "completed"
-                    or labels != ["catalog-run-terminal-v1"]
-                    or (issue.get("closed_by") or {}).get("login")
-                    != "github-actions[bot]"
-                ):
-                    raise SystemExit("CATALOG_REQUEST_TERMINAL_READBACK_INVALID")
-            PY
-          fi
+
+      - id: orphan_readback
+        name: Verify the repaired receipt through a fresh complete snapshot
+        if: ${{ needs.routing_snapshot.outputs.request_receipt_orphan == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ needs.filter.outputs.issue_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/capture_catalog_routing_snapshot.py \
+            --issue-number "$ISSUE_NUMBER" \
+            --repo-root . \
+            --output-dir "$RUNNER_TEMP/catalog-request-orphan-readback"
+          test ! -f "$RUNNER_TEMP/catalog-request-orphan-readback/request-receipt-orphan.json"
+      - name: Preserve the bounded repair read-back
+        if: ${{ needs.routing_snapshot.outputs.request_receipt_orphan == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-request-receipt-repair-${{ steps.reconcile_mirror.outputs.payload_sha256 }}
+          path: ${{ runner.temp }}/catalog-request-orphan-readback
+          if-no-files-found: error
+          retention-days: 90
 
   record_running:
     name: record_running
@@ -1605,35 +1531,16 @@ jobs:
   live_controls_audit_before_terminal:
     needs: prepare_terminal_evidence
     if: ${{ needs.prepare_terminal_evidence.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    environment: catalog-production
+    uses: ./.github/workflows/catalog-live-controls-audit.yml
+    with:
+      purpose: terminal
+      caller_workflow: .github/workflows/catalog-run-controller.yml
+      caller_job: live_controls_audit_before_terminal
+      protected_commit_sha: ${{ needs.prepare_terminal_evidence.outputs.controls_commit_sha }}
+      audit_context_sha256: ${{ needs.prepare_terminal_evidence.outputs.audit_context_sha256 }}
     permissions:
       actions: read
       contents: read
-    outputs:
-      receipt_artifact_name: ${{ steps.audit.outputs.receipt_artifact_name }}
-      receipt_sha256: ${{ steps.audit.outputs.receipt_sha256 }}
-      receipt_status: ${{ steps.audit.outputs.receipt_status }}
-    steps:
-      - name: Check out the exact protected commit
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ needs.prepare_terminal_evidence.outputs.controls_commit_sha }}
-          persist-credentials: false
-      - name: Run the protected read-only audit
-        id: audit
-        uses: ./.github/actions/catalog-live-controls-audit
-        with:
-          purpose: terminal
-          caller_workflow: .github/workflows/catalog-run-controller.yml
-          caller_job: live_controls_audit_before_terminal
-          protected_commit_sha: ${{ needs.prepare_terminal_evidence.outputs.controls_commit_sha }}
-          audit_context_sha256: ${{ needs.prepare_terminal_evidence.outputs.audit_context_sha256 }}
-          auditor_app_id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
-          auditor_private_key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
-          enterprise_billing_token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
-          package_inventory_token: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
 
   prepare_terminal_decision:
     needs: [prepare_terminal_evidence, live_controls_audit_before_terminal]

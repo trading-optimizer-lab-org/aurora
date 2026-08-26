@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -440,8 +441,7 @@ def _valid_controller_inputs(**updates: object) -> dict[str, object]:
     }
     values.update(updates)
     if "ledger" in updates:
-        supplied_ledger = updates["ledger"]
-        assert isinstance(supplied_ledger, VerifiedAuthorityLedgerV1)
+        supplied_ledger = cast(VerifiedAuthorityLedgerV1, updates["ledger"])
         if "authority_anchor_evidence" not in updates:
             values["authority_anchor_evidence"] = _anchor_evidence(supplied_ledger)
         if "protected_head_evidence" not in updates and supplied_ledger.latest is not None:

@@ -43,6 +43,8 @@ def _pin_aurora_source_checkout() -> None:
 _pin_aurora_source_checkout()
 
 from aurora.infra.sp500_megarun.catalog_github_controls import (
+    CatalogGithubAuditorV1,
+    CatalogGithubControlsV1,
     CatalogGithubControlsReceiptV1,
     audit_catalog_github_controls,
     bootstrap_controls_prepared,
@@ -52,13 +54,22 @@ from aurora.infra.sp500_megarun.catalog_github_controls import (
     load_catalog_github_controls,
 )
 
-from audit_catalog_github_controls import (
-    ACCEPT,
-    GhReadOnlyClient,
-    collect_live_snapshot,
-    load_snapshot_directory,
-    write_json,
-)
+try:
+    from scripts.audit_catalog_github_controls import (
+        ACCEPT,
+        GhReadOnlyClient,
+        collect_live_snapshot,
+        load_snapshot_directory,
+        write_json,
+    )
+except ModuleNotFoundError:  # Direct script execution puts scripts/ on sys.path.
+    from audit_catalog_github_controls import (  # type: ignore[no-redef]
+        ACCEPT,
+        GhReadOnlyClient,
+        collect_live_snapshot,
+        load_snapshot_directory,
+        write_json,
+    )
 
 
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -81,8 +92,8 @@ def _load_verified_zero_mutation_dry_run(
     *,
     repository: str,
     expected_state_sha: str,
-    desired: object,
-) -> object:
+    desired: CatalogGithubControlsV1,
+) -> CatalogGithubControlsReceiptV1:
     text = path.read_text("utf-8")
     value = json.loads(text)
     if text != _canonical_json(value) + "\n":
@@ -157,6 +168,145 @@ class GhMutationClient:
             return None
         return json.loads(completed.stdout)
 
+    def get(self, endpoint: str) -> object:
+        if not endpoint.startswith("/") or any(
+            token in endpoint for token in ("\r", "\n", "\x00")
+        ):
+            raise ValueError("CATALOG_GITHUB_MUTATION_ENDPOINT_INVALID")
+        completed = subprocess.run(
+            [
+                "gh",
+                "api",
+                "--method",
+                "GET",
+                "-H",
+                f"Accept: {ACCEPT}",
+                "-H",
+                f"X-GitHub-Api-Version: {self.api_version}",
+                endpoint,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+        if completed.returncode != 0:
+            raise ValueError(
+                "CATALOG_GITHUB_MUTATION_READ_FAILED: "
+                f"GET {endpoint}: {completed.stderr.strip()}"
+            )
+        return json.loads(completed.stdout)
+
+
+def _cache_retention_value(client: object, endpoint: str) -> int:
+    payload = client.get(endpoint)  # type: ignore[attr-defined]
+    value = payload.get("max_cache_retention_days") if isinstance(payload, dict) else None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError("CATALOG_CACHE_RETENTION_UNKNOWN")
+    return value
+
+
+def apply_cache_retention_transaction(
+    client: object,
+    *,
+    desired: object,
+    receipt: CatalogGithubControlsReceiptV1,
+    plan: object,
+) -> list[object]:
+    """Apply the sealed three-level retention change with verified rollback."""
+
+    control_plane = desired.billing.budget_control_plane  # type: ignore[attr-defined]
+    minimum = desired.billing.repository_cache_retention_days  # type: ignore[attr-defined]
+    endpoints = (
+        f"/enterprises/{control_plane.enterprise}/actions/cache/retention-limit",
+        f"/organizations/{control_plane.organization_id}/actions/cache/retention-limit",
+        f"/repos/{receipt.repository}/actions/cache/retention-limit",
+    )
+    retention_mutations = tuple(
+        mutation
+        for mutation in plan.mutations  # type: ignore[attr-defined]
+        if "CACHE_RETENTION_POLICY_REQUIRED" in mutation.reason_codes
+    )
+    if not retention_mutations:
+        return []
+    if (
+        len(retention_mutations) != 3
+        or len(plan.mutations) != 3  # type: ignore[attr-defined]
+        or tuple(mutation.endpoint for mutation in retention_mutations) != endpoints
+        or any(mutation.method != "PUT" for mutation in retention_mutations)
+    ):
+        raise ValueError("CATALOG_CACHE_RETENTION_PLAN_INVALID")
+
+    originals = tuple(_cache_retention_value(client, endpoint) for endpoint in endpoints)
+    sealed_originals = (
+        receipt.enterprise_cache_retention_days,
+        receipt.organization_cache_retention_days,
+        receipt.repository_cache_retention_days,
+    )
+    if originals != sealed_originals:
+        raise ValueError("CATALOG_CACHE_RETENTION_PLAN_STALE")
+
+    targets: list[int] = []
+    for mutation, original in zip(retention_mutations, originals, strict=True):
+        target = mutation.body.get("max_cache_retention_days")
+        if (
+            isinstance(target, bool)
+            or not isinstance(target, int)
+            or target != max(original, minimum)
+            or target < original
+        ):
+            raise ValueError("CATALOG_CACHE_RETENTION_PLAN_INVALID")
+        targets.append(target)
+
+    mutated: list[tuple[str, int]] = []
+    responses: list[object] = []
+    try:
+        for mutation, target, original in zip(
+            retention_mutations, targets, originals, strict=True
+        ):
+            latest = _cache_retention_value(client, mutation.endpoint)
+            if latest != original:
+                raise ValueError("CATALOG_CACHE_RETENTION_CONCURRENT_CHANGE")
+            target = max(target, latest, minimum)
+            # A failed PUT can be ambiguous, so treat the level as possibly
+            # mutated and prove its rollback before returning an error.
+            mutated.append((mutation.endpoint, original))
+            response = client.mutate(  # type: ignore[attr-defined]
+                method="PUT",
+                endpoint=mutation.endpoint,
+                body={"max_cache_retention_days": target},
+            )
+            observed = _cache_retention_value(client, mutation.endpoint)
+            if observed != target:
+                raise ValueError("CATALOG_CACHE_RETENTION_READBACK_INVALID")
+            responses.append(
+                {
+                    "endpoint": mutation.endpoint,
+                    "response": response,
+                    "readback": observed,
+                }
+            )
+    except Exception as transaction_error:
+        rollback_errors: list[str] = []
+        for endpoint, original in reversed(mutated):
+            try:
+                client.mutate(  # type: ignore[attr-defined]
+                    method="PUT",
+                    endpoint=endpoint,
+                    body={"max_cache_retention_days": original},
+                )
+                if _cache_retention_value(client, endpoint) != original:
+                    raise ValueError("ROLLBACK_READBACK_INVALID")
+            except Exception as rollback_error:
+                rollback_errors.append(f"{endpoint}:{rollback_error}")
+        if rollback_errors:
+            raise ValueError(
+                "CATALOG_CACHE_RETENTION_ROLLBACK_FAILED:"
+                + "|".join(rollback_errors)
+            ) from transaction_error
+        raise ValueError("CATALOG_CACHE_RETENTION_TRANSACTION_FAILED") from transaction_error
+    return responses
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -191,7 +341,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _live_snapshot(args: argparse.Namespace, desired: object, auditor: object) -> dict[str, object]:
+def _live_snapshot(
+    args: argparse.Namespace,
+    desired: CatalogGithubControlsV1,
+    auditor: CatalogGithubAuditorV1,
+) -> dict[str, object]:
     client = GhReadOnlyClient(api_version=desired.github_api_version)
     observed_commit = client.get(
         f"/repos/{args.repository}/commits/{desired.default_branch}"
@@ -258,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
             prepared = bootstrap_controls_prepared(fresh)
             if fresh.status != "ready" and not prepared:
                 raise ValueError("CATALOG_GITHUB_CONTROLS_RECONCILIATION_INCOMPLETE")
-            result = {
+            result: dict[str, object] = {
                 "schema_version": "1",
                 "mode": "apply",
                 "repository": args.repository,
@@ -298,7 +452,7 @@ def main(argv: list[str] | None = None) -> int:
             desired=desired,
             receipt=before,
         )
-        result: dict[str, object] = {
+        result = {
             "schema_version": "1",
             "mode": "apply" if args.apply else "dry_run",
             "repository": args.repository,
@@ -346,14 +500,28 @@ def main(argv: list[str] | None = None) -> int:
 
         mutation_client = GhMutationClient(api_version=desired.github_api_version)
         responses: list[object] = []
-        for mutation in plan.mutations:
-            responses.append(
-                mutation_client.mutate(
-                    method=mutation.method,
-                    endpoint=mutation.endpoint,
-                    body=dict(mutation.body),
+        retention_present = any(
+            "CACHE_RETENTION_POLICY_REQUIRED" in mutation.reason_codes
+            for mutation in plan.mutations
+        )
+        if retention_present:
+            responses.extend(
+                apply_cache_retention_transaction(
+                    mutation_client,
+                    desired=desired,
+                    receipt=fresh,
+                    plan=plan,
                 )
             )
+        else:
+            for mutation in plan.mutations:
+                responses.append(
+                    mutation_client.mutate(
+                        method=mutation.method,
+                        endpoint=mutation.endpoint,
+                        body=dict(mutation.body),
+                    )
+                )
         after_snapshots = _live_snapshot(args, desired, auditor)
         after = audit_catalog_github_controls(
             desired=desired,
@@ -379,6 +547,36 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     except Exception as exc:
+        failure_result = locals().get("result")
+        if args.apply and isinstance(failure_result, dict):
+            failure = dict(failure_result)
+            failure["mode"] = "failed"
+            failure["error_code"] = str(exc).split(":", maxsplit=1)[0]
+            failure["api_responses"] = list(locals().get("responses", []))
+            try:
+                failure_snapshots = (
+                    load_snapshot_directory(args.snapshot_dir)
+                    if args.snapshot_dir is not None
+                    else _live_snapshot(args, desired, auditor)
+                )
+                failure_after = audit_catalog_github_controls(
+                    desired=desired,
+                    auditor=auditor,
+                    snapshots=failure_snapshots,
+                )
+                failure["failure_after_receipt"] = failure_after.model_dump(
+                    mode="json"
+                )
+                failure["failure_snapshot_error"] = None
+            except Exception as snapshot_error:
+                failure["failure_after_receipt"] = None
+                failure["failure_snapshot_error"] = str(snapshot_error).split(
+                    ":", maxsplit=1
+                )[0]
+            try:
+                write_json(args.output, failure)
+            except Exception:
+                pass
         print(str(exc), file=sys.stderr)
         return 2
 

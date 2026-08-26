@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +23,10 @@ def _parameters(path: Path) -> set[str]:
     return set(re.findall(r"\$(\w+)", block.group(1)))
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="requires powershell.exe",
+)
 def test_installer_is_nonmutating_by_default() -> None:
     result = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(INSTALLER)],
@@ -57,6 +64,50 @@ def test_installer_has_exact_confirmation_and_reproducible_gate() -> None:
     assert "$AllowedRemotes -cnotcontains $Remote" in source
     assert "(?:^|/)trading-optimizer-lab-org/aurora" not in source
     assert "Invoke-Expression" not in source
+
+
+def test_installer_disables_controller_variables_in_order_with_exact_readback() -> None:
+    source = INSTALLER.read_text("utf-8")
+    preflight = source.split("$BuildRoot = ", 1)[0]
+    expected_variables = '''foreach ($ControllerName in @(
+    "CATALOG_CONTROLLER_PRODUCTION_ARMED",
+    "CATALOG_CONTROLLER_ENABLED"
+))'''
+    set_command = '& gh variable set $ControllerName --repo $Repository --body "false"'
+    get_command = "& gh variable get $ControllerName --repo $Repository"
+
+    assert expected_variables in preflight
+    assert set_command in preflight
+    assert get_command in preflight
+    assert preflight.index(set_command) < preflight.index(get_command)
+    assert '$ControllerReadback -cne "false"' in preflight
+
+
+def test_installer_attempts_both_disables_and_aggregates_each_failure() -> None:
+    source = INSTALLER.read_text("utf-8")
+    preflight = source.split("$BuildRoot = ", 1)[0]
+
+    assert "try {" in preflight
+    assert "catch {" in preflight
+    assert '[void]$ControllerFailures.Add("$ControllerName=SET_FAILED")' in preflight
+    assert '[void]$ControllerFailures.Add("$ControllerName=READBACK_FAILED")' in preflight
+    assert 'if ($ControllerFailures.Count -gt 0) {' in preflight
+    assert (
+        'throw ("BLOCKED_BOOTSTRAP_CONTROLLER_DISABLE_FAILED:" + '
+        '($ControllerFailures -join "|"))'
+    ) in preflight
+
+
+def test_installer_never_enables_controller_variables() -> None:
+    source = INSTALLER.read_text("utf-8")
+    controller_commands = "\n".join(
+        line
+        for line in source.splitlines()
+        if "CATALOG_CONTROLLER_" in line or "gh variable" in line
+    )
+
+    assert re.search(r"CATALOG_CONTROLLER_(?:PRODUCTION_ARMED|ENABLED).*true", controller_commands, re.I) is None
+    assert re.search(r"gh variable set[^\r\n]*--body\s+['\"]true['\"]", controller_commands, re.I) is None
 
 
 def test_starter_has_fixed_uac_target_and_no_visible_fallback() -> None:

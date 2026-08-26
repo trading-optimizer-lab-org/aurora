@@ -124,6 +124,7 @@ def test_default_acl_checker_passes_path_via_dedicated_environment_variable(
         calls.append((args, kwargs))
         return Result()
 
+    monkeypatch.setattr(secrets_module.os, "name", "nt")
     monkeypatch.setattr(secrets_module, "_is_reparse_point", lambda _path: False)
     monkeypatch.setattr(secrets_module.subprocess, "run", fake_run)
 

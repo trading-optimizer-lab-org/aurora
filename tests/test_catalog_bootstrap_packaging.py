@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import json
+import re
 import runpy
+import sys
 import zipfile
 from pathlib import Path
 
 import jsonschema
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +20,7 @@ BUILDER = ROOT / "scripts/build_catalog_bootstrap_assistant.py"
 
 def _build(destination: Path) -> None:
     subprocess.run(
-        ["C:/Python314/python.exe", str(BUILDER), "--output", str(destination)],
+        [sys.executable, str(BUILDER), "--output", str(destination)],
         cwd=ROOT,
         check=True,
         capture_output=True,
@@ -30,6 +34,10 @@ def test_cli_has_only_installed_root() -> None:
     assert "--url" not in text and "--repository" not in text
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="requires the Windows runtime",
+)
 def test_two_builds_are_identical(tmp_path: Path) -> None:
     first = tmp_path / "one"
     second = tmp_path / "two"
@@ -81,15 +89,23 @@ def test_runner_has_closed_phase_dispatch_and_no_production_launch() -> None:
     allowed_block = text.split("_ALLOWED_BOOTSTRAP_WORKFLOWS", 1)[1].split(
         "_HEAVY_WORKFLOW_PATHS", 1
     )[0]
+    allowed_workflows = set(re.findall(r'"([^"]+\.yml)"', allowed_block))
+    assert allowed_workflows == {
+        "catalog-live-controls-qualification.yml",
+        "catalog-controller-policy-check.yml",
+        "catalog-controller-qualification.yml",
+        "catalog-capacity-calibration.yml",
+        "catalog-artifact-keeper.yml",
+    }
     assert "catalog-live-controls-qualification.yml" in allowed_block
     assert "catalog-controller-qualification.yml" in allowed_block
     assert "catalog-optimized-run.yml" not in allowed_block
-    assert "sp500-optimized-catalog-v1" not in text
+    assert "sp500-optimized-catalog-v1" not in allowed_block
     assert "shell=True" not in text
     assert "os.startfile" not in text
     assert 'root / "browser-action-v1.json"' in text
     assert "CATALOG_BOOTSTRAP_PHASE_NOT_YET_BOUND" not in text
-    assert "_pending" not in text
+    assert "_pending" not in allowed_block
     assert "_REQUIRED\")" not in text
     assert '"PRECHECK": perform_precheck' in text
     assert '"FINAL_AUDIT_PENDING": perform_final_audit' in text

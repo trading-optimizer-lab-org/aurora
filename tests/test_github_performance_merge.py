@@ -8,6 +8,7 @@ import pytest
 
 from aurora.infra.github_performance import merge_runtime
 from aurora.infra.github_performance.contracts import (
+    AttemptManifest,
     ShardDefinition,
     TerminalState,
     UnitAttemptRecord,
@@ -43,6 +44,84 @@ def test_conflicting_successful_attempts_block_merge() -> None:
     ]
     with pytest.raises(ReconciliationError, match="conflicting output"):
         reconcile_attempts({"u1"}, attempts)
+
+
+def _attempt_manifest(
+    shard_id: str,
+    attempt_id: str,
+    *,
+    state: TerminalState,
+    output_sha256: str | None = None,
+    reason_code: str | None = None,
+) -> AttemptManifest:
+    completed = state is TerminalState.COMPLETED
+    return AttemptManifest(
+        shard_id=shard_id,
+        attempt_id=attempt_id,
+        state=state,
+        spec_hash="1" * 64,
+        policy_hash="2" * 64,
+        snapshot_hash="3" * 64,
+        code_sha="4" * 40,
+        dependency_lock_sha256="5" * 64,
+        capacity_profile_sha256="6" * 64,
+        output_sha256=(output_sha256 if completed else None),
+        reason_code=(None if completed else reason_code or "RUNNER_LOST"),
+        artifact_name=f"artifact-{shard_id}-{attempt_id}",
+        unit_attempts_path=("unit_attempts.parquet" if completed else None),
+        unit_attempts_sha256=("7" * 64 if completed else None),
+        checkpoint_artifact=None,
+        completed_unit_count=1 if completed else 0,
+        output_rows=1 if completed else 0,
+        output_bytes=100 if completed else 0,
+        runtime_access_ledger_path=(
+            "runtime_access_ledger.parquet" if completed else None
+        ),
+        runtime_access_ledger_sha256=("8" * 64 if completed else None),
+        metric_inputs_path=("metric_inputs.parquet" if completed else None),
+        metric_inputs_sha256=("9" * 64 if completed else None),
+    )
+
+
+def test_runtime_merge_rejects_conflicting_completed_shard_attempts() -> None:
+    first = _attempt_manifest(
+        "s001",
+        "a1",
+        state=TerminalState.COMPLETED,
+        output_sha256="1" * 64,
+    )
+    second = _attempt_manifest(
+        "s001",
+        "a2",
+        state=TerminalState.COMPLETED,
+        output_sha256="2" * 64,
+    )
+
+    with pytest.raises(
+        merge_runtime.PhysicalMergeError,
+        match="conflicting completed outputs",
+    ):
+        merge_runtime._select_attempt(
+            ((first, Path("first")), (second, Path("second")))
+        )
+
+
+def test_runtime_merge_selects_latest_failed_attempt_numerically() -> None:
+    older = _attempt_manifest(
+        "s001",
+        "a2",
+        state=TerminalState.FAILED_TECHNICAL,
+    )
+    latest = _attempt_manifest(
+        "s001",
+        "a10",
+        state=TerminalState.FAILED_TECHNICAL,
+    )
+
+    selected, _ = merge_runtime._select_attempt(
+        ((older, Path("older")), (latest, Path("latest")))
+    )
+    assert selected.attempt_id == "a10"
 
 
 def test_identical_duplicate_attempt_is_not_double_counted() -> None:

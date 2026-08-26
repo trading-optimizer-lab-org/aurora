@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from copy import deepcopy
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
 import subprocess
 import sys
 import importlib
+from typing import Protocol, TypedDict, cast
 
 import jsonschema
 import pytest
 
 from scripts import audit_catalog_github_controls as github_audit_runner
+from aurora.infra.sp500_megarun.catalog_execution_protocol import PROTOCOL_COMMON_PATHS
 from aurora.infra.sp500_megarun.catalog_github_controls import (
+    AUDITOR_SECRET_CONSUMER,
     CatalogGithubAuditorV1,
     CatalogGithubControlsV1,
     audit_catalog_github_controls,
@@ -32,18 +37,81 @@ from scripts.audit_catalog_github_controls import (
     _billing_usage_endpoint,
     _campaign_storage_projection,
     _paginate_list_rows,
+    _paginate_list_rows_stable,
     _paginate_object_rows,
+    _paginate_object_rows_stable,
     _package_inventory_endpoint,
     _reported_shared_storage_evidence,
     _retry_transient_snapshot_collection,
 )
-
-
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLS = ROOT / "config/catalog_github_controls_v1.json"
 AUDITOR = ROOT / "config/catalog_github_auditor_v1.json"
+UTC = timezone.utc
 NOW = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
 HEAVY_PATH = ".github/workflows/synthetic-catalog-engine.yml"
+_APPLY_RUNNER_MODULE = "scripts.apply_catalog_github_controls"
+
+
+class _ApplyRunner(Protocol):
+    def main(self, argv: list[str]) -> int: ...
+
+    def apply_cache_retention_transaction(
+        self,
+        client: object,
+        *,
+        desired: object,
+        receipt: object,
+        plan: object,
+    ) -> list[object]: ...
+
+
+@contextmanager
+def _isolated_apply_runner() -> Iterator[_ApplyRunner]:
+    """Load the apply script without leaking its source-pinned modules."""
+    original_modules = dict(sys.modules)
+    original_meta_path = list(sys.meta_path)
+    sys.modules.pop(_APPLY_RUNNER_MODULE, None)
+    try:
+        yield cast(
+            _ApplyRunner,
+            importlib.import_module(_APPLY_RUNNER_MODULE),
+        )
+    finally:
+        sys.meta_path[:] = original_meta_path
+        sys.modules.clear()
+        sys.modules.update(original_modules)
+
+
+def _run_cache_retention_transaction(
+    client: object,
+    *,
+    desired: CatalogGithubControlsV1,
+    receipt: object,
+    plan: object,
+) -> list[object]:
+    with _isolated_apply_runner() as runner:
+        return runner.apply_cache_retention_transaction(
+            client,
+            desired=desired,
+            receipt=receipt,
+            plan=plan,
+        )
+
+
+class _AuditInputs(TypedDict):
+    desired: CatalogGithubControlsV1
+    auditor: CatalogGithubAuditorV1
+    snapshots: dict[str, object]
+
+
+class _ReportedSharedStorageArgs(TypedDict):
+    explicit_shared: int | None
+    billing_fresh: bool
+    billing_period_complete: bool
+    inventory_complete: bool
+    artifact_inventory_bytes: int
+    package_inventory_bytes: int
 
 
 def load_desired_controls() -> CatalogGithubControlsV1:
@@ -77,7 +145,23 @@ def _safe_heavy_workflow() -> dict[str, object]:
     }
 
 
-def protected_snapshots() -> dict[str, object]:
+def _safe_issue_writer_workflow(job_ids: tuple[str, ...]) -> dict[str, object]:
+    return {
+        "name": "Synthetic bounded issue writers",
+        "on": {"workflow_call": {"inputs": {}}},
+        "permissions": {"contents": "read"},
+        "jobs": {
+            job_id: {
+                "runs-on": "ubuntu-24.04",
+                "permissions": {"issues": "write"},
+                "steps": [],
+            }
+            for job_id in job_ids
+        },
+    }
+
+
+def protected_snapshots() -> _AuditInputs:
     desired = load_desired_controls()
     auditor = load_desired_auditor()
     budgets = _budget_rows(desired)
@@ -114,7 +198,9 @@ def protected_snapshots() -> dict[str, object]:
         "budget_details": deepcopy(budgets),
         "cache_settings": {
             "storage_limit_gb": 10,
-            "retention_days": desired.billing.repository_cache_retention_days,
+            "enterprise_retention_days": desired.billing.repository_cache_retention_days,
+            "organization_retention_days": desired.billing.repository_cache_retention_days,
+            "repository_retention_days": desired.billing.repository_cache_retention_days,
         },
         "storage": {
             "telemetry_complete": True,
@@ -136,8 +222,35 @@ def protected_snapshots() -> dict[str, object]:
             "estimated_paid_actions_cost": 0,
             "billing_snapshot_complete": True,
         },
-        "workflow_documents": {HEAVY_PATH: _safe_heavy_workflow()},
-        "workflow_source_sha256s": {HEAVY_PATH: "b" * 64},
+        "workflow_documents": {
+            HEAVY_PATH: _safe_heavy_workflow(),
+            ".github/workflows/catalog-run-controller.yml": _safe_issue_writer_workflow(
+                (
+                    "issue_tamper_guard",
+                    "reserve",
+                    "report_nonexecuting_decision",
+                    "record_running",
+                    "record_nonterminal_wait",
+                    "finalize",
+                )
+            ),
+            ".github/workflows/catalog-request-reconciler.yml": _safe_issue_writer_workflow(
+                ("call_controller",)
+            ),
+            ".github/workflows/catalog-ledger-guard.yml": _safe_issue_writer_workflow(
+                ("record_tamper_incident",)
+            ),
+            ".github/workflows/catalog-run-watchdog.yml": _safe_issue_writer_workflow(
+                ("call_controller",)
+            ),
+        },
+        "workflow_source_sha256s": {
+            HEAVY_PATH: "b" * 64,
+            ".github/workflows/catalog-run-controller.yml": "b" * 64,
+            ".github/workflows/catalog-request-reconciler.yml": "b" * 64,
+            ".github/workflows/catalog-ledger-guard.yml": "b" * 64,
+            ".github/workflows/catalog-run-watchdog.yml": "b" * 64,
+        },
         "active_runs": [],
         "runs_pagination_complete": True,
         "jobs_pagination_complete": True,
@@ -159,9 +272,24 @@ def protected_snapshots() -> dict[str, object]:
         },
         "auditor_installation": None,
         "auditor_secret_consumer_workflows": [
-            ".github/actions/catalog-live-controls-audit/action.yml"
+            AUDITOR_SECRET_CONSUMER
         ],
         "auditor_runtime_callers": [
+            {
+                "caller_workflow": ".github/workflows/catalog-run-controller.yml",
+                "caller_job": "live_controls_audit_before_reserve",
+                "purpose": "admission",
+            },
+            {
+                "caller_workflow": ".github/workflows/catalog-run-controller.yml",
+                "caller_job": "live_controls_audit_before_terminal",
+                "purpose": "terminal",
+            },
+            {
+                "caller_workflow": ".github/workflows/catalog-artifact-keeper.yml",
+                "caller_job": "live_controls_audit_before_maintenance",
+                "purpose": "maintenance",
+            },
             {
                 "caller_workflow": (
                     ".github/workflows/catalog-live-controls-qualification.yml"
@@ -184,7 +312,7 @@ def protected_snapshots() -> dict[str, object]:
     return {"desired": desired, "auditor": auditor, "snapshots": snapshot}
 
 
-def mutated_protection_snapshots(mutation: str) -> dict[str, object]:
+def mutated_protection_snapshots(mutation: str) -> _AuditInputs:
     inputs = protected_snapshots()
     snapshot = inputs["snapshots"]
     assert isinstance(snapshot, dict)
@@ -212,50 +340,63 @@ def mutated_protection_snapshots(mutation: str) -> dict[str, object]:
     elif mutation == "actions_can_approve":
         actions["can_approve_pull_request_reviews"] = True
     elif mutation == "repository_private":
-        snapshot["repository"]["visibility"] = "private"
-        snapshot["repository"]["private"] = True
+        repository = cast(dict[str, object], snapshot["repository"])
+        repository["visibility"] = "private"
+        repository["private"] = True
     elif mutation == "environment_missing":
         snapshot["environment"] = None
     elif mutation == "environment_any_branch":
-        snapshot["environment"]["protected_branches_only"] = False
+        environment = cast(dict[str, object], snapshot["environment"])
+        environment["protected_branches_only"] = False
     elif mutation == "terminal_label_missing":
         snapshot["labels"] = []
     elif mutation == "terminal_label_drift":
-        snapshot["labels"][0]["color"] = "ffffff"
+        labels = cast(list[dict[str, object]], snapshot["labels"])
+        labels[0]["color"] = "ffffff"
     elif mutation == "paid_runner_allowed":
         actions["larger_runners_allowed"] = True
     elif mutation == "zero_actions_budget_missing":
         snapshot["budgets"] = [
-            row for row in snapshot["budgets"] if row["budget_product_sku"] != "actions"
+            row
+            for row in cast(list[dict[str, object]], snapshot["budgets"])
+            if row["budget_product_sku"] != "actions"
         ]
     elif mutation == "zero_actions_storage_budget_missing":
         snapshot["budgets"] = [
             row
-            for row in snapshot["budgets"]
+            for row in cast(list[dict[str, object]], snapshot["budgets"])
             if row["budget_product_sku"] != "actions_storage"
         ]
     elif mutation == "zero_cache_storage_budget_missing":
         snapshot["budgets"] = [
             row
-            for row in snapshot["budgets"]
+            for row in cast(list[dict[str, object]], snapshot["budgets"])
             if row["budget_product_sku"] != "actions_cache_storage"
         ]
     elif mutation == "budget_wrong_repository":
-        snapshot["budgets"][0]["budget_entity_name"] = "aurora-copy"
+        budgets = cast(list[dict[str, object]], snapshot["budgets"])
+        budgets[0]["budget_entity_name"] = "aurora-copy"
     elif mutation == "actions_budget_does_not_stop":
-        snapshot["budgets"][0]["prevent_further_usage"] = False
+        budgets = cast(list[dict[str, object]], snapshot["budgets"])
+        budgets[0]["prevent_further_usage"] = False
     elif mutation == "cache_limit_above_10_gb":
-        snapshot["cache_settings"]["storage_limit_gb"] = 20
-    elif mutation == "cache_retention_not_7_days":
-        snapshot["cache_settings"]["retention_days"] = 6
+        cache_settings = cast(dict[str, object], snapshot["cache_settings"])
+        cache_settings["storage_limit_gb"] = 20
+    elif mutation == "cache_retention_below_90_days":
+        cache_settings = cast(dict[str, object], snapshot["cache_settings"])
+        cache_settings["repository_retention_days"] = 89
     elif mutation == "request_actor_admin":
-        snapshot["request_actor_permissions"]["repository_administration"] = "write"
+        request_actor = cast(dict[str, object], snapshot["request_actor_permissions"])
+        request_actor["repository_administration"] = "write"
     elif mutation == "local_agent_admin":
-        snapshot["local_agent"]["has_admin"] = True
+        local_agent = cast(dict[str, object], snapshot["local_agent"])
+        local_agent["has_admin"] = True
     elif mutation == "local_agent_requester_key":
-        snapshot["local_agent"]["can_read_requester_credential"] = True
+        local_agent = cast(dict[str, object], snapshot["local_agent"])
+        local_agent["can_read_requester_credential"] = True
     elif mutation == "local_agent_auditor_key":
-        snapshot["local_agent"]["can_read_auditor_credential"] = True
+        local_agent = cast(dict[str, object], snapshot["local_agent"])
+        local_agent["can_read_auditor_credential"] = True
     else:
         raise AssertionError(mutation)
     return inputs
@@ -270,9 +411,104 @@ def test_exact_protected_state_passes() -> None:
     assert receipt.audit_use_context == "controller_admission"
 
 
-def test_cache_retention_matches_github_repository_limit() -> None:
+def test_auditor_secret_consumer_is_the_reusable_workflow_without_composite() -> None:
+    expected = ".github/workflows/catalog-live-controls-audit.yml"
+    composite = ".github/actions/catalog-live-controls-audit/action.yml"
+    schema_text = (ROOT / "schemas/catalog_github_controls_v1.schema.json").read_text(
+        "utf-8"
+    )
+    schema = json.loads(schema_text)
+
+    assert AUDITOR_SECRET_CONSUMER == expected
+    assert load_desired_controls().auditor.only_token_consumer_workflow == expected
+    assert schema["$defs"]["auditor"]["properties"][
+        "only_token_consumer_workflow"
+    ]["const"] == expected
+    assert composite not in CONTROLS.read_text("utf-8")
+    assert composite not in schema_text
+    assert composite not in PROTOCOL_COMMON_PATHS
+    assert expected in PROTOCOL_COMMON_PATHS
+
+
+def test_auditor_runtime_topology_requires_exactly_five_callers() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    callers = snapshots["auditor_runtime_callers"]
+    assert isinstance(callers, list)
+    callers.pop()
+
+    receipt = audit_catalog_github_controls(**inputs)
+
+    assert receipt.status == "blocked"
+    assert "CATALOG_AUDITOR_TOPOLOGY_INVALID" in receipt.failed_controls
+
+
+def test_auditor_runtime_topology_rejects_an_extra_caller() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    callers = snapshots["auditor_runtime_callers"]
+    assert isinstance(callers, list)
+    callers.append(
+        {
+            "caller_workflow": ".github/workflows/catalog-run-controller.yml",
+            "caller_job": "unexpected_auditor_call",
+            "purpose": "admission",
+        }
+    )
+
+    receipt = audit_catalog_github_controls(**inputs)
+
+    assert receipt.status == "blocked"
+    assert "CATALOG_AUDITOR_TOPOLOGY_INVALID" in receipt.failed_controls
+
+
+def test_missing_permitted_writer_blocks_closed_topology() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    workflows = snapshots["workflow_documents"]
+    assert isinstance(workflows, dict)
+    controller = workflows[".github/workflows/catalog-run-controller.yml"]
+    assert isinstance(controller, dict)
+    jobs = controller["jobs"]
+    assert isinstance(jobs, dict)
+    del jobs["finalize"]
+
+    receipt = audit_catalog_github_controls(**inputs)
+
+    assert receipt.status == "blocked"
+    assert "ISSUES_WRITE_TOPOLOGY_EXACT" in receipt.failed_controls
+
+
+def test_controller_writer_allowlist_has_exactly_six_schema_items() -> None:
+    payload = json.loads(CONTROLS.read_text("utf-8"))
+    schema = json.loads(
+        (ROOT / "schemas/catalog_github_controls_v1.schema.json").read_text("utf-8")
+    )
+    expected = [
+        "issue_tamper_guard",
+        "reserve",
+        "report_nonexecuting_decision",
+        "record_running",
+        "record_nonterminal_wait",
+        "finalize",
+    ]
+    observed = payload["entrypoints"]["issues_write_job_allowlist"][
+        ".github/workflows/catalog-run-controller.yml"
+    ]
+    schema_node = schema["$defs"]["issues_write_job_allowlist"]["properties"][
+        ".github/workflows/catalog-run-controller.yml"
+    ]
+    assert observed == expected
+    assert schema_node["minItems"] == 6
+    assert schema_node["maxItems"] == 6
+
+
+def test_cache_retention_matches_the_90_day_hierarchy_minimum() -> None:
     desired = load_desired_controls()
-    assert desired.billing.repository_cache_retention_days == 7
+    assert desired.billing.repository_cache_retention_days == 90
 
 
 @pytest.mark.parametrize(
@@ -305,7 +541,7 @@ def test_cache_retention_matches_github_repository_limit() -> None:
         ("budget_wrong_repository", "ZERO_BUDGET_REPOSITORY_SCOPE_EXACT"),
         ("actions_budget_does_not_stop", "ZERO_ACTIONS_SPEND_STOP_REQUIRED"),
         ("cache_limit_above_10_gb", "FREE_CACHE_STORAGE_LIMIT_REQUIRED"),
-        ("cache_retention_not_7_days", "CACHE_RETENTION_POLICY_REQUIRED"),
+        ("cache_retention_below_90_days", "CACHE_RETENTION_POLICY_REQUIRED"),
         ("request_actor_admin", "REQUEST_ACTOR_NON_ADMIN"),
         ("local_agent_admin", "AGENT_ADMIN_CREDENTIAL_EXPOSED"),
         ("local_agent_requester_key", "AGENT_REQUESTER_CREDENTIAL_EXPOSED"),
@@ -324,14 +560,14 @@ def test_every_control_drift_blocks(mutation: str, control: str) -> None:
 def test_documented_budget_repository_forms_are_canonicalized(entity: str) -> None:
     inputs = protected_snapshots()
     for collection in ("budgets", "budget_details"):
-        for row in inputs["snapshots"][collection]:
+        for row in cast(list[dict[str, object]], inputs["snapshots"][collection]):
             row["budget_entity_name"] = entity
     assert audit_catalog_github_controls(**inputs).status == "ready"
 
 
 def test_similarly_named_budget_repository_is_rejected() -> None:
     inputs = protected_snapshots()
-    for row in inputs["snapshots"]["budgets"]:
+    for row in cast(list[dict[str, object]], inputs["snapshots"]["budgets"]):
         row["budget_entity_name"] = "trading-optimizer-lab-org/aurora-copy"
     receipt = audit_catalog_github_controls(**inputs)
     assert "ZERO_BUDGET_REPOSITORY_SCOPE_EXACT" in receipt.failed_controls
@@ -366,7 +602,7 @@ def test_active_heavy_run_inventory_is_complete_and_authority_bound() -> None:
     assert receipt.status == "ready"
     assert receipt.unmanaged_active_heavy_run_ids == ()
 
-    snapshot["active_runs"].append(
+    cast(list[dict[str, object]], snapshot["active_runs"]).append(
         {
             "run_id": 101,
             "workflow_path": HEAVY_PATH,
@@ -421,12 +657,57 @@ def test_auditor_app_is_read_only() -> None:
     assert desired.enterprise_billing_token_environment_secret == (
         "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"
     )
-    assert desired.required_enterprise_token_scopes == ("manage_billing:enterprise",)
+    assert desired.enterprise_cache_verifier_token_environment_secret == (
+        "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN"
+    )
+    assert desired.required_enterprise_billing_token_scopes == (
+        "manage_billing:enterprise",
+    )
+    assert desired.required_enterprise_cache_verifier_token_scopes == (
+        "admin:enterprise",
+    )
+    assert set(
+        (
+            desired.private_key_environment_secret,
+            desired.enterprise_billing_token_environment_secret,
+            desired.enterprise_cache_verifier_token_environment_secret,
+            desired.package_inventory_token_environment_secret,
+        )
+    ) == {
+        "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+        "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+        "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN",
+        "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN",
+    }
     assert desired.package_inventory_token_environment_secret == (
         "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN"
     )
     assert desired.required_package_inventory_token_scopes == ("read:packages",)
     assert not any(value == "write" for value in desired.required_repository_permissions.values())
+
+
+@pytest.mark.parametrize(
+    ("scope_field", "wrong_scope"),
+    [
+        ("required_enterprise_billing_token_scopes", ["admin:enterprise"]),
+        (
+            "required_enterprise_cache_verifier_token_scopes",
+            ["manage_billing:enterprise"],
+        ),
+    ],
+)
+def test_auditor_rejects_cross_assigned_enterprise_scopes(
+    scope_field: str, wrong_scope: list[str]
+) -> None:
+    payload = json.loads(AUDITOR.read_text("utf-8"))
+    payload[scope_field] = wrong_scope
+    schema = json.loads(
+        (ROOT / "schemas/catalog_github_auditor_v1.schema.json").read_text("utf-8")
+    )
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(payload, schema)
+    with pytest.raises(ValueError, match="scope contract must be exact"):
+        CatalogGithubAuditorV1.model_validate(payload)
 
 
 def test_schemas_are_closed_and_validate_checked_contracts() -> None:
@@ -531,28 +812,25 @@ def test_controls_state_sha_ignores_observation_envelope_but_detects_drift() -> 
     assert isinstance(drifted_snapshot, dict)
     cache_settings = drifted_snapshot["cache_settings"]
     assert isinstance(cache_settings, dict)
-    cache_settings["retention_days"] = 89
+    cache_settings["repository_retention_days"] = 89
     changed = audit_catalog_github_controls(**drifted)
     assert github_controls_state_sha256(first) != github_controls_state_sha256(
         changed
     )
 
 
-def test_budget_mutations_use_the_enterprise_endpoint_only() -> None:
+def test_budget_drift_blocks_without_creating_or_changing_budgets() -> None:
     inputs = mutated_protection_snapshots("zero_actions_budget_missing")
     receipt = audit_catalog_github_controls(**inputs)
     plan = build_github_controls_mutation_plan(
         desired=inputs["desired"],
         receipt=receipt,
     )
-    endpoints = {
-        mutation.endpoint
+    assert receipt.status == "blocked"
+    assert not any(
+        mutation.method == "POST" or "/settings/billing/budgets" in mutation.endpoint
         for mutation in plan.mutations
-        if "/settings/billing/budgets" in mutation.endpoint
-    }
-    assert endpoints == {
-        "/enterprises/trading-optimizer-lab/settings/billing/budgets"
-    }
+    )
 
 
 def test_auditor_routes_enterprise_billing_to_a_separate_token() -> None:
@@ -562,14 +840,18 @@ def test_auditor_routes_enterprise_billing_to_a_separate_token() -> None:
         auditor=load_desired_auditor(),
     )
     client._repository_token = "repository-token"
-    client._enterprise_token = "enterprise-token"
+    client._enterprise_billing_token = "enterprise-billing-token"
+    client._enterprise_cache_verifier_token = "enterprise-cache-verifier-token"
     client._package_token = "package-token"
     assert client._token_for_endpoint("/repos/trading-optimizer-lab-org/aurora") == (
         "repository-token"
     )
     assert client._token_for_endpoint(
         "/enterprises/trading-optimizer-lab/settings/billing/budgets"
-    ) == "enterprise-token"
+    ) == "enterprise-billing-token"
+    assert client._token_for_endpoint(
+        "/enterprises/trading-optimizer-lab/actions/cache/retention-limit"
+    ) == "enterprise-cache-verifier-token"
     assert client._token_for_endpoint(
         "/organizations/287229438/packages?package_type=container"
     ) == "package-token"
@@ -585,6 +867,27 @@ def test_auditor_routes_enterprise_billing_to_a_separate_token() -> None:
         )
     with pytest.raises(ValueError, match="CATALOG_AUDITOR_ENDPOINT_INVALID"):
         client._token_for_endpoint("/enterprises/other/settings/billing/budgets")
+    for endpoint in (
+        "/enterprises/trading-optimizer-lab/actions/cache/retention-limit/",
+        "/enterprises/trading-optimizer-lab/actions/cache/retention-limit?x=1",
+        "/enterprises/trading-optimizer-lab/actions/runners",
+        "/enterprises/trading-optimizer-lab/settings/secret",
+    ):
+        with pytest.raises(ValueError, match="CATALOG_AUDITOR_ENDPOINT_INVALID"):
+            client._token_for_endpoint(endpoint)
+
+
+def test_auditor_clears_both_enterprise_tokens_on_exit() -> None:
+    client = AppReadOnlyClient(
+        api_version="2026-03-10",
+        repository="trading-optimizer-lab-org/aurora",
+        auditor=load_desired_auditor(),
+    )
+    client._enterprise_billing_token = "enterprise-billing-token"
+    client._enterprise_cache_verifier_token = "enterprise-cache-verifier-token"
+    client.__exit__()
+    assert client._enterprise_billing_token is None
+    assert client._enterprise_cache_verifier_token is None
 
 
 def test_auditor_provider_permissions_match_the_created_github_app() -> None:
@@ -651,8 +954,9 @@ def test_package_inventory_uses_githubs_canonical_organization_route() -> None:
 def test_bootstrap_controls_mode_defers_only_identity_and_live_capacity() -> None:
     inputs = protected_snapshots()
     snapshot = inputs["snapshots"]
-    snapshot["local_agent"]["has_admin"] = True
-    snapshot["local_agent"]["broker_acl_verified"] = False
+    local_agent = cast(dict[str, object], snapshot["local_agent"])
+    local_agent["has_admin"] = True
+    local_agent["broker_acl_verified"] = False
     receipt = audit_catalog_github_controls(**inputs)
     assert bootstrap_controls_prepared(receipt)
 
@@ -685,26 +989,9 @@ def test_final_observation_uses_the_last_github_response_time() -> None:
 
 
 def test_verified_zero_mutation_dry_run_needs_only_one_fresh_snapshot(
-    tmp_path: Path, monkeypatch, request
+    tmp_path: Path, monkeypatch
 ) -> None:
-    original_aurora_modules = {
-        name: module
-        for name, module in sys.modules.items()
-        if name == "aurora" or name.startswith("aurora.")
-    }
-
-    def restore_import_identity() -> None:
-        for name in tuple(sys.modules):
-            if name == "aurora" or name.startswith("aurora."):
-                del sys.modules[name]
-        sys.modules.update(original_aurora_modules)
-        sys.modules.pop("scripts.apply_catalog_github_controls", None)
-
-    request.addfinalizer(restore_import_identity)
     monkeypatch.syspath_prepend(str(ROOT / "scripts"))
-    github_apply_runner = importlib.import_module(
-        "scripts.apply_catalog_github_controls"
-    )
     inputs = protected_snapshots()
     receipt = audit_catalog_github_controls(**inputs)
     plan = build_github_controls_mutation_plan(
@@ -734,30 +1021,48 @@ def test_verified_zero_mutation_dry_run_needs_only_one_fresh_snapshot(
         calls += 1
         return deepcopy(inputs["snapshots"])
 
-    monkeypatch.setattr(github_apply_runner, "_live_snapshot", fresh_snapshot)
-
-    result = github_apply_runner.main(
-        [
-            "--repo-root",
-            str(ROOT),
-            "--output",
-            str(output),
-            "--apply",
-            "--bootstrap-controls-only",
-            "--verified-dry-run",
-            str(dry_path),
-            "--expected-current-state-sha",
-            dry_run["current_state_sha256"],
-            "--confirm",
-            "CATALOG_GITHUB_CONTROLS_V1",
-        ]
-    )
+    original_modules = dict(sys.modules)
+    original_meta_path = tuple(sys.meta_path)
+    with _isolated_apply_runner() as github_apply_runner:
+        monkeypatch.setattr(github_apply_runner, "_live_snapshot", fresh_snapshot)
+        result = github_apply_runner.main(
+            [
+                "--repo-root",
+                str(ROOT),
+                "--output",
+                str(output),
+                "--apply",
+                "--bootstrap-controls-only",
+                "--verified-dry-run",
+                str(dry_path),
+                "--expected-current-state-sha",
+                dry_run["current_state_sha256"],
+                "--confirm",
+                "CATALOG_GITHUB_CONTROLS_V1",
+            ]
+        )
 
     applied = json.loads(output.read_text("utf-8"))
+    assert sys.modules == original_modules
+    assert tuple(sys.meta_path) == original_meta_path
     assert result == 0
     assert calls == 1
     assert applied["mutations"] == []
     assert applied["after_receipt"]["status"] == "ready"
+
+
+def test_apply_tool_import_restores_exact_aurora_module_identity() -> None:
+    module_name = "aurora.infra.sp500_megarun.catalog_github_controls"
+    original_modules = dict(sys.modules)
+    original_meta_path = tuple(sys.meta_path)
+    original_catalog_module = sys.modules[module_name]
+
+    with _isolated_apply_runner():
+        assert sys.modules[module_name] is not original_catalog_module
+
+    assert sys.modules == original_modules
+    assert tuple(sys.meta_path) == original_meta_path
+    assert sys.modules[module_name] is original_catalog_module
 
 
 def test_apply_tool_binds_live_audit_to_observed_default_branch() -> None:
@@ -907,9 +1212,15 @@ def test_apply_cli_rejects_stale_expected_state_before_mutation(
         check=False,
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert result.returncode != 0
     assert "CATALOG_GITHUB_CONTROLS_STALE" in result.stderr
+    failure = json.loads(output.read_text("utf-8"))
+    assert failure["mode"] == "failed"
+    assert failure["error_code"] == "CATALOG_GITHUB_CONTROLS_STALE"
+    assert failure["failure_after_receipt"]["status"] == "ready"
+    assert failure["failure_snapshot_error"] is None
 
 
 def test_github_auditor_receipt_requires_exact_read_only_installation() -> None:
@@ -935,11 +1246,18 @@ def test_github_auditor_receipt_requires_exact_read_only_installation() -> None:
         "repositories": [auditor.repository],
         "token_minted_in_process": True,
         "fixed_get_endpoints_only": True,
-        "enterprise_credential_kind": "classic_pat",
-        "enterprise_credential_scopes": list(
-            auditor.required_enterprise_token_scopes
+        "enterprise_billing_credential_kind": "classic_pat",
+        "enterprise_billing_credential_scopes": list(
+            auditor.required_enterprise_billing_token_scopes
         ),
-        "enterprise_write_blocked_by_client": True,
+        "enterprise_billing_get_only": True,
+        "enterprise_billing_write_blocked_by_client": True,
+        "enterprise_cache_verifier_credential_kind": "classic_pat",
+        "enterprise_cache_verifier_credential_scopes": list(
+            auditor.required_enterprise_cache_verifier_token_scopes
+        ),
+        "enterprise_cache_verifier_get_only": True,
+        "enterprise_cache_verifier_write_blocked_by_client": True,
         "package_credential_kind": "oauth_device_token",
         "package_credential_scopes": list(
             auditor.required_package_inventory_token_scopes
@@ -963,7 +1281,8 @@ def test_incomplete_storage_telemetry_blocks_without_estimating_headroom() -> No
     inputs = protected_snapshots()
     snapshot = inputs["snapshots"]
     assert isinstance(snapshot, dict)
-    snapshot["storage"]["packages_pagination_complete"] = False
+    storage = cast(dict[str, object], snapshot["storage"])
+    storage["packages_pagination_complete"] = False
     receipt = audit_catalog_github_controls(**inputs)
     assert "CATALOG_FREE_STORAGE_TELEMETRY_UNAVAILABLE" in receipt.failed_controls
     assert receipt.free_artifact_storage_headroom is None
@@ -1000,7 +1319,7 @@ def test_billing_storage_evidence_uses_the_current_daily_repository_period() -> 
     }
 
     evidence = _billing_actions_storage_evidence(
-        payload,
+        cast(dict[str, object], payload),
         repository_name="aurora",
         observed_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
         included_shared_storage_bytes=50 * 1024**3,
@@ -1032,7 +1351,12 @@ def test_billing_storage_evidence_never_pretends_an_old_or_malformed_row_is_curr
     malformed = deepcopy(stale)
     malformed["usageItems"][0]["date"] = "not-a-date"
 
-    for payload in (stale, malformed, {"usageItems": []}):
+    payloads: tuple[dict[str, object], ...] = (
+        cast(dict[str, object], stale),
+        cast(dict[str, object], malformed),
+        {"usageItems": []},
+    )
+    for payload in payloads:
         evidence = _billing_actions_storage_evidence(
             payload,
             repository_name="aurora",
@@ -1107,15 +1431,18 @@ def test_current_storage_fallback_requires_fresh_billing_and_complete_inventory(
         {"billing_period_complete": False},
         {"inventory_complete": False},
     ):
-        values = {
-            "explicit_shared": None,
-            "billing_fresh": True,
-            "billing_period_complete": True,
-            "inventory_complete": True,
-            "artifact_inventory_bytes": 39_000,
-            "package_inventory_bytes": 1_000,
-            **updates,
-        }
+        values = cast(
+            _ReportedSharedStorageArgs,
+            {
+                "explicit_shared": None,
+                "billing_fresh": True,
+                "billing_period_complete": True,
+                "inventory_complete": True,
+                "artifact_inventory_bytes": 39_000,
+                "package_inventory_bytes": 1_000,
+                **updates,
+            },
+        )
         evidence = _reported_shared_storage_evidence(**values)
         assert evidence["billing_snapshot_complete"] is False
         assert evidence["reported_shared_use_source"] == "unavailable"
@@ -1145,7 +1472,7 @@ def test_controller_admission_requires_promoted_campaign_projection() -> None:
     assert projection == (0, 0, False)
 
 
-def test_keeper_accepts_the_protected_seven_day_cache_policy() -> None:
+def test_keeper_accepts_the_protected_90_day_cache_policy() -> None:
     from scripts.run_catalog_artifact_keeper import _validate_controls_receipt
 
     inputs = protected_snapshots()
@@ -1153,7 +1480,8 @@ def test_keeper_accepts_the_protected_seven_day_cache_policy() -> None:
     assert isinstance(snapshots, dict)
     snapshots["observer_context"] = "github_auditor"
     snapshots["local_agent"] = {}
-    snapshots["runtime_provenance"].update(
+    runtime_provenance = cast(dict[str, object], snapshots["runtime_provenance"])
+    runtime_provenance.update(
         {
             "caller_workflow": ".github/workflows/catalog-artifact-keeper.yml",
             "caller_job": "live_controls_audit_before_maintenance",
@@ -1169,11 +1497,18 @@ def test_keeper_accepts_the_protected_seven_day_cache_policy() -> None:
         "repositories": [auditor.repository],
         "token_minted_in_process": True,
         "fixed_get_endpoints_only": True,
-        "enterprise_credential_kind": "classic_pat",
-        "enterprise_credential_scopes": list(
-            auditor.required_enterprise_token_scopes
+        "enterprise_billing_credential_kind": "classic_pat",
+        "enterprise_billing_credential_scopes": list(
+            auditor.required_enterprise_billing_token_scopes
         ),
-        "enterprise_write_blocked_by_client": True,
+        "enterprise_billing_get_only": True,
+        "enterprise_billing_write_blocked_by_client": True,
+        "enterprise_cache_verifier_credential_kind": "classic_pat",
+        "enterprise_cache_verifier_credential_scopes": list(
+            auditor.required_enterprise_cache_verifier_token_scopes
+        ),
+        "enterprise_cache_verifier_get_only": True,
+        "enterprise_cache_verifier_write_blocked_by_client": True,
         "package_credential_kind": "oauth_device_token",
         "package_credential_scopes": list(
             auditor.required_package_inventory_token_scopes
@@ -1188,7 +1523,290 @@ def test_keeper_accepts_the_protected_seven_day_cache_policy() -> None:
         protected_commit_sha="a" * 40,
     )
 
-    assert checked["repository_cache_retention_days"] == 7
+    assert checked["enterprise_cache_retention_days"] == 90
+    assert checked["organization_cache_retention_days"] == 90
+    assert checked["repository_cache_retention_days"] == 90
+
+
+def _set_cache_retention(snapshot: dict[str, object], *values: object) -> None:
+    settings = snapshot["cache_settings"]
+    assert isinstance(settings, dict)
+    settings["enterprise_retention_days"] = values[0]
+    settings["organization_retention_days"] = values[1]
+    settings["repository_retention_days"] = values[2]
+
+
+def test_cache_config_uses_validated_organization_id_and_90_days() -> None:
+    desired = load_desired_controls()
+    assert desired.billing.budget_control_plane.organization_id == 287229438
+    assert desired.billing.repository_cache_storage_limit_gb == 10
+    assert desired.billing.repository_cache_retention_days == 90
+
+
+def test_cache_retention_hierarchy_at_or_above_90_is_ready() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    _set_cache_retention(snapshots, 90, 91, 100)
+    receipt = audit_catalog_github_controls(**inputs)
+    assert receipt.status == "ready"
+    assert receipt.enterprise_cache_retention_days == 90
+    assert receipt.organization_cache_retention_days == 91
+    assert receipt.repository_cache_retention_days == 100
+
+
+def test_cache_retention_below_minimum_plans_exactly_three_puts_in_order() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    _set_cache_retention(snapshots, 89, 90, 90)
+    receipt = audit_catalog_github_controls(**inputs)
+    plan = build_github_controls_mutation_plan(
+        desired=inputs["desired"], receipt=receipt
+    )
+    retention = [m for m in plan.mutations if "cache/retention-limit" in m.endpoint]
+    assert [(m.method, m.endpoint.rsplit("/actions", 1)[0]) for m in retention] == [
+        ("PUT", "/enterprises/trading-optimizer-lab"),
+        ("PUT", "/organizations/287229438"),
+        ("PUT", "/repos/trading-optimizer-lab-org/aurora"),
+    ]
+    assert len(retention) == 3
+
+
+def test_cache_retention_above_minimum_is_preserved_in_plan_bodies() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    _set_cache_retention(snapshots, 91, 89, 120)
+    receipt = audit_catalog_github_controls(**inputs)
+    plan = build_github_controls_mutation_plan(
+        desired=inputs["desired"], receipt=receipt
+    )
+    retention = [m for m in plan.mutations if "cache/retention-limit" in m.endpoint]
+    assert [m.body["max_cache_retention_days"] for m in retention] == [91, 90, 120]
+
+
+@pytest.mark.parametrize("unknown", [True, None, "90", 0])
+def test_unknown_cache_retention_blocks_without_retention_mutations(unknown: object) -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    _set_cache_retention(snapshots, unknown, 90, 90)
+    receipt = audit_catalog_github_controls(**inputs)
+    plan = build_github_controls_mutation_plan(
+        desired=inputs["desired"], receipt=receipt
+    )
+    assert receipt.status == "blocked"
+    assert "CACHE_RETENTION_UNKNOWN" in receipt.failed_controls
+    assert not [m for m in plan.mutations if "cache/retention-limit" in m.endpoint]
+
+
+def test_storage_limit_drift_never_plans_storage_put() -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    cache_settings = cast(dict[str, object], snapshots["cache_settings"])
+    cache_settings["storage_limit_gb"] = 20
+    _set_cache_retention(snapshots, 89, 89, 89)
+    plan = build_github_controls_mutation_plan(
+        desired=inputs["desired"],
+        receipt=audit_catalog_github_controls(**inputs),
+    )
+    assert not any("cache/storage-limit" in m.endpoint for m in plan.mutations)
+
+
+class _RetentionTransactionClient:
+    def __init__(
+        self,
+        values: dict[str, int],
+        *,
+        fail_readback: str | None = None,
+        fail_put: set[str] | None = None,
+        fail_rollback: set[str] | None = None,
+    ) -> None:
+        self.values = dict(values)
+        self.originals = dict(values)
+        self.calls: list[tuple[str, str, object]] = []
+        self.fail_readback = fail_readback
+        self.readback_failed = False
+        self.fail_put = fail_put or set()
+        self.fail_rollback = fail_rollback or set()
+
+    def get(self, endpoint: str) -> object:
+        self.calls.append(("GET", endpoint, None))
+        if (
+            self.fail_readback == endpoint
+            and not self.readback_failed
+            and sum(call[0] == "GET" and call[1] == endpoint for call in self.calls) > 1
+        ):
+            self.readback_failed = True
+            raise ValueError("readback failed")
+        return {"max_cache_retention_days": self.values[endpoint]}
+
+    def mutate(self, *, method: str, endpoint: str, body: dict[str, object]) -> object:
+        self.calls.append((method, endpoint, body))
+        target = int(cast(int, body["max_cache_retention_days"]))
+        if endpoint in self.fail_put and target != self.originals[endpoint]:
+            raise ValueError("put failed")
+        if (
+            endpoint in self.fail_rollback
+            and target == self.originals[endpoint]
+            and self.values[endpoint] != self.originals[endpoint]
+        ):
+            raise ValueError("rollback failed")
+        self.values[endpoint] = target
+        return {}
+
+
+def _retention_receipt(values: tuple[int, int, int]):
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    _set_cache_retention(snapshots, *values)
+    return inputs["desired"], audit_catalog_github_controls(**inputs)
+
+
+def test_retention_transaction_uses_exact_get_put_get_order() -> None:
+    desired, receipt = _retention_receipt((89, 90, 120))
+    plan = build_github_controls_mutation_plan(desired=desired, receipt=receipt)
+    endpoints = [
+        mutation.endpoint
+        for mutation in plan.mutations
+        if "cache/retention-limit" in mutation.endpoint
+    ]
+    client = _RetentionTransactionClient(
+        dict(zip(endpoints, (89, 90, 120), strict=True))
+    )
+
+    responses = _run_cache_retention_transaction(
+        client, desired=desired, receipt=receipt, plan=plan
+    )
+
+    assert [client.values[endpoint] for endpoint in endpoints] == [90, 90, 120]
+    assert [cast(dict[str, object], response)["readback"] for response in responses] == [90, 90, 120]
+    assert [(call[0], call[1]) for call in client.calls] == [
+        ("GET", endpoints[0]),
+        ("GET", endpoints[1]),
+        ("GET", endpoints[2]),
+        ("GET", endpoints[0]),
+        ("PUT", endpoints[0]),
+        ("GET", endpoints[0]),
+        ("GET", endpoints[1]),
+        ("PUT", endpoints[1]),
+        ("GET", endpoints[1]),
+        ("GET", endpoints[2]),
+        ("PUT", endpoints[2]),
+        ("GET", endpoints[2]),
+    ]
+
+
+def test_retention_transaction_rejects_a_mixed_plan_before_any_api_call() -> None:
+    inputs = mutated_protection_snapshots("admins_not_enforced")
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    _set_cache_retention(snapshots, 89, 89, 89)
+    receipt = audit_catalog_github_controls(**inputs)
+    plan = build_github_controls_mutation_plan(
+        desired=inputs["desired"], receipt=receipt
+    )
+    client = _RetentionTransactionClient({})
+
+    with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_PLAN_INVALID"):
+        _run_cache_retention_transaction(
+            client, desired=inputs["desired"], receipt=receipt, plan=plan
+        )
+
+    assert client.calls == []
+
+
+def test_retention_transaction_is_get_put_get_and_rolls_back_level_one_on_level_two_failure() -> None:
+    desired, receipt = _retention_receipt((89, 89, 89))
+    plan = build_github_controls_mutation_plan(desired=desired, receipt=receipt)
+    endpoints = [m.endpoint for m in plan.mutations if "cache/retention-limit" in m.endpoint]
+    client = _RetentionTransactionClient({endpoint: 89 for endpoint in endpoints}, fail_put={endpoints[1]})
+    with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_TRANSACTION_FAILED"):
+        _run_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
+    assert client.values[endpoints[0]] == 89
+    assert client.values[endpoints[1]] == 89
+    assert [(c[0], c[1]) for c in client.calls] == [
+        ("GET", endpoints[0]), ("GET", endpoints[1]), ("GET", endpoints[2]),
+        ("GET", endpoints[0]), ("PUT", endpoints[0]), ("GET", endpoints[0]),
+        ("GET", endpoints[1]), ("PUT", endpoints[1]),
+        ("PUT", endpoints[1]), ("GET", endpoints[1]),
+        ("PUT", endpoints[0]), ("GET", endpoints[0]),
+    ]
+
+
+def test_retention_transaction_readback_failure_rolls_back_all_mutated_levels() -> None:
+    desired, receipt = _retention_receipt((89, 89, 89))
+    plan = build_github_controls_mutation_plan(desired=desired, receipt=receipt)
+    endpoints = [m.endpoint for m in plan.mutations if "cache/retention-limit" in m.endpoint]
+    client = _RetentionTransactionClient({endpoint: 89 for endpoint in endpoints}, fail_readback=endpoints[1])
+    with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_TRANSACTION_FAILED"):
+        _run_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
+    assert all(client.values[endpoint] == 89 for endpoint in endpoints)
+
+
+def test_retention_transaction_reports_rollback_failure_and_attempts_remaining_rollbacks() -> None:
+    desired, receipt = _retention_receipt((89, 89, 89))
+    plan = build_github_controls_mutation_plan(desired=desired, receipt=receipt)
+    endpoints = [m.endpoint for m in plan.mutations if "cache/retention-limit" in m.endpoint]
+    client = _RetentionTransactionClient(
+        {endpoint: 89 for endpoint in endpoints},
+        fail_put={endpoints[2]},
+        fail_rollback={endpoints[0]},
+    )
+    with pytest.raises(ValueError, match="CATALOG_CACHE_RETENTION_ROLLBACK_FAILED"):
+        _run_cache_retention_transaction(client, desired=desired, receipt=receipt, plan=plan)
+    rollback_puts = [
+        call
+        for call in client.calls
+        if call[0] == "PUT"
+        and isinstance(call[2], dict)
+        and cast(dict[str, object], call[2])["max_cache_retention_days"] == 89
+    ]
+    assert [call[1] for call in rollback_puts] == [
+        endpoints[2],
+        endpoints[1],
+        endpoints[0],
+    ]
+
+
+def test_retention_transaction_detects_concurrent_raise_before_put() -> None:
+    desired, receipt = _retention_receipt((89, 89, 89))
+    plan = build_github_controls_mutation_plan(desired=desired, receipt=receipt)
+    endpoints = [
+        mutation.endpoint
+        for mutation in plan.mutations
+        if "cache/retention-limit" in mutation.endpoint
+    ]
+
+    class ConcurrentRaiseClient(_RetentionTransactionClient):
+        def get(self, endpoint: str) -> object:
+            if endpoint == endpoints[1] and sum(
+                call[0] == "GET" and call[1] == endpoint for call in self.calls
+            ) == 1:
+                self.values[endpoint] = 120
+            return super().get(endpoint)
+
+    client = ConcurrentRaiseClient({endpoint: 89 for endpoint in endpoints})
+
+    with pytest.raises(
+        ValueError, match="CATALOG_CACHE_RETENTION_TRANSACTION_FAILED"
+    ):
+        _run_cache_retention_transaction(
+            client, desired=desired, receipt=receipt, plan=plan
+        )
+
+    assert client.values[endpoints[0]] == 89
+    assert client.values[endpoints[1]] == 120
+    assert not any(
+        call[0] == "PUT"
+        and call[1] == endpoints[1]
+        and isinstance(call[2], dict)
+        and cast(dict[str, object], call[2])["max_cache_retention_days"] == 90
+        for call in client.calls
+    )
 
 
 class _PagedClient:
@@ -1199,6 +1817,108 @@ class _PagedClient:
     def get(self, endpoint: str) -> object:
         self.requested.append(endpoint)
         return deepcopy(self.pages[endpoint])
+
+
+class _SequentialPagedClient:
+    def __init__(self, pages: dict[str, list[object]]) -> None:
+        self.pages = pages
+        self.positions = {endpoint: 0 for endpoint in pages}
+        self.requested: list[str] = []
+
+    def get(self, endpoint: str) -> object:
+        self.requested.append(endpoint)
+        position = self.positions[endpoint]
+        self.positions[endpoint] = position + 1
+        return deepcopy(self.pages[endpoint][position])
+
+
+def test_stable_object_pagination_requires_two_identical_complete_scans() -> None:
+    client = _PagedClient(
+        {
+            "/items?per_page=100&page=1": {
+                "total_count": 2,
+                "items": [{"id": 1}, {"id": 2}],
+            }
+        }
+    )
+
+    rows, complete = _paginate_object_rows_stable(
+        client,
+        "/items",
+        root="items",
+        max_pages=1,
+    )
+
+    assert rows == ({"id": 1}, {"id": 2})
+    assert complete is True
+    assert len(client.requested) == 2
+
+
+def test_stable_object_pagination_rejects_change_with_same_total() -> None:
+    first_page = {
+        "total_count": 101,
+        "items": [{"id": value} for value in range(1, 101)],
+    }
+    client = _SequentialPagedClient(
+        {
+            "/items?per_page=100&page=1": [first_page, first_page],
+            "/items?per_page=100&page=2": [
+                {"total_count": 101, "items": [{"id": 101}]},
+                {"total_count": 101, "items": [{"id": 102}]},
+            ],
+        }
+    )
+
+    with pytest.raises(ValueError, match="CATALOG_GITHUB_PAGINATION_UNSTABLE"):
+        _paginate_object_rows_stable(
+            client,
+            "/items",
+            root="items",
+            max_pages=2,
+        )
+
+
+def test_stable_object_pagination_never_completes_after_incomplete_second_scan() -> None:
+    first_page = {
+        "total_count": 101,
+        "items": [{"id": value} for value in range(1, 101)],
+    }
+    client = _SequentialPagedClient(
+        {
+            "/items?per_page=100&page=1": [first_page, first_page],
+            "/items?per_page=100&page=2": [
+                {"total_count": 101, "items": [{"id": 101}]},
+                {
+                    "total_count": 101,
+                    "items": [{"id": value} for value in range(101, 201)],
+                },
+            ],
+        }
+    )
+
+    rows, complete = _paginate_object_rows_stable(
+        client,
+        "/items",
+        root="items",
+        max_pages=2,
+    )
+
+    assert len(rows) in (101, 200)
+    assert complete is False
+
+
+def test_stable_list_pagination_requires_two_identical_complete_scans() -> None:
+    client = _PagedClient(
+        {
+            "/rows?per_page=100&page=1": [{"id": 1}, {"id": 2}],
+        }
+    )
+
+    rows, complete = _paginate_list_rows_stable(client, "/rows", max_pages=1)
+
+    assert rows == ({"id": 1}, {"id": 2})
+    assert complete is True
+    assert len(client.requested) == 2
 
 
 def test_live_auditor_fully_paginates_object_rows_without_duplicates() -> None:

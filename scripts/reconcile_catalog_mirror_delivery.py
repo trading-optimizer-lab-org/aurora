@@ -22,6 +22,7 @@ from aurora.infra.sp500_megarun.catalog_authority_ledger import (
 )
 from aurora.infra.sp500_megarun.catalog_mirror_delivery import (
     CatalogMirrorArtifactV1,
+    CatalogMirrorCurrentRepairWriterContextV1,
     CatalogMirrorRepairClaimV1,
     CatalogMirrorRepairWriterContextV1,
     CatalogMirrorWriterEvidenceV1,
@@ -45,6 +46,7 @@ _MAX_JSON_BYTES = 1024 * 1024
 _MAX_SLOT_ARTIFACTS = 2
 _MAX_REPAIR_ATTEMPTS = 3
 _REPAIR_CLAIM_STEP_NAME = "Claim one mirror-comment repair attempt"
+_REQUEST_REPORT_PUBLICATION_STEP_NAME = "Read back, append exactly once"
 
 _STEP_NAMES: dict[tuple[str, str], tuple[str, str]] = {
     ("authority", "reserve"): (
@@ -65,7 +67,7 @@ _STEP_NAMES: dict[tuple[str, str], tuple[str, str]] = {
     ),
     ("request", "report_nonexecuting_decision"): (
         "Mirror the request receipt first",
-        "Read back, append exactly once, and close only terminal states",
+        _REQUEST_REPORT_PUBLICATION_STEP_NAME,
     ),
     ("request", "record_nonterminal_wait"): (
         "Mirror WAITING_RETRY request status before posting it",
@@ -448,12 +450,16 @@ def _positive_environment_integer(name: str) -> int:
 def _current_repair_writer(
     *,
     kind: Literal["authority", "request"],
-) -> CatalogMirrorRepairWriterContextV1:
+) -> CatalogMirrorCurrentRepairWriterContextV1:
     run_id = _positive_environment_integer("GITHUB_RUN_ID")
     run_attempt = _positive_environment_integer("GITHUB_RUN_ATTEMPT")
     job_id = os.environ.get("GITHUB_JOB", "")
     github_sha = os.environ.get("GITHUB_SHA", "")
-    if (kind, job_id) not in _STEP_NAMES or not _COMMIT.fullmatch(github_sha):
+    if (
+        (kind, job_id) not in _STEP_NAMES
+        or job_id == "repair_request_receipt_orphan"
+        or not _COMMIT.fullmatch(github_sha)
+    ):
         raise ValueError("CATALOG_MIRROR_REPAIR_WRITER_INVALID")
     run = _gh_json(f"repos/{_REPOSITORY}/actions/runs/{run_id}")
     run_readback = _gh_json(f"repos/{_REPOSITORY}/actions/runs/{run_id}")
@@ -492,7 +498,7 @@ def _current_repair_writer(
         or job.get("conclusion") is not None
     ):
         raise ValueError("CATALOG_MIRROR_REPAIR_WRITER_INVALID")
-    return CatalogMirrorRepairWriterContextV1(
+    return CatalogMirrorCurrentRepairWriterContextV1(
         run_id=run_id,
         run_attempt=run_attempt,
         writer_job_id=job_id,

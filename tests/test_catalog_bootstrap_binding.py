@@ -105,10 +105,17 @@ def test_binding_rejects_private_or_unexpected_tree_material() -> None:
         )
 
 
-def test_controller_requires_the_repository_enable_switch() -> None:
+def test_controller_requires_both_repository_switches_and_production_arm() -> None:
     workflow = (ROOT / ".github/workflows/catalog-run-controller.yml").read_text(
         encoding="utf-8"
     )
     assert "CONTROLLER_ENABLED: ${{ vars.CATALOG_CONTROLLER_ENABLED }}" in workflow
+    assert (
+        "CONTROLLER_ARMED: ${{ vars.CATALOG_CONTROLLER_PRODUCTION_ARMED }}" in workflow
+    )
     assert 'controller_enabled = os.environ.get("CONTROLLER_ENABLED") == "true"' in workflow
-    assert "if actors.get(\"production_enabled\") is True and controller_enabled:" in workflow
+    assert 'controller_armed = os.environ.get("CONTROLLER_ARMED") == "true"' in workflow
+    assert (
+        'if actors.get("production_enabled") is True and controller_enabled and '
+        "controller_armed:"
+    ) in workflow

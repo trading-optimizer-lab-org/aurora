@@ -7,6 +7,30 @@
   },
   "migrations": [
     {
+      "path": ".github/workflows/catalog-artifact-keeper.yml",
+      "previous_sha256": "7c96083a4c0a9e0ecb8a20694ffba7b932dcc209c582ca9d7c2debc37605d52b",
+      "reason": "harden protected catalog artifact retention and synthetic qualification",
+      "replacement_sha256": "2498ccac023b5d83599f32aa7903d3f9f872b822e9f96c74be4c9563bc9dce75"
+    },
+    {
+      "path": ".github/workflows/catalog-request-reconciler.yml",
+      "previous_sha256": "4bbe04040bdd9e341a6d7b97ffd386fc8343f952e5e610057335ddb272671d00",
+      "reason": "enforce explicit production arming before catalog reconciliation",
+      "replacement_sha256": "d46a4e90ab931e5646bcf7b4ff22b25e583dfd06fb831563ead8f17c4276b402"
+    },
+    {
+      "path": ".github/workflows/catalog-run-controller.yml",
+      "previous_sha256": "b2dc75b1805a9ad1efa42f56f1a3f36258669cc5e1a395e59edad26eea8ecd06",
+      "reason": "replace local composite audit with protected reusable live controls",
+      "replacement_sha256": "a105c8d805eb7251374dc98670860eb193804d9343c4897ba18ad8b1c689050e"
+    },
+    {
+      "path": ".github/workflows/catalog-run-watchdog.yml",
+      "previous_sha256": "41fe824d7f7602f4bef23a8f9387497d78055a49cf4122ca07bb3c4b970f559a",
+      "reason": "add bounded fail-closed catalog watchdog recovery",
+      "replacement_sha256": "c770df483a09e92d5bde5459f353cdf5dcf013dbd107b64edcc593bbbbd47481"
+    },
+    {
       "path": ".github/workflows/docs.yml",
       "previous_sha256": "8c5514b0e0eb4f5a1e31df4199f79de5b5565020afcb99c153ba1dd6082e6fce",
       "reason": "make documentation dependencies complete and validate warnings on pull requests",
@@ -21,14 +45,14 @@
     {
       "path": ".github/workflows/tests.yml",
       "previous_sha256": "9d9a893c6504f7d24843913d9b668be790c60429b7d3cf149efe4a37db2d0836",
-      "reason": "make the test command cross-platform and pin official actions",
-      "replacement_sha256": "774e731045ecb32475dc91f78b8969de86a4038ee909fe12b59b076c9d6ef7cc"
+      "reason": "keep the test command cross-platform and shard Windows execution below the protected timeout",
+      "replacement_sha256": "26d91399b7d5f502678038cf9add2af0a5bef9baac7cc5f63de169f20fe67811"
     },
     {
       "path": ".github/workflows/typecheck.yml",
       "previous_sha256": "b8fedf60ca30643f72cf9d74e4699ea6e921c5c127a01f4a74935854bbde8316",
-      "reason": "freeze existing mypy debt and reject every new type error",
-      "replacement_sha256": "2446b8ac7c176ae1307648471bec5822573e83a2e2e48698144c64afd745fd09"
+        "reason": "compare base and head with one pinned mypy environment and reject every new diagnostic",
+        "replacement_sha256": "e02d5c2fe878d9cbc20bdbc6258efeffa2ab9827d8f45ed71d86f54b5438c334"
     }
   ],
   "schema_version": "1"

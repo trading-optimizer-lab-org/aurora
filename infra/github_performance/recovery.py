@@ -513,12 +513,75 @@ def classify_failure(payload: Mapping[str, Any]) -> FailureClass:
 
 
 def _attempt_number(attempt_id: str) -> tuple[int, str]:
-    digits = "".join(character for character in attempt_id if character.isdigit())
-    return (int(digits) if digits else -1, attempt_id)
+    text = str(attempt_id)
+    recovery_match = re.match(r"^recovery-(\d+)(?:-|$)", text)
+    if recovery_match is not None:
+        return (int(recovery_match.group(1)), text)
+    attempt_match = re.search(
+        r"(?:^|[-:/])attempt[-:/]?(\d+)(?:$|[-:/])",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if attempt_match is not None:
+        return (int(attempt_match.group(1)), text)
+    digits = re.findall(r"\d+", text)
+    return (int(digits[-1]) if digits else -1, text)
 
 
-def _new_attempt_id(fingerprint: str, occurrence: int) -> str:
-    return f"recovery-{occurrence + 1}-{fingerprint[:20]}"
+def _new_attempt_id(
+    fingerprint: str,
+    occurrence: int,
+    used_attempt_ids: Iterable[str] = (),
+) -> str:
+    base = f"recovery-{occurrence + 1}-{fingerprint[:20]}"
+    used = {str(item) for item in used_attempt_ids}
+    candidate = base
+    suffix = 0
+    while candidate in used:
+        suffix += 1
+        candidate = f"{base}-{suffix}"
+    return candidate
+
+
+def _normalize_attempts(
+    shard_ids: set[str],
+    attempts: Sequence[AttemptManifest],
+) -> tuple[AttemptManifest, ...]:
+    """Reject ambiguous evidence and collapse repeated copies of one attempt."""
+
+    by_identity: dict[tuple[str, str], AttemptManifest] = {}
+    for attempt in attempts:
+        if attempt.shard_id not in shard_ids:
+            raise RecoveryEvidenceError(
+                f"RECOVERY_ATTEMPT_SHARD_UNKNOWN:{attempt.shard_id}"
+            )
+        identity = (attempt.shard_id, attempt.attempt_id)
+        previous = by_identity.get(identity)
+        if previous is None:
+            by_identity[identity] = attempt
+        elif previous != attempt:
+            raise RecoveryEvidenceError(
+                "RECOVERY_DUPLICATE_ATTEMPT_ID:" + attempt.attempt_id
+            )
+    return tuple(
+        sorted(
+            by_identity.values(),
+            key=lambda item: (item.shard_id, _attempt_number(item.attempt_id)),
+        )
+    )
+
+
+def _seal_retry_descriptors(plan: RecoveryPlan) -> RecoveryPlan:
+    payload = deep_thaw_json(plan)
+    payload.pop("plan_sha256", None)
+    payload["retry_matrix_a"] = []
+    payload["retry_matrix_b"] = []
+    payload["has_retry_matrix_a"] = False
+    payload["has_retry_matrix_b"] = False
+    return RecoveryPlan(
+        **payload,
+        plan_sha256=canonical_sha256(payload),
+    )
 
 
 def _best_checkpoint(
@@ -582,8 +645,12 @@ def build_recovery_plan(
         ordered_shards
     ):
         raise ValueError("duplicate shard_id in recovery input")
+    normalized_attempts = _normalize_attempts(
+        {shard.shard_id for shard in ordered_shards},
+        attempts,
+    )
     attempts_by_shard: dict[str, list[AttemptManifest]] = defaultdict(list)
-    for attempt in attempts:
+    for attempt in normalized_attempts:
         attempts_by_shard[attempt.shard_id].append(attempt)
 
     decisions: list[RecoveryDecision] = []
@@ -651,6 +718,14 @@ def build_recovery_plan(
         checkpoint = _best_checkpoint(shard.shard_id, checkpoints)
         if failure_class in TRANSIENT_CLASSES:
             budget = min(2, max(0, int(retry_policy.get(failure_class.value, 0))))
+            same_class_occurrences = sum(
+                classify_failure(
+                    {"reason_code": attempt.reason_code or "UNKNOWN"}
+                )
+                is failure_class
+                for attempt in shard_attempts
+                if attempt.state is TerminalState.FAILED_TECHNICAL
+            )
             if same_failure_occurrences >= 3:
                 decision = RecoveryDecision(
                     shard_id=shard.shard_id,
@@ -661,7 +736,7 @@ def build_recovery_plan(
                     checkpoint_artifact=None,
                     reason_code="SAME_FAILURE_OCCURRENCE_LIMIT",
                 )
-            elif same_failure_occurrences > budget:
+            elif same_class_occurrences > budget:
                 decision = RecoveryDecision(
                     shard_id=shard.shard_id,
                     prior_attempt_id=prior_attempt_id,
@@ -675,6 +750,7 @@ def build_recovery_plan(
                 next_attempt = _new_attempt_id(
                     fingerprint,
                     same_failure_occurrences,
+                    (attempt.attempt_id for attempt in shard_attempts),
                 )
                 decision = RecoveryDecision(
                     shard_id=shard.shard_id,
@@ -836,9 +912,13 @@ def build_recovery_loop(
     if max_waves < 1:
         raise ValueError("max_waves must be positive")
     ordered_shards = tuple(sorted(shards, key=lambda item: item.shard_id))
+    normalized_attempts = _normalize_attempts(
+        {shard.shard_id for shard in ordered_shards},
+        attempts,
+    )
     plan = build_recovery_plan(
         ordered_shards,
-        attempts,
+        normalized_attempts,
         checkpoints,
         retry_policy,
         checkpoint_audit,
@@ -852,24 +932,39 @@ def build_recovery_loop(
     terminal_attempts_by_shard: dict[str, list[AttemptManifest]] = (
         defaultdict(list)
     )
-    for attempt in attempts:
+    for attempt in normalized_attempts:
         if (
             attempt.state in terminal_states
             and attempt.shard_id in shards_by_id
             and attempt.artifact_name is not None
         ):
             terminal_attempts_by_shard[attempt.shard_id].append(attempt)
-    selected_terminal_attempts = tuple(
-        min(
-            terminal_attempts_by_shard[shard_id],
-            key=lambda item: (
-                item.attempt_id,
-                item.output_sha256 or "",
-                item.artifact_name or "",
-            ),
+    selected_terminal_attempts_list: list[AttemptManifest] = []
+    for shard_id in sorted(terminal_attempts_by_shard):
+        candidates = terminal_attempts_by_shard[shard_id]
+        completed = tuple(
+            item for item in candidates if item.state is TerminalState.COMPLETED
         )
-        for shard_id in sorted(terminal_attempts_by_shard)
-    )
+        selected_terminal_attempts_list.append(
+            min(
+                completed or tuple(candidates),
+                key=lambda item: (
+                    _attempt_number(item.attempt_id),
+                    item.output_sha256 or "",
+                    item.artifact_name or "",
+                ),
+            )
+            if completed
+            else max(
+                candidates,
+                key=lambda item: (
+                    _attempt_number(item.attempt_id),
+                    item.output_sha256 or "",
+                    item.artifact_name or "",
+                ),
+            )
+        )
+    selected_terminal_attempts = tuple(selected_terminal_attempts_list)
     terminal_shards = {
         attempt.shard_id for attempt in selected_terminal_attempts
     }
@@ -915,6 +1010,35 @@ def build_recovery_loop(
         status = RecoveryLoopStatus.COMPLETE
         next_wave = None
         reasons: tuple[str, ...] = ()
+    elif do_not_retry:
+        if retry_count or replans:
+            status = RecoveryLoopStatus.BLOCKED_HARD_FAILURE
+            next_wave = None
+            retry_count = 0
+            reasons = tuple(
+                dict.fromkeys(
+                    decision.reason_code for decision in do_not_retry
+                )
+            )
+            plan = _seal_retry_descriptors(plan)
+        elif all(
+            decision.failure_class
+            == FailureClass.DETERMINISTIC_SCIENTIFIC_ENGINE_FAILURE.value
+            for decision in do_not_retry
+        ):
+            status = RecoveryLoopStatus.FAILED_SCIENTIFIC
+            next_wave = None
+            reasons = tuple(
+                dict.fromkeys(decision.reason_code for decision in do_not_retry)
+            )
+        else:
+            status = RecoveryLoopStatus.BLOCKED_HARD_FAILURE
+            next_wave = None
+            reasons = tuple(
+                dict.fromkeys(
+                    decision.reason_code for decision in do_not_retry
+                )
+            )
     elif replans:
         status = RecoveryLoopStatus.REPLAN
         next_wave = None
@@ -934,34 +1058,7 @@ def build_recovery_loop(
         next_wave = None
         retry_count = 0
         reasons = ("RECOVERY_WAVE_BUDGET_EXHAUSTED",)
-        payload = deep_thaw_json(plan)
-        payload.pop("plan_sha256", None)
-        payload["retry_matrix_a"] = []
-        payload["retry_matrix_b"] = []
-        payload["has_retry_matrix_a"] = False
-        payload["has_retry_matrix_b"] = False
-        plan = RecoveryPlan(
-            **payload,
-            plan_sha256=canonical_sha256(payload),
-        )
-    elif do_not_retry and all(
-        decision.failure_class
-        == FailureClass.DETERMINISTIC_SCIENTIFIC_ENGINE_FAILURE.value
-        for decision in do_not_retry
-    ):
-        status = RecoveryLoopStatus.FAILED_SCIENTIFIC
-        next_wave = None
-        reasons = tuple(
-            dict.fromkeys(decision.reason_code for decision in do_not_retry)
-        )
-    elif do_not_retry:
-        status = RecoveryLoopStatus.BLOCKED_HARD_FAILURE
-        next_wave = None
-        reasons = tuple(
-            dict.fromkeys(
-                decision.reason_code for decision in do_not_retry
-            )
-        )
+        plan = _seal_retry_descriptors(plan)
     else:
         status = RecoveryLoopStatus.BLOCKED_HARD_FAILURE
         next_wave = None

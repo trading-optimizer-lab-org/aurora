@@ -63,9 +63,30 @@ if ($Head -cne $ProtectedHead) {
 if (@(& git -C $RepoRoot status --porcelain=v1 --untracked-files=no).Count -ne 0) {
     throw "BLOCKED_BOOTSTRAP_TRACKED_TREE_DIRTY"
 }
-$ControllerValue = (& gh variable get CATALOG_CONTROLLER_ENABLED --repo $Repository).Trim()
-if ($ControllerValue -cne "false") {
-    throw "BLOCKED_BOOTSTRAP_CONTROLLER_NOT_DISABLED"
+$ControllerFailures = [System.Collections.Generic.List[string]]::new()
+foreach ($ControllerName in @(
+    "CATALOG_CONTROLLER_PRODUCTION_ARMED",
+    "CATALOG_CONTROLLER_ENABLED"
+)) {
+    try {
+        [void](& gh variable set $ControllerName --repo $Repository --body "false")
+        if ($LASTEXITCODE -ne 0) { throw "SET_FAILED" }
+    }
+    catch {
+        [void]$ControllerFailures.Add("$ControllerName=SET_FAILED")
+    }
+    try {
+        $ControllerReadback = (& gh variable get $ControllerName --repo $Repository).Trim()
+        if ($LASTEXITCODE -ne 0 -or $ControllerReadback -cne "false") {
+            throw "READBACK_FAILED"
+        }
+    }
+    catch {
+        [void]$ControllerFailures.Add("$ControllerName=READBACK_FAILED")
+    }
+}
+if ($ControllerFailures.Count -gt 0) {
+    throw ("BLOCKED_BOOTSTRAP_CONTROLLER_DISABLE_FAILED:" + ($ControllerFailures -join "|"))
 }
 
 $BuildRoot = Join-Path ([IO.Path]::GetTempPath()) ("aurora-bootstrap-build-" + [Guid]::NewGuid().ToString("N"))

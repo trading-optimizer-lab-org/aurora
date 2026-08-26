@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from pathlib import Path
 import subprocess
 import sys
+import threading
+import time
 from types import SimpleNamespace
+from typing import TypedDict, TypeVar, cast
 
 import pytest
 
@@ -13,6 +17,7 @@ from scripts import run_catalog_bootstrap_assistant as bootstrap_runner
 
 from infra.sp500_megarun.catalog_bootstrap_state import (
     CatalogBootstrapEventV1,
+    EventName,
     advance_bootstrap_state,
     canonical_state_bytes,
     initial_bootstrap_state,
@@ -30,6 +35,37 @@ PUBLIC_BINDING_PATHS = (
     "config/catalog_requester_app_permissions_v1.json",
     "config/catalog_requester_public_key_v1.pem",
 )
+
+
+class _RequesterRecoveryFixture(TypedDict):
+    root: Path
+    broker_root: Path
+    source: Path
+    first: dict[str, object]
+    status: dict[str, object]
+    issue: dict[str, object]
+    controller: dict[str, object]
+
+
+_ItemT = TypeVar("_ItemT")
+_ResultT = TypeVar("_ResultT")
+
+
+def _append_then_return(
+    items: list[_ItemT], item: _ItemT, result: _ResultT
+) -> _ResultT:
+    items.append(item)
+    return result
+
+
+def _append_and_get_last(items: list[_ItemT], item: _ItemT) -> _ItemT:
+    items.append(item)
+    return items[-1]
+
+
+@pytest.fixture
+def isolated_controller_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bootstrap_runner, "_disable_controller", lambda: None)
 
 
 def test_review_environment_loads_the_selected_checkout_in_child_process(
@@ -74,7 +110,9 @@ def test_review_environment_loads_the_selected_checkout_in_child_process(
     assert environment["PYTHONPATH"] != str(stale)
 
 
-def event(name: str, sequence: int, *, bootstrap_id: str = BOOTSTRAP_ID):
+def event(
+    name: EventName, sequence: int, *, bootstrap_id: str = BOOTSTRAP_ID
+) -> CatalogBootstrapEventV1:
     return CatalogBootstrapEventV1(
         schema_version="1",
         bootstrap_id=bootstrap_id,
@@ -95,7 +133,7 @@ def test_only_closed_forward_transitions_are_allowed() -> None:
 
 
 def test_complete_transition_graph_reaches_ready() -> None:
-    names = (
+    names: tuple[EventName, ...] = (
         "precheck_passed",
         "requester_created",
         "requester_installed",
@@ -117,7 +155,7 @@ def test_complete_transition_graph_reaches_ready() -> None:
 
 
 def _merge_pending_state():
-    names = (
+    names: tuple[EventName, ...] = (
         "precheck_passed",
         "requester_created",
         "requester_installed",
@@ -657,6 +695,30 @@ def _github_controls_package_token_repair_operation(
     }
 
 
+def _idempotent_resume_repair_operation(
+    *,
+    prior_merge: str,
+    repair_head: str,
+    repair_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": prior_merge,
+        "branch": "codex/catalog-bootstrap-idempotent-resume",
+        "changed_paths": [
+            "scripts/run_catalog_bootstrap_assistant.py",
+            "tests/test_catalog_bootstrap_assistant.py",
+        ],
+        "head_commit_sha": repair_head,
+        "merge_commit_sha": repair_merge,
+        "patch_sha256": "1" * 64,
+        "pr_number": 194,
+        "prior_runtime_commit_sha": prior_merge,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "catalog-controller-policy",
+        "schema_version": "1",
+    }
+
+
 def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None:
     blocked = _blocked_local_install_state()
 
@@ -748,7 +810,7 @@ def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None
 
 
 def test_second_local_install_block_enters_protected_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -773,7 +835,7 @@ def test_second_local_install_block_enters_protected_recovery(
 
 
 def test_third_local_install_block_enters_protected_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -798,7 +860,7 @@ def test_third_local_install_block_enters_protected_recovery(
 
 
 def test_fourth_local_install_block_enters_protected_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -823,7 +885,7 @@ def test_fourth_local_install_block_enters_protected_recovery(
 
 
 def test_fifth_local_install_block_enters_protected_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -848,7 +910,7 @@ def test_fifth_local_install_block_enters_protected_recovery(
 
 
 def test_sixth_local_install_block_enters_protected_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -873,7 +935,7 @@ def test_sixth_local_install_block_enters_protected_recovery(
 
 
 def test_seventh_local_install_block_enters_protected_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -898,7 +960,7 @@ def test_seventh_local_install_block_enters_protected_recovery(
 
 
 def test_github_controls_block_waits_for_protected_recovery_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -922,7 +984,7 @@ def test_github_controls_block_waits_for_protected_recovery_receipt(
 
 
 def test_second_github_controls_block_waits_for_enterprise_repair_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -946,7 +1008,7 @@ def test_second_github_controls_block_waits_for_enterprise_repair_receipt(
 
 
 def test_third_github_controls_block_waits_for_stable_precondition_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -970,7 +1032,7 @@ def test_third_github_controls_block_waits_for_stable_precondition_receipt(
 
 
 def test_fourth_github_controls_block_waits_for_cache_retention_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -994,7 +1056,7 @@ def test_fourth_github_controls_block_waits_for_cache_retention_receipt(
 
 
 def test_fifth_github_controls_block_waits_for_storage_audit_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -1018,7 +1080,7 @@ def test_fifth_github_controls_block_waits_for_storage_audit_receipt(
 
 
 def test_sixth_github_controls_block_waits_for_audit_throughput_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -1042,7 +1104,7 @@ def test_sixth_github_controls_block_waits_for_audit_throughput_receipt(
 
 
 def test_audit_throughput_repair_operation_is_validated(tmp_path: Path) -> None:
-    prior = {"merge_commit_sha": "a" * 40}
+    prior: dict[str, object] = {"merge_commit_sha": "a" * 40}
     operation = _github_controls_audit_throughput_repair_operation(
         prior_merge="a" * 40,
         repair_head="b" * 40,
@@ -1061,7 +1123,7 @@ def test_audit_throughput_repair_operation_is_validated(tmp_path: Path) -> None:
 
 
 def test_package_token_repair_operation_is_validated(tmp_path: Path) -> None:
-    prior = {"merge_commit_sha": "a" * 40}
+    prior: dict[str, object] = {"merge_commit_sha": "a" * 40}
     operation = _github_controls_package_token_repair_operation(
         prior_merge="a" * 40,
         repair_head="b" * 40,
@@ -1080,7 +1142,7 @@ def test_package_token_repair_operation_is_validated(tmp_path: Path) -> None:
 
 
 def test_seventh_github_controls_block_waits_for_package_token_receipt(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -1129,7 +1191,7 @@ def test_github_controls_recovery_rejects_any_other_install_root(
 
 
 def test_github_controls_recovery_binds_receipt_to_exact_blocked_state(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -1334,6 +1396,228 @@ def test_prepare_auditor_secret_reuses_only_proven_protected_secret(
     }
 
 
+def test_protected_environment_secret_names_require_exact_unique_rows(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda _args: json.dumps(
+            [
+                {"name": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY"},
+                {"name": "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"},
+            ]
+        ),
+    )
+
+    assert bootstrap_runner._protected_environment_secret_names() == frozenset(
+        {
+            "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+            "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+        }
+    )
+
+    for invalid in (
+        {"name": "not-a-list"},
+        [{"name": "duplicate"}, {"name": "duplicate"}],
+        [{"name": "valid", "value": "must-not-be-returned"}],
+        [{"name": ""}],
+    ):
+        monkeypatch.setattr(
+            bootstrap_runner, "_run", lambda _args, value=invalid: json.dumps(value)
+        )
+        with pytest.raises(
+            ValueError,
+            match="^CATALOG_BOOTSTRAP_ENVIRONMENT_SECRET_LIST_INVALID$",
+        ):
+            bootstrap_runner._protected_environment_secret_names()
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda _args: '[{"name":"first","name":"second"}]',
+    )
+    with pytest.raises(
+        ValueError,
+        match="^CATALOG_BOOTSTRAP_ENVIRONMENT_SECRET_LIST_INVALID$",
+    ):
+        bootstrap_runner._protected_environment_secret_names()
+
+
+def test_required_environment_secrets_fail_closed_with_exact_missing_names(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_protected_environment_secret_names",
+        lambda: frozenset({"AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"}),
+    )
+
+    with pytest.raises(ValueError) as error:
+        bootstrap_runner._require_protected_environment_secrets(
+            frozenset(
+                {
+                    "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+                    "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN",
+                    "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN",
+                }
+            )
+        )
+
+    assert str(error.value) == (
+        "CATALOG_BOOTSTRAP_AUDITOR_ENVIRONMENT_SECRETS_MISSING:"
+        "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN,"
+        "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN"
+    )
+
+
+def test_required_environment_secret_gate_returns_no_sensitive_metadata(
+    monkeypatch,
+) -> None:
+    required = frozenset(
+        {
+            "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+            "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+        }
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_protected_environment_secret_names",
+        lambda: required,
+    )
+
+    assert cast(
+        object,
+        bootstrap_runner._require_protected_environment_secrets(required),
+    ) is None
+
+
+def test_github_controls_receipt_source_does_not_persist_secret_names() -> None:
+    source = inspect.getsource(bootstrap_runner.apply_github_controls)
+
+    assert '"auditor_secret_name"' not in source
+    assert 'proof.get("name")' not in source
+
+
+def test_safe_blocked_reason_preserves_only_allowlisted_missing_secret_names() -> None:
+    safe = ValueError(
+        "CATALOG_BOOTSTRAP_AUDITOR_ENVIRONMENT_SECRETS_MISSING:"
+        "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN,"
+        "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN"
+    )
+
+    assert bootstrap_runner._safe_blocked_reason(safe, "fallback") == str(safe)
+    assert (
+        bootstrap_runner._safe_blocked_reason(
+            ValueError(
+                "CATALOG_BOOTSTRAP_AUDITOR_ENVIRONMENT_SECRETS_MISSING:"
+                "ATTACKER_TOKEN"
+            ),
+            "fallback",
+        )
+        == "fallback"
+    )
+    assert (
+        bootstrap_runner._safe_blocked_reason(
+            ValueError("password=do-not-persist"), "fallback"
+        )
+        == "fallback"
+    )
+
+
+def test_github_controls_require_external_secrets_before_mutation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    source = tmp_path / "source"
+    (source / "config").mkdir(parents=True)
+    (source / "config/catalog_authority_anchor_v1.json").write_text(
+        '{"issue_number":1,"production_enabled":true}\n', encoding="utf-8"
+    )
+    root.mkdir(exist_ok=True)
+    (root / "auditor-public-v1.json").write_text(
+        '{"app_id":2}\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(bootstrap_runner, "load_bootstrap_state", lambda _path: object())
+    monkeypatch.setattr(
+        bootstrap_runner, "_context", lambda _root: {"source_root": str(source)}
+    )
+    monkeypatch.setattr(bootstrap_runner, "_runtime_commit", lambda _root: "a" * 40)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_require_protected_environment_secrets",
+        lambda _required: (_ for _ in ()).throw(ValueError("missing")),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_disable_controller",
+        lambda: pytest.fail("controller must not be mutated"),
+    )
+
+    with pytest.raises(ValueError, match="^missing$"):
+        bootstrap_runner.apply_github_controls(root)
+
+
+def test_github_controls_require_all_secrets_before_live_qualification(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "protected"
+    source = tmp_path / "source"
+    receipts = root / "receipts"
+    (source / "config").mkdir(parents=True)
+    receipts.mkdir(parents=True)
+    (source / "config/catalog_authority_anchor_v1.json").write_text(
+        '{"issue_number":1,"production_enabled":true}\n', encoding="utf-8"
+    )
+    (root / "auditor-public-v1.json").write_text(
+        '{"app_id":2}\n', encoding="utf-8"
+    )
+    dry = {"current_state_sha256": "b" * 64, "mode": "dry_run"}
+    applied = {"bootstrap_controls_prepared": True, "mode": "apply"}
+    (receipts / "github-controls-dry-run-v1.json").write_bytes(
+        bootstrap_runner._canonical(dry) + b"\n"
+    )
+    (receipts / "github-controls-apply-v1.json").write_bytes(
+        bootstrap_runner._canonical(applied) + b"\n"
+    )
+    requirements: list[frozenset[str]] = []
+
+    def require(required: frozenset[str]) -> dict[str, object]:
+        requirements.append(required)
+        if len(requirements) == 2:
+            raise ValueError("missing-final")
+        return {"environment": "catalog-production", "present": sorted(required)}
+
+    monkeypatch.setattr(bootstrap_runner, "load_bootstrap_state", lambda _path: object())
+    monkeypatch.setattr(
+        bootstrap_runner, "_context", lambda _root: {"source_root": str(source)}
+    )
+    monkeypatch.setattr(bootstrap_runner, "_runtime_commit", lambda _root: "a" * 40)
+    monkeypatch.setattr(bootstrap_runner, "_disable_controller", lambda: None)
+    monkeypatch.setattr(bootstrap_runner, "_set_repository_variable", lambda *_args: None)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_prepare_auditor_secret",
+        lambda _root: {"name": bootstrap_runner.AUDITOR_SECRET},
+    )
+    monkeypatch.setattr(
+        bootstrap_runner, "_require_protected_environment_secrets", require
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run_live_qualification",
+        lambda *_args, **_kwargs: pytest.fail("live qualification must not run"),
+    )
+
+    with pytest.raises(ValueError, match="^missing-final$"):
+        bootstrap_runner.apply_github_controls(root)
+
+    assert requirements == [
+        bootstrap_runner.PROTECTED_ENVIRONMENT_EXTERNAL_SECRETS,
+        bootstrap_runner.PROTECTED_ENVIRONMENT_REQUIRED_SECRETS,
+    ]
+
+
 def test_existing_bootstrap_control_receipts_are_reused_only_when_canonical(
     tmp_path: Path,
 ) -> None:
@@ -1355,7 +1639,7 @@ def test_existing_bootstrap_control_receipts_are_reused_only_when_canonical(
 
 
 def test_eighth_github_controls_block_waits_for_idempotent_retry(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -1379,7 +1663,7 @@ def test_eighth_github_controls_block_waits_for_idempotent_retry(
 
 
 def test_ninth_github_controls_block_waits_for_windows_receipt_retry(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, isolated_controller_shutdown: None
 ) -> None:
     root = tmp_path / "protected"
     persist_bootstrap_state(
@@ -1453,14 +1737,31 @@ def test_local_install_recovery_rejects_context_not_bound_to_repair(
         bootstrap_runner._canonical(repair) + b"\n"
     )
     monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
-    monkeypatch.setattr(
-        bootstrap_runner,
-        "_run",
-        lambda *_args, **_kwargs: pytest.fail("external command must not run"),
-    )
+    calls: list[list[str]] = []
+
+    def allow_only_controller_shutdown(args: list[str], **_kwargs: object) -> str:
+        calls.append(args)
+        assert args[:2] == ["gh", "variable"]
+        assert args[2] in {"get", "set"}
+        assert args[3] in {
+            bootstrap_runner.ARMED_VARIABLE,
+            bootstrap_runner.CONTROLLER_VARIABLE,
+        }
+        if args[2] == "set":
+            assert args[4:6] == ["--body", "false"]
+            return ""
+        return "false"
+
+    monkeypatch.setattr(bootstrap_runner, "_run", allow_only_controller_shutdown)
 
     with pytest.raises(ValueError, match="LOCAL_RETRY_CONTEXT_INVALID"):
         bootstrap_runner._resume_transient_local_install_block(root)
+    assert [(args[2], args[3]) for args in calls] == [
+        ("set", bootstrap_runner.ARMED_VARIABLE),
+        ("get", bootstrap_runner.ARMED_VARIABLE),
+        ("set", bootstrap_runner.CONTROLLER_VARIABLE),
+        ("get", bootstrap_runner.CONTROLLER_VARIABLE),
+    ]
 
 
 def test_recover_exact_clean_local_install_block_through_protected_repair(
@@ -1517,7 +1818,10 @@ def test_recover_exact_clean_local_install_block_through_protected_repair(
     (root / "local-install-repair-operation-v1.json").write_bytes(
         bootstrap_runner._canonical(repair) + b"\n"
     )
-    baseline = {"heavy_run_ids": [], "request_issue_numbers": []}
+    baseline: dict[str, list[int]] = {
+        "heavy_run_ids": [],
+        "request_issue_numbers": [],
+    }
     (root / "github-activity-baseline-v1.json").write_bytes(
         bootstrap_runner._canonical(baseline) + b"\n"
     )
@@ -1528,6 +1832,13 @@ def test_recover_exact_clean_local_install_block_through_protected_repair(
 
     def fake_fixed_run(args: list[str], **_kwargs: object) -> str:
         calls.append(args)
+        if args[:3] == ["gh", "variable", "set"]:
+            assert args[3] in {
+                bootstrap_runner.ARMED_VARIABLE,
+                bootstrap_runner.CONTROLLER_VARIABLE,
+            }
+            assert args[4:6] == ["--body", "false"]
+            return ""
         if args == ["git", "fetch", "origin", "main"]:
             return ""
         if args == ["git", "rev-parse", "HEAD"]:
@@ -1676,14 +1987,31 @@ def test_local_install_recovery_rejects_partial_staging_before_any_command(
     monkeypatch.setattr(bootstrap_runner, "BOOTSTRAP_STAGING_ROOT", staging)
     monkeypatch.setattr(bootstrap_runner, "AGENT_ROOT", tmp_path / "agent")
     monkeypatch.setattr(bootstrap_runner, "BROKER_ROOT", tmp_path / "broker")
-    monkeypatch.setattr(
-        bootstrap_runner,
-        "_run",
-        lambda *_args, **_kwargs: pytest.fail("external command must not run"),
-    )
+    calls: list[list[str]] = []
+
+    def allow_only_controller_shutdown(args: list[str], **_kwargs: object) -> str:
+        calls.append(args)
+        assert args[:2] == ["gh", "variable"]
+        assert args[2] in {"get", "set"}
+        assert args[3] in {
+            bootstrap_runner.ARMED_VARIABLE,
+            bootstrap_runner.CONTROLLER_VARIABLE,
+        }
+        if args[2] == "set":
+            assert args[4:6] == ["--body", "false"]
+            return ""
+        return "false"
+
+    monkeypatch.setattr(bootstrap_runner, "_run", allow_only_controller_shutdown)
 
     with pytest.raises(ValueError, match="LOCAL_RETRY_PARTIAL_INSTALL"):
         bootstrap_runner._resume_transient_local_install_block(root)
+    assert [(args[2], args[3]) for args in calls] == [
+        ("set", bootstrap_runner.ARMED_VARIABLE),
+        ("get", bootstrap_runner.ARMED_VARIABLE),
+        ("set", bootstrap_runner.CONTROLLER_VARIABLE),
+        ("get", bootstrap_runner.CONTROLLER_VARIABLE),
+    ]
 
 
 def test_runtime_commit_defaults_to_the_public_binding(tmp_path: Path) -> None:
@@ -2403,6 +2731,341 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
 
     assert bootstrap_runner._runtime_commit(root) == package_token_merge
 
+    resume_head = "4" * 40
+    resume_merge = "5" * 40
+    resume_operation = _idempotent_resume_repair_operation(
+        prior_merge=package_token_merge,
+        repair_head=resume_head,
+        repair_merge=resume_merge,
+    )
+    (root / "github-controls-idempotent-resume-repair-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(resume_operation) + b"\n"
+    )
+    package_token_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-9-v1.json"
+    )
+    resume_retry = {
+        "activity_baseline_sha256": "6" * 64,
+        "bootstrap_id": BOOTSTRAP_ID,
+        "bootstrap_source_commit_sha": COMMIT,
+        "idempotent_resume_merge_commit_sha": resume_merge,
+        "idempotent_resume_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(resume_operation)
+        ).hexdigest(),
+        "idempotent_resume_pr_number": 194,
+        "installations": {"auditor": 2, "requester": 1},
+        "interrupted_phase": "QUALIFICATION_PENDING",
+        "interrupted_sequence": 43,
+        "interrupted_state_sha256": "7" * 64,
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            package_token_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": package_token_merge,
+        "schema_version": "1",
+    }
+    (root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json").write_bytes(
+        bootstrap_runner._canonical(resume_retry) + b"\n"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID",
+    ):
+        bootstrap_runner._runtime_commit(root)
+
+    prior_controls = {"protected_commit_sha": package_token_merge}
+    refreshed_controls = {"protected_commit_sha": resume_merge}
+    prior_controls_path = root / "github-controls-operation-before-runtime-upgrade-v1.json"
+    controls_path = root / "github-controls-operation-v1.json"
+    prior_controls_path.write_bytes(bootstrap_runner._canonical(prior_controls) + b"\n")
+    controls_path.write_bytes(bootstrap_runner._canonical(refreshed_controls) + b"\n")
+    refresh = {
+        "bootstrap_id": BOOTSTRAP_ID,
+        "prior_controls_operation_sha256": hashlib.sha256(
+            prior_controls_path.read_bytes()
+        ).hexdigest(),
+        "protected_commit_sha": resume_merge,
+        "refreshed_controls_operation_sha256": hashlib.sha256(
+            controls_path.read_bytes()
+        ).hexdigest(),
+        "runtime_upgrade_operation_sha256": hashlib.sha256(
+            (root / "github-controls-idempotent-resume-repair-operation-v1.json").read_bytes()
+        ).hexdigest(),
+        "schema_version": "1",
+    }
+    (root / "runtime-upgrade-controls-refresh-v1.json").write_bytes(
+        bootstrap_runner._canonical(refresh) + b"\n"
+    )
+
+    assert bootstrap_runner._runtime_commit(root) == resume_merge
+
+    resume_retry["prior_retry_receipt_sha256"] = "0" * 64
+    (root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json").write_bytes(
+        bootstrap_runner._canonical(resume_retry) + b"\n"
+    )
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_RETRY_INVALID",
+    ):
+        bootstrap_runner._runtime_commit(root)
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        ["../escape.py"],
+        ["scripts\\escape.py"],
+        ["scripts/ok.py", "scripts/ok.py"],
+        ["outside/file.py"],
+        ["tests/z.py", "scripts/a.py"],
+    ],
+)
+def test_idempotent_resume_paths_fail_closed(paths: list[str]) -> None:
+    assert bootstrap_runner._valid_idempotent_resume_paths(paths) is False
+
+
+def test_idempotent_resume_github_authorization_binds_pr_check_paths_and_graph(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    operation = _idempotent_resume_repair_operation(
+        prior_merge="3" * 40,
+        repair_head="4" * 40,
+        repair_merge="5" * 40,
+    )
+    observed_paths = tuple(cast(list[str], operation["changed_paths"]))
+    graph_calls: list[dict[str, object]] = []
+
+    def fake_run(command: list[str], *, cwd: Path, **_kwargs: object) -> str:
+        assert cwd == tmp_path
+        if command[:3] == ["gh", "pr", "view"]:
+            return json.dumps(
+                {
+                    "baseRefName": "main",
+                    "baseRefOid": operation["base_commit_sha"],
+                    "headRefName": operation["branch"],
+                    "headRefOid": operation["head_commit_sha"],
+                    "isDraft": False,
+                    "mergeCommit": {"oid": operation["merge_commit_sha"]},
+                    "number": operation["pr_number"],
+                    "state": "MERGED",
+                }
+            )
+        if command[:3] == ["gh", "pr", "checks"]:
+            return json.dumps(
+                [
+                    {
+                        "bucket": "pass",
+                        "name": "catalog-controller-policy",
+                        "state": "SUCCESS",
+                    }
+                ]
+            )
+        if command == ["git", "rev-parse", "origin/main"]:
+            return str(operation["merge_commit_sha"])
+        raise AssertionError(command)
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_git_changed_paths",
+        lambda *_args: observed_paths,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_verify_github_controls_repair_graph",
+        lambda _source, value: graph_calls.append(value),
+    )
+
+    bootstrap_runner._verify_idempotent_resume_github_authorization(tmp_path, operation)
+
+    assert graph_calls == [operation]
+
+    operation["changed_paths"] = ["config/unrelated.json"]
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_PATHS_INVALID",
+    ):
+        bootstrap_runner._verify_idempotent_resume_github_authorization(tmp_path, operation)
+
+
+def test_idempotent_resume_github_authorization_rejects_unmerged_pr(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    operation = _idempotent_resume_repair_operation(
+        prior_merge="3" * 40,
+        repair_head="4" * 40,
+        repair_merge="5" * 40,
+    )
+
+    def fake_run(command: list[str], *, cwd: Path, **_kwargs: object) -> str:
+        assert cwd == tmp_path
+        if command[:3] == ["gh", "pr", "view"]:
+            return json.dumps(
+                {
+                    "baseRefName": "main",
+                    "baseRefOid": operation["base_commit_sha"],
+                    "headRefName": operation["branch"],
+                    "headRefOid": operation["head_commit_sha"],
+                    "isDraft": False,
+                    "mergeCommit": None,
+                    "number": operation["pr_number"],
+                    "state": "OPEN",
+                }
+            )
+        if command[:3] == ["gh", "pr", "checks"]:
+            return "[]"
+        raise AssertionError(command)
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_GITHUB_INVALID",
+    ):
+        bootstrap_runner._verify_idempotent_resume_github_authorization(tmp_path, operation)
+
+
+def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "installed"
+    (root / "state").mkdir(parents=True)
+    (root / "receipts").mkdir()
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    state_document = {
+        "bootstrap_id": BOOTSTRAP_ID,
+        "phase": "QUALIFICATION_PENDING",
+        "sequence": 43,
+    }
+    state_path.write_bytes(bootstrap_runner._canonical(state_document) + b"\n")
+    original_state = state_path.read_bytes()
+    baseline: dict[str, object] = {
+        "heavy_run_ids": [],
+        "request_issue_numbers": [],
+    }
+    (root / "github-activity-baseline-v1.json").write_bytes(
+        bootstrap_runner._canonical(baseline) + b"\n"
+    )
+    prior_runtime = "3" * 40
+    protected_commit = "5" * 40
+    retry = {
+        "activity_baseline_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(baseline)
+        ).hexdigest(),
+        "bootstrap_id": BOOTSTRAP_ID,
+        "interrupted_state_sha256": hashlib.sha256(original_state).hexdigest(),
+    }
+    (root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json").write_bytes(
+        bootstrap_runner._canonical(retry) + b"\n"
+    )
+    upgrade_operation = {
+        "prior_runtime_commit_sha": prior_runtime,
+    }
+    (root / "github-controls-idempotent-resume-repair-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(upgrade_operation) + b"\n"
+    )
+    old_controls = {"protected_commit_sha": prior_runtime}
+    controls_path = root / "github-controls-operation-v1.json"
+    controls_path.write_bytes(bootstrap_runner._canonical(old_controls) + b"\n")
+    source = tmp_path / "source"
+    source.mkdir()
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "load_bootstrap_state",
+        lambda _path: SimpleNamespace(
+            phase="QUALIFICATION_PENDING",
+            sequence=43,
+        ),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_runtime_commit",
+        lambda _root, **_kwargs: protected_commit,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_context",
+        lambda _root: {
+            "repository": bootstrap_runner.REPOSITORY,
+            "source_commit_sha": protected_commit,
+            "source_root": str(source),
+        },
+    )
+
+    def fake_run(command: list[str], **_kwargs: object) -> str:
+        if command[1:3] == ["rev-parse", "origin/main"]:
+            return protected_commit
+        if command[1:3] == ["status", "--porcelain=v1"]:
+            return ""
+        return protected_commit
+
+    def fake_prepare(
+        installed_root: Path,
+        commit: str,
+        *,
+        live_step_name: str,
+    ) -> dict[str, object]:
+        calls.append(live_step_name)
+        receipt: dict[str, object] = {"protected_commit_sha": commit}
+        (installed_root / "github-controls-operation-v1.json").write_bytes(
+            bootstrap_runner._canonical(receipt) + b"\n"
+        )
+        return receipt
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+
+    rejected_authorizations: list[tuple[Path, dict[str, object]]] = []
+
+    def reject_authorization(
+        checkout: Path,
+        operation: dict[str, object],
+    ) -> None:
+        rejected_authorizations.append((checkout, operation))
+        raise ValueError("authorization-rejected")
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_verify_idempotent_resume_github_authorization",
+        reject_authorization,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_prepare_github_controls_operation",
+        fake_prepare,
+    )
+
+    with pytest.raises(ValueError, match="authorization-rejected"):
+        bootstrap_runner._refresh_interrupted_runtime_controls(root)
+
+    assert rejected_authorizations == [(source, upgrade_operation)]
+    assert calls == []
+    assert controls_path.read_bytes() == bootstrap_runner._canonical(old_controls) + b"\n"
+    assert not (root / "github-controls-operation-before-runtime-upgrade-v1.json").exists()
+    assert not (root / "runtime-upgrade-controls-refresh-v1.json").exists()
+    assert state_path.read_bytes() == original_state
+
+    verified_authorizations: list[tuple[Path, dict[str, object]]] = []
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_verify_idempotent_resume_github_authorization",
+        lambda checkout, operation: verified_authorizations.append((checkout, operation)),
+    )
+    bootstrap_runner._refresh_interrupted_runtime_controls(root)
+    bootstrap_runner._refresh_interrupted_runtime_controls(root)
+
+    assert verified_authorizations == [
+        (source, upgrade_operation),
+        (source, upgrade_operation),
+    ]
+    assert calls == ["github_controls_runtime_upgrade_live_1"]
+    assert state_path.read_bytes() == original_state
+    assert (root / "runtime-upgrade-controls-refresh-v1.json").is_file()
+
 
 def test_post_repair_phases_all_use_the_runtime_commit() -> None:
     for handler in (
@@ -2445,12 +3108,12 @@ def test_main_tries_local_recovery_after_merge_recovery_declines(
     monkeypatch.setattr(
         bootstrap_runner,
         "_resume_transient_merge_block",
-        lambda _root: recoveries.append("merge") or False,
+        lambda _root: _append_then_return(recoveries, "merge", False),
     )
     monkeypatch.setattr(
         bootstrap_runner,
         "_resume_transient_local_install_block",
-        lambda _root: recoveries.append("local") or True,
+        lambda _root: _append_then_return(recoveries, "local", True),
     )
     monkeypatch.setattr(
         sys,
@@ -2635,6 +3298,1560 @@ def test_required_check_cannot_be_substituted(monkeypatch) -> None:
         bootstrap_runner._wait_for_required_checks("163", Path("C:/source"))
 
 
+def test_qualification_checkpoint_write_is_exclusive_and_exact(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "qualification-substeps-v1.checkpoint.json"
+    first = {"schema_version": "1", "value": "first"}
+    second = {"schema_version": "1", "value": "second"}
+
+    digest = bootstrap_runner._write_exact_canonical_checkpoint(path, first)
+
+    assert digest == hashlib.sha256(path.read_bytes()).hexdigest()
+    original = path.read_bytes()
+    with pytest.raises(ValueError, match="CHECKPOINT_CONFLICT"):
+        bootstrap_runner._write_exact_canonical_checkpoint(path, second)
+    assert path.read_bytes() == original
+
+    linked = tmp_path / "linked-checkpoint.json"
+    linked.write_bytes(original)
+    path.unlink()
+    try:
+        path.hardlink_to(linked)
+    except (OSError, NotImplementedError):
+        pytest.skip("hard links are unavailable in this Windows test environment")
+    with pytest.raises(ValueError, match="CHECKPOINT_PATH_INVALID"):
+        bootstrap_runner._write_exact_canonical_checkpoint(path, first)
+
+
+def test_first_checkpoint_write_recovers_crash_before_atomic_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "first-checkpoint.json"
+    value = {"schema_version": "1", "value": "sealed"}
+    original_publish = bootstrap_runner._publish_checkpoint_temp
+    original_fsync = bootstrap_runner.os.fsync
+    flushed = False
+
+    def record_fsync(descriptor: int) -> None:
+        nonlocal flushed
+        original_fsync(descriptor)
+        flushed = True
+
+    def crash_before_publish(
+        source: Path, destination: Path, *, replace_existing: bool
+    ) -> None:
+        source_path = Path(source)
+        destination_path = Path(destination)
+        assert source_path.parent == destination_path.parent == path.parent
+        assert destination_path == path
+        assert source_path != path
+        assert source_path.read_bytes() == bootstrap_runner._canonical(value) + b"\n"
+        assert replace_existing is False
+        assert flushed is True
+        assert not path.exists()
+        raise SystemExit("FAULT_AFTER_TEMP_FSYNC")
+
+    monkeypatch.setattr(bootstrap_runner.os, "fsync", record_fsync)
+    monkeypatch.setattr(
+        bootstrap_runner, "_publish_checkpoint_temp", crash_before_publish
+    )
+
+    with pytest.raises(SystemExit, match="FAULT_AFTER_TEMP_FSYNC"):
+        bootstrap_runner._write_exact_canonical_checkpoint(path, value)
+
+    temporary = list(tmp_path.glob(f".{path.name}.*.tmp"))
+    assert len(temporary) == 1
+    assert temporary[0].read_bytes() == bootstrap_runner._canonical(value) + b"\n"
+
+    monkeypatch.setattr(
+        bootstrap_runner, "_publish_checkpoint_temp", original_publish
+    )
+    monkeypatch.setattr(bootstrap_runner.os, "fsync", original_fsync)
+    digest = bootstrap_runner._write_exact_canonical_checkpoint(path, value)
+
+    assert digest == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert path.read_bytes() == bootstrap_runner._canonical(value) + b"\n"
+    assert list(tmp_path.glob(f".{path.name}.*.tmp")) == []
+
+
+def test_first_checkpoint_write_cleans_safe_temp_after_publish_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "failed-checkpoint.json"
+    value = {"schema_version": "1", "value": "sealed"}
+
+    def fail_publish(
+        _source: Path, _destination: Path, *, replace_existing: bool
+    ) -> None:
+        assert replace_existing is False
+        raise OSError("publication failed")
+
+    monkeypatch.setattr(bootstrap_runner, "_publish_checkpoint_temp", fail_publish)
+
+    with pytest.raises(ValueError, match="CHECKPOINT_WRITE_FAILED"):
+        bootstrap_runner._write_exact_canonical_checkpoint(path, value)
+
+    assert not path.exists()
+    assert list(tmp_path.glob(f".{path.name}.*.tmp")) == []
+
+
+def test_checkpoint_lock_rejects_hardlink_before_any_write(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "locked-checkpoint.json"
+    lock_path = checkpoint.with_name(f".{checkpoint.name}.lock")
+    lock_source = tmp_path / "lock-source"
+    lock_source.write_bytes(b"0")
+    try:
+        lock_path.hardlink_to(lock_source)
+    except (OSError, NotImplementedError):
+        pytest.skip("hard links are unavailable in this Windows test environment")
+
+    with pytest.raises(ValueError, match="CHECKPOINT_LOCK_INVALID"):
+        bootstrap_runner._write_exact_canonical_checkpoint(
+            checkpoint, {"schema_version": "1"}
+        )
+    assert not checkpoint.exists()
+
+
+def test_checkpoint_lock_excludes_another_process(tmp_path: Path) -> None:
+    assert hasattr(bootstrap_runner, "_exclusive_checkpoint_lock"), (
+        "checkpoint writes need a real cross-process lock"
+    )
+    checkpoint = tmp_path / "process-checkpoint.json"
+    repository = Path(__file__).resolve().parents[1]
+    child = (
+        "from pathlib import Path\n"
+        "import sys\n"
+        "from scripts import run_catalog_bootstrap_assistant as runner\n"
+        "try:\n"
+        "    with runner._exclusive_checkpoint_lock("
+        "Path(sys.argv[1]), timeout_seconds=0.2):\n"
+        "        raise SystemExit(3)\n"
+        "except ValueError as exc:\n"
+        "    print(str(exc))\n"
+        "    raise SystemExit(0 if str(exc) == "
+        "'CATALOG_BOOTSTRAP_CHECKPOINT_LOCKED' else 4)\n"
+    )
+
+    with bootstrap_runner._exclusive_checkpoint_lock(checkpoint):
+        result = subprocess.run(
+            [sys.executable, "-c", child, str(checkpoint)],
+            cwd=repository,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "CATALOG_BOOTSTRAP_CHECKPOINT_LOCKED"
+
+
+def test_checkpoint_revision_cas_rejects_stale_process(tmp_path: Path) -> None:
+    assert hasattr(bootstrap_runner, "_exclusive_checkpoint_lock"), (
+        "checkpoint revisions need a real cross-process lock"
+    )
+    checkpoint = tmp_path / "revision-checkpoint.json"
+    ready = tmp_path / "child-ready"
+    previous = {"schema_version": "1", "revision": "previous"}
+    candidate = {"schema_version": "1", "revision": "candidate"}
+    competing = {"schema_version": "1", "revision": "competing"}
+    checkpoint.write_bytes(bootstrap_runner._canonical(previous) + b"\n")
+    repository = Path(__file__).resolve().parents[1]
+    child = (
+        "import json\n"
+        "from pathlib import Path\n"
+        "import sys\n"
+        "from scripts import run_catalog_bootstrap_assistant as runner\n"
+        "path = Path(sys.argv[1])\n"
+        "Path(sys.argv[2]).write_text('ready', encoding='utf-8')\n"
+        "try:\n"
+        "    runner._write_qualification_checkpoint_revision("
+        "path, json.loads(sys.argv[3]), json.loads(sys.argv[4]))\n"
+        "except ValueError as exc:\n"
+        "    print(str(exc))\n"
+        "    raise SystemExit(0 if str(exc) == "
+        "'CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_CONFLICT' else 4)\n"
+        "raise SystemExit(3)\n"
+    )
+
+    with bootstrap_runner._exclusive_checkpoint_lock(checkpoint):
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                child,
+                str(checkpoint),
+                str(ready),
+                json.dumps(candidate, separators=(",", ":"), sort_keys=True),
+                json.dumps(previous, separators=(",", ":"), sort_keys=True),
+            ],
+            cwd=repository,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists()
+        checkpoint.write_bytes(bootstrap_runner._canonical(competing) + b"\n")
+
+    stdout, stderr = process.communicate(timeout=10)
+    assert process.returncode == 0, stderr
+    assert stdout.strip() == "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_CONFLICT"
+    assert checkpoint.read_bytes() == bootstrap_runner._canonical(competing) + b"\n"
+
+
+def test_requester_qualification_uses_terminal_status_without_ticket(
+    tmp_path: Path, monkeypatch
+) -> None:
+    broker_root = tmp_path / "broker"
+    status_dir = broker_root / "campaign-status"
+    status_dir.mkdir(parents=True)
+    request_id = "018f47a2-6e91-7c34-8000-000000000001"
+    request_payload = {
+        "schema_version": "1",
+        "request_id": request_id,
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "launch_generation": 1,
+        "launch_ticket_sha256": "3" * 64,
+        "previous_terminal_request_sha256": None,
+        "campaign_definition_sha256": "a" * 64,
+        "prompt_sha256": "b" * 64,
+        "authorization": "USER_EXPLICITLY_REQUESTED_NEW_CATALOG_RUN",
+        "free_resources_only": True,
+        "automatic_recovery": True,
+        "max_same_failure_count": 3,
+        "requester_public_key_sha256": "c" * 64,
+        "requester_attestation_algorithm": "rsa-pss-sha256-v1",
+        "requester_attestation_b64": "A" * 300,
+    }
+    request_sha256 = hashlib.sha256(
+        bootstrap_runner._canonical(request_payload)
+    ).hexdigest()
+    status = {
+        "schema_version": "1",
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "state": "terminal",
+        "launch_generation": 1,
+        "launch_ticket_sha256": "3" * 64,
+        "submission_key_sha256": "1" * 64,
+        "request_id": request_id,
+        "request_sha256": request_sha256,
+        "issue_number": 123,
+        "last_github_checked_at": "2026-08-25T10:00:00Z",
+        "updated_at": "2026-08-25T10:00:00Z",
+        "status_sha256": "0" * 64,
+    }
+    status["status_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(status)
+    ).hexdigest()
+    (status_dir / "controller-bootstrap-qualification-v1.status.json").write_bytes(
+        bootstrap_runner._canonical(status) + b"\n"
+    )
+    root = tmp_path / "installed"
+    root.mkdir()
+    (root / "requester-public-v1.json").write_bytes(
+        bootstrap_runner._canonical(
+            {"app_slug": "aurora-catalog-request-f10c7b40e1"}
+        )
+        + b"\n"
+    )
+    first = {
+        "schema_version": "1",
+        "status": "existing",
+        "reason_code": "REQUEST_ALREADY_EXISTS",
+        "submission_key_sha256": "1" * 64,
+        "request_id": request_id,
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "launch_generation": 1,
+        "issue_number": 123,
+        "request_sha256": request_sha256,
+        "observed_at": "2026-08-25T10:01:00Z",
+        "receipt_sha256": "0" * 64,
+    }
+    first["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(first)
+    ).hexdigest()
+    issue = {
+        "number": 123,
+        "state": "closed",
+        "state_reason": "completed",
+        "html_url": f"https://github.com/{bootstrap_runner.REPOSITORY}/issues/123",
+        "title": f"[AURORA CATALOG RUN REQUEST] {request_id}",
+        "body": "```json\n"
+        + bootstrap_runner._canonical(request_payload).decode()
+        + "\n```\n",
+        "user": {"login": "aurora-catalog-request-f10c7b40e1[bot]"},
+        "closed_by": {"login": "github-actions[bot]"},
+    }
+    controller = {
+        "schema_version": "1",
+        "issue_number": 123,
+        "state": "BLOCKED",
+        "reason_code": "CATALOG_CONTROLLER_DISABLED",
+        "writer_job_id": "report_nonexecuting_decision",
+        "request_sha256": request_sha256,
+        "receipt_sha256": "0" * 64,
+    }
+    controller["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(
+            {key: value for key, value in controller.items() if key != "receipt_sha256"}
+        )
+    ).hexdigest()
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(bootstrap_runner, "BROKER_ROOT", broker_root)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_context",
+        lambda _root: {
+            "repository": bootstrap_runner.REPOSITORY,
+            "source_commit_sha": COMMIT,
+            "source_root": str(tmp_path / "source"),
+        },
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_invoke_bootstrap_request",
+        lambda _source: _append_then_return(calls, first, first),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_parse_terminal_controller_receipt",
+        lambda _issue: controller,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+            lambda args, **_kwargs: json.dumps(issue)
+            if args[:2] == ["gh", "api"]
+            and args[2] == f"/repos/{bootstrap_runner.REPOSITORY}/issues/123"
+            else pytest.fail(f"unexpected command: {args}"),
+    )
+    clock = iter((0.0, 301.0))
+    monkeypatch.setattr(bootstrap_runner.time, "monotonic", lambda: next(clock))
+
+    result = bootstrap_runner._run_requester_qualification(
+        root, tmp_path / "source"
+    )
+
+    assert result["issue_number"] == 123
+    assert len(calls) == 2
+    assert not (broker_root / "launch-tickets").exists()
+
+
+def _qualification_pending_root(tmp_path: Path) -> Path:
+    root = tmp_path / "qualification-root"
+    root.mkdir()
+    source = tmp_path / "source"
+    source.mkdir()
+    state = initial_bootstrap_state(BOOTSTRAP_ID, COMMIT)
+    names: tuple[EventName, ...] = (
+        "precheck_passed",
+        "requester_created",
+        "requester_installed",
+        "auditor_created",
+        "auditor_installed",
+        "public_binding_committed",
+        "protected_merge_observed",
+        "local_install_verified",
+        "github_controls_verified",
+    )
+    for sequence, name in enumerate(names, 1):
+        state = advance_bootstrap_state(state, event(name, sequence))
+    persist_bootstrap_state(root / "state/catalog-bootstrap-state-v1.json", state)
+    controls = {
+        "protected_commit_sha": COMMIT,
+        "apply_receipt_sha256": "1" * 64,
+        "auditor_secret_name": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
+        "first_live_qualification": _fake_live_receipt(100),
+    }
+    baseline: dict[str, list[int]] = {
+        "request_issue_numbers": [],
+        "heavy_run_ids": [],
+    }
+    (root / "github-controls-operation-v1.json").write_bytes(
+        bootstrap_runner._canonical(controls) + b"\n"
+    )
+    (root / "github-activity-baseline-v1.json").write_bytes(
+        bootstrap_runner._canonical(baseline) + b"\n"
+    )
+    return root
+
+
+def _fake_live_receipt(run_id: int) -> dict[str, object]:
+    identity = {
+        "schema_version": "1",
+        "observer_context": "live_qualification",
+        "protected_commit_sha": COMMIT,
+        "admission_receipt_sha256": f"{run_id:064x}",
+        "terminal_receipt_sha256": f"{run_id + 1:064x}",
+    }
+    receipt = {
+        **identity,
+        "receipt_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(identity)
+        ).hexdigest(),
+    }
+    return {
+        "run_id": run_id,
+        "run_url": f"https://example.test/runs/{run_id}",
+        "file_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(receipt) + b"\n"
+        ).hexdigest(),
+        "receipt": receipt,
+    }
+
+
+_QUALIFICATION_WORKFLOW_DISPLAY_NAMES = {
+    "catalog-live-controls-qualification.yml": "Catalog live controls qualification",
+    "catalog-controller-policy-check.yml": "Catalog controller policy",
+    "catalog-controller-qualification.yml": (
+        "AURORA catalog controller synthetic qualification"
+    ),
+    "catalog-capacity-calibration.yml": "Catalog capacity calibration",
+    "catalog-artifact-keeper.yml": "Catalog artifact keeper",
+}
+
+
+def _fake_qualification_api_run(
+    run_id: int,
+    step_name: str,
+    *,
+    protected_commit_sha: str = COMMIT,
+) -> dict[str, object]:
+    workflow = bootstrap_runner._QUALIFICATION_STEP_WORKFLOWS[step_name]
+    return {
+        "id": run_id,
+        "head_sha": protected_commit_sha,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-25T10:00:01Z",
+        "html_url": f"https://example.test/runs/{run_id}",
+        "path": f".github/workflows/{workflow}",
+    }
+
+
+def _fake_qualification_view(run: dict[str, object], workflow: str) -> str:
+    return json.dumps({**run, "path": f".github/workflows/{workflow}"})
+
+
+@pytest.mark.parametrize(
+    "step_name",
+    tuple(bootstrap_runner._QUALIFICATION_STEP_WORKFLOWS),
+)
+def test_dispatch_intent_recovers_accepted_run_without_redispatch(
+    step_name: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert hasattr(bootstrap_runner, "_run_qualification_workflow_step"), (
+        "qualification dispatch needs persistent intent reconciliation"
+    )
+    root = tmp_path / "installed"
+    root.mkdir()
+    workflow = bootstrap_runner._QUALIFICATION_STEP_WORKFLOWS[step_name]
+    run = _fake_qualification_api_run(7001, step_name)
+    runs: list[dict[str, object]] = []
+    dispatch_calls = 0
+
+    def fake_run(args: list[str], **_kwargs: object) -> str:
+        nonlocal dispatch_calls
+        if args[:4] == ["gh", "api", "--paginate", "--slurp"]:
+            return json.dumps([{"workflow_runs": list(runs)}])
+        if args[:3] == ["gh", "workflow", "run"]:
+            dispatch_calls += 1
+            runs.append(run)
+            raise RuntimeError("FAULT_AFTER_WORKFLOW_DISPATCH_ACCEPTED")
+        if args[:2] == ["gh", "api"] and args[2].endswith(
+            f"/actions/runs/{run['id']}"
+        ):
+            return _fake_qualification_view(run, workflow)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+    monkeypatch.setattr(
+        bootstrap_runner.subprocess,
+        "run",
+        lambda args, **_kwargs: subprocess.CompletedProcess(args, 0, "", ""),
+    )
+
+    with pytest.raises(RuntimeError, match="DISPATCH_ACCEPTED"):
+        bootstrap_runner._run_qualification_workflow_step(root, step_name, COMMIT)
+
+    intent_path = bootstrap_runner._qualification_dispatch_intent_path(
+        root, step_name
+    )
+    intent_bytes = intent_path.read_bytes()
+    intent = json.loads(intent_bytes)
+    assert intent_bytes == bootstrap_runner._canonical(intent) + b"\n"
+    unsigned = {**intent, "correlation_key_sha256": "0" * 64}
+    assert intent["correlation_key_sha256"] == hashlib.sha256(
+        bootstrap_runner._canonical(unsigned)
+    ).hexdigest()
+
+    observed = bootstrap_runner._run_qualification_workflow_step(
+        root, step_name, COMMIT
+    )
+
+    assert observed["databaseId"] == run["id"]
+    assert dispatch_calls == 1
+    assert intent_path.read_bytes() == intent_bytes
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected"),
+    (
+        ("zero", "QUALIFICATION_RUN_NOT_FOUND"),
+        ("multiple", "QUALIFICATION_RUN_AMBIGUOUS"),
+        ("wrong_identity", "QUALIFICATION_RUN_IDENTITY_AMBIGUOUS"),
+    ),
+)
+def test_dispatch_intent_fails_closed_when_reconciliation_is_not_unique(
+    scenario: str,
+    expected: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert hasattr(bootstrap_runner, "_run_qualification_workflow_step"), (
+        "qualification dispatch needs persistent intent reconciliation"
+    )
+    root = tmp_path / "installed"
+    root.mkdir()
+    step_name = "policy_1"
+    exact = _fake_qualification_api_run(7101, step_name)
+    wrong = _fake_qualification_api_run(
+        7102, step_name, protected_commit_sha="b" * 40
+    )
+    runs: list[dict[str, object]] = []
+    dispatch_calls = 0
+
+    def fake_run(args: list[str], **_kwargs: object) -> str:
+        nonlocal dispatch_calls
+        if args[:4] == ["gh", "api", "--paginate", "--slurp"]:
+            return json.dumps([{"workflow_runs": list(runs)}])
+        if args[:3] == ["gh", "workflow", "run"]:
+            dispatch_calls += 1
+            if scenario == "multiple":
+                runs.extend((exact, {**exact, "id": 7103}))
+            elif scenario == "wrong_identity":
+                runs.append(wrong)
+            raise RuntimeError("FAULT_AFTER_WORKFLOW_DISPATCH_ACCEPTED")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+    with pytest.raises(RuntimeError, match="DISPATCH_ACCEPTED"):
+        bootstrap_runner._run_qualification_workflow_step(root, step_name, COMMIT)
+
+    if scenario == "zero":
+        clock = iter((0.0, 0.0, 301.0))
+        monkeypatch.setattr(bootstrap_runner.time, "monotonic", lambda: next(clock))
+        monkeypatch.setattr(bootstrap_runner.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(ValueError, match=expected):
+        bootstrap_runner._run_qualification_workflow_step(root, step_name, COMMIT)
+    assert dispatch_calls == 1
+
+
+def test_qualification_reentry_does_not_redispatch_a_checkpointed_step(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _qualification_pending_root(tmp_path)
+    source = tmp_path / "source"
+    dispatched: list[str] = []
+    requester_calls = 0
+    live_calls = 0
+
+    def fake_live(
+        _root: Path, _commit: str, *, step_name: str | None = None
+    ) -> dict[str, object]:
+        nonlocal live_calls
+        assert step_name in {"live_2", "live_3"}
+        live_calls += 1
+        return _fake_live_receipt(100 + live_calls)
+
+    def fake_dispatch(
+        workflow: str,
+        _commit: str,
+        *,
+        baseline_run_ids: set[int] | None = None,
+    ) -> dict[str, object]:
+        assert baseline_run_ids == set()
+        dispatched.append(workflow)
+        run_id = 200 + len(dispatched)
+        return {
+            "databaseId": run_id,
+            "headSha": COMMIT,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "success",
+            "url": f"https://example.test/runs/{run_id}",
+        }
+
+    def fake_requester(*_args: object, **_kwargs: object) -> dict[str, object]:
+        nonlocal requester_calls
+        requester_calls += 1
+        return {
+            "issue_number": 777,
+            "submission_key_sha256": "1" * 64,
+            "request_sha256": "2" * 64,
+            "request_id": "018f47a2-6e91-7c34-8000-000000000001",
+            "launch_ticket_sha256": "3" * 64,
+            "status_sha256": "4" * 64,
+            "requester_receipt_sha256": "5" * 64,
+            "requester_receipt_file_sha256": "6" * 64,
+            "issue_identity_sha256": "7" * 64,
+            "issue_sha256": "8" * 64,
+            "controller_receipt_sha256": "9" * 64,
+            "bootstrap_seal_sha256": "a" * 64,
+            "duplicate_call_proof_sha256": "3" * 64,
+        }
+
+    monkeypatch.setattr(bootstrap_runner, "_runtime_commit", lambda _root: COMMIT)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_context",
+        lambda _root: {
+            "repository": bootstrap_runner.REPOSITORY,
+            "source_commit_sha": COMMIT,
+            "source_root": str(source),
+        },
+    )
+    monkeypatch.setattr(bootstrap_runner, "_run_live_qualification", fake_live)
+    monkeypatch.setattr(bootstrap_runner, "_dispatch_workflow", fake_dispatch)
+    monkeypatch.setattr(bootstrap_runner, "_list_workflow_runs", lambda _workflow: [])
+    monkeypatch.setattr(bootstrap_runner, "_run_requester_qualification", fake_requester)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_github_activity_snapshot",
+        lambda: {"request_issue_numbers": [777], "heavy_run_ids": []},
+    )
+    monkeypatch.setattr(bootstrap_runner, "_advance", lambda *_args: None)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_revalidate_qualification_step",
+        lambda *_args, **_kwargs: None,
+        raising=False,
+    )
+    original_writer = bootstrap_runner._write_exact_canonical_checkpoint
+    faulted = False
+
+    def fail_after_live_2(path: Path, value: object) -> str:
+        nonlocal faulted
+        digest = original_writer(path, value)
+        if (
+            not faulted
+            and path.name == bootstrap_runner.QUALIFICATION_CHECKPOINT_FILENAME
+            and isinstance(value, dict)
+            and value.get("steps", [{}])[-1].get("name") == "live_2"
+        ):
+            faulted = True
+            raise RuntimeError("FAULT_AFTER_CHECKPOINT_WRITE")
+        return digest
+
+    monkeypatch.setattr(
+        bootstrap_runner, "_write_exact_canonical_checkpoint", fail_after_live_2
+    )
+    with pytest.raises(RuntimeError, match="FAULT_AFTER_CHECKPOINT_WRITE"):
+        bootstrap_runner.run_qualifications(root)
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_write_exact_canonical_checkpoint",
+        original_writer,
+    )
+    bootstrap_runner.run_qualifications(root)
+
+    assert live_calls == 2
+    assert requester_calls == 1
+    assert dispatched.count("catalog-controller-policy-check.yml") == 3
+    assert dispatched.count("catalog-controller-qualification.yml") == 3
+    assert dispatched.count("catalog-capacity-calibration.yml") == 1
+    assert dispatched.count("catalog-artifact-keeper.yml") == 1
+
+
+def test_corrupt_qualification_checkpoint_blocks_before_any_dispatch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _qualification_pending_root(tmp_path)
+    checkpoint_path = root / bootstrap_runner.QUALIFICATION_CHECKPOINT_FILENAME
+    checkpoint_path.write_bytes(b'{"schema_version":"1"')
+    original = checkpoint_path.read_bytes()
+    monkeypatch.setattr(bootstrap_runner, "_runtime_commit", lambda _root: COMMIT)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_context",
+        lambda _root: {
+            "repository": bootstrap_runner.REPOSITORY,
+            "source_commit_sha": COMMIT,
+            "source_root": str(tmp_path / "source"),
+        },
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run_live_qualification",
+        lambda *_args: pytest.fail("dispatch must not follow a corrupt checkpoint"),
+    )
+
+    with pytest.raises(ValueError, match="QUALIFICATION_CHECKPOINT_INVALID"):
+        bootstrap_runner.run_qualifications(root)
+    assert checkpoint_path.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    (
+        ("commit", "QUALIFICATION_RUN_INVALID"),
+        ("conclusion", "QUALIFICATION_RUN_INVALID"),
+    ),
+)
+def test_stored_workflow_receipt_must_bind_exact_commit_and_success(
+    mutation: str, expected: str, tmp_path: Path
+) -> None:
+    receipt = {
+        "databaseId": 901,
+        "headSha": "b" * 40 if mutation == "commit" else COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "failure" if mutation == "conclusion" else "success",
+        "url": "https://example.test/runs/901",
+    }
+    entry: dict[str, object] = {
+        "name": "policy_1",
+        "receipt": receipt,
+        "receipt_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(receipt)
+        ).hexdigest(),
+    }
+    with pytest.raises(ValueError, match=expected):
+        bootstrap_runner._revalidate_qualification_step(
+            tmp_path,
+            entry,
+            protected_commit_sha=COMMIT,
+        )
+
+
+def test_stored_workflow_receipt_rejects_wrong_workflow_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    receipt = {
+        "databaseId": 902,
+        "headSha": COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://example.test/runs/902",
+    }
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_list_workflow_runs",
+        lambda _workflow: pytest.fail("revalidation must not list the latest 50 runs"),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda *_args, **_kwargs: json.dumps(
+            {
+                "id": receipt["databaseId"],
+                "head_sha": receipt["headSha"],
+                "event": receipt["event"],
+                "status": receipt["status"],
+                "conclusion": receipt["conclusion"],
+                "html_url": receipt["url"],
+                "path": ".github/workflows/other.yml",
+            }
+        ),
+    )
+    with pytest.raises(ValueError, match="QUALIFICATION_RUN_INVALID"):
+        bootstrap_runner._revalidate_qualification_step(
+            tmp_path,
+            {
+                "name": "policy_1",
+                "receipt": receipt,
+                "receipt_sha256": hashlib.sha256(
+                    bootstrap_runner._canonical(receipt)
+                ).hexdigest(),
+            },
+            protected_commit_sha=COMMIT,
+        )
+
+
+def test_stored_workflow_run_is_revalidated_directly_by_run_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = {
+        "databaseId": 904,
+        "headSha": COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://example.test/runs/904",
+    }
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_list_workflow_runs",
+        lambda _workflow: pytest.fail("revalidation must not list the latest 50 runs"),
+    )
+
+    def fake_run(args: list[str], **_kwargs: object) -> str:
+        commands.append(args)
+        return json.dumps(
+            {
+                "id": receipt["databaseId"],
+                "head_sha": receipt["headSha"],
+                "event": receipt["event"],
+                "status": receipt["status"],
+                "conclusion": receipt["conclusion"],
+                "html_url": receipt["url"],
+                "path": ".github/workflows/catalog-controller-policy-check.yml",
+            }
+        )
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+
+    observed = bootstrap_runner._read_stored_workflow_run(
+        "catalog-controller-policy-check.yml",
+        receipt,
+        protected_commit_sha=COMMIT,
+    )
+
+    assert observed == receipt
+    assert len(commands) == 1
+    assert commands == [
+        [
+            "gh",
+            "api",
+            f"/repos/{bootstrap_runner.REPOSITORY}/actions/runs/904",
+        ]
+    ]
+
+
+def test_stored_live_receipt_rejects_changed_artifact(
+    tmp_path: Path, monkeypatch
+) -> None:
+    receipt = _fake_live_receipt(903)
+    entry: dict[str, object] = {
+        "name": "live_2",
+        "receipt": receipt,
+        "receipt_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(receipt)
+        ).hexdigest(),
+    }
+    run = {
+        "databaseId": 903,
+        "headSha": COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "url": receipt["run_url"],
+    }
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_read_stored_workflow_run",
+        lambda *_args, **_kwargs: run,
+    )
+    changed = {**receipt, "file_sha256": "e" * 64}
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_download_live_qualification",
+        lambda *_args, **_kwargs: changed,
+    )
+    with pytest.raises(ValueError, match="LIVE_RECEIPT_CHANGED"):
+        bootstrap_runner._revalidate_qualification_step(
+            tmp_path,
+            entry,
+            protected_commit_sha=COMMIT,
+        )
+
+
+def _requester_recovery_fixture(tmp_path: Path) -> _RequesterRecoveryFixture:
+    broker_root = tmp_path / "requester-broker"
+    (broker_root / "campaign-status").mkdir(parents=True)
+    (broker_root / "receipts").mkdir(parents=True)
+    root = tmp_path / "requester-installed"
+    root.mkdir()
+    request_id = "018f47a2-6e91-7c34-8000-000000000001"
+    request_payload = {
+        "schema_version": "1",
+        "request_id": request_id,
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "launch_generation": 1,
+        "launch_ticket_sha256": "3" * 64,
+        "previous_terminal_request_sha256": None,
+        "campaign_definition_sha256": "a" * 64,
+        "prompt_sha256": "b" * 64,
+        "authorization": "USER_EXPLICITLY_REQUESTED_NEW_CATALOG_RUN",
+        "free_resources_only": True,
+        "automatic_recovery": True,
+        "max_same_failure_count": 3,
+        "requester_public_key_sha256": "c" * 64,
+        "requester_attestation_algorithm": "rsa-pss-sha256-v1",
+        "requester_attestation_b64": "A" * 300,
+    }
+    request_sha256 = hashlib.sha256(
+        bootstrap_runner._canonical(request_payload)
+    ).hexdigest()
+    status = {
+        "schema_version": "1",
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "state": "terminal",
+        "launch_generation": 1,
+        "launch_ticket_sha256": "3" * 64,
+        "submission_key_sha256": "1" * 64,
+        "request_id": request_id,
+        "request_sha256": request_sha256,
+        "issue_number": 123,
+        "last_github_checked_at": "2026-08-25T10:00:00Z",
+        "updated_at": "2026-08-25T10:00:00Z",
+        "status_sha256": "0" * 64,
+    }
+    status["status_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(status)
+    ).hexdigest()
+    (broker_root / "campaign-status/controller-bootstrap-qualification-v1.status.json").write_bytes(
+        bootstrap_runner._canonical(status) + b"\n"
+    )
+    (root / "requester-public-v1.json").write_bytes(
+        bootstrap_runner._canonical(
+            {
+                "app_slug": "aurora-catalog-request-f10c7b40e1",
+                "public_key_sha256": "c" * 64,
+            }
+        )
+        + b"\n"
+    )
+    first = {
+        "schema_version": "1",
+        "status": "existing",
+        "reason_code": "REQUEST_ALREADY_EXISTS",
+        "submission_key_sha256": "1" * 64,
+        "request_id": request_id,
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "launch_generation": 1,
+        "issue_number": 123,
+        "request_sha256": request_sha256,
+        "observed_at": "2026-08-25T10:01:00Z",
+        "receipt_sha256": "0" * 64,
+    }
+    first["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(first)
+    ).hexdigest()
+    (broker_root / "receipts" / ("1" * 64 + ".receipt.json")).write_bytes(
+        bootstrap_runner._canonical(first) + b"\n"
+    )
+    issue = {
+        "number": 123,
+        "state": "closed",
+        "state_reason": "completed",
+        "html_url": f"https://github.com/{bootstrap_runner.REPOSITORY}/issues/123",
+        "title": f"[AURORA CATALOG RUN REQUEST] {request_id}",
+        "body": "```json\n"
+        + bootstrap_runner._canonical(request_payload).decode()
+        + "\n```\n",
+        "user": {"login": "aurora-catalog-request-f10c7b40e1[bot]"},
+        "closed_by": {"login": "github-actions[bot]"},
+    }
+    controller = {
+        "schema_version": "1",
+        "issue_number": 123,
+        "state": "BLOCKED",
+        "reason_code": "CATALOG_CONTROLLER_DISABLED",
+        "writer_job_id": "report_nonexecuting_decision",
+        "request_sha256": request_sha256,
+        "receipt_sha256": "0" * 64,
+    }
+    controller["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(
+            {key: value for key, value in controller.items() if key != "receipt_sha256"}
+        )
+    ).hexdigest()
+    return {
+        "root": root,
+        "broker_root": broker_root,
+        "source": tmp_path / "source",
+        "first": first,
+        "status": status,
+        "issue": issue,
+        "controller": controller,
+    }
+
+
+def _patch_requester_recovery_fakes(
+    fixture: _RequesterRecoveryFixture, monkeypatch: pytest.MonkeyPatch
+) -> list[dict[str, object]]:
+    root = fixture["root"]
+    broker_root = fixture["broker_root"]
+    source = fixture["source"]
+    first = fixture["first"]
+    issue = fixture["issue"]
+    controller = fixture["controller"]
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(bootstrap_runner, "BROKER_ROOT", broker_root)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_context",
+        lambda _root: {
+            "repository": bootstrap_runner.REPOSITORY,
+            "source_commit_sha": COMMIT,
+            "source_root": str(source),
+        },
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_invoke_bootstrap_request",
+        lambda _source: _append_then_return(calls, dict(first), dict(first)),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_parse_terminal_controller_receipt",
+        lambda _issue: dict(controller),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda args, **_kwargs: json.dumps(issue)
+        if args[:2] == ["gh", "api"]
+        and args[2] == f"/repos/{bootstrap_runner.REPOSITORY}/issues/123"
+        else pytest.fail(f"unexpected command: {args}"),
+    )
+    return calls
+
+
+def _reseal_complete_checkpoint(value: dict[str, object]) -> dict[str, object]:
+    terminal = {
+        key: item
+        for key, item in value.items()
+        if key != "complete_checkpoint_sha256"
+    }
+    terminal["terminal_checkpoint_sha256"] = "0" * 64
+    terminal["terminal_checkpoint_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(terminal)
+    ).hexdigest()
+    complete = {**terminal, "complete_checkpoint_sha256": "0" * 64}
+    complete["complete_checkpoint_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(complete)
+    ).hexdigest()
+    return complete
+
+
+def test_requester_checkpoints_bind_all_cross_identity_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+
+    bootstrap_runner._run_requester_qualification(root, fixture["source"])
+
+    for filename in (
+        bootstrap_runner.REQUESTER_TERMINAL_CHECKPOINT_FILENAME,
+        bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME,
+    ):
+        checkpoint = json.loads((root / filename).read_bytes())
+        status = checkpoint["status"]
+        receipt = checkpoint["requester_receipt"]
+        for field in (
+            "request_id",
+            "request_sha256",
+            "submission_key_sha256",
+            "issue_number",
+        ):
+            assert checkpoint[field] == status[field] == receipt[field]
+
+
+@pytest.mark.parametrize(
+    ("field", "different"),
+    (
+        ("request_id", "018f47a2-6e91-7c34-8000-000000000002"),
+        ("request_sha256", "d" * 64),
+        ("submission_key_sha256", "e" * 64),
+        ("issue_number", 999),
+    ),
+)
+def test_requester_complete_rejects_cross_identity_mismatch_without_local_receipt(
+    field: str,
+    different: object,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    bootstrap_runner._run_requester_qualification(root, fixture["source"])
+    complete_path = root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
+    complete = json.loads(complete_path.read_bytes())
+    receipt = dict(complete["requester_receipt"])
+    receipt[field] = different
+    receipt["receipt_sha256"] = "0" * 64
+    receipt["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(receipt)
+    ).hexdigest()
+    receipt_file_sha256 = hashlib.sha256(
+        bootstrap_runner._canonical(receipt) + b"\n"
+    ).hexdigest()
+    complete["requester_receipt"] = receipt
+    complete["requester_receipt_sha256"] = receipt["receipt_sha256"]
+    complete["requester_receipt_file_sha256"] = receipt_file_sha256
+    qualification = dict(complete["requester_qualification"])
+    qualification["requester_receipt_sha256"] = receipt["receipt_sha256"]
+    qualification["requester_receipt_file_sha256"] = receipt_file_sha256
+    complete["requester_qualification"] = qualification
+    complete = _reseal_complete_checkpoint(complete)
+    complete_path.write_bytes(bootstrap_runner._canonical(complete) + b"\n")
+    local_receipt = (
+        fixture["broker_root"]
+        / "receipts"
+        / (str(fixture["status"]["submission_key_sha256"]) + ".receipt.json")
+    )
+    local_receipt.unlink()
+    calls.clear()
+
+    with pytest.raises(ValueError, match="REQUESTER_EVIDENCE_IDENTITY_MISMATCH"):
+        bootstrap_runner._run_requester_qualification(root, fixture["source"], COMMIT)
+    assert calls == []
+
+
+def test_requester_checkpoint_protected_commit_must_match_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    bootstrap_runner._run_requester_qualification(root, fixture["source"], COMMIT)
+    complete_path = root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
+    complete = json.loads(complete_path.read_bytes())
+    complete["protected_commit_sha"] = "b" * 40
+    complete = _reseal_complete_checkpoint(complete)
+    complete_path.write_bytes(bootstrap_runner._canonical(complete) + b"\n")
+
+    with pytest.raises(ValueError, match="REQUESTER_PROTECTED_COMMIT_MISMATCH"):
+        bootstrap_runner._run_requester_qualification(root, fixture["source"], COMMIT)
+
+
+def test_requester_complete_recovers_missing_local_receipt_deterministically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    source = fixture["source"]
+    first_result = bootstrap_runner._run_requester_qualification(root, source, COMMIT)
+    receipt_path = (
+        fixture["broker_root"] / "receipts" / ("1" * 64 + ".receipt.json")
+    )
+    receipt_bytes = receipt_path.read_bytes()
+    receipt_path.unlink()
+    calls.clear()
+
+    def recover(_source: Path) -> dict[str, object]:
+        calls.append(dict(fixture["first"]))
+        receipt_path.write_bytes(receipt_bytes)
+        return dict(fixture["first"])
+
+    monkeypatch.setattr(bootstrap_runner, "_invoke_bootstrap_request", recover)
+
+    recovered = bootstrap_runner._run_requester_qualification(root, source, COMMIT)
+
+    assert recovered == first_result
+    assert calls == [fixture["first"]]
+    assert receipt_path.read_bytes() == receipt_bytes
+
+
+def test_requester_complete_restores_receipt_from_authoritative_client_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    source = fixture["source"]
+    first_result = bootstrap_runner._run_requester_qualification(root, source, COMMIT)
+    receipt_path = (
+        fixture["broker_root"] / "receipts" / ("1" * 64 + ".receipt.json")
+    )
+    receipt_path.unlink()
+    calls.clear()
+
+    recovered = bootstrap_runner._run_requester_qualification(root, source, COMMIT)
+    assert recovered == first_result
+    assert calls == [fixture["first"]]
+    assert json.loads(receipt_path.read_bytes()) == fixture["first"]
+
+
+def test_requester_complete_checkpoint_revalidates_without_new_client_call(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    source = fixture["source"]
+
+    first_result = bootstrap_runner._run_requester_qualification(root, source)
+    complete_bytes = (
+        root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
+    ).read_bytes()
+    calls.clear()
+    second_result = bootstrap_runner._run_requester_qualification(root, source)
+
+    assert second_result == first_result
+    assert calls == []
+    assert (
+        root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
+    ).read_bytes() == complete_bytes
+
+
+@pytest.mark.parametrize(
+    "step_name",
+    (
+        "github_controls_live_1",
+        "final_pre_enable_live",
+        "final_post_enable_live",
+    ),
+)
+def test_all_one_shot_live_qualifications_use_persistent_dispatch_intents(
+    step_name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = {
+        "databaseId": 999,
+        "headSha": COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://example.test/runs/999",
+    }
+    calls: list[str] = []
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run_qualification_workflow_step",
+        lambda _root, observed_step, _commit: _append_then_return(
+            calls, observed_step, run
+        ),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_download_live_qualification",
+        lambda *_args: {"run_id": 999},
+    )
+
+    observed = bootstrap_runner._run_live_qualification(
+        tmp_path, COMMIT, step_name=step_name
+    )
+
+    assert observed == {"run_id": 999}
+    assert calls == [step_name]
+
+
+def test_live_call_sites_bind_distinct_persistent_intent_names() -> None:
+    apply_source = inspect.getsource(bootstrap_runner.apply_github_controls)
+    final_source = inspect.getsource(bootstrap_runner.perform_final_audit)
+
+    assert 'step_name="github_controls_live_1"' in apply_source
+    assert 'step_name="final_pre_enable_live"' in final_source
+    assert 'step_name="final_post_enable_live"' in final_source
+
+
+def test_dispatch_guard_serializes_two_concurrent_callers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir()
+    entered = threading.Event()
+    release = threading.Event()
+    run = {
+        "databaseId": 1201,
+        "headSha": COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://example.test/runs/1201",
+    }
+    dispatch_count = 0
+    results: list[dict[str, object]] = []
+    errors: list[BaseException] = []
+
+    monkeypatch.setattr(bootstrap_runner, "_list_workflow_runs", lambda _workflow: [])
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_reconcile_qualification_dispatch_intent",
+        lambda _intent: dict(run),
+    )
+
+    def fake_dispatch(
+        _workflow: str,
+        _commit: str,
+        *,
+        baseline_run_ids: set[int] | None = None,
+    ) -> dict[str, object]:
+        nonlocal dispatch_count
+        assert baseline_run_ids == set()
+        dispatch_count += 1
+        entered.set()
+        assert release.wait(timeout=5)
+        return dict(run)
+
+    monkeypatch.setattr(bootstrap_runner, "_dispatch_workflow", fake_dispatch)
+
+    def invoke() -> None:
+        try:
+            results.append(
+                bootstrap_runner._run_qualification_workflow_step(
+                    root, "policy_1", COMMIT
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below.
+            errors.append(exc)
+
+    first = threading.Thread(target=invoke)
+    second = threading.Thread(target=invoke)
+    first.start()
+    assert entered.wait(timeout=5)
+    second.start()
+    time.sleep(0.1)
+    assert dispatch_count == 1
+    release.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
+    assert results == [run, run]
+    assert dispatch_count == 1
+
+
+def test_requester_initial_response_rejects_cross_identity_before_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    receipt_path = (
+        fixture["broker_root"] / "receipts" / ("1" * 64 + ".receipt.json")
+    )
+    receipt_path.unlink()
+    mismatched = dict(fixture["first"])
+    mismatched["request_id"] = "018f47a2-6e91-7c34-8000-000000000002"
+    mismatched["receipt_sha256"] = "0" * 64
+    mismatched["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(mismatched)
+    ).hexdigest()
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_invoke_bootstrap_request",
+        lambda _source: _append_then_return(calls, mismatched, mismatched),
+    )
+
+    with pytest.raises(ValueError, match="QUALIFICATION_NOT_TERMINAL"):
+        bootstrap_runner._run_requester_qualification(
+            root, fixture["source"], COMMIT
+        )
+    assert not (
+        root / bootstrap_runner.REQUESTER_TERMINAL_CHECKPOINT_FILENAME
+    ).exists()
+
+
+def test_requester_initial_response_restores_missing_local_receipt_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    _patch_requester_recovery_fakes(fixture, monkeypatch)
+    receipt_path = (
+        fixture["broker_root"] / "receipts" / ("1" * 64 + ".receipt.json")
+    )
+    receipt_path.unlink()
+
+    bootstrap_runner._run_requester_qualification(
+        fixture["root"], fixture["source"], COMMIT
+    )
+
+    assert receipt_path.read_bytes() == (
+        bootstrap_runner._canonical(fixture["first"]) + b"\n"
+    )
+
+
+def test_requester_blocked_receipt_preserves_exact_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    blocked = {
+        "schema_version": "1",
+        "status": "blocked",
+        "reason_code": "REQUESTER_PRODUCTION_SEAL_MISSING",
+        "submission_key_sha256": "1" * 64,
+        "request_id": "018f47a2-6e91-7c34-8000-000000000001",
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "launch_generation": 1,
+        "issue_number": None,
+        "request_sha256": None,
+        "observed_at": "2026-08-25T10:01:00Z",
+        "receipt_sha256": "0" * 64,
+    }
+    blocked["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(blocked)
+    ).hexdigest()
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda *_args, **_kwargs: json.dumps(blocked),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="REQUESTER_BLOCKED:REQUESTER_PRODUCTION_SEAL_MISSING",
+    ):
+        bootstrap_runner._invoke_bootstrap_request(tmp_path)
+
+
+def test_windows_checkpoint_publication_requests_write_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if bootstrap_runner.os.name != "nt":
+        pytest.skip("Windows durability contract")
+    temporary = tmp_path / "temporary"
+    destination = tmp_path / "destination"
+    temporary.write_bytes(b"sealed")
+    observed_flags: list[int] = []
+
+    class FakeMove:
+        argtypes: object = None
+        restype: object = None
+
+        def __call__(self, source: str, target: str, flags: int) -> int:
+            observed_flags.append(flags)
+            bootstrap_runner.os.replace(source, target)
+            return 1
+
+    fake_move = FakeMove()
+    monkeypatch.setattr(
+        bootstrap_runner.ctypes,
+        "WinDLL",
+        lambda *_args, **_kwargs: SimpleNamespace(MoveFileExW=fake_move),
+    )
+
+    bootstrap_runner._publish_checkpoint_temp(
+        temporary, destination, replace_existing=False
+    )
+
+    assert destination.read_bytes() == b"sealed"
+    assert observed_flags == [0x8]
+
+
+def test_existing_seal_without_complete_reuses_bytes_and_performs_one_replay(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    source = fixture["source"]
+    bootstrap_runner._run_requester_qualification(root, source)
+    seal_path = fixture["broker_root"] / "config/bootstrap-qualified-v1.seal.json"
+    seal_bytes = seal_path.read_bytes()
+    (root / bootstrap_runner.REQUESTER_TERMINAL_CHECKPOINT_FILENAME).unlink()
+    (root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME).unlink()
+    calls.clear()
+
+    bootstrap_runner._run_requester_qualification(root, source)
+
+    assert len(calls) == 1
+    assert seal_path.read_bytes() == seal_bytes
+
+
+@pytest.mark.parametrize(
+    ("fault_file", "expected_replay_calls"),
+    (
+        (bootstrap_runner.REQUESTER_TERMINAL_CHECKPOINT_FILENAME, 0),
+        (bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME, 0),
+        ("bootstrap-qualified-v1.seal.json", 1),
+    ),
+)
+def test_requester_reentry_after_checkpoint_write_does_not_replay(
+    fault_file: str,
+    expected_replay_calls: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    source = fixture["source"]
+    original = bootstrap_runner._write_exact_canonical_checkpoint
+    faulted = False
+
+    def fail_after_write(path: Path, value: object) -> str:
+        nonlocal faulted
+        digest = original(path, value)
+        if not faulted and path.name == fault_file:
+            faulted = True
+            raise RuntimeError("FAULT_AFTER_REQUESTER_CHECKPOINT_WRITE")
+        return digest
+
+    monkeypatch.setattr(
+        bootstrap_runner, "_write_exact_canonical_checkpoint", fail_after_write
+    )
+    with pytest.raises(RuntimeError, match="FAULT_AFTER_REQUESTER_CHECKPOINT_WRITE"):
+        bootstrap_runner._run_requester_qualification(root, source)
+    monkeypatch.setattr(
+        bootstrap_runner, "_write_exact_canonical_checkpoint", original
+    )
+    calls.clear()
+    bootstrap_runner._run_requester_qualification(root, source)
+
+    assert len(calls) == expected_replay_calls
+    assert (
+        root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
+    ).is_file()
+
+
+def test_second_requester_receipt_with_any_field_difference_blocks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    root = fixture["root"]
+    source = fixture["source"]
+    first = fixture["first"]
+    different = {**first, "reason_code": "REQUEST_DIFFERENT"}
+    different["receipt_sha256"] = "0" * 64
+    different["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(different)
+    ).hexdigest()
+    responses = iter((dict(first), different))
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_invoke_bootstrap_request",
+        lambda _source: _append_and_get_last(calls, dict(next(responses))),
+    )
+
+    with pytest.raises(ValueError, match="REQUESTER_REPLAY_INVALID"):
+        bootstrap_runner._run_requester_qualification(root, source)
+    assert not (
+        root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
+    ).exists()
+
+
+def test_controller_receipt_request_hash_mismatch_blocks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    _patch_requester_recovery_fakes(fixture, monkeypatch)
+    bad = {**fixture["controller"], "request_sha256": "d" * 64}
+    bad["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(
+            {key: value for key, value in bad.items() if key != "receipt_sha256"}
+        )
+    ).hexdigest()
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_parse_terminal_controller_receipt",
+        lambda _issue: bad,
+    )
+
+    with pytest.raises(ValueError, match="CONTROLLER_RECEIPT_INVALID"):
+        bootstrap_runner._run_requester_qualification(
+            fixture["root"], fixture["source"]
+        )
+
+
 @pytest.mark.parametrize(
     ("remote", "expected"),
     (
@@ -2784,13 +5001,23 @@ def test_recover_exact_merge_block_without_replaying_prior_phases(
             json.dumps(operation, sort_keys=True, separators=(",", ":")) + "\n"
         ).encode("utf-8")
     )
-    baseline = {"heavy_run_ids": [], "request_issue_numbers": []}
+    baseline: dict[str, list[int]] = {
+        "heavy_run_ids": [],
+        "request_issue_numbers": [],
+    }
     (root / "github-activity-baseline-v1.json").write_text(
         json.dumps(baseline, sort_keys=True, separators=(",", ":")) + "\n",
         encoding="utf-8",
     )
 
     def fake_fixed_run(args: list[str], **_kwargs: object) -> str:
+        if args[:3] == ["gh", "variable", "set"]:
+            assert args[3] in {
+                bootstrap_runner.ARMED_VARIABLE,
+                bootstrap_runner.CONTROLLER_VARIABLE,
+            }
+            assert args[4:6] == ["--body", "false"]
+            return ""
         if args[:3] == ["git", "status", "--porcelain=v1"]:
             return ""
         if args == ["git", "rev-parse", "HEAD"]:
@@ -3013,3 +5240,116 @@ def test_load_rejects_noncanonical_json_and_links(tmp_path: Path) -> None:
         pytest.skip("symlink creation unavailable")
     with pytest.raises(ValueError, match="STATE_LINK_FORBIDDEN"):
         load_bootstrap_state(link)
+
+
+def test_controller_double_shutdown_is_ordered_and_attempts_enabled_after_armed_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_set(name: str, value: str) -> None:
+        calls.append((name, value))
+        if name == bootstrap_runner.ARMED_VARIABLE:
+            raise ValueError("armed readback failed")
+
+    monkeypatch.setattr(bootstrap_runner, "_set_repository_variable", fake_set)
+
+    with pytest.raises(bootstrap_runner.CatalogControllerShutdownError) as raised:
+        bootstrap_runner._disable_controller()
+
+    assert calls == [
+        (bootstrap_runner.ARMED_VARIABLE, "false"),
+        (bootstrap_runner.CONTROLLER_VARIABLE, "false"),
+    ]
+    assert [str(error) for error in raised.value.exceptions] == [
+        "armed readback failed"
+    ]
+
+
+def test_controller_double_shutdown_aggregates_failures_in_fixed_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_set(name: str, _value: str) -> None:
+        calls.append(name)
+        raise ValueError(f"failure:{name}")
+
+    monkeypatch.setattr(bootstrap_runner, "_set_repository_variable", fake_set)
+
+    with pytest.raises(bootstrap_runner.CatalogControllerShutdownError) as raised:
+        bootstrap_runner._disable_controller()
+
+    assert calls == [bootstrap_runner.ARMED_VARIABLE, bootstrap_runner.CONTROLLER_VARIABLE]
+    assert [str(error) for error in raised.value.exceptions] == [
+        f"failure:{bootstrap_runner.ARMED_VARIABLE}",
+        f"failure:{bootstrap_runner.CONTROLLER_VARIABLE}",
+    ]
+
+
+def test_failed_shutdown_writes_truthful_emergency_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_disable_controller",
+        lambda: (_ for _ in ()).throw(ValueError("secret must not escape")),
+    )
+
+    assert (
+        bootstrap_runner._disable_controller_for_failure_receipt(
+            tmp_path,
+            phase="FINAL_AUDIT_PENDING",
+        )
+        is False
+    )
+    receipt = json.loads(
+        (
+            tmp_path / "receipts/controller-bootstrap-shutdown-failed-v1.json"
+        ).read_text("utf-8")
+    )
+    assert receipt == {
+        "controller_enabled_readback": True,
+        "phase": "FINAL_AUDIT_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_CONTROLLER_SHUTDOWN_FAILED",
+        "result": "FAILED",
+        "schema_version": "1",
+    }
+
+
+@pytest.mark.parametrize("armed", ("", "TRUE", " true ", "yes", None))
+def test_controller_ready_is_fail_closed_for_missing_or_malformed_values(
+    armed: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    values = {
+        bootstrap_runner.CONTROLLER_VARIABLE: "true",
+        bootstrap_runner.ARMED_VARIABLE: armed,
+    }
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_read_repository_variable",
+        lambda name: values[name],
+    )
+
+    assert bootstrap_runner._controller_is_ready() is False
+
+
+def test_final_activation_sequence_is_exactly_ordered() -> None:
+    source = inspect.getsource(bootstrap_runner.perform_final_audit)
+    ordered_markers = (
+        '_set_repository_variable(ARMED_VARIABLE, "false")',
+        'pre_enable = _run_live_qualification',
+        '_set_repository_variable(CONTROLLER_VARIABLE, "true")',
+        'post_enable = _run_live_qualification',
+        '_write_canonical(ready_path, ready.model_dump(mode="json"))',
+        'if ready_path.read_bytes() != ready_bytes:',
+        'seal = _production_seal',
+        'deadline = time.monotonic() + 300',
+        'self_audit.get("status") != "production_sealed"',
+        '_set_repository_variable(ARMED_VARIABLE, "true")',
+        'if not _controller_is_ready():',
+        'final_activity = _github_activity_snapshot()',
+        '"controller_armed_readback": True',
+    )
+    positions = [source.index(marker) for marker in ordered_markers]
+    assert positions == sorted(positions)

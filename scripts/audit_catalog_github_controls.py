@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import hashlib
 import json
@@ -16,7 +16,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping, cast
 
 import requests
 import yaml
@@ -41,6 +41,9 @@ from aurora.infra.sp500_megarun.catalog_github_controls import (
     load_catalog_github_auditor,
     load_catalog_github_controls,
 )
+
+
+UTC = timezone.utc
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -194,7 +197,8 @@ class AppReadOnlyClient:
         self.github_date: datetime | None = None
         self._session = requests.Session()
         self._repository_token: str | None = None
-        self._enterprise_token: str | None = None
+        self._enterprise_billing_token: str | None = None
+        self._enterprise_cache_verifier_token: str | None = None
         self._package_token: str | None = None
         self._last_oauth_scopes: tuple[str, ...] = ()
         self.installation_proof: dict[str, object] | None = None
@@ -205,10 +209,19 @@ class AppReadOnlyClient:
         enterprise_token = os.environ.get(
             self.auditor.enterprise_billing_token_environment_secret
         )
+        cache_verifier_token = os.environ.get(
+            self.auditor.enterprise_cache_verifier_token_environment_secret
+        )
         package_token = os.environ.get(
             self.auditor.package_inventory_token_environment_secret
         )
-        if not app_id or not private_key or not enterprise_token or not package_token:
+        if (
+            not app_id
+            or not private_key
+            or not enterprise_token
+            or not cache_verifier_token
+            or not package_token
+        ):
             raise ValueError("CATALOG_AUDITOR_CREDENTIAL_MISSING")
         key_bytes = private_key.encode("utf-8")
         key = serialization.load_pem_private_key(key_bytes, password=None)
@@ -256,14 +269,21 @@ class AppReadOnlyClient:
         ):
             raise ValueError("CATALOG_AUDITOR_TOKEN_MINT_FAILED")
         self._repository_token = token_payload["token"]
-        self._enterprise_token = enterprise_token
+        self._enterprise_billing_token = enterprise_token
+        self._enterprise_cache_verifier_token = cache_verifier_token
         self._package_token = package_token
         self._request("GET", "/user", bearer=enterprise_token)
         enterprise_scopes = self._last_oauth_scopes
         if enterprise_scopes != tuple(
-            sorted(self.auditor.required_enterprise_token_scopes)
+            sorted(self.auditor.required_enterprise_billing_token_scopes)
         ):
             raise ValueError("CATALOG_AUDITOR_ENTERPRISE_TOKEN_SCOPES_INVALID")
+        self._request("GET", "/user", bearer=cache_verifier_token)
+        cache_verifier_scopes = self._last_oauth_scopes
+        if cache_verifier_scopes != tuple(
+            sorted(self.auditor.required_enterprise_cache_verifier_token_scopes)
+        ):
+            raise ValueError("CATALOG_AUDITOR_ENTERPRISE_CACHE_VERIFIER_TOKEN_SCOPES_INVALID")
         self._request("GET", "/user", bearer=package_token)
         package_scopes = self._last_oauth_scopes
         if package_scopes != tuple(
@@ -280,15 +300,21 @@ class AppReadOnlyClient:
             "repository_installation_id": installation["id"],
             "app_slug": installation.get("app_slug"),
             "public_key_sha256": fingerprint,
-            "enterprise_credential_kind": "classic_pat",
-            "enterprise_credential_scopes": list(enterprise_scopes),
-            "enterprise_write_blocked_by_client": True,
+            "enterprise_billing_credential_kind": "classic_pat",
+            "enterprise_billing_credential_scopes": list(enterprise_scopes),
+            "enterprise_billing_get_only": True,
+            "enterprise_billing_write_blocked_by_client": True,
+            "enterprise_cache_verifier_credential_kind": "classic_pat",
+            "enterprise_cache_verifier_credential_scopes": list(cache_verifier_scopes),
+            "enterprise_cache_verifier_get_only": True,
+            "enterprise_cache_verifier_write_blocked_by_client": True,
             "package_credential_kind": "oauth_device_token",
             "package_credential_scopes": list(package_scopes),
             "package_write_blocked_by_client": True,
         }
         private_key = ""
         enterprise_token = ""
+        cache_verifier_token = ""
         package_token = ""
         key_bytes = b""
         jwt = ""
@@ -296,7 +322,8 @@ class AppReadOnlyClient:
 
     def __exit__(self, *_: object) -> None:
         self._repository_token = None
-        self._enterprise_token = None
+        self._enterprise_billing_token = None
+        self._enterprise_cache_verifier_token = None
         self._package_token = None
         self._last_oauth_scopes = ()
         self._session.headers.clear()
@@ -306,11 +333,18 @@ class AppReadOnlyClient:
         return self._request("GET", endpoint, bearer=self._token_for_endpoint(endpoint))
 
     def _token_for_endpoint(self, endpoint: str) -> str:
-        enterprise_prefix = f"/enterprises/{self.auditor.enterprise}/settings/billing/"
-        if endpoint.startswith(enterprise_prefix):
-            if self._enterprise_token is None:
+        enterprise_billing_prefix = f"/enterprises/{self.auditor.enterprise}/settings/billing/"
+        enterprise_cache_verifier_endpoint = (
+            f"/enterprises/{self.auditor.enterprise}/actions/cache/retention-limit"
+        )
+        if endpoint.startswith(enterprise_billing_prefix):
+            if self._enterprise_billing_token is None:
                 raise ValueError("CATALOG_AUDITOR_ENTERPRISE_TOKEN_UNAVAILABLE")
-            return self._enterprise_token
+            return self._enterprise_billing_token
+        if endpoint == enterprise_cache_verifier_endpoint:
+            if self._enterprise_cache_verifier_token is None:
+                raise ValueError("CATALOG_AUDITOR_ENTERPRISE_CACHE_VERIFIER_TOKEN_UNAVAILABLE")
+            return self._enterprise_cache_verifier_token
         if endpoint.startswith("/enterprises/"):
             raise ValueError("CATALOG_AUDITOR_ENDPOINT_INVALID")
         owner = self.repository.split("/", maxsplit=1)[0]
@@ -414,8 +448,10 @@ def _encode_jwt(
     return f"{unsigned}.{_base64url(signature)}"
 
 
-def _workflow_documents(root: Path) -> tuple[dict[str, object], dict[str, str]]:
-    documents: dict[str, object] = {}
+def _workflow_documents(
+    root: Path,
+) -> tuple[dict[str, Mapping[str, object]], dict[str, str]]:
+    documents: dict[str, Mapping[str, object]] = {}
     hashes_by_path: dict[str, str] = {}
     workflow_root = root / ".github" / "workflows"
     for path in sorted((*workflow_root.glob("*.yml"), *workflow_root.glob("*.yaml"))):
@@ -467,6 +503,10 @@ def _normalize_branch_protection(payload: object) -> dict[str, object]:
 
 def _dict(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
+
+
+def _as_int(value: object) -> int:
+    return int(cast(int | str | float | bytes | bytearray, value))
 
 
 def _page_endpoint(endpoint: str, page: int) -> str:
@@ -541,6 +581,36 @@ def _paginate_object_rows(
     return tuple(rows), False
 
 
+def _paginate_object_rows_stable(
+    client: GhReadOnlyClient | AppReadOnlyClient | object,
+    endpoint: str,
+    *,
+    root: str,
+    max_pages: int = 100,
+) -> tuple[tuple[dict[str, object], ...], bool]:
+    """Require two complete, identical consecutive object-collection scans."""
+
+    first_rows, first_complete = _paginate_object_rows(
+        client,
+        endpoint,
+        root=root,
+        max_pages=max_pages,
+    )
+    second_rows, second_complete = _paginate_object_rows(
+        client,
+        endpoint,
+        root=root,
+        max_pages=max_pages,
+    )
+    if (
+        first_complete
+        and second_complete
+        and _canonical_json(first_rows) != _canonical_json(second_rows)
+    ):
+        raise ValueError("CATALOG_GITHUB_PAGINATION_UNSTABLE")
+    return first_rows, first_complete and second_complete
+
+
 def _parse_utc(value: object) -> datetime | None:
     if not isinstance(value, str):
         return None
@@ -586,7 +656,7 @@ def _authority_anchor_status(
             repository_snapshot=repository_snapshot,
             issue_snapshot=issue,
         )
-        comments, complete = _paginate_list_rows(
+        comments, complete = _paginate_list_rows_stable(
             client,
             f"/repos/{repository}/issues/{anchor.issue_number}/comments",
             max_pages=100,
@@ -676,7 +746,7 @@ def _collect_active_run_inventory(
         latest_by_authority[record.authority_id] = record
     latest_records = tuple(latest_by_authority.values())
     for status in ("queued", "in_progress"):
-        rows, complete = _paginate_object_rows(
+        rows, complete = _paginate_object_rows_stable(
             client,
             f"/repos/{repository}/actions/runs?status={status}",
             root="workflow_runs",
@@ -688,7 +758,7 @@ def _collect_active_run_inventory(
             if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id in seen:
                 raise ValueError("CATALOG_ACTIVE_RUN_INVENTORY_INVALID")
             seen.add(run_id)
-            jobs, complete_jobs = _paginate_object_rows(
+            jobs, complete_jobs = _paginate_object_rows_stable(
                 client,
                 f"/repos/{repository}/actions/runs/{run_id}/jobs",
                 root="jobs",
@@ -745,14 +815,14 @@ def _collect_active_run_inventory(
                     "writer_provenance_verified": writer_matches,
                     "current_engine_owner": nonterminal,
                     "active_heavy_job_database_ids": sorted(
-                        int(job["id"])
+                        _as_int(job["id"])
                         for job in active_heavy_jobs
                         if isinstance(job.get("id"), int)
                         and not isinstance(job.get("id"), bool)
                     ),
                 }
             )
-    return tuple(sorted(runs, key=lambda row: int(row["run_id"]))), runs_complete, jobs_complete
+    return tuple(sorted(runs, key=lambda row: _as_int(row["run_id"]))), runs_complete, jobs_complete
 
 
 def _billing_paid_usage(
@@ -1015,13 +1085,13 @@ def _collect_storage_snapshot(
     caller_job: str,
     purpose: str,
 ) -> tuple[dict[str, object], bool]:
-    artifacts, artifacts_complete = _paginate_object_rows(
+    artifacts, artifacts_complete = _paginate_object_rows_stable(
         client,
         f"/repos/{repository}/actions/artifacts",
         root="artifacts",
         max_pages=2_000,
     )
-    caches, caches_complete = _paginate_object_rows(
+    caches, caches_complete = _paginate_object_rows_stable(
         client,
         f"/repos/{repository}/actions/caches",
         root="actions_caches",
@@ -1030,7 +1100,7 @@ def _collect_storage_snapshot(
     package_rows: list[dict[str, object]] = []
     packages_complete = True
     for package_type in ("container", "maven", "npm", "nuget", "rubygems"):
-        rows, complete = _paginate_list_rows(
+        rows, complete = _paginate_list_rows_stable(
             client,
             _package_inventory_endpoint(organization_id, package_type),
             max_pages=10,
@@ -1041,13 +1111,13 @@ def _collect_storage_snapshot(
     package_sizes_valid = not package_rows or all(
         isinstance(row.get("size_in_bytes"), int)
         and not isinstance(row.get("size_in_bytes"), bool)
-        and int(row["size_in_bytes"]) >= 0
+        and _as_int(row["size_in_bytes"]) >= 0
         for row in package_rows
     )
     cache_sizes_valid = all(
         isinstance(row.get("size_in_bytes"), int)
         and not isinstance(row.get("size_in_bytes"), bool)
-        and int(row["size_in_bytes"]) >= 0
+        and _as_int(row["size_in_bytes"]) >= 0
         for row in caches
     )
     org_cache = _dict(client.get(f"/orgs/{owner}/actions/cache/usage"))
@@ -1078,7 +1148,7 @@ def _collect_storage_snapshot(
             )
             if isinstance(billing.get(key), int)
             and not isinstance(billing.get(key), bool)
-            and int(billing[key]) >= 0
+            and _as_int(billing[key]) >= 0
         ),
         None,
     )
@@ -1110,31 +1180,31 @@ def _collect_storage_snapshot(
         minutes=desired.billing.cache_reporting_lag_minutes
     )
     unreflected = sum(
-        int(row["size_in_bytes"])
+        _as_int(row["size_in_bytes"])
         for row in active_artifacts
         if artifact_sizes_valid
         and (created := _parse_utc(row.get("created_at"))) is not None
         and created >= artifact_cutoff
     )
     pending_cache = sum(
-        int(row["size_in_bytes"])
+        _as_int(row["size_in_bytes"])
         for row in caches
         if cache_sizes_valid
         and (created := _parse_utc(row.get("created_at"))) is not None
         and created >= cache_cutoff
     )
     artifact_inventory_bytes = (
-        sum(int(row["size_in_bytes"]) for row in active_artifacts)
+        sum(_as_int(row["size_in_bytes"]) for row in active_artifacts)
         if artifact_sizes_valid
         else 0
     )
     package_inventory_bytes = (
-        sum(int(row["size_in_bytes"]) for row in package_rows)
+        sum(_as_int(row["size_in_bytes"]) for row in package_rows)
         if package_sizes_valid
         else 0
     )
     shared_evidence = _reported_shared_storage_evidence(
-        explicit_shared=int(explicit_shared) if explicit_shared is not None else None,
+        explicit_shared=_as_int(explicit_shared) if explicit_shared is not None else None,
         billing_fresh=billing_fresh,
         billing_period_complete=(
             billing_storage_evidence["billing_storage_period_evidence_complete"]
@@ -1178,8 +1248,8 @@ def _collect_storage_snapshot(
         "artifact_inventory_bytes": artifact_inventory_bytes,
         "package_inventory_bytes": package_inventory_bytes,
         "unreflected_upload_bytes": unreflected,
-        "reported_cache_use_bytes": int(reported_cache or 0),
-        "cache_inventory_bytes": sum(int(row["size_in_bytes"]) for row in caches)
+        "reported_cache_use_bytes": _as_int(reported_cache or 0),
+        "cache_inventory_bytes": sum(_as_int(row["size_in_bytes"]) for row in caches)
         if cache_sizes_valid
         else 0,
         "pending_cache_bytes": pending_cache,
@@ -1250,6 +1320,33 @@ def _paginate_list_rows(
     return tuple(rows), False
 
 
+def _paginate_list_rows_stable(
+    client: GhReadOnlyClient | AppReadOnlyClient | object,
+    endpoint: str,
+    *,
+    max_pages: int = 100,
+) -> tuple[tuple[dict[str, object], ...], bool]:
+    """Require two complete, identical consecutive plain-list scans."""
+
+    first_rows, first_complete = _paginate_list_rows(
+        client,
+        endpoint,
+        max_pages=max_pages,
+    )
+    second_rows, second_complete = _paginate_list_rows(
+        client,
+        endpoint,
+        max_pages=max_pages,
+    )
+    if (
+        first_complete
+        and second_complete
+        and _canonical_json(first_rows) != _canonical_json(second_rows)
+    ):
+        raise ValueError("CATALOG_GITHUB_PAGINATION_UNSTABLE")
+    return first_rows, first_complete and second_complete
+
+
 def collect_live_snapshot(
     *,
     client: GhReadOnlyClient | AppReadOnlyClient,
@@ -1273,19 +1370,23 @@ def collect_live_snapshot(
     owner, _ = repository.split("/", maxsplit=1)
     repo = _dict(client.get(f"/repos/{repository}"))
     organization_id = _dict(repo.get("owner")).get("id")
-    if isinstance(organization_id, bool) or not isinstance(organization_id, int):
+    if (
+        isinstance(organization_id, bool)
+        or not isinstance(organization_id, int)
+        or organization_id != desired.billing.budget_control_plane.organization_id
+    ):
         raise ValueError("CATALOG_GITHUB_ORGANIZATION_ID_INVALID")
     branch = client.get(
         f"/repos/{repository}/branches/{desired.default_branch}/protection"
     )
     actions = _dict(client.get(f"/repos/{repository}/actions/permissions/workflow"))
-    larger_runners, larger_runners_complete = _paginate_object_rows(
+    larger_runners, larger_runners_complete = _paginate_object_rows_stable(
         client,
         f"/orgs/{owner}/actions/hosted-runners",
         root="runners",
         max_pages=10,
     )
-    self_hosted_runners, self_hosted_runners_complete = _paginate_object_rows(
+    self_hosted_runners, self_hosted_runners_complete = _paginate_object_rows_stable(
         client,
         f"/repos/{repository}/actions/runners",
         root="runners",
@@ -1305,7 +1406,7 @@ def collect_live_snapshot(
     )
     organization = desired.billing.budget_control_plane.organization
     enterprise = desired.billing.budget_control_plane.enterprise
-    budgets, budgets_complete = _paginate_object_rows(
+    budgets, budgets_complete = _paginate_object_rows_stable(
         client,
         f"/enterprises/{enterprise}/settings/billing/budgets?scope=repository",
         root="budgets",
@@ -1322,7 +1423,13 @@ def collect_live_snapshot(
                 f"/enterprises/{enterprise}/settings/billing/budgets/{budget['id']}"
             )
         )
-    cache_retention = _dict(
+    enterprise_cache_retention = _dict(
+        client.get(f"/enterprises/{enterprise}/actions/cache/retention-limit")
+    )
+    organization_cache_retention = _dict(
+        client.get(f"/organizations/{organization_id}/actions/cache/retention-limit")
+    )
+    repository_cache_retention = _dict(
         client.get(f"/repos/{repository}/actions/cache/retention-limit")
     )
     cache_storage = _dict(
@@ -1330,7 +1437,15 @@ def collect_live_snapshot(
     )
     cache_settings = {
         "storage_limit_gb": cache_storage.get("max_cache_size_gb"),
-        "retention_days": cache_retention.get("max_cache_retention_days"),
+        "enterprise_retention_days": enterprise_cache_retention.get(
+            "max_cache_retention_days"
+        ),
+        "organization_retention_days": organization_cache_retention.get(
+            "max_cache_retention_days"
+        ),
+        "repository_retention_days": repository_cache_retention.get(
+            "max_cache_retention_days"
+        ),
     }
     billing_observed_at = client.github_date
     if billing_observed_at is None:
@@ -1341,7 +1456,7 @@ def collect_live_snapshot(
     workflows, workflow_hashes = _workflow_documents(repo_root)
     heavy_paths = {
         str(row["path"])
-        for row in inventory_heavy_workflows(workflows)  # type: ignore[arg-type]
+        for row in inventory_heavy_workflows(workflows)
         if row.get("heavy") is True
     }
     authority_anchor_verified, authority_records, authority_comments_complete = (
@@ -1448,10 +1563,12 @@ def collect_live_snapshot(
             is True,
             "required_reviewers": sorted(
                 str(reviewer.get("login"))
-                for rule in environment.get("protection_rules", ())
+                for rule in cast(
+                    Iterable[object], environment.get("protection_rules", ())
+                )
                 if isinstance(rule, dict)
                 and isinstance(rule.get("reviewers"), list)
-                for reviewer in rule["reviewers"]
+                for reviewer in cast(list[object], rule["reviewers"])
                 if isinstance(reviewer, dict) and reviewer.get("login")
             ),
         },

@@ -11,14 +11,21 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
-from datetime import UTC, datetime
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from .catalog_request_contract import FrozenModel
+
+
+UTC = timezone.utc
+
+
+def _as_int(value: object) -> int:
+    return int(cast(int | str | float | bytes | bytearray, value))
 
 
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
@@ -28,7 +35,7 @@ RepositoryName = Annotated[
     StringConstraints(pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"),
 ]
 
-AUDITOR_SECRET_CONSUMER = ".github/actions/catalog-live-controls-audit/action.yml"
+AUDITOR_SECRET_CONSUMER = ".github/workflows/catalog-live-controls-audit.yml"
 AUDITOR_CALLER_TOPOLOGY = (
     (
         ".github/workflows/catalog-run-controller.yml",
@@ -185,6 +192,7 @@ class BudgetControlPlaneV1(FrozenModel):
     scope: Literal["enterprise"]
     enterprise: str
     organization: str
+    organization_id: int = Field(ge=1)
     repository_entity_name: RepositoryName
 
 
@@ -278,11 +286,13 @@ class CatalogGithubAuditorV1(FrozenModel):
     required_repository_permissions: Mapping[str, Literal["read"]]
     required_organization_permissions: Mapping[str, Literal["read"]]
     required_enterprise_permissions: Mapping[str, Literal["read"]]
-    required_enterprise_token_scopes: tuple[str, ...]
+    required_enterprise_billing_token_scopes: tuple[str, ...]
+    required_enterprise_cache_verifier_token_scopes: tuple[str, ...]
     required_package_inventory_token_scopes: tuple[str, ...]
     forbidden_write_permissions: tuple[str, ...]
     private_key_environment_secret: str
     enterprise_billing_token_environment_secret: str
+    enterprise_cache_verifier_token_environment_secret: str
     package_inventory_token_environment_secret: str
     app_id_variable: str
 
@@ -297,6 +307,14 @@ class CatalogGithubAuditorV1(FrozenModel):
             )
         ):
             raise ValueError("auditor permissions must be read-only")
+        if self.required_enterprise_billing_token_scopes != (
+            "manage_billing:enterprise",
+        ):
+            raise ValueError("billing token scope contract must be exact")
+        if self.required_enterprise_cache_verifier_token_scopes != (
+            "admin:enterprise",
+        ):
+            raise ValueError("cache verifier token scope contract must be exact")
         return self
 
 
@@ -326,6 +344,8 @@ class _CatalogGithubControlsReceiptBaseV1(FrozenModel):
     free_artifact_storage_headroom: int | None = Field(ge=0)
     free_cache_storage_headroom: int | None = Field(ge=0)
     repository_cache_storage_limit_gb: int | None = Field(ge=0)
+    enterprise_cache_retention_days: int | None = Field(ge=1)
+    organization_cache_retention_days: int | None = Field(ge=1)
     repository_cache_retention_days: int | None = Field(ge=0)
     projected_campaign_artifact_bytes: int | None = Field(ge=0)
     projected_campaign_cache_bytes: int | None = Field(ge=0)
@@ -626,13 +646,25 @@ def _auditor_proof_is_exact(
         return False
     if proof.get("fixed_get_endpoints_only") is not True:
         return False
-    if proof.get("enterprise_credential_kind") != "classic_pat":
+    if proof.get("enterprise_billing_credential_kind") != "classic_pat":
         return False
-    if proof.get("enterprise_credential_scopes") != list(
-        auditor.required_enterprise_token_scopes
+    if proof.get("enterprise_billing_credential_scopes") != list(
+        auditor.required_enterprise_billing_token_scopes
     ):
         return False
-    if proof.get("enterprise_write_blocked_by_client") is not True:
+    if proof.get("enterprise_billing_get_only") is not True:
+        return False
+    if proof.get("enterprise_billing_write_blocked_by_client") is not True:
+        return False
+    if proof.get("enterprise_cache_verifier_credential_kind") != "classic_pat":
+        return False
+    if proof.get("enterprise_cache_verifier_credential_scopes") != list(
+        auditor.required_enterprise_cache_verifier_token_scopes
+    ):
+        return False
+    if proof.get("enterprise_cache_verifier_get_only") is not True:
+        return False
+    if proof.get("enterprise_cache_verifier_write_blocked_by_client") is not True:
         return False
     if proof.get("package_credential_kind") != "oauth_device_token":
         return False
@@ -704,7 +736,7 @@ def audit_catalog_github_controls(
         ("MAIN_STRICT_STATUS_CHECKS_REQUIRED", branch.get("strict_status_checks") is True),
         (
             "MAIN_STATUS_CHECKS_EXACT",
-            tuple(branch.get("required_status_checks", ()))
+            tuple(cast(Iterable[str], branch.get("required_status_checks", ())))
             == desired.branch_protection.required_status_checks,
         ),
         (
@@ -749,7 +781,7 @@ def audit_catalog_github_controls(
         "CATALOG_ENVIRONMENT_MAIN_ONLY",
         environment_map.get("name") == desired.environment.name
         and environment_map.get("protected_branches_only") is True
-        and tuple(environment_map.get("required_reviewers", ()))
+        and tuple(cast(Iterable[str], environment_map.get("required_reviewers", ())))
         == desired.environment.required_reviewers,
     )
 
@@ -863,14 +895,30 @@ def audit_catalog_github_controls(
 
     cache = _mapping(snapshots.get("cache_settings"))
     cache_limit = cache.get("storage_limit_gb")
-    cache_retention = cache.get("retention_days")
+    enterprise_cache_retention = cache.get("enterprise_retention_days")
+    organization_cache_retention = cache.get("organization_retention_days")
+    repository_cache_retention = cache.get("repository_retention_days")
+    cache_retentions = (
+        enterprise_cache_retention,
+        organization_cache_retention,
+        repository_cache_retention,
+    )
+    cache_retention_known = all(
+        isinstance(value, int) and not isinstance(value, bool) and value >= 1
+        for value in cache_retentions
+    )
     check(
         "FREE_CACHE_STORAGE_LIMIT_REQUIRED",
         cache_limit == desired.billing.repository_cache_storage_limit_gb,
     )
+    check("CACHE_RETENTION_UNKNOWN", cache_retention_known)
     check(
         "CACHE_RETENTION_POLICY_REQUIRED",
-        cache_retention == desired.billing.repository_cache_retention_days,
+        cache_retention_known
+        and all(
+            _as_int(value) >= desired.billing.repository_cache_retention_days
+            for value in cache_retentions
+        ),
     )
 
     storage = _mapping(snapshots.get("storage"))
@@ -900,7 +948,7 @@ def audit_catalog_github_controls(
     numeric_storage = all(
         isinstance(storage.get(key), int)
         and not isinstance(storage.get(key), bool)
-        and int(storage[key]) >= 0
+        and _as_int(storage[key]) >= 0
         for key in numeric_keys
     )
     allowance_exact = (
@@ -919,29 +967,29 @@ def audit_catalog_github_controls(
         and allowance_exact
         and isinstance(cache_limit, int)
     ):
-        allowance = int(storage["shared_allowance_bytes"])
+        allowance = _as_int(storage["shared_allowance_bytes"])
         reconciled = max(
-            int(storage["reported_shared_use_bytes"]),
-            int(storage["artifact_inventory_bytes"])
-            + int(storage["package_inventory_bytes"]),
+            _as_int(storage["reported_shared_use_bytes"]),
+            _as_int(storage["artifact_inventory_bytes"])
+            + _as_int(storage["package_inventory_bytes"]),
         )
         artifact_headroom = int(
             allowance
             - reconciled
-            - int(storage["unreflected_upload_bytes"])
+            - _as_int(storage["unreflected_upload_bytes"])
             - allowance * desired.billing.artifact_storage_safety_fraction
-            - int(storage["projected_campaign_artifact_bytes"])
+            - _as_int(storage["projected_campaign_artifact_bytes"])
         )
         cache_limit_bytes = cache_limit * 1_000_000_000
         cache_headroom = int(
             cache_limit_bytes
             - max(
-                int(storage["reported_cache_use_bytes"]),
-                int(storage["cache_inventory_bytes"]),
+                _as_int(storage["reported_cache_use_bytes"]),
+                _as_int(storage["cache_inventory_bytes"]),
             )
-            - int(storage["pending_cache_bytes"])
+            - _as_int(storage["pending_cache_bytes"])
             - cache_limit_bytes * desired.billing.cache_storage_safety_fraction
-            - int(storage["projected_campaign_cache_bytes"])
+            - _as_int(storage["projected_campaign_cache_bytes"])
         )
     check(
         "CATALOG_ARTIFACT_STORAGE_HEADROOM_SUFFICIENT",
@@ -969,7 +1017,7 @@ def audit_catalog_github_controls(
         and all(isinstance(value, Mapping) for value in workflow_documents_raw.values())
         else {}
     )
-    heavy_inventory = inventory_heavy_workflows(workflow_documents)  # type: ignore[arg-type]
+    heavy_inventory = inventory_heavy_workflows(workflow_documents)
     heavy_paths = {
         str(row["path"]) for row in heavy_inventory if row.get("heavy") is True
     }
@@ -981,13 +1029,15 @@ def audit_catalog_github_controls(
         desired.entrypoints.fixed_nonproduction_trigger_exemptions
     )
     direct_dispatch = any(
-        "workflow_dispatch" in row.get("direct_heavy_triggers", ())
+        "workflow_dispatch"
+        in cast(Iterable[str], row.get("direct_heavy_triggers", ()))
         for row in heavy_inventory
         if row.get("heavy") is True
         and row.get("path") not in exempt_heavy_triggers
     )
     other_direct = any(
-        set(row.get("direct_heavy_triggers", ())) - {"workflow_dispatch"}
+        set(cast(Iterable[str], row.get("direct_heavy_triggers", ())))
+        - {"workflow_dispatch"}
         for row in heavy_inventory
         if row.get("heavy") is True
         and row.get("path") not in public_heavy_entrypoints
@@ -997,13 +1047,13 @@ def audit_catalog_github_controls(
     check("HEAVY_DIRECT_DISPATCH_FORBIDDEN", not direct_dispatch)
     check("HEAVY_DIRECT_TRIGGER_FORBIDDEN", not other_direct)
 
-    writers = jobs_with_issues_write(workflow_documents)  # type: ignore[arg-type]
+    writers = jobs_with_issues_write(workflow_documents)
     allowed_writers = {
         (path, job)
         for path, jobs in desired.entrypoints.issues_write_job_allowlist.items()
         for job in jobs
     }
-    check("ISSUES_WRITE_TOPOLOGY_EXACT", set(writers) <= allowed_writers)
+    check("ISSUES_WRITE_TOPOLOGY_EXACT", set(writers) == allowed_writers)
 
     source_hashes = _mapping(snapshots.get("workflow_source_sha256s"))
     check(
@@ -1031,7 +1081,7 @@ def audit_catalog_github_controls(
             )
         )
         if not bound and isinstance(run.get("run_id"), int):
-            unmanaged_ids.append(int(run["run_id"]))
+            unmanaged_ids.append(_as_int(run["run_id"]))
     check(
         "CATALOG_UNMANAGED_HEAVY_RUN_ACTIVE",
         not unmanaged_ids
@@ -1057,10 +1107,13 @@ def audit_catalog_github_controls(
         check("CATALOG_OBSERVER_CONTEXT_VALID", True)
 
     provenance = _mapping(snapshots.get("runtime_provenance"))
-    caller = (
-        provenance.get("caller_workflow"),
-        provenance.get("caller_job"),
-        provenance.get("purpose"),
+    caller = cast(
+        tuple[str, str, str],
+        (
+            provenance.get("caller_workflow"),
+            provenance.get("caller_job"),
+            provenance.get("purpose"),
+        ),
     )
     audit_context = _AUDIT_CONTEXT_BY_CALLER.get(caller)
     audit_context_sha256 = provenance.get("audit_context_sha256")
@@ -1098,7 +1151,7 @@ def audit_catalog_github_controls(
     topology_valid = (
         consumer_workflows == [AUDITOR_SECRET_CONSUMER]
         and len(normalized_callers) == len(callers)
-        and normalized_callers <= set(_AUDIT_CONTEXT_BY_CALLER)
+        and normalized_callers == set(_AUDIT_CONTEXT_BY_CALLER)
     )
     check("CATALOG_AUDITOR_TOPOLOGY_INVALID", topology_valid)
 
@@ -1144,7 +1197,7 @@ def audit_catalog_github_controls(
     observed_at = _parse_time(snapshots.get("observed_at"))
     github_at = _parse_time(snapshots.get("github_api_observed_at"))
     freshness_valid = observed_at is not None and github_at is not None
-    if freshness_valid:
+    if observed_at is not None and github_at is not None:
         delta = (observed_at - github_at).total_seconds()
         freshness_valid = (
             delta <= desired.audit_freshness.maximum_age_seconds
@@ -1175,7 +1228,9 @@ def audit_catalog_github_controls(
         "free_artifact_storage_headroom": artifact_headroom,
         "free_cache_storage_headroom": cache_headroom,
         "repository_cache_storage_limit_gb": cache_limit if isinstance(cache_limit, int) else None,
-        "repository_cache_retention_days": cache_retention if isinstance(cache_retention, int) else None,
+        "enterprise_cache_retention_days": enterprise_cache_retention if isinstance(enterprise_cache_retention, int) and not isinstance(enterprise_cache_retention, bool) and enterprise_cache_retention >= 1 else None,
+        "organization_cache_retention_days": organization_cache_retention if isinstance(organization_cache_retention, int) and not isinstance(organization_cache_retention, bool) and organization_cache_retention >= 1 else None,
+        "repository_cache_retention_days": repository_cache_retention if isinstance(repository_cache_retention, int) and not isinstance(repository_cache_retention, bool) and repository_cache_retention >= 1 else None,
         "projected_campaign_artifact_bytes": storage.get("projected_campaign_artifact_bytes") if numeric_storage else None,
         "projected_campaign_cache_bytes": storage.get("projected_campaign_cache_bytes") if numeric_storage else None,
         "local_agent_actor": local_actor,
@@ -1324,57 +1379,39 @@ def build_github_controls_mutation_plan(
                 reason_codes=("CATALOG_TERMINAL_LABEL_EXACT",),
             )
         )
-    if "FREE_CACHE_STORAGE_LIMIT_REQUIRED" in failures:
-        mutations.append(
-            GithubControlMutationV1(
-                order=len(mutations) + 1,
-                method="PUT",
-                endpoint=f"/repos/{repository}/actions/cache/storage-limit",
-                body={
-                    "max_cache_size_gb": (
-                        desired.billing.repository_cache_storage_limit_gb
-                    )
-                },
-                reason_codes=("FREE_CACHE_STORAGE_LIMIT_REQUIRED",),
-            )
+    if (
+        "CACHE_RETENTION_POLICY_REQUIRED" in failures
+        and "CACHE_RETENTION_UNKNOWN" not in failures
+    ):
+        observed_retentions = (
+            receipt.enterprise_cache_retention_days,
+            receipt.organization_cache_retention_days,
+            receipt.repository_cache_retention_days,
         )
-    if "CACHE_RETENTION_POLICY_REQUIRED" in failures:
-        mutations.append(
-            GithubControlMutationV1(
-                order=len(mutations) + 1,
-                method="PUT",
-                endpoint=f"/repos/{repository}/actions/cache/retention-limit",
-                body={
-                    "max_cache_retention_days": (
-                        desired.billing.repository_cache_retention_days
-                    )
-                },
-                reason_codes=("CACHE_RETENTION_POLICY_REQUIRED",),
-            )
+        retention_endpoints = (
+            f"/enterprises/{desired.billing.budget_control_plane.enterprise}/actions/cache/retention-limit",
+            f"/organizations/{desired.billing.budget_control_plane.organization_id}/actions/cache/retention-limit",
+            f"/repos/{repository}/actions/cache/retention-limit",
         )
-    budget_failures = {
-        "ZERO_ACTIONS_SPEND_BUDGET_REQUIRED",
-        "ZERO_ACTIONS_STORAGE_BUDGET_REQUIRED",
-        "ZERO_CACHE_STORAGE_BUDGET_REQUIRED",
-        "ZERO_BUDGET_REPOSITORY_SCOPE_EXACT",
-        "ZERO_ACTIONS_SPEND_STOP_REQUIRED",
-        "ZERO_BUDGET_DETAIL_CROSSCHECK_REQUIRED",
-    }
-    if failures & budget_failures:
-        for budget in desired.billing.required_zero_budgets:
+        if any(value is None for value in observed_retentions):
+            raise ValueError("CATALOG_CACHE_RETENTION_PLAN_UNKNOWN")
+        for endpoint, observed in zip(
+            retention_endpoints, observed_retentions, strict=True
+        ):
             mutations.append(
                 GithubControlMutationV1(
                     order=len(mutations) + 1,
-                    method="POST",
-                    endpoint=(
-                        f"/enterprises/{desired.billing.budget_control_plane.enterprise}/"
-                        "settings/billing/budgets"
-                    ),
-                    body=budget.model_dump(mode="json"),
-                    reason_codes=tuple(sorted(failures & budget_failures)),
+                    method="PUT",
+                    endpoint=endpoint,
+                    body={
+                        "max_cache_retention_days": max(
+                            _as_int(observed),
+                            desired.billing.repository_cache_retention_days,
+                        )
+                    },
+                    reason_codes=("CACHE_RETENTION_POLICY_REQUIRED",),
                 )
             )
-
     plan_payload = {
         "schema_version": "1",
         "repository": repository,

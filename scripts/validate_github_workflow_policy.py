@@ -52,7 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     root = Path(args.repo_root).resolve()
     allowlist = load_legacy_workflow_allowlist(
-        root / args.allowlist
+        root / args.allowlist,
+        root,
     )
     migrations = load_legacy_workflow_migrations(
         root / args.migrations,

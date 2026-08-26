@@ -17,35 +17,16 @@ concurrency:
 jobs:
   live_controls_audit_before_maintenance:
     name: Verify live controls before maintenance
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    environment: catalog-production
+    uses: ./.github/workflows/catalog-live-controls-audit.yml
+    with:
+      purpose: maintenance
+      caller_workflow: .github/workflows/catalog-artifact-keeper.yml
+      caller_job: live_controls_audit_before_maintenance
+      protected_commit_sha: ${{ github.sha }}
+      audit_context_sha256: 0b90c2b50f081b48eb3b173b907eab0015973e536db2e8e195ff8f95b69bec42
     permissions:
       actions: read
       contents: read
-    outputs:
-      receipt_artifact_name: ${{ steps.audit.outputs.receipt_artifact_name }}
-      receipt_sha256: ${{ steps.audit.outputs.receipt_sha256 }}
-      receipt_status: ${{ steps.audit.outputs.receipt_status }}
-    steps:
-      - name: Check out the exact protected commit
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Run the protected read-only audit
-        id: audit
-        uses: ./.github/actions/catalog-live-controls-audit
-        with:
-          purpose: maintenance
-          caller_workflow: .github/workflows/catalog-artifact-keeper.yml
-          caller_job: live_controls_audit_before_maintenance
-          protected_commit_sha: ${{ github.sha }}
-          audit_context_sha256: 0b90c2b50f081b48eb3b173b907eab0015973e536db2e8e195ff8f95b69bec42
-          auditor_app_id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
-          auditor_private_key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
-          enterprise_billing_token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
-          package_inventory_token: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
 
   inventory_and_preserve:
     name: Inventory and preserve verified catalog objects

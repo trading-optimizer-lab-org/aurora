@@ -18,12 +18,15 @@ import re
 import shutil
 import stat
 import tempfile
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 import zipfile
+
+
+UTC = timezone.utc
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -199,7 +202,12 @@ def _validate_controls_receipt(
             raise KeeperError("KEEPER_ZERO_SPEND_BUDGETS_INVALID")
     if (
         receipt.get("repository_cache_storage_limit_gb") != 10
-        or receipt.get("repository_cache_retention_days") != 7
+        or not isinstance(receipt.get("enterprise_cache_retention_days"), int)
+        or receipt.get("enterprise_cache_retention_days", 0) < 90
+        or not isinstance(receipt.get("organization_cache_retention_days"), int)
+        or receipt.get("organization_cache_retention_days", 0) < 90
+        or not isinstance(receipt.get("repository_cache_retention_days"), int)
+        or receipt.get("repository_cache_retention_days", 0) < 90
     ):
         raise KeeperError("KEEPER_CACHE_CONTROLS_INVALID")
     return receipt
@@ -626,7 +634,7 @@ def _inventory(args: argparse.Namespace) -> int:
     )
     download_budget = min(
         maximum_download_bytes,
-        int(artifact_headroom * 0.8) if headroom_known else 0,
+        int(cast(int, artifact_headroom) * 0.8) if headroom_known else 0,
     )
 
     selected: list[tuple[dict[str, Any], dict[str, Any]]] = []

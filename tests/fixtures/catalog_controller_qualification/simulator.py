@@ -1237,6 +1237,16 @@ def _prove_recovery_or_reduction(
             raise AssertionError(
                 f"RECOVERY_STATUS_INVALID:{scenario_id}:{result.status}"
             )
+        if scenario_id == "Q-024" and (
+            result.next_wave is not None
+            or result.retry_count != 0
+            or result.replan_shard_ids
+            or any(
+                decision.action != "do_not_retry"
+                for decision in result.plan.decisions
+            )
+        ):
+            raise AssertionError("RECOVERY_NOT_CLOSED:Q-024")
         calls.append("github_performance.recovery.build_recovery_loop")
         if scenario_id == "Q-022":
             calls.record(
@@ -1318,16 +1328,21 @@ def _prove_recovery_or_reduction(
         )
         return True
     if scenario_id == "Q-028":
-        _expect_error(
-            lambda: reconcile_attempts(
+        try:
+            reconcile_attempts(
                 {"u1"},
                 [
                     completed_unit("u1", "a1", digest="1" * 64),
                     completed_unit("u1", "a2", digest="2" * 64),
                 ],
-            ),
-            "conflicting output",
-        )
+            )
+        except ReconciliationError as exc:
+            if "conflicting output" not in str(exc):
+                raise AssertionError(
+                    f"Q-028_CONFLICT_EVIDENCE_INVALID:{exc}"
+                ) from exc
+        else:
+            raise AssertionError("Q-028_CONFLICT_NOT_REJECTED")
         calls.append("github_performance.merge_planner.reconcile_attempts")
         calls.record(
             "BLOCKED",
@@ -1696,12 +1711,20 @@ def _prove_controls_capacity_or_requester(
         if "CONTROLLER_ENABLED: ${{ vars.CATALOG_CONTROLLER_ENABLED }}" not in workflow:
             raise AssertionError("DISABLED_CONTROLLER_VARIABLE_NOT_BOUND")
         if (
+            "CONTROLLER_ARMED: ${{ vars.CATALOG_CONTROLLER_PRODUCTION_ARMED }}" not in workflow
+        ):
+            raise AssertionError("DISABLED_CONTROLLER_ARMED_VARIABLE_NOT_BOUND")
+        if (
             'controller_enabled = os.environ.get("CONTROLLER_ENABLED") == "true"'
             not in workflow
         ):
             raise AssertionError("DISABLED_CONTROLLER_VARIABLE_NOT_READ")
         if (
-            'if actors.get("production_enabled") is True and controller_enabled:'
+            'controller_armed = os.environ.get("CONTROLLER_ARMED") == "true"' not in workflow
+        ):
+            raise AssertionError("DISABLED_CONTROLLER_ARMED_VARIABLE_NOT_READ")
+        if (
+            'if actors.get("production_enabled") is True and controller_enabled and controller_armed:'
             not in workflow
         ):
             raise AssertionError("DISABLED_CONTROLLER_GATE_NOT_QUALIFIED")

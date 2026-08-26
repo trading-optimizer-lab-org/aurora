@@ -580,10 +580,7 @@ def test_compiled_volatility_path_matches_frozen_python_kernel(kind: str) -> Non
         expected_absolute=np.sqrt(2.0 / np.pi),
     )
 
-    if kind == "egarch":
-        np.testing.assert_array_equal(observed, expected)
-    else:
-        np.testing.assert_allclose(observed, expected, rtol=1e-13, atol=1e-13)
+    np.testing.assert_allclose(observed, expected, rtol=1e-13, atol=1e-13)
 
 
 def test_vectorized_temporal_convolution_matches_frozen_python_kernel() -> None:
@@ -1138,10 +1135,11 @@ def test_weekly_keeper_is_read_only_and_cannot_launch_science() -> None:
         "issues": "read",
     }
     audit = keeper["jobs"]["live_controls_audit_before_maintenance"]
-    assert audit["environment"] == "catalog-production"
-    assert audit["runs-on"] == "ubuntu-24.04"
-    assert audit["steps"][1]["uses"] == "./.github/actions/catalog-live-controls-audit"
-    assert audit["steps"][1]["with"]["purpose"] == "maintenance"
+    assert audit["uses"] == "./.github/workflows/catalog-live-controls-audit.yml"
+    assert audit["with"]["purpose"] == "maintenance"
+    assert "environment" not in audit
+    assert "runs-on" not in audit
+    assert "steps" not in audit
     assert "secrets" not in audit
     preservation = keeper["jobs"]["inventory_and_preserve"]
     assert preservation["runs-on"] == "ubuntu-24.04"

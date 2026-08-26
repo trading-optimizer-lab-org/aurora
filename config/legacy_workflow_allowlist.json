@@ -1,6 +1,19 @@
 {
   "adoption_commit": "0ca928bd1f901c47a1c411fd95ba626e772152f6",
-  "schema_version": "1",
+  "authorized_adoptions": [
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "authorization_receipt": {
+        "actor_id": "github-user:271768688",
+        "path": "docs/readiness/catalog-controller/workflow_policy_baseline_adoption_v1.json",
+        "scope": "adopt_exact_preexisting_main_workflow_policy_baseline",
+        "sha256": "85847097c3bbbffadbb540a5cc65d9a9c33da8f0c9e4a8dd5e83cb5e2b0b3362"
+      },
+      "workflow_count": 31,
+      "workflows_sha256": "851673d91b1fcc2dfddde48091a76be7f500dddd9b68007355e9ece0f0d7d848"
+    }
+  ],
+  "schema_version": "2",
   "workflows": [
     {
       "path": ".github/workflows/_stock-protocol-original-290-event-study.yml",
@@ -37,6 +50,86 @@
     {
       "path": ".github/workflows/calmar-gt1-pvalue-bootstrap-173495.yml",
       "sha256": "6136678f995f905c1f3bb235d6997aa4330d0c4a6fc26e6c9c333a5734fd26c3"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-artifact-keeper.yml",
+      "sha256": "7c96083a4c0a9e0ecb8a20694ffba7b932dcc209c582ca9d7c2debc37605d52b"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-capacity-calibration.yml",
+      "sha256": "fbd7f8e6a2080ac9e179514e7881b812bf0a71140d696ddd39526d974d27fd73"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-component-determinism.yml",
+      "sha256": "69eecdf83e7ea6cdaf04f6b57f104c3c5ac0b264e69dce16da6e9d5bc72c13a7"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-component-worker.yml",
+      "sha256": "d5f49d95ffdc3c43b66ecc9417226b20e82022826095f5cbed73679b54a665e6"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-controller-policy-check.yml",
+      "sha256": "71db33aaf25a1e09da29f70098c9cb1280b1ebf81f3de46c6fe8ae1c997ac593"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-controller-qualification.yml",
+      "sha256": "cb0c7ac6999ea56dc374b11ed497a27cdf31258e5fd111016a20e84cfc50ba0f"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-equivalence-diagnostic.yml",
+      "sha256": "3346d54f7c9c32ae70f34168bfb4ce0429a87aadd9b34e3bde905bc6a04fd3ee"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-optimized-run.yml",
+      "sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-optimized-verify-only.yml",
+      "sha256": "acd5244f382b015e9fe2d523592585b04daf5f4054ae1edc3998e4cea5080820"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-optimized-worker.yml",
+      "sha256": "219b28147a66b2932d9cab120dddc5dbd5e41dcaa0017855c3691efa1e481a63"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-recovery-wave.yml",
+      "sha256": "3cf909d40daa6f311685d14521c89ab99aa7476691443a84eff4aac2ea66b1b4"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-reference-oracle.yml",
+      "sha256": "5a8cba3c3640ca3193e6eab0c0ea8ec6117ddeeeb19bd37e418353c839de7e4f"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-reference-worker.yml",
+      "sha256": "d7a29090c69b6e46becfecd0501b6fb0bbaeecb9dc902fb48e36553eb97e6dc7"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-request-reconciler.yml",
+      "sha256": "4bbe04040bdd9e341a6d7b97ffd386fc8343f952e5e610057335ddb272671d00"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-run-controller.yml",
+      "sha256": "b2dc75b1805a9ad1efa42f56f1a3f36258669cc5e1a395e59edad26eea8ecd06"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/catalog-run-watchdog.yml",
+      "sha256": "41fe824d7f7602f4bef23a8f9387497d78055a49cf4122ca07bb3c4b970f559a"
     },
     {
       "path": ".github/workflows/concurrency-smoke-500.yml",
@@ -165,6 +258,81 @@
     {
       "path": ".github/workflows/sp500-only-outperforming-study-finder.yml",
       "sha256": "3c76304afbac0cfeb4254fc8839dae19eee8a43e977bac04fd42634745cfab66"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-atlas-calibration.yml",
+      "sha256": "6030d23f95b247af3889bfd218f56175f7bf0c4a07b3e6462e8df2441e5e72ce"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-atlas-controller.yml",
+      "sha256": "c44962eb22992bd7562c16845a4eaa1c22037b9ca8883f06ff5e2f2498ff5fb8"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-atlas-pilot.yml",
+      "sha256": "06a27045ea57fd5426fa122a30af665c0662e580b5ce1ed0c231da06243641e8"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-atlas-postrun.yml",
+      "sha256": "472e39e04c713b73d467630845ba038b27125b968b4d54e52e7e6d657920a16e"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-atlas-run.yml",
+      "sha256": "aa50a5e345803e918929af7bd8a775d9434fdf92e44bb443b4464012912f2dcb"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-atlas-segment.yml",
+      "sha256": "5da379f72bcd7c421d95a1dfd7813d9ec0c11f2738d98b7f9cb9a040831cd46d"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-catalog-optimization-qualification.yml",
+      "sha256": "cc7d62ac3a2558135ec7b4798ab1a09915966bc26ff6dcbc2abc96e875a2482e"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-dehb-continuous-bootstrap-v2.yml",
+      "sha256": "86e6f0e2bbd8b5b5babbccced14469c4494a1621878e59f10e931aa7e75bd0c3"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-dehb-continuous-coordinator-v2.yml",
+      "sha256": "0739ed0a1d426d5f2affff88f4d3a0d3cf8bff3edc56a79ade904c6bf6ce30ac"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-dehb-continuous-reducer-v2.yml",
+      "sha256": "d2d7c1971e3c5eb4064f210eed65fbffa618d534bff106f3a1548039f1191d87"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-dehb-continuous-supervisor-v2.yml",
+      "sha256": "fdffe451839651acf3a6f2b50fd3200c5ff542acf1dd71fabb3147ddd32e996a"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-dehb-continuous-worker-pool-v2.yml",
+      "sha256": "eea2ec41b084c05f33177368c3669c28cb69d3ed2d25661195640956e884e389"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-f024-inverse-diagnostic.yml",
+      "sha256": "e2210182e3b02f4f1315fc1dafde491ba7cd1a4674e804fc0557a3a929d85a27"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-megarun-dehb-official-smoke.yml",
+      "sha256": "1efc3eb93284941c96a327becb27ff9e180a2ccdaa07fac6344f7e47cec5cadd"
+    },
+    {
+      "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
+      "path": ".github/workflows/sp500-selected-validation-12-once.yml",
+      "sha256": "3d9bfb3d467c21055f4eac6439de4207fc056dfb549e27995c71892c69a84395"
     },
     {
       "path": ".github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-1wave-80jobs-1h.yml",

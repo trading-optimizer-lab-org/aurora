@@ -802,6 +802,10 @@ def _run_powershell_script(path: Path, *arguments: str) -> subprocess.CompletedP
     )
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="requires powershell.exe",
+)
 def test_installers_are_non_mutating_dry_runs_by_default() -> None:
     for path, identity in (
         (AGENT_INSTALLER, "AURORAAgent"),
@@ -827,6 +831,10 @@ def test_installers_are_non_mutating_dry_runs_by_default() -> None:
             )
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="requires powershell.exe",
+)
 def test_installers_reject_apply_without_exact_confirmation() -> None:
     for path in (AGENT_INSTALLER, BROKER_INSTALLER):
         result = _run_powershell_script(path, "-Apply")

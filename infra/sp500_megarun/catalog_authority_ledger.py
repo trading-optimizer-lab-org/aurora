@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import json
@@ -75,6 +75,7 @@ _REQUEST_LIFECYCLE_MUTATIONS = frozenset(
     }
 )
 _UNSET = object()
+UTC = timezone.utc
 
 
 def _canonical_bytes(value: object) -> bytes:

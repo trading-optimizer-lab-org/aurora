@@ -20,8 +20,11 @@
   "required_enterprise_permissions": {
     "enterprise_billing": "read"
   },
-  "required_enterprise_token_scopes": [
+  "required_enterprise_billing_token_scopes": [
     "manage_billing:enterprise"
+  ],
+  "required_enterprise_cache_verifier_token_scopes": [
+    "admin:enterprise"
   ],
   "required_package_inventory_token_scopes": [
     "read:packages"
@@ -40,6 +43,7 @@
   ],
   "private_key_environment_secret": "AURORA_CATALOG_AUDITOR_PRIVATE_KEY",
   "enterprise_billing_token_environment_secret": "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN",
+  "enterprise_cache_verifier_token_environment_secret": "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN",
   "package_inventory_token_environment_secret": "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN",
   "app_id_variable": "AURORA_CATALOG_AUDITOR_APP_ID"
 }

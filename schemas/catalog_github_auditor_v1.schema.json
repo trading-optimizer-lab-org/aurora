@@ -13,11 +13,13 @@
     "required_repository_permissions",
     "required_organization_permissions",
     "required_enterprise_permissions",
-    "required_enterprise_token_scopes",
+    "required_enterprise_billing_token_scopes",
+    "required_enterprise_cache_verifier_token_scopes",
     "required_package_inventory_token_scopes",
     "forbidden_write_permissions",
     "private_key_environment_secret",
     "enterprise_billing_token_environment_secret",
+    "enterprise_cache_verifier_token_environment_secret",
     "package_inventory_token_environment_secret",
     "app_id_variable"
   ],
@@ -73,8 +75,11 @@
       "required": ["enterprise_billing"],
       "properties": {"enterprise_billing": {"const": "read"}}
     },
-    "required_enterprise_token_scopes": {
+    "required_enterprise_billing_token_scopes": {
       "const": ["manage_billing:enterprise"]
+    },
+    "required_enterprise_cache_verifier_token_scopes": {
+      "const": ["admin:enterprise"]
     },
     "required_package_inventory_token_scopes": {
       "const": ["read:packages"]
@@ -103,6 +108,9 @@
     },
     "enterprise_billing_token_environment_secret": {
       "const": "AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN"
+    },
+    "enterprise_cache_verifier_token_environment_secret": {
+      "const": "AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN"
     },
     "package_inventory_token_environment_secret": {
       "const": "AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN"

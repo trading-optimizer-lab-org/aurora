@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -381,9 +382,52 @@ def _attempt_directories(
     return tuple(records)
 
 
+def _attempt_sort_key(attempt_id: str) -> tuple[int, str]:
+    """Order retry identifiers by their logical number, not text spelling."""
+
+    text = str(attempt_id)
+    recovery_match = re.match(r"^recovery-(\d+)(?:-|$)", text)
+    if recovery_match is not None:
+        return int(recovery_match.group(1)), text
+    attempt_match = re.search(
+        r"(?:^|[-:/])attempt[-:/]?(\d+)(?:$|[-:/])",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if attempt_match is not None:
+        return int(attempt_match.group(1)), text
+    digits = re.findall(r"\d+", text)
+    return (int(digits[-1]) if digits else -1), text
+
+
+def _unique_attempt_candidates(
+    candidates: Sequence[tuple[AttemptManifest, Path]],
+) -> tuple[tuple[AttemptManifest, Path], ...]:
+    if not candidates:
+        raise PhysicalMergeError("no attempt candidates")
+    shard_ids = {manifest.shard_id for manifest, _ in candidates}
+    if len(shard_ids) != 1:
+        raise PhysicalMergeError("attempt candidates span multiple shards")
+    by_attempt_id: dict[str, tuple[AttemptManifest, Path]] = {}
+    for manifest, directory in candidates:
+        previous = by_attempt_id.get(manifest.attempt_id)
+        if previous is None:
+            by_attempt_id[manifest.attempt_id] = (manifest, directory)
+            continue
+        if previous[0] != manifest:
+            raise PhysicalMergeError(
+                "conflicting evidence for attempt "
+                f"{manifest.attempt_id} on shard {manifest.shard_id}"
+            )
+        if str(directory) < str(previous[1]):
+            by_attempt_id[manifest.attempt_id] = (manifest, directory)
+    return tuple(by_attempt_id.values())
+
+
 def _select_attempt(
     candidates: Sequence[tuple[AttemptManifest, Path]],
 ) -> tuple[AttemptManifest, Path]:
+    candidates = _unique_attempt_candidates(candidates)
     completed = tuple(
         item
         for item in candidates
@@ -396,8 +440,8 @@ def _select_attempt(
             raise PhysicalMergeError(
                 f"conflicting completed outputs for shard {shard_id}"
             )
-        return min(completed, key=lambda item: item[0].attempt_id)
-    return max(candidates, key=lambda item: item[0].attempt_id)
+        return min(completed, key=lambda item: _attempt_sort_key(item[0].attempt_id))
+    return max(candidates, key=lambda item: _attempt_sort_key(item[0].attempt_id))
 
 
 def select_group_attempts(
