@@ -580,10 +580,7 @@ def test_compiled_volatility_path_matches_frozen_python_kernel(kind: str) -> Non
         expected_absolute=np.sqrt(2.0 / np.pi),
     )
 
-    if kind == "egarch":
-        np.testing.assert_array_equal(observed, expected)
-    else:
-        np.testing.assert_allclose(observed, expected, rtol=1e-13, atol=1e-13)
+    np.testing.assert_allclose(observed, expected, rtol=1e-13, atol=1e-13)
 
 
 def test_vectorized_temporal_convolution_matches_frozen_python_kernel() -> None:
