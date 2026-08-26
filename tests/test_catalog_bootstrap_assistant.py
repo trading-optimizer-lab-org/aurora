@@ -744,6 +744,30 @@ def _idempotent_resume_followup_repair_operation(
     }
 
 
+def _idempotent_resume_catchup_repair_operation(
+    *,
+    prior_merge: str,
+    repair_head: str,
+    repair_merge: str,
+) -> dict[str, object]:
+    return {
+        "base_commit_sha": prior_merge,
+        "branch": "codex/catalog-bootstrap-runtime-catchup",
+        "changed_paths": [
+            "scripts/run_catalog_bootstrap_assistant.py",
+            "tests/test_catalog_bootstrap_assistant.py",
+        ],
+        "head_commit_sha": repair_head,
+        "merge_commit_sha": repair_merge,
+        "patch_sha256": "3" * 64,
+        "pr_number": 197,
+        "prior_runtime_commit_sha": prior_merge,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "catalog-controller-policy",
+        "schema_version": "1",
+    }
+
+
 def test_only_exact_local_install_retry_returns_to_local_install_phase() -> None:
     blocked = _blocked_local_install_state()
 
@@ -2871,7 +2895,7 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     ):
         bootstrap_runner._runtime_commit(root)
 
-    prior_controls = {"protected_commit_sha": resume_merge}
+    prior_controls = {"protected_commit_sha": package_token_merge}
     refreshed_controls = {"protected_commit_sha": followup_merge}
     prior_controls_path.write_bytes(bootstrap_runner._canonical(prior_controls) + b"\n")
     controls_path.write_bytes(bootstrap_runner._canonical(refreshed_controls) + b"\n")
@@ -2894,6 +2918,73 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     )
 
     assert bootstrap_runner._runtime_commit(root) == followup_merge
+
+    catchup_head = "9" * 40
+    catchup_merge = "a" * 40
+    catchup_operation = _idempotent_resume_catchup_repair_operation(
+        prior_merge=followup_merge,
+        repair_head=catchup_head,
+        repair_merge=catchup_merge,
+    )
+    catchup_operation_path = (
+        root / "github-controls-idempotent-resume-catchup-repair-operation-v1.json"
+    )
+    catchup_operation_path.write_bytes(
+        bootstrap_runner._canonical(catchup_operation) + b"\n"
+    )
+    followup_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-11-v1.json"
+    )
+    catchup_retry = {
+        "activity_baseline_sha256": "b" * 64,
+        "bootstrap_id": BOOTSTRAP_ID,
+        "bootstrap_source_commit_sha": COMMIT,
+        "idempotent_resume_catchup_merge_commit_sha": catchup_merge,
+        "idempotent_resume_catchup_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(catchup_operation)
+        ).hexdigest(),
+        "idempotent_resume_catchup_pr_number": 197,
+        "installations": {"auditor": 2, "requester": 1},
+        "interrupted_phase": "QUALIFICATION_PENDING",
+        "interrupted_sequence": 43,
+        "interrupted_state_sha256": "c" * 64,
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            followup_retry_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": followup_merge,
+        "schema_version": "1",
+    }
+    (
+        root / "receipts/controller-bootstrap-github-controls-retry-12-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(catchup_retry) + b"\n")
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CATCHUP_REFRESH_INVALID",
+    ):
+        bootstrap_runner._runtime_commit(root)
+
+    refreshed_controls = {"protected_commit_sha": catchup_merge}
+    controls_path.write_bytes(bootstrap_runner._canonical(refreshed_controls) + b"\n")
+    catchup_refresh = {
+        "bootstrap_id": BOOTSTRAP_ID,
+        "prior_controls_operation_sha256": hashlib.sha256(
+            prior_controls_path.read_bytes()
+        ).hexdigest(),
+        "protected_commit_sha": catchup_merge,
+        "refreshed_controls_operation_sha256": hashlib.sha256(
+            controls_path.read_bytes()
+        ).hexdigest(),
+        "runtime_upgrade_operation_sha256": hashlib.sha256(
+            catchup_operation_path.read_bytes()
+        ).hexdigest(),
+        "schema_version": "1",
+    }
+    (root / "runtime-upgrade-controls-refresh-v1.json").write_bytes(
+        bootstrap_runner._canonical(catchup_refresh) + b"\n"
+    )
+
+    assert bootstrap_runner._runtime_commit(root) == catchup_merge
 
     resume_retry["prior_retry_receipt_sha256"] = "0" * 64
     (root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json").write_bytes(
@@ -3119,7 +3210,9 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
         bootstrap_runner._canonical(baseline) + b"\n"
     )
     prior_runtime = "3" * 40
-    protected_commit = "5" * 40
+    intermediate_runtime = "4" * 40
+    followup_runtime = "5" * 40
+    protected_commit = "6" * 40
     retry = {
         "activity_baseline_sha256": hashlib.sha256(
             bootstrap_runner._canonical(baseline)
@@ -3137,8 +3230,8 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
         bootstrap_runner._canonical(upgrade_operation) + b"\n"
     )
     followup_operation = {
-        "merge_commit_sha": protected_commit,
-        "prior_runtime_commit_sha": prior_runtime,
+        "merge_commit_sha": followup_runtime,
+        "prior_runtime_commit_sha": intermediate_runtime,
     }
     (
         root / "github-controls-idempotent-resume-followup-repair-operation-v1.json"
@@ -3151,6 +3244,21 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
     (
         root / "receipts/controller-bootstrap-github-controls-retry-11-v1.json"
     ).write_bytes(bootstrap_runner._canonical(followup_retry) + b"\n")
+    catchup_operation = {
+        "merge_commit_sha": protected_commit,
+        "prior_runtime_commit_sha": followup_runtime,
+    }
+    (
+        root / "github-controls-idempotent-resume-catchup-repair-operation-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(catchup_operation) + b"\n")
+    catchup_retry = {
+        "activity_baseline_sha256": retry["activity_baseline_sha256"],
+        "bootstrap_id": BOOTSTRAP_ID,
+        "interrupted_state_sha256": retry["interrupted_state_sha256"],
+    }
+    (
+        root / "receipts/controller-bootstrap-github-controls-retry-12-v1.json"
+    ).write_bytes(bootstrap_runner._canonical(catchup_retry) + b"\n")
     old_controls = {"protected_commit_sha": prior_runtime}
     controls_path = root / "github-controls-operation-v1.json"
     controls_path.write_bytes(bootstrap_runner._canonical(old_controls) + b"\n")
@@ -3226,7 +3334,7 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
     with pytest.raises(ValueError, match="authorization-rejected"):
         bootstrap_runner._refresh_interrupted_runtime_controls(root)
 
-    assert rejected_authorizations == [(source, followup_operation)]
+    assert rejected_authorizations == [(source, catchup_operation)]
     assert calls == []
     assert controls_path.read_bytes() == bootstrap_runner._canonical(old_controls) + b"\n"
     assert not (root / "github-controls-operation-before-runtime-upgrade-v1.json").exists()
@@ -3239,12 +3347,25 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
         "_verify_idempotent_resume_github_authorization",
         lambda checkout, operation: verified_authorizations.append((checkout, operation)),
     )
+    unrelated_controls = {"protected_commit_sha": "7" * 40}
+    controls_path.write_bytes(
+        bootstrap_runner._canonical(unrelated_controls) + b"\n"
+    )
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CONTROLS_INVALID",
+    ):
+        bootstrap_runner._refresh_interrupted_runtime_controls(root)
+    assert calls == []
+
+    controls_path.write_bytes(bootstrap_runner._canonical(old_controls) + b"\n")
     bootstrap_runner._refresh_interrupted_runtime_controls(root)
     bootstrap_runner._refresh_interrupted_runtime_controls(root)
 
     assert verified_authorizations == [
-        (source, followup_operation),
-        (source, followup_operation),
+        (source, catchup_operation),
+        (source, catchup_operation),
+        (source, catchup_operation),
     ]
     assert calls == ["github_controls_runtime_upgrade_live_1"]
     assert state_path.read_bytes() == original_state
