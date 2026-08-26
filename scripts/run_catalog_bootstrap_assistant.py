@@ -198,6 +198,9 @@ _QUALIFICATION_STEP_WORKFLOWS = {
 _DISPATCH_INTENT_STEP_WORKFLOWS = {
     **_QUALIFICATION_STEP_WORKFLOWS,
     "github_controls_live_1": "catalog-live-controls-qualification.yml",
+    "github_controls_runtime_upgrade_live_1": (
+        "catalog-live-controls-qualification.yml"
+    ),
     "final_pre_enable_live": "catalog-live-controls-qualification.yml",
     "final_post_enable_live": "catalog-live-controls-qualification.yml",
 }
