@@ -334,8 +334,10 @@ _GITHUB_CONTROLS_CACHE_RETENTION_REPAIR_PATHS = (
     "tests/test_catalog_bootstrap_assistant.py",
     "tests/test_catalog_github_controls.py",
 )
+# Immutable changed-path evidence for the historical PR 179 repair. Later
+# topology migrations must not rewrite the receipt contract retroactively.
 _GITHUB_CONTROLS_STORAGE_AUDIT_REPAIR_PATHS = (
-    ".github/actions/catalog-live-controls-audit/action.yml",
+    ".github/workflows/catalog-live-controls-audit.yml",
     "config/catalog_campaign_definitions/sp500-optimized-catalog-v1.manifest.json",
     "scripts/audit_catalog_github_controls.py",
     "scripts/run_catalog_artifact_keeper.py",
@@ -3308,8 +3310,7 @@ def _validated_github_controls_storage_audit_repair(
         or not isinstance(operation.get("merge_commit_sha"), str)
         or not _COMMIT.fullmatch(str(operation.get("merge_commit_sha")))
         or not _SHA256.fullmatch(str(operation.get("patch_sha256", "")))
-        or not isinstance(operation.get("pr_number"), int)
-        or _as_int(operation["pr_number"]) < 1
+        or operation.get("pr_number") != 179
         or operation.get("required_check") not in _BOOTSTRAP_REQUIRED_CHECK_NAMES
     ):
         raise ValueError(

@@ -715,6 +715,65 @@ def _github_controls_storage_audit_repair_operation(
     }
 
 
+def test_storage_audit_repair_receipt_stays_bound_to_pr179_paths(
+    tmp_path: Path,
+) -> None:
+    historical_paths = [
+        ".github/workflows/catalog-live-controls-audit.yml",
+        "config/catalog_campaign_definitions/sp500-optimized-catalog-v1.manifest.json",
+        "scripts/audit_catalog_github_controls.py",
+        "scripts/run_catalog_artifact_keeper.py",
+        "scripts/run_catalog_bootstrap_assistant.py",
+        "tests/test_catalog_bootstrap_assistant.py",
+        "tests/test_catalog_controller_workflows.py",
+        "tests/test_catalog_github_controls.py",
+        "tests/test_sp500_catalog_optimized_engine.py",
+    ]
+    prior_repair: dict[str, object] = {"merge_commit_sha": "5" * 40}
+    operation = {
+        "base_commit_sha": "5" * 40,
+        "branch": "codex/catalog-storage-audit-recovery",
+        "changed_paths": historical_paths,
+        "head_commit_sha": "6" * 40,
+        "merge_commit_sha": "7" * 40,
+        "patch_sha256": "8" * 64,
+        "pr_number": 179,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+    path = tmp_path / "github-controls-storage-audit-repair-operation-v1.json"
+    path.write_bytes(bootstrap_runner._canonical(operation) + b"\n")
+
+    assert bootstrap_runner._validated_github_controls_storage_audit_repair(
+        tmp_path, prior_repair
+    ) == operation
+
+    operation["changed_paths"] = [
+        ".github/actions/catalog-live-controls-audit/action.yml",
+        *historical_paths[1:],
+    ]
+    path.write_bytes(bootstrap_runner._canonical(operation) + b"\n")
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_GITHUB_CONTROLS_STORAGE_AUDIT_INVALID",
+    ):
+        bootstrap_runner._validated_github_controls_storage_audit_repair(
+            tmp_path, prior_repair
+        )
+
+    operation["changed_paths"] = historical_paths
+    operation["pr_number"] = 180
+    path.write_bytes(bootstrap_runner._canonical(operation) + b"\n")
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_GITHUB_CONTROLS_STORAGE_AUDIT_INVALID",
+    ):
+        bootstrap_runner._validated_github_controls_storage_audit_repair(
+            tmp_path, prior_repair
+        )
+
+
 def _github_controls_audit_throughput_repair_operation(
     *,
     prior_merge: str,
