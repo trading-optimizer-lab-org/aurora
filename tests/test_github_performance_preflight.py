@@ -358,6 +358,30 @@ def test_legacy_migration_loader_verifies_authorization_receipt(
         load_legacy_workflow_migrations(migration, tmp_path)
 
 
+def test_catalog_control_workflow_migrations_match_current_bytes() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    allowlist = load_legacy_workflow_allowlist(repo_root=repo_root)
+    migrations = load_legacy_workflow_migrations(repo_root=repo_root)
+
+    for relative in (
+        ".github/workflows/catalog-artifact-keeper.yml",
+        ".github/workflows/catalog-run-controller.yml",
+    ):
+        workflow = repo_root / relative
+        assert classify_workflow(
+            workflow,
+            allowlist,
+            repo_root,
+            migrations,
+        ) == "migrated_legacy"
+        assert validate_workflow_policy(
+            workflow,
+            repo_root,
+            allowlist,
+            migrations,
+        ) == []
+
+
 def test_authorized_adoption_loader_binds_receipt_commit_and_rows(
     tmp_path: Path,
 ) -> None:
@@ -461,6 +485,13 @@ def test_new_heavy_workflow_must_call_framework(tmp_path: Path) -> None:
     assert "FUTURE_HEAVY_WORKFLOW_BYPASSES_FRAMEWORK" in {
         item.code for item in violations
     }
+
+
+def test_catalog_live_controls_qualification_is_not_scientific_heavy() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workflow = repo_root / ".github/workflows/catalog-live-controls-qualification.yml"
+
+    assert validate_workflow_policy(workflow, repo_root, {}) == []
 
 
 def test_new_framework_caller_passes_policy(tmp_path: Path) -> None:

@@ -38,7 +38,11 @@ GITHUB_WORKFLOW_DIRECTORY_PREFIX = ".github" + "/workflows/"
 HEAVY_WORKFLOW_MARKERS = (
     "backtest",
     "research",
-    "optim",
+    # Match complete optimization terms.  The shorter ``optim`` substring
+    # also matches the repository owner in protected checkout URLs.
+    "optimize",
+    "optimized",
+    "optimization",
     "robust",
     "sweep",
     "search",
@@ -1959,7 +1963,13 @@ def _is_heavy_workflow(
     searchable = " ".join(
         [Path(path).name, *_iter_scalar_strings(jobs)]
     ).lower()
-    return any(marker in searchable for marker in HEAVY_WORKFLOW_MARKERS)
+    return any(
+        re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(marker)}(?![A-Za-z0-9])",
+            searchable,
+        )
+        for marker in HEAVY_WORKFLOW_MARKERS
+    )
 
 
 def validate_workflow_policy(
