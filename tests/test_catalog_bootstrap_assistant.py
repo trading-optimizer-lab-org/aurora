@@ -2871,7 +2871,7 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
     ):
         bootstrap_runner._runtime_commit(root)
 
-    prior_controls = {"protected_commit_sha": resume_merge}
+    prior_controls = {"protected_commit_sha": package_token_merge}
     refreshed_controls = {"protected_commit_sha": followup_merge}
     prior_controls_path.write_bytes(bootstrap_runner._canonical(prior_controls) + b"\n")
     controls_path.write_bytes(bootstrap_runner._canonical(refreshed_controls) + b"\n")
@@ -3119,6 +3119,7 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
         bootstrap_runner._canonical(baseline) + b"\n"
     )
     prior_runtime = "3" * 40
+    intermediate_runtime = "4" * 40
     protected_commit = "5" * 40
     retry = {
         "activity_baseline_sha256": hashlib.sha256(
@@ -3138,7 +3139,7 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
     )
     followup_operation = {
         "merge_commit_sha": protected_commit,
-        "prior_runtime_commit_sha": prior_runtime,
+        "prior_runtime_commit_sha": intermediate_runtime,
     }
     (
         root / "github-controls-idempotent-resume-followup-repair-operation-v1.json"
@@ -3239,10 +3240,23 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
         "_verify_idempotent_resume_github_authorization",
         lambda checkout, operation: verified_authorizations.append((checkout, operation)),
     )
+    unrelated_controls = {"protected_commit_sha": "6" * 40}
+    controls_path.write_bytes(
+        bootstrap_runner._canonical(unrelated_controls) + b"\n"
+    )
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CONTROLS_INVALID",
+    ):
+        bootstrap_runner._refresh_interrupted_runtime_controls(root)
+    assert calls == []
+
+    controls_path.write_bytes(bootstrap_runner._canonical(old_controls) + b"\n")
     bootstrap_runner._refresh_interrupted_runtime_controls(root)
     bootstrap_runner._refresh_interrupted_runtime_controls(root)
 
     assert verified_authorizations == [
+        (source, followup_operation),
         (source, followup_operation),
         (source, followup_operation),
     ]

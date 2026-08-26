@@ -3470,7 +3470,7 @@ def _validated_runtime_upgrade_refresh(
     root: Path,
     operation: dict[str, object],
     retry: dict[str, object],
-    prior_runtime_commit: object,
+    prior_runtime_commits: tuple[object, ...],
     *,
     operation_path: Path | None = None,
     error_code: str = "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID",
@@ -3483,6 +3483,11 @@ def _validated_runtime_upgrade_refresh(
     refresh = _read_canonical_document(refresh_path, error_code)
     controls = _read_canonical_document(controls_path, error_code)
     backup = _read_canonical_document(backup_path, error_code)
+    if not prior_runtime_commits or any(
+        not isinstance(commit, str) or not _COMMIT.fullmatch(commit)
+        for commit in prior_runtime_commits
+    ):
+        raise ValueError(error_code)
     if (
         set(refresh)
         != {
@@ -3502,7 +3507,7 @@ def _validated_runtime_upgrade_refresh(
         != hashlib.sha256(backup_path.read_bytes()).hexdigest()
         or refresh.get("refreshed_controls_operation_sha256")
         != hashlib.sha256(controls_path.read_bytes()).hexdigest()
-        or backup.get("protected_commit_sha") != prior_runtime_commit
+        or backup.get("protected_commit_sha") not in prior_runtime_commits
         or controls.get("protected_commit_sha") != operation.get("merge_commit_sha")
     ):
         raise ValueError(error_code)
@@ -4304,7 +4309,7 @@ def _runtime_commit(
                 root,
                 resume_operation,
                 resume_retry,
-                package_token_merge,
+                (package_token_merge,),
             )
         return str(resume_merge)
     if _is_reparse_path(followup_retry_path):
@@ -4365,7 +4370,7 @@ def _runtime_commit(
             root,
             followup_operation,
             followup_retry,
-            resume_merge,
+            (resume_merge, resume_operation.get("prior_runtime_commit_sha")),
             operation_path=followup_operation_path,
             error_code="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_FOLLOWUP_REFRESH_INVALID",
         )
@@ -5949,6 +5954,9 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
             root
             / "github-controls-idempotent-resume-followup-repair-operation-v1.json"
         )
+        prior_upgrade_operation_path = (
+            root / "github-controls-idempotent-resume-repair-operation-v1.json"
+        )
     else:
         retry_path = resume_retry_path
         upgrade_operation_path = (
@@ -5968,7 +5976,17 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_STATE_INVALID")
 
     upgrade_operation = _read_json(upgrade_operation_path)
-    prior_runtime = upgrade_operation.get("prior_runtime_commit_sha")
+    acceptable_prior_runtimes = {upgrade_operation.get("prior_runtime_commit_sha")}
+    if followup_retry_path.exists():
+        prior_upgrade_operation = _read_json(prior_upgrade_operation_path)
+        acceptable_prior_runtimes.add(
+            prior_upgrade_operation.get("prior_runtime_commit_sha")
+        )
+    if any(
+        not isinstance(commit, str) or not _COMMIT.fullmatch(commit)
+        for commit in acceptable_prior_runtimes
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CONTROLS_INVALID")
     context = _context(root)
     source = Path(str(context["source_root"]))
     _run(["git", "fetch", "origin", "main"], cwd=source, timeout_seconds=1800)
@@ -5991,7 +6009,7 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
     )
     backup_path = root / "github-controls-operation-before-runtime-upgrade-v1.json"
     refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
-    if controls.get("protected_commit_sha") == prior_runtime:
+    if controls.get("protected_commit_sha") in acceptable_prior_runtimes:
         _write_exact_canonical_checkpoint(backup_path, controls)
         _prepare_github_controls_operation(
             root,
@@ -6011,7 +6029,7 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
         backup_path, "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_BACKUP_INVALID"
     )
     if (
-        prior_controls.get("protected_commit_sha") != prior_runtime
+        prior_controls.get("protected_commit_sha") not in acceptable_prior_runtimes
         or controls.get("protected_commit_sha") != protected_commit_sha
     ):
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CONTROLS_INVALID")
