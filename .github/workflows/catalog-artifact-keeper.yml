@@ -17,16 +17,41 @@ concurrency:
 jobs:
   live_controls_audit_before_maintenance:
     name: Verify live controls before maintenance
-    uses: ./.github/workflows/catalog-live-controls-audit.yml
-    with:
-      purpose: maintenance
-      caller_workflow: .github/workflows/catalog-artifact-keeper.yml
-      caller_job: live_controls_audit_before_maintenance
-      protected_commit_sha: ${{ github.sha }}
-      audit_context_sha256: 0b90c2b50f081b48eb3b173b907eab0015973e536db2e8e195ff8f95b69bec42
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: catalog-production
     permissions:
       actions: read
       contents: read
+    concurrency:
+      group: catalog-live-controls-audit-v1
+      queue: max
+      cancel-in-progress: false
+    outputs:
+      receipt_artifact_name: ${{ steps.controls.outputs.receipt_artifact_name }}
+      receipt_sha256: ${{ steps.controls.outputs.receipt_sha256 }}
+      receipt_status: ${{ steps.controls.outputs.receipt_status }}
+    steps:
+      - name: Check out the exact protected commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: controls
+        name: Run protected read-only audit
+        uses: ./.github/actions/catalog-live-controls-audit
+        with:
+          purpose: maintenance
+          caller-workflow: .github/workflows/catalog-artifact-keeper.yml
+          caller-job: live_controls_audit_before_maintenance
+          protected-commit-sha: ${{ github.sha }}
+          audit-context-sha256: 0b90c2b50f081b48eb3b173b907eab0015973e536db2e8e195ff8f95b69bec42
+          auditor-app-id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
+          auditor-private-key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
+          enterprise-billing-token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
+          enterprise-cache-verifier-token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN }}
+          package-inventory-token: ${{ secrets.AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN }}
 
   inventory_and_preserve:
     name: Inventory and preserve verified catalog objects

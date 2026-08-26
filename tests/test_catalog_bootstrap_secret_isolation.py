@@ -138,6 +138,20 @@ def test_default_acl_checker_passes_path_via_dedicated_environment_variable(
     assert not any(key.casefold() == "psmodulepath" for key in environment)
 
 
+def test_default_acl_checker_fails_closed_on_probe_timeout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(secrets_module.os, "name", "nt")
+    monkeypatch.setattr(secrets_module, "_is_reparse_point", lambda _path: False)
+
+    def raise_timeout(args: list[str], **kwargs: object) -> object:
+        raise secrets_module.subprocess.TimeoutExpired(args, 10)
+
+    monkeypatch.setattr(secrets_module.subprocess, "run", raise_timeout)
+
+    assert secrets_module._default_acl_checker(tmp_path) is False
+
+
 def test_requester_key_is_create_new_and_read_back_verified(tmp_path: Path) -> None:
     target = tmp_path / "requester-private-key.pem"
     first = _key_pem()
