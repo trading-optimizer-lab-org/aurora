@@ -4506,6 +4506,7 @@ def test_requester_complete_checkpoint_revalidates_without_new_client_call(
     "step_name",
     (
         "github_controls_live_1",
+        "github_controls_runtime_upgrade_live_1",
         "final_pre_enable_live",
         "final_post_enable_live",
     ),
