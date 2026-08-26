@@ -584,6 +584,60 @@ def _github_controls_billing_token_repair_operation(
     }
 
 
+def test_billing_token_repair_receipt_stays_bound_to_pr176_paths(
+    tmp_path: Path,
+) -> None:
+    legacy_paths = [
+        ".github/workflows/catalog-live-controls-audit.yml",
+        "config/catalog_github_auditor_v1.json",
+        "config/catalog_github_controls_v1.json",
+        "infra/sp500_megarun/catalog_github_controls.py",
+        "infra/sp500_megarun/catalog_requester_broker_cli.py",
+        "infra/sp500_megarun/catalog_requester_cli.py",
+        "schemas/catalog_github_auditor_v1.schema.json",
+        "schemas/catalog_github_controls_v1.schema.json",
+        "scripts/audit_catalog_agent_capabilities.ps1",
+        "scripts/audit_catalog_github_controls.py",
+        "scripts/run_catalog_bootstrap_assistant.py",
+        "tests/test_catalog_bootstrap_assistant.py",
+        "tests/test_catalog_controller_workflows.py",
+        "tests/test_catalog_github_controls.py",
+        "tests/test_catalog_requester_packaging.py",
+    ]
+    prior_repair = {"merge_commit_sha": "5" * 40}
+    operation = {
+        "base_commit_sha": "5" * 40,
+        "branch": "codex/catalog-billing-audit-token-recovery",
+        "changed_paths": legacy_paths,
+        "head_commit_sha": "6" * 40,
+        "merge_commit_sha": "7" * 40,
+        "patch_sha256": "8" * 64,
+        "pr_number": 176,
+        "repository": bootstrap_runner.REPOSITORY,
+        "required_check": "GTBI V7 stage-two required",
+        "schema_version": "1",
+    }
+    path = tmp_path / "github-controls-billing-token-repair-operation-v1.json"
+    path.write_bytes(bootstrap_runner._canonical(operation) + b"\n")
+
+    assert bootstrap_runner._validated_github_controls_billing_token_repair(
+        tmp_path, prior_repair
+    ) == operation
+
+    operation["changed_paths"] = [
+        ".github/actions/catalog-live-controls-audit/action.yml",
+        *legacy_paths[1:],
+    ]
+    path.write_bytes(bootstrap_runner._canonical(operation) + b"\n")
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_GITHUB_CONTROLS_BILLING_TOKEN_INVALID",
+    ):
+        bootstrap_runner._validated_github_controls_billing_token_repair(
+            tmp_path, prior_repair
+        )
+
+
 def _github_controls_stable_precondition_repair_operation(
     *,
     prior_merge: str,
