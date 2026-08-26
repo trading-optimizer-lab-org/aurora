@@ -604,7 +604,7 @@ def test_billing_token_repair_receipt_stays_bound_to_pr176_paths(
         "tests/test_catalog_github_controls.py",
         "tests/test_catalog_requester_packaging.py",
     ]
-    prior_repair = {"merge_commit_sha": "5" * 40}
+    prior_repair: dict[str, object] = {"merge_commit_sha": "5" * 40}
     operation = {
         "base_commit_sha": "5" * 40,
         "branch": "codex/catalog-billing-audit-token-recovery",
