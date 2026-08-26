@@ -272,7 +272,7 @@ def protected_snapshots() -> _AuditInputs:
         },
         "auditor_installation": None,
         "auditor_secret_consumer_workflows": [
-            AUDITOR_SECRET_CONSUMER
+            ".github/actions/catalog-live-controls-audit/action.yml"
         ],
         "auditor_runtime_callers": [
             {
@@ -411,9 +411,9 @@ def test_exact_protected_state_passes() -> None:
     assert receipt.audit_use_context == "controller_admission"
 
 
-def test_auditor_secret_consumer_is_the_reusable_workflow_without_composite() -> None:
-    expected = ".github/workflows/catalog-live-controls-audit.yml"
-    composite = ".github/actions/catalog-live-controls-audit/action.yml"
+def test_auditor_secret_consumer_is_the_local_composite_action() -> None:
+    expected = ".github/actions/catalog-live-controls-audit/action.yml"
+    broken = ".github/workflows/catalog-live-controls-audit.yml"
     schema_text = (ROOT / "schemas/catalog_github_controls_v1.schema.json").read_text(
         "utf-8"
     )
@@ -424,10 +424,10 @@ def test_auditor_secret_consumer_is_the_reusable_workflow_without_composite() ->
     assert schema["$defs"]["auditor"]["properties"][
         "only_token_consumer_workflow"
     ]["const"] == expected
-    assert composite not in CONTROLS.read_text("utf-8")
-    assert composite not in schema_text
-    assert composite not in PROTOCOL_COMMON_PATHS
+    assert expected in CONTROLS.read_text("utf-8")
+    assert expected in schema_text
     assert expected in PROTOCOL_COMMON_PATHS
+    assert broken not in PROTOCOL_COMMON_PATHS
 
 
 def test_auditor_runtime_topology_requires_exactly_five_callers() -> None:

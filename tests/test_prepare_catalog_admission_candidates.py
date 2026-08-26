@@ -41,7 +41,7 @@ NOW = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
 
 _CRITICAL_COMMON_PROTOCOL_PATHS = {
     ".github/workflows/catalog-run-controller.yml",
-    ".github/workflows/catalog-live-controls-audit.yml",
+    ".github/actions/catalog-live-controls-audit/action.yml",
     ".github/workflows/catalog-request-reconciler.yml",
     ".github/workflows/catalog-ledger-guard.yml",
     ".github/workflows/catalog-run-watchdog.yml",
@@ -423,8 +423,8 @@ def test_candidate_documents_never_embed_issue_text_or_absolute_paths(tmp_path: 
 def test_execution_protocol_common_manifest_is_closed_and_complete() -> None:
     assert len(_PROTOCOL_COMMON_PATHS) == len(set(_PROTOCOL_COMMON_PATHS))
     assert _CRITICAL_COMMON_PROTOCOL_PATHS <= set(_PROTOCOL_COMMON_PATHS)
-    assert ".github/workflows/catalog-live-controls-audit.yml" in _PROTOCOL_COMMON_PATHS
-    assert ".github/actions/catalog-live-controls-audit/action.yml" not in _PROTOCOL_COMMON_PATHS
+    assert ".github/actions/catalog-live-controls-audit/action.yml" in _PROTOCOL_COMMON_PATHS
+    assert ".github/workflows/catalog-live-controls-audit.yml" not in _PROTOCOL_COMMON_PATHS
     for relative in _PROTOCOL_COMMON_PATHS:
         assert relative == Path(relative).as_posix()
         assert not Path(relative).is_absolute()

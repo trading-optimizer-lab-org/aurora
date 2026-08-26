@@ -35,7 +35,7 @@ RepositoryName = Annotated[
     StringConstraints(pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"),
 ]
 
-AUDITOR_SECRET_CONSUMER = ".github/workflows/catalog-live-controls-audit.yml"
+AUDITOR_SECRET_CONSUMER = ".github/actions/catalog-live-controls-audit/action.yml"
 AUDITOR_CALLER_TOPOLOGY = (
     (
         ".github/workflows/catalog-run-controller.yml",
@@ -1267,7 +1267,10 @@ def build_github_controls_mutation_plan(
     failures = set(receipt.failed_controls)
     mutations: list[GithubControlMutationV1] = []
 
-    groups: tuple[tuple[set[str], str, str, Mapping[str, object]], ...] = (
+    groups: tuple[
+        tuple[set[str], Literal["PUT", "POST", "PATCH"], str, Mapping[str, object]],
+        ...,
+    ] = (
         (
             {
                 "MAIN_ADMINS_ENFORCED",
@@ -1412,14 +1415,19 @@ def build_github_controls_mutation_plan(
                     reason_codes=("CACHE_RETENTION_POLICY_REQUIRED",),
                 )
             )
-    plan_payload = {
+    plan_payload: dict[str, object] = {
         "schema_version": "1",
         "repository": repository,
         "current_receipt_sha256": receipt.receipt_sha256,
         "mutations": tuple(item.model_dump(mode="json") for item in mutations),
     }
     return CatalogGithubControlsMutationPlanV1(
-        **plan_payload,
+        schema_version=cast(Literal["1"], plan_payload["schema_version"]),
+        repository=cast(str, plan_payload["repository"]),
+        current_receipt_sha256=cast(str, plan_payload["current_receipt_sha256"]),
+        mutations=cast(
+            tuple[GithubControlMutationV1, ...], plan_payload["mutations"]
+        ),
         plan_sha256=_sha256(plan_payload),
     )
 

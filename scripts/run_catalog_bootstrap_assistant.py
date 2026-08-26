@@ -302,7 +302,7 @@ _GITHUB_CONTROLS_ENTERPRISE_REPAIR_PATHS = (
     "tests/test_catalog_github_controls.py",
 )
 _GITHUB_CONTROLS_BILLING_TOKEN_REPAIR_PATHS = (
-    ".github/workflows/catalog-live-controls-audit.yml",
+    ".github/actions/catalog-live-controls-audit/action.yml",
     "config/catalog_github_auditor_v1.json",
     "config/catalog_github_controls_v1.json",
     "infra/sp500_megarun/catalog_github_controls.py",
@@ -333,7 +333,7 @@ _GITHUB_CONTROLS_CACHE_RETENTION_REPAIR_PATHS = (
     "tests/test_catalog_github_controls.py",
 )
 _GITHUB_CONTROLS_STORAGE_AUDIT_REPAIR_PATHS = (
-    ".github/workflows/catalog-live-controls-audit.yml",
+    ".github/actions/catalog-live-controls-audit/action.yml",
     "config/catalog_campaign_definitions/sp500-optimized-catalog-v1.manifest.json",
     "scripts/audit_catalog_github_controls.py",
     "scripts/run_catalog_artifact_keeper.py",
@@ -362,6 +362,7 @@ _IDEMPOTENT_RESUME_FOLLOWUP_PR_NUMBER = 196
 _IDEMPOTENT_RESUME_FOLLOWUP_REQUIRED_CHECK = "catalog-controller-policy"
 _IDEMPOTENT_RESUME_CATCHUP_BRANCH = "codex/catalog-bootstrap-runtime-catchup"
 _IDEMPOTENT_RESUME_CATCHUP_PR_NUMBER = 197
+_MAX_IDEMPOTENT_RESUME_UPGRADE_INDEX = 128
 _IDEMPOTENT_RESUME_CATCHUP_REQUIRED_CHECK = "catalog-controller-policy"
 _IDEMPOTENT_RESUME_ALLOWED_ROOTS = frozenset(
     {".github", "config", "docs", "infra", "schemas", "scripts", "tests"}
@@ -2591,6 +2592,8 @@ def _git_changed_paths(source: Path, base_commit: str, head_commit: str) -> tupl
 def _verify_idempotent_resume_github_authorization(
     source: Path,
     operation: dict[str, object],
+    *,
+    protected_main_commit_sha: str | None = None,
 ) -> None:
     operation_pr_number = operation.get("pr_number")
     if operation_pr_number == _IDEMPOTENT_RESUME_PR_NUMBER:
@@ -2606,6 +2609,18 @@ def _verify_idempotent_resume_github_authorization(
     elif operation_pr_number == _IDEMPOTENT_RESUME_CATCHUP_PR_NUMBER:
         expected_branch = _IDEMPOTENT_RESUME_CATCHUP_BRANCH
         required_check = _IDEMPOTENT_RESUME_CATCHUP_REQUIRED_CHECK
+        patch_base_commit = str(operation.get("prior_runtime_commit_sha", ""))
+        graph_patch_base = patch_base_commit
+    elif (
+        isinstance(operation_pr_number, int)
+        and not isinstance(operation_pr_number, bool)
+        and operation_pr_number > _IDEMPOTENT_RESUME_CATCHUP_PR_NUMBER
+        and isinstance(operation.get("branch"), str)
+        and re.fullmatch(r"codex/catalog-[a-z0-9][a-z0-9-]{0,79}", str(operation["branch"]))
+        and operation.get("required_check") == "catalog-controller-policy"
+    ):
+        expected_branch = str(operation["branch"])
+        required_check = "catalog-controller-policy"
         patch_base_commit = str(operation.get("prior_runtime_commit_sha", ""))
         graph_patch_base = patch_base_commit
     else:
@@ -2680,8 +2695,17 @@ def _verify_idempotent_resume_github_authorization(
 
     head_commit = str(operation["head_commit_sha"])
     merge_commit_sha = str(operation["merge_commit_sha"])
-    if _run(["git", "rev-parse", "origin/main"], cwd=source) != merge_commit_sha:
+    expected_main = protected_main_commit_sha or merge_commit_sha
+    if (
+        not _COMMIT.fullmatch(expected_main)
+        or _run(["git", "rev-parse", "origin/main"], cwd=source) != expected_main
+    ):
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_MAIN_INVALID")
+    if merge_commit_sha != expected_main:
+        _run(
+            ["git", "merge-base", "--is-ancestor", merge_commit_sha, expected_main],
+            cwd=source,
+        )
     changed_paths = tuple(cast(list[str], operation["changed_paths"]))
     if _git_changed_paths(source, patch_base_commit, head_commit) != changed_paths:
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_PATHS_INVALID")
@@ -3512,6 +3536,104 @@ def _validated_idempotent_resume_catchup_repair(
     ):
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CATCHUP_REPAIR_INVALID")
     return operation
+
+
+def _validated_idempotent_resume_upgrade_repair(
+    root: Path,
+    upgrade_index: int,
+    prior_repair: dict[str, object],
+) -> tuple[Path, dict[str, object]]:
+    path = (
+        root
+        / f"github-controls-idempotent-resume-upgrade-{upgrade_index}-operation-v1.json"
+    )
+    operation = _read_json(path)
+    prior_merge = prior_repair.get("merge_commit_sha")
+    branch = operation.get("branch")
+    pr_number = operation.get("pr_number")
+    base_commit = operation.get("base_commit_sha")
+    prior_runtime = operation.get("prior_runtime_commit_sha")
+    head_commit = operation.get("head_commit_sha")
+    merge_commit = operation.get("merge_commit_sha")
+    patch_hash = operation.get("patch_sha256")
+    if (
+        upgrade_index < 13
+        or set(operation)
+        != {
+            "base_commit_sha",
+            "branch",
+            "changed_paths",
+            "head_commit_sha",
+            "merge_commit_sha",
+            "patch_sha256",
+            "pr_number",
+            "prior_runtime_commit_sha",
+            "repository",
+            "required_check",
+            "schema_version",
+            "upgrade_index",
+        }
+        or path.read_bytes() != _canonical(operation) + b"\n"
+        or operation.get("schema_version") != "1"
+        or operation.get("upgrade_index") != upgrade_index
+        or operation.get("repository") != REPOSITORY
+        or not isinstance(prior_merge, str)
+        or not _COMMIT.fullmatch(prior_merge)
+        or not isinstance(base_commit, str)
+        or not _COMMIT.fullmatch(base_commit)
+        or not isinstance(prior_runtime, str)
+        or not _COMMIT.fullmatch(prior_runtime)
+        or operation.get("base_commit_sha") != prior_merge
+        or operation.get("prior_runtime_commit_sha") != prior_merge
+        or not isinstance(branch, str)
+        or not re.fullmatch(r"codex/catalog-[a-z0-9][a-z0-9-]{0,79}", branch)
+        or not isinstance(pr_number, int)
+        or isinstance(pr_number, bool)
+        or pr_number <= _IDEMPOTENT_RESUME_CATCHUP_PR_NUMBER
+        or operation.get("required_check") != "catalog-controller-policy"
+        or not _valid_idempotent_resume_paths(operation.get("changed_paths"))
+        or not isinstance(head_commit, str)
+        or not _COMMIT.fullmatch(head_commit)
+        or not isinstance(merge_commit, str)
+        or not _COMMIT.fullmatch(merge_commit)
+        or not isinstance(patch_hash, str)
+        or not _SHA256.fullmatch(patch_hash)
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_REPAIR_INVALID")
+    return path, operation
+
+
+def _idempotent_resume_upgrade_indexes(root: Path) -> tuple[int, ...]:
+    operation_pattern = re.compile(
+        r"github-controls-idempotent-resume-upgrade-(\d+)-operation-v1\.json"
+    )
+    retry_pattern = re.compile(
+        r"controller-bootstrap-github-controls-retry-(\d+)-v1\.json"
+    )
+    operation_indexes = {
+        int(match.group(1))
+        for path in root.iterdir()
+        if (match := operation_pattern.fullmatch(path.name)) is not None
+        and int(match.group(1)) >= 13
+    }
+    retry_indexes = {
+        int(match.group(1))
+        for path in (root / "receipts").iterdir()
+        if (match := retry_pattern.fullmatch(path.name)) is not None
+        and int(match.group(1)) >= 13
+    }
+    if operation_indexes != retry_indexes:
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_RETRY_INVALID")
+    if not operation_indexes:
+        return ()
+    highest = max(operation_indexes)
+    if (
+        min(operation_indexes) != 13
+        or highest > _MAX_IDEMPOTENT_RESUME_UPGRADE_INDEX
+        or len(operation_indexes) != highest - 12
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_RETRY_INVALID")
+    return tuple(sorted(operation_indexes))
 
 
 def _validated_runtime_upgrade_refresh(
@@ -4480,20 +4602,104 @@ def _runtime_commit(
         )
     ):
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CATCHUP_RETRY_INVALID")
+    accepted_prior_runtimes: list[object] = [
+        followup_merge,
+        followup_operation.get("prior_runtime_commit_sha"),
+        resume_operation.get("prior_runtime_commit_sha"),
+    ]
+    latest_operation = catchup_operation
+    latest_retry = catchup_retry
+    latest_operation_path = catchup_operation_path
+    latest_retry_path = catchup_retry_path
+    latest_merge = catchup_merge
+    upgrade_indexes = _idempotent_resume_upgrade_indexes(root)
+    for upgrade_index in upgrade_indexes:
+        operation_path = (
+            root
+            / f"github-controls-idempotent-resume-upgrade-{upgrade_index}-operation-v1.json"
+        )
+        retry_path = (
+            root
+            / f"receipts/controller-bootstrap-github-controls-retry-{upgrade_index}-v1.json"
+        )
+        if (
+            not operation_path.exists()
+            or not retry_path.exists()
+            or _is_reparse_path(operation_path)
+            or _is_reparse_path(retry_path)
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_RETRY_INVALID")
+        validated_path, operation = _validated_idempotent_resume_upgrade_repair(
+            root,
+            upgrade_index,
+            latest_operation,
+        )
+        retry = _read_json(retry_path)
+        merge_commit = operation["merge_commit_sha"]
+        if (
+            set(retry)
+            != {
+                "activity_baseline_sha256",
+                "bootstrap_id",
+                "bootstrap_source_commit_sha",
+                "idempotent_resume_upgrade_index",
+                "idempotent_resume_upgrade_merge_commit_sha",
+                "idempotent_resume_upgrade_operation_sha256",
+                "idempotent_resume_upgrade_pr_number",
+                "installations",
+                "interrupted_phase",
+                "interrupted_sequence",
+                "interrupted_state_sha256",
+                "prior_retry_receipt_sha256",
+                "prior_runtime_commit_sha",
+                "schema_version",
+            }
+            or retry_path.read_bytes() != _canonical(retry) + b"\n"
+            or retry.get("schema_version") != "1"
+            or retry.get("bootstrap_id") != latest_retry.get("bootstrap_id")
+            or retry.get("interrupted_phase") != "QUALIFICATION_PENDING"
+            or retry.get("interrupted_sequence") != 43
+            or retry.get("idempotent_resume_upgrade_index") != upgrade_index
+            or retry.get("prior_runtime_commit_sha") != latest_merge
+            or retry.get("idempotent_resume_upgrade_merge_commit_sha")
+            != merge_commit
+            or retry.get("idempotent_resume_upgrade_pr_number")
+            != operation.get("pr_number")
+            or retry.get("idempotent_resume_upgrade_operation_sha256")
+            != hashlib.sha256(_canonical(operation)).hexdigest()
+            or retry.get("prior_retry_receipt_sha256")
+            != hashlib.sha256(latest_retry_path.read_bytes()).hexdigest()
+            or retry.get("bootstrap_source_commit_sha")
+            != latest_retry.get("bootstrap_source_commit_sha")
+            or retry.get("installations") != latest_retry.get("installations")
+            or not _SHA256.fullmatch(
+                str(retry.get("activity_baseline_sha256", ""))
+            )
+            or not _SHA256.fullmatch(
+                str(retry.get("interrupted_state_sha256", ""))
+            )
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_RETRY_INVALID")
+        accepted_prior_runtimes.append(operation.get("prior_runtime_commit_sha"))
+        latest_operation = operation
+        latest_retry = retry
+        latest_operation_path = validated_path
+        latest_retry_path = retry_path
+        latest_merge = merge_commit
     if not allow_pending_idempotent_resume:
         _validated_runtime_upgrade_refresh(
             root,
-            catchup_operation,
-            catchup_retry,
-            (
-                followup_merge,
-                followup_operation.get("prior_runtime_commit_sha"),
-                resume_operation.get("prior_runtime_commit_sha"),
+            latest_operation,
+            latest_retry,
+            tuple(accepted_prior_runtimes),
+            operation_path=latest_operation_path,
+            error_code=(
+                "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CATCHUP_REFRESH_INVALID"
+                if not upgrade_indexes
+                else "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_REFRESH_INVALID"
             ),
-            operation_path=catchup_operation_path,
-            error_code="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CATCHUP_REFRESH_INVALID",
         )
-    return str(catchup_merge)
+    return str(latest_merge)
 
 
 def _resume_transient_local_install_block(root: Path) -> bool:
@@ -6070,8 +6276,39 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
     catchup_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-12-v1.json"
     )
+    generic_upgrade_indexes = _idempotent_resume_upgrade_indexes(root)
     prior_upgrade_operation_paths: tuple[Path, ...]
-    if catchup_retry_path.exists():
+    authorization_operation_paths: tuple[Path, ...]
+    if generic_upgrade_indexes:
+        if not catchup_retry_path.exists():
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_RETRY_INVALID"
+            )
+        latest_upgrade_index = generic_upgrade_indexes[-1]
+        retry_path = (
+            root
+            / f"receipts/controller-bootstrap-github-controls-retry-{latest_upgrade_index}-v1.json"
+        )
+        upgrade_operation_path = (
+            root
+            / f"github-controls-idempotent-resume-upgrade-{latest_upgrade_index}-operation-v1.json"
+        )
+        prior_upgrade_operation_paths = (
+            *(
+                root
+                / f"github-controls-idempotent-resume-upgrade-{index}-operation-v1.json"
+                for index in generic_upgrade_indexes[:-1]
+            ),
+            root / "github-controls-idempotent-resume-catchup-repair-operation-v1.json",
+            root / "github-controls-idempotent-resume-followup-repair-operation-v1.json",
+            root / "github-controls-idempotent-resume-repair-operation-v1.json",
+        )
+        authorization_operation_paths = tuple(
+            root
+            / f"github-controls-idempotent-resume-upgrade-{index}-operation-v1.json"
+            for index in generic_upgrade_indexes
+        )
+    elif catchup_retry_path.exists():
         retry_path = catchup_retry_path
         upgrade_operation_path = (
             root
@@ -6081,6 +6318,7 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
             root / "github-controls-idempotent-resume-followup-repair-operation-v1.json",
             root / "github-controls-idempotent-resume-repair-operation-v1.json",
         )
+        authorization_operation_paths = (upgrade_operation_path,)
     elif followup_retry_path.exists():
         retry_path = followup_retry_path
         upgrade_operation_path = (
@@ -6090,12 +6328,14 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
         prior_upgrade_operation_paths = (
             root / "github-controls-idempotent-resume-repair-operation-v1.json",
         )
+        authorization_operation_paths = (upgrade_operation_path,)
     else:
         retry_path = resume_retry_path
         upgrade_operation_path = (
             root / "github-controls-idempotent-resume-repair-operation-v1.json"
         )
         prior_upgrade_operation_paths = ()
+        authorization_operation_paths = (upgrade_operation_path,)
     state_path = _state_path(root)
     state_document = _read_json(state_path)
     retry = _read_json(retry_path)
@@ -6135,7 +6375,12 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
         )
     ):
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_SOURCE_INVALID")
-    _verify_idempotent_resume_github_authorization(source, upgrade_operation)
+    for authorization_operation_path in authorization_operation_paths:
+        _verify_idempotent_resume_github_authorization(
+            source,
+            _read_json(authorization_operation_path),
+            protected_main_commit_sha=protected_commit_sha,
+        )
 
     controls_path = root / "github-controls-operation-v1.json"
     controls = _read_canonical_document(

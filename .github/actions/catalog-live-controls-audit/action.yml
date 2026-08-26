@@ -1,0 +1,180 @@
+name: Catalog live controls audit
+description: Run the protected read-only catalog controls audit
+
+inputs:
+  purpose:
+    description: Fixed audit purpose controlling the protected read-only check
+    required: true
+  caller-workflow:
+    description: Authorized workflow path invoking this audit
+    required: true
+  caller-job:
+    description: Authorized job identifier invoking this audit
+    required: true
+  protected-commit-sha:
+    description: Protected commit SHA that the audit must verify
+    required: true
+  audit-context-sha256:
+    description: SHA-256 digest binding the audit context
+    required: true
+  auditor-app-id:
+    description: Read-only GitHub App identifier for the audit
+    required: true
+  auditor-private-key:
+    description: Credential for the read-only GitHub App audit
+    required: true
+  enterprise-billing-token:
+    description: Credential for read-only enterprise billing evidence
+    required: true
+  enterprise-cache-verifier-token:
+    description: Credential for read-only enterprise cache evidence
+    required: true
+  package-inventory-token:
+    description: Credential for read-only package inventory evidence
+    required: true
+
+outputs:
+  receipt_artifact_name:
+    description: Name of the immutable secret-free audit receipt artifact
+    value: ${{ steps.receipt_artifact.outputs.name }}
+  receipt_sha256:
+    description: SHA-256 digest of the audit receipt
+    value: ${{ steps.controls.outputs.receipt_sha256 }}
+  receipt_status:
+    description: Final status recorded by the controls audit
+    value: ${{ steps.controls.outputs.receipt_status }}
+
+runs:
+  using: composite
+  steps:
+    - id: provenance
+      name: Validate the real caller and protected provenance
+      shell: bash
+      env:
+        EXPECTED_PURPOSE: ${{ inputs.purpose }}
+        EXPECTED_CALLER_WORKFLOW: ${{ inputs.caller-workflow }}
+        EXPECTED_CALLER_JOB: ${{ inputs.caller-job }}
+        EXPECTED_PROTECTED_COMMIT_SHA: ${{ inputs.protected-commit-sha }}
+        EXPECTED_AUDIT_CONTEXT_SHA256: ${{ inputs.audit-context-sha256 }}
+        ACTUAL_WORKFLOW_REF: ${{ github.workflow_ref }}
+        ACTUAL_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        ACTUAL_EVENT_NAME: ${{ github.event_name }}
+        ACTUAL_REF: ${{ github.ref }}
+        ACTUAL_SHA: ${{ github.sha }}
+        ACTUAL_REPOSITORY: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        repository="trading-optimizer-lab-org/aurora"
+        controller="trading-optimizer-lab-org/aurora/.github/workflows/catalog-run-controller.yml@refs/heads/main"
+        qualification="trading-optimizer-lab-org/aurora/.github/workflows/catalog-live-controls-qualification.yml@refs/heads/main"
+        keeper="trading-optimizer-lab-org/aurora/.github/workflows/catalog-artifact-keeper.yml@refs/heads/main"
+        watchdog="trading-optimizer-lab-org/aurora/.github/workflows/catalog-run-watchdog.yml@refs/heads/main"
+        reconciler="trading-optimizer-lab-org/aurora/.github/workflows/catalog-request-reconciler.yml@refs/heads/main"
+
+        [[ "$ACTUAL_REPOSITORY" == "$repository" ]] || {
+          echo "CATALOG_AUDIT_REPOSITORY_INVALID" >&2; exit 1;
+        }
+        [[ "$EXPECTED_PROTECTED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+          echo "CATALOG_AUDIT_PROTECTED_COMMIT_INVALID" >&2; exit 1;
+        }
+        [[ "$EXPECTED_AUDIT_CONTEXT_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+          echo "CATALOG_AUDIT_CONTEXT_INVALID" >&2; exit 1;
+        }
+        [[ "$ACTUAL_WORKFLOW_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]
+        [[ "$ACTUAL_REF" == "refs/heads/main" ]]
+        [[ "$ACTUAL_SHA" == "$EXPECTED_PROTECTED_COMMIT_SHA" ]]
+
+        case "$EXPECTED_PURPOSE:$EXPECTED_CALLER_WORKFLOW:$EXPECTED_CALLER_JOB" in
+          admission:.github/workflows/catalog-run-controller.yml:live_controls_audit_before_reserve|\
+          terminal:.github/workflows/catalog-run-controller.yml:live_controls_audit_before_terminal|\
+          admission:.github/workflows/catalog-live-controls-qualification.yml:qualify_live_admission_controls|\
+          terminal:.github/workflows/catalog-live-controls-qualification.yml:qualify_live_terminal_controls|\
+          maintenance:.github/workflows/catalog-artifact-keeper.yml:live_controls_audit_before_maintenance) ;;
+          *) echo "CATALOG_AUDIT_LOGICAL_CALLER_INVALID" >&2; exit 1 ;;
+        esac
+
+        case "$EXPECTED_CALLER_WORKFLOW" in
+          .github/workflows/catalog-run-controller.yml)
+            case "$ACTUAL_WORKFLOW_REF:$ACTUAL_EVENT_NAME" in
+              "$controller":issues|"$controller":schedule|\
+              "$watchdog":schedule|"$reconciler":schedule) ;;
+              *) echo "CATALOG_AUDIT_CALLER_EVENT_INVALID" >&2; exit 1 ;;
+            esac
+            ;;
+          .github/workflows/catalog-live-controls-qualification.yml)
+            [[ "$ACTUAL_WORKFLOW_REF:$ACTUAL_EVENT_NAME" == "$qualification:workflow_dispatch" ]] || {
+              echo "CATALOG_AUDIT_CALLER_EVENT_INVALID" >&2; exit 1;
+            }
+            ;;
+          .github/workflows/catalog-artifact-keeper.yml)
+            case "$ACTUAL_WORKFLOW_REF:$ACTUAL_EVENT_NAME" in
+              "$keeper":schedule|"$keeper":workflow_dispatch) ;;
+              *) echo "CATALOG_AUDIT_CALLER_EVENT_INVALID" >&2; exit 1 ;;
+            esac
+            ;;
+          *) echo "CATALOG_AUDIT_CALLER_EVENT_INVALID" >&2; exit 1 ;;
+        esac
+
+    - name: Use Python 3.11
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: "3.11"
+        cache: ""
+
+    - name: Install the locked read-only audit runtime
+      shell: bash
+      run: >-
+        python -m pip install
+        --only-binary=:all:
+        --no-deps
+        --require-hashes
+        -r requirements/catalog-controller-linux-py311.lock
+
+    - name: Mint, audit, emit the secret-free receipt, and discard credentials
+      id: controls
+      shell: bash
+      env:
+        AURORA_CATALOG_AUDITOR_APP_ID: ${{ inputs.auditor-app-id }}
+        AURORA_CATALOG_AUDITOR_PRIVATE_KEY: ${{ inputs.auditor-private-key }}
+        AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN: ${{ inputs.enterprise-billing-token }}
+        AURORA_CATALOG_ENTERPRISE_CACHE_VERIFIER_TOKEN: ${{ inputs.enterprise-cache-verifier-token }}
+        AURORA_CATALOG_PACKAGE_INVENTORY_TOKEN: ${{ inputs.package-inventory-token }}
+        AUDIT_PURPOSE: ${{ inputs.purpose }}
+        AUDIT_CALLER_WORKFLOW: ${{ inputs.caller-workflow }}
+        AUDIT_CALLER_JOB: ${{ inputs.caller-job }}
+        AUDIT_PROTECTED_COMMIT_SHA: ${{ inputs.protected-commit-sha }}
+        AUDIT_CONTEXT_SHA256: ${{ inputs.audit-context-sha256 }}
+        PYTHONPATH: ${{ github.workspace }}/..
+      run: |
+        set -euo pipefail
+        python scripts/audit_catalog_github_controls.py \
+          --repository trading-optimizer-lab-org/aurora \
+          --desired config/catalog_github_controls_v1.json \
+          --auditor config/catalog_github_auditor_v1.json \
+          --workflow-auditor \
+          --purpose "$AUDIT_PURPOSE" \
+          --caller-workflow "$AUDIT_CALLER_WORKFLOW" \
+          --caller-job "$AUDIT_CALLER_JOB" \
+          --protected-commit-sha "$AUDIT_PROTECTED_COMMIT_SHA" \
+          --audit-context-sha256 "$AUDIT_CONTEXT_SHA256" \
+          --output catalog_github_controls_receipt_v1.json \
+          --github-output "$GITHUB_OUTPUT"
+
+    - name: Freeze the bounded receipt artifact name
+      id: receipt_artifact
+      shell: bash
+      env:
+        AUDIT_PURPOSE: ${{ inputs.purpose }}
+        AUDIT_CONTEXT_SHA256: ${{ inputs.audit-context-sha256 }}
+      run: |
+        set -euo pipefail
+        printf 'name=catalog-live-controls-%s-%s\n' \
+          "$AUDIT_PURPOSE" "$AUDIT_CONTEXT_SHA256" >> "$GITHUB_OUTPUT"
+
+    - name: Publish the secret-free controls receipt
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: ${{ steps.receipt_artifact.outputs.name }}
+        path: catalog_github_controls_receipt_v1.json
+        if-no-files-found: error
+        retention-days: 90
