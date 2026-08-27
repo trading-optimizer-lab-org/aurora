@@ -327,33 +327,75 @@ def test_only_exact_merge_retry_can_leave_terminal_blocked_state() -> None:
         advance_bootstrap_state(precheck, event("merge_retry_authorized", 1))
 
 
-def _blocked_qualification_state(sequence: int = 44) -> CatalogBootstrapStateV1:
-    return CatalogBootstrapStateV1(
-        schema_version="1",
-        bootstrap_id=BOOTSTRAP_ID,
-        protected_commit_sha=COMMIT,
-        phase="BLOCKED",
-        sequence=sequence,
-        applied_event_sha256s=tuple(
-            f"{number:064x}" for number in range(1, sequence + 1)
-        ),
-        last_observed_at="2026-08-23T12:00:00Z",
-        reason_codes=(),
-    )
-
-
-def _qualification_failure_receipts() -> tuple[
-    dict[str, object], dict[str, object]
-]:
-    blocked = {
+def _qualification_blocked_receipt() -> dict[str, object]:
+    return {
         "controller_enabled_readback": False,
         "phase": "QUALIFICATION_PENDING",
         "reason_code": "CATALOG_BOOTSTRAP_WORKFLOW_FAILED",
         "result": "BLOCKED",
         "schema_version": "1",
     }
-    refresh = {**blocked, "state_preserved_for_retry": True}
-    return blocked, refresh
+
+
+def _qualification_pending_state_before_block() -> CatalogBootstrapStateV1:
+    state = initial_bootstrap_state(BOOTSTRAP_ID, COMMIT)
+    names: tuple[EventName, ...] = (
+        "precheck_passed",
+        "requester_created",
+        "requester_installed",
+        "auditor_created",
+        "auditor_installed",
+        "public_binding_committed",
+        "protected_merge_observed",
+        "local_install_verified",
+        "github_controls_verified",
+    )
+    for sequence, name in enumerate(names, 1):
+        state = advance_bootstrap_state(state, event(name, sequence))
+    for sequence in range(10, 43, 2):
+        state = advance_bootstrap_state(state, event("blocked", sequence))
+        state = advance_bootstrap_state(
+            state,
+            event("qualification_retry_authorized", sequence + 1),
+        )
+    assert state.phase == "QUALIFICATION_PENDING"
+    assert state.sequence == 43
+    return state
+
+
+def _blocked_qualification_state(
+    sequence: int = 44,
+    *,
+    blocked: dict[str, object] | None = None,
+    event_matches: bool = True,
+) -> CatalogBootstrapStateV1:
+    state = _qualification_pending_state_before_block()
+    if sequence != 44:
+        return state.model_copy(update={"phase": "BLOCKED", "sequence": sequence})
+    blocked = _qualification_blocked_receipt() if blocked is None else blocked
+    assert state.last_observed_at is not None
+    blocked_event = CatalogBootstrapEventV1(
+        schema_version="1",
+        bootstrap_id=state.bootstrap_id,
+        sequence=44,
+        name="blocked",
+        protected_commit_sha=state.protected_commit_sha,
+        observed_at=state.last_observed_at,
+        evidence_sha256=hashlib.sha256(
+            bootstrap_runner._canonical(blocked)
+        ).hexdigest(),
+    )
+    state = advance_bootstrap_state(state, blocked_event)
+    if not event_matches:
+        state = state.model_copy(
+            update={
+                "applied_event_sha256s": (
+                    *state.applied_event_sha256s[:-1],
+                    "f" * 64,
+                )
+            }
+        )
+    return state
 
 
 def _write_qualification_failure_fixture(
@@ -361,24 +403,25 @@ def _write_qualification_failure_fixture(
     *,
     state: CatalogBootstrapStateV1 | None = None,
     blocked: dict[str, object] | None = None,
-    refresh: dict[str, object] | None = None,
-) -> tuple[Path, Path]:
+    legacy_refresh: bool = False,
+) -> Path:
+    blocked = _qualification_blocked_receipt() if blocked is None else blocked
     persist_bootstrap_state(
         root / "state/catalog-bootstrap-state-v1.json",
-        state or _blocked_qualification_state(),
+        state or _blocked_qualification_state(blocked=blocked),
     )
     receipts = root / "receipts"
     receipts.mkdir(parents=True, exist_ok=True)
-    expected_blocked, expected_refresh = _qualification_failure_receipts()
-    blocked = expected_blocked if blocked is None else blocked
-    refresh = expected_refresh if refresh is None else refresh
     blocked_path = receipts / "controller-bootstrap-blocked-v1.json"
-    refresh_path = (
-        receipts / "controller-bootstrap-runtime-upgrade-refresh-blocked-v1.json"
-    )
     blocked_path.write_bytes(bootstrap_runner._canonical(blocked) + b"\n")
-    refresh_path.write_bytes(bootstrap_runner._canonical(refresh) + b"\n")
-    return blocked_path, refresh_path
+    if legacy_refresh:
+        refresh_path = (
+            receipts
+            / "controller-bootstrap-runtime-upgrade-refresh-blocked-v1.json"
+        )
+        refresh = {**blocked, "state_preserved_for_retry": True}
+        refresh_path.write_bytes(bootstrap_runner._canonical(refresh) + b"\n")
+    return blocked_path
 
 
 def test_only_exact_qualification_retry_can_leave_terminal_blocked_state() -> None:
@@ -393,17 +436,31 @@ def test_only_exact_qualification_retry_can_leave_terminal_blocked_state() -> No
     assert resumed.sequence == 45
 
 
-def test_recover_exact_qualification_block_preserves_receipts_and_is_idempotent(
+def test_recover_real_qualification_block_refreshes_and_archives_stale_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "protected"
+    _write_interrupted_refresh_fixture(root)
+    blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
+    blocked_path.write_bytes(
+        bootstrap_runner._canonical(_qualification_blocked_receipt()) + b"\n"
+    )
     state_path = root / "state/catalog-bootstrap-state-v1.json"
-    blocked_path, refresh_path = _write_qualification_failure_fixture(root)
-    blocked_bytes = blocked_path.read_bytes()
-    refresh_bytes = refresh_path.read_bytes()
+    blocked_event_sha = load_bootstrap_state(state_path).applied_event_sha256s[-1]
+    old_commit = "b" * 40
+    checkpoint = bootstrap_runner._new_qualification_checkpoint(
+        protected_commit_sha=old_commit,
+        github_controls_operation_sha256="1" * 64,
+        activity_baseline_sha256="2" * 64,
+        steps=[],
+    )
+    checkpoint_path = root / bootstrap_runner.QUALIFICATION_CHECKPOINT_FILENAME
+    checkpoint_bytes = bootstrap_runner._canonical(checkpoint) + b"\n"
+    checkpoint_path.write_bytes(checkpoint_bytes)
+    checkpoint_sha = hashlib.sha256(checkpoint_bytes).hexdigest()
+    refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
     disabled: list[Path] = []
-    runtime_commits: list[Path] = []
-    advanced: list[tuple[str, object]] = []
+    advanced: list[tuple[str, dict[str, object]]] = []
 
     monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
     monkeypatch.setattr(
@@ -412,61 +469,128 @@ def test_recover_exact_qualification_block_preserves_receipts_and_is_idempotent(
         lambda: disabled.append(root),
     )
 
-    def runtime_commit(runtime_root: Path) -> str:
-        runtime_commits.append(runtime_root)
-        return "f" * 40
-
     monkeypatch.setattr(
         bootstrap_runner,
         "_runtime_commit",
-        runtime_commit,
+        lambda _root, **_kwargs: COMMIT,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda command, **_kwargs: "" if command[1:3] == [
+            "status",
+            "--porcelain=v1",
+        ] else COMMIT,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_verify_idempotent_resume_github_authorization",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def fake_prepare(
+        installed_root: Path,
+        commit: str,
+        *,
+        live_step_name: str,
+        controller_already_disabled: bool = False,
+    ) -> dict[str, object]:
+        assert installed_root == root
+        assert commit == COMMIT
+        assert live_step_name == "github_controls_runtime_upgrade_live_1"
+        assert controller_already_disabled is True
+        receipt: dict[str, object] = {"protected_commit_sha": commit}
+        (installed_root / "github-controls-operation-v1.json").write_bytes(
+            bootstrap_runner._canonical(receipt) + b"\n"
+        )
+        return receipt
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_prepare_github_controls_operation",
+        fake_prepare,
     )
     original_advance = bootstrap_runner._advance
 
-    def capture_advance(root, state, name, evidence):
-        advanced.append((name, evidence))
-        original_advance(root, state, name, evidence)
+    def capture_advance(
+        installed_root: Path,
+        state: CatalogBootstrapStateV1,
+        name: str,
+        evidence: object,
+    ) -> None:
+        advanced.append((name, cast(dict[str, object], evidence)))
+        original_advance(installed_root, state, cast(EventName, name), evidence)
 
     monkeypatch.setattr(bootstrap_runner, "_advance", capture_advance)
 
     assert bootstrap_runner._resume_transient_qualification_block(root) is True
+
     resumed = load_bootstrap_state(state_path)
     assert resumed.phase == "QUALIFICATION_PENDING"
     assert resumed.sequence == 45
-    assert advanced == [
-        (
-            "qualification_retry_authorized",
-            {
-                "blocked_receipt_sha256": hashlib.sha256(
-                    blocked_bytes
-                ).hexdigest(),
-                "runtime_commit_sha": "f" * 40,
-                "runtime_upgrade_refresh_receipt_sha256": hashlib.sha256(
-                    refresh_bytes
-                ).hexdigest(),
-            },
-        )
-    ]
-    assert blocked_path.read_bytes() == blocked_bytes
-    assert refresh_path.read_bytes() == refresh_bytes
     assert disabled == [root]
-    assert runtime_commits == [root]
+    assert not checkpoint_path.exists()
+    archives = list(root.glob("qualification-substeps-v1.checkpoint.archived-*.json"))
+    assert len(archives) == 1
+    assert old_commit in archives[0].name
+    assert checkpoint_sha in archives[0].name
+    assert archives[0].read_bytes() == checkpoint_bytes
+    assert not (
+        root / "receipts/controller-bootstrap-runtime-upgrade-refresh-blocked-v1.json"
+    ).exists()
+    assert advanced[0][0] == "qualification_retry_authorized"
+    evidence = advanced[0][1]
+    assert evidence["blocked_receipt_sha256"] == hashlib.sha256(
+        blocked_path.read_bytes()
+    ).hexdigest()
+    assert evidence["runtime_commit_sha"] == COMMIT
+    assert evidence["runtime_upgrade_refresh_receipt_sha256"] == hashlib.sha256(
+        refresh_path.read_bytes()
+    ).hexdigest()
+    assert evidence["archived_qualification_checkpoint_sha256"] == checkpoint_sha
+    assert (
+        bootstrap_runner._archive_stale_qualification_checkpoint(
+            root,
+            protected_commit_sha=COMMIT,
+            recovery_event_sha256=blocked_event_sha,
+        )
+        == checkpoint_sha
+    )
 
-    state_after_recovery = state_path.read_bytes()
+
+def test_qualification_recovery_rejects_a_block_event_mismatch_without_mutating_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    _write_qualification_failure_fixture(
+        root,
+        state=_blocked_qualification_state(event_matches=False),
+        legacy_refresh=True,
+    )
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    before = state_path.read_bytes()
+    calls: list[str] = []
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(
+        bootstrap_runner, "_disable_controller", lambda: calls.append("disable")
+    )
+    monkeypatch.setattr(
+        bootstrap_runner, "_runtime_commit", lambda _root: COMMIT
+    )
+
     assert bootstrap_runner._resume_transient_qualification_block(root) is False
-    assert state_path.read_bytes() == state_after_recovery
+    assert state_path.read_bytes() == before
+    assert calls == ["disable"]
 
 
 def test_qualification_recovery_rejects_wrong_reason_without_mutating_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "protected"
-    state_path = root / "state/catalog-bootstrap-state-v1.json"
-    blocked, refresh = _qualification_failure_receipts()
+    blocked = _qualification_blocked_receipt()
     blocked["reason_code"] = "CATALOG_BOOTSTRAP_PHASE_FAILED"
-    _write_qualification_failure_fixture(
-        root, blocked=blocked, refresh=refresh
-    )
+    _write_qualification_failure_fixture(root, blocked=blocked)
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
     before = state_path.read_bytes()
     monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
 
@@ -474,60 +598,269 @@ def test_qualification_recovery_rejects_wrong_reason_without_mutating_state(
     assert state_path.read_bytes() == before
 
 
-def test_qualification_recovery_rejects_wrong_runtime_refresh_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _write_interrupted_refresh_fixture(
+    root: Path,
+    *,
+    interrupted_phase: str = "QUALIFICATION_PENDING",
+    interrupted_sequence: int = 43,
+) -> tuple[Path, Path, Path]:
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    blocked_state = _blocked_qualification_state()
+    persist_bootstrap_state(state_path, blocked_state)
+    interrupted_state_path = (
+        root / "state/catalog-bootstrap-interrupted-state-v1.json"
+    )
+    interrupted_state = _qualification_pending_state_before_block()
+    assert (
+        interrupted_state.applied_event_sha256s
+        == blocked_state.applied_event_sha256s[:-1]
+    )
+    persist_bootstrap_state(interrupted_state_path, interrupted_state)
+    baseline: dict[str, object] = {
+        "heavy_run_ids": [],
+        "request_issue_numbers": [],
+    }
+    baseline_path = root / "github-activity-baseline-v1.json"
+    baseline_path.write_bytes(bootstrap_runner._canonical(baseline) + b"\n")
+    receipts = root / "receipts"
+    receipts.mkdir(parents=True, exist_ok=True)
+    retry = {
+        "activity_baseline_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(baseline)
+        ).hexdigest(),
+        "bootstrap_id": BOOTSTRAP_ID,
+        "interrupted_phase": interrupted_phase,
+        "interrupted_sequence": interrupted_sequence,
+        "interrupted_state_sha256": hashlib.sha256(
+            interrupted_state_path.read_bytes()
+        ).hexdigest(),
+    }
+    (receipts / "controller-bootstrap-github-controls-retry-10-v1.json").write_bytes(
+        bootstrap_runner._canonical(retry) + b"\n"
+    )
+    operation = {
+        "merge_commit_sha": COMMIT,
+        "prior_runtime_commit_sha": "4" * 40,
+    }
+    operation_path = root / "github-controls-idempotent-resume-repair-operation-v1.json"
+    operation_path.write_bytes(bootstrap_runner._canonical(operation) + b"\n")
+    controls_path = root / "github-controls-operation-v1.json"
+    controls_path.write_bytes(
+        bootstrap_runner._canonical({"protected_commit_sha": "4" * 40}) + b"\n"
+    )
+    tmp_path_for_refresh = root / "source"
+    tmp_path_for_refresh.mkdir()
+    (root / "install-context-v1.json").write_bytes(
+        bootstrap_runner._canonical(
+            {
+                "repository": bootstrap_runner.REPOSITORY,
+                "source_commit_sha": COMMIT,
+                "source_root": str(tmp_path_for_refresh),
+            }
+        )
+        + b"\n"
+    )
+    return state_path, controls_path, root / "runtime-upgrade-controls-refresh-v1.json"
+
+
+@pytest.mark.parametrize(
+    ("interrupted_phase", "interrupted_sequence"),
+    (("MERGE_PENDING", 43), ("QUALIFICATION_PENDING", 42)),
+)
+def test_blocked_qualification_refresh_rejects_wrong_interrupted_identity(
+    interrupted_phase: str,
+    interrupted_sequence: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = tmp_path / "protected"
-    state_path = root / "state/catalog-bootstrap-state-v1.json"
-    blocked, refresh = _qualification_failure_receipts()
-    refresh["state_preserved_for_retry"] = False
-    _write_qualification_failure_fixture(
-        root, blocked=blocked, refresh=refresh
+    state_path, controls_path, refresh_path = _write_interrupted_refresh_fixture(
+        root,
+        interrupted_phase=interrupted_phase,
+        interrupted_sequence=interrupted_sequence,
     )
     before = state_path.read_bytes()
-    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
-
-    assert bootstrap_runner._resume_transient_qualification_block(root) is False
-    assert state_path.read_bytes() == before
-
-
-def test_qualification_recovery_rejects_wrong_runtime_chain_hash(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = tmp_path / "protected"
-    state_path = root / "state/catalog-bootstrap-state-v1.json"
-    _write_qualification_failure_fixture(root)
-    before = state_path.read_bytes()
-    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
-    monkeypatch.setattr(
-        bootstrap_runner,
-        "_disable_controller",
-        lambda: None,
-    )
     monkeypatch.setattr(
         bootstrap_runner,
         "_runtime_commit",
-        lambda _root: (_ for _ in ()).throw(
-            ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID")
-        ),
+        lambda *_args, **_kwargs: pytest.fail("refresh must reject before runtime lookup"),
     )
 
     with pytest.raises(
         ValueError,
-        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID",
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_RETRY_INVALID",
+    ):
+        bootstrap_runner._refresh_interrupted_runtime_controls(
+            root, allow_blocked_recovery=True
+        )
+    assert state_path.read_bytes() == before
+    assert controls_path.read_bytes() == (
+        bootstrap_runner._canonical({"protected_commit_sha": "4" * 40}) + b"\n"
+    )
+    assert not refresh_path.exists()
+
+
+def test_blocked_qualification_refresh_rejects_wrong_interrupted_state_hash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "protected"
+    state_path, controls_path, refresh_path = _write_interrupted_refresh_fixture(root)
+    retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json"
+    )
+    retry = json.loads(retry_path.read_bytes())
+    retry["interrupted_state_sha256"] = "3" * 64
+    retry_path.write_bytes(bootstrap_runner._canonical(retry) + b"\n")
+    before = state_path.read_bytes()
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_runtime_commit",
+        lambda *_args, **_kwargs: pytest.fail("invalid state hash reached runtime lookup"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_RETRY_INVALID",
+    ):
+        bootstrap_runner._refresh_interrupted_runtime_controls(
+            root, allow_blocked_recovery=True
+        )
+
+    assert state_path.read_bytes() == before
+    assert controls_path.read_bytes() == (
+        bootstrap_runner._canonical({"protected_commit_sha": "4" * 40}) + b"\n"
+    )
+    assert not refresh_path.exists()
+
+
+def test_qualification_recovery_rejects_corrupt_checkpoint_before_advance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    _write_qualification_failure_fixture(root)
+    checkpoint_path = root / bootstrap_runner.QUALIFICATION_CHECKPOINT_FILENAME
+    checkpoint_path.write_bytes(b'{"schema_version":"1"')
+    original_checkpoint = checkpoint_path.read_bytes()
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    before = state_path.read_bytes()
+    refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
+    refresh_path.write_bytes(
+        bootstrap_runner._canonical({"protected_commit_sha": COMMIT}) + b"\n"
+    )
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(bootstrap_runner, "_disable_controller", lambda: None)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_refresh_interrupted_runtime_controls",
+        lambda *_args, **_kwargs: COMMIT,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID",
     ):
         bootstrap_runner._resume_transient_qualification_block(root)
     assert state_path.read_bytes() == before
+    assert checkpoint_path.read_bytes() == original_checkpoint
+    assert not list(root.glob("qualification-substeps-v1.checkpoint.archived-*.json"))
+
+
+def test_qualification_recovery_rejects_checkpoint_from_current_runtime(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "protected"
+    root.mkdir()
+    checkpoint = bootstrap_runner._new_qualification_checkpoint(
+        protected_commit_sha=COMMIT,
+        github_controls_operation_sha256="1" * 64,
+        activity_baseline_sha256="2" * 64,
+        steps=[],
+    )
+    checkpoint_path = root / bootstrap_runner.QUALIFICATION_CHECKPOINT_FILENAME
+    checkpoint_bytes = bootstrap_runner._canonical(checkpoint) + b"\n"
+    checkpoint_path.write_bytes(checkpoint_bytes)
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_NOT_STALE",
+    ):
+        bootstrap_runner._archive_stale_qualification_checkpoint(
+            root,
+            protected_commit_sha=COMMIT,
+            recovery_event_sha256="3" * 64,
+        )
+
+    assert checkpoint_path.read_bytes() == checkpoint_bytes
+    assert not list(root.glob("qualification-substeps-v1.checkpoint.archived-*.json"))
+
+
+@pytest.mark.parametrize(
+    "step_name", tuple(bootstrap_runner._DISPATCH_INTENT_STEP_WORKFLOWS)
+)
+def test_all_qualification_steps_scope_legacy_intents_by_commit(
+    step_name: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir()
+    workflow = bootstrap_runner._DISPATCH_INTENT_STEP_WORKFLOWS[step_name]
+    prior_commit = "b" * 40
+    legacy_intent = bootstrap_runner._new_qualification_dispatch_intent(
+        step_name=step_name,
+        workflow=workflow,
+        protected_commit_sha=prior_commit,
+        baseline_run_ids={101},
+    )
+    legacy_path = root / f"qualification-dispatch-{step_name}-v1.intent.json"
+    legacy_bytes = bootstrap_runner._canonical(legacy_intent) + b"\n"
+    legacy_path.write_bytes(legacy_bytes)
+    expected_run = {
+        "databaseId": 202,
+        "headSha": COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://example.test/runs/202",
+    }
+    dispatches: list[tuple[str, str, set[int] | None]] = []
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_list_workflow_runs",
+        lambda _workflow: [{"databaseId": 101}],
+    )
+
+    def fake_dispatch(
+        observed_workflow: str,
+        observed_commit: str,
+        *,
+        baseline_run_ids: set[int] | None = None,
+    ) -> dict[str, object]:
+        dispatches.append((observed_workflow, observed_commit, baseline_run_ids))
+        return expected_run
+
+    monkeypatch.setattr(bootstrap_runner, "_dispatch_workflow", fake_dispatch)
+
+    observed = bootstrap_runner._run_qualification_workflow_step(
+        root, step_name, COMMIT
+    )
+
+    current_path = root / f"qualification-dispatch-{step_name}-{COMMIT}-v1.intent.json"
+    assert observed == expected_run
+    assert legacy_path.read_bytes() == legacy_bytes
+    assert current_path.is_file()
+    assert dispatches == [(workflow, COMMIT, {101})]
 
 
 def test_qualification_recovery_rejects_wrong_sequence_without_mutating_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "protected"
-    state_path = root / "state/catalog-bootstrap-state-v1.json"
     _write_qualification_failure_fixture(
         root, state=_blocked_qualification_state(sequence=43)
     )
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
     before = state_path.read_bytes()
     monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
 
@@ -3898,6 +4231,8 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
             bootstrap_runner._canonical(baseline)
         ).hexdigest(),
         "bootstrap_id": BOOTSTRAP_ID,
+        "interrupted_phase": "QUALIFICATION_PENDING",
+        "interrupted_sequence": 43,
         "interrupted_state_sha256": hashlib.sha256(original_state).hexdigest(),
     }
     (root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json").write_bytes(
@@ -3919,6 +4254,8 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
     followup_retry = {
         "activity_baseline_sha256": retry["activity_baseline_sha256"],
         "bootstrap_id": BOOTSTRAP_ID,
+        "interrupted_phase": "QUALIFICATION_PENDING",
+        "interrupted_sequence": 43,
         "interrupted_state_sha256": retry["interrupted_state_sha256"],
     }
     (
@@ -3934,6 +4271,8 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
     catchup_retry = {
         "activity_baseline_sha256": retry["activity_baseline_sha256"],
         "bootstrap_id": BOOTSTRAP_ID,
+        "interrupted_phase": "QUALIFICATION_PENDING",
+        "interrupted_sequence": 43,
         "interrupted_state_sha256": retry["interrupted_state_sha256"],
     }
     (
@@ -3949,6 +4288,8 @@ def test_runtime_upgrade_control_refresh_is_idempotent_and_preserves_state(
     generic_retry = {
         "activity_baseline_sha256": retry["activity_baseline_sha256"],
         "bootstrap_id": BOOTSTRAP_ID,
+        "interrupted_phase": "QUALIFICATION_PENDING",
+        "interrupted_sequence": 43,
         "interrupted_state_sha256": retry["interrupted_state_sha256"],
     }
     (
