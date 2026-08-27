@@ -60,6 +60,7 @@ jobs:
           if spec is None or spec.loader is None:
               raise SystemExit("QUALIFICATION_SIMULATOR_IMPORT_INVALID")
           simulator = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = simulator
           spec.loader.exec_module(simulator)
 
           def canonical_sha256(value):

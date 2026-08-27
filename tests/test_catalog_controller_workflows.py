@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import sys
 import textwrap
 from typing import TypedDict, cast
 
@@ -757,6 +758,36 @@ def test_controller_qualification_receipt_covers_all_required_modes() -> None:
         "README.md",
     ):
         assert scanned in text
+
+
+def test_controller_qualification_embedded_import_supports_dataclasses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = _workflow(CONTROLLER_QUALIFICATION)
+    steps = workflow["jobs"]["qualify-controller"]["steps"]
+    build_step = next(
+        step
+        for step in steps
+        if step.get("name") == "Build the canonical synthetic qualification receipt"
+    )
+    lines = build_step["run"].splitlines()
+    start = lines.index("import hashlib")
+    stop = lines.index("def canonical_sha256(value):")
+    import_program = "\n".join(lines[start:stop])
+    module_name = "catalog_controller_qualification_simulator"
+    monkeypatch.chdir(ROOT)
+    monkeypatch.setenv(
+        "QUALIFICATION_FIXTURE",
+        "tests/fixtures/catalog_controller_qualification/campaign_v1.json",
+    )
+    sys.modules.pop(module_name, None)
+    namespace: dict[str, object] = {}
+    try:
+        exec(compile(import_program, str(CONTROLLER_QUALIFICATION), "exec"), namespace)
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert callable(getattr(namespace["simulator"], "run_scenario", None))
 
 
 def test_task_seven_embeds_all_five_future_auditor_callers() -> None:
