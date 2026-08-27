@@ -406,6 +406,7 @@ def test_live_audit_is_one_fixed_secret_consuming_composite_action() -> None:
         for step in steps
         if "scripts/audit_catalog_github_controls.py" in step.get("run", "")
     )
+    assert controls["continue-on-error"] is True
     assert controls["env"] == {
         "AURORA_CATALOG_AUDITOR_APP_ID": "${{ inputs.auditor-app-id }}",
         "AURORA_CATALOG_AUDITOR_PRIVATE_KEY": "${{ inputs.auditor-private-key }}",
@@ -425,6 +426,25 @@ def test_live_audit_is_one_fixed_secret_consuming_composite_action() -> None:
         "AUDIT_CONTEXT_SHA256": "${{ inputs.audit-context-sha256 }}",
         "PYTHONPATH": "${{ github.workspace }}/..",
     }
+
+    receipt_artifact = next(
+        step for step in steps if step.get("id") == "receipt_artifact"
+    )
+    assert receipt_artifact["if"] == "${{ always() }}"
+    upload = next(
+        step
+        for step in steps
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    )
+    assert upload["if"] == "${{ always() }}"
+
+    enforcement = steps[-1]
+    assert enforcement["if"] == "${{ always() }}"
+    assert enforcement["env"] == {
+        "AUDIT_STEP_OUTCOME": "${{ steps.controls.outcome }}",
+        "AUDIT_RECEIPT_STATUS": "${{ steps.controls.outputs.receipt_status }}",
+    }
+    assert "CATALOG_LIVE_CONTROLS_BLOCKED" in enforcement["run"]
 
 
 def test_live_audit_validates_real_provenance_before_the_credential_step() -> None:

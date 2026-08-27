@@ -132,6 +132,7 @@ runs:
 
     - name: Mint, audit, emit the secret-free receipt, and discard credentials
       id: controls
+      continue-on-error: true
       shell: bash
       env:
         AURORA_CATALOG_AUDITOR_APP_ID: ${{ inputs.auditor-app-id }}
@@ -162,6 +163,7 @@ runs:
 
     - name: Freeze the bounded receipt artifact name
       id: receipt_artifact
+      if: ${{ always() }}
       shell: bash
       env:
         AUDIT_PURPOSE: ${{ inputs.purpose }}
@@ -172,9 +174,23 @@ runs:
           "$AUDIT_PURPOSE" "$AUDIT_CONTEXT_SHA256" >> "$GITHUB_OUTPUT"
 
     - name: Publish the secret-free controls receipt
+      if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: ${{ steps.receipt_artifact.outputs.name }}
         path: catalog_github_controls_receipt_v1.json
         if-no-files-found: error
         retention-days: 90
+
+    - name: Enforce the controls result after preserving evidence
+      if: ${{ always() }}
+      shell: bash
+      env:
+        AUDIT_STEP_OUTCOME: ${{ steps.controls.outcome }}
+        AUDIT_RECEIPT_STATUS: ${{ steps.controls.outputs.receipt_status }}
+      run: |
+        set -euo pipefail
+        [[ "$AUDIT_STEP_OUTCOME" == "success" && "$AUDIT_RECEIPT_STATUS" == "ready" ]] || {
+          echo "CATALOG_LIVE_CONTROLS_BLOCKED" >&2
+          exit 2
+        }
