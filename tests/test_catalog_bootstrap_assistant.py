@@ -4607,6 +4607,143 @@ def test_dispatch_intent_recovers_accepted_run_without_redispatch(
     assert intent_path.read_bytes() == intent_bytes
 
 
+def test_runtime_upgrade_dispatch_uses_commit_scoped_intent_after_prior_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir()
+    step_name = "github_controls_runtime_upgrade_live_1"
+    workflow = "catalog-live-controls-qualification.yml"
+    prior_commit = "e238a50ee4fd25a5c2c97f6edac21201bf71a3c0"
+    legacy_intent = {
+        "baseline_run_ids": [101],
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "correlation_key_sha256": (
+            "fe5877741f6df6fcb8a8f7c1e29c598f17f5ca11f8829450187623961ab31ab0"
+        ),
+        "protected_commit_sha": prior_commit,
+        "schema_version": "1",
+        "step_name": step_name,
+        "workflow": workflow,
+    }
+    legacy_path = root / f"qualification-dispatch-{step_name}-v1.intent.json"
+    legacy_bytes = bootstrap_runner._canonical(legacy_intent) + b"\n"
+    legacy_path.write_bytes(legacy_bytes)
+    dispatches: list[tuple[str, str, set[int] | None]] = []
+    expected_run = {
+        "databaseId": 202,
+        "headSha": COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://example.test/runs/202",
+    }
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_list_workflow_runs",
+        lambda _workflow: [{"databaseId": 101}],
+    )
+
+    def fake_dispatch(
+        observed_workflow: str,
+        observed_commit: str,
+        *,
+        baseline_run_ids: set[int] | None = None,
+    ) -> dict[str, object]:
+        dispatches.append((observed_workflow, observed_commit, baseline_run_ids))
+        return dict(expected_run)
+
+    monkeypatch.setattr(bootstrap_runner, "_dispatch_workflow", fake_dispatch)
+
+    observed = bootstrap_runner._run_qualification_workflow_step(
+        root, step_name, COMMIT
+    )
+
+    current_path = (
+        root / f"qualification-dispatch-{step_name}-{COMMIT}-v1.intent.json"
+    )
+    current_intent = json.loads(current_path.read_bytes())
+    assert observed == expected_run
+    assert legacy_path.read_bytes() == legacy_bytes
+    assert current_intent["protected_commit_sha"] == COMMIT
+    assert current_intent["baseline_run_ids"] == [101]
+    assert dispatches == [(workflow, COMMIT, {101})]
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_reconcile_qualification_dispatch_intent",
+        lambda _intent: dict(expected_run),
+    )
+    observed_again = bootstrap_runner._run_qualification_workflow_step(
+        root, step_name, COMMIT
+    )
+
+    assert observed_again == expected_run
+    assert dispatches == [(workflow, COMMIT, {101})]
+
+
+def test_runtime_upgrade_dispatch_reconciles_same_commit_legacy_intent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir()
+    step_name = "github_controls_runtime_upgrade_live_1"
+    workflow = "catalog-live-controls-qualification.yml"
+    legacy_intent = {
+        "baseline_run_ids": [101],
+        "campaign_key": "controller-bootstrap-qualification-v1",
+        "correlation_key_sha256": (
+            "ad774a80561db6f20b1c4764b04a759f392f3cd1d85a07b2389df4faf32f860a"
+        ),
+        "protected_commit_sha": COMMIT,
+        "schema_version": "1",
+        "step_name": step_name,
+        "workflow": workflow,
+    }
+    legacy_path = root / f"qualification-dispatch-{step_name}-v1.intent.json"
+    legacy_bytes = bootstrap_runner._canonical(legacy_intent) + b"\n"
+    legacy_path.write_bytes(legacy_bytes)
+    expected_run = {
+        "databaseId": 202,
+        "headSha": COMMIT,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://example.test/runs/202",
+    }
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_reconcile_qualification_dispatch_intent",
+        lambda intent: dict(expected_run)
+        if intent == legacy_intent
+        else pytest.fail("unexpected intent"),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_list_workflow_runs",
+        lambda _workflow: pytest.fail("same-commit legacy intent was ignored"),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_dispatch_workflow",
+        lambda *_args, **_kwargs: pytest.fail("same-commit legacy intent redispatched"),
+    )
+
+    observed = bootstrap_runner._run_qualification_workflow_step(
+        root, step_name, COMMIT
+    )
+
+    assert observed == expected_run
+    assert legacy_path.read_bytes() == legacy_bytes
+    assert not (
+        root / f"qualification-dispatch-{step_name}-{COMMIT}-v1.intent.json"
+    ).exists()
+
+
 @pytest.mark.parametrize(
     ("scenario", "expected"),
     (
