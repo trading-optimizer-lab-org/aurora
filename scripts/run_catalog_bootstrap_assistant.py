@@ -1264,14 +1264,44 @@ def _run_qualification_workflow_step(
     workflow = _DISPATCH_INTENT_STEP_WORKFLOWS.get(step_name)
     if workflow is None or not _COMMIT.fullmatch(protected_commit_sha):
         raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID")
-    intent_path = _qualification_dispatch_intent_path(root, step_name)
-    dispatch_guard = intent_path.with_name(f".{intent_path.name}.dispatch-guard")
+    legacy_intent_path = _qualification_dispatch_intent_path(root, step_name)
+    dispatch_guard = legacy_intent_path.with_name(
+        f".{legacy_intent_path.name}.dispatch-guard"
+    )
     with _exclusive_checkpoint_lock(dispatch_guard, timeout_seconds=4000):
-        if intent_path.exists() or intent_path.is_symlink():
-            intent = _read_canonical_document(
-                intent_path,
-                "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID",
+        intent_path = legacy_intent_path
+        intent: dict[str, object] | None = None
+        if step_name == "github_controls_runtime_upgrade_live_1":
+            intent_path = (
+                root
+                / f"qualification-dispatch-{step_name}-{protected_commit_sha}-v1.intent.json"
             )
+            if legacy_intent_path.exists() or legacy_intent_path.is_symlink():
+                legacy_intent = _read_canonical_document(
+                    legacy_intent_path,
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID",
+                )
+                legacy_commit = legacy_intent.get("protected_commit_sha")
+                if not isinstance(legacy_commit, str) or not _COMMIT.fullmatch(
+                    legacy_commit
+                ):
+                    raise ValueError(
+                        "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID"
+                    )
+                _validate_qualification_dispatch_intent(
+                    legacy_intent,
+                    step_name=step_name,
+                    protected_commit_sha=legacy_commit,
+                )
+                if legacy_commit == protected_commit_sha:
+                    intent_path = legacy_intent_path
+                    intent = legacy_intent
+        if intent_path.exists() or intent_path.is_symlink():
+            if intent is None:
+                intent = _read_canonical_document(
+                    intent_path,
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID",
+                )
             _validate_qualification_dispatch_intent(
                 intent,
                 step_name=step_name,
