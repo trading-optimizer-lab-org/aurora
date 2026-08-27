@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import sys
 import textwrap
+from types import ModuleType
 from typing import TypedDict, cast
 
 import pytest
@@ -757,6 +759,41 @@ def test_controller_qualification_receipt_covers_all_required_modes() -> None:
         "README.md",
     ):
         assert scanned in text
+
+
+def test_controller_qualification_embedded_import_supports_dataclasses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = _workflow(CONTROLLER_QUALIFICATION)
+    steps = workflow["jobs"]["qualify-controller"]["steps"]
+    build_step = next(
+        step
+        for step in steps
+        if step.get("name") == "Build the canonical synthetic qualification receipt"
+    )
+    lines = build_step["run"].splitlines()
+    start = lines.index("import hashlib")
+    stop = lines.index("def canonical_sha256(value):")
+    import_program = "\n".join(lines[start:stop])
+    module_name = "catalog_controller_qualification_simulator"
+    original_sys_path = sys.path.copy()
+    previous_module = ModuleType("previous_catalog_controller_qualification_simulator")
+    monkeypatch.chdir(ROOT)
+    monkeypatch.setenv(
+        "QUALIFICATION_FIXTURE",
+        "tests/fixtures/catalog_controller_qualification/campaign_v1.json",
+    )
+    monkeypatch.setitem(sys.modules, module_name, previous_module)
+    namespace: dict[str, object] = {}
+    try:
+        exec(compile(import_program, str(CONTROLLER_QUALIFICATION), "exec"), namespace)
+    finally:
+        sys.path[:] = original_sys_path
+        sys.modules[module_name] = previous_module
+
+    assert callable(getattr(namespace["simulator"], "run_scenario", None))
+    assert sys.path == original_sys_path
+    assert sys.modules[module_name] is previous_module
 
 
 def test_task_seven_embeds_all_five_future_auditor_callers() -> None:
