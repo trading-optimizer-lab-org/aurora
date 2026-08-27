@@ -3719,6 +3719,42 @@ def _runtime_upgrade_refresh_path(
     return versioned_path
 
 
+def _runtime_upgrade_backup_path(
+    root: Path,
+    upgrade_index: object,
+    *,
+    for_write: bool = False,
+) -> Path:
+    if upgrade_index is None:
+        return root / "github-controls-operation-before-runtime-upgrade-v1.json"
+    if not isinstance(upgrade_index, int) or isinstance(upgrade_index, bool):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_REPAIR_INVALID")
+
+    versioned_path = (
+        root / f"github-controls-operation-before-runtime-upgrade-{upgrade_index}-v1.json"
+    )
+    try:
+        versioned_path.lstat()
+    except FileNotFoundError as exc:
+        try:
+            is_reparse = _is_reparse_path(versioned_path)
+        except OSError as reparse_exc:
+            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID") from reparse_exc
+        if is_reparse:
+            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID") from exc
+        if for_write:
+            return versioned_path
+        return root / "github-controls-operation-before-runtime-upgrade-v1.json"
+    except OSError as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID") from exc
+
+    _validate_exact_file_path(
+        versioned_path,
+        "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID",
+    )
+    return versioned_path
+
+
 def _validated_runtime_upgrade_refresh(
     root: Path,
     operation: dict[str, object],
@@ -3732,7 +3768,7 @@ def _validated_runtime_upgrade_refresh(
         root, operation.get("upgrade_index")
     )
     controls_path = root / "github-controls-operation-v1.json"
-    backup_path = root / "github-controls-operation-before-runtime-upgrade-v1.json"
+    backup_path = _runtime_upgrade_backup_path(root, operation.get("upgrade_index"))
     if operation_path is None:
         operation_path = root / "github-controls-idempotent-resume-repair-operation-v1.json"
     refresh = _read_canonical_document(refresh_path, error_code)
@@ -6766,7 +6802,11 @@ def _refresh_interrupted_runtime_controls(
     controls = _read_canonical_document(
         controls_path, "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CONTROLS_INVALID"
     )
-    backup_path = root / "github-controls-operation-before-runtime-upgrade-v1.json"
+    backup_path = _runtime_upgrade_backup_path(
+        root,
+        upgrade_operation.get("upgrade_index"),
+        for_write=True,
+    )
     refresh_path = _runtime_upgrade_refresh_path(
         root,
         upgrade_operation.get("upgrade_index"),
