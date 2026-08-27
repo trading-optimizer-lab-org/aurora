@@ -3602,6 +3602,7 @@ def _validated_idempotent_resume_upgrade_repair(
     head_commit = operation.get("head_commit_sha")
     merge_commit = operation.get("merge_commit_sha")
     patch_hash = operation.get("patch_sha256")
+    operation_upgrade_index = operation.get("upgrade_index")
     if (
         upgrade_index < 13
         or set(operation)
@@ -3621,7 +3622,9 @@ def _validated_idempotent_resume_upgrade_repair(
         }
         or path.read_bytes() != _canonical(operation) + b"\n"
         or operation.get("schema_version") != "1"
-        or operation.get("upgrade_index") != upgrade_index
+        or not isinstance(operation_upgrade_index, int)
+        or isinstance(operation_upgrade_index, bool)
+        or operation_upgrade_index != upgrade_index
         or operation.get("repository") != REPOSITORY
         or not isinstance(prior_merge, str)
         or not _COMMIT.fullmatch(prior_merge)
@@ -3688,11 +3691,32 @@ def _runtime_upgrade_refresh_path(
     *,
     for_write: bool = False,
 ) -> Path:
-    if isinstance(upgrade_index, int) and not isinstance(upgrade_index, bool):
-        versioned_path = root / f"runtime-upgrade-controls-refresh-{upgrade_index}-v1.json"
-        if for_write or versioned_path.exists() or versioned_path.is_symlink():
+    if upgrade_index is None:
+        return root / "runtime-upgrade-controls-refresh-v1.json"
+    if not isinstance(upgrade_index, int) or isinstance(upgrade_index, bool):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_REPAIR_INVALID")
+
+    versioned_path = root / f"runtime-upgrade-controls-refresh-{upgrade_index}-v1.json"
+    try:
+        versioned_path.lstat()
+    except FileNotFoundError as exc:
+        try:
+            is_reparse = _is_reparse_path(versioned_path)
+        except OSError as reparse_exc:
+            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID") from reparse_exc
+        if is_reparse:
+            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID") from exc
+        if for_write:
             return versioned_path
-    return root / "runtime-upgrade-controls-refresh-v1.json"
+        return root / "runtime-upgrade-controls-refresh-v1.json"
+    except OSError as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID") from exc
+
+    _validate_exact_file_path(
+        versioned_path,
+        "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID",
+    )
+    return versioned_path
 
 
 def _validated_runtime_upgrade_refresh(
@@ -4696,6 +4720,7 @@ def _runtime_commit(
             latest_operation,
         )
         retry = _read_json(retry_path)
+        retry_upgrade_index = retry.get("idempotent_resume_upgrade_index")
         merge_commit = operation["merge_commit_sha"]
         if (
             set(retry)
@@ -4720,7 +4745,9 @@ def _runtime_commit(
             or retry.get("bootstrap_id") != latest_retry.get("bootstrap_id")
             or retry.get("interrupted_phase") != "QUALIFICATION_PENDING"
             or retry.get("interrupted_sequence") != 43
-            or retry.get("idempotent_resume_upgrade_index") != upgrade_index
+            or not isinstance(retry_upgrade_index, int)
+            or isinstance(retry_upgrade_index, bool)
+            or retry_upgrade_index != upgrade_index
             or retry.get("prior_runtime_commit_sha") != latest_merge
             or retry.get("idempotent_resume_upgrade_merge_commit_sha")
             != merge_commit

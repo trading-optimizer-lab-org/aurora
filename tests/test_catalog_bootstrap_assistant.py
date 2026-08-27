@@ -669,10 +669,30 @@ def test_recover_blocked_generic_upgrade_versions_refresh_and_preserves_legacy(
 
     monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
     monkeypatch.setattr(bootstrap_runner, "_disable_controller", lambda: None)
+
+    real_validate_refresh = bootstrap_runner._validated_runtime_upgrade_refresh
+
+    def fake_runtime_commit(
+        installed_root: Path,
+        *,
+        allow_pending_idempotent_resume: bool = False,
+    ) -> str:
+        if allow_pending_idempotent_resume:
+            return COMMIT
+        real_validate_refresh(
+            installed_root,
+            upgrade_operation,
+            retry13,
+            (old_commit,),
+            operation_path=upgrade_operation_path,
+            error_code="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_REFRESH_INVALID",
+        )
+        return COMMIT
+
     monkeypatch.setattr(
         bootstrap_runner,
         "_runtime_commit",
-        lambda _root, **_kwargs: COMMIT,
+        fake_runtime_commit,
     )
     monkeypatch.setattr(
         bootstrap_runner,
@@ -781,6 +801,32 @@ def test_qualification_recovery_rejects_wrong_reason_without_mutating_state(
 
     assert bootstrap_runner._resume_transient_qualification_block(root) is False
     assert state_path.read_bytes() == before
+
+
+def test_versioned_refresh_rejects_reparse_entry_without_legacy_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    versioned_path = root / "runtime-upgrade-controls-refresh-13-v1.json"
+    original_lstat = Path.lstat
+
+    def fake_lstat(path: Path) -> object:
+        if path == versioned_path:
+            return SimpleNamespace(st_mode=0, st_nlink=1)
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_is_reparse_path",
+        lambda path: path == versioned_path,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID",
+    ):
+        bootstrap_runner._runtime_upgrade_refresh_path(root, 13)
 
 
 def _write_interrupted_refresh_fixture(
@@ -3962,6 +4008,37 @@ def test_runtime_commit_uses_the_verified_compat_repair_receipt(
         root / "receipts/controller-bootstrap-github-controls-retry-13-v1.json"
     ).write_bytes(bootstrap_runner._canonical(upgrade_retry) + b"\n")
 
+    upgrade_operation["upgrade_index"] = 13.0
+    upgrade_operation_path.write_bytes(
+        bootstrap_runner._canonical(upgrade_operation) + b"\n"
+    )
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_REPAIR_INVALID",
+    ):
+        bootstrap_runner._runtime_commit(root)
+    upgrade_operation["upgrade_index"] = 13
+    upgrade_operation_path.write_bytes(
+        bootstrap_runner._canonical(upgrade_operation) + b"\n"
+    )
+
+    upgrade_retry["idempotent_resume_upgrade_index"] = 13.0
+    upgrade_retry_path = (
+        root / "receipts/controller-bootstrap-github-controls-retry-13-v1.json"
+    )
+    upgrade_retry_path.write_bytes(
+        bootstrap_runner._canonical(upgrade_retry) + b"\n"
+    )
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_RETRY_INVALID",
+    ):
+        bootstrap_runner._runtime_commit(root)
+    upgrade_retry["idempotent_resume_upgrade_index"] = 13
+    upgrade_retry_path.write_bytes(
+        bootstrap_runner._canonical(upgrade_retry) + b"\n"
+    )
+
     with pytest.raises(
         ValueError,
         match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_REFRESH_INVALID",
@@ -4343,6 +4420,18 @@ def test_generic_runtime_upgrade_rejects_numeric_commit_or_hash_fields(
             13,
             {"merge_commit_sha": "3" * 40},
         )
+
+
+@pytest.mark.parametrize("invalid_index", [13.0, True])
+def test_runtime_refresh_selector_requires_strict_integer_upgrade_index(
+    tmp_path: Path,
+    invalid_index: object,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_REPAIR_INVALID",
+    ):
+        bootstrap_runner._runtime_upgrade_refresh_path(tmp_path, invalid_index)
 
 
 def test_idempotent_resume_github_authorization_rejects_unmerged_pr(
