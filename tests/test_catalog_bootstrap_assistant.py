@@ -411,11 +411,15 @@ def test_recover_exact_qualification_block_preserves_receipts_and_is_idempotent(
         "_disable_controller",
         lambda: disabled.append(root),
     )
+
+    def runtime_commit(runtime_root: Path) -> str:
+        runtime_commits.append(runtime_root)
+        return "f" * 40
+
     monkeypatch.setattr(
         bootstrap_runner,
         "_runtime_commit",
-        lambda runtime_root: runtime_commits.append(runtime_root)
-        or "f" * 40,
+        runtime_commit,
     )
     original_advance = bootstrap_runner._advance
 
