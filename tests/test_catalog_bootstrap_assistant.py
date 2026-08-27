@@ -17,6 +17,7 @@ from scripts import run_catalog_bootstrap_assistant as bootstrap_runner
 
 from infra.sp500_megarun.catalog_bootstrap_state import (
     CatalogBootstrapEventV1,
+    CatalogBootstrapStateV1,
     EventName,
     advance_bootstrap_state,
     canonical_state_bytes,
@@ -324,6 +325,267 @@ def test_only_exact_merge_retry_can_leave_terminal_blocked_state() -> None:
     precheck = initial_bootstrap_state(BOOTSTRAP_ID, COMMIT)
     with pytest.raises(ValueError, match="TRANSITION_INVALID"):
         advance_bootstrap_state(precheck, event("merge_retry_authorized", 1))
+
+
+def _blocked_qualification_state(sequence: int = 44) -> CatalogBootstrapStateV1:
+    return CatalogBootstrapStateV1(
+        schema_version="1",
+        bootstrap_id=BOOTSTRAP_ID,
+        protected_commit_sha=COMMIT,
+        phase="BLOCKED",
+        sequence=sequence,
+        applied_event_sha256s=tuple(
+            f"{number:064x}" for number in range(1, sequence + 1)
+        ),
+        last_observed_at="2026-08-23T12:00:00Z",
+        reason_codes=(),
+    )
+
+
+def _qualification_failure_receipts() -> tuple[
+    dict[str, object], dict[str, object]
+]:
+    blocked = {
+        "controller_enabled_readback": False,
+        "phase": "QUALIFICATION_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_WORKFLOW_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    refresh = {**blocked, "state_preserved_for_retry": True}
+    return blocked, refresh
+
+
+def _write_qualification_failure_fixture(
+    root: Path,
+    *,
+    state: CatalogBootstrapStateV1 | None = None,
+    blocked: dict[str, object] | None = None,
+    refresh: dict[str, object] | None = None,
+) -> tuple[Path, Path]:
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        state or _blocked_qualification_state(),
+    )
+    receipts = root / "receipts"
+    receipts.mkdir(parents=True, exist_ok=True)
+    expected_blocked, expected_refresh = _qualification_failure_receipts()
+    blocked = expected_blocked if blocked is None else blocked
+    refresh = expected_refresh if refresh is None else refresh
+    blocked_path = receipts / "controller-bootstrap-blocked-v1.json"
+    refresh_path = (
+        receipts / "controller-bootstrap-runtime-upgrade-refresh-blocked-v1.json"
+    )
+    blocked_path.write_bytes(bootstrap_runner._canonical(blocked) + b"\n")
+    refresh_path.write_bytes(bootstrap_runner._canonical(refresh) + b"\n")
+    return blocked_path, refresh_path
+
+
+def test_only_exact_qualification_retry_can_leave_terminal_blocked_state() -> None:
+    blocked = _blocked_qualification_state()
+
+    resumed = advance_bootstrap_state(
+        blocked,
+        event("qualification_retry_authorized", 45),
+    )
+
+    assert resumed.phase == "QUALIFICATION_PENDING"
+    assert resumed.sequence == 45
+
+
+def test_recover_exact_qualification_block_preserves_receipts_and_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    blocked_path, refresh_path = _write_qualification_failure_fixture(root)
+    blocked_bytes = blocked_path.read_bytes()
+    refresh_bytes = refresh_path.read_bytes()
+    disabled: list[Path] = []
+    runtime_commits: list[Path] = []
+    advanced: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_disable_controller",
+        lambda: disabled.append(root),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_runtime_commit",
+        lambda runtime_root: runtime_commits.append(runtime_root)
+        or "f" * 40,
+    )
+    original_advance = bootstrap_runner._advance
+
+    def capture_advance(root, state, name, evidence):
+        advanced.append((name, evidence))
+        original_advance(root, state, name, evidence)
+
+    monkeypatch.setattr(bootstrap_runner, "_advance", capture_advance)
+
+    assert bootstrap_runner._resume_transient_qualification_block(root) is True
+    resumed = load_bootstrap_state(state_path)
+    assert resumed.phase == "QUALIFICATION_PENDING"
+    assert resumed.sequence == 45
+    assert advanced == [
+        (
+            "qualification_retry_authorized",
+            {
+                "blocked_receipt_sha256": hashlib.sha256(
+                    blocked_bytes
+                ).hexdigest(),
+                "runtime_commit_sha": "f" * 40,
+                "runtime_upgrade_refresh_receipt_sha256": hashlib.sha256(
+                    refresh_bytes
+                ).hexdigest(),
+            },
+        )
+    ]
+    assert blocked_path.read_bytes() == blocked_bytes
+    assert refresh_path.read_bytes() == refresh_bytes
+    assert disabled == [root]
+    assert runtime_commits == [root]
+
+    state_after_recovery = state_path.read_bytes()
+    assert bootstrap_runner._resume_transient_qualification_block(root) is False
+    assert state_path.read_bytes() == state_after_recovery
+
+
+def test_qualification_recovery_rejects_wrong_reason_without_mutating_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    blocked, refresh = _qualification_failure_receipts()
+    blocked["reason_code"] = "CATALOG_BOOTSTRAP_PHASE_FAILED"
+    _write_qualification_failure_fixture(
+        root, blocked=blocked, refresh=refresh
+    )
+    before = state_path.read_bytes()
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+
+    assert bootstrap_runner._resume_transient_qualification_block(root) is False
+    assert state_path.read_bytes() == before
+
+
+def test_qualification_recovery_rejects_wrong_runtime_refresh_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    blocked, refresh = _qualification_failure_receipts()
+    refresh["state_preserved_for_retry"] = False
+    _write_qualification_failure_fixture(
+        root, blocked=blocked, refresh=refresh
+    )
+    before = state_path.read_bytes()
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+
+    assert bootstrap_runner._resume_transient_qualification_block(root) is False
+    assert state_path.read_bytes() == before
+
+
+def test_qualification_recovery_rejects_wrong_runtime_chain_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    _write_qualification_failure_fixture(root)
+    before = state_path.read_bytes()
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_disable_controller",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_runtime_commit",
+        lambda _root: (_ for _ in ()).throw(
+            ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID")
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID",
+    ):
+        bootstrap_runner._resume_transient_qualification_block(root)
+    assert state_path.read_bytes() == before
+
+
+def test_qualification_recovery_rejects_wrong_sequence_without_mutating_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    _write_qualification_failure_fixture(
+        root, state=_blocked_qualification_state(sequence=43)
+    )
+    before = state_path.read_bytes()
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+
+    assert bootstrap_runner._resume_transient_qualification_block(root) is False
+    assert state_path.read_bytes() == before
+
+
+def test_main_retries_qualification_before_other_blocked_recoveries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{}\n", encoding="utf-8")
+    blocked = _blocked_qualification_state()
+    pending = blocked.model_copy(
+        update={"phase": "QUALIFICATION_PENDING", "sequence": 45}
+    )
+    ready = pending.model_copy(update={"phase": "READY", "sequence": 56})
+    observed_states = iter((blocked, blocked, pending, pending, ready))
+    recoveries: list[str] = []
+    phases: list[str] = []
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "load_bootstrap_state",
+        lambda _path: next(observed_states),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_resume_transient_qualification_block",
+        lambda _root: _append_then_return(recoveries, "qualification", True),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_resume_transient_merge_block",
+        lambda _root: _append_then_return(recoveries, "merge", False),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_resume_transient_local_install_block",
+        lambda _root: _append_then_return(recoveries, "local", False),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_resume_transient_github_controls_block",
+        lambda _root: _append_then_return(recoveries, "github", False),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "run_phase",
+        lambda phase, _root: phases.append(phase),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["catalog-bootstrap-assistant", "--installed-root", str(root)],
+    )
+
+    assert bootstrap_runner.main() == 0
+    assert recoveries == ["qualification"]
+    assert phases == ["QUALIFICATION_PENDING"]
 
 
 def _local_install_repair_operation(
@@ -3910,6 +4172,11 @@ def test_main_tries_local_recovery_after_merge_recovery_declines(
         bootstrap_runner,
         "load_bootstrap_state",
         lambda _path: next(observed_states),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_resume_transient_qualification_block",
+        lambda _root: False,
     )
     monkeypatch.setattr(
         bootstrap_runner,

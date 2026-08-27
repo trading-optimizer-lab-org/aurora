@@ -6294,6 +6294,59 @@ def apply_github_controls(root: Path) -> None:
     _advance(root, state, "github_controls_verified", receipt)
 
 
+def _resume_transient_qualification_block(root: Path) -> bool:
+    state = load_bootstrap_state(_state_path(root))
+    if state.phase != "BLOCKED" or state.sequence != 44:
+        return False
+    if root.resolve() != EXPECTED_ROOT.resolve():
+        raise ValueError("CATALOG_BOOTSTRAP_ROOT_INVALID")
+
+    blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
+    blocked = _read_json(blocked_path)
+    expected_block = {
+        "controller_enabled_readback": False,
+        "phase": "QUALIFICATION_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_WORKFLOW_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    if blocked != expected_block:
+        return False
+    if blocked_path.read_bytes() != _canonical(blocked) + b"\n":
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_BLOCK_RECEIPT_INVALID")
+
+    refresh_path = (
+        root / "receipts/controller-bootstrap-runtime-upgrade-refresh-blocked-v1.json"
+    )
+    refresh = _read_json(refresh_path)
+    expected_refresh = {
+        **expected_block,
+        "state_preserved_for_retry": True,
+    }
+    if refresh != expected_refresh:
+        return False
+    if refresh_path.read_bytes() != _canonical(refresh) + b"\n":
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_QUALIFICATION_REFRESH_RECEIPT_INVALID"
+        )
+
+    _disable_controller()
+    runtime_commit = _runtime_commit(root)
+    if not isinstance(runtime_commit, str) or not _COMMIT.fullmatch(runtime_commit):
+        raise ValueError("CATALOG_BOOTSTRAP_PROTECTED_COMMIT_INVALID")
+    evidence = {
+        "blocked_receipt_sha256": hashlib.sha256(
+            blocked_path.read_bytes()
+        ).hexdigest(),
+        "runtime_commit_sha": runtime_commit,
+        "runtime_upgrade_refresh_receipt_sha256": hashlib.sha256(
+            refresh_path.read_bytes()
+        ).hexdigest(),
+    }
+    _advance(root, state, "qualification_retry_authorized", evidence)
+    return True
+
+
 def _refresh_interrupted_runtime_controls(root: Path) -> None:
     state = load_bootstrap_state(_state_path(root))
     if state.phase != "QUALIFICATION_PENDING" or state.sequence != 43:
@@ -8321,7 +8374,11 @@ def main() -> int:
             return 0
         if state.phase == "BLOCKED":
             try:
-                recovered = _resume_transient_merge_block(args.installed_root)
+                recovered = _resume_transient_qualification_block(
+                    args.installed_root
+                )
+                if not recovered:
+                    recovered = _resume_transient_merge_block(args.installed_root)
                 if not recovered:
                     recovered = _resume_transient_local_install_block(
                         args.installed_root
