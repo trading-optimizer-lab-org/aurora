@@ -558,6 +558,191 @@ def test_recover_real_qualification_block_refreshes_and_archives_stale_checkpoin
     )
 
 
+def test_recover_blocked_generic_upgrade_versions_refresh_and_preserves_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    _write_interrupted_refresh_fixture(root)
+    blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
+    blocked_path.write_bytes(
+        bootstrap_runner._canonical(_qualification_blocked_receipt()) + b"\n"
+    )
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    old_commit = "4" * 40
+    base_operation = _idempotent_resume_repair_operation(
+        prior_merge="3" * 40,
+        repair_head="5" * 40,
+        repair_merge=old_commit,
+    )
+    base_operation_path = (
+        root / "github-controls-idempotent-resume-repair-operation-v1.json"
+    )
+    base_operation_path.write_bytes(
+        bootstrap_runner._canonical(base_operation) + b"\n"
+    )
+    followup_operation = _idempotent_resume_followup_repair_operation(
+        prior_merge=old_commit,
+        base_commit=old_commit,
+        repair_head="6" * 40,
+        repair_merge="7" * 40,
+    )
+    followup_operation_path = (
+        root / "github-controls-idempotent-resume-followup-repair-operation-v1.json"
+    )
+    followup_operation_path.write_bytes(
+        bootstrap_runner._canonical(followup_operation) + b"\n"
+    )
+    catchup_operation = _idempotent_resume_catchup_repair_operation(
+        prior_merge="7" * 40,
+        repair_head="8" * 40,
+        repair_merge="9" * 40,
+    )
+    catchup_operation_path = (
+        root / "github-controls-idempotent-resume-catchup-repair-operation-v1.json"
+    )
+    catchup_operation_path.write_bytes(
+        bootstrap_runner._canonical(catchup_operation) + b"\n"
+    )
+    upgrade_operation = _idempotent_resume_upgrade_repair_operation(
+        upgrade_index=13,
+        prior_merge="9" * 40,
+        repair_head="b" * 40,
+        repair_merge=COMMIT,
+        pr_number=198,
+    )
+    upgrade_operation_path = (
+        root / "github-controls-idempotent-resume-upgrade-13-operation-v1.json"
+    )
+    upgrade_operation_path.write_bytes(
+        bootstrap_runner._canonical(upgrade_operation) + b"\n"
+    )
+
+    retry10_path = root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json"
+    retry10 = cast(dict[str, object], json.loads(retry10_path.read_bytes()))
+    retry12_path = root / "receipts/controller-bootstrap-github-controls-retry-12-v1.json"
+    retry12_path.write_bytes(bootstrap_runner._canonical(retry10) + b"\n")
+    retry13 = {
+        **retry10,
+        "idempotent_resume_upgrade_index": 13,
+        "idempotent_resume_upgrade_merge_commit_sha": COMMIT,
+        "idempotent_resume_upgrade_operation_sha256": hashlib.sha256(
+            bootstrap_runner._canonical(upgrade_operation)
+        ).hexdigest(),
+        "idempotent_resume_upgrade_pr_number": 198,
+        "prior_retry_receipt_sha256": hashlib.sha256(
+            retry12_path.read_bytes()
+        ).hexdigest(),
+        "prior_runtime_commit_sha": "9" * 40,
+    }
+    retry13_path = root / "receipts/controller-bootstrap-github-controls-retry-13-v1.json"
+    retry13_path.write_bytes(bootstrap_runner._canonical(retry13) + b"\n")
+
+    controls_path = root / "github-controls-operation-v1.json"
+    old_controls = controls_path.read_bytes()
+    backup_path = root / "github-controls-operation-before-runtime-upgrade-v1.json"
+    backup_path.write_bytes(old_controls)
+    legacy_refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
+    legacy_refresh = {
+        "bootstrap_id": BOOTSTRAP_ID,
+        "prior_controls_operation_sha256": hashlib.sha256(old_controls).hexdigest(),
+        "protected_commit_sha": old_commit,
+        "refreshed_controls_operation_sha256": hashlib.sha256(old_controls).hexdigest(),
+        "runtime_upgrade_operation_sha256": hashlib.sha256(
+            base_operation_path.read_bytes()
+        ).hexdigest(),
+        "schema_version": "1",
+    }
+    legacy_bytes = bootstrap_runner._canonical(legacy_refresh) + b"\n"
+    legacy_refresh_path.write_bytes(legacy_bytes)
+
+    checkpoint = bootstrap_runner._new_qualification_checkpoint(
+        protected_commit_sha=old_commit,
+        github_controls_operation_sha256="1" * 64,
+        activity_baseline_sha256="2" * 64,
+        steps=[],
+    )
+    checkpoint_path = root / bootstrap_runner.QUALIFICATION_CHECKPOINT_FILENAME
+    checkpoint_bytes = bootstrap_runner._canonical(checkpoint) + b"\n"
+    checkpoint_path.write_bytes(checkpoint_bytes)
+    checkpoint_sha = hashlib.sha256(checkpoint_bytes).hexdigest()
+    advanced: list[tuple[str, dict[str, object]]] = []
+
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(bootstrap_runner, "_disable_controller", lambda: None)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_runtime_commit",
+        lambda _root, **_kwargs: COMMIT,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda command, **_kwargs: ""
+        if command[1:3] == ["status", "--porcelain=v1"]
+        else COMMIT,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_verify_idempotent_resume_github_authorization",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def fake_prepare(
+        installed_root: Path,
+        commit: str,
+        *,
+        live_step_name: str,
+        controller_already_disabled: bool = False,
+    ) -> dict[str, object]:
+        assert installed_root == root
+        assert commit == COMMIT
+        assert live_step_name == "github_controls_runtime_upgrade_live_1"
+        assert controller_already_disabled is True
+        receipt: dict[str, object] = {"protected_commit_sha": commit}
+        controls_path.write_bytes(bootstrap_runner._canonical(receipt) + b"\n")
+        return receipt
+
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_prepare_github_controls_operation",
+        fake_prepare,
+    )
+    original_advance = bootstrap_runner._advance
+
+    def capture_advance(
+        installed_root: Path,
+        state: CatalogBootstrapStateV1,
+        name: str,
+        evidence: object,
+    ) -> None:
+        advanced.append((name, cast(dict[str, object], evidence)))
+        original_advance(installed_root, state, cast(EventName, name), evidence)
+
+    monkeypatch.setattr(bootstrap_runner, "_advance", capture_advance)
+
+    assert bootstrap_runner._resume_transient_qualification_block(root) is True
+
+    versioned_refresh_path = root / "runtime-upgrade-controls-refresh-13-v1.json"
+    assert versioned_refresh_path.is_file()
+    assert legacy_refresh_path.read_bytes() == legacy_bytes
+    assert advanced[0][0] == "qualification_retry_authorized"
+    evidence = advanced[0][1]
+    assert evidence["runtime_upgrade_refresh_receipt_sha256"] == hashlib.sha256(
+        versioned_refresh_path.read_bytes()
+    ).hexdigest()
+    assert evidence["runtime_upgrade_refresh_receipt_sha256"] != hashlib.sha256(
+        legacy_bytes
+    ).hexdigest()
+    assert evidence["archived_qualification_checkpoint_sha256"] == checkpoint_sha
+
+    state_after_recovery = state_path.read_bytes()
+    versioned_bytes = versioned_refresh_path.read_bytes()
+    assert bootstrap_runner._resume_transient_qualification_block(root) is False
+    assert state_path.read_bytes() == state_after_recovery
+    assert versioned_refresh_path.read_bytes() == versioned_bytes
+    assert legacy_refresh_path.read_bytes() == legacy_bytes
+
+
 def test_qualification_recovery_rejects_a_block_event_mismatch_without_mutating_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
