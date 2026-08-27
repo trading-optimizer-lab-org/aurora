@@ -13,6 +13,12 @@
       "replacement_sha256": "2895feb551f66aec443eaf43205ce81537ea5177209b53de50a74559d4ebbcd7"
     },
     {
+      "path": ".github/workflows/catalog-controller-qualification.yml",
+      "previous_sha256": "cb0c7ac6999ea56dc374b11ed497a27cdf31258e5fd111016a20e84cfc50ba0f",
+      "reason": "register the dynamically loaded simulator before dataclass evaluation",
+      "replacement_sha256": "32e3a7a97f8c1632b499967d105b49df501fc8721fde5c6cf0f55eaf0e857e05"
+    },
+    {
       "path": ".github/workflows/catalog-request-reconciler.yml",
       "previous_sha256": "4bbe04040bdd9e341a6d7b97ffd386fc8343f952e5e610057335ddb272671d00",
       "reason": "enforce explicit production arming before catalog reconciliation",
