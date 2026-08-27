@@ -1156,6 +1156,21 @@ def _qualification_dispatch_intent_path(root: Path, step_name: str) -> Path:
     return root / f"qualification-dispatch-{step_name}-v1.intent.json"
 
 
+def _qualification_commit_scoped_intent_path(
+    root: Path,
+    step_name: str,
+    protected_commit_sha: str,
+) -> Path:
+    if (
+        step_name not in _DISPATCH_INTENT_STEP_WORKFLOWS
+        or not _COMMIT.fullmatch(protected_commit_sha)
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID")
+    return root / (
+        f"qualification-dispatch-{step_name}-{protected_commit_sha}-v1.intent.json"
+    )
+
+
 def _new_qualification_dispatch_intent(
     *,
     step_name: str,
@@ -1271,31 +1286,29 @@ def _run_qualification_workflow_step(
     with _exclusive_checkpoint_lock(dispatch_guard, timeout_seconds=4000):
         intent_path = legacy_intent_path
         intent: dict[str, object] | None = None
-        if step_name == "github_controls_runtime_upgrade_live_1":
-            intent_path = (
-                root
-                / f"qualification-dispatch-{step_name}-{protected_commit_sha}-v1.intent.json"
+        if legacy_intent_path.exists() or legacy_intent_path.is_symlink():
+            legacy_intent = _read_canonical_document(
+                legacy_intent_path,
+                "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID",
             )
-            if legacy_intent_path.exists() or legacy_intent_path.is_symlink():
-                legacy_intent = _read_canonical_document(
-                    legacy_intent_path,
-                    "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID",
+            legacy_commit = legacy_intent.get("protected_commit_sha")
+            if not isinstance(legacy_commit, str) or not _COMMIT.fullmatch(
+                legacy_commit
+            ):
+                raise ValueError(
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID"
                 )
-                legacy_commit = legacy_intent.get("protected_commit_sha")
-                if not isinstance(legacy_commit, str) or not _COMMIT.fullmatch(
-                    legacy_commit
-                ):
-                    raise ValueError(
-                        "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID"
-                    )
-                _validate_qualification_dispatch_intent(
-                    legacy_intent,
-                    step_name=step_name,
-                    protected_commit_sha=legacy_commit,
+            _validate_qualification_dispatch_intent(
+                legacy_intent,
+                step_name=step_name,
+                protected_commit_sha=legacy_commit,
+            )
+            if legacy_commit == protected_commit_sha:
+                intent = legacy_intent
+            else:
+                intent_path = _qualification_commit_scoped_intent_path(
+                    root, step_name, protected_commit_sha
                 )
-                if legacy_commit == protected_commit_sha:
-                    intent_path = legacy_intent_path
-                    intent = legacy_intent
         if intent_path.exists() or intent_path.is_symlink():
             if intent is None:
                 intent = _read_canonical_document(
@@ -6204,6 +6217,7 @@ def _prepare_github_controls_operation(
     protected_commit_sha: str,
     *,
     live_step_name: str,
+    controller_already_disabled: bool = False,
 ) -> dict[str, object]:
     context = _context(root)
     source = Path(str(context["source_root"]))
@@ -6217,7 +6231,8 @@ def _prepare_github_controls_operation(
     ):
         raise ValueError("CATALOG_BOOTSTRAP_PUBLIC_BINDING_INVALID")
     _require_protected_environment_secrets(PROTECTED_ENVIRONMENT_EXTERNAL_SECRETS)
-    _disable_controller()
+    if not controller_already_disabled:
+        _disable_controller()
     _set_repository_variable(
         "CATALOG_AUTHORITY_ISSUE_NUMBER", str(authority["issue_number"])
     )
@@ -6294,15 +6309,276 @@ def apply_github_controls(root: Path) -> None:
     _advance(root, state, "github_controls_verified", receipt)
 
 
-def _refresh_interrupted_runtime_controls(root: Path) -> None:
+def _qualification_checkpoint_archive_path(
+    root: Path,
+    protected_commit_sha: str,
+    checkpoint_sha256: str,
+) -> Path:
+    if not _COMMIT.fullmatch(protected_commit_sha) or not _SHA256.fullmatch(
+        checkpoint_sha256
+    ):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
+    return root / (
+        f"{Path(QUALIFICATION_CHECKPOINT_FILENAME).stem}.archived-"
+        f"{protected_commit_sha}-{checkpoint_sha256}.json"
+    )
+
+
+def _archive_stale_qualification_checkpoint(
+    root: Path,
+    *,
+    protected_commit_sha: str,
+    recovery_event_sha256: str,
+) -> str | None:
+    if not _SHA256.fullmatch(recovery_event_sha256):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
+    path = _qualification_checkpoint_path(root)
+    operation_path = root / "qualification-checkpoint-archive-operation-v1.json"
+    with _exclusive_checkpoint_lock(path):
+        if not path.exists() and not path.is_symlink():
+            if not operation_path.exists() and not operation_path.is_symlink():
+                return None
+            archive_operation = _read_canonical_document(
+                operation_path,
+                "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID",
+            )
+            expected_fields = {
+                "archive_filename",
+                "archived_checkpoint_sha256",
+                "archived_protected_commit_sha",
+                "operation_sha256",
+                "recovery_event_sha256",
+                "runtime_commit_sha",
+                "schema_version",
+            }
+            if (
+                set(archive_operation) != expected_fields
+                or archive_operation.get("schema_version") != "1"
+                or archive_operation.get("runtime_commit_sha")
+                != protected_commit_sha
+                or archive_operation.get("recovery_event_sha256")
+                != recovery_event_sha256
+                or not _COMMIT.fullmatch(
+                    str(archive_operation.get("archived_protected_commit_sha", ""))
+                )
+                or not _SHA256.fullmatch(
+                    str(archive_operation.get("archived_checkpoint_sha256", ""))
+                )
+                or not _SHA256.fullmatch(
+                    str(archive_operation.get("operation_sha256", ""))
+                )
+                or _seal_hash(archive_operation, "operation_sha256")
+                != archive_operation.get("operation_sha256")
+            ):
+                raise ValueError(
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID"
+                )
+            archive_filename = archive_operation.get("archive_filename")
+            if (
+                not isinstance(archive_filename, str)
+                or Path(archive_filename).name != archive_filename
+            ):
+                raise ValueError(
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID"
+                )
+            archive_path = root / archive_filename
+            _validate_exact_file_path(
+                archive_path,
+                "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID",
+            )
+            if hashlib.sha256(
+                archive_path.read_bytes()
+            ).hexdigest() != archive_operation.get("archived_checkpoint_sha256"):
+                raise ValueError(
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID"
+                )
+            return str(archive_operation["archived_checkpoint_sha256"])
+        value = _read_canonical_document(
+            path, "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID"
+        )
+        checkpoint_commit = value.get("protected_commit_sha")
+        controls_hash = value.get("github_controls_operation_sha256")
+        baseline_hash = value.get("activity_baseline_sha256")
+        if (
+            not isinstance(checkpoint_commit, str)
+            or not _COMMIT.fullmatch(checkpoint_commit)
+            or not isinstance(controls_hash, str)
+            or not _SHA256.fullmatch(controls_hash)
+            or not isinstance(baseline_hash, str)
+            or not _SHA256.fullmatch(baseline_hash)
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
+        _validate_qualification_checkpoint(
+            value,
+            protected_commit_sha=checkpoint_commit,
+            github_controls_operation_sha256=controls_hash,
+            activity_baseline_sha256=baseline_hash,
+        )
+        if checkpoint_commit == protected_commit_sha:
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_NOT_STALE"
+            )
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID"
+            ) from exc
+        checkpoint_sha256 = hashlib.sha256(data).hexdigest()
+        archive_path = _qualification_checkpoint_archive_path(
+            root, checkpoint_commit, checkpoint_sha256
+        )
+        if archive_path.exists() or archive_path.is_symlink():
+            _validate_exact_file_path(
+                archive_path,
+                "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID",
+            )
+            try:
+                archived = archive_path.read_bytes()
+            except OSError as exc:
+                raise ValueError(
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID"
+                ) from exc
+            if archived != data:
+                raise ValueError(
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_CONFLICT"
+                )
+        else:
+            _write_exact_canonical_checkpoint(archive_path, value)
+        _validate_exact_file_path(
+            archive_path,
+            "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID",
+        )
+        if archive_path.read_bytes() != data:
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_CONFLICT"
+            )
+        operation: dict[str, object] = {
+            "archive_filename": archive_path.name,
+            "archived_checkpoint_sha256": checkpoint_sha256,
+            "archived_protected_commit_sha": checkpoint_commit,
+            "operation_sha256": "0" * 64,
+            "recovery_event_sha256": recovery_event_sha256,
+            "runtime_commit_sha": protected_commit_sha,
+            "schema_version": "1",
+        }
+        operation["operation_sha256"] = _seal_hash(operation, "operation_sha256")
+        _write_exact_canonical_checkpoint(operation_path, operation)
+        _validate_exact_file_path(
+            path, "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID"
+        )
+        if path.read_bytes() != data:
+            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_CONFLICT")
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_FAILED"
+            ) from exc
+        return checkpoint_sha256
+
+
+def _qualification_block_event_matches(
+    state: CatalogBootstrapStateV1,
+    blocked: dict[str, object],
+) -> bool:
+    if state.last_observed_at is None or not state.applied_event_sha256s:
+        return False
+    from infra.sp500_megarun.catalog_bootstrap_state import CatalogBootstrapEventV1
+
+    try:
+        event = CatalogBootstrapEventV1(
+            schema_version="1",
+            bootstrap_id=state.bootstrap_id,
+            sequence=44,
+            name="blocked",
+            protected_commit_sha=state.protected_commit_sha,
+            observed_at=state.last_observed_at,
+            evidence_sha256=hashlib.sha256(_canonical(blocked)).hexdigest(),
+        )
+    except (TypeError, ValueError):
+        return False
+    return state.applied_event_sha256s[-1] == event.idempotency_sha256
+
+
+def _resume_transient_qualification_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
-    if state.phase != "QUALIFICATION_PENDING" or state.sequence != 43:
-        return
+    if state.phase != "BLOCKED" or state.sequence != 44:
+        return False
+    if root.resolve() != EXPECTED_ROOT.resolve():
+        raise ValueError("CATALOG_BOOTSTRAP_ROOT_INVALID")
+
+    blocked_path = root / "receipts/controller-bootstrap-blocked-v1.json"
+    blocked = _read_canonical_document(
+        blocked_path, "CATALOG_BOOTSTRAP_QUALIFICATION_BLOCK_RECEIPT_INVALID"
+    )
+    expected_block = {
+        "controller_enabled_readback": False,
+        "phase": "QUALIFICATION_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_WORKFLOW_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    if blocked != expected_block:
+        return False
+    _disable_controller()
+    if not _qualification_block_event_matches(state, blocked):
+        return False
+
+    runtime_commit = _refresh_interrupted_runtime_controls(
+        root, allow_blocked_recovery=True
+    )
+    if not isinstance(runtime_commit, str) or not _COMMIT.fullmatch(runtime_commit):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID")
+    refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
+    refresh = _read_canonical_document(
+        refresh_path, "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID"
+    )
+    if refresh.get("protected_commit_sha") != runtime_commit:
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID")
+    archived_checkpoint_sha256 = _archive_stale_qualification_checkpoint(
+        root,
+        protected_commit_sha=runtime_commit,
+        recovery_event_sha256=state.applied_event_sha256s[-1],
+    )
+    evidence: dict[str, object] = {
+        "blocked_receipt_sha256": hashlib.sha256(
+            blocked_path.read_bytes()
+        ).hexdigest(),
+        "runtime_commit_sha": runtime_commit,
+        "runtime_upgrade_refresh_receipt_sha256": hashlib.sha256(
+            refresh_path.read_bytes()
+        ).hexdigest(),
+    }
+    if archived_checkpoint_sha256 is not None:
+        evidence["archived_qualification_checkpoint_sha256"] = (
+            archived_checkpoint_sha256
+        )
+    _advance(root, state, "qualification_retry_authorized", evidence)
+    return True
+
+
+def _refresh_interrupted_runtime_controls(
+    root: Path,
+    *,
+    allow_blocked_recovery: bool = False,
+) -> str | None:
+    state = load_bootstrap_state(_state_path(root))
+    if allow_blocked_recovery:
+        if state.phase != "BLOCKED" or state.sequence != 44:
+            return None
+        interrupted_sequence = state.sequence - 1
+    elif state.phase != "QUALIFICATION_PENDING" or state.sequence != 43:
+        return None
+    else:
+        interrupted_sequence = 43
     resume_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-10-v1.json"
     )
     if not resume_retry_path.exists():
-        return
+        if allow_blocked_recovery:
+            raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_RETRY_INVALID")
+        return None
     followup_retry_path = (
         root / "receipts/controller-bootstrap-github-controls-retry-11-v1.json"
     )
@@ -6374,13 +6650,38 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
     retry = _read_json(retry_path)
     baseline_path = root / "github-activity-baseline-v1.json"
     baseline = _read_json(baseline_path)
-    if (
-        retry.get("bootstrap_id") != state_document.get("bootstrap_id")
-        or retry.get("interrupted_state_sha256")
-        != hashlib.sha256(state_path.read_bytes()).hexdigest()
-        or retry.get("activity_baseline_sha256") != hashlib.sha256(_canonical(baseline)).hexdigest()
-    ):
-        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_STATE_INVALID")
+    state_hash_matches = retry.get("interrupted_state_sha256") == hashlib.sha256(
+        state_path.read_bytes()
+    ).hexdigest()
+    retry_identity_matches = bool(
+        retry.get("bootstrap_id") == state_document.get("bootstrap_id")
+        and retry.get("interrupted_phase") == "QUALIFICATION_PENDING"
+        and retry.get("interrupted_sequence") == interrupted_sequence
+        and retry.get("activity_baseline_sha256")
+        == hashlib.sha256(_canonical(baseline)).hexdigest()
+        and _SHA256.fullmatch(str(retry.get("interrupted_state_sha256", "")))
+    )
+    if allow_blocked_recovery:
+        interrupted_state_path = (
+            root / "state/catalog-bootstrap-interrupted-state-v1.json"
+        )
+        interrupted_state = load_bootstrap_state(interrupted_state_path)
+        retry_identity_matches = retry_identity_matches and (
+            interrupted_state.phase == "QUALIFICATION_PENDING"
+            and interrupted_state.sequence == interrupted_sequence
+            and interrupted_state.bootstrap_id == state.bootstrap_id
+            and interrupted_state.protected_commit_sha == state.protected_commit_sha
+            and interrupted_state.applied_event_sha256s
+            == state.applied_event_sha256s[:-1]
+            and hashlib.sha256(interrupted_state_path.read_bytes()).hexdigest()
+            == retry.get("interrupted_state_sha256")
+        )
+    if not retry_identity_matches or (not allow_blocked_recovery and not state_hash_matches):
+        raise ValueError(
+            "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_RETRY_INVALID"
+            if allow_blocked_recovery
+            else "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_STATE_INVALID"
+        )
 
     upgrade_operation = _read_json(upgrade_operation_path)
     acceptable_prior_runtimes = {upgrade_operation.get("prior_runtime_commit_sha")}
@@ -6423,11 +6724,19 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
     refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
     if controls.get("protected_commit_sha") in acceptable_prior_runtimes:
         _write_exact_canonical_checkpoint(backup_path, controls)
-        _prepare_github_controls_operation(
-            root,
-            protected_commit_sha,
-            live_step_name="github_controls_runtime_upgrade_live_1",
-        )
+        if allow_blocked_recovery:
+            _prepare_github_controls_operation(
+                root,
+                protected_commit_sha,
+                live_step_name="github_controls_runtime_upgrade_live_1",
+                controller_already_disabled=True,
+            )
+        else:
+            _prepare_github_controls_operation(
+                root,
+                protected_commit_sha,
+                live_step_name="github_controls_runtime_upgrade_live_1",
+            )
         controls = _read_canonical_document(
             controls_path,
             "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CONTROLS_INVALID",
@@ -6460,6 +6769,7 @@ def _refresh_interrupted_runtime_controls(root: Path) -> None:
     _write_exact_canonical_checkpoint(refresh_path, refresh)
     if _runtime_commit(root) != protected_commit_sha:
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID")
+    return protected_commit_sha
 
 
 def _parse_terminal_controller_receipt(issue_number: int) -> dict[str, object]:
@@ -8321,7 +8631,11 @@ def main() -> int:
             return 0
         if state.phase == "BLOCKED":
             try:
-                recovered = _resume_transient_merge_block(args.installed_root)
+                recovered = _resume_transient_qualification_block(
+                    args.installed_root
+                )
+                if not recovered:
+                    recovered = _resume_transient_merge_block(args.installed_root)
                 if not recovered:
                     recovered = _resume_transient_local_install_block(
                         args.installed_root
