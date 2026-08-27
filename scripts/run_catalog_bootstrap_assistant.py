@@ -3602,6 +3602,7 @@ def _validated_idempotent_resume_upgrade_repair(
     head_commit = operation.get("head_commit_sha")
     merge_commit = operation.get("merge_commit_sha")
     patch_hash = operation.get("patch_sha256")
+    operation_upgrade_index = operation.get("upgrade_index")
     if (
         upgrade_index < 13
         or set(operation)
@@ -3621,7 +3622,9 @@ def _validated_idempotent_resume_upgrade_repair(
         }
         or path.read_bytes() != _canonical(operation) + b"\n"
         or operation.get("schema_version") != "1"
-        or operation.get("upgrade_index") != upgrade_index
+        or not isinstance(operation_upgrade_index, int)
+        or isinstance(operation_upgrade_index, bool)
+        or operation_upgrade_index != upgrade_index
         or operation.get("repository") != REPOSITORY
         or not isinstance(prior_merge, str)
         or not _COMMIT.fullmatch(prior_merge)
@@ -3682,6 +3685,40 @@ def _idempotent_resume_upgrade_indexes(root: Path) -> tuple[int, ...]:
     return tuple(sorted(operation_indexes))
 
 
+def _runtime_upgrade_refresh_path(
+    root: Path,
+    upgrade_index: object,
+    *,
+    for_write: bool = False,
+) -> Path:
+    if upgrade_index is None:
+        return root / "runtime-upgrade-controls-refresh-v1.json"
+    if not isinstance(upgrade_index, int) or isinstance(upgrade_index, bool):
+        raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_UPGRADE_REPAIR_INVALID")
+
+    versioned_path = root / f"runtime-upgrade-controls-refresh-{upgrade_index}-v1.json"
+    try:
+        versioned_path.lstat()
+    except FileNotFoundError as exc:
+        try:
+            is_reparse = _is_reparse_path(versioned_path)
+        except OSError as reparse_exc:
+            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID") from reparse_exc
+        if is_reparse:
+            raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID") from exc
+        if for_write:
+            return versioned_path
+        return root / "runtime-upgrade-controls-refresh-v1.json"
+    except OSError as exc:
+        raise ValueError("CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID") from exc
+
+    _validate_exact_file_path(
+        versioned_path,
+        "CATALOG_BOOTSTRAP_CHECKPOINT_PATH_INVALID",
+    )
+    return versioned_path
+
+
 def _validated_runtime_upgrade_refresh(
     root: Path,
     operation: dict[str, object],
@@ -3691,7 +3728,9 @@ def _validated_runtime_upgrade_refresh(
     operation_path: Path | None = None,
     error_code: str = "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID",
 ) -> dict[str, object]:
-    refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
+    refresh_path = _runtime_upgrade_refresh_path(
+        root, operation.get("upgrade_index")
+    )
     controls_path = root / "github-controls-operation-v1.json"
     backup_path = root / "github-controls-operation-before-runtime-upgrade-v1.json"
     if operation_path is None:
@@ -4681,6 +4720,7 @@ def _runtime_commit(
             latest_operation,
         )
         retry = _read_json(retry_path)
+        retry_upgrade_index = retry.get("idempotent_resume_upgrade_index")
         merge_commit = operation["merge_commit_sha"]
         if (
             set(retry)
@@ -4705,7 +4745,9 @@ def _runtime_commit(
             or retry.get("bootstrap_id") != latest_retry.get("bootstrap_id")
             or retry.get("interrupted_phase") != "QUALIFICATION_PENDING"
             or retry.get("interrupted_sequence") != 43
-            or retry.get("idempotent_resume_upgrade_index") != upgrade_index
+            or not isinstance(retry_upgrade_index, int)
+            or isinstance(retry_upgrade_index, bool)
+            or retry_upgrade_index != upgrade_index
             or retry.get("prior_runtime_commit_sha") != latest_merge
             or retry.get("idempotent_resume_upgrade_merge_commit_sha")
             != merge_commit
@@ -6530,7 +6572,11 @@ def _resume_transient_qualification_block(root: Path) -> bool:
     )
     if not isinstance(runtime_commit, str) or not _COMMIT.fullmatch(runtime_commit):
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID")
-    refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
+    generic_upgrade_indexes = _idempotent_resume_upgrade_indexes(root)
+    refresh_path = _runtime_upgrade_refresh_path(
+        root,
+        generic_upgrade_indexes[-1] if generic_upgrade_indexes else None,
+    )
     refresh = _read_canonical_document(
         refresh_path, "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_REFRESH_INVALID"
     )
@@ -6721,7 +6767,11 @@ def _refresh_interrupted_runtime_controls(
         controls_path, "CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_CONTROLS_INVALID"
     )
     backup_path = root / "github-controls-operation-before-runtime-upgrade-v1.json"
-    refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
+    refresh_path = _runtime_upgrade_refresh_path(
+        root,
+        upgrade_operation.get("upgrade_index"),
+        for_write=True,
+    )
     if controls.get("protected_commit_sha") in acceptable_prior_runtimes:
         _write_exact_canonical_checkpoint(backup_path, controls)
         if allow_blocked_recovery:
