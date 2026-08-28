@@ -436,7 +436,7 @@ def test_only_exact_qualification_retry_can_leave_terminal_blocked_state() -> No
     assert resumed.sequence == 45
 
 
-def test_recover_real_qualification_block_refreshes_and_archives_stale_checkpoint(
+def test_recover_real_qualification_block_archives_unseen_dispatch_before_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "protected"
@@ -458,6 +458,19 @@ def test_recover_real_qualification_block_refreshes_and_archives_stale_checkpoin
     checkpoint_bytes = bootstrap_runner._canonical(checkpoint) + b"\n"
     checkpoint_path.write_bytes(checkpoint_bytes)
     checkpoint_sha = hashlib.sha256(checkpoint_bytes).hexdigest()
+    step_name = "github_controls_runtime_upgrade_live_1"
+    intent = bootstrap_runner._new_qualification_dispatch_intent(
+        step_name=step_name,
+        workflow="catalog-live-controls-qualification.yml",
+        protected_commit_sha=COMMIT,
+        baseline_run_ids={101},
+    )
+    intent_path = bootstrap_runner._qualification_commit_scoped_intent_path(
+        root, step_name, COMMIT
+    )
+    intent_bytes = bootstrap_runner._canonical(intent) + b"\n"
+    intent_path.write_bytes(intent_bytes)
+    intent_sha = hashlib.sha256(intent_bytes).hexdigest()
     refresh_path = root / "runtime-upgrade-controls-refresh-v1.json"
     disabled: list[Path] = []
     advanced: list[tuple[str, dict[str, object]]] = []
@@ -486,6 +499,11 @@ def test_recover_real_qualification_block_refreshes_and_archives_stale_checkpoin
         bootstrap_runner,
         "_verify_idempotent_resume_github_authorization",
         lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_list_workflow_runs",
+        lambda _workflow: [{"databaseId": 101}],
     )
 
     def fake_prepare(
@@ -535,6 +553,11 @@ def test_recover_real_qualification_block_refreshes_and_archives_stale_checkpoin
     assert old_commit in archives[0].name
     assert checkpoint_sha in archives[0].name
     assert archives[0].read_bytes() == checkpoint_bytes
+    assert not intent_path.exists()
+    intent_archives = list(root.glob("qdr-*.json"))
+    assert len(intent_archives) == 1
+    assert intent_sha in intent_archives[0].name
+    assert intent_archives[0].read_bytes() == intent_bytes
     assert not (
         root / "receipts/controller-bootstrap-runtime-upgrade-refresh-blocked-v1.json"
     ).exists()
@@ -548,6 +571,12 @@ def test_recover_real_qualification_block_refreshes_and_archives_stale_checkpoin
         refresh_path.read_bytes()
     ).hexdigest()
     assert evidence["archived_qualification_checkpoint_sha256"] == checkpoint_sha
+    assert evidence["archived_qualification_dispatch_intent_sha256s"] == [intent_sha]
+    assert bootstrap_runner._archive_retryable_qualification_dispatch_intents(
+        root,
+        protected_commit_sha=COMMIT,
+        recovery_event_sha256=blocked_event_sha,
+    ) == [intent_sha]
     assert (
         bootstrap_runner._archive_stale_qualification_checkpoint(
             root,
@@ -556,6 +585,64 @@ def test_recover_real_qualification_block_refreshes_and_archives_stale_checkpoin
         )
         == checkpoint_sha
     )
+
+
+@pytest.mark.parametrize(
+    ("status", "conclusion", "expected_archived"),
+    (
+        ("queued", None, False),
+        ("in_progress", None, False),
+        ("completed", "success", False),
+        ("completed", "failure", True),
+    ),
+)
+def test_qualification_retry_preserves_live_or_successful_dispatch(
+    status: str,
+    conclusion: str | None,
+    expected_archived: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "protected"
+    root.mkdir()
+    step_name = "github_controls_runtime_upgrade_live_1"
+    workflow = "catalog-live-controls-qualification.yml"
+    intent = bootstrap_runner._new_qualification_dispatch_intent(
+        step_name=step_name,
+        workflow=workflow,
+        protected_commit_sha=COMMIT,
+        baseline_run_ids={101},
+    )
+    intent_path = bootstrap_runner._qualification_commit_scoped_intent_path(
+        root, step_name, COMMIT
+    )
+    intent_path.write_bytes(bootstrap_runner._canonical(intent) + b"\n")
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_list_workflow_runs",
+        lambda _workflow: [
+            {
+                "databaseId": 101,
+            },
+            {
+                "databaseId": 202,
+                "headSha": COMMIT,
+                "event": "workflow_dispatch",
+                "status": status,
+                "conclusion": conclusion,
+                "path": f".github/workflows/{workflow}",
+            },
+        ],
+    )
+
+    archived = bootstrap_runner._archive_retryable_qualification_dispatch_intents(
+        root,
+        protected_commit_sha=COMMIT,
+        recovery_event_sha256="c" * 64,
+    )
+
+    assert bool(archived) is expected_archived
+    assert intent_path.exists() is not expected_archived
 
 
 def test_recover_blocked_generic_upgrade_versions_refresh_and_preserves_legacy(

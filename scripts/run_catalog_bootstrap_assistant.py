@@ -6579,6 +6579,129 @@ def _qualification_block_event_matches(
     return state.applied_event_sha256s[-1] == event.idempotency_sha256
 
 
+def _archive_retryable_qualification_dispatch_intents(
+    root: Path,
+    *,
+    protected_commit_sha: str,
+    recovery_event_sha256: str,
+) -> list[str]:
+    if not _SHA256.fullmatch(recovery_event_sha256):
+        raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_ARCHIVE_INVALID")
+    archived_sha256s: list[str] = []
+    for step_name in _DISPATCH_INTENT_STEP_WORKFLOWS:
+        paths = (
+            _qualification_dispatch_intent_path(root, step_name),
+            _qualification_commit_scoped_intent_path(
+                root, step_name, protected_commit_sha
+            ),
+        )
+        for path in dict.fromkeys(paths):
+            step_key = hashlib.sha256(step_name.encode("utf-8")).hexdigest()[:8]
+            archive_prefix = f"qdr-{step_key}-{protected_commit_sha[:12]}-"
+            archive_pattern = f"{archive_prefix}*.json"
+            existing_archives = list(root.glob(archive_pattern))
+            if len(existing_archives) > 1:
+                raise ValueError(
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_ARCHIVE_CONFLICT"
+                )
+            if existing_archives:
+                archived_intent = _read_canonical_document(
+                    existing_archives[0],
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_ARCHIVE_INVALID",
+                )
+                _validate_qualification_dispatch_intent(
+                    archived_intent,
+                    step_name=step_name,
+                    protected_commit_sha=protected_commit_sha,
+                )
+                archived_data = existing_archives[0].read_bytes()
+                archived_sha256 = hashlib.sha256(archived_data).hexdigest()
+                expected_archive_name = f"{archive_prefix}{archived_sha256}.json"
+                if existing_archives[0].name != expected_archive_name:
+                    raise ValueError(
+                        "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_ARCHIVE_INVALID"
+                    )
+                archived_sha256s.append(archived_sha256)
+                if path.exists() or path.is_symlink():
+                    _validate_exact_file_path(
+                        path,
+                        "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID",
+                    )
+                    if path.read_bytes() != archived_data:
+                        raise ValueError(
+                            "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_ARCHIVE_CONFLICT"
+                        )
+                    path.unlink()
+                continue
+            if not path.exists() and not path.is_symlink():
+                continue
+            intent = _read_canonical_document(
+                path,
+                "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID",
+            )
+            if intent.get("protected_commit_sha") != protected_commit_sha:
+                continue
+            _validate_qualification_dispatch_intent(
+                intent,
+                step_name=step_name,
+                protected_commit_sha=protected_commit_sha,
+            )
+            baseline_run_ids = {
+                _as_int(run_id)
+                for run_id in cast(list[object], intent["baseline_run_ids"])
+            }
+            new_runs = _new_workflow_run_candidates(
+                _list_workflow_runs(str(intent["workflow"])),
+                baseline_run_ids=baseline_run_ids,
+            )
+            candidates = [
+                row
+                for row in new_runs
+                if _workflow_run_matches_dispatch(
+                    row,
+                    workflow=str(intent["workflow"]),
+                    protected_commit_sha=protected_commit_sha,
+                )
+            ]
+            if len(new_runs) > 1 or len(candidates) > 1:
+                raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUN_AMBIGUOUS")
+            if new_runs and not candidates:
+                raise ValueError(
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_RUN_IDENTITY_AMBIGUOUS"
+                )
+            if candidates and not (
+                candidates[0].get("status") == "completed"
+                and candidates[0].get("conclusion") != "success"
+            ):
+                continue
+
+            data = path.read_bytes()
+            intent_sha256 = hashlib.sha256(data).hexdigest()
+            archive_path = path.with_name(f"{archive_prefix}{intent_sha256}.json")
+            if archive_path.exists() or archive_path.is_symlink():
+                _validate_exact_file_path(
+                    archive_path,
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_ARCHIVE_INVALID",
+                )
+                if archive_path.read_bytes() != data:
+                    raise ValueError(
+                        "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_ARCHIVE_CONFLICT"
+                    )
+            else:
+                _write_exact_canonical_checkpoint(archive_path, intent)
+            _validate_exact_file_path(
+                path,
+                "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID",
+            )
+            if path.read_bytes() != data:
+                raise ValueError(
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_CONFLICT"
+                )
+            path.unlink()
+            archived_sha256s.append(intent_sha256)
+    return sorted(set(archived_sha256s))
+
+
 def _resume_transient_qualification_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
     if state.phase != "BLOCKED" or state.sequence != 44:
@@ -6623,6 +6746,11 @@ def _resume_transient_qualification_block(root: Path) -> bool:
         protected_commit_sha=runtime_commit,
         recovery_event_sha256=state.applied_event_sha256s[-1],
     )
+    archived_dispatch_sha256s = _archive_retryable_qualification_dispatch_intents(
+        root,
+        protected_commit_sha=runtime_commit,
+        recovery_event_sha256=state.applied_event_sha256s[-1],
+    )
     evidence: dict[str, object] = {
         "blocked_receipt_sha256": hashlib.sha256(
             blocked_path.read_bytes()
@@ -6635,6 +6763,10 @@ def _resume_transient_qualification_block(root: Path) -> bool:
     if archived_checkpoint_sha256 is not None:
         evidence["archived_qualification_checkpoint_sha256"] = (
             archived_checkpoint_sha256
+        )
+    if archived_dispatch_sha256s:
+        evidence["archived_qualification_dispatch_intent_sha256s"] = (
+            archived_dispatch_sha256s
         )
     _advance(root, state, "qualification_retry_authorized", evidence)
     return True
