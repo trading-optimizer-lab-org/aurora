@@ -2562,16 +2562,25 @@ def _verify_github_controls_repair_graph(
     operation: dict[str, object],
     *,
     patch_base_commit: str | None = None,
+    pull_request_base_commit: str | None = None,
 ) -> None:
     merge_commit = str(operation["merge_commit_sha"])
     base_commit = str(operation["base_commit_sha"])
     head_commit = str(operation["head_commit_sha"])
     patch_base = patch_base_commit or base_commit
-    if not _COMMIT.fullmatch(patch_base):
+    pull_request_base = pull_request_base_commit or base_commit
+    if not _COMMIT.fullmatch(patch_base) or not _COMMIT.fullmatch(
+        pull_request_base
+    ):
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_GRAPH_INVALID")
-    if patch_base != base_commit:
+    for ancestor, descendant in (
+        (patch_base, base_commit),
+        (base_commit, pull_request_base),
+    ):
+        if ancestor == descendant:
+            continue
         ancestry = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", patch_base, base_commit],
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
             cwd=source,
             check=False,
             stdin=subprocess.DEVNULL,
@@ -2586,8 +2595,8 @@ def _verify_github_controls_repair_graph(
         cwd=source,
     ).split()
     merge_graph_valid = (
-        parents == [merge_commit, base_commit, head_commit]
-        or parents == [merge_commit, base_commit]
+        parents == [merge_commit, pull_request_base, head_commit]
+        or parents == [merge_commit, pull_request_base]
     )
     if not merge_graph_valid:
         raise ValueError("CATALOG_BOOTSTRAP_GITHUB_CONTROLS_REPAIR_GRAPH_INVALID")
@@ -2643,6 +2652,7 @@ def _verify_idempotent_resume_github_authorization(
     protected_main_commit_sha: str | None = None,
 ) -> None:
     operation_pr_number = operation.get("pr_number")
+    allow_cumulative_pr_base = False
     if operation_pr_number == _IDEMPOTENT_RESUME_PR_NUMBER:
         expected_branch = _IDEMPOTENT_RESUME_BRANCH
         required_check = _IDEMPOTENT_RESUME_REQUIRED_CHECK
@@ -2665,11 +2675,12 @@ def _verify_idempotent_resume_github_authorization(
         and isinstance(operation.get("branch"), str)
         and re.fullmatch(r"codex/catalog-[a-z0-9][a-z0-9-]{0,79}", str(operation["branch"]))
         and operation.get("required_check") == "catalog-controller-policy"
-    ):
+      ):
         expected_branch = str(operation["branch"])
         required_check = "catalog-controller-policy"
         patch_base_commit = str(operation.get("prior_runtime_commit_sha", ""))
         graph_patch_base = patch_base_commit
+        allow_cumulative_pr_base = True
     else:
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_GITHUB_INVALID")
     if not _COMMIT.fullmatch(patch_base_commit):
@@ -2713,13 +2724,21 @@ def _verify_idempotent_resume_github_authorization(
 
     merge_commit = pull_request.get("mergeCommit") if isinstance(pull_request, dict) else None
     merge_oid = merge_commit.get("oid") if isinstance(merge_commit, dict) else None
+    pull_request_base = (
+        pull_request.get("baseRefOid") if isinstance(pull_request, dict) else None
+    )
     if (
         not isinstance(pull_request, dict)
         or pull_request.get("number") != operation_pr_number
         or pull_request.get("state") != "MERGED"
         or pull_request.get("isDraft") is not False
         or pull_request.get("baseRefName") != "main"
-        or pull_request.get("baseRefOid") != operation.get("base_commit_sha")
+        or not isinstance(pull_request_base, str)
+        or not _COMMIT.fullmatch(pull_request_base)
+        or (
+            not allow_cumulative_pr_base
+            and pull_request_base != operation.get("base_commit_sha")
+        )
         or pull_request.get("headRefName") != expected_branch
         or pull_request.get("headRefOid") != operation.get("head_commit_sha")
         or merge_oid != operation.get("merge_commit_sha")
@@ -2758,6 +2777,13 @@ def _verify_idempotent_resume_github_authorization(
         raise ValueError("CATALOG_BOOTSTRAP_IDEMPOTENT_RESUME_PATHS_INVALID")
     if graph_patch_base is None:
         _verify_github_controls_repair_graph(source, operation)
+    elif allow_cumulative_pr_base:
+        _verify_github_controls_repair_graph(
+            source,
+            operation,
+            patch_base_commit=graph_patch_base,
+            pull_request_base_commit=pull_request_base,
+        )
     else:
         _verify_github_controls_repair_graph(
             source,

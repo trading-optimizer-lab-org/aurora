@@ -2707,6 +2707,59 @@ def test_github_controls_repair_graph_accepts_verified_linear_merge(
     bootstrap_runner._verify_github_controls_repair_graph(tmp_path, operation)
 
 
+def test_github_controls_repair_graph_accepts_verified_cumulative_linear_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    operation = _github_controls_cache_retention_repair_operation(
+        prior_merge="a" * 40,
+        repair_head="b" * 40,
+        repair_merge="c" * 40,
+    )
+    pull_request_base = "d" * 40
+    ancestry_calls: list[list[str]] = []
+
+    def fake_run(arguments: list[str], *, cwd: Path) -> str:
+        assert cwd == tmp_path
+        assert arguments == [
+            "git",
+            "rev-list",
+            "--parents",
+            "-n",
+            "1",
+            "c" * 40,
+        ]
+        return " ".join(("c" * 40, pull_request_base))
+
+    def fake_subprocess_run(
+        arguments: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        ancestry_calls.append(arguments)
+        return subprocess.CompletedProcess(arguments, 0, b"", b"")
+
+    monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
+    monkeypatch.setattr(bootstrap_runner.subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_github_controls_repair_patch_sha256",
+        lambda _source, base, target, _paths: (
+            "5" * 64
+            if base == "a" * 40 and target in {"b" * 40, "c" * 40}
+            else "0" * 64
+        ),
+    )
+
+    bootstrap_runner._verify_github_controls_repair_graph(
+        tmp_path,
+        operation,
+        patch_base_commit="a" * 40,
+        pull_request_base_commit=pull_request_base,
+    )
+
+    assert ancestry_calls == [
+        ["git", "merge-base", "--is-ancestor", "a" * 40, pull_request_base]
+    ]
+
+
 def test_post_install_verification_uses_installed_requester_key(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -4646,8 +4699,9 @@ def test_generic_runtime_upgrade_authorization_binds_its_own_pr_and_runtime_base
         pr_number=198,
     )
     observed_paths = tuple(cast(list[str], operation["changed_paths"]))
+    pull_request_base = "6" * 40
     path_calls: list[tuple[str, str]] = []
-    graph_calls: list[tuple[dict[str, object], str | None]] = []
+    graph_calls: list[tuple[dict[str, object], str | None, str | None]] = []
 
     def fake_run(command: list[str], *, cwd: Path, **_kwargs: object) -> str:
         assert cwd == tmp_path
@@ -4655,7 +4709,7 @@ def test_generic_runtime_upgrade_authorization_binds_its_own_pr_and_runtime_base
             return json.dumps(
                 {
                     "baseRefName": "main",
-                    "baseRefOid": operation["base_commit_sha"],
+                    "baseRefOid": pull_request_base,
                     "headRefName": operation["branch"],
                     "headRefOid": operation["head_commit_sha"],
                     "isDraft": False,
@@ -4687,8 +4741,9 @@ def test_generic_runtime_upgrade_authorization_binds_its_own_pr_and_runtime_base
         value: dict[str, object],
         *,
         patch_base_commit: str | None = None,
+        pull_request_base_commit: str | None = None,
     ) -> None:
-        graph_calls.append((value, patch_base_commit))
+        graph_calls.append((value, patch_base_commit, pull_request_base_commit))
 
     monkeypatch.setattr(bootstrap_runner, "_run", fake_run)
     monkeypatch.setattr(bootstrap_runner, "_git_changed_paths", fake_paths)
@@ -4704,7 +4759,11 @@ def test_generic_runtime_upgrade_authorization_binds_its_own_pr_and_runtime_base
         (str(operation["prior_runtime_commit_sha"]), str(operation["head_commit_sha"]))
     ]
     assert graph_calls == [
-        (operation, str(operation["prior_runtime_commit_sha"]))
+        (
+            operation,
+            str(operation["prior_runtime_commit_sha"]),
+            pull_request_base,
+        )
     ]
 
 
