@@ -517,6 +517,8 @@ def test_recover_real_qualification_block_archives_unseen_dispatch_before_retry(
         assert commit == COMMIT
         assert live_step_name == "github_controls_runtime_upgrade_live_1"
         assert controller_already_disabled is True
+        assert not intent_path.exists()
+        assert len(list(root.glob("qdr-*.json"))) == 1
         receipt: dict[str, object] = {"protected_commit_sha": commit}
         (installed_root / "github-controls-operation-v1.json").write_bytes(
             bootstrap_runner._canonical(receipt) + b"\n"

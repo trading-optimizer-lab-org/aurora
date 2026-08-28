@@ -6955,6 +6955,12 @@ def _refresh_interrupted_runtime_controls(
             _read_json(authorization_operation_path),
             protected_main_commit_sha=protected_commit_sha,
         )
+    if allow_blocked_recovery:
+        _archive_retryable_qualification_dispatch_intents(
+            root,
+            protected_commit_sha=protected_commit_sha,
+            recovery_event_sha256=state.applied_event_sha256s[-1],
+        )
 
     controls_path = root / "github-controls-operation-v1.json"
     controls = _read_canonical_document(
