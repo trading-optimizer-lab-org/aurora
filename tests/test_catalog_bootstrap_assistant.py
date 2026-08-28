@@ -645,6 +645,55 @@ def test_qualification_retry_preserves_live_or_successful_dispatch(
     assert intent_path.exists() is not expected_archived
 
 
+def test_qualification_retry_rejects_wrong_identity_before_archiving(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "protected"
+    root.mkdir()
+    step_name = "github_controls_runtime_upgrade_live_1"
+    workflow = "catalog-live-controls-qualification.yml"
+    intent = bootstrap_runner._new_qualification_dispatch_intent(
+        step_name=step_name,
+        workflow=workflow,
+        protected_commit_sha=COMMIT,
+        baseline_run_ids={101},
+    )
+    intent_path = bootstrap_runner._qualification_commit_scoped_intent_path(
+        root, step_name, COMMIT
+    )
+    intent_bytes = bootstrap_runner._canonical(intent) + b"\n"
+    intent_path.write_bytes(intent_bytes)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_list_workflow_runs",
+        lambda _workflow: [
+            {"databaseId": 101},
+            {
+                "databaseId": 202,
+                "headSha": "b" * 40,
+                "event": "workflow_dispatch",
+                "status": "completed",
+                "conclusion": "failure",
+                "path": f".github/workflows/{workflow}",
+            },
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_QUALIFICATION_RUN_IDENTITY_AMBIGUOUS",
+    ):
+        bootstrap_runner._archive_retryable_qualification_dispatch_intents(
+            root,
+            protected_commit_sha=COMMIT,
+            recovery_event_sha256="c" * 64,
+        )
+
+    assert intent_path.read_bytes() == intent_bytes
+    assert list(root.glob("qdr-*.json")) == []
+
+
 def test_recover_blocked_generic_upgrade_versions_refresh_and_preserves_legacy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
