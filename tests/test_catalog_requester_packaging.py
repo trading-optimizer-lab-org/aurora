@@ -180,6 +180,18 @@ def test_requester_apps_reject_the_wrong_or_nonisolated_python_runtime() -> None
         assert '"Lib/site-packages"' in source
 
 
+def test_installer_and_broker_use_the_same_windows_acl_serializer() -> None:
+    installer = BROKER_INSTALLER.read_text(encoding="utf-8")
+    broker = BROKER_CLI.read_text(encoding="utf-8")
+    for api_name in (
+        "GetNamedSecurityInfoW",
+        "ConvertSecurityDescriptorToStringSecurityDescriptorW",
+    ):
+        assert api_name in installer
+        assert api_name in broker
+    assert '(Get-Acl -LiteralPath $AbsolutePath).Sddl' not in installer
+
+
 def test_client_runtime_requires_the_dedicated_non_admin_agent_identity() -> None:
     source = CLIENT_CLI.read_text(encoding="utf-8")
     assert "GetUserNameW" in source
