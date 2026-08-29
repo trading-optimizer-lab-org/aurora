@@ -414,7 +414,23 @@ def _broker_main() -> int:
     ctypes.windll.shell32.IsUserAnAdmin.restype = ctypes.c_int
     if ctypes.windll.shell32.IsUserAnAdmin():
         raise RuntimeError("REQUESTER_BROKER_OS_IDENTITY_INVALID")
-    service_sid = windows_account_sid(f".\\{buffer.value}")
+    kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
+    kernel32.GetComputerNameW.argtypes = (
+        ctypes.c_wchar_p,
+        ctypes.POINTER(ctypes.c_ulong),
+    )
+    kernel32.GetComputerNameW.restype = ctypes.c_int
+    computer_name_size = ctypes.c_ulong(256)
+    computer_name_buffer = ctypes.create_unicode_buffer(computer_name_size.value)
+    if not kernel32.GetComputerNameW(
+        computer_name_buffer,
+        ctypes.byref(computer_name_size),
+    ):
+        raise RuntimeError("REQUESTER_BROKER_OS_IDENTITY_UNPROVEN")
+    computer_name = computer_name_buffer.value
+    if not computer_name:
+        raise RuntimeError("REQUESTER_BROKER_OS_IDENTITY_UNPROVEN")
+    service_sid = windows_account_sid(f"{computer_name}\\{buffer.value}")
 
     if any(
         os.environ.get(name)

@@ -142,6 +142,13 @@ def test_broker_runtime_rejects_an_administrative_service_token() -> None:
     assert "client.requester_public_key_sha256" in source
 
 
+def test_broker_resolves_the_service_sid_as_a_local_machine_account() -> None:
+    source = BROKER_CLI.read_text(encoding="utf-8")
+    assert "GetComputerNameW" in source
+    assert 'windows_account_sid(f"{computer_name}\\\\{buffer.value}")' in source
+    assert 'windows_account_sid(f".\\\\{buffer.value}")' not in source
+
+
 def test_broker_startup_rehashes_both_installed_applications() -> None:
     source = BROKER_CLI.read_text(encoding="utf-8")
     assert 'application_kind="client"' in source
