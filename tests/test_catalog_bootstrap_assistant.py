@@ -838,6 +838,81 @@ def test_qualification_retry_preserves_live_or_successful_dispatch(
     assert intent_path.exists() is not expected_archived
 
 
+def test_qualification_retry_archives_multiple_failed_dispatches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "protected"
+    root.mkdir()
+    step_name = "github_controls_runtime_upgrade_live_1"
+    workflow = "catalog-live-controls-qualification.yml"
+    intent_path = bootstrap_runner._qualification_commit_scoped_intent_path(
+        root, step_name, COMMIT
+    )
+    runs: list[dict[str, object]] = [
+        {"databaseId": 101},
+        {
+            "databaseId": 202,
+            "headSha": COMMIT,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "failure",
+            "path": f".github/workflows/{workflow}",
+        },
+    ]
+    monkeypatch.setattr(bootstrap_runner, "_list_workflow_runs", lambda _: runs)
+
+    first_intent = bootstrap_runner._new_qualification_dispatch_intent(
+        step_name=step_name,
+        workflow=workflow,
+        protected_commit_sha=COMMIT,
+        baseline_run_ids={101},
+    )
+    intent_path.write_bytes(bootstrap_runner._canonical(first_intent) + b"\n")
+    first_archived = bootstrap_runner._archive_retryable_qualification_dispatch_intents(
+        root,
+        protected_commit_sha=COMMIT,
+        recovery_event_sha256="c" * 64,
+    )
+
+    runs.append(
+        {
+            "databaseId": 303,
+            "headSha": COMMIT,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "failure",
+            "path": f".github/workflows/{workflow}",
+        }
+    )
+    second_intent = bootstrap_runner._new_qualification_dispatch_intent(
+        step_name=step_name,
+        workflow=workflow,
+        protected_commit_sha=COMMIT,
+        baseline_run_ids={101, 202},
+    )
+    intent_path.write_bytes(bootstrap_runner._canonical(second_intent) + b"\n")
+    second_archived = bootstrap_runner._archive_retryable_qualification_dispatch_intents(
+        root,
+        protected_commit_sha=COMMIT,
+        recovery_event_sha256="c" * 64,
+    )
+
+    assert len(first_archived) == 1
+    assert len(second_archived) == 2
+    assert set(first_archived).issubset(second_archived)
+    assert not intent_path.exists()
+    assert len(list(root.glob("qdr-*.json"))) == 2
+    assert (
+        bootstrap_runner._archive_retryable_qualification_dispatch_intents(
+            root,
+            protected_commit_sha=COMMIT,
+            recovery_event_sha256="c" * 64,
+        )
+        == second_archived
+    )
+
+
 def test_qualification_retry_rejects_wrong_identity_before_archiving(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
