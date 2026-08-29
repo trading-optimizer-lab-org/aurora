@@ -212,15 +212,15 @@ def main(argv=None):
 
 
 def _exit_after_main(exit_code: int | None) -> None:
-    """Exit a module invocation without corrupting data-verify failures.
+    """Exit a data-verify module invocation without native teardown hangs.
 
-    PyArrow can abort during Linux interpreter teardown after a failed parquet
-    integrity check, replacing the intentional exit code 1 with SIGABRT.  The
-    command is read-only and its output is complete at this point, so flush it
-    and bypass native-library teardown only for that explicit failure path.
+    PyArrow can abort or hang during Linux interpreter teardown after a parquet
+    integrity check, replacing the intended result.  The command is read-only
+    and its output is complete at this point, so flush it and bypass native
+    teardown for both successful and failed verification.
     """
     normalized = int(exit_code or 0)
-    if normalized and sys.argv[1:3] == ["data", "verify"]:
+    if sys.argv[1:3] == ["data", "verify"]:
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(normalized)
