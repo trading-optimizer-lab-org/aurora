@@ -6761,24 +6761,26 @@ def _resume_transient_qualification_block(root: Path) -> bool:
 
     if state.sequence == 46:
         _wait_for_requester_ticket()
-        runtime_commit = _runtime_commit(root)
-        if not isinstance(runtime_commit, str) or not _COMMIT.fullmatch(runtime_commit):
+        ticket_runtime_commit = _runtime_commit(root)
+        if not isinstance(ticket_runtime_commit, str) or not _COMMIT.fullmatch(
+            ticket_runtime_commit
+        ):
             raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUNTIME_INVALID")
         ticket_path = (
             BROKER_ROOT
             / "launch-tickets"
             / f"{_BOOTSTRAP_QUALIFICATION_CAMPAIGN}.ticket.json"
         )
-        evidence = {
+        ticket_evidence = {
             "blocked_receipt_sha256": hashlib.sha256(
                 blocked_path.read_bytes()
             ).hexdigest(),
             "qualification_ticket_sha256": hashlib.sha256(
                 ticket_path.read_bytes()
             ).hexdigest(),
-            "runtime_commit_sha": runtime_commit,
+            "runtime_commit_sha": ticket_runtime_commit,
         }
-        _advance(root, state, "qualification_retry_authorized", evidence)
+        _advance(root, state, "qualification_retry_authorized", ticket_evidence)
         return True
 
     runtime_commit = _refresh_interrupted_runtime_controls(
