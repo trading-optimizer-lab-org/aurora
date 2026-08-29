@@ -6594,7 +6594,7 @@ def _qualification_block_event_matches(
         event = CatalogBootstrapEventV1(
             schema_version="1",
             bootstrap_id=state.bootstrap_id,
-            sequence=44,
+            sequence=state.sequence,
             name="blocked",
             protected_commit_sha=state.protected_commit_sha,
             observed_at=state.last_observed_at,
@@ -6730,7 +6730,7 @@ def _archive_retryable_qualification_dispatch_intents(
 
 def _resume_transient_qualification_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
-    if state.phase != "BLOCKED" or state.sequence != 44:
+    if state.phase != "BLOCKED" or state.sequence not in {44, 46}:
         return False
     if root.resolve() != EXPECTED_ROOT.resolve():
         raise ValueError("CATALOG_BOOTSTRAP_ROOT_INVALID")
@@ -6746,11 +6746,42 @@ def _resume_transient_qualification_block(root: Path) -> bool:
         "result": "BLOCKED",
         "schema_version": "1",
     }
-    if blocked != expected_block:
+    ticket_missing_block = {
+        **expected_block,
+        "reason_code": "CATALOG_BOOTSTRAP_QUALIFICATION_TICKET_MISSING",
+    }
+    if not (
+        (state.sequence == 44 and blocked == expected_block)
+        or (state.sequence == 46 and blocked == ticket_missing_block)
+    ):
         return False
     _disable_controller()
     if not _qualification_block_event_matches(state, blocked):
         return False
+
+    if state.sequence == 46:
+        _wait_for_requester_ticket()
+        ticket_runtime_commit = _runtime_commit(root)
+        if not isinstance(ticket_runtime_commit, str) or not _COMMIT.fullmatch(
+            ticket_runtime_commit
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RUNTIME_INVALID")
+        ticket_path = (
+            BROKER_ROOT
+            / "launch-tickets"
+            / f"{_BOOTSTRAP_QUALIFICATION_CAMPAIGN}.ticket.json"
+        )
+        ticket_evidence = {
+            "blocked_receipt_sha256": hashlib.sha256(
+                blocked_path.read_bytes()
+            ).hexdigest(),
+            "qualification_ticket_sha256": hashlib.sha256(
+                ticket_path.read_bytes()
+            ).hexdigest(),
+            "runtime_commit_sha": ticket_runtime_commit,
+        }
+        _advance(root, state, "qualification_retry_authorized", ticket_evidence)
+        return True
 
     runtime_commit = _refresh_interrupted_runtime_controls(
         root, allow_blocked_recovery=True
