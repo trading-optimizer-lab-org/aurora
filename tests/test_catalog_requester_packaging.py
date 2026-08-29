@@ -1126,6 +1126,65 @@ def test_broker_retry_wrapper_honors_provider_retry_delay(
     assert sleeps == [600]
 
 
+@pytest.mark.parametrize(
+    ("error_text", "expected_reason"),
+    [
+        ("REQUESTER_BROKER_ACL_DRIFT", "REQUESTER_BROKER_ACL_DRIFT"),
+        ("token=ghs_never_persist_this", "REQUESTER_BROKER_STARTUP_FAILED"),
+    ],
+)
+def test_broker_nonretryable_startup_failure_writes_only_a_safe_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_text: str,
+    expected_reason: str,
+) -> None:
+    from aurora.infra.sp500_megarun import catalog_requester_broker_cli as cli
+
+    receipts = tmp_path / "receipts"
+    receipts.mkdir()
+    observed_at = datetime(2026, 8, 29, 5, 40, tzinfo=UTC)
+
+    def fail_startup() -> int:
+        raise RuntimeError(error_text)
+
+    monkeypatch.setattr(cli, "_BROKER_ROOT", str(tmp_path))
+    monkeypatch.setattr(cli, "_broker_main", fail_startup)
+    monkeypatch.setattr(
+        cli,
+        "_startup_failure_observed_at",
+        lambda: observed_at,
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match=error_text):
+        cli.main()
+
+    path = receipts / "broker-startup-failure-v1.receipt.json"
+    value = json.loads(path.read_text(encoding="utf-8"))
+    unsigned = {
+        "failure_sha256": "0" * 64,
+        "observed_at": "2026-08-29T05:40:00Z",
+        "reason_code": expected_reason,
+        "schema_version": "1",
+        "status": "FAILED",
+    }
+    expected_hash = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    expected = {**unsigned, "failure_sha256": expected_hash}
+    assert value == expected
+    assert path.read_bytes() == (
+        json.dumps(expected, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        + b"\n"
+    )
+    assert "ghs_never_persist_this" not in path.read_text(encoding="utf-8")
+
+
 def test_broker_installer_rejects_any_unexpected_ntfs_acl_identity() -> None:
     broker = BROKER_INSTALLER.read_text(encoding="utf-8")
     assert "Assert-ClosedAcl" in broker
