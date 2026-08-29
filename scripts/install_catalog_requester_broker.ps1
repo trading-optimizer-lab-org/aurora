@@ -1163,27 +1163,135 @@ $AclRelativePaths = @(
     "secrets\requester-private-key.pem",
     "secrets\requester-app-binding-v1.json"
 )
-$AclRecords = @()
-foreach ($RelativePath in $AclRelativePaths) {
-    $AbsolutePath = if ($RelativePath -eq ".") {
-        $BrokerRoot
-    }
-    else {
-        Join-Path $BrokerRoot $RelativePath
-    }
-    $AclRecords += [ordered]@{
-        path = ($RelativePath -replace "\\", "/")
-        sddl = (Get-Acl -LiteralPath $AbsolutePath).Sddl
-    }
+$AclBaselineSerializer = @'
+from __future__ import annotations
+
+import ctypes
+import json
+from pathlib import Path
+import sys
+
+
+def windows_path_sddl(path: Path, *, security_information: int = 0x00000007) -> str:
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32.GetNamedSecurityInfoW.argtypes = (
+        ctypes.c_wchar_p,
+        ctypes.c_uint,
+        ctypes.c_uint,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+    )
+    advapi32.GetNamedSecurityInfoW.restype = ctypes.c_ulong
+    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_ulong),
+    )
+    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = ctypes.c_int
+    kernel32.LocalFree.argtypes = (ctypes.c_void_p,)
+    kernel32.LocalFree.restype = ctypes.c_void_p
+    owner = ctypes.c_void_p()
+    group = ctypes.c_void_p()
+    dacl = ctypes.c_void_p()
+    descriptor = ctypes.c_void_p()
+    result = advapi32.GetNamedSecurityInfoW(
+        str(path),
+        1,
+        security_information,
+        ctypes.byref(owner),
+        ctypes.byref(group),
+        ctypes.byref(dacl),
+        None,
+        ctypes.byref(descriptor),
+    )
+    if result != 0 or not descriptor.value:
+        raise RuntimeError("ACL_READBACK_FAILED")
+    text_pointer = ctypes.c_void_p()
+    text_length = ctypes.c_ulong()
+    try:
+        converted = advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            descriptor,
+            1,
+            security_information,
+            ctypes.byref(text_pointer),
+            ctypes.byref(text_length),
+        )
+        if not converted or not text_pointer.value:
+            raise RuntimeError("ACL_CONVERSION_FAILED")
+        return ctypes.wstring_at(text_pointer.value)
+    finally:
+        if text_pointer.value:
+            kernel32.LocalFree(text_pointer)
+        kernel32.LocalFree(descriptor)
+
+
+root = Path(sys.argv[1]).resolve(strict=True)
+relative_paths = tuple(value.replace("\\", "/") for value in sys.argv[2:])
+records = []
+for relative in relative_paths:
+    target = root if relative == "." else root.joinpath(*relative.split("/"))
+    if target.is_symlink() or not target.resolve(strict=True).is_relative_to(root):
+        raise RuntimeError("ACL_PATH_INVALID")
+    records.append({"path": relative, "sddl": windows_path_sddl(target)})
+print(
+    json.dumps(
+        {"schema_version": "1", "records": records},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+)
+'@
+$AclBaselineSerializerPath = Join-Path $StagingRoot `
+    ("acl-baseline-serializer-" + [Guid]::NewGuid().ToString("N") + ".py")
+[IO.File]::WriteAllText(
+    $AclBaselineSerializerPath,
+    $AclBaselineSerializer,
+    [Text.UTF8Encoding]::new($false)
+)
+& icacls.exe $AclBaselineSerializerPath /inheritance:r /grant:r `
+    "${SystemAcl}:(F)" "${AdministratorsAcl}:(F)" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "BLOCKED_REQUESTER_ACL_BASELINE_SERIALIZER_ACL_FAILED"
 }
-$AclBaseline = [ordered]@{
-    schema_version = "1"
-    records = $AclRecords
+try {
+    $AclBaselineLines = @(& (Join-Path $BrokerVenv "Scripts\python.exe") `
+        -I -s -E $AclBaselineSerializerPath $BrokerRoot $AclRelativePaths)
+    $AclBaselineSerializerExitCode = $LASTEXITCODE
+}
+finally {
+    Remove-Item -LiteralPath $AclBaselineSerializerPath -Force -ErrorAction SilentlyContinue
+}
+if ($AclBaselineSerializerExitCode -ne 0 -or $AclBaselineLines.Count -ne 1) {
+    throw "BLOCKED_REQUESTER_ACL_BASELINE_SERIALIZATION_FAILED"
+}
+$AclBaselineLine = [string]$AclBaselineLines[0]
+try {
+    $AclBaseline = $AclBaselineLine | ConvertFrom-Json
+}
+catch {
+    throw "BLOCKED_REQUESTER_ACL_BASELINE_SERIALIZATION_INVALID"
+}
+$ExpectedAclRelativePaths = @($AclRelativePaths | ForEach-Object { $_ -replace "\\", "/" })
+$ObservedAclRelativePaths = @($AclBaseline.records | ForEach-Object { [string]$_.path })
+if (
+    [string]$AclBaseline.schema_version -cne "1" -or
+    $ObservedAclRelativePaths.Count -ne $ExpectedAclRelativePaths.Count -or
+    (Compare-Object -SyncWindow 0 `
+        -ReferenceObject $ExpectedAclRelativePaths `
+        -DifferenceObject $ObservedAclRelativePaths)
+) {
+    throw "BLOCKED_REQUESTER_ACL_BASELINE_SERIALIZATION_INVALID"
 }
 $AclBaselinePath = Join-Path $BrokerRoot "config\acl-baseline-v1.json"
 [IO.File]::WriteAllText(
     $AclBaselinePath,
-    (($AclBaseline | ConvertTo-Json -Depth 8 -Compress) + "`n"),
+    ($AclBaselineLine + "`n"),
     $Utf8NoBom
 )
 foreach ($VariableName in @(
