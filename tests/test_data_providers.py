@@ -439,6 +439,23 @@ def test_failed_data_verify_bypasses_native_teardown(monkeypatch):
     assert observed == [1]
 
 
+def test_successful_data_verify_bypasses_native_teardown(monkeypatch):
+    """A successful parquet check also avoids the hanging native teardown."""
+    from aurora.cli import forge
+
+    observed = []
+
+    def fake_exit(code):
+        observed.append(code)
+        raise RuntimeError("immediate exit")
+
+    monkeypatch.setattr(forge.os, "_exit", fake_exit)
+    monkeypatch.setattr(forge.sys, "argv", ["forge", "data", "verify"])
+    with pytest.raises(RuntimeError, match="immediate exit"):
+        forge._exit_after_main(0)
+    assert observed == [0]
+
+
 # ---------------------------------------------------------------------------
 # 13. Default registry singleton
 # ---------------------------------------------------------------------------
