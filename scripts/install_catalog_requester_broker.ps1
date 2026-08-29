@@ -1154,7 +1154,6 @@ $AclRelativePaths = @(
     "receipts",
     "launch-tickets",
     "campaign-status",
-    "client-venv",
     "broker-venv",
     "bin\catalog-requester-client.pyz",
     "bin\catalog-requester-client.manifest.json",
