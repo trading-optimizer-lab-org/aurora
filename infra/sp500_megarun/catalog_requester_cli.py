@@ -113,6 +113,7 @@ def main() -> int:
         raise RuntimeError("REQUESTER_CLIENT_RUNTIME_INVALID")
     allowed_runtime_paths = {
         expected_application,
+        expected_prefix,
         expected_prefix / "Lib/site-packages",
         observed_base_prefix,
         observed_base_prefix / "python314.zip",
