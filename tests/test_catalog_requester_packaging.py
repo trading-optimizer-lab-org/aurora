@@ -1149,10 +1149,46 @@ def test_broker_retry_wrapper_honors_provider_retry_delay(
 
 
 @pytest.mark.parametrize(
+    ("error_text", "startup_stage", "expected_reason"),
+    [
+        (
+            "REQUESTER_GITHUB_ERROR:token=ghs_never_persist_this",
+            "GITHUB_CLIENT_VERIFIED",
+            "REQUESTER_GITHUB_ERROR",
+        ),
+        (
+            "token=ghs_never_persist_this",
+            "CONFIG_VERIFIED",
+            "REQUESTER_BROKER_STARTUP_FAILED_CONFIG_VERIFIED",
+        ),
+        (
+            "TOKEN_GHS_NEVER_PERSIST_THIS",
+            "IDENTITY_VERIFIED",
+            "REQUESTER_BROKER_STARTUP_FAILED_IDENTITY_VERIFIED",
+        ),
+    ],
+)
+def test_broker_startup_failure_reason_is_safe_and_identifies_the_stage(
+    error_text: str,
+    startup_stage: str,
+    expected_reason: str,
+) -> None:
+    from aurora.infra.sp500_megarun import catalog_requester_broker_cli as cli
+
+    assert cli._safe_startup_failure_reason(
+        RuntimeError(error_text),
+        startup_stage=startup_stage,
+    ) == expected_reason
+
+
+@pytest.mark.parametrize(
     ("error_text", "expected_reason"),
     [
         ("REQUESTER_BROKER_ACL_DRIFT", "REQUESTER_BROKER_ACL_DRIFT"),
-        ("token=ghs_never_persist_this", "REQUESTER_BROKER_STARTUP_FAILED"),
+        (
+            "token=ghs_never_persist_this",
+            "REQUESTER_BROKER_STARTUP_FAILED_INITIALIZING",
+        ),
     ],
 )
 def test_broker_nonretryable_startup_failure_writes_only_a_safe_receipt(

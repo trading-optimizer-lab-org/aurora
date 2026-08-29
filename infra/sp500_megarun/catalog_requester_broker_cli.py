@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import re
 
 
 _BROKER_ROOT = "C:/ProgramData/AURORA/CatalogRequester"
 _broker_lock_descriptor: int | None = None
+_broker_startup_stage = "INITIALIZING"
 _RETRYABLE_REASON_CODES = frozenset(
     {
         "REQUESTER_GITHUB_TRANSIENT_FAILURE",
@@ -27,18 +29,35 @@ def _startup_failure_observed_at():
     return datetime.now(timezone.utc)
 
 
+def _safe_startup_failure_reason(
+    error: BaseException,
+    *,
+    startup_stage: str,
+) -> str:
+    safe_prefix = str(error).partition(":")[0]
+    if (
+        re.fullmatch(r"(?:REQUESTER|AGENT)_[A-Z0-9_]{2,117}", safe_prefix)
+        is not None
+    ):
+        return safe_prefix
+    safe_stage = startup_stage
+    if re.fullmatch(r"[A-Z][A-Z0-9_]{2,63}", safe_stage) is None:
+        safe_stage = "UNKNOWN"
+    return f"REQUESTER_BROKER_STARTUP_FAILED_{safe_stage}"
+
+
 def _write_startup_failure_receipt(error: BaseException) -> None:
     from datetime import timezone
     import hashlib
     import json
     import os
     from pathlib import Path
-    import re
     import uuid
 
-    reason = str(error)
-    if re.fullmatch(r"[A-Z][A-Z0-9_]{2,127}", reason) is None:
-        reason = "REQUESTER_BROKER_STARTUP_FAILED"
+    reason = _safe_startup_failure_reason(
+        error,
+        startup_stage=_broker_startup_stage,
+    )
     observed_at = _startup_failure_observed_at().astimezone(timezone.utc)
     receipts = (Path(_BROKER_ROOT).resolve(strict=True) / "receipts").resolve(
         strict=True
@@ -96,7 +115,9 @@ def _write_startup_failure_receipt(error: BaseException) -> None:
 
 
 def _broker_main() -> int:
-    global _broker_lock_descriptor
+    global _broker_lock_descriptor, _broker_startup_stage
+
+    _broker_startup_stage = "INITIALIZING"
 
     _parser().parse_args()
     import ctypes
@@ -477,6 +498,7 @@ def _broker_main() -> int:
         )
     ):
         raise RuntimeError("AGENT_ADMIN_CREDENTIAL_EXPOSED")
+    _broker_startup_stage = "IDENTITY_VERIFIED"
 
     root = Path(_BROKER_ROOT).resolve(strict=True)
     try:
@@ -518,6 +540,7 @@ def _broker_main() -> int:
         observed_path = Path(entry).resolve(strict=False)
         if observed_path not in allowed_runtime_paths:
             raise RuntimeError("REQUESTER_BROKER_RUNTIME_INVALID")
+    _broker_startup_stage = "RUNTIME_VERIFIED"
     lock_path = root / "processing/catalog-requester-broker.lock"
     lock_flags = os.O_RDWR | os.O_CREAT
     if hasattr(os, "O_BINARY"):
@@ -537,6 +560,7 @@ def _broker_main() -> int:
         os.close(broker_lock)
         _broker_lock_descriptor = None
         raise RuntimeError("REQUESTER_BROKER_ALREADY_RUNNING") from exc
+    _broker_startup_stage = "LOCK_VERIFIED"
     verify_installed_requester_application(
         broker_root=root,
         application_kind="client",
@@ -547,7 +571,9 @@ def _broker_main() -> int:
         application_kind="broker",
         application_path=Path(sys.argv[0]),
     )
+    _broker_startup_stage = "APPLICATIONS_VERIFIED"
     verify_acl_baseline(root)
+    _broker_startup_stage = "ACL_VERIFIED"
     config = CatalogRequesterConfigV1.model_validate_json(
         (root / "config/catalog_requester_v1.json").read_bytes()
     )
@@ -581,6 +607,7 @@ def _broker_main() -> int:
         or actors.get("ledger_actor") != config.terminal_close_marker.closed_by
     ):
         raise RuntimeError("REQUESTER_TERMINAL_MARKER_CONFIG_DRIFT")
+    _broker_startup_stage = "CONFIG_VERIFIED"
 
     reparse_marker = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
     app_binding_path = root / config.broker.secrets / "requester-app-binding-v1.json"
@@ -641,6 +668,7 @@ def _broker_main() -> int:
         client.requester_public_key_sha256
     ):
         raise RuntimeError("REQUESTER_PUBLIC_IDENTITY_BINDING_INVALID")
+    _broker_startup_stage = "GITHUB_CLIENT_VERIFIED"
     publish_catalog_broker_self_audit(
         broker_root=root,
         config=config,
@@ -651,6 +679,7 @@ def _broker_main() -> int:
         ).hexdigest(),
         observed_at=datetime.now(UTC),
     )
+    _broker_startup_stage = "READY"
 
     processing = root / config.broker.processing
     registry = load_catalog_campaign_registry(
