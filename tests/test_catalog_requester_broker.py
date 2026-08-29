@@ -169,6 +169,7 @@ class _FakeHttp:
         self.uncertain_post = uncertain_post
         self.issue_created_at = issue_created_at
         self.issue_posts = 0
+        self.token_requests: list[dict[str, object] | None] = []
         self.created_title: str | None = None
         self.created_body: str | None = None
 
@@ -183,6 +184,7 @@ class _FakeHttp:
         del headers
         self.calls.append((method, url))
         if url.endswith("/app/installations/123/access_tokens"):
+            self.token_requests.append(json_body)
             permissions = {"issues": "write", "metadata": "read"}
             if self.overprivileged:
                 permissions["contents"] = "write"
@@ -317,6 +319,7 @@ def test_broker_uses_only_token_issue_post_and_exact_readback() -> None:
     )
     assert result.status == "submitted"
     assert result.issue_number == 77
+    assert fake.token_requests == [{"repositories": ["aurora"]}]
     assert fake.calls == [
         (
             "POST",
