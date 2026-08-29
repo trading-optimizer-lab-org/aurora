@@ -173,6 +173,9 @@ def test_requester_apps_reject_the_wrong_or_nonisolated_python_runtime() -> None
         assert "sys.flags.ignore_environment" in source
         assert "sys.flags.no_user_site" in source
         assert "sys.flags.safe_path" in source
+        runtime_paths = source[source.index("allowed_runtime_paths = {") :]
+        runtime_paths = runtime_paths[: runtime_paths.index("}")]
+        assert "expected_prefix," in runtime_paths
         assert '"python314.zip"' in source
         assert '"Lib/site-packages"' in source
 
