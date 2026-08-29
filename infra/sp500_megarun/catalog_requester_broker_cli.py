@@ -22,13 +22,13 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _startup_failure_observed_at():
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone
 
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def _write_startup_failure_receipt(error: BaseException) -> None:
-    from datetime import UTC
+    from datetime import timezone
     import hashlib
     import json
     import os
@@ -39,7 +39,7 @@ def _write_startup_failure_receipt(error: BaseException) -> None:
     reason = str(error)
     if re.fullmatch(r"[A-Z][A-Z0-9_]{2,127}", reason) is None:
         reason = "REQUESTER_BROKER_STARTUP_FAILED"
-    observed_at = _startup_failure_observed_at().astimezone(UTC)
+    observed_at = _startup_failure_observed_at().astimezone(timezone.utc)
     receipts = (Path(_BROKER_ROOT).resolve(strict=True) / "receipts").resolve(
         strict=True
     )
