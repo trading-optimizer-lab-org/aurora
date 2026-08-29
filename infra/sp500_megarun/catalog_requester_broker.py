@@ -2256,12 +2256,18 @@ class CatalogBrokerGithubClient:
 
     def installation_token(self) -> str:
         path = f"/app/installations/{self.installation_id}/access_tokens"
+        repository_name = self.config.repository.rsplit("/", 1)[1]
         jwt = _app_jwt(
             app_id=self.app_id,
             private_key=self._private_key,
             now=self.now(),
         )
-        response = self.request_fixed("POST", path, token=jwt, json_body={})
+        response = self.request_fixed(
+            "POST",
+            path,
+            token=jwt,
+            json_body={"repositories": [repository_name]},
+        )
         if response.status_code != 201 or not isinstance(response.json_body, Mapping):
             raise ValueError("REQUESTER_INSTALLATION_TOKEN_UNPROVEN")
         payload = response.json_body
