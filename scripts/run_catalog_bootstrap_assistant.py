@@ -3484,7 +3484,7 @@ def _valid_idempotent_resume_paths(value: object) -> bool:
             or any(part in {"", ".", ".."} for part in path.parts)
         ):
             return False
-        if raw_path == "pyproject.toml":
+        if raw_path in {"cli/forge.py", "pyproject.toml"}:
             continue
         if not path.parts or path.parts[0] not in _IDEMPOTENT_RESUME_ALLOWED_ROOTS:
             return False

@@ -4669,6 +4669,16 @@ def test_idempotent_resume_paths_fail_closed(paths: list[str]) -> None:
     assert bootstrap_runner._valid_idempotent_resume_paths(paths) is False
 
 
+def test_idempotent_resume_paths_allow_only_the_exact_forge_compatibility_file() -> None:
+    assert (
+        bootstrap_runner._valid_idempotent_resume_paths(
+            ["cli/forge.py", "scripts/run_catalog_bootstrap_assistant.py"]
+        )
+        is True
+    )
+    assert bootstrap_runner._valid_idempotent_resume_paths(["cli/other.py"]) is False
+
+
 def test_idempotent_resume_github_authorization_binds_pr_check_paths_and_graph(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
