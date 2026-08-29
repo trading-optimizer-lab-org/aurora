@@ -21,6 +21,80 @@ def _parser() -> argparse.ArgumentParser:
     )
 
 
+def _startup_failure_observed_at():
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc)
+
+
+def _write_startup_failure_receipt(error: BaseException) -> None:
+    from datetime import timezone
+    import hashlib
+    import json
+    import os
+    from pathlib import Path
+    import re
+    import uuid
+
+    reason = str(error)
+    if re.fullmatch(r"[A-Z][A-Z0-9_]{2,127}", reason) is None:
+        reason = "REQUESTER_BROKER_STARTUP_FAILED"
+    observed_at = _startup_failure_observed_at().astimezone(timezone.utc)
+    receipts = (Path(_BROKER_ROOT).resolve(strict=True) / "receipts").resolve(
+        strict=True
+    )
+    if receipts.parent != Path(_BROKER_ROOT).resolve(strict=True):
+        raise RuntimeError("REQUESTER_BROKER_FAILURE_RECEIPT_PATH_INVALID")
+    unsigned = {
+        "failure_sha256": "0" * 64,
+        "observed_at": observed_at.isoformat(timespec="seconds").replace(
+            "+00:00", "Z"
+        ),
+        "reason_code": reason,
+        "schema_version": "1",
+        "status": "FAILED",
+    }
+    canonical_unsigned = json.dumps(
+        unsigned,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    receipt = {
+        **unsigned,
+        "failure_sha256": hashlib.sha256(canonical_unsigned).hexdigest(),
+    }
+    payload = (
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        + b"\n"
+    )
+    destination = receipts / "broker-startup-failure-v1.receipt.json"
+    temporary = receipts / f".broker-startup-failure-{uuid.uuid4().hex}.tmp"
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
+            0o600,
+        )
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                raise OSError("REQUESTER_BROKER_FAILURE_RECEIPT_WRITE_FAILED")
+            offset += written
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = None
+        os.replace(temporary, destination)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def _broker_main() -> int:
     global _broker_lock_descriptor
 
@@ -716,6 +790,10 @@ def main() -> int:
             return _broker_main()
         except (OSError, RuntimeError, ValueError) as exc:
             if str(exc) not in _RETRYABLE_REASON_CODES:
+                try:
+                    _write_startup_failure_receipt(exc)
+                except (OSError, RuntimeError, ValueError):
+                    pass
                 raise
             import os
             import time
