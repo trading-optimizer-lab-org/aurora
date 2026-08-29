@@ -1258,6 +1258,23 @@ def test_broker_installer_rejects_any_unexpected_ntfs_acl_identity() -> None:
     assert "BLOCKED_REQUESTER_BROKER_STAGING_ACL_NOT_CLOSED" in broker
 
 
+def test_broker_acl_baseline_excludes_agent_only_client_runtime() -> None:
+    installer = BROKER_INSTALLER.read_text(encoding="utf-8")
+    installer_baseline = installer.split("$AclRelativePaths = @(", 1)[1].split(
+        ")", 1
+    )[0]
+    broker_cli = BROKER_CLI.read_text(encoding="utf-8")
+    broker_baseline = broker_cli.split("def verify_acl_baseline", 1)[1].split(
+        "baseline_path =", 1
+    )[0]
+
+    assert '"client-venv"' not in installer_baseline
+    assert '"client-venv"' not in broker_baseline
+    assert '"broker-venv"' in installer_baseline
+    assert '"broker-venv"' in broker_baseline
+    assert '"client-venv"); Sids = $AgentOnly' in installer
+
+
 def test_broker_installer_cannot_upgrade_live_production_and_reads_back_task() -> None:
     broker = BROKER_INSTALLER.read_text(encoding="utf-8")
     assert "BLOCKED_REQUESTER_BROKER_PRODUCTION_ALREADY_SEALED" in broker
