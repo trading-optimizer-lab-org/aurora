@@ -6663,14 +6663,10 @@ def _archive_retryable_qualification_dispatch_intents(
             step_key = hashlib.sha256(step_name.encode("utf-8")).hexdigest()[:8]
             archive_prefix = f"qdr-{step_key}-{protected_commit_sha[:12]}-"
             archive_pattern = f"{archive_prefix}*.json"
-            existing_archives = list(root.glob(archive_pattern))
-            if len(existing_archives) > 1:
-                raise ValueError(
-                    "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_ARCHIVE_CONFLICT"
-                )
-            if existing_archives:
+            existing_archives = sorted(root.glob(archive_pattern))
+            for existing_archive in existing_archives:
                 archived_intent = _read_canonical_document(
-                    existing_archives[0],
+                    existing_archive,
                     "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_ARCHIVE_INVALID",
                 )
                 _validate_qualification_dispatch_intent(
@@ -6678,25 +6674,14 @@ def _archive_retryable_qualification_dispatch_intents(
                     step_name=step_name,
                     protected_commit_sha=protected_commit_sha,
                 )
-                archived_data = existing_archives[0].read_bytes()
+                archived_data = existing_archive.read_bytes()
                 archived_sha256 = hashlib.sha256(archived_data).hexdigest()
                 expected_archive_name = f"{archive_prefix}{archived_sha256}.json"
-                if existing_archives[0].name != expected_archive_name:
+                if existing_archive.name != expected_archive_name:
                     raise ValueError(
                         "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_ARCHIVE_INVALID"
                     )
                 archived_sha256s.append(archived_sha256)
-                if path.exists() or path.is_symlink():
-                    _validate_exact_file_path(
-                        path,
-                        "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_INTENT_INVALID",
-                    )
-                    if path.read_bytes() != archived_data:
-                        raise ValueError(
-                            "CATALOG_BOOTSTRAP_QUALIFICATION_DISPATCH_ARCHIVE_CONFLICT"
-                        )
-                    path.unlink()
-                continue
             if not path.exists() and not path.is_symlink():
                 continue
             intent = _read_canonical_document(
