@@ -707,6 +707,79 @@ def test_recover_real_qualification_block_archives_unseen_dispatch_before_retry(
     )
 
 
+def test_archive_stale_qualification_checkpoint_supports_repeated_recoveries(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "protected"
+    root.mkdir()
+    checkpoint_path = root / bootstrap_runner.QUALIFICATION_CHECKPOINT_FILENAME
+
+    first_checkpoint = bootstrap_runner._new_qualification_checkpoint(
+        protected_commit_sha="a" * 40,
+        github_controls_operation_sha256="1" * 64,
+        activity_baseline_sha256="2" * 64,
+        steps=[],
+    )
+    checkpoint_path.write_bytes(
+        bootstrap_runner._canonical(first_checkpoint) + b"\n"
+    )
+    first_sha = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
+    first_runtime = "b" * 40
+    first_event = "3" * 64
+
+    assert (
+        bootstrap_runner._archive_stale_qualification_checkpoint(
+            root,
+            protected_commit_sha=first_runtime,
+            recovery_event_sha256=first_event,
+        )
+        == first_sha
+    )
+    legacy_operation_path = (
+        root / "qualification-checkpoint-archive-operation-v1.json"
+    )
+    legacy_operation = legacy_operation_path.read_bytes()
+
+    second_checkpoint = bootstrap_runner._new_qualification_checkpoint(
+        protected_commit_sha=first_runtime,
+        github_controls_operation_sha256="4" * 64,
+        activity_baseline_sha256="5" * 64,
+        steps=[],
+    )
+    checkpoint_path.write_bytes(
+        bootstrap_runner._canonical(second_checkpoint) + b"\n"
+    )
+    second_sha = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
+    second_runtime = "c" * 40
+    second_event = "6" * 64
+
+    assert (
+        bootstrap_runner._archive_stale_qualification_checkpoint(
+            root,
+            protected_commit_sha=second_runtime,
+            recovery_event_sha256=second_event,
+        )
+        == second_sha
+    )
+    assert legacy_operation_path.read_bytes() == legacy_operation
+    versioned_operation_path = root / (
+        "qualification-checkpoint-archive-operation-"
+        f"{second_runtime}-{second_event}-v1.json"
+    )
+    assert versioned_operation_path.is_file()
+    assert (
+        bootstrap_runner._archive_stale_qualification_checkpoint(
+            root,
+            protected_commit_sha=second_runtime,
+            recovery_event_sha256=second_event,
+        )
+        == second_sha
+    )
+    assert len(
+        list(root.glob("qualification-substeps-v1.checkpoint.archived-*.json"))
+    ) == 2
+
+
 @pytest.mark.parametrize(
     ("status", "conclusion", "expected_archived"),
     (

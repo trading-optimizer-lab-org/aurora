@@ -6434,18 +6434,27 @@ def _archive_stale_qualification_checkpoint(
     protected_commit_sha: str,
     recovery_event_sha256: str,
 ) -> str | None:
-    if not _SHA256.fullmatch(recovery_event_sha256):
+    if not _COMMIT.fullmatch(protected_commit_sha) or not _SHA256.fullmatch(
+        recovery_event_sha256
+    ):
         raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID")
     path = _qualification_checkpoint_path(root)
-    operation_path = root / "qualification-checkpoint-archive-operation-v1.json"
+    legacy_operation_path = (
+        root / "qualification-checkpoint-archive-operation-v1.json"
+    )
+    versioned_operation_path = root / (
+        "qualification-checkpoint-archive-operation-"
+        f"{protected_commit_sha}-{recovery_event_sha256}-v1.json"
+    )
     with _exclusive_checkpoint_lock(path):
         if not path.exists() and not path.is_symlink():
-            if not operation_path.exists() and not operation_path.is_symlink():
+            operation_paths = [
+                candidate
+                for candidate in (versioned_operation_path, legacy_operation_path)
+                if candidate.exists() or candidate.is_symlink()
+            ]
+            if not operation_paths:
                 return None
-            archive_operation = _read_canonical_document(
-                operation_path,
-                "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID",
-            )
             expected_fields = {
                 "archive_filename",
                 "archived_checkpoint_sha256",
@@ -6455,28 +6464,48 @@ def _archive_stale_qualification_checkpoint(
                 "runtime_commit_sha",
                 "schema_version",
             }
-            if (
-                set(archive_operation) != expected_fields
-                or archive_operation.get("schema_version") != "1"
-                or archive_operation.get("runtime_commit_sha")
-                != protected_commit_sha
-                or archive_operation.get("recovery_event_sha256")
-                != recovery_event_sha256
-                or not _COMMIT.fullmatch(
-                    str(archive_operation.get("archived_protected_commit_sha", ""))
+            archive_operation: dict[str, object] | None = None
+            for operation_path in operation_paths:
+                candidate_operation = _read_canonical_document(
+                    operation_path,
+                    "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID",
                 )
-                or not _SHA256.fullmatch(
-                    str(archive_operation.get("archived_checkpoint_sha256", ""))
-                )
-                or not _SHA256.fullmatch(
-                    str(archive_operation.get("operation_sha256", ""))
-                )
-                or _seal_hash(archive_operation, "operation_sha256")
-                != archive_operation.get("operation_sha256")
-            ):
-                raise ValueError(
-                    "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID"
-                )
+                if (
+                    set(candidate_operation) != expected_fields
+                    or candidate_operation.get("schema_version") != "1"
+                    or not _COMMIT.fullmatch(
+                        str(
+                            candidate_operation.get(
+                                "archived_protected_commit_sha", ""
+                            )
+                        )
+                    )
+                    or not _SHA256.fullmatch(
+                        str(candidate_operation.get("archived_checkpoint_sha256", ""))
+                    )
+                    or not _SHA256.fullmatch(
+                        str(candidate_operation.get("operation_sha256", ""))
+                    )
+                    or _seal_hash(candidate_operation, "operation_sha256")
+                    != candidate_operation.get("operation_sha256")
+                ):
+                    raise ValueError(
+                        "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID"
+                    )
+                if (
+                    candidate_operation.get("runtime_commit_sha")
+                    == protected_commit_sha
+                    and candidate_operation.get("recovery_event_sha256")
+                    == recovery_event_sha256
+                ):
+                    archive_operation = candidate_operation
+                    break
+                if operation_path == versioned_operation_path:
+                    raise ValueError(
+                        "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID"
+                    )
+            if archive_operation is None:
+                return None
             archive_filename = archive_operation.get("archive_filename")
             if (
                 not isinstance(archive_filename, str)
@@ -6567,6 +6596,15 @@ def _archive_stale_qualification_checkpoint(
             "schema_version": "1",
         }
         operation["operation_sha256"] = _seal_hash(operation, "operation_sha256")
+        operation_data = _canonical(operation) + b"\n"
+        operation_path = legacy_operation_path
+        if legacy_operation_path.exists() or legacy_operation_path.is_symlink():
+            _validate_exact_file_path(
+                legacy_operation_path,
+                "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_ARCHIVE_INVALID",
+            )
+            if legacy_operation_path.read_bytes() != operation_data:
+                operation_path = versioned_operation_path
         _write_exact_canonical_checkpoint(operation_path, operation)
         _validate_exact_file_path(
             path, "CATALOG_BOOTSTRAP_QUALIFICATION_CHECKPOINT_INVALID"
