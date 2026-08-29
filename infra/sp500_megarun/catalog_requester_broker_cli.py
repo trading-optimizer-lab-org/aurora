@@ -414,7 +414,7 @@ def _broker_main() -> int:
     ctypes.windll.shell32.IsUserAnAdmin.restype = ctypes.c_int
     if ctypes.windll.shell32.IsUserAnAdmin():
         raise RuntimeError("REQUESTER_BROKER_OS_IDENTITY_INVALID")
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
     kernel32.GetComputerNameW.argtypes = (
         ctypes.c_wchar_p,
         ctypes.POINTER(ctypes.c_ulong),
