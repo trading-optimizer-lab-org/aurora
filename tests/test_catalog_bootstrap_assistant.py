@@ -337,6 +337,16 @@ def _qualification_blocked_receipt() -> dict[str, object]:
     }
 
 
+def _qualification_ticket_missing_blocked_receipt() -> dict[str, object]:
+    return {
+        "controller_enabled_readback": False,
+        "phase": "QUALIFICATION_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_QUALIFICATION_TICKET_MISSING",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+
+
 def _qualification_pending_state_before_block() -> CatalogBootstrapStateV1:
     state = initial_bootstrap_state(BOOTSTRAP_ID, COMMIT)
     names: tuple[EventName, ...] = (
@@ -398,6 +408,30 @@ def _blocked_qualification_state(
     return state
 
 
+def _blocked_after_qualification_ticket_missing() -> CatalogBootstrapStateV1:
+    first_blocked = _blocked_qualification_state()
+    pending = advance_bootstrap_state(
+        first_blocked,
+        event("qualification_retry_authorized", 45),
+    )
+    blocked = _qualification_ticket_missing_blocked_receipt()
+    assert pending.last_observed_at is not None
+    return advance_bootstrap_state(
+        pending,
+        CatalogBootstrapEventV1(
+            schema_version="1",
+            bootstrap_id=pending.bootstrap_id,
+            sequence=46,
+            name="blocked",
+            protected_commit_sha=pending.protected_commit_sha,
+            observed_at=pending.last_observed_at,
+            evidence_sha256=hashlib.sha256(
+                bootstrap_runner._canonical(blocked)
+            ).hexdigest(),
+        ),
+    )
+
+
 def _write_qualification_failure_fixture(
     root: Path,
     *,
@@ -434,6 +468,90 @@ def test_only_exact_qualification_retry_can_leave_terminal_blocked_state() -> No
 
     assert resumed.phase == "QUALIFICATION_PENDING"
     assert resumed.sequence == 45
+
+
+def test_ticket_missing_qualification_recovers_only_after_ticket_is_valid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    blocked = _qualification_ticket_missing_blocked_receipt()
+    _write_qualification_failure_fixture(
+        root,
+        state=_blocked_after_qualification_ticket_missing(),
+        blocked=blocked,
+    )
+    broker_root = tmp_path / "broker"
+    ticket_path = (
+        broker_root
+        / "launch-tickets"
+        / "controller-bootstrap-qualification-v1.ticket.json"
+    )
+    ticket_path.parent.mkdir(parents=True)
+    ticket_path.write_bytes(b'{"validated":true}\n')
+    calls: list[str] = []
+
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(bootstrap_runner, "BROKER_ROOT", broker_root)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_disable_controller",
+        lambda: calls.append("disable"),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_wait_for_requester_ticket",
+        lambda: calls.append("ticket_valid"),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_runtime_commit",
+        lambda _root: _append_then_return(calls, "runtime_valid", COMMIT),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_refresh_interrupted_runtime_controls",
+        lambda *_args, **_kwargs: pytest.fail("ticket recovery refreshed controls"),
+    )
+
+    assert bootstrap_runner._resume_transient_qualification_block(root) is True
+
+    resumed = load_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json"
+    )
+    assert resumed.phase == "QUALIFICATION_PENDING"
+    assert resumed.sequence == 47
+    assert calls == ["disable", "ticket_valid", "runtime_valid"]
+
+
+def test_ticket_missing_qualification_stays_blocked_while_ticket_is_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    blocked = _qualification_ticket_missing_blocked_receipt()
+    _write_qualification_failure_fixture(
+        root,
+        state=_blocked_after_qualification_ticket_missing(),
+        blocked=blocked,
+    )
+    state_path = root / "state/catalog-bootstrap-state-v1.json"
+    before = state_path.read_bytes()
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(bootstrap_runner, "_disable_controller", lambda: None)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_wait_for_requester_ticket",
+        lambda: (_ for _ in ()).throw(
+            ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_TICKET_MISSING")
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_BOOTSTRAP_QUALIFICATION_TICKET_MISSING",
+    ):
+        bootstrap_runner._resume_transient_qualification_block(root)
+
+    assert state_path.read_bytes() == before
 
 
 def test_recover_real_qualification_block_archives_unseen_dispatch_before_retry(
