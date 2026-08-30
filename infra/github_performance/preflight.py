@@ -960,7 +960,7 @@ def _validate_catalog_live_audit_topology(
                 or any(inputs.get(key) != value for key, value in credential_inputs.items())
                 or job.get("environment") != "catalog-production"
                 or job.get("runs-on") != "ubuntu-24.04"
-                or job.get("timeout-minutes") != 20
+                or job.get("timeout-minutes") != 30
                 or job.get("permissions") != {"actions": "read", "contents": "read"}
                 or not isinstance(checkout, Mapping)
                 or not str(checkout.get("uses", "")).startswith("actions/checkout@")
@@ -1294,7 +1294,7 @@ def validate_catalog_workflow_topology(
                     not isinstance(audit, Mapping)
                     or "uses" in audit
                     or audit.get("runs-on") != "ubuntu-24.04"
-                    or audit.get("timeout-minutes") != 20
+                    or audit.get("timeout-minutes") != 30
                     or audit.get("environment") != "catalog-production"
                     or audit.get("permissions")
                     != {"actions": "read", "contents": "read"}
