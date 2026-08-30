@@ -6773,9 +6773,9 @@ def _archive_retryable_qualification_dispatch_intents(
 
 def _resume_transient_qualification_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
-    late_fixed_command_block = state.sequence >= 48 and state.sequence % 2 == 0
+    late_retryable_block = state.sequence >= 48 and state.sequence % 2 == 0
     if state.phase != "BLOCKED" or (
-        state.sequence not in {44, 46} and not late_fixed_command_block
+        state.sequence not in {44, 46} and not late_retryable_block
     ):
         return False
     if root.resolve() != EXPECTED_ROOT.resolve():
@@ -6803,14 +6803,17 @@ def _resume_transient_qualification_block(root: Path) -> bool:
     if not (
         (state.sequence == 44 and blocked == expected_block)
         or (state.sequence == 46 and blocked == ticket_missing_block)
-        or (late_fixed_command_block and blocked == fixed_command_block)
+        or (
+            late_retryable_block
+            and blocked in (expected_block, fixed_command_block)
+        )
     ):
         return False
     _disable_controller()
     if not _qualification_block_event_matches(state, blocked):
         return False
 
-    if late_fixed_command_block:
+    if late_retryable_block:
         current_runtime_commit = _runtime_commit(root)
         context = _context(root)
         source = Path(str(context["source_root"]))
