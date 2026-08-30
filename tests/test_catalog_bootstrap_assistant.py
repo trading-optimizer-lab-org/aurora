@@ -554,8 +554,17 @@ def test_ticket_missing_qualification_stays_blocked_while_ticket_is_absent(
     assert state_path.read_bytes() == before
 
 
-def test_late_qualification_fixed_command_block_resumes_idempotently(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "reason_code",
+    [
+        "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "CATALOG_BOOTSTRAP_WORKFLOW_FAILED",
+    ],
+)
+def test_late_qualification_retryable_block_resumes_idempotently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reason_code: str,
 ) -> None:
     root = tmp_path / "protected"
     source = tmp_path / "source"
@@ -567,7 +576,7 @@ def test_late_qualification_fixed_command_block_resumes_idempotently(
     blocked_receipt = {
         "controller_enabled_readback": False,
         "phase": "QUALIFICATION_PENDING",
-        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "reason_code": reason_code,
         "result": "BLOCKED",
         "schema_version": "1",
     }
