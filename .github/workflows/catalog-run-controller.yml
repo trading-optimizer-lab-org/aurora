@@ -372,7 +372,7 @@ jobs:
     needs: prepare_admission_candidates
     if: ${{ needs.prepare_admission_candidates.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment: catalog-production
     permissions:
       actions: read
@@ -1557,7 +1557,7 @@ jobs:
     needs: prepare_terminal_evidence
     if: ${{ needs.prepare_terminal_evidence.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment: catalog-production
     permissions:
       actions: read
