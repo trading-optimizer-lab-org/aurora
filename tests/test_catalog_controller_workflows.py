@@ -518,7 +518,7 @@ def test_protected_audit_jobs_require_catalog_production_environment() -> None:
         for job_id in expected_jobs:
             job = jobs[job_id]
             assert job["runs-on"] == "ubuntu-24.04"
-            assert job["timeout-minutes"] == 20
+            assert job["timeout-minutes"] == 30
             assert job["environment"] == "catalog-production"
 
 
@@ -641,7 +641,7 @@ def test_live_qualification_has_two_protected_action_jobs_and_one_finalizer() ->
         (terminal, "qualify_live_terminal_controls"),
     ):
         assert job["runs-on"] == "ubuntu-24.04"
-        assert job["timeout-minutes"] == 20
+        assert job["timeout-minutes"] == 30
         assert job["environment"] == "catalog-production"
         assert job["permissions"] == {"actions": "read", "contents": "read"}
         assert job["outputs"] == AUDIT_JOB_OUTPUTS

@@ -10,7 +10,7 @@
       "path": ".github/workflows/catalog-artifact-keeper.yml",
       "previous_sha256": "7c96083a4c0a9e0ecb8a20694ffba7b932dcc209c582ca9d7c2debc37605d52b",
       "reason": "replace the broken reusable live-controls workflow with a protected local composite audit",
-      "replacement_sha256": "2895feb551f66aec443eaf43205ce81537ea5177209b53de50a74559d4ebbcd7"
+      "replacement_sha256": "ee1b75658f89ac2899263381d65ceecba59676a3f816c7f34213334c4bcfd5e1"
     },
     {
       "path": ".github/workflows/catalog-controller-qualification.yml",
@@ -28,7 +28,7 @@
       "path": ".github/workflows/catalog-run-controller.yml",
       "previous_sha256": "b2dc75b1805a9ad1efa42f56f1a3f36258669cc5e1a395e59edad26eea8ecd06",
       "reason": "replace the broken reusable live-controls workflow with a protected local composite audit",
-      "replacement_sha256": "2ebb4e632a9757d8bb85e0ca8c1c2963b7bf6345ab9d3b732b31f20229d0c841"
+      "replacement_sha256": "7c0a3f3044e718002a7a1fd6441c9e5498e11300a7b9452e870bad6697276fab"
     },
     {
       "path": ".github/workflows/catalog-run-watchdog.yml",

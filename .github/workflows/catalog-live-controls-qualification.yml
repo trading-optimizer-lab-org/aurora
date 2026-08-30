@@ -11,7 +11,7 @@ jobs:
   qualify_live_admission_controls:
     name: Qualify admission controls
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment: catalog-production
     permissions:
       actions: read
@@ -50,7 +50,7 @@ jobs:
     name: Qualify terminal controls
     needs: qualify_live_admission_controls
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment: catalog-production
     permissions:
       actions: read
