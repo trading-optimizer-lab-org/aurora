@@ -6811,15 +6811,16 @@ def _resume_transient_qualification_block(root: Path) -> bool:
         return False
 
     if late_fixed_command_block:
-        runtime_commit = _runtime_commit(root)
+        current_runtime_commit = _runtime_commit(root)
         context = _context(root)
         source = Path(str(context["source_root"]))
         _run(["git", "fetch", "origin", "main"], cwd=source, timeout_seconds=1800)
         if (
-            context.get("source_commit_sha") != runtime_commit
-            or _run(["git", "rev-parse", "HEAD"], cwd=source) != runtime_commit
+            context.get("source_commit_sha") != current_runtime_commit
+            or _run(["git", "rev-parse", "HEAD"], cwd=source)
+            != current_runtime_commit
             or _run(["git", "rev-parse", "origin/main"], cwd=source)
-            != runtime_commit
+            != current_runtime_commit
             or _run(
                 ["git", "status", "--porcelain=v1", "--untracked-files=no"],
                 cwd=source,
@@ -6834,7 +6835,7 @@ def _resume_transient_qualification_block(root: Path) -> bool:
                 "blocked_receipt_sha256": hashlib.sha256(
                     blocked_path.read_bytes()
                 ).hexdigest(),
-                "runtime_commit_sha": runtime_commit,
+                "runtime_commit_sha": current_runtime_commit,
             },
         )
         return True
