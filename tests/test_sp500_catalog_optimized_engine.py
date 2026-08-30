@@ -1137,7 +1137,7 @@ def test_weekly_keeper_is_read_only_and_cannot_launch_science() -> None:
     audit = keeper["jobs"]["live_controls_audit_before_maintenance"]
     assert audit["environment"] == "catalog-production"
     assert audit["runs-on"] == "ubuntu-24.04"
-    assert audit["timeout-minutes"] == 20
+    assert audit["timeout-minutes"] == 30
     assert audit["steps"][1]["uses"] == "./.github/actions/catalog-live-controls-audit"
     assert audit["steps"][1]["with"]["purpose"] == "maintenance"
     assert "secrets" not in audit
