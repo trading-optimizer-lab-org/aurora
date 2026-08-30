@@ -554,6 +554,125 @@ def test_ticket_missing_qualification_stays_blocked_while_ticket_is_absent(
     assert state_path.read_bytes() == before
 
 
+def test_late_qualification_fixed_command_block_resumes_idempotently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "protected"
+    source = tmp_path / "source"
+    source.mkdir(parents=True)
+    pending = advance_bootstrap_state(
+        _blocked_after_qualification_ticket_missing(),
+        event("qualification_retry_authorized", 47),
+    )
+    blocked_receipt = {
+        "controller_enabled_readback": False,
+        "phase": "QUALIFICATION_PENDING",
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "result": "BLOCKED",
+        "schema_version": "1",
+    }
+    assert pending.last_observed_at is not None
+    blocked = advance_bootstrap_state(
+        pending,
+        CatalogBootstrapEventV1(
+            schema_version="1",
+            bootstrap_id=pending.bootstrap_id,
+            sequence=48,
+            name="blocked",
+            protected_commit_sha=pending.protected_commit_sha,
+            observed_at=pending.last_observed_at,
+            evidence_sha256=hashlib.sha256(
+                bootstrap_runner._canonical(blocked_receipt)
+            ).hexdigest(),
+        ),
+    )
+    persist_bootstrap_state(
+        root / "state/catalog-bootstrap-state-v1.json",
+        blocked,
+    )
+    receipts = root / "receipts"
+    receipts.mkdir(parents=True)
+    blocked_path = receipts / "controller-bootstrap-blocked-v1.json"
+    blocked_path.write_bytes(bootstrap_runner._canonical(blocked_receipt) + b"\n")
+    (root / "install-context-v1.json").write_bytes(
+        bootstrap_runner._canonical(
+            {
+                "repository": bootstrap_runner.REPOSITORY,
+                "source_commit_sha": COMMIT,
+                "source_root": str(source),
+            }
+        )
+        + b"\n"
+    )
+    disabled: list[Path] = []
+    commands: list[list[str]] = []
+
+    def clean_current_source(args: list[str], **_kwargs: object) -> str:
+        commands.append(args)
+        if args[:3] == ["git", "fetch", "origin"]:
+            return ""
+        if args[:2] == ["git", "rev-parse"]:
+            return COMMIT
+        if args[:3] == ["git", "status", "--porcelain=v1"]:
+            return ""
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(bootstrap_runner, "EXPECTED_ROOT", root)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_disable_controller",
+        lambda: disabled.append(root),
+    )
+    monkeypatch.setattr(bootstrap_runner, "_runtime_commit", lambda _root: COMMIT)
+    monkeypatch.setattr(bootstrap_runner, "_run", clean_current_source)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_refresh_interrupted_runtime_controls",
+        lambda *_args, **_kwargs: pytest.fail("current runtime must not be refreshed"),
+    )
+
+    assert bootstrap_runner._resume_transient_qualification_block(root) is True
+
+    resumed = load_bootstrap_state(root / "state/catalog-bootstrap-state-v1.json")
+    assert resumed.phase == "QUALIFICATION_PENDING"
+    assert resumed.sequence == 49
+    assert disabled == [root]
+    assert commands
+    assert all(command[0] == "git" for command in commands)
+
+
+@pytest.mark.parametrize("transient_target", ["issues", "heavy"])
+def test_github_activity_snapshot_retries_transient_read_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    transient_target: str,
+) -> None:
+    failures_remaining = {transient_target: 1}
+    sleeps: list[float] = []
+
+    def transient_read(args: list[str], **_kwargs: object) -> str:
+        target = "issues" if "issues?state=all" in args[-1] else "heavy"
+        if failures_remaining.get(target, 0):
+            failures_remaining[target] -= 1
+            raise ValueError("CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED")
+        if target == "issues":
+            return json.dumps([[]])
+        return json.dumps({"workflow_runs": []})
+
+    monkeypatch.setattr(bootstrap_runner, "_run", transient_read)
+    monkeypatch.setattr(
+        bootstrap_runner.time,
+        "sleep",
+        lambda seconds: sleeps.append(seconds),
+    )
+
+    assert bootstrap_runner._github_activity_snapshot() == {
+        "request_issue_numbers": [],
+        "heavy_run_ids": [],
+    }
+    assert failures_remaining[transient_target] == 0
+    assert sleeps == [2]
+
+
 def test_recover_real_qualification_block_archives_unseen_dispatch_before_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
