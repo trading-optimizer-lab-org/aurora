@@ -798,6 +798,26 @@ def _run_with_input(
     return result.stdout.decode("utf-8").strip()
 
 
+def _run_readonly_github_api(
+    args: list[str],
+    *,
+    timeout_seconds: int = 120,
+) -> str:
+    if args[:2] != ["gh", "api"]:
+        raise ValueError("CATALOG_BOOTSTRAP_READONLY_COMMAND_FORBIDDEN")
+    for attempt in range(3):
+        try:
+            return _run(args, timeout_seconds=timeout_seconds)
+        except ValueError as exc:
+            if (
+                str(exc) != "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED"
+                or attempt == 2
+            ):
+                raise
+            time.sleep(2)
+    raise AssertionError("unreachable")
+
+
 def _review_import_environment(root: Path, source: Path) -> dict[str, str]:
     source = source.resolve(strict=True)
     source_init = source / "__init__.py"
@@ -1070,7 +1090,7 @@ def _list_recent_heavy_workflow_runs(
     if workflow_path not in _HEAVY_WORKFLOW_PATHS:
         raise ValueError("CATALOG_BOOTSTRAP_WORKFLOW_FORBIDDEN")
     workflow_name = Path(workflow_path).name
-    raw = _run(
+    raw = _run_readonly_github_api(
         [
             "gh",
             "api",
@@ -1418,7 +1438,7 @@ def _run_live_qualification(
 
 def _github_activity_snapshot() -> dict[str, object]:
     issue_pages = json.loads(
-        _run(
+        _run_readonly_github_api(
             [
                 "gh",
                 "api",
@@ -6753,7 +6773,10 @@ def _archive_retryable_qualification_dispatch_intents(
 
 def _resume_transient_qualification_block(root: Path) -> bool:
     state = load_bootstrap_state(_state_path(root))
-    if state.phase != "BLOCKED" or state.sequence not in {44, 46}:
+    late_fixed_command_block = state.sequence >= 48 and state.sequence % 2 == 0
+    if state.phase != "BLOCKED" or (
+        state.sequence not in {44, 46} and not late_fixed_command_block
+    ):
         return False
     if root.resolve() != EXPECTED_ROOT.resolve():
         raise ValueError("CATALOG_BOOTSTRAP_ROOT_INVALID")
@@ -6773,14 +6796,49 @@ def _resume_transient_qualification_block(root: Path) -> bool:
         **expected_block,
         "reason_code": "CATALOG_BOOTSTRAP_QUALIFICATION_TICKET_MISSING",
     }
+    fixed_command_block = {
+        **expected_block,
+        "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+    }
     if not (
         (state.sequence == 44 and blocked == expected_block)
         or (state.sequence == 46 and blocked == ticket_missing_block)
+        or (late_fixed_command_block and blocked == fixed_command_block)
     ):
         return False
     _disable_controller()
     if not _qualification_block_event_matches(state, blocked):
         return False
+
+    if late_fixed_command_block:
+        current_runtime_commit = _runtime_commit(root)
+        context = _context(root)
+        source = Path(str(context["source_root"]))
+        _run(["git", "fetch", "origin", "main"], cwd=source, timeout_seconds=1800)
+        if (
+            context.get("source_commit_sha") != current_runtime_commit
+            or _run(["git", "rev-parse", "HEAD"], cwd=source)
+            != current_runtime_commit
+            or _run(["git", "rev-parse", "origin/main"], cwd=source)
+            != current_runtime_commit
+            or _run(
+                ["git", "status", "--porcelain=v1", "--untracked-files=no"],
+                cwd=source,
+            )
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_QUALIFICATION_RETRY_SOURCE_INVALID")
+        _advance(
+            root,
+            state,
+            "qualification_retry_authorized",
+            {
+                "blocked_receipt_sha256": hashlib.sha256(
+                    blocked_path.read_bytes()
+                ).hexdigest(),
+                "runtime_commit_sha": current_runtime_commit,
+            },
+        )
+        return True
 
     if state.sequence == 46:
         _wait_for_requester_ticket()
