@@ -5094,17 +5094,27 @@ def test_idempotent_resume_followup_authorization_uses_cumulative_runtime_base(
     ]
 
 
+@pytest.mark.parametrize(
+    ("pr_number", "branch"),
+    [
+        (198, "codex/catalog-runtime-upgrade-13"),
+        (240, "fix/recover-terminal-requester-qualification"),
+    ],
+)
 def test_generic_runtime_upgrade_authorization_binds_its_own_pr_and_runtime_base(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    pr_number: int,
+    branch: str,
 ) -> None:
     operation = _idempotent_resume_upgrade_repair_operation(
         upgrade_index=13,
         prior_merge="3" * 40,
         repair_head="4" * 40,
         repair_merge="5" * 40,
-        pr_number=198,
+        pr_number=pr_number,
     )
+    operation["branch"] = branch
     observed_paths = tuple(cast(list[str], operation["changed_paths"]))
     pull_request_base = "6" * 40
     path_calls: list[tuple[str, str]] = []
