@@ -368,6 +368,9 @@ _IDEMPOTENT_RESUME_CATCHUP_BRANCH = "codex/catalog-bootstrap-runtime-catchup"
 _IDEMPOTENT_RESUME_CATCHUP_PR_NUMBER = 197
 _MAX_IDEMPOTENT_RESUME_UPGRADE_INDEX = 128
 _IDEMPOTENT_RESUME_CATCHUP_REQUIRED_CHECK = "catalog-controller-policy"
+_IDEMPOTENT_RESUME_LEGACY_BRANCHES = {
+    240: "fix/recover-terminal-requester-qualification",
+}
 _IDEMPOTENT_RESUME_ALLOWED_ROOTS = frozenset(
     {".github", "config", "docs", "infra", "schemas", "scripts", "tests"}
 )
@@ -2693,7 +2696,14 @@ def _verify_idempotent_resume_github_authorization(
         and not isinstance(operation_pr_number, bool)
         and operation_pr_number > _IDEMPOTENT_RESUME_CATCHUP_PR_NUMBER
         and isinstance(operation.get("branch"), str)
-        and re.fullmatch(r"codex/catalog-[a-z0-9][a-z0-9-]{0,79}", str(operation["branch"]))
+        and (
+            re.fullmatch(
+                r"codex/catalog-[a-z0-9][a-z0-9-]{0,79}",
+                str(operation["branch"]),
+            )
+            or _IDEMPOTENT_RESUME_LEGACY_BRANCHES.get(operation_pr_number)
+            == operation["branch"]
+        )
         and operation.get("required_check") == "catalog-controller-policy"
       ):
         expected_branch = str(operation["branch"])
