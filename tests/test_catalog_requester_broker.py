@@ -916,6 +916,37 @@ def test_atomic_service_state_recovers_an_interrupted_temporary_write(
     assert abandoned[0].read_bytes() == b"partial"
 
 
+def test_atomic_service_state_retries_a_transient_replace_sharing_violation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aurora.infra.sp500_megarun import catalog_requester_broker as broker_module
+
+    target = tmp_path / "campaign.status.json"
+    target.write_bytes(b"old\n")
+    actual_replace = broker_module.os.replace
+    attempts = 0
+    sleeps: list[float] = []
+
+    def replace_after_reader_releases(source: Path, destination: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            error = PermissionError("simulated Windows sharing violation")
+            error.winerror = 32  # type: ignore[attr-defined]
+            raise error
+        actual_replace(source, destination)
+
+    monkeypatch.setattr(broker_module.os, "replace", replace_after_reader_releases)
+    monkeypatch.setattr(broker_module.time, "sleep", sleeps.append)
+
+    broker_module._atomic_replace(target, b"new\n")
+
+    assert target.read_bytes() == b"new\n"
+    assert attempts == 3
+    assert sleeps == [0.05, 0.05]
+
+
 def test_final_receipt_becomes_visible_only_after_its_bytes_are_complete(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

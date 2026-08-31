@@ -633,6 +633,17 @@ def _exclusive_write(path: Path, data: bytes) -> bool:
     return True
 
 
+def _replace_service_state(source: Path, destination: Path) -> None:
+    for attempt in range(40):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) not in {5, 32} or attempt == 39:
+                raise
+            time.sleep(0.05)
+
+
 def _atomic_replace(path: Path, data: bytes) -> None:
     temporary = path.with_name(path.name + ".service-tmp")
     if temporary.exists() or temporary.is_symlink():
@@ -645,7 +656,7 @@ def _atomic_replace(path: Path, data: bytes) -> None:
         ):
             raise ValueError("REQUESTER_BROKER_TEMPORARY_EXISTS")
         if metadata.st_size == len(data) and temporary.read_bytes() == data:
-            os.replace(temporary, path)
+            _replace_service_state(temporary, path)
             return
         abandoned = path.with_name(
             path.name + f".abandoned-{uuid.uuid4().hex}.service-state"
@@ -655,7 +666,7 @@ def _atomic_replace(path: Path, data: bytes) -> None:
         os.rename(temporary, abandoned)
     if not _exclusive_write(temporary, data):
         raise ValueError("REQUESTER_BROKER_TEMPORARY_EXISTS")
-    os.replace(temporary, path)
+    _replace_service_state(temporary, path)
 
 
 def publish_catalog_broker_capacity(
