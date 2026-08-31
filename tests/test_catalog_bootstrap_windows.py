@@ -130,6 +130,55 @@ def test_qualification_client_is_fixed_unprivileged_and_nonproduction() -> None:
     assert "Invoke-Expression" not in source
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="requires powershell.exe",
+)
+def test_qualification_client_uses_short_direct_python_process_plan() -> None:
+    script_path = str(QUALIFICATION_CLIENT).replace("'", "''")
+    command = (
+        f". '{script_path}'; "
+        "$Plan=Get-BootstrapQualificationClientProcessPlan; "
+        "$Plan|ConvertTo-Json -Depth 5 -Compress"
+    )
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            command,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    plan = json.loads(result.stdout)
+    assert plan["file_path"] == (
+        "C:\\ProgramData\\AURORA\\CatalogRequester\\client-venv\\Scripts\\python.exe"
+    )
+    assert plan["argument_list"] == [
+        "-I",
+        "-s",
+        "-E",
+        "C:\\ProgramData\\AURORA\\CatalogRequester\\bin\\catalog-requester-client.pyz",
+        "--campaign-key",
+        "controller-bootstrap-qualification-v1",
+    ]
+    assert plan["forbidden_environment_names"] == [
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_ENTERPRISE_TOKEN",
+        "GITHUB_ENTERPRISE_TOKEN",
+        "GH_CONFIG_DIR",
+        "XDG_CONFIG_HOME",
+    ]
+    assert len(" ".join(plan["argument_list"])) < 512
+
+
 def test_agent_capability_audit_proves_negative_boundaries_from_agent_identity() -> None:
     source = CAPABILITY_AUDIT.read_text("utf-8")
     for marker in (
