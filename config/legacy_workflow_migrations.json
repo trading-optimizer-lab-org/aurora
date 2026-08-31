@@ -21,8 +21,8 @@
     {
       "path": ".github/workflows/catalog-request-reconciler.yml",
       "previous_sha256": "4bbe04040bdd9e341a6d7b97ffd386fc8343f952e5e610057335ddb272671d00",
-      "reason": "enforce explicit production arming before catalog reconciliation",
-      "replacement_sha256": "d46a4e90ab931e5646bcf7b4ff22b25e583dfd06fb831563ead8f17c4276b402"
+      "reason": "allow bounded manual reconciliation without creating or dispatching production work",
+      "replacement_sha256": "21957f8b596642f499b6ff35ef6fec1950e17146695eb8af777705f871a676ec"
     },
     {
       "path": ".github/workflows/catalog-run-controller.yml",

@@ -1,6 +1,7 @@
 name: AURORA catalog request reconciler
 
 on:
+  workflow_dispatch: {}
   schedule:
     - cron: "*/15 * * * *"
 

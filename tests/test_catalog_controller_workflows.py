@@ -1239,7 +1239,8 @@ def test_legacy_catalog_launchers_have_no_public_trigger() -> None:
 
 def test_request_reconciler_replays_only_existing_requests() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-request-reconciler.yml")
-    assert set(workflow["on"]) == {"schedule"}
+    assert set(workflow["on"]) == {"workflow_dispatch", "schedule"}
+    assert workflow["on"]["workflow_dispatch"] == {}
     assert workflow["on"]["schedule"] == [{"cron": "*/15 * * * *"}]
     assert workflow["permissions"] == {
         "actions": "read",
@@ -1251,7 +1252,6 @@ def test_request_reconciler_replays_only_existing_requests() -> None:
     }
     text = (WORKFLOWS / "catalog-request-reconciler.yml").read_text("utf-8")
     for forbidden in (
-        "workflow_dispatch",
         "--method POST",
         "create_catalog_run_request",
         "catalog-optimized-run.yml",
