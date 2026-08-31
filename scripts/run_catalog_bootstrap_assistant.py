@@ -6800,12 +6800,21 @@ def _resume_transient_qualification_block(root: Path) -> bool:
         **expected_block,
         "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
     }
+    qualification_not_terminal_block = {
+        **expected_block,
+        "reason_code": "CATALOG_BOOTSTRAP_QUALIFICATION_NOT_TERMINAL",
+    }
     if not (
         (state.sequence == 44 and blocked == expected_block)
         or (state.sequence == 46 and blocked == ticket_missing_block)
         or (
             late_retryable_block
-            and blocked in (expected_block, fixed_command_block)
+            and blocked
+            in (
+                expected_block,
+                fixed_command_block,
+                qualification_not_terminal_block,
+            )
         )
     ):
         return False

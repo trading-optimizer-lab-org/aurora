@@ -558,6 +558,7 @@ def test_ticket_missing_qualification_stays_blocked_while_ticket_is_absent(
     "reason_code",
     [
         "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "CATALOG_BOOTSTRAP_QUALIFICATION_NOT_TERMINAL",
         "CATALOG_BOOTSTRAP_WORKFLOW_FAILED",
     ],
 )
