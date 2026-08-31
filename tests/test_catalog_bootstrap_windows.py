@@ -126,7 +126,7 @@ def test_qualification_client_is_fixed_unprivileged_and_nonproduction() -> None:
     assert "--campaign-key" in source
     assert "gh " not in source.casefold()
     assert "Start-Process" in source and "-Credential" in source
-    assert "-WorkingDirectory $AgentRoot" in source
+    assert "-WorkingDirectory" not in source
     assert "Invoke-Expression" not in source
 
 
