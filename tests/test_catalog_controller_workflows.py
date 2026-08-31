@@ -1521,6 +1521,8 @@ def test_orphan_repair_is_admitted_only_by_report_and_is_mirror_first() -> None:
     )
     assert "needs.filter.outputs.valid != 'true'" in disabled_close["if"]
     assert "CATALOG_CONTROLLER_DISABLED" in disabled_close["if"]
+    assert 'receipt.writer_job_id == "report_nonexecuting_decision"' in disabled_close["run"]
+    assert "receipt.writer.writer_job_id" not in disabled_close["run"]
 
     download = next(
         step

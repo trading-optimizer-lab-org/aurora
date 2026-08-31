@@ -27,8 +27,8 @@
     {
       "path": ".github/workflows/catalog-run-controller.yml",
       "previous_sha256": "b2dc75b1805a9ad1efa42f56f1a3f36258669cc5e1a395e59edad26eea8ecd06",
-      "reason": "accept protected reconciler calls by validated issue input and terminally close disabled requests",
-      "replacement_sha256": "eafeab6899821f459f5f8b2b96be7a7034b4d56e5963a31fc8ffe19dfc6e475b"
+      "reason": "validate the direct request receipt writer field before terminally closing disabled requests",
+      "replacement_sha256": "e03f8e4f936564df2e6a5e79a59656bca5a708a46aac51a3b9f737a13034f370"
     },
     {
       "path": ".github/workflows/catalog-run-watchdog.yml",
