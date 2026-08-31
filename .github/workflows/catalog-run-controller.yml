@@ -949,14 +949,24 @@ jobs:
           import os
           from pathlib import Path
 
-          from aurora.infra.sp500_megarun.catalog_request_receipt import (
-              parse_request_receipt_comment,
-          )
+            from aurora.infra.sp500_megarun.catalog_request_receipt import (
+                CatalogRequestReceiptV1,
+                parse_request_receipt_comment,
+            )
 
           root = Path(os.environ["RUNNER_TEMP"])
-          issue_number = int(os.environ["ISSUE_NUMBER"])
-          request_sha256 = os.environ["REQUEST_SHA256"]
-          pages = json.loads((root / "catalog-disabled-comments.json").read_text("utf-8"))
+            issue_number = int(os.environ["ISSUE_NUMBER"])
+            request_sha256 = os.environ["REQUEST_SHA256"]
+            desired = CatalogRequestReceiptV1.model_validate(
+                json.loads(
+                    (
+                        root
+                        / "catalog-nonexecuting-request-delivery"
+                        / "request-receipt.json"
+                    ).read_text("utf-8")
+                )
+            )
+            pages = json.loads((root / "catalog-disabled-comments.json").read_text("utf-8"))
           matches = []
           for page in pages:
               for comment in page:
@@ -967,13 +977,21 @@ jobs:
                   if receipt is not None and (
                       receipt.issue_number == issue_number
                       and receipt.request_sha256 == request_sha256
-                      and receipt.state == "BLOCKED"
-                      and receipt.reason_code == "CATALOG_CONTROLLER_DISABLED"
-            and receipt.writer_job_id == "report_nonexecuting_decision"
-                  ):
-                      matches.append(receipt)
-          if len(matches) != 1:
-              raise SystemExit("CATALOG_DISABLED_RECEIPT_INVALID")
+                        and receipt.state == "BLOCKED"
+                        and receipt.reason_code == "CATALOG_CONTROLLER_DISABLED"
+                        and receipt.writer_job_id == "report_nonexecuting_decision"
+                        and receipt.receipt_sha256 == desired.receipt_sha256
+                    ):
+                        matches.append(receipt)
+            if (
+                desired.issue_number != issue_number
+                or desired.request_sha256 != request_sha256
+                or desired.state != "BLOCKED"
+                or desired.reason_code != "CATALOG_CONTROLLER_DISABLED"
+                or desired.writer_job_id != "report_nonexecuting_decision"
+                or len(matches) != 1
+            ):
+                raise SystemExit("CATALOG_DISABLED_RECEIPT_INVALID")
           patch = {
               "labels": ["catalog-run-terminal-v1"],
               "state": "closed",
