@@ -1525,6 +1525,12 @@ def test_orphan_repair_is_admitted_only_by_report_and_is_mirror_first() -> None:
     assert "receipt.writer.writer_job_id" not in disabled_close["run"]
     assert "CatalogRequestReceiptV1.model_validate" in disabled_close["run"]
     assert "receipt.receipt_sha256 == desired.receipt_sha256" in disabled_close["run"]
+    python_blocks = re.findall(
+        r"python - <<'PY'\n(.*?)\nPY", disabled_close["run"], flags=re.DOTALL
+    )
+    assert len(python_blocks) == 2
+    for index, block in enumerate(python_blocks):
+        compile(block, f"disabled-close-{index}.py", "exec")
 
     download = next(
         step
