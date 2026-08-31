@@ -969,7 +969,7 @@ jobs:
                       and receipt.request_sha256 == request_sha256
                       and receipt.state == "BLOCKED"
                       and receipt.reason_code == "CATALOG_CONTROLLER_DISABLED"
-                      and receipt.writer.writer_job_id == "report_nonexecuting_decision"
+            and receipt.writer_job_id == "report_nonexecuting_decision"
                   ):
                       matches.append(receipt)
           if len(matches) != 1:
