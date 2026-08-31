@@ -873,6 +873,10 @@ def test_controller_has_only_request_lifecycle_and_reconciler_triggers() -> None
     }
     assert set(workflow["on"]) == {"issues", "workflow_call"}
     assert set(workflow["on"]["workflow_call"]["inputs"]) == {"issue_number"}
+    assert workflow["jobs"]["filter"]["if"] == (
+        "${{ inputs.issue_number > 0 || "
+        "(github.event_name == 'issues' && github.event.action == 'opened') }}"
+    )
     assert workflow["permissions"] == {
         "actions": "read",
         "contents": "read",
