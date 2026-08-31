@@ -33,7 +33,7 @@ foreach($n in @('GH_TOKEN','GITHUB_TOKEN','GH_ENTERPRISE_TOKEN','GITHUB_ENTERPRI
 exit $LASTEXITCODE
 '@
 $Encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($FixedCommand))
-$Process = Start-Process -FilePath "powershell.exe" -Credential $Credential -WorkingDirectory $AgentRoot -WindowStyle Hidden -Wait -PassThru `
+$Process = Start-Process -FilePath "powershell.exe" -Credential $Credential -WindowStyle Hidden -Wait -PassThru `
     -RedirectStandardOutput $OutputPath -RedirectStandardError $ErrorPath `
     -ArgumentList @("-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", $Encoded)
 $Credential = $null
