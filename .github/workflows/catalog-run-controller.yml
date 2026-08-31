@@ -169,6 +169,30 @@ jobs:
           request_sha = hashlib.sha256(raw).hexdigest()
           controller_enabled = os.environ.get("CONTROLLER_ENABLED") == "true"
           controller_armed = os.environ.get("CONTROLLER_ARMED") == "true"
+          execution_enabled = (
+              actors.get("production_enabled") is True
+              and controller_enabled
+              and controller_armed
+          )
+          if relevant and not execution_enabled:
+              allowed = set(actors.get("request_actors", ()))
+              key_path = actors.get("requester_public_key_path")
+              if issue.get("user", {}).get("login") in allowed and isinstance(key_path, str):
+                  try:
+                      disabled_request = parse_catalog_run_request(
+                          issue.get("title", ""),
+                          issue.get("body", ""),
+                          Path(key_path).read_bytes(),
+                      )
+                  except Exception:
+                      pass
+                  else:
+                      disabled_canonical = json.dumps(
+                          disabled_request.model_dump(mode="json"),
+                          sort_keys=True,
+                          separators=(",", ":"),
+                      ).encode()
+                      request_sha = hashlib.sha256(disabled_canonical).hexdigest()
           if actors.get("production_enabled") is True and controller_enabled and controller_armed:
               allowed = set(actors.get("request_actors", ()))
               key_path = actors.get("requester_public_key_path")
@@ -663,11 +687,13 @@ jobs:
     if: >-
       ${{ always() && needs.filter.result == 'success' &&
       needs.filter.outputs.relevant == 'true' &&
-      needs.routing_snapshot.result == 'success' &&
+      ((needs.filter.outputs.valid != 'true' &&
+      needs.filter.outputs.reason_code == 'CATALOG_CONTROLLER_DISABLED') ||
+      (needs.routing_snapshot.result == 'success' &&
       (needs.routing_snapshot.outputs.request_receipt_orphan == 'true' ||
       (needs.routing_snapshot.outputs.request_receipt_orphan != 'true' &&
       needs.admission.outputs.call_engine != 'true' &&
-      needs.route_without_privileged_audit.outputs.reason_code != 'CATALOG_RETRY_NOT_DUE')) }}
+      needs.route_without_privileged_audit.outputs.reason_code != 'CATALOG_RETRY_NOT_DUE')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
