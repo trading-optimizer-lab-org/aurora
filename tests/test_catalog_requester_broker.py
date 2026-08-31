@@ -163,11 +163,13 @@ class _FakeHttp:
         overprivileged: bool = False,
         uncertain_post: bool = False,
         issue_created_at: str = "2026-08-22T12:00:01Z",
+        response_date: str | None = None,
     ):
         self.calls: list[tuple[str, str]] = []
         self.overprivileged = overprivileged
         self.uncertain_post = uncertain_post
         self.issue_created_at = issue_created_at
+        self.response_date = response_date
         self.issue_posts = 0
         self.token_requests: list[dict[str, object] | None] = []
         self.created_title: str | None = None
@@ -212,7 +214,7 @@ class _FakeHttp:
         if url.endswith("/repos/trading-optimizer-lab-org/aurora/issues/77"):
             return CatalogBrokerHttpResponse(
                 status_code=200,
-                headers={},
+                headers=({"Date": self.response_date} if self.response_date else {}),
                 json_body={
                     "number": 77,
                     "title": self.created_title,
@@ -227,7 +229,7 @@ class _FakeHttp:
         if "/issues?" in url:
             return CatalogBrokerHttpResponse(
                 status_code=200,
-                headers={},
+                headers=({"Date": self.response_date} if self.response_date else {}),
                 json_body=[
                     {
                         "number": 77,
@@ -300,6 +302,34 @@ def test_github_second_precision_cannot_reject_a_valid_same_second_issue() -> No
         client=_client(fake, key),
         post_lower_bound=NOW + timedelta(microseconds=900_000),
         post_upper_bound=NOW + timedelta(seconds=5, microseconds=100_000),
+        installation_token="opaque-installation-token",
+    )
+
+    assert receipt.issue_number == 77
+    assert fake.issue_posts == 1
+
+
+@pytest.mark.parametrize("uncertain_post", [False, True])
+def test_github_server_date_bounds_valid_issue_when_local_clock_is_behind(
+    uncertain_post: bool,
+) -> None:
+    key = _private_key()
+    signed = sign_catalog_request(
+        draft=_draft(),
+        private_key_pem=_private_pem(key),
+        signed_at=NOW,
+    )
+    fake = _FakeHttp(
+        uncertain_post=uncertain_post,
+        issue_created_at="2026-08-22T12:00:11Z",
+        response_date="Sat, 22 Aug 2026 12:00:11 GMT",
+    )
+
+    receipt = submit_catalog_request_to_github(
+        signed=signed,
+        client=_client(fake, key),
+        post_lower_bound=NOW,
+        post_upper_bound=NOW + timedelta(seconds=5),
         installation_token="opaque-installation-token",
     )
 

@@ -2311,6 +2311,20 @@ def _github_timestamp_ceil(value: datetime) -> datetime:
     return checked.replace(microsecond=0) + timedelta(seconds=1)
 
 
+def _github_response_time(response: CatalogBrokerHttpResponse) -> datetime | None:
+    raw = next(
+        (value for key, value in response.headers.items() if key.casefold() == "date"),
+        None,
+    )
+    if raw is None:
+        return None
+    try:
+        parsed = parsedate_to_datetime(raw)
+        return _utc(parsed)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("REQUESTER_GITHUB_RESPONSE_INVALID") from exc
+
+
 def _verify_issue(
     payload: object,
     *,
@@ -2425,6 +2439,9 @@ def _reconcile_uncertain_post(
         response = client.request_fixed("GET", path, token=token)
         if response.status_code != 200 or not isinstance(response.json_body, list):
             raise ValueError("REQUESTER_POST_RECONCILIATION_PENDING")
+        response_time = _github_response_time(response)
+        if response_time is not None:
+            upper_bound = max(upper_bound, _github_timestamp_ceil(response_time))
         page_oldest: datetime | None = None
         for item in response.json_body:
             if not isinstance(item, Mapping):
@@ -3768,6 +3785,9 @@ def submit_catalog_request_to_github(
         if readback.status_code != 200:
             raise ValueError("REQUESTER_CREATED_ISSUE_INVALID")
         upper_bound = _utc(post_upper_bound or client.now())
+        response_time = _github_response_time(readback)
+        if response_time is not None:
+            upper_bound = max(upper_bound, response_time)
         verified_number = _verify_issue(
             readback.json_body,
             signed=checked,
