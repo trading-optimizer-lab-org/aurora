@@ -77,7 +77,9 @@ class CatalogAuthorityWriterContextV1(FrozenModel):
         ".github/workflows/catalog-request-reconciler.yml",
         ".github/workflows/catalog-run-watchdog.yml",
     ]
-    event: Literal["issues", "workflow_call", "schedule", "workflow_run"]
+    event: Literal[
+        "issues", "workflow_call", "workflow_dispatch", "schedule", "workflow_run"
+    ]
     repository: Literal["trading-optimizer-lab-org/aurora"]
     protected_commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     observed_at: datetime
@@ -126,7 +128,8 @@ def catalog_authority_writer_context_from_github(
         run.get("id") != expected_run_id
         or run.get("run_attempt") != expected_run_attempt
         or workflow_path not in _WRITER_CALLER_WORKFLOWS
-        or run.get("event") not in {"issues", "workflow_call", "schedule", "workflow_run"}
+        or run.get("event")
+        not in {"issues", "workflow_call", "workflow_dispatch", "schedule", "workflow_run"}
         or repository_name != _REPOSITORY
         or run.get("head_sha") != expected_protected_commit_sha
         or run.get("status") not in {"queued", "in_progress"}

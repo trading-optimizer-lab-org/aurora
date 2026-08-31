@@ -359,13 +359,16 @@ def test_writer_context_requires_the_exact_current_job_and_protected_commit() ->
         )
 
 
-def test_writer_context_accepts_the_exact_reusable_job_suffix_without_ambiguity() -> None:
+@pytest.mark.parametrize("event", ("schedule", "workflow_dispatch"))
+def test_writer_context_accepts_the_exact_reusable_job_suffix_without_ambiguity(
+    event: str,
+) -> None:
     context = catalog_authority_writer_context_from_github(
         run={
             "id": 9002,
             "run_attempt": 1,
             "path": ".github/workflows/catalog-request-reconciler.yml",
-            "event": "schedule",
+            "event": event,
             "head_sha": COMMIT,
             "status": "in_progress",
             "repository": {"full_name": "trading-optimizer-lab-org/aurora"},
@@ -386,6 +389,7 @@ def test_writer_context_accepts_the_exact_reusable_job_suffix_without_ambiguity(
     )
     assert context.workflow_path == ".github/workflows/catalog-request-reconciler.yml"
     assert context.writer_job_database_id == 9201
+    assert context.event == event
 
 
 def _terminal_decision():
