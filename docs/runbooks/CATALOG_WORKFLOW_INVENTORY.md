@@ -5,7 +5,7 @@ Este documento registra **todos** los workflows presentes durante la migración 
 ## Resultado
 
 - Workflows inventariados: **181**.
-- Hash canónico del inventario final: `e974e036f87796c70e7d4f62f2d0d3b96dd2d90ab8f0e9b568524d3c93f4e19f`.
+- Hash canónico del inventario final: `60f7edc0170f59933597ab5ae3cfebc122e774a3f69f80c4091f4d51bcc7280c`.
 - Estado final del validador de topología: **READY**.
 - Campaña activa: `sp500-optimized-catalog-v1` mediante `optimized_catalog_v1`.
 - Los Atlas antiguos y sus wrappers quedan inactivos y sin disparador público. Su código se conserva para trazabilidad, pero no existe un llamador autorizado.
@@ -55,7 +55,7 @@ Este documento registra **todos** los workflows presentes durante la migración 
 | .github/workflows/catalog-recovery-wave.yml | not present | yes | optimized_catalog_v1 | sp500-optimized-catalog-v1 | workflow_call | created as the bounded selective-recovery worker path | recovery policy, sealed inputs and topology tests |
 | .github/workflows/catalog-reference-oracle.yml | workflow_call | no | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
 | .github/workflows/catalog-reference-worker.yml | workflow_call | yes | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
-| .github/workflows/catalog-request-reconciler.yml | not present | no | - | - | schedule | created as bounded delivery fallback | bounded reconciler topology test |
+| .github/workflows/catalog-request-reconciler.yml | not present | no | - | - | schedule, workflow_dispatch | created as bounded delivery fallback | bounded reconciler topology test |
 | .github/workflows/catalog-run-controller.yml | not present | yes | - | - | issues, workflow_call | created as sole public signed-request entrypoint | controller trigger, writer, ordering and gate tests |
 | .github/workflows/catalog-run-watchdog.yml | not present | no | - | - | schedule | created as read-only discovery and controller re-entry only | watchdog authority and topology tests |
 | .github/workflows/concurrency-smoke-500.yml | workflow_dispatch | no | - | - | workflow_dispatch | outside catalog execution scope; inventoried with no change | repository topology receipt |

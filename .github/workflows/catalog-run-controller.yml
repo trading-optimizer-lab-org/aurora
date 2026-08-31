@@ -929,6 +929,88 @@ jobs:
               raise SystemExit("CATALOG_REQUEST_RECEIPT_READBACK_INVALID")
           PY
 
+      - name: Close one authenticated disabled request terminally
+        if: >-
+          ${{ needs.filter.outputs.valid != 'true' &&
+          needs.filter.outputs.reason_code == 'CATALOG_CONTROLLER_DISABLED' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ needs.filter.outputs.issue_number }}
+          REQUEST_SHA256: ${{ needs.filter.outputs.request_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]
+          [[ "$REQUEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" > "$RUNNER_TEMP/catalog-disabled-issue-before.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments?per_page=100" > "$RUNNER_TEMP/catalog-disabled-comments.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from aurora.infra.sp500_megarun.catalog_request_receipt import (
+              parse_request_receipt_comment,
+          )
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          issue_number = int(os.environ["ISSUE_NUMBER"])
+          request_sha256 = os.environ["REQUEST_SHA256"]
+          pages = json.loads((root / "catalog-disabled-comments.json").read_text("utf-8"))
+          matches = []
+          for page in pages:
+              for comment in page:
+                  receipt = parse_request_receipt_comment(
+                      comment,
+                      expected_author="github-actions[bot]",
+                  )
+                  if receipt is not None and (
+                      receipt.issue_number == issue_number
+                      and receipt.request_sha256 == request_sha256
+                      and receipt.state == "BLOCKED"
+                      and receipt.reason_code == "CATALOG_CONTROLLER_DISABLED"
+                      and receipt.writer.writer_job_id == "report_nonexecuting_decision"
+                  ):
+                      matches.append(receipt)
+          if len(matches) != 1:
+              raise SystemExit("CATALOG_DISABLED_RECEIPT_INVALID")
+          patch = {
+              "labels": ["catalog-run-terminal-v1"],
+              "state": "closed",
+              "state_reason": "completed",
+          }
+          (root / "disabled-terminal-issue-patch.json").write_text(
+              json.dumps(patch, sort_keys=True, separators=(",", ":")),
+              encoding="utf-8",
+          )
+          PY
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
+            --input "$RUNNER_TEMP/disabled-terminal-issue-patch.json" \
+            > "$RUNNER_TEMP/catalog-disabled-issue-patch-response.json"
+          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" > "$RUNNER_TEMP/catalog-disabled-issue-after.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          before = json.loads((root / "catalog-disabled-issue-before.json").read_text("utf-8"))
+          after = json.loads((root / "catalog-disabled-issue-after.json").read_text("utf-8"))
+          if (
+              before.get("state") != "open"
+              or after.get("state") != "closed"
+              or after.get("state_reason") != "completed"
+              or (after.get("closed_by") or {}).get("login") != "github-actions[bot]"
+              or [row.get("name") for row in after.get("labels", [])]
+              != ["catalog-run-terminal-v1"]
+              or any(
+                  before.get(field) != after.get(field)
+                  for field in ("id", "number", "title", "body", "user")
+              )
+          ):
+              raise SystemExit("CATALOG_DISABLED_TERMINAL_READBACK_INVALID")
+          PY
+
       - id: orphan_readback
         name: Verify the repaired receipt through a fresh complete snapshot
         if: ${{ needs.routing_snapshot.outputs.request_receipt_orphan == 'true' }}

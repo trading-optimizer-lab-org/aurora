@@ -1239,7 +1239,8 @@ def test_legacy_catalog_launchers_have_no_public_trigger() -> None:
 
 def test_request_reconciler_replays_only_existing_requests() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-request-reconciler.yml")
-    assert set(workflow["on"]) == {"schedule"}
+    assert set(workflow["on"]) == {"workflow_dispatch", "schedule"}
+    assert workflow["on"]["workflow_dispatch"] == {}
     assert workflow["on"]["schedule"] == [{"cron": "*/15 * * * *"}]
     assert workflow["permissions"] == {
         "actions": "read",
@@ -1251,7 +1252,6 @@ def test_request_reconciler_replays_only_existing_requests() -> None:
     }
     text = (WORKFLOWS / "catalog-request-reconciler.yml").read_text("utf-8")
     for forbidden in (
-        "workflow_dispatch",
         "--method POST",
         "create_catalog_run_request",
         "catalog-optimized-run.yml",
@@ -1429,6 +1429,15 @@ def test_disabled_signed_request_reaches_the_nonexecuting_receipt_writer() -> No
     assert "CATALOG_CONTROLLER_DISABLED" in report["if"]
     assert "needs.filter.outputs.valid != 'true'" in report["if"]
     assert "needs.routing_snapshot.result == 'success'" in report["if"]
+    close = next(
+        step
+        for step in report["steps"]
+        if step.get("name") == "Close one authenticated disabled request terminally"
+    )
+    assert "CATALOG_CONTROLLER_DISABLED" in close["if"]
+    assert "--method PATCH" in close["run"]
+    assert '"catalog-run-terminal-v1"' in close["run"]
+    assert '"state_reason": "completed"' in close["run"]
 
 
 def test_terminal_pipeline_uses_real_bounded_adapters() -> None:
@@ -1461,13 +1470,13 @@ def test_only_request_receipt_writers_can_apply_fixed_atomic_terminal_patches() 
     path = WORKFLOWS / "catalog-run-controller.yml"
     workflow = _workflow(path)
     text = path.read_text("utf-8")
-    assert text.count("--method PATCH") == 1
+    assert text.count("--method PATCH") == 2
     reporter = json.dumps(
         workflow["jobs"]["report_nonexecuting_decision"], sort_keys=True
     )
     finalizer = json.dumps(workflow["jobs"]["finalize"], sort_keys=True)
-    assert "--method PATCH" not in reporter
-    assert "terminal-issue-patch.json" not in reporter
+    assert "--method PATCH" in reporter
+    assert "disabled-terminal-issue-patch.json" in reporter
     assert "--method PATCH" in finalizer
     assert "terminal-issue-patch.json" in finalizer
     receipt_script = ROOT / "scripts/prepare_catalog_terminal_request_receipt.py"
@@ -1500,7 +1509,14 @@ def test_orphan_repair_is_admitted_only_by_report_and_is_mirror_first() -> None:
     assert "request-receipt-orphan-comment.md" in rendered
     assert "prepare_catalog_request_receipt.py" in rendered
     assert "engine_optimized_catalog_v1" not in rendered
-    assert "--method PATCH" not in rendered
+    assert rendered.count("--method PATCH") == 1
+    disabled_close = next(
+        step
+        for step in steps
+        if step.get("name") == "Close one authenticated disabled request terminally"
+    )
+    assert "needs.filter.outputs.valid != 'true'" in disabled_close["if"]
+    assert "CATALOG_CONTROLLER_DISABLED" in disabled_close["if"]
 
     download = next(
         step
