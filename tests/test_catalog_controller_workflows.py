@@ -1418,6 +1418,19 @@ def test_controller_writer_jobs_use_only_declared_request_outputs() -> None:
     assert "needs.filter.outputs.issue_number" in report_text
 
 
+def test_disabled_signed_request_reaches_the_nonexecuting_receipt_writer() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    filter_job = workflow["jobs"]["filter"]
+    verify = next(step for step in filter_job["steps"] if step.get("id") == "verify")
+    report = workflow["jobs"]["report_nonexecuting_decision"]
+
+    assert "if relevant and not execution_enabled:" in verify["run"]
+    assert "parse_catalog_run_request" in verify["run"]
+    assert "CATALOG_CONTROLLER_DISABLED" in report["if"]
+    assert "needs.filter.outputs.valid != 'true'" in report["if"]
+    assert "needs.routing_snapshot.result == 'success'" in report["if"]
+
+
 def test_terminal_pipeline_uses_real_bounded_adapters() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
     text_by_job = {
