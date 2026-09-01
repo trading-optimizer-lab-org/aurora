@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 import inspect
 import json
@@ -7241,6 +7242,7 @@ def test_requester_checkpoint_protected_commit_must_match_runtime(
 ) -> None:
     fixture = _requester_recovery_fixture(tmp_path)
     _patch_requester_recovery_fakes(fixture, monkeypatch)
+    fake_run = cast(Callable[..., str], bootstrap_runner._run)
     root = fixture["root"]
     bootstrap_runner._run_requester_qualification(root, fixture["source"], COMMIT)
     complete_path = root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
@@ -7249,8 +7251,50 @@ def test_requester_checkpoint_protected_commit_must_match_runtime(
     complete = _reseal_complete_checkpoint(complete)
     complete_path.write_bytes(bootstrap_runner._canonical(complete) + b"\n")
 
+    def reject_unrelated_commit(args: list[str], **kwargs: object) -> str:
+        if args[:2] == ["git", "merge-base"]:
+            return "c" * 40
+        return fake_run(args, **kwargs)
+
+    monkeypatch.setattr(bootstrap_runner, "_run", reject_unrelated_commit)
+
     with pytest.raises(ValueError, match="REQUESTER_PROTECTED_COMMIT_MISMATCH"):
         bootstrap_runner._run_requester_qualification(root, fixture["source"], COMMIT)
+
+
+def test_requester_checkpoint_accepts_verified_ancestor_runtime_upgrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _requester_recovery_fixture(tmp_path)
+    calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
+    fake_run = cast(Callable[..., str], bootstrap_runner._run)
+    root = fixture["root"]
+    prior_commit = "b" * 40
+    first = bootstrap_runner._run_requester_qualification(
+        root, fixture["source"], prior_commit
+    )
+    terminal_path = root / bootstrap_runner.REQUESTER_TERMINAL_CHECKPOINT_FILENAME
+    complete_path = root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
+    terminal_bytes = terminal_path.read_bytes()
+    complete_bytes = complete_path.read_bytes()
+    calls.clear()
+
+    def accept_ancestor_commit(args: list[str], **kwargs: object) -> str:
+        if args[:2] == ["git", "merge-base"]:
+            assert args == ["git", "merge-base", prior_commit, COMMIT]
+            return prior_commit
+        return fake_run(args, **kwargs)
+
+    monkeypatch.setattr(bootstrap_runner, "_run", accept_ancestor_commit)
+
+    observed = bootstrap_runner._run_requester_qualification(
+        root, fixture["source"], COMMIT
+    )
+
+    assert observed == first
+    assert calls == []
+    assert terminal_path.read_bytes() == terminal_bytes
+    assert complete_path.read_bytes() == complete_bytes
 
 
 def test_requester_complete_recovers_missing_local_receipt_deterministically(
