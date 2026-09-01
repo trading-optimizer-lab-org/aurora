@@ -6813,6 +6813,10 @@ def _resume_transient_qualification_block(root: Path) -> bool:
         **expected_block,
         "reason_code": "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
     }
+    controller_receipt_invalid_block = {
+        **expected_block,
+        "reason_code": "CATALOG_BOOTSTRAP_CONTROLLER_RECEIPT_INVALID",
+    }
     qualification_not_terminal_block = {
         **expected_block,
         "reason_code": "CATALOG_BOOTSTRAP_QUALIFICATION_NOT_TERMINAL",
@@ -6825,6 +6829,7 @@ def _resume_transient_qualification_block(root: Path) -> bool:
             and blocked
             in (
                 expected_block,
+                controller_receipt_invalid_block,
                 fixed_command_block,
                 qualification_not_terminal_block,
             )
@@ -7211,12 +7216,23 @@ def _parse_terminal_controller_receipt(issue_number: int) -> dict[str, object]:
         and row.get("writer_job_id") == "report_nonexecuting_decision"
         and _SHA256.fullmatch(str(row.get("receipt_sha256", "")))
     ]
-    if len(exact) != 1:
+    if not exact:
         raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_RECEIPT_INVALID")
-    identity = {key: value for key, value in exact[0].items() if key != "receipt_sha256"}
-    if hashlib.sha256(_canonical(identity)).hexdigest() != exact[0]["receipt_sha256"]:
-        raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_RECEIPT_INVALID")
-    return exact[0]
+    expected_request_sha256 = exact[0].get("request_sha256")
+    for sequence, receipt in enumerate(exact):
+        identity = {
+            key: value for key, value in receipt.items() if key != "receipt_sha256"
+        }
+        if (
+            receipt.get("delivery_sequence") != sequence
+            or isinstance(receipt.get("delivery_sequence"), bool)
+            or not _SHA256.fullmatch(str(expected_request_sha256 or ""))
+            or receipt.get("request_sha256") != expected_request_sha256
+            or hashlib.sha256(_canonical(identity)).hexdigest()
+            != receipt["receipt_sha256"]
+        ):
+            raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_RECEIPT_INVALID")
+    return exact[-1]
 
 
 def _invoke_bootstrap_request(source: Path) -> dict[str, object]:
