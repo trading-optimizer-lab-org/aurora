@@ -6694,6 +6694,106 @@ def test_qualification_reentry_does_not_redispatch_a_checkpointed_step(
     assert dispatched.count("catalog-artifact-keeper.yml") == 1
 
 
+def test_qualification_accepts_sealed_requester_issue_already_in_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _qualification_pending_root(tmp_path)
+    source = tmp_path / "source"
+    (root / "github-activity-baseline-v1.json").write_bytes(
+        bootstrap_runner._canonical(
+            {"request_issue_numbers": [777], "heavy_run_ids": []}
+        )
+        + b"\n"
+    )
+    live_calls = 0
+    workflow_calls = 0
+    advanced: list[str] = []
+
+    def fake_live(
+        _root: Path, _commit: str, *, step_name: str | None = None
+    ) -> dict[str, object]:
+        nonlocal live_calls
+        assert step_name in {"live_2", "live_3"}
+        live_calls += 1
+        return _fake_live_receipt(100 + live_calls)
+
+    def fake_dispatch(
+        _workflow: str,
+        _commit: str,
+        *,
+        baseline_run_ids: set[int] | None = None,
+    ) -> dict[str, object]:
+        nonlocal workflow_calls
+        assert baseline_run_ids == set()
+        workflow_calls += 1
+        run_id = 200 + workflow_calls
+        return {
+            "databaseId": run_id,
+            "headSha": COMMIT,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "success",
+            "url": f"https://example.test/runs/{run_id}",
+        }
+
+    requester = {
+        "issue_number": 777,
+        "submission_key_sha256": "1" * 64,
+        "request_sha256": "2" * 64,
+        "request_id": "018f47a2-6e91-7c34-8000-000000000001",
+        "launch_ticket_sha256": "3" * 64,
+        "status_sha256": "4" * 64,
+        "requester_receipt_sha256": "5" * 64,
+        "requester_receipt_file_sha256": "6" * 64,
+        "issue_identity_sha256": "7" * 64,
+        "issue_sha256": "8" * 64,
+        "controller_receipt_sha256": "9" * 64,
+        "bootstrap_seal_sha256": "a" * 64,
+        "duplicate_call_proof_sha256": "b" * 64,
+    }
+    monkeypatch.setattr(bootstrap_runner, "_runtime_commit", lambda _root: COMMIT)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_context",
+        lambda _root: {
+            "repository": bootstrap_runner.REPOSITORY,
+            "source_commit_sha": COMMIT,
+            "source_root": str(source),
+        },
+    )
+    monkeypatch.setattr(bootstrap_runner, "_run_live_qualification", fake_live)
+    monkeypatch.setattr(bootstrap_runner, "_dispatch_workflow", fake_dispatch)
+    monkeypatch.setattr(bootstrap_runner, "_list_workflow_runs", lambda _workflow: [])
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run_requester_qualification",
+        lambda *_args, **_kwargs: requester,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_github_activity_snapshot",
+        lambda: {"request_issue_numbers": [777], "heavy_run_ids": []},
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_advance",
+        lambda _root, _state, name, _evidence: advanced.append(name),
+    )
+
+    bootstrap_runner.run_qualifications(root)
+
+    assert advanced == ["qualification_passed"]
+    qualification = bootstrap_runner._read_canonical_document(
+        root / "qualification-operation-v1.json",
+        "TEST_QUALIFICATION_RECEIPT_INVALID",
+    )
+    assert qualification["production_request_count"] == 0
+    requester_qualification = cast(
+        dict[str, object], qualification["requester_qualification"]
+    )
+    assert requester_qualification["issue_number"] == 777
+
+
 def test_corrupt_qualification_checkpoint_blocks_before_any_dispatch(
     tmp_path: Path, monkeypatch
 ) -> None:
