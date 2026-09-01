@@ -39,10 +39,12 @@ from scripts.audit_catalog_github_controls import (
     _paginate_list_rows,
     _paginate_list_rows_stable,
     _paginate_object_rows,
+    _paginate_object_rows_sample_verified,
     _paginate_object_rows_stable,
     _package_inventory_endpoint,
     _reported_shared_storage_evidence,
     _retry_transient_snapshot_collection,
+    _load_qualification_replay_snapshot,
 )
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLS = ROOT / "config/catalog_github_controls_v1.json"
@@ -1125,6 +1127,70 @@ def _write_snapshot_directory(path: Path) -> None:
     )
 
 
+def _write_ready_admission_auditor_artifact(path: Path) -> dict[str, object]:
+    inputs = protected_snapshots()
+    snapshot = inputs["snapshots"]
+    auditor = inputs["auditor"]
+    assert isinstance(snapshot, dict)
+    assert isinstance(auditor, CatalogGithubAuditorV1)
+    snapshot["observer_context"] = "github_auditor"
+    snapshot["local_agent"] = {}
+    snapshot["runtime_provenance"] = {
+        "caller_workflow": ".github/workflows/catalog-live-controls-qualification.yml",
+        "caller_job": "qualify_live_admission_controls",
+        "purpose": "admission",
+        "audit_context_sha256": "d" * 64,
+        "protected_commit_sha": "a" * 40,
+        "verified": True,
+    }
+    snapshot["observed_at"] = NOW.isoformat()
+    snapshot["github_api_observed_at"] = NOW.isoformat()
+    snapshot["auditor_installation"] = {
+        "repository_permissions": dict(auditor.required_repository_permissions),
+        "organization_permissions": dict(auditor.required_organization_permissions),
+        "enterprise_permissions": dict(auditor.required_enterprise_permissions),
+        "repositories": [auditor.repository],
+        "token_minted_in_process": True,
+        "fixed_get_endpoints_only": True,
+        "enterprise_billing_credential_kind": "classic_pat",
+        "enterprise_billing_credential_scopes": list(
+            auditor.required_enterprise_billing_token_scopes
+        ),
+        "enterprise_billing_get_only": True,
+        "enterprise_billing_write_blocked_by_client": True,
+        "enterprise_cache_verifier_credential_kind": "classic_pat",
+        "enterprise_cache_verifier_credential_scopes": list(
+            auditor.required_enterprise_cache_verifier_token_scopes
+        ),
+        "enterprise_cache_verifier_get_only": True,
+        "enterprise_cache_verifier_write_blocked_by_client": True,
+        "package_credential_kind": "oauth_device_token",
+        "package_credential_scopes": list(
+            auditor.required_package_inventory_token_scopes
+        ),
+        "package_write_blocked_by_client": True,
+    }
+    receipt = audit_catalog_github_controls(**inputs)
+    assert receipt.status == "ready"
+    path.mkdir()
+    snapshot_payload = json.dumps(
+        snapshot, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+    receipt_payload = json.dumps(
+        receipt.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    (path / "catalog_github_controls_snapshot_v1.json").write_text(
+        snapshot_payload + "\n", encoding="utf-8", newline="\n"
+    )
+    (path / "catalog_github_controls_receipt_v1.json").write_text(
+        receipt_payload + "\n", encoding="utf-8", newline="\n"
+    )
+    return snapshot
+
+
 def test_snapshot_audit_cli_is_read_only_and_writes_valid_receipt(
     tmp_path: Path,
 ) -> None:
@@ -1154,6 +1220,65 @@ def test_snapshot_audit_cli_is_read_only_and_writes_valid_receipt(
     assert receipt["status"] == "ready"
     assert len(receipt["receipt_sha256"]) == 64
     assert "private_key" not in output.read_text("utf-8").casefold()
+
+
+def test_qualification_terminal_replay_is_bound_to_fresh_ready_admission(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "admission"
+    original = _write_ready_admission_auditor_artifact(artifact)
+
+    replay = _load_qualification_replay_snapshot(
+        artifact,
+        repository="trading-optimizer-lab-org/aurora",
+        caller_workflow=".github/workflows/catalog-live-controls-qualification.yml",
+        caller_job="qualify_live_terminal_controls",
+        purpose="terminal",
+        audit_context_sha256="e" * 64,
+        protected_commit_sha="a" * 40,
+        now=NOW + timedelta(minutes=1),
+    )
+
+    assert replay["storage"] == original["storage"]
+    assert replay["runtime_provenance"] == {
+        "caller_workflow": ".github/workflows/catalog-live-controls-qualification.yml",
+        "caller_job": "qualify_live_terminal_controls",
+        "purpose": "terminal",
+        "audit_context_sha256": "e" * 64,
+        "protected_commit_sha": "a" * 40,
+        "verified": True,
+    }
+
+
+def test_qualification_terminal_replay_rejects_stale_or_tampered_snapshot(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "admission"
+    _write_ready_admission_auditor_artifact(artifact)
+    arguments = {
+        "repository": "trading-optimizer-lab-org/aurora",
+        "caller_workflow": ".github/workflows/catalog-live-controls-qualification.yml",
+        "caller_job": "qualify_live_terminal_controls",
+        "purpose": "terminal",
+        "audit_context_sha256": "e" * 64,
+        "protected_commit_sha": "a" * 40,
+    }
+
+    with pytest.raises(ValueError, match="CATALOG_QUALIFICATION_REPLAY_STALE"):
+        _load_qualification_replay_snapshot(
+            artifact,
+            **arguments,
+            now=NOW + timedelta(minutes=16),
+        )
+
+    snapshot_path = artifact / "catalog_github_controls_snapshot_v1.json"
+    snapshot_path.write_bytes(snapshot_path.read_bytes() + b" ")
+    with pytest.raises(ValueError, match="CATALOG_QUALIFICATION_REPLAY_SNAPSHOT_INVALID"):
+        _load_qualification_replay_snapshot(
+            artifact,
+            **arguments,
+            now=NOW + timedelta(minutes=1),
+        )
 
 
 def test_apply_cli_is_dry_run_by_default(tmp_path: Path) -> None:
@@ -1852,6 +1977,73 @@ def test_stable_object_pagination_requires_two_identical_complete_scans() -> Non
     assert rows == ({"id": 1}, {"id": 2})
     assert complete is True
     assert len(client.requested) == 2
+
+
+def test_sample_verified_object_pagination_rechecks_only_bounded_anchors() -> None:
+    total = 601
+    pages: dict[str, object] = {
+        f"/items?per_page=100&page={page}": {
+            "total_count": total,
+            "items": [
+                {"id": value}
+                for value in range((page - 1) * 100 + 1, min(page * 100, total) + 1)
+            ],
+        }
+        for page in range(1, 8)
+    }
+    client = _PagedClient(pages)
+
+    rows, complete = _paginate_object_rows_sample_verified(
+        client,
+        "/items",
+        root="items",
+        max_pages=7,
+    )
+
+    assert complete is True
+    assert [row["id"] for row in rows] == list(range(1, total + 1))
+    assert client.requested[:7] == [
+        f"/items?per_page=100&page={page}" for page in range(1, 8)
+    ]
+    assert client.requested[7:] == [
+        "/items?per_page=100&page=1",
+        "/items?per_page=100&page=2",
+        "/items?per_page=100&page=4",
+        "/items?per_page=100&page=5",
+        "/items?per_page=100&page=7",
+    ]
+
+
+def test_sample_verified_object_pagination_rejects_changed_anchor() -> None:
+    total = 601
+    pages: dict[str, list[object]] = {}
+    for page in range(1, 8):
+        payload = {
+            "total_count": total,
+            "items": [
+                {"id": value}
+                for value in range((page - 1) * 100 + 1, min(page * 100, total) + 1)
+            ],
+        }
+        pages[f"/items?per_page=100&page={page}"] = [payload]
+    for page in (1, 2, 4, 5, 7):
+        original = cast(
+            dict[str, object],
+            pages[f"/items?per_page=100&page={page}"][0],
+        )
+        payload = deepcopy(original)
+        if page == 4:
+            payload["items"] = [{"id": 999_999}]
+        pages[f"/items?per_page=100&page={page}"].append(payload)
+    client = _SequentialPagedClient(pages)
+
+    with pytest.raises(ValueError, match="CATALOG_GITHUB_PAGINATION_UNSTABLE"):
+        _paginate_object_rows_sample_verified(
+            client,
+            "/items",
+            root="items",
+            max_pages=7,
+        )
 
 
 def test_stable_object_pagination_rejects_change_with_same_total() -> None:

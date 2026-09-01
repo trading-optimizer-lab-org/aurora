@@ -47,6 +47,7 @@ jobs:
           caller-job: live_controls_audit_before_maintenance
           protected-commit-sha: ${{ github.sha }}
           audit-context-sha256: 0b90c2b50f081b48eb3b173b907eab0015973e536db2e8e195ff8f95b69bec42
+          qualification-replay-directory: ""
           auditor-app-id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
           auditor-private-key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
           enterprise-billing-token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}

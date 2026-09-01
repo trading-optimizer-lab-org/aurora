@@ -48,6 +48,7 @@ AUDIT_CALLER_WORKFLOWS = {
             "caller-job": "qualify_live_admission_controls",
             "protected-commit-sha": "${{ github.sha }}",
             "audit-context-sha256": "188a007b5b956430175492a1016026214d71c4ba4af0f7afc2f5dea6d8aecbe4",
+            "qualification-replay-directory": "",
         },
         "qualify_live_terminal_controls": {
             "purpose": "terminal",
@@ -55,6 +56,7 @@ AUDIT_CALLER_WORKFLOWS = {
             "caller-job": "qualify_live_terminal_controls",
             "protected-commit-sha": "${{ github.sha }}",
             "audit-context-sha256": "c32c0915943952c27734fcb52279556e3cc814a2fd6ef3d500335ceca7c0bcb3",
+            "qualification-replay-directory": "admission-controls",
         },
     },
     ".github/workflows/catalog-run-controller.yml": {
@@ -64,6 +66,7 @@ AUDIT_CALLER_WORKFLOWS = {
             "caller-job": "live_controls_audit_before_reserve",
             "protected-commit-sha": "${{ needs.prepare_admission_candidates.outputs.controls_commit_sha }}",
             "audit-context-sha256": "${{ needs.prepare_admission_candidates.outputs.audit_context_sha256 }}",
+            "qualification-replay-directory": "",
         },
         "live_controls_audit_before_terminal": {
             "purpose": "terminal",
@@ -71,6 +74,7 @@ AUDIT_CALLER_WORKFLOWS = {
             "caller-job": "live_controls_audit_before_terminal",
             "protected-commit-sha": "${{ needs.prepare_terminal_evidence.outputs.controls_commit_sha }}",
             "audit-context-sha256": "${{ needs.prepare_terminal_evidence.outputs.audit_context_sha256 }}",
+            "qualification-replay-directory": "",
         },
     },
     ".github/workflows/catalog-artifact-keeper.yml": {
@@ -80,6 +84,7 @@ AUDIT_CALLER_WORKFLOWS = {
             "caller-job": "live_controls_audit_before_maintenance",
             "protected-commit-sha": "${{ github.sha }}",
             "audit-context-sha256": "0b90c2b50f081b48eb3b173b907eab0015973e536db2e8e195ff8f95b69bec42",
+            "qualification-replay-directory": "",
         },
     },
 }
@@ -89,6 +94,7 @@ AUDIT_ACTION_INPUT_NAMES = {
     "caller-job",
     "protected-commit-sha",
     "audit-context-sha256",
+    "qualification-replay-directory",
     "auditor-app-id",
     "auditor-private-key",
     "enterprise-billing-token",
@@ -426,6 +432,9 @@ def test_live_audit_is_one_fixed_secret_consuming_composite_action() -> None:
         "AUDIT_CALLER_JOB": "${{ inputs.caller-job }}",
         "AUDIT_PROTECTED_COMMIT_SHA": "${{ inputs.protected-commit-sha }}",
         "AUDIT_CONTEXT_SHA256": "${{ inputs.audit-context-sha256 }}",
+        "QUALIFICATION_REPLAY_DIRECTORY": (
+            "${{ inputs.qualification-replay-directory }}"
+        ),
         "PYTHONPATH": "${{ github.workspace }}/..",
     }
 
@@ -659,6 +668,15 @@ def test_live_qualification_has_two_protected_action_jobs_and_one_finalizer() ->
             **AUDIT_ACTION_CREDENTIAL_WITH,
         }
     assert terminal["needs"] == "qualify_live_admission_controls"
+    replay_download = next(
+        step
+        for step in terminal["steps"]
+        if str(step.get("uses", "")).startswith("actions/download-artifact@")
+    )
+    assert replay_download["with"] == {
+        "name": "${{ needs.qualify_live_admission_controls.outputs.receipt_artifact_name }}",
+        "path": "admission-controls",
+    }
     final = jobs["verify_qualification_receipt"]
     assert final["runs-on"] == "ubuntu-24.04"
     assert final["timeout-minutes"] == 5

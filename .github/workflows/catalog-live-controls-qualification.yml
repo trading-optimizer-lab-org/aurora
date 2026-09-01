@@ -40,6 +40,7 @@ jobs:
           caller-job: qualify_live_admission_controls
           protected-commit-sha: ${{ github.sha }}
           audit-context-sha256: 188a007b5b956430175492a1016026214d71c4ba4af0f7afc2f5dea6d8aecbe4
+          qualification-replay-directory: ""
           auditor-app-id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
           auditor-private-key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
           enterprise-billing-token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
@@ -70,6 +71,11 @@ jobs:
           repository: trading-optimizer-lab-org/aurora
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download the fresh admission snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.qualify_live_admission_controls.outputs.receipt_artifact_name }}
+          path: admission-controls
       - id: controls
         name: Run protected read-only audit
         uses: ./.github/actions/catalog-live-controls-audit
@@ -79,6 +85,7 @@ jobs:
           caller-job: qualify_live_terminal_controls
           protected-commit-sha: ${{ github.sha }}
           audit-context-sha256: c32c0915943952c27734fcb52279556e3cc814a2fd6ef3d500335ceca7c0bcb3
+          qualification-replay-directory: admission-controls
           auditor-app-id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
           auditor-private-key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
           enterprise-billing-token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
