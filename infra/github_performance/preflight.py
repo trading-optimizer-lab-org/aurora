@@ -791,6 +791,7 @@ def _validate_catalog_live_audit_topology(
         "caller-job",
         "protected-commit-sha",
         "audit-context-sha256",
+        "qualification-replay-directory",
         "auditor-app-id",
         "auditor-private-key",
         "enterprise-billing-token",
