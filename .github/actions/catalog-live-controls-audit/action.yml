@@ -19,7 +19,8 @@ inputs:
     required: true
   qualification-replay-directory:
     description: Admission artifact directory used only by the no-work qualification terminal
-    required: true
+    required: false
+    default: ""
   auditor-app-id:
     description: Read-only GitHub App identifier for the audit
     required: true

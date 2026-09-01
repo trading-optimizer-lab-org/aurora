@@ -425,7 +425,6 @@ jobs:
           caller-job: live_controls_audit_before_reserve
           protected-commit-sha: ${{ needs.prepare_admission_candidates.outputs.controls_commit_sha }}
           audit-context-sha256: ${{ needs.prepare_admission_candidates.outputs.audit_context_sha256 }}
-          qualification-replay-directory: ""
           auditor-app-id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
           auditor-private-key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
           enterprise-billing-token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
@@ -1713,7 +1712,6 @@ jobs:
           caller-job: live_controls_audit_before_terminal
           protected-commit-sha: ${{ needs.prepare_terminal_evidence.outputs.controls_commit_sha }}
           audit-context-sha256: ${{ needs.prepare_terminal_evidence.outputs.audit_context_sha256 }}
-          qualification-replay-directory: ""
           auditor-app-id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
           auditor-private-key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
           enterprise-billing-token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}

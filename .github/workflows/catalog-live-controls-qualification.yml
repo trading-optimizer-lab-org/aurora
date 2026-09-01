@@ -40,7 +40,6 @@ jobs:
           caller-job: qualify_live_admission_controls
           protected-commit-sha: ${{ github.sha }}
           audit-context-sha256: 188a007b5b956430175492a1016026214d71c4ba4af0f7afc2f5dea6d8aecbe4
-          qualification-replay-directory: ""
           auditor-app-id: ${{ vars.AURORA_CATALOG_AUDITOR_APP_ID }}
           auditor-private-key: ${{ secrets.AURORA_CATALOG_AUDITOR_PRIVATE_KEY }}
           enterprise-billing-token: ${{ secrets.AURORA_CATALOG_ENTERPRISE_BILLING_TOKEN }}
