@@ -558,6 +558,7 @@ def test_ticket_missing_qualification_stays_blocked_while_ticket_is_absent(
     "reason_code",
     [
         "CATALOG_BOOTSTRAP_FIXED_COMMAND_FAILED",
+        "CATALOG_BOOTSTRAP_CONTROLLER_RECEIPT_INVALID",
         "CATALOG_BOOTSTRAP_QUALIFICATION_NOT_TERMINAL",
         "CATALOG_BOOTSTRAP_WORKFLOW_FAILED",
     ],
@@ -7549,6 +7550,82 @@ def test_second_requester_receipt_with_any_field_difference_blocks(
     assert not (
         root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
     ).exists()
+
+
+def _controller_retry_comment(
+    *, issue_number: int, sequence: int, request_sha256: str
+) -> dict[str, object]:
+    receipt: dict[str, object] = {
+        "delivery_sequence": sequence,
+        "issue_number": issue_number,
+        "protected_commit_sha": f"{sequence + 1:040x}",
+        "reason_code": "CATALOG_CONTROLLER_DISABLED",
+        "receipt_sha256": "0" * 64,
+        "request_sha256": request_sha256,
+        "state": "BLOCKED",
+        "writer_job_id": "report_nonexecuting_decision",
+    }
+    identity = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    receipt["receipt_sha256"] = hashlib.sha256(
+        bootstrap_runner._canonical(identity)
+    ).hexdigest()
+    body = (
+        "ignored human summary\n\n"
+        "<!-- AURORA_CATALOG_REQUEST_RECEIPT_V1 -->\n```json\n"
+        + bootstrap_runner._canonical(receipt).decode()
+        + "\n```\n"
+    )
+    observed_at = f"2026-08-31T17:{40 + sequence:02d}:00Z"
+    return {
+        "body": body,
+        "created_at": observed_at,
+        "updated_at": observed_at,
+        "user": {"login": "github-actions[bot]"},
+    }
+
+
+def test_terminal_controller_receipt_accepts_monotonic_equivalent_retries(
+    monkeypatch,
+) -> None:
+    request_sha256 = "a" * 64
+    comments = [
+        _controller_retry_comment(
+            issue_number=232,
+            sequence=sequence,
+            request_sha256=request_sha256,
+        )
+        for sequence in range(5)
+    ]
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda *_args, **_kwargs: json.dumps([comments]),
+    )
+
+    observed = bootstrap_runner._parse_terminal_controller_receipt(232)
+
+    assert observed["delivery_sequence"] == 4
+    assert observed["request_sha256"] == request_sha256
+
+
+def test_terminal_controller_receipt_rejects_a_sequence_gap(monkeypatch) -> None:
+    request_sha256 = "a" * 64
+    comments = [
+        _controller_retry_comment(
+            issue_number=232,
+            sequence=sequence,
+            request_sha256=request_sha256,
+        )
+        for sequence in (0, 2)
+    ]
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run",
+        lambda *_args, **_kwargs: json.dumps([comments]),
+    )
+
+    with pytest.raises(ValueError, match="CONTROLLER_RECEIPT_INVALID"):
+        bootstrap_runner._parse_terminal_controller_receipt(232)
 
 
 def test_controller_receipt_request_hash_mismatch_blocks(
