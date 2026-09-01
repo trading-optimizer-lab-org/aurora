@@ -3691,9 +3691,12 @@ def _validated_idempotent_resume_upgrade_repair(
         or operation.get("base_commit_sha") != prior_merge
         or operation.get("prior_runtime_commit_sha") != prior_merge
         or not isinstance(branch, str)
-        or not re.fullmatch(r"codex/catalog-[a-z0-9][a-z0-9-]{0,79}", branch)
         or not isinstance(pr_number, int)
         or isinstance(pr_number, bool)
+        or not (
+            re.fullmatch(r"codex/catalog-[a-z0-9][a-z0-9-]{0,79}", branch)
+            or _IDEMPOTENT_RESUME_LEGACY_BRANCHES.get(pr_number) == branch
+        )
         or pr_number <= _IDEMPOTENT_RESUME_CATCHUP_PR_NUMBER
         or operation.get("required_check") != "catalog-controller-policy"
         or not _valid_idempotent_resume_paths(operation.get("changed_paths"))

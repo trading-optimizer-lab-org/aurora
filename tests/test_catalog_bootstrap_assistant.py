@@ -5286,6 +5286,34 @@ def test_generic_runtime_upgrade_rejects_numeric_commit_or_hash_fields(
         )
 
 
+def test_generic_runtime_upgrade_accepts_exact_historical_pr240_branch(
+    tmp_path: Path,
+) -> None:
+    operation = _idempotent_resume_upgrade_repair_operation(
+        upgrade_index=34,
+        prior_merge="3" * 40,
+        repair_head="4" * 40,
+        repair_merge="5" * 40,
+        pr_number=240,
+    )
+    operation["branch"] = "fix/recover-terminal-requester-qualification"
+    path = (
+        tmp_path / "github-controls-idempotent-resume-upgrade-34-operation-v1.json"
+    )
+    path.write_bytes(bootstrap_runner._canonical(operation) + b"\n")
+
+    observed_path, observed = (
+        bootstrap_runner._validated_idempotent_resume_upgrade_repair(
+            tmp_path,
+            34,
+            {"merge_commit_sha": "3" * 40},
+        )
+    )
+
+    assert observed_path == path
+    assert observed == operation
+
+
 @pytest.mark.parametrize("invalid_index", [13.0, True])
 def test_runtime_refresh_selector_requires_strict_integer_upgrade_index(
     tmp_path: Path,
