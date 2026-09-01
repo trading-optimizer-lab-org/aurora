@@ -17,6 +17,10 @@ inputs:
   audit-context-sha256:
     description: SHA-256 digest binding the audit context
     required: true
+  qualification-replay-directory:
+    description: Admission artifact directory used only by the no-work qualification terminal
+    required: false
+    default: ""
   auditor-app-id:
     description: Read-only GitHub App identifier for the audit
     required: true
@@ -145,14 +149,19 @@ runs:
         AUDIT_CALLER_JOB: ${{ inputs.caller-job }}
         AUDIT_PROTECTED_COMMIT_SHA: ${{ inputs.protected-commit-sha }}
         AUDIT_CONTEXT_SHA256: ${{ inputs.audit-context-sha256 }}
+        QUALIFICATION_REPLAY_DIRECTORY: ${{ inputs.qualification-replay-directory }}
         PYTHONPATH: ${{ github.workspace }}/..
       run: |
         set -euo pipefail
+        mode=(--workflow-auditor --snapshot-output catalog_github_controls_snapshot_v1.json)
+        if [[ -n "$QUALIFICATION_REPLAY_DIRECTORY" ]]; then
+          mode=(--qualification-replay-directory "$QUALIFICATION_REPLAY_DIRECTORY")
+        fi
         python scripts/audit_catalog_github_controls.py \
           --repository trading-optimizer-lab-org/aurora \
           --desired config/catalog_github_controls_v1.json \
           --auditor config/catalog_github_auditor_v1.json \
-          --workflow-auditor \
+          "${mode[@]}" \
           --purpose "$AUDIT_PURPOSE" \
           --caller-workflow "$AUDIT_CALLER_WORKFLOW" \
           --caller-job "$AUDIT_CALLER_JOB" \
@@ -178,7 +187,9 @@ runs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: ${{ steps.receipt_artifact.outputs.name }}
-        path: catalog_github_controls_receipt_v1.json
+        path: |
+          catalog_github_controls_receipt_v1.json
+          catalog_github_controls_snapshot_v1.json
         if-no-files-found: error
         retention-days: 90
 

@@ -55,6 +55,7 @@ AUDIT_CALLER_WORKFLOWS = {
             "caller-job": "qualify_live_terminal_controls",
             "protected-commit-sha": "${{ github.sha }}",
             "audit-context-sha256": "c32c0915943952c27734fcb52279556e3cc814a2fd6ef3d500335ceca7c0bcb3",
+            "qualification-replay-directory": "admission-controls",
         },
     },
     ".github/workflows/catalog-run-controller.yml": {
@@ -74,13 +75,13 @@ AUDIT_CALLER_WORKFLOWS = {
         },
     },
     ".github/workflows/catalog-artifact-keeper.yml": {
-        "live_controls_audit_before_maintenance": {
-            "purpose": "maintenance",
-            "caller-workflow": ".github/workflows/catalog-artifact-keeper.yml",
-            "caller-job": "live_controls_audit_before_maintenance",
-            "protected-commit-sha": "${{ github.sha }}",
-            "audit-context-sha256": "0b90c2b50f081b48eb3b173b907eab0015973e536db2e8e195ff8f95b69bec42",
-        },
+          "live_controls_audit_before_maintenance": {
+              "purpose": "maintenance",
+              "caller-workflow": ".github/workflows/catalog-artifact-keeper.yml",
+              "caller-job": "live_controls_audit_before_maintenance",
+              "protected-commit-sha": "${{ github.sha }}",
+              "audit-context-sha256": "0b90c2b50f081b48eb3b173b907eab0015973e536db2e8e195ff8f95b69bec42",
+          },
     },
 }
 AUDIT_ACTION_INPUT_NAMES = {
@@ -89,6 +90,7 @@ AUDIT_ACTION_INPUT_NAMES = {
     "caller-job",
     "protected-commit-sha",
     "audit-context-sha256",
+    "qualification-replay-directory",
     "auditor-app-id",
     "auditor-private-key",
     "enterprise-billing-token",
@@ -356,10 +358,20 @@ def test_live_audit_is_one_fixed_secret_consuming_composite_action() -> None:
     action = _workflow(LIVE_AUDIT)
     inputs = action["inputs"]
     assert set(inputs) == AUDIT_ACTION_INPUT_NAMES
+    replay_input = inputs["qualification-replay-directory"]
+    assert replay_input == {
+        "description": (
+            "Admission artifact directory used only by the no-work "
+            "qualification terminal"
+        ),
+        "required": False,
+        "default": "",
+    }
     assert all(
         value["required"] is True
         and set(value) <= {"description", "required"}
-        for value in inputs.values()
+        for name, value in inputs.items()
+        if name != "qualification-replay-directory"
     )
     outputs = action["outputs"]
     assert set(outputs) == {
@@ -426,6 +438,9 @@ def test_live_audit_is_one_fixed_secret_consuming_composite_action() -> None:
         "AUDIT_CALLER_JOB": "${{ inputs.caller-job }}",
         "AUDIT_PROTECTED_COMMIT_SHA": "${{ inputs.protected-commit-sha }}",
         "AUDIT_CONTEXT_SHA256": "${{ inputs.audit-context-sha256 }}",
+        "QUALIFICATION_REPLAY_DIRECTORY": (
+            "${{ inputs.qualification-replay-directory }}"
+        ),
         "PYTHONPATH": "${{ github.workspace }}/..",
     }
 
@@ -659,6 +674,15 @@ def test_live_qualification_has_two_protected_action_jobs_and_one_finalizer() ->
             **AUDIT_ACTION_CREDENTIAL_WITH,
         }
     assert terminal["needs"] == "qualify_live_admission_controls"
+    replay_download = next(
+        step
+        for step in terminal["steps"]
+        if str(step.get("uses", "")).startswith("actions/download-artifact@")
+    )
+    assert replay_download["with"] == {
+        "name": "${{ needs.qualify_live_admission_controls.outputs.receipt_artifact_name }}",
+        "path": "admission-controls",
+    }
     final = jobs["verify_qualification_receipt"]
     assert final["runs-on"] == "ubuntu-24.04"
     assert final["timeout-minutes"] == 5

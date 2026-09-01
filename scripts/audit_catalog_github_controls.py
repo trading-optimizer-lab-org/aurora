@@ -34,6 +34,7 @@ from aurora.infra.sp500_megarun.catalog_authority_ledger import (
 )
 from aurora.infra.sp500_megarun.catalog_github_controls import (
     AUDITOR_CALLER_TOPOLOGY,
+    AuditorCatalogGithubControlsReceiptV1,
     CatalogGithubAuditorV1,
     CatalogGithubControlsV1,
     audit_catalog_github_controls,
@@ -611,6 +612,49 @@ def _paginate_object_rows_stable(
     return first_rows, first_complete and second_complete
 
 
+def _paginate_object_rows_sample_verified(
+    client: GhReadOnlyClient | AppReadOnlyClient | object,
+    endpoint: str,
+    *,
+    root: str,
+    max_pages: int = 100,
+) -> tuple[tuple[dict[str, object], ...], bool]:
+    """Scan once, then recheck five bounded anchors instead of rescanning history."""
+
+    rows, complete = _paginate_object_rows(
+        client,
+        endpoint,
+        root=root,
+        max_pages=max_pages,
+    )
+    if not complete:
+        return rows, False
+    page_count = max(1, math.ceil(len(rows) / 100))
+    verification_pages = sorted(
+        {
+            1,
+            page_count,
+            *(1 + ((page_count - 1) * numerator) // 4 for numerator in (1, 2, 3)),
+        }
+    )
+    for page in verification_pages:
+        payload = getattr(client, "get")(_page_endpoint(endpoint, page))
+        if not isinstance(payload, dict):
+            raise ValueError("CATALOG_GITHUB_PAGINATION_SHAPE_INVALID")
+        total = payload.get("total_count")
+        page_rows = payload.get(root)
+        expected_rows = rows[(page - 1) * 100 : page * 100]
+        if (
+            isinstance(total, bool)
+            or not isinstance(total, int)
+            or total != len(rows)
+            or not isinstance(page_rows, list)
+            or _canonical_json(page_rows) != _canonical_json(expected_rows)
+        ):
+            raise ValueError("CATALOG_GITHUB_PAGINATION_UNSTABLE")
+    return rows, True
+
+
 def _parse_utc(value: object) -> datetime | None:
     if not isinstance(value, str):
         return None
@@ -628,6 +672,91 @@ def _load_closed_json(path: Path) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError("CATALOG_PROTECTED_CONFIG_INVALID")
     return payload
+
+
+def _load_qualification_replay_snapshot(
+    directory: Path,
+    *,
+    repository: str,
+    caller_workflow: str,
+    caller_job: str,
+    purpose: str,
+    audit_context_sha256: str,
+    protected_commit_sha: str,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Rebind one fresh admission snapshot only for the no-work qualification terminal."""
+
+    if (
+        caller_workflow != ".github/workflows/catalog-live-controls-qualification.yml"
+        or caller_job != "qualify_live_terminal_controls"
+        or purpose != "terminal"
+        or not re.fullmatch(r"[0-9a-f]{64}", audit_context_sha256)
+        or not re.fullmatch(r"[0-9a-f]{40}", protected_commit_sha)
+    ):
+        raise ValueError("CATALOG_QUALIFICATION_REPLAY_CONTEXT_INVALID")
+    snapshot_path = directory / "catalog_github_controls_snapshot_v1.json"
+    receipt_path = directory / "catalog_github_controls_receipt_v1.json"
+    try:
+        snapshot_data = snapshot_path.read_bytes()
+        receipt_data = receipt_path.read_bytes()
+        snapshot_raw = _strict_json(snapshot_data.decode("utf-8"))
+        receipt_raw = _strict_json(receipt_data.decode("utf-8"))
+        if not isinstance(snapshot_raw, dict) or not isinstance(receipt_raw, dict):
+            raise ValueError("shape")
+        snapshot = cast(dict[str, object], snapshot_raw)
+        if snapshot_data != (_canonical_json(snapshot) + "\n").encode("utf-8"):
+            raise ValueError("snapshot canonical form")
+        receipt = AuditorCatalogGithubControlsReceiptV1.model_validate(receipt_raw)
+        if receipt_data != (
+            _canonical_json(receipt.model_dump(mode="json")) + "\n"
+        ).encode("utf-8"):
+            raise ValueError("receipt canonical form")
+        snapshot_sha256 = hashlib.sha256(
+            _canonical_json(snapshot).encode("utf-8")
+        ).hexdigest()
+        provenance = _dict(snapshot.get("runtime_provenance"))
+        repository_snapshot = _dict(snapshot.get("repository"))
+        admission_valid = (
+            receipt.status == "ready"
+            and receipt.repository == repository
+            and receipt.protected_commit_sha == protected_commit_sha
+            and receipt.caller_workflow
+            == ".github/workflows/catalog-live-controls-qualification.yml"
+            and receipt.caller_job == "qualify_live_admission_controls"
+            and receipt.audit_use_context == "live_qualification_admission"
+            and receipt.source_snapshot_sha256 == snapshot_sha256
+            and snapshot.get("observer_context") == "github_auditor"
+            and repository_snapshot.get("full_name") == repository
+            and repository_snapshot.get("default_branch_sha") == protected_commit_sha
+            and provenance
+            == {
+                "caller_workflow": receipt.caller_workflow,
+                "caller_job": receipt.caller_job,
+                "purpose": "admission",
+                "audit_context_sha256": receipt.audit_context_sha256,
+                "protected_commit_sha": receipt.protected_commit_sha,
+                "verified": True,
+            }
+        )
+        if not admission_valid:
+            raise ValueError("admission binding")
+    except Exception as exc:
+        raise ValueError("CATALOG_QUALIFICATION_REPLAY_SNAPSHOT_INVALID") from exc
+    current = (now or datetime.now(tz=UTC)).astimezone(UTC)
+    observed = receipt.github_api_observed_at.astimezone(UTC)
+    age = current - observed
+    if age < timedelta(seconds=-30) or age > timedelta(minutes=15):
+        raise ValueError("CATALOG_QUALIFICATION_REPLAY_STALE")
+    snapshot["runtime_provenance"] = {
+        "caller_workflow": caller_workflow,
+        "caller_job": caller_job,
+        "purpose": purpose,
+        "audit_context_sha256": audit_context_sha256,
+        "protected_commit_sha": protected_commit_sha,
+        "verified": True,
+    }
+    return snapshot
 
 
 def _authority_anchor_status(
@@ -1085,7 +1214,7 @@ def _collect_storage_snapshot(
     caller_job: str,
     purpose: str,
 ) -> tuple[dict[str, object], bool]:
-    artifacts, artifacts_complete = _paginate_object_rows_stable(
+    artifacts, artifacts_complete = _paginate_object_rows_sample_verified(
         client,
         f"/repos/{repository}/actions/artifacts",
         root="artifacts",
@@ -1633,6 +1762,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=ROOT / "config/catalog_github_auditor_v1.json",
     )
     parser.add_argument("--snapshot-dir", type=Path)
+    parser.add_argument("--snapshot-output", type=Path)
+    parser.add_argument("--qualification-replay-directory", type=Path)
     parser.add_argument("--workflow-auditor", action="store_true")
     parser.add_argument("--purpose", choices=("admission", "terminal", "maintenance"))
     parser.add_argument("--caller-workflow")
@@ -1677,7 +1808,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if not REPOSITORY_PATTERN.fullmatch(args.repository):
             raise ValueError("CATALOG_REPOSITORY_INVALID")
-        if args.snapshot_dir is not None and args.workflow_auditor:
+        selected_modes = sum(
+            (
+                args.snapshot_dir is not None,
+                args.workflow_auditor,
+                args.qualification_replay_directory is not None,
+            )
+        )
+        if selected_modes > 1 or (
+            args.snapshot_output is not None and not args.workflow_auditor
+        ):
             raise ValueError("CATALOG_AUDIT_MODE_AMBIGUOUS")
         desired = load_catalog_github_controls(args.desired)
         auditor = load_catalog_github_auditor(args.auditor)
@@ -1699,7 +1839,17 @@ def main(argv: list[str] | None = None) -> int:
                 r"[0-9a-f]{40}", args.protected_commit_sha
             ):
                 raise ValueError("CATALOG_PROTECTED_COMMIT_SHA_INVALID")
-            if args.workflow_auditor:
+            if args.qualification_replay_directory is not None:
+                snapshots = _load_qualification_replay_snapshot(
+                    args.qualification_replay_directory,
+                    repository=args.repository,
+                    caller_workflow=caller_workflow,
+                    caller_job=caller_job,
+                    purpose=purpose,
+                    audit_context_sha256=args.audit_context_sha256,
+                    protected_commit_sha=args.protected_commit_sha,
+                )
+            elif args.workflow_auditor:
                 def collect_workflow_snapshot() -> dict[str, object]:
                     with AppReadOnlyClient(
                         api_version=desired.github_api_version,
@@ -1723,6 +1873,8 @@ def main(argv: list[str] | None = None) -> int:
                 snapshots = _retry_transient_snapshot_collection(
                     collect_workflow_snapshot
                 )
+                if args.snapshot_output is not None:
+                    write_json(args.snapshot_output, snapshots)
             else:
                 client = GhReadOnlyClient(api_version=desired.github_api_version)
                 snapshots = collect_live_snapshot(
