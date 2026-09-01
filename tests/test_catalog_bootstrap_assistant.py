@@ -6788,7 +6788,10 @@ def test_qualification_accepts_sealed_requester_issue_already_in_baseline(
         "TEST_QUALIFICATION_RECEIPT_INVALID",
     )
     assert qualification["production_request_count"] == 0
-    assert qualification["requester_qualification"]["issue_number"] == 777
+    requester_qualification = cast(
+        dict[str, object], qualification["requester_qualification"]
+    )
+    assert requester_qualification["issue_number"] == 777
 
 
 def test_corrupt_qualification_checkpoint_blocks_before_any_dispatch(
