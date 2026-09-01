@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 import inspect
 import json
@@ -7241,7 +7242,7 @@ def test_requester_checkpoint_protected_commit_must_match_runtime(
 ) -> None:
     fixture = _requester_recovery_fixture(tmp_path)
     _patch_requester_recovery_fakes(fixture, monkeypatch)
-    fake_run = bootstrap_runner._run
+    fake_run = cast(Callable[..., str], bootstrap_runner._run)
     root = fixture["root"]
     bootstrap_runner._run_requester_qualification(root, fixture["source"], COMMIT)
     complete_path = root / bootstrap_runner.REQUESTER_COMPLETE_CHECKPOINT_FILENAME
@@ -7266,7 +7267,7 @@ def test_requester_checkpoint_accepts_verified_ancestor_runtime_upgrade(
 ) -> None:
     fixture = _requester_recovery_fixture(tmp_path)
     calls = _patch_requester_recovery_fakes(fixture, monkeypatch)
-    fake_run = bootstrap_runner._run
+    fake_run = cast(Callable[..., str], bootstrap_runner._run)
     root = fixture["root"]
     prior_commit = "b" * 40
     first = bootstrap_runner._run_requester_qualification(
