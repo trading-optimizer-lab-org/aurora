@@ -7950,8 +7950,27 @@ def _revalidate_requester_evidence(
     *,
     protected_commit_sha: str,
 ) -> None:
-    if evidence.get("protected_commit_sha") != protected_commit_sha:
-        raise ValueError("CATALOG_BOOTSTRAP_REQUESTER_PROTECTED_COMMIT_MISMATCH")
+    checkpoint_commit = evidence.get("protected_commit_sha")
+    if checkpoint_commit != protected_commit_sha:
+        if not isinstance(checkpoint_commit, str) or not _COMMIT.fullmatch(
+            checkpoint_commit
+        ):
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_REQUESTER_PROTECTED_COMMIT_MISMATCH"
+            )
+        try:
+            merge_base = _run(
+                ["git", "merge-base", checkpoint_commit, protected_commit_sha],
+                cwd=source,
+            )
+        except Exception as exc:
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_REQUESTER_PROTECTED_COMMIT_MISMATCH"
+            ) from exc
+        if merge_base != checkpoint_commit:
+            raise ValueError(
+                "CATALOG_BOOTSTRAP_REQUESTER_PROTECTED_COMMIT_MISMATCH"
+            )
     checkpoint_receipt = evidence.get("requester_receipt")
     checkpoint_status = evidence.get("status")
     if not isinstance(checkpoint_receipt, dict) or not isinstance(
