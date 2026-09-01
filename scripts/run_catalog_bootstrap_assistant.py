@@ -8655,7 +8655,12 @@ def run_qualifications(root: Path) -> None:
     current_requests = set(cast(list[int], current["request_issue_numbers"]))
     baseline_heavy = set(cast(list[int], baseline["heavy_run_ids"]))
     current_heavy = set(cast(list[int], current["heavy_run_ids"]))
-    if current_requests - baseline_requests != {requester["issue_number"]}:
+    requester_issue = _as_int(requester["issue_number"])
+    expected_request_delta = {requester_issue} - baseline_requests
+    if (
+        requester_issue not in current_requests
+        or current_requests - baseline_requests != expected_request_delta
+    ):
         raise ValueError("CATALOG_BOOTSTRAP_PRODUCTION_REQUEST_OBSERVED")
     if current_heavy - baseline_heavy:
         raise ValueError("CATALOG_BOOTSTRAP_PRODUCTION_RUN_OBSERVED")
