@@ -70,6 +70,24 @@ def isolated_controller_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bootstrap_runner, "_disable_controller", lambda: None)
 
 
+def test_protected_agent_can_coexist_with_user_codex() -> None:
+    assert bootstrap_runner._protected_agent_is_running(
+        [
+            {"pid": 101, "name": "ChatGPT.exe", "user": "HP"},
+            {"pid": 202, "name": "ChatGPT.exe", "user": "AURORAAgent"},
+        ]
+    )
+    assert not bootstrap_runner._protected_agent_is_running(
+        [{"pid": 101, "name": "ChatGPT.exe", "user": "HP"}]
+    )
+    assert not bootstrap_runner._protected_agent_is_running(
+        [
+            {"pid": 202, "name": "ChatGPT.exe", "user": "AURORAAgent"},
+            {"pid": 303, "name": "codex.exe", "user": "UnknownUser"},
+        ]
+    )
+
+
 def test_review_environment_loads_the_selected_checkout_in_child_process(
     tmp_path: Path, monkeypatch
 ) -> None:

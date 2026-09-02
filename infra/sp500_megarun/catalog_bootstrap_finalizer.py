@@ -99,7 +99,6 @@ def finalize_bootstrap(
     valid = (
         all(exact_true)
         and checked.agent_process_owner == "AURORAAgent"
-        and checked.hp_codex_process_count == 0
         and checked.github_controls_status == "ready"
         and checked.zero_budget_count == 3
         and len(checked.qualification_receipt_sha256s) == 3

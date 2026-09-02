@@ -49,11 +49,13 @@ def test_sandbox_persists_only_dpapi_protected_launcher_credential() -> None:
     assert "SetEnvironmentVariable" not in source
 
 
-def test_launcher_has_owner_and_hp_process_gates() -> None:
+def test_launcher_allows_hp_codex_only_alongside_protected_agent() -> None:
     source = LAUNCHER.read_text("utf-8")
-    assert "BLOCKED_CATALOG_CODEX_HP_PROCESS_ACTIVE" in source
+    assert "BLOCKED_CATALOG_CODEX_HP_PROCESS_ACTIVE" not in source
     assert "Win32_Process" in source
     assert "GetOwner" in source
     assert "AURORAAgent" in source
+    assert '$_.User -notin @($TargetIdentity, "HP")' in source
+    assert 'Where-Object { $_.User -eq $TargetIdentity }' in source
     assert "CODEX_HOME" in source
     assert "GH_TOKEN" in source

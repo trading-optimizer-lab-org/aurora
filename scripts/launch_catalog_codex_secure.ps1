@@ -22,9 +22,6 @@ function Get-CodeProcessOwners {
 }
 
 if ($CurrentIdentity -cne $TargetIdentity) {
-    if ((Get-CodeProcessOwners | Where-Object { $_.User -eq "HP" }).Count -ne 0) {
-        throw "BLOCKED_CATALOG_CODEX_HP_PROCESS_ACTIVE"
-    }
     if (-not (Test-Path -LiteralPath $CredentialPath -PathType Leaf)) {
         throw "BLOCKED_CATALOG_AGENT_CREDENTIAL_MISSING"
     }
@@ -59,7 +56,9 @@ if ($Package.PackageFamilyName -cne $PackageFamily -or $Package.Publisher -cne $
 }
 Start-Process -FilePath "explorer.exe" -ArgumentList "shell:AppsFolder\$PackageFamily!App"
 Start-Sleep -Seconds 10
-$Foreign = Get-CodeProcessOwners | Where-Object { $_.User -ne $TargetIdentity }
-if ($Foreign.Count -ne 0) {
+$Owners = @(Get-CodeProcessOwners)
+$Foreign = @($Owners | Where-Object { $_.User -notin @($TargetIdentity, "HP") })
+$Protected = @($Owners | Where-Object { $_.User -eq $TargetIdentity })
+if ($Foreign.Count -ne 0 -or $Protected.Count -eq 0) {
     throw "BLOCKED_CATALOG_CODEX_PROCESS_OWNER_INVALID"
 }

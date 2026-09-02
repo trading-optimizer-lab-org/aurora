@@ -83,6 +83,13 @@ def test_final_ready_has_zero_production_activity() -> None:
     ).hexdigest()
 
 
+def test_final_ready_allows_user_codex_to_remain_open() -> None:
+    receipt = finalize_bootstrap(
+        complete_evidence().model_copy(update={"hp_codex_process_count": 3})
+    )
+    assert receipt.result == "READY"
+
+
 def test_any_drift_or_activity_blocks_ready() -> None:
     complete = complete_evidence()
     mutations = (
