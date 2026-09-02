@@ -1601,29 +1601,6 @@ def perform_precheck(root: Path) -> None:
     )
 
 
-def _stop_hp_codex_processes() -> None:
-    command = (
-        "$rows=Get-CimInstance Win32_Process | Where-Object {$_.Name -in "
-        "@('ChatGPT.exe','codex.exe')}; foreach($p in $rows){"
-        "$o=Invoke-CimMethod -InputObject $p -MethodName GetOwner;"
-        "if($o.User -eq 'HP'){Stop-Process -Id $p.ProcessId -Force}};"
-        "Start-Sleep -Milliseconds 500; $left=Get-CimInstance Win32_Process | "
-        "Where-Object {$_.Name -in @('ChatGPT.exe','codex.exe')};"
-        "foreach($p in $left){$o=Invoke-CimMethod -InputObject $p -MethodName GetOwner;"
-        "if($o.User -eq 'HP'){exit 17}}"
-    )
-    _run(
-        [
-            "powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            command,
-        ]
-    )
-
-
 def _create_app(root: Path, kind: Literal["requester", "auditor"]) -> None:
     from infra.sp500_megarun.catalog_bootstrap_github import derive_public_binding
     from infra.sp500_megarun.catalog_bootstrap_manifest import (
@@ -8831,10 +8808,16 @@ def _codex_process_owners() -> list[dict[str, object]]:
     return rows
 
 
+def _protected_agent_is_running(owners: list[dict[str, object]]) -> bool:
+    users = [row.get("user") for row in owners]
+    return "AURORAAgent" in users and all(
+        user in {"HP", "AURORAAgent"} for user in users
+    )
+
+
 def launch_isolated_codex(root: Path) -> None:
     state = load_bootstrap_state(_state_path(root))
     source = Path(str(_context(root)["source_root"]))
-    _stop_hp_codex_processes()
     _run(
         [
             "powershell.exe",
@@ -8851,10 +8834,10 @@ def launch_isolated_codex(root: Path) -> None:
     owners: list[dict[str, object]] = []
     while time.monotonic() < deadline:
         owners = _codex_process_owners()
-        if owners and all(row.get("user") == "AURORAAgent" for row in owners):
+        if _protected_agent_is_running(owners):
             break
         time.sleep(3)
-    if not owners or any(row.get("user") != "AURORAAgent" for row in owners):
+    if not _protected_agent_is_running(owners):
         raise ValueError("CATALOG_BOOTSTRAP_AGENT_RESTART_INVALID")
     capability_raw = _run(
         [
@@ -8966,7 +8949,7 @@ def perform_final_audit(root: Path) -> None:
         )
     ):
         raise ValueError("CATALOG_BOOTSTRAP_AGENT_CAPABILITY_INVALID")
-    if not owners or any(row.get("user") != "AURORAAgent" for row in owners):
+    if not _protected_agent_is_running(owners):
         raise ValueError("CATALOG_BOOTSTRAP_AGENT_PROCESS_OWNER_INVALID")
     try:
         _set_repository_variable(ARMED_VARIABLE, "false")
@@ -9110,8 +9093,7 @@ def perform_final_audit(root: Path) -> None:
         if (
             final_production_requests
             or final_production_runs
-            or not final_owners
-            or any(row.get("user") != "AURORAAgent" for row in final_owners)
+            or not _protected_agent_is_running(final_owners)
             or not _controller_is_ready()
         ):
             raise ValueError("CATALOG_BOOTSTRAP_POST_ENABLE_DRIFT")
