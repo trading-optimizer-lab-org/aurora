@@ -6695,6 +6695,236 @@ def test_qualification_reentry_does_not_redispatch_a_checkpointed_step(
     assert dispatched.count("catalog-artifact-keeper.yml") == 1
 
 
+def _historical_bootstrap_request_issue(
+    *,
+    issue_number: int,
+    actor: str = "aurora-catalog-request-test[bot]",
+    campaign_key: str = "controller-bootstrap-qualification-v1",
+    state: str = "closed",
+) -> dict[str, object]:
+    request_id = "018f47a2-6e91-7c34-8000-000000000001"
+    payload = {
+        "authorization": "USER_EXPLICITLY_REQUESTED_NEW_CATALOG_RUN",
+        "automatic_recovery": True,
+        "campaign_definition_sha256": "1" * 64,
+        "campaign_key": campaign_key,
+        "free_resources_only": True,
+        "launch_generation": 1,
+        "launch_ticket_sha256": "2" * 64,
+        "max_same_failure_count": 3,
+        "previous_terminal_request_sha256": None,
+        "prompt_sha256": "3" * 64,
+        "request_id": request_id,
+        "requester_attestation_algorithm": "rsa-pss-sha256-v1",
+        "requester_attestation_b64": "A" * 344,
+        "requester_public_key_sha256": "4" * 64,
+        "schema_version": "1",
+    }
+    return {
+        "body": "```json\n" + bootstrap_runner._canonical(payload).decode() + "\n```\n",
+        "html_url": (
+            f"https://github.com/{bootstrap_runner.REPOSITORY}/issues/{issue_number}"
+        ),
+        "number": issue_number,
+        "state": state,
+        "title": f"[AURORA CATALOG RUN REQUEST] {request_id}",
+        "user": {"login": actor},
+    }
+
+
+def test_closed_authenticated_historical_bootstrap_request_is_not_production(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir()
+    requester = {
+        "app_slug": "aurora-catalog-request-test",
+        "public_key_sha256": "4" * 64,
+    }
+    (root / "requester-public-v1.json").write_bytes(
+        bootstrap_runner._canonical(requester) + b"\n"
+    )
+    issue = _historical_bootstrap_request_issue(issue_number=228)
+    calls: list[list[str]] = []
+
+    def fake_readonly(args: list[str], **_kwargs: object) -> str:
+        calls.append(args)
+        assert args == [
+            "gh",
+            "api",
+            f"/repos/{bootstrap_runner.REPOSITORY}/issues/228",
+        ]
+        return json.dumps(issue)
+
+    monkeypatch.setattr(bootstrap_runner, "_run_readonly_github_api", fake_readonly)
+
+    assert (
+        bootstrap_runner._production_request_issue_numbers(
+            root,
+            baseline_requests=set(),
+            current_requests={228, 232},
+            requester_issue=232,
+        )
+        == set()
+    )
+    assert calls == [
+        ["gh", "api", f"/repos/{bootstrap_runner.REPOSITORY}/issues/228"]
+    ]
+
+
+@pytest.mark.parametrize(
+    ("issue"),
+    (
+        _historical_bootstrap_request_issue(issue_number=228, state="open"),
+        _historical_bootstrap_request_issue(issue_number=228, actor="untrusted-user"),
+        _historical_bootstrap_request_issue(
+            issue_number=228, campaign_key="sp500-optimized-catalog-v1"
+        ),
+    ),
+)
+def test_untrusted_historical_request_remains_production(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    issue: dict[str, object],
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir()
+    requester = {
+        "app_slug": "aurora-catalog-request-test",
+        "public_key_sha256": "4" * 64,
+    }
+    (root / "requester-public-v1.json").write_bytes(
+        bootstrap_runner._canonical(requester) + b"\n"
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run_readonly_github_api",
+        lambda *_args, **_kwargs: json.dumps(issue),
+    )
+
+    assert bootstrap_runner._production_request_issue_numbers(
+        root,
+        baseline_requests=set(),
+        current_requests={228, 232},
+        requester_issue=232,
+    ) == {228}
+
+
+def test_qualification_accepts_authenticated_historical_requester_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _qualification_pending_root(tmp_path)
+    source = tmp_path / "source"
+    (root / "github-activity-baseline-v1.json").write_bytes(
+        bootstrap_runner._canonical(
+            {"request_issue_numbers": [], "heavy_run_ids": []}
+        )
+        + b"\n"
+    )
+    (root / "requester-public-v1.json").write_bytes(
+        bootstrap_runner._canonical(
+            {
+                "app_slug": "aurora-catalog-request-test",
+                "public_key_sha256": "4" * 64,
+            }
+        )
+        + b"\n"
+    )
+    historical_issue = _historical_bootstrap_request_issue(issue_number=228)
+    live_calls = 0
+    workflow_calls = 0
+    advanced: list[str] = []
+
+    def fake_live(
+        _root: Path, _commit: str, *, step_name: str | None = None
+    ) -> dict[str, object]:
+        nonlocal live_calls
+        assert step_name in {"live_2", "live_3"}
+        live_calls += 1
+        return _fake_live_receipt(100 + live_calls)
+
+    def fake_dispatch(
+        _workflow: str,
+        _commit: str,
+        *,
+        baseline_run_ids: set[int] | None = None,
+    ) -> dict[str, object]:
+        nonlocal workflow_calls
+        assert baseline_run_ids == set()
+        workflow_calls += 1
+        run_id = 200 + workflow_calls
+        return {
+            "databaseId": run_id,
+            "headSha": COMMIT,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "success",
+            "url": f"https://example.test/runs/{run_id}",
+        }
+
+    requester = {
+        "issue_number": 777,
+        "submission_key_sha256": "1" * 64,
+        "request_sha256": "2" * 64,
+        "request_id": "018f47a2-6e91-7c34-8000-000000000001",
+        "launch_ticket_sha256": "3" * 64,
+        "status_sha256": "4" * 64,
+        "requester_receipt_sha256": "5" * 64,
+        "requester_receipt_file_sha256": "6" * 64,
+        "issue_identity_sha256": "7" * 64,
+        "issue_sha256": "8" * 64,
+        "controller_receipt_sha256": "9" * 64,
+        "bootstrap_seal_sha256": "a" * 64,
+        "duplicate_call_proof_sha256": "b" * 64,
+    }
+    monkeypatch.setattr(bootstrap_runner, "_runtime_commit", lambda _root: COMMIT)
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_context",
+        lambda _root: {
+            "repository": bootstrap_runner.REPOSITORY,
+            "source_commit_sha": COMMIT,
+            "source_root": str(source),
+        },
+    )
+    monkeypatch.setattr(bootstrap_runner, "_run_live_qualification", fake_live)
+    monkeypatch.setattr(bootstrap_runner, "_dispatch_workflow", fake_dispatch)
+    monkeypatch.setattr(bootstrap_runner, "_list_workflow_runs", lambda _workflow: [])
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run_requester_qualification",
+        lambda *_args, **_kwargs: requester,
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_github_activity_snapshot",
+        lambda: {"request_issue_numbers": [228, 777], "heavy_run_ids": []},
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_run_readonly_github_api",
+        lambda *_args, **_kwargs: json.dumps(historical_issue),
+    )
+    monkeypatch.setattr(
+        bootstrap_runner,
+        "_advance",
+        lambda _root, _state, name, _evidence: advanced.append(name),
+    )
+
+    bootstrap_runner.run_qualifications(root)
+
+    assert advanced == ["qualification_passed"]
+    qualification = bootstrap_runner._read_canonical_document(
+        root / "qualification-operation-v1.json",
+        "TEST_QUALIFICATION_RECEIPT_INVALID",
+    )
+    assert qualification["production_request_count"] == 0
+    requester_qualification = cast(
+        dict[str, object], qualification["requester_qualification"]
+    )
+    assert requester_qualification["issue_number"] == 777
+
+
 def test_qualification_accepts_sealed_requester_issue_already_in_baseline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

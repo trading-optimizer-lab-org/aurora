@@ -7574,6 +7574,105 @@ def _load_remote_requester_issue(
     return issue, identity, hashlib.sha256(_canonical(issue)).hexdigest()
 
 
+def _historical_bootstrap_request_issue_is_authenticated(
+    issue_number: int,
+    *,
+    requester: dict[str, object],
+) -> bool:
+    if isinstance(issue_number, bool) or issue_number < 1:
+        return False
+    try:
+        raw = _run_readonly_github_api(
+            ["gh", "api", f"/repos/{REPOSITORY}/issues/{issue_number}"]
+        )
+        issue = json.loads(
+            raw,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_nonfinite_json,
+        )
+        actor = f"{requester['app_slug']}[bot]"
+        user = issue.get("user") if isinstance(issue, dict) else None
+        if (
+            not isinstance(issue, dict)
+            or issue.get("number") != issue_number
+            or issue.get("state") != "closed"
+            or "pull_request" in issue
+            or not isinstance(user, Mapping)
+            or user.get("login") != actor
+            or issue.get("html_url")
+            != f"https://github.com/{REPOSITORY}/issues/{issue_number}"
+        ):
+            return False
+        body = issue.get("body")
+        prefix = "```json\n"
+        suffix = "\n```\n"
+        if (
+            not isinstance(body, str)
+            or not body.startswith(prefix)
+            or not body.endswith(suffix)
+        ):
+            return False
+        encoded = body[len(prefix) : -len(suffix)]
+        payload = json.loads(
+            encoded,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_nonfinite_json,
+        )
+        if (
+            not isinstance(payload, dict)
+            or encoded.encode() != _canonical(payload)
+            or re.fullmatch(
+                r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                str(payload.get("request_id", "")),
+            )
+            is None
+            or not _SHA256.fullmatch(
+                str(payload.get("launch_ticket_sha256", ""))
+            )
+        ):
+            return False
+        status = {
+            "launch_ticket_sha256": payload["launch_ticket_sha256"],
+            "request_id": payload["request_id"],
+            "request_sha256": hashlib.sha256(_canonical(payload)).hexdigest(),
+        }
+        return (
+            _request_payload_from_issue(
+                issue,
+                status=status,
+                requester=requester,
+            )
+            == payload
+        )
+    except Exception:
+        return False
+
+
+def _production_request_issue_numbers(
+    root: Path,
+    *,
+    baseline_requests: set[int],
+    current_requests: set[int],
+    requester_issue: int,
+) -> set[int]:
+    candidates = current_requests - baseline_requests - {requester_issue}
+    if not candidates:
+        return set()
+    try:
+        requester = _load_requester_public_binding(root)
+    except Exception:
+        return candidates
+    authenticated = {
+        issue_number
+        for issue_number in candidates
+        if _historical_bootstrap_request_issue_is_authenticated(
+            issue_number,
+            requester=requester,
+        )
+    }
+    return candidates - authenticated
+
+
 def _validate_controller_receipt(
     receipt: dict[str, object],
     *,
@@ -8675,11 +8774,13 @@ def run_qualifications(root: Path) -> None:
     baseline_heavy = set(cast(list[int], baseline["heavy_run_ids"]))
     current_heavy = set(cast(list[int], current["heavy_run_ids"]))
     requester_issue = _as_int(requester["issue_number"])
-    expected_request_delta = {requester_issue} - baseline_requests
-    if (
-        requester_issue not in current_requests
-        or current_requests - baseline_requests != expected_request_delta
-    ):
+    production_requests = _production_request_issue_numbers(
+        root,
+        baseline_requests=baseline_requests,
+        current_requests=current_requests,
+        requester_issue=requester_issue,
+    )
+    if requester_issue not in current_requests or production_requests:
         raise ValueError("CATALOG_BOOTSTRAP_PRODUCTION_REQUEST_OBSERVED")
     if current_heavy - baseline_heavy:
         raise ValueError("CATALOG_BOOTSTRAP_PRODUCTION_RUN_OBSERVED")
@@ -8881,11 +8982,14 @@ def perform_final_audit(root: Path) -> None:
         requester = cast(
             dict[str, object], qualification["requester_qualification"]
         )
-        production_requests = set(
-            cast(list[int], current["request_issue_numbers"])
-        ) - set(cast(list[int], baseline["request_issue_numbers"])) - {
-            _as_int(requester["issue_number"])
-        }
+        production_requests = _production_request_issue_numbers(
+            root,
+            baseline_requests=set(
+                cast(list[int], baseline["request_issue_numbers"])
+            ),
+            current_requests=set(cast(list[int], current["request_issue_numbers"])),
+            requester_issue=_as_int(requester["issue_number"]),
+        )
         production_runs = set(cast(list[int], current["heavy_run_ids"])) - set(
             cast(list[int], baseline["heavy_run_ids"])
         )
@@ -8989,11 +9093,16 @@ def perform_final_audit(root: Path) -> None:
         if not _controller_is_ready():
             raise ValueError("CATALOG_BOOTSTRAP_CONTROLLER_NOT_READY")
         final_activity = _github_activity_snapshot()
-        final_production_requests = set(
-            cast(list[int], final_activity["request_issue_numbers"])
-        ) - set(cast(list[int], baseline["request_issue_numbers"])) - {
-            _as_int(requester["issue_number"])
-        }
+        final_production_requests = _production_request_issue_numbers(
+            root,
+            baseline_requests=set(
+                cast(list[int], baseline["request_issue_numbers"])
+            ),
+            current_requests=set(
+                cast(list[int], final_activity["request_issue_numbers"])
+            ),
+            requester_issue=_as_int(requester["issue_number"]),
+        )
         final_production_runs = set(
             cast(list[int], final_activity["heavy_run_ids"])
         ) - set(cast(list[int], baseline["heavy_run_ids"]))
