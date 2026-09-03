@@ -60,6 +60,7 @@ from aurora.infra.sp500_megarun.catalog_rebuildable_store_index import (
 )
 from aurora.infra.sp500_megarun.catalog_routing import CatalogRoutingCommandV1
 from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_request
+from aurora.infra.sp500_megarun.strategy_catalog import configuration_sha256
 from scripts.compile_sp500_catalog_recipes import write_recipe_dag_artifacts
 from scripts.plan_sp500_optimized_catalog_run import (
     CatalogComponentRequirementV1,
@@ -208,38 +209,45 @@ def derive_catalog_work_requirements(
     if not _SHA256.fullmatch(feature_contract_sha256):
         raise ValueError("CATALOG_FEATURE_CONTRACT_HASH_INVALID")
     source_components: dict[str, tuple[str, Mapping[str, object]]] = {}
-    for raw_row in (*catalog_rows, *selected_rows):
-        row = _mapping(raw_row, "CATALOG_CANDIDATE_ROW_INVALID")
-        raw_components = (
-            row.get("components")
-            if "components" in row
-            else (row,)
-        )
-        if not isinstance(raw_components, Sequence) or isinstance(
-            raw_components, (str, bytes)
-        ):
-            raise ValueError("CATALOG_CANDIDATE_COMPONENT_SET_INVALID")
-        for raw_component in raw_components:
-            component = _mapping(
-                raw_component,
-                "CATALOG_CANDIDATE_COMPONENT_INVALID",
-            )
-            lane_id = component.get("lane_id")
-            source_id = component.get("configuration_sha256")
-            configuration = component.get("configuration")
-            if (
-                not isinstance(lane_id, str)
-                or not lane_id
-                or not isinstance(source_id, str)
-                or not _SHA256.fullmatch(source_id)
-                or not isinstance(configuration, Mapping)
+    for rows, allow_selected_key in (
+        (catalog_rows, False),
+        (selected_rows, True),
+    ):
+        for raw_row in rows:
+            row = _mapping(raw_row, "CATALOG_CANDIDATE_ROW_INVALID")
+            raw_components = row.get("components") if "components" in row else (row,)
+            if not isinstance(raw_components, Sequence) or isinstance(
+                raw_components, (str, bytes)
             ):
-                raise ValueError("CATALOG_CANDIDATE_COMPONENT_INVALID")
-            checked = (lane_id, dict(configuration))
-            previous = source_components.get(source_id)
-            if previous is not None and previous != checked:
-                raise ValueError("COMPONENT_DEFINITION_CONFLICT")
-            source_components[source_id] = checked
+                raise ValueError("CATALOG_CANDIDATE_COMPONENT_SET_INVALID")
+            for raw_component in raw_components:
+                component = _mapping(
+                    raw_component,
+                    "CATALOG_CANDIDATE_COMPONENT_INVALID",
+                )
+                lane_id = component.get("lane_id")
+                source_id = component.get("configuration_sha256")
+                configuration = component.get("configuration")
+                if (
+                    not isinstance(lane_id, str)
+                    or not lane_id
+                    or not isinstance(configuration, Mapping)
+                ):
+                    raise ValueError("CATALOG_CANDIDATE_COMPONENT_INVALID")
+                if source_id is None and allow_selected_key:
+                    selected_key = component.get("source_strategy_key")
+                    if not isinstance(selected_key, str) or not _SHA256.fullmatch(
+                        selected_key
+                    ):
+                        raise ValueError("CATALOG_CANDIDATE_COMPONENT_INVALID")
+                    source_id = configuration_sha256(lane_id, configuration)
+                if not isinstance(source_id, str) or not _SHA256.fullmatch(source_id):
+                    raise ValueError("CATALOG_CANDIDATE_COMPONENT_INVALID")
+                checked = (lane_id, dict(configuration))
+                previous = source_components.get(source_id)
+                if previous is not None and previous != checked:
+                    raise ValueError("COMPONENT_DEFINITION_CONFLICT")
+                source_components[source_id] = checked
 
     requirements: list[CatalogComponentRequirementV1] = []
     global_by_source: dict[str, str] = {}
