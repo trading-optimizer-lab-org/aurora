@@ -1716,6 +1716,8 @@ def test_preparation_runs_outside_the_request_path_and_reuses_prepared_cache() -
     one = _workflow(WORKFLOWS / "catalog-prepare-one.yml")
     assert set(public["on"]) == {"push", "schedule"}
     assert public["on"]["push"] == {"branches": ["main"]}
+    assert public["env"] == {"PYTHONPATH": "${{ github.workspace }}/.."}
+    assert one["env"] == {"PYTHONPATH": "${{ github.workspace }}/.."}
     assert public["jobs"]["prepare"]["uses"] == (
         "./.github/workflows/catalog-prepare-one.yml"
     )

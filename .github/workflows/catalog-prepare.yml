@@ -10,6 +10,9 @@ permissions:
   actions: read
   contents: read
 
+env:
+  PYTHONPATH: ${{ github.workspace }}/..
+
 concurrency:
   group: aurora-catalog-preparation-${{ github.ref }}
   cancel-in-progress: false
