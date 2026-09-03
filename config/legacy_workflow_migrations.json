@@ -13,6 +13,12 @@
       "replacement_sha256": "ee1b75658f89ac2899263381d65ceecba59676a3f816c7f34213334c4bcfd5e1"
     },
     {
+      "path": ".github/workflows/catalog-controller-policy-check.yml",
+      "previous_sha256": "71db33aaf25a1e09da29f70098c9cb1280b1ebf81f3de46c6fe8ae1c997ac593",
+      "reason": "run the routing snapshot regression tests in the protected controller policy check",
+      "replacement_sha256": "fd62a22fea0cf5ea1ea7f13e665feaf0d0837c9c1d2b726337385e1cbd1d5991"
+    },
+    {
       "path": ".github/workflows/catalog-controller-qualification.yml",
       "previous_sha256": "cb0c7ac6999ea56dc374b11ed497a27cdf31258e5fd111016a20e84cfc50ba0f",
       "reason": "register the dynamically loaded simulator before dataclass evaluation",
