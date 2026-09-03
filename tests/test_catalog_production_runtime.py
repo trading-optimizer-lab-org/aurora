@@ -17,6 +17,7 @@ def test_real_optimized_lock_imports_the_complete_production_boundary(tmp_path: 
     receipt = verify_production_runtime(
         lock_path=ROOT / "requirements/catalog-optimized.lock",
         import_names=(
+            "cryptography",
             "numpy",
             "pandas",
             "pyarrow",
@@ -25,7 +26,14 @@ def test_real_optimized_lock_imports_the_complete_production_boundary(tmp_path: 
             "scripts.plan_sp500_optimized_catalog_run",
             "scripts.prepare_catalog_admission_candidates",
         ),
-        required_distributions=("numpy", "pandas", "pyarrow", "pydantic", "scipy"),
+        required_distributions=(
+            "cryptography",
+            "numpy",
+            "pandas",
+            "pyarrow",
+            "pydantic",
+            "scipy",
+        ),
         output_path=output,
     )
 

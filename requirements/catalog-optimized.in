@@ -1,3 +1,4 @@
 -r dehb-official.lock
+cryptography==50.0.0
 numba==0.66.0
 pydantic==2.13.4
