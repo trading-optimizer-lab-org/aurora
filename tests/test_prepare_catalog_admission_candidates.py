@@ -20,6 +20,7 @@ from aurora.infra.sp500_megarun.catalog_rebuildable_store import (
 from aurora.infra.sp500_megarun.catalog_rebuildable_store_index import (
     CatalogRebuildableStoreIndexV1,
 )
+from aurora.infra.sp500_megarun.strategy_catalog import configuration_sha256
 from aurora.infra.sp500_megarun.catalog_campaign_registry import (
     CatalogCampaignEntryV1,
     load_catalog_campaign_registry,
@@ -127,6 +128,84 @@ def test_candidate_derivation_deduplicates_global_components_without_science_com
     assert set(by_strategy["strategy-b"].component_ids) < set(
         by_strategy["strategy-a"].component_ids
     )
+
+
+def test_candidate_derivation_normalizes_selected_strategy_keys_to_component_hashes() -> None:
+    selected = {
+        "source_strategy_key": "3" * 64,
+        "lane_id": "F150",
+        "configuration": {"kind": "attention", "window": 756},
+    }
+    catalog_component = _component("F001", "1" * 64)
+
+    components, _recipes = derive_catalog_work_requirements(
+        contract=_contract(),
+        catalog_rows=[
+            {
+                "strategy_id": "strategy-a",
+                "feature_count": 1,
+                "components": [catalog_component],
+            }
+        ],
+        selected_rows=[selected],
+        feature_contract_sha256="6" * 64,
+    )
+
+    expected = configuration_sha256(
+        str(selected["lane_id"]),
+        selected["configuration"],
+    )
+    assert {item.source_configuration_sha256 for item in components} == {
+        "1" * 64,
+        expected,
+    }
+
+
+def test_candidate_derivation_rejects_an_invalid_selected_strategy_key() -> None:
+    with pytest.raises(ValueError, match="CATALOG_CANDIDATE_COMPONENT_INVALID"):
+        derive_catalog_work_requirements(
+            contract=_contract(),
+            catalog_rows=[
+                {
+                    "strategy_id": "strategy-a",
+                    "feature_count": 1,
+                    "components": [_component("F001", "1" * 64)],
+                }
+            ],
+            selected_rows=[
+                {
+                    "source_strategy_key": "not-a-sha256",
+                    "lane_id": "F150",
+                    "configuration": {"kind": "attention", "window": 756},
+                }
+            ],
+            feature_contract_sha256="6" * 64,
+        )
+
+
+def test_registered_sp500_selected_components_use_the_canonical_component_identity() -> None:
+    selected = json.loads(
+        (ROOT / "config/sp500_megarun_selected_dehb_13.json").read_text("utf-8")
+    )
+    components, _recipes = derive_catalog_work_requirements(
+        contract=_contract(),
+        catalog_rows=[
+            {
+                "strategy_id": "strategy-a",
+                "feature_count": 1,
+                "components": [_component("F001", "1" * 64)],
+            }
+        ],
+        selected_rows=selected,
+        feature_contract_sha256="6" * 64,
+    )
+
+    observed = {item.source_configuration_sha256 for item in components}
+    expected = {
+        configuration_sha256(str(item["lane_id"]), item["configuration"])
+        for item in selected
+    }
+    assert expected <= observed
 
 
 def _source_contract() -> dict[str, object]:
