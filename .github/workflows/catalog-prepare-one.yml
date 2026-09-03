@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 env:
-  PYTHONPATH: ${{ github.workspace }}/..
+  PYTHONPATH: ${{ github.workspace }}/..:${{ github.workspace }}
 
 jobs:
   preflight:
