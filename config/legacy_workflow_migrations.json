@@ -51,8 +51,8 @@
     {
       "path": ".github/workflows/catalog-prepare-one.yml",
       "previous_sha256": "3574b886740be21a68bbb62bc6d71744b74d32cb2aaed2716843a70d6ff334f9",
-      "reason": "bind catalog preparation directly to the protected event commit",
-      "replacement_sha256": "611e2dc887a60e7105fbdf5802322436d0ecb0eb8ac9c2a463d50040d27b5578"
+      "reason": "bind catalog preparation directly to the protected event commit and expose both package import roots",
+      "replacement_sha256": "11b87b16ef5e612b5bdc0cff5b24b7dd86b4dbfbfc9d91305f6ed9f94b239af6"
     },
     {
       "path": ".github/workflows/catalog-prepare.yml",
