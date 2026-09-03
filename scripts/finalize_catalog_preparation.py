@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 from math import ceil
@@ -493,7 +493,7 @@ def finalize_preparation(
     )
     receipt = CatalogPreparedReceiptV1.create(
         identity=identity,
-        generated_at=datetime.now(UTC),
+        generated_at=datetime.now(timezone.utc),
         runtime_identity_sha256=plan.runtime.identity_sha256,
         prepared_input_identity_sha256=plan.prepared_inputs.identity_sha256,
         component_store_manifest_sha256=index.index_sha256,

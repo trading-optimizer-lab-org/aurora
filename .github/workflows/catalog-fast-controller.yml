@@ -59,7 +59,7 @@ jobs:
       - name: Check out the exact protected branch
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - id: commit
@@ -324,7 +324,7 @@ jobs:
       science_sha256: ${{ needs.gate.outputs.science_sha256 }}
       execution_plan_sha256: ${{ needs.gate.outputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ needs.gate.outputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ needs.gate.outputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ needs.gate.outputs.decision_sha256 }}
       execution_mode: run
 
@@ -341,7 +341,7 @@ jobs:
       - name: Check out the exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ needs.gate.outputs.protected_commit_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Use the controller Python family

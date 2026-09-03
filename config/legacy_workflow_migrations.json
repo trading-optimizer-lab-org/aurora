@@ -13,6 +13,12 @@
       "replacement_sha256": "ee1b75658f89ac2899263381d65ceecba59676a3f816c7f34213334c4bcfd5e1"
     },
     {
+      "path": ".github/workflows/catalog-component-worker.yml",
+      "previous_sha256": "d5f49d95ffdc3c43b66ecc9417226b20e82022826095f5cbed73679b54a665e6",
+      "reason": "bind component construction to the immutable caller revision",
+      "replacement_sha256": "ef114ffad527df8cfe429cfb00fd3bf20c8551760727788fd1dd5722a0047969"
+    },
+    {
       "path": ".github/workflows/catalog-controller-policy-check.yml",
       "previous_sha256": "71db33aaf25a1e09da29f70098c9cb1280b1ebf81f3de46c6fe8ae1c997ac593",
       "reason": "run the routing snapshot regression tests in the protected controller policy check",
@@ -25,10 +31,46 @@
       "replacement_sha256": "32e3a7a97f8c1632b499967d105b49df501fc8721fde5c6cf0f55eaf0e857e05"
     },
     {
+      "path": ".github/workflows/catalog-fast-controller.yml",
+      "previous_sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e",
+      "reason": "bind the signed fast path directly to the protected event commit",
+      "replacement_sha256": "5614f473d03e16089796d8e6f55cb1ec3db58496b4852e56513fba45ea203d61"
+    },
+    {
+      "path": ".github/workflows/catalog-optimized-run.yml",
+      "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
+      "reason": "add explicit prepared and run modes while preserving the optimized engine",
+      "replacement_sha256": "9b08ada45479510da45e04c7c96059931e7d73debae5f89bfc6029c84d27a055"
+    },
+    {
+      "path": ".github/workflows/catalog-optimized-worker.yml",
+      "previous_sha256": "219b28147a66b2932d9cab120dddc5dbd5e41dcaa0017855c3691efa1e481a63",
+      "reason": "bind strategy evaluation to the immutable caller revision",
+      "replacement_sha256": "fd3caba0bd1e2bfda0640328ba1560692d94fafa54c76d893ed201f38eb12a61"
+    },
+    {
+      "path": ".github/workflows/catalog-prepare-one.yml",
+      "previous_sha256": "3574b886740be21a68bbb62bc6d71744b74d32cb2aaed2716843a70d6ff334f9",
+      "reason": "bind catalog preparation directly to the protected event commit",
+      "replacement_sha256": "611e2dc887a60e7105fbdf5802322436d0ecb0eb8ac9c2a463d50040d27b5578"
+    },
+    {
+      "path": ".github/workflows/catalog-prepare.yml",
+      "previous_sha256": "3e5cb02e4fabfa74ed3340bbb4272d5747a7090646505221f65ca8fff880ab90",
+      "reason": "remove the manually selectable code reference from automatic preparation",
+      "replacement_sha256": "8bdc5a7fedf22e4cbcd90e78e430248f1eb26fba70bf74339b618a70f1bb3a5a"
+    },
+    {
+      "path": ".github/workflows/catalog-recovery-wave.yml",
+      "previous_sha256": "3cf909d40daa6f311685d14521c89ab99aa7476691443a84eff4aac2ea66b1b4",
+      "reason": "bind selective recovery to the immutable caller revision",
+      "replacement_sha256": "da5a3ab151b9e01853b9811cffaf4dd81dd6ef7d41c7381463a494bfbe435d7f"
+    },
+    {
       "path": ".github/workflows/catalog-request-reconciler.yml",
       "previous_sha256": "4bbe04040bdd9e341a6d7b97ffd386fc8343f952e5e610057335ddb272671d00",
-      "reason": "allow bounded manual reconciliation without creating or dispatching production work",
-      "replacement_sha256": "21957f8b596642f499b6ff35ef6fec1950e17146695eb8af777705f871a676ec"
+      "reason": "route bounded reconciliation through the signed fast controller",
+      "replacement_sha256": "5cff56d0b37797cf0f72b318f4273c05bd630e8a678b1df9ad180f1317cf81b5"
     },
     {
       "path": ".github/workflows/catalog-run-controller.yml",
@@ -39,8 +81,8 @@
     {
       "path": ".github/workflows/catalog-run-watchdog.yml",
       "previous_sha256": "41fe824d7f7602f4bef23a8f9387497d78055a49cf4122ca07bb3c4b970f559a",
-      "reason": "add bounded fail-closed catalog watchdog recovery",
-      "replacement_sha256": "c770df483a09e92d5bde5459f353cdf5dcf013dbd107b64edcc593bbbbd47481"
+      "reason": "route bounded watchdog recovery through the signed fast controller",
+      "replacement_sha256": "d4292d910e4a3012fe63b2b67fe33f08b19f97663b858e9ddb095e8ce85ae05b"
     },
     {
       "path": ".github/workflows/docs.yml",

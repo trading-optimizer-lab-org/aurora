@@ -42,11 +42,16 @@ jobs:
     steps:
       - name: Check out the protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
 
       - name: Verify protected source commit
+        env:
+          REQUESTED_PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          TRUSTED_PROTECTED_COMMIT_SHA: ${{ github.sha }}
         shell: bash
-        run: test "$(git rev-parse HEAD)" = "${{ inputs.protected_commit_sha }}"
+        run: |
+          test "$REQUESTED_PROTECTED_COMMIT_SHA" = "$TRUSTED_PROTECTED_COMMIT_SHA"
+          test "$(git rev-parse HEAD)" = "$TRUSTED_PROTECTED_COMMIT_SHA"
 
       - name: Download compact worker descriptor
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -300,7 +305,7 @@ jobs:
           runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
           dependency-lock-path: requirements/catalog-optimized.lock
           expected-runtime-identity-sha256: ${{ steps.descriptor.outputs.runtime_identity_sha256 }}
-          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ steps.descriptor.outputs.numeric_profile_sha256 }}
 
       - name: Download only exact assignment, data, components, and prior checkpoint
@@ -450,7 +455,7 @@ jobs:
           --authority-id "${{ inputs.authority_id }}"
           --campaign-id "${{ inputs.campaign_id }}"
           --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
-          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --protected-commit-sha "${{ github.sha }}"
           --worker-id "${{ inputs.worker_id }}"
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
@@ -506,7 +511,7 @@ jobs:
           --authority-id "${{ inputs.authority_id }}"
           --campaign-id "${{ inputs.campaign_id }}"
           --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
-          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --protected-commit-sha "${{ github.sha }}"
           --worker-id "${{ inputs.worker_id }}"
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
@@ -563,7 +568,7 @@ jobs:
           --authority-id "${{ inputs.authority_id }}"
           --campaign-id "${{ inputs.campaign_id }}"
           --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
-          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --protected-commit-sha "${{ github.sha }}"
           --worker-id "${{ inputs.worker_id }}"
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
@@ -620,7 +625,7 @@ jobs:
           --authority-id "${{ inputs.authority_id }}"
           --campaign-id "${{ inputs.campaign_id }}"
           --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
-          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --protected-commit-sha "${{ github.sha }}"
           --worker-id "${{ inputs.worker_id }}"
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
@@ -677,7 +682,7 @@ jobs:
           --authority-id "${{ inputs.authority_id }}"
           --campaign-id "${{ inputs.campaign_id }}"
           --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
-          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --protected-commit-sha "${{ github.sha }}"
           --worker-id "${{ inputs.worker_id }}"
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
@@ -734,7 +739,7 @@ jobs:
           --authority-id "${{ inputs.authority_id }}"
           --campaign-id "${{ inputs.campaign_id }}"
           --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
-          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --protected-commit-sha "${{ github.sha }}"
           --worker-id "${{ inputs.worker_id }}"
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
@@ -791,7 +796,7 @@ jobs:
           --authority-id "${{ inputs.authority_id }}"
           --campaign-id "${{ inputs.campaign_id }}"
           --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
-          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --protected-commit-sha "${{ github.sha }}"
           --worker-id "${{ inputs.worker_id }}"
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
@@ -848,7 +853,7 @@ jobs:
           --authority-id "${{ inputs.authority_id }}"
           --campaign-id "${{ inputs.campaign_id }}"
           --execution-plan-sha256 "${{ inputs.execution_plan_sha256 }}"
-          --protected-commit-sha "${{ inputs.protected_commit_sha }}"
+          --protected-commit-sha "${{ github.sha }}"
           --worker-id "${{ inputs.worker_id }}"
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
@@ -935,7 +940,7 @@ jobs:
           AUTHORITY_ID: ${{ inputs.authority_id }}
           CAMPAIGN_ID: ${{ inputs.campaign_id }}
           EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
-          PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          PROTECTED_COMMIT_SHA: ${{ github.sha }}
           WORKER_ID: ${{ inputs.worker_id }}
           VERIFIED_ATTEMPT_ID: ${{ steps.descriptor.outputs.attempt_id }}
           COMPUTE_1: ${{ steps.compute_1.outcome }}

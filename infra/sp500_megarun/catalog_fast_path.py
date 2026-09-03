@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -49,7 +49,7 @@ def _canonical_sha256(value: object) -> str:
 def _as_utc(value: datetime, *, code: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(code)
-    return value.astimezone(UTC)
+    return value.astimezone(timezone.utc)
 
 
 def _safe_repository_file(root: Path, relative: str) -> Path:

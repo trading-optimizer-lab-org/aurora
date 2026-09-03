@@ -11,6 +11,17 @@
       },
       "workflow_count": 31,
       "workflows_sha256": "851673d91b1fcc2dfddde48091a76be7f500dddd9b68007355e9ece0f0d7d848"
+    },
+    {
+      "adoption_commit": "f56c89eeec3f93340d4fe2c482c0f147654ec33b",
+      "authorization_receipt": {
+        "actor_id": "github-user:271768688",
+        "path": "docs/readiness/catalog-controller/catalog_fast_path_workflow_baseline_adoption_v1.json",
+        "scope": "adopt_catalog_fast_path_baseline",
+        "sha256": "c3dde8acae9fa2b495da9402e23c4eaa973010e65633a4f7662cdbf3f2a600d4"
+      },
+      "workflow_count": 3,
+      "workflows_sha256": "95b97968cee150349c6c09d8c295ec5984c64fd95e2a603a71a1c7d97766dfa4"
     }
   ],
   "schema_version": "2",
@@ -87,6 +98,11 @@
       "sha256": "3346d54f7c9c32ae70f34168bfb4ce0429a87aadd9b34e3bde905bc6a04fd3ee"
     },
     {
+      "adoption_commit": "f56c89eeec3f93340d4fe2c482c0f147654ec33b",
+      "path": ".github/workflows/catalog-fast-controller.yml",
+      "sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e"
+    },
+    {
       "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
       "path": ".github/workflows/catalog-optimized-run.yml",
       "sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff"
@@ -100,6 +116,16 @@
       "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",
       "path": ".github/workflows/catalog-optimized-worker.yml",
       "sha256": "219b28147a66b2932d9cab120dddc5dbd5e41dcaa0017855c3691efa1e481a63"
+    },
+    {
+      "adoption_commit": "f56c89eeec3f93340d4fe2c482c0f147654ec33b",
+      "path": ".github/workflows/catalog-prepare-one.yml",
+      "sha256": "3574b886740be21a68bbb62bc6d71744b74d32cb2aaed2716843a70d6ff334f9"
+    },
+    {
+      "adoption_commit": "f56c89eeec3f93340d4fe2c482c0f147654ec33b",
+      "path": ".github/workflows/catalog-prepare.yml",
+      "sha256": "3e5cb02e4fabfa74ed3340bbb4272d5747a7090646505221f65ca8fff880ab90"
     },
     {
       "adoption_commit": "8a738e5ebb1223fa72eeb5248217b0e47918f8d0",

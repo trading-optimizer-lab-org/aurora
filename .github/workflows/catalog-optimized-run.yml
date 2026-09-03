@@ -110,11 +110,16 @@ jobs:
     steps:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
 
       - name: Verify protected source commit
+        env:
+          REQUESTED_PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          TRUSTED_PROTECTED_COMMIT_SHA: ${{ github.sha }}
         shell: bash
-        run: test "$(git rev-parse HEAD)" = "${{ inputs.protected_commit_sha }}"
+        run: |
+          test "$REQUESTED_PROTECTED_COMMIT_SHA" = "$TRUSTED_PROTECTED_COMMIT_SHA"
+          test "$(git rev-parse HEAD)" = "$TRUSTED_PROTECTED_COMMIT_SHA"
 
       - name: Download the controller-sealed execution plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -132,7 +137,7 @@ jobs:
           EXPECTED_SCIENCE_SHA256: ${{ inputs.science_sha256 }}
           EXPECTED_EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
           EXPECTED_EXECUTION_PROTOCOL_SHA256: ${{ inputs.execution_protocol_sha256 }}
-          EXPECTED_PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          EXPECTED_PROTECTED_COMMIT_SHA: ${{ github.sha }}
           EXPECTED_DECISION_SHA256: ${{ inputs.decision_sha256 }}
         run: |
           set -euo pipefail
@@ -480,7 +485,7 @@ jobs:
     steps:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
 
       - name: Download the controller-sealed execution plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -804,7 +809,7 @@ jobs:
           SCIENCE_SHA256: ${{ inputs.science_sha256 }}
           EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
           EXECUTION_PROTOCOL_SHA256: ${{ inputs.execution_protocol_sha256 }}
-          PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          PROTECTED_COMMIT_SHA: ${{ github.sha }}
           RUNTIME_IDENTITY: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
           PREPARED_IDENTITY: ${{ needs.engine_verify_sealed_plan.outputs.prepared_input_identity_sha256 }}
           HIT_CORE: ${{ steps.input_cache_core.outputs.cache-hit }}
@@ -1010,7 +1015,7 @@ jobs:
           runtime-manifest-path: ${{ runner.temp }}/runtime-store/runtime_manifest.json
           dependency-lock-path: requirements/catalog-optimized.lock
           expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
-          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
       - name: Publish bound runtime and prepared-input seal
@@ -1127,7 +1132,7 @@ jobs:
       science_sha256: ${{ inputs.science_sha256 }}
       execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
       worker_id: ${{ matrix.worker_id }}
       descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
@@ -1150,7 +1155,7 @@ jobs:
       science_sha256: ${{ inputs.science_sha256 }}
       execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
       worker_id: ${{ matrix.worker_id }}
       descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
@@ -1173,7 +1178,7 @@ jobs:
       science_sha256: ${{ inputs.science_sha256 }}
       execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
       worker_id: ${{ matrix.worker_id }}
       descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
@@ -1196,7 +1201,7 @@ jobs:
       science_sha256: ${{ inputs.science_sha256 }}
       execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
       worker_id: ${{ matrix.worker_id }}
       descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
@@ -1226,7 +1231,7 @@ jobs:
     steps:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
 
       - name: Download frozen component-store input manifest
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1255,7 +1260,7 @@ jobs:
           runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
           dependency-lock-path: requirements/catalog-optimized.lock
           expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
-          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
       - name: Download every current-run exact component transport
@@ -1440,7 +1445,7 @@ jobs:
       science_sha256: ${{ inputs.science_sha256 }}
       execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
       worker_id: ${{ matrix.worker_id }}
       descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
@@ -1463,7 +1468,7 @@ jobs:
       science_sha256: ${{ inputs.science_sha256 }}
       execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
       worker_id: ${{ matrix.worker_id }}
       descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
@@ -1486,7 +1491,7 @@ jobs:
       science_sha256: ${{ inputs.science_sha256 }}
       execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
       worker_id: ${{ matrix.worker_id }}
       descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
@@ -1525,7 +1530,7 @@ jobs:
     steps:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
 
       - name: Download the sealed execution plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1555,7 +1560,7 @@ jobs:
           runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
           dependency-lock-path: requirements/catalog-optimized.lock
           expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
-          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
       - name: Fetch two stable complete artifact inventories
@@ -1583,7 +1588,7 @@ jobs:
           SCIENCE_SHA256: ${{ inputs.science_sha256 }}
           EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
           EXECUTION_PROTOCOL_SHA256: ${{ inputs.execution_protocol_sha256 }}
-          PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          PROTECTED_COMMIT_SHA: ${{ github.sha }}
           DECISION_SHA256: ${{ inputs.decision_sha256 }}
           ACTIVE_RECIPE_WORKERS: ${{ needs.engine_verify_sealed_plan.outputs.active_recipe_workers }}
           EVALUATE_A_RESULT: ${{ needs.evaluate_a.result }}
@@ -1731,7 +1736,7 @@ jobs:
       science_sha256: ${{ inputs.science_sha256 }}
       execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
       campaign_state_artifact: ${{ needs.reconcile_wave_0.outputs.campaign_state_artifact }}
       attempt_manifest_artifacts: ${{ needs.reconcile_wave_0.outputs.attempt_manifest_artifacts }}
@@ -1751,7 +1756,7 @@ jobs:
       science_sha256: ${{ inputs.science_sha256 }}
       execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
       campaign_state_artifact: ${{ needs.recovery_wave_1.outputs.campaign_state_artifact }}
       attempt_manifest_artifacts: ${{ needs.recovery_wave_1.outputs.attempt_manifest_artifacts }}
@@ -1775,7 +1780,7 @@ jobs:
     steps:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
       - name: Confirm selective recovery reached merge readiness
         run: echo "CATALOG_RECOVERY_READY_TO_MERGE"
 
@@ -1799,7 +1804,7 @@ jobs:
     steps:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
 
       - name: Download exact plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1822,7 +1827,7 @@ jobs:
           runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
           dependency-lock-path: requirements/catalog-optimized.lock
           expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
-          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
       - name: Download only this sealed checkpoint group
@@ -1900,7 +1905,7 @@ jobs:
     steps:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
 
       - name: Download exact plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1923,7 +1928,7 @@ jobs:
           runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
           dependency-lock-path: requirements/catalog-optimized.lock
           expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
-          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
       - name: Download only bounded reduction groups
@@ -1976,7 +1981,7 @@ jobs:
     steps:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
 
       - name: Download exact sealed plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -2005,7 +2010,7 @@ jobs:
           runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
           dependency-lock-path: requirements/catalog-optimized.lock
           expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
-          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
       - name: Fetch only the sealed frozen reference
@@ -2051,7 +2056,7 @@ jobs:
     steps:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"
@@ -2088,7 +2093,7 @@ jobs:
               "science_sha256": "${{ inputs.science_sha256 }}",
               "execution_plan_sha256": "${{ inputs.execution_plan_sha256 }}",
               "execution_protocol_sha256": "${{ inputs.execution_protocol_sha256 }}",
-              "protected_commit_sha": "${{ inputs.protected_commit_sha }}",
+              "protected_commit_sha": "${{ github.sha }}",
           }
           Path("runtime-binding.json").write_text(
               json.dumps(binding, sort_keys=True, separators=(",", ":")) + "\n",
@@ -2166,7 +2171,7 @@ jobs:
     steps:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
 
       - name: Expose one preparation-only outcome
         id: prepare_outcome
@@ -2225,7 +2230,7 @@ jobs:
               "science_sha256": "${{ inputs.science_sha256 }}",
               "execution_plan_sha256": "${{ inputs.execution_plan_sha256 }}",
               "execution_protocol_sha256": "${{ inputs.execution_protocol_sha256 }}",
-              "protected_commit_sha": "${{ inputs.protected_commit_sha }}",
+              "protected_commit_sha": "${{ github.sha }}",
               "stage_results": stages,
               "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
           }
@@ -2342,7 +2347,7 @@ jobs:
               "science_sha256": "${{ inputs.science_sha256 }}",
               "execution_plan_sha256": "${{ inputs.execution_plan_sha256 }}",
               "execution_protocol_sha256": "${{ inputs.execution_protocol_sha256 }}",
-              "protected_commit_sha": "${{ inputs.protected_commit_sha }}",
+              "protected_commit_sha": "${{ github.sha }}",
               "engine_run_id": int(os.environ["GITHUB_RUN_ID"]),
               "engine_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
               "stage_results": stages,

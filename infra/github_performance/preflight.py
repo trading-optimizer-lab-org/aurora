@@ -1179,6 +1179,7 @@ def validate_catalog_workflow_topology(
                     )
                 )
             jobs = workflow.get("jobs", {})
+            protected_commit_guard_present = False
             if isinstance(jobs, Mapping):
                 for job_id, job in jobs.items():
                     if not isinstance(job, Mapping) or "runs-on" not in job:
@@ -1200,6 +1201,23 @@ def validate_catalog_workflow_topology(
                             )
                         )
                     steps = job.get("steps", ())
+                    for step in steps:
+                        if not isinstance(step, Mapping):
+                            continue
+                        guard_env = step.get("env")
+                        guard_run = str(step.get("run", ""))
+                        if (
+                            isinstance(guard_env, Mapping)
+                            and guard_env.get("REQUESTED_PROTECTED_COMMIT_SHA")
+                            == "${{ inputs.protected_commit_sha }}"
+                            and guard_env.get("TRUSTED_PROTECTED_COMMIT_SHA")
+                            == "${{ github.sha }}"
+                            and 'test "$REQUESTED_PROTECTED_COMMIT_SHA" = '
+                            '"$TRUSTED_PROTECTED_COMMIT_SHA"' in guard_run
+                            and 'test "$(git rev-parse HEAD)" = '
+                            '"$TRUSTED_PROTECTED_COMMIT_SHA"' in guard_run
+                        ):
+                            protected_commit_guard_present = True
                     checkout_refs = {
                         step.get("with", {}).get("ref")
                         for step in steps
@@ -1208,14 +1226,22 @@ def validate_catalog_workflow_topology(
                         and step["uses"].startswith("actions/checkout@")
                         and isinstance(step.get("with"), Mapping)
                     }
-                    if "${{ inputs.protected_commit_sha }}" not in checkout_refs:
+                    if "${{ github.sha }}" not in checkout_refs:
                         violations.append(
                             _catalog_violation(
                                 "CATALOG_PROTECTED_COMMIT_NOT_ENFORCED",
                                 item.path,
-                                f"job {job_id} does not check out the sealed commit",
+                                f"job {job_id} does not check out the trusted caller commit",
                             )
                         )
+            if not protected_commit_guard_present:
+                violations.append(
+                    _catalog_violation(
+                        "CATALOG_PROTECTED_COMMIT_GUARD_MISSING",
+                        item.path,
+                        "signed requested commit is not bound to the trusted caller commit",
+                    )
+                )
 
         if item.role == "keeper_maintenance":
             event = workflow.get("on")

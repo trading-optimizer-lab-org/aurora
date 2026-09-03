@@ -22,7 +22,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      protected_commit_sha: ${{ steps.commit.outputs.protected_commit_sha }}
       preparation_key_sha256: ${{ steps.identity.outputs.preparation_key_sha256 }}
       qualified_workers: ${{ steps.identity.outputs.qualified_workers }}
       needs_prepare: ${{ steps.route.outputs.needs_prepare }}
@@ -31,13 +30,8 @@ jobs:
       - name: Check out the exact protected branch
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
-
-      - id: commit
-        name: Bind preparation to the checked-out commit
-        shell: bash
-        run: echo "protected_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Use the controller Python family
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
@@ -53,7 +47,7 @@ jobs:
       - id: identity
         name: Derive the exact preparation identity
         env:
-          CATALOG_PROTECTED_COMMIT_SHA: ${{ steps.commit.outputs.protected_commit_sha }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ github.sha }}
         shell: bash
         run: >-
           python scripts/inspect_catalog_preparation.py
@@ -74,7 +68,7 @@ jobs:
         if: ${{ steps.restore.outputs['cache-matched-key'] != '' }}
         continue-on-error: true
         env:
-          CATALOG_PROTECTED_COMMIT_SHA: ${{ steps.commit.outputs.protected_commit_sha }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: >-
@@ -115,7 +109,7 @@ jobs:
       - name: Check out the exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ needs.preflight.outputs.protected_commit_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Use the production Python family
@@ -188,7 +182,7 @@ jobs:
       - id: prepare
         name: Build the request-independent preparation plan
         env:
-          CATALOG_PROTECTED_COMMIT_SHA: ${{ needs.preflight.outputs.protected_commit_sha }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: >-
@@ -239,7 +233,7 @@ jobs:
       science_sha256: ${{ needs.seed.outputs.science_sha256 }}
       execution_plan_sha256: ${{ needs.seed.outputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ needs.seed.outputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ needs.preflight.outputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ needs.seed.outputs.decision_sha256 }}
       execution_mode: prepare
 
@@ -254,7 +248,7 @@ jobs:
       - name: Check out the exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ needs.preflight.outputs.protected_commit_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Use the production Python family
@@ -283,7 +277,7 @@ jobs:
       - id: finalize
         name: Seal the complete hot execution bundle
         env:
-          CATALOG_PROTECTED_COMMIT_SHA: ${{ needs.preflight.outputs.protected_commit_sha }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ github.sha }}
         shell: bash
         run: >-
           python scripts/finalize_catalog_preparation.py

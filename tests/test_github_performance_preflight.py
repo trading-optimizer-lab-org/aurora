@@ -365,7 +365,16 @@ def test_catalog_control_workflow_migrations_match_current_bytes() -> None:
 
     for relative in (
         ".github/workflows/catalog-artifact-keeper.yml",
+        ".github/workflows/catalog-component-worker.yml",
+        ".github/workflows/catalog-fast-controller.yml",
+        ".github/workflows/catalog-optimized-run.yml",
+        ".github/workflows/catalog-optimized-worker.yml",
+        ".github/workflows/catalog-prepare-one.yml",
+        ".github/workflows/catalog-prepare.yml",
+        ".github/workflows/catalog-recovery-wave.yml",
+        ".github/workflows/catalog-request-reconciler.yml",
         ".github/workflows/catalog-run-controller.yml",
+        ".github/workflows/catalog-run-watchdog.yml",
     ):
         workflow = repo_root / relative
         assert classify_workflow(
@@ -586,8 +595,11 @@ def test_internal_helper_exception_is_path_scoped(tmp_path: Path) -> None:
 def test_repository_allowlist_has_frozen_adoption_metadata() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     allowlist = load_legacy_workflow_allowlist(repo_root=repo_root)
-    assert len(allowlist) == 130
+    assert len(allowlist) == 133
     assert ".github/workflows/tests.yml" in allowlist
+    assert ".github/workflows/catalog-fast-controller.yml" in allowlist
+    assert ".github/workflows/catalog-prepare-one.yml" in allowlist
+    assert ".github/workflows/catalog-prepare.yml" in allowlist
     assert ".github/workflows/catalog-run-controller.yml" in allowlist
     assert ".github/workflows/sp500-atlas-run.yml" in allowlist
 
@@ -711,7 +723,7 @@ def _write_topology_fixture(
         ({"action": "actions/checkout@v4"}, "CATALOG_ACTION_NOT_PINNED"),
         (
             {"checkout_ref": "${{ github.sha }}"},
-            "CATALOG_PROTECTED_COMMIT_NOT_ENFORCED",
+            "CATALOG_PROTECTED_COMMIT_GUARD_MISSING",
         ),
         ({"run": "gh workflow run unsafe.yml"}, "CATALOG_NESTED_DISPATCH"),
         (

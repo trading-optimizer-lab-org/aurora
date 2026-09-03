@@ -39,11 +39,16 @@ jobs:
     steps:
       - name: Check out the protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
 
       - name: Verify protected source commit
+        env:
+          REQUESTED_PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          TRUSTED_PROTECTED_COMMIT_SHA: ${{ github.sha }}
         shell: bash
-        run: test "$(git rev-parse HEAD)" = "${{ inputs.protected_commit_sha }}"
+        run: |
+          test "$REQUESTED_PROTECTED_COMMIT_SHA" = "$TRUSTED_PROTECTED_COMMIT_SHA"
+          test "$(git rev-parse HEAD)" = "$TRUSTED_PROTECTED_COMMIT_SHA"
 
       - name: Download the compact descriptor bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -244,7 +249,7 @@ jobs:
           runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
           dependency-lock-path: requirements/catalog-optimized.lock
           expected-runtime-identity-sha256: ${{ steps.descriptor.outputs.runtime_identity_sha256 }}
-          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ steps.descriptor.outputs.numeric_profile_sha256 }}
 
       - name: Download exact assignment and prepared input partitions
