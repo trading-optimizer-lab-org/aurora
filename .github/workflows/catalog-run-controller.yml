@@ -16,6 +16,7 @@ permissions:
 
 env:
   PYTHONPATH: ${{ github.workspace }}/..
+  CATALOG_AUTHORITY_ISSUE_NUMBER: ${{ vars.CATALOG_AUTHORITY_ISSUE_NUMBER }}
 
 jobs:
   issue_tamper_guard:

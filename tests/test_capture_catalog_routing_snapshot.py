@@ -12,6 +12,7 @@ import zipfile
 
 import pytest
 
+import scripts.capture_catalog_routing_snapshot as capture_script
 from aurora.infra.sp500_megarun.catalog_authority_ledger import (
     AuthorityState,
     append_authority_record,
@@ -42,6 +43,19 @@ from test_catalog_routing_snapshot import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class _RepositoryIdentityClient:
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+
+    def get_json(self, url: str):
+        self.urls.append(url)
+        if url == f"/repos/{REPOSITORY}":
+            return {"full_name": REPOSITORY, "node_id": "R_repo"}, object()
+        if url == f"/repos/{REPOSITORY}/git/ref/heads/main":
+            return {"object": {"sha": HEAD}}, object()
+        raise AssertionError(f"unexpected GitHub read: {url}")
 
 
 def _record():
@@ -115,6 +129,52 @@ def test_capture_cli_has_no_arbitrary_network_or_command_surface() -> None:
     assert "--issue-number" in result.stdout
     for forbidden in ("--repository", "--url", "--token", "--command", "--workflow"):
         assert forbidden not in result.stdout
+
+
+def test_repository_identity_uses_workflow_variable_without_variables_api(
+    monkeypatch,
+) -> None:
+    client = _RepositoryIdentityClient()
+    monkeypatch.setenv("CATALOG_AUTHORITY_ISSUE_NUMBER", str(AUTHORITY_NUMBER))
+
+    repository, variable, protected_ref = (
+        capture_script._repository_identity_snapshot(
+            client=client,
+            repository=REPOSITORY,
+            variable_name="CATALOG_AUTHORITY_ISSUE_NUMBER",
+        )
+    )
+
+    assert client.urls == [
+        f"/repos/{REPOSITORY}",
+        f"/repos/{REPOSITORY}/git/ref/heads/main",
+    ]
+    assert repository == {"full_name": REPOSITORY, "node_id": "R_repo"}
+    assert variable == {
+        "name": "CATALOG_AUTHORITY_ISSUE_NUMBER",
+        "source": "github_actions_vars_context",
+        "value": str(AUTHORITY_NUMBER),
+    }
+    assert protected_ref == {"object": {"sha": HEAD}}
+
+
+@pytest.mark.parametrize("value", ("", "0", "01", "not-a-number", " 1"))
+def test_repository_identity_rejects_invalid_workflow_variable(
+    monkeypatch,
+    value: str,
+) -> None:
+    client = _RepositoryIdentityClient()
+    monkeypatch.setenv("CATALOG_AUTHORITY_ISSUE_NUMBER", value)
+
+    with pytest.raises(
+        ValueError,
+        match="CATALOG_ROUTING_GITHUB_SNAPSHOT_INVALID",
+    ):
+        capture_script._repository_identity_snapshot(
+            client=client,
+            repository=REPOSITORY,
+            variable_name="CATALOG_AUTHORITY_ISSUE_NUMBER",
+        )
 
 
 def test_mirror_zip_accepts_only_one_exact_canonical_record() -> None:

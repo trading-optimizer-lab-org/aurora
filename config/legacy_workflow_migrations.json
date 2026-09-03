@@ -13,6 +13,12 @@
       "replacement_sha256": "ee1b75658f89ac2899263381d65ceecba59676a3f816c7f34213334c4bcfd5e1"
     },
     {
+      "path": ".github/workflows/catalog-controller-policy-check.yml",
+      "previous_sha256": "71db33aaf25a1e09da29f70098c9cb1280b1ebf81f3de46c6fe8ae1c997ac593",
+      "reason": "run the routing snapshot regression tests in the protected controller policy check",
+      "replacement_sha256": "fd62a22fea0cf5ea1ea7f13e665feaf0d0837c9c1d2b726337385e1cbd1d5991"
+    },
+    {
       "path": ".github/workflows/catalog-controller-qualification.yml",
       "previous_sha256": "cb0c7ac6999ea56dc374b11ed497a27cdf31258e5fd111016a20e84cfc50ba0f",
       "reason": "register the dynamically loaded simulator before dataclass evaluation",
@@ -27,8 +33,8 @@
     {
       "path": ".github/workflows/catalog-run-controller.yml",
       "previous_sha256": "b2dc75b1805a9ad1efa42f56f1a3f36258669cc5e1a395e59edad26eea8ecd06",
-      "reason": "compile and match the current disabled receipt by immutable hash while retaining history",
-      "replacement_sha256": "53437be691a069778254c54d546807935fc156b4ef9be921c9dec98ced6b3a55"
+      "reason": "read the protected authority issue through the GitHub Actions variables context while retaining history",
+      "replacement_sha256": "dd4cc1cf5ddd85840342325040b9979994a600d1fa5c6afc36eac1f0ff3788d8"
     },
     {
       "path": ".github/workflows/catalog-run-watchdog.yml",
