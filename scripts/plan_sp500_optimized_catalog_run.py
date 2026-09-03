@@ -405,10 +405,24 @@ def build_global_reuse_execution_plan(
     qualifications: tuple[BundleLayoutQualificationV1, ...],
     reduction_projection: MergeResourceProjectionV1,
     hierarchical_reduction_projection: MergeResourceProjectionV1,
+    preparation_only: bool = False,
+    hot_checkpoint_upload_seconds_p95: float | None = None,
+    worker_count_override: int | None = None,
 ) -> CatalogGlobalReuseExecutionPlanV1:
     """Build a deterministic cold/warm/partial plan before reservation."""
     if not component_requirements or not recipes:
         raise ValueError("CATALOG_GLOBAL_REUSE_WORKLOAD_EMPTY")
+    worker_count = (
+        contract.execution.workers
+        if worker_count_override is None
+        else worker_count_override
+    )
+    if (
+        isinstance(worker_count, bool)
+        or not isinstance(worker_count, int)
+        or not 1 <= worker_count <= 360
+    ):
+        raise ValueError("CATALOG_WORKER_CEILING_INVALID")
     required_by_id = {
         requirement.component_id: requirement
         for requirement in component_requirements
@@ -447,7 +461,6 @@ def build_global_reuse_execution_plan(
         != "central"
     ):
         raise ValueError("CATALOG_HIERARCHICAL_REDUCTION_MARGIN_UNPROVEN")
-    layout = select_qualified_bundle_layout(qualifications)
     required_component_ids = tuple(sorted(required_by_id))
     selected_component_candidates = select_component_store_candidates(
         tuple(resolved.values()),
@@ -471,6 +484,40 @@ def build_global_reuse_execution_plan(
         for component_id in required_component_ids
         if component_id not in cached_set
     )
+    layout = (
+        select_qualified_bundle_layout(qualifications)
+        if qualifications
+        else None
+    )
+    if layout is not None:
+        selected_bundle_count = layout.bundle_count
+        checkpoint_upload_seconds_p95 = layout.checkpoint_upload_seconds_p95
+        projected_cache_uploads = layout.projected_cache_uploads_per_minute
+        projected_cache_downloads = layout.projected_cache_downloads_per_minute
+        projected_component_download_bytes = (
+            layout.projected_component_download_bytes
+        )
+    elif preparation_only:
+        selected_bundle_count = 96 if pending_component_ids else 8
+        checkpoint_upload_seconds_p95 = 0.0
+        projected_cache_uploads = 0
+        projected_cache_downloads = 0
+        projected_component_download_bytes = sum(
+            required_by_id[item].estimated_bytes for item in pending_component_ids
+        )
+    elif pending_component_ids:
+        raise ValueError("CATALOG_PREPARATION_REQUIRED")
+    else:
+        if (
+            hot_checkpoint_upload_seconds_p95 is None
+            or hot_checkpoint_upload_seconds_p95 < 0
+        ):
+            raise ValueError("CATALOG_HOT_CHECKPOINT_EVIDENCE_REQUIRED")
+        selected_bundle_count = 8
+        checkpoint_upload_seconds_p95 = hot_checkpoint_upload_seconds_p95
+        projected_cache_uploads = 0
+        projected_cache_downloads = 0
+        projected_component_download_bytes = 0
 
     runtime_candidate = resolved.get(
         ("runtime", "runtime", str(runtime_identity_sha256))
@@ -552,7 +599,7 @@ def build_global_reuse_execution_plan(
 
     pending_bundle_count = min(
         len(pending_component_ids),
-        layout.bundle_count,
+        selected_bundle_count,
         contract.execution.component_workers,
     )
     component_bins: list[list[str]] = [
@@ -764,6 +811,17 @@ def build_global_reuse_execution_plan(
         > contract.rebuildable_store_execution.maximum_component_cache_bundles_per_campaign
     ):
         raise ValueError("CATALOG_COMPONENT_CACHE_BUNDLE_BUDGET_EXCEEDED")
+    if layout is None and not pending_component_ids:
+        selected_bundle_count = next(
+            (
+                count
+                for count in (8, 16, 32, 64, 96, 128)
+                if count >= component_cache_bundle_count
+            ),
+            0,
+        )
+        if selected_bundle_count == 0:
+            raise ValueError("CATALOG_COMPONENT_CACHE_BUNDLE_BUDGET_EXCEEDED")
     component_assignment_by_id = {
         component_id: assignment
         for assignment in (
@@ -775,7 +833,7 @@ def build_global_reuse_execution_plan(
     if set(component_assignment_by_id) != set(required_component_ids):
         raise ValueError("CATALOG_COMPONENT_ASSIGNMENT_COVERAGE_INVALID")
 
-    recipe_worker_count = min(contract.execution.workers, len(recipes))
+    recipe_worker_count = min(worker_count, len(recipes))
     recipe_bins: list[list[CatalogRecipeRequirementV1]] = [
         [] for _ in range(recipe_worker_count)
     ]
@@ -805,6 +863,12 @@ def build_global_reuse_execution_plan(
     unconsumed_component_ids = set(required_component_ids) - consumed_component_ids
     if unconsumed_component_ids:
         recipe_components[0].update(unconsumed_component_ids)
+    if layout is None and not pending_component_ids:
+        projected_component_download_bytes = sum(
+            required_by_id[component_id].estimated_bytes
+            for component_ids in recipe_components
+            for component_id in component_ids
+        )
 
     recipe_data_artifacts = _partition_artifacts_for_datasets(
         partition_artifacts=partition_artifacts,
@@ -841,7 +905,7 @@ def build_global_reuse_execution_plan(
         )
         slots = select_checkpoint_slot_count(
             projected_worker_seconds_p99=recipe_loads[worker_id],
-            upload_verify_seconds_p95=layout.checkpoint_upload_seconds_p95,
+            upload_verify_seconds_p95=checkpoint_upload_seconds_p95,
         )
         assignment_artifact = _payload_bundle_artifact(
             family="recipe-assignments",
@@ -986,7 +1050,7 @@ def build_global_reuse_execution_plan(
         raise ValueError("CATALOG_CACHE_ENTRY_BUDGET_EXCEEDED")
     cache_uploads = max(
         new_cache_entries,
-        layout.projected_cache_uploads_per_minute,
+        projected_cache_uploads,
     )
     observed_cache_downloads = (
         len(cached_component_assignments)
@@ -995,7 +1059,7 @@ def build_global_reuse_execution_plan(
     )
     cache_downloads = max(
         observed_cache_downloads,
-        layout.projected_cache_downloads_per_minute,
+        projected_cache_downloads,
     )
     if (
         cache_uploads
@@ -1010,7 +1074,7 @@ def build_global_reuse_execution_plan(
         for assignment in checked_recipe_assignments
     )
     unique_bytes = sum(item.estimated_bytes for item in component_requirements)
-    projected_download_bytes = layout.projected_component_download_bytes
+    projected_download_bytes = projected_component_download_bytes
     amplification = projected_download_bytes / unique_bytes
     matrix_bytes = _compact_matrix_bytes(
         component_matrix_a,
@@ -1046,7 +1110,7 @@ def build_global_reuse_execution_plan(
         "recipe_matrix_c": recipe_matrix_c,
         "runtime": runtime,
         "prepared_inputs": prepared_inputs,
-        "selected_component_bundle_count": layout.bundle_count,
+        "selected_component_bundle_count": selected_bundle_count,
         "component_cache_bundle_count": component_cache_bundle_count,
         "new_cache_entry_count": new_cache_entries,
         "cache_uploads_per_minute": cache_uploads,

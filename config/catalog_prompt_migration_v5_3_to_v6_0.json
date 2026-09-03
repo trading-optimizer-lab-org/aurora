@@ -2,8 +2,8 @@
   "schema_version": "1",
   "source_prompt_version": "5.3",
   "source_prompt_sha256": "6be6180a40c82298c7e6eef6f531344d90979aea50364a2056d2ad3dab601a6b",
-  "active_prompt_version": "6.0-CONTROLLER",
-  "active_prompt_sha256": "11819c62d14d489684f17057e55cc0f0b3c71a60759b46557c090a54d90a5859",
+  "active_prompt_version": "7.0-FAST-PATH",
+  "active_prompt_sha256": "fac44360844f11413d6dc9e41e036903b5fa94d280289a879ae05561ee00b621",
   "spans": [
     {
       "start_line": 1,

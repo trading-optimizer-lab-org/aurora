@@ -11,6 +11,7 @@ on:
       execution_protocol_sha256: {required: true, type: string}
       protected_commit_sha: {required: true, type: string}
       decision_sha256: {required: true, type: string}
+      execution_mode: {required: false, type: string, default: run}
     outputs:
       campaign_state:
         value: ${{ jobs.campaign_outcome.outputs.campaign_state }}
@@ -503,8 +504,15 @@ jobs:
           lookup-only: false
           fail-on-cache-miss: false
 
+      - name: Refuse runtime construction in a requested run
+        if: ${{ inputs.execution_mode == 'run' && steps.runtime_cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: |
+          echo "CATALOG_PREPARATION_CACHE_MISSING:runtime" >&2
+          exit 1
+
       - name: Validate the complete hashed dependency supply
-        if: ${{ steps.runtime_cache.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.runtime_cache.outputs.cache-hit != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -529,7 +537,7 @@ jobs:
 
       - name: Build the one locked runtime store
         id: runtime_build
-        if: ${{ steps.runtime_cache.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.runtime_cache.outputs.cache-hit != 'true' }}
         shell: bash
         env:
           RUNTIME_MODE: ${{ needs.engine_verify_sealed_plan.outputs.runtime_mode }}
@@ -614,7 +622,7 @@ jobs:
           PY
 
       - name: Save exact immutable runtime cache
-        if: ${{ steps.runtime_cache.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.runtime_cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -747,8 +755,15 @@ jobs:
             echo "has_missing=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Refuse input preparation in a requested run
+        if: ${{ inputs.execution_mode == 'run' && steps.input_decision.outputs.has_missing == 'true' }}
+        shell: bash
+        run: |
+          echo "CATALOG_PREPARATION_CACHE_MISSING:prepared_input" >&2
+          exit 1
+
       - name: Download and verify the frozen train-only source once
-        if: ${{ steps.input_decision.outputs.has_missing == 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.input_decision.outputs.has_missing == 'true' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -915,7 +930,7 @@ jobs:
           PY
 
       - name: Save prepared core cache
-        if: ${{ steps.input_cache_core.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.input_cache_core.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -923,7 +938,7 @@ jobs:
           key: ${{ steps.prepared_keys.outputs.cache_key_core }}
 
       - name: Save prepared D_CBOE_PCR cache
-        if: ${{ steps.input_cache_d_cboe_pcr.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.input_cache_d_cboe_pcr.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -931,7 +946,7 @@ jobs:
           key: ${{ steps.prepared_keys.outputs.cache_key_d_cboe_pcr }}
 
       - name: Save prepared D_CFTC_LEGACY cache
-        if: ${{ steps.input_cache_d_cftc_legacy.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.input_cache_d_cftc_legacy.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -939,7 +954,7 @@ jobs:
           key: ${{ steps.prepared_keys.outputs.cache_key_d_cftc_legacy }}
 
       - name: Save prepared D_CFTC cache
-        if: ${{ steps.input_cache_d_cftc.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.input_cache_d_cftc.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -947,7 +962,7 @@ jobs:
           key: ${{ steps.prepared_keys.outputs.cache_key_d_cftc }}
 
       - name: Save prepared D_Z1 cache
-        if: ${{ steps.input_cache_d_z1.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.input_cache_d_z1.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -955,7 +970,7 @@ jobs:
           key: ${{ steps.prepared_keys.outputs.cache_key_d_z1 }}
 
       - name: Save prepared federal block cache
-        if: ${{ steps.input_cache_d_fed.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.input_cache_d_fed.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -963,7 +978,7 @@ jobs:
           key: ${{ steps.prepared_keys.outputs.cache_key_d_fed }}
 
       - name: Save prepared D_MACRO_PIT cache
-        if: ${{ steps.input_cache_d_macro_pit.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.input_cache_d_macro_pit.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -971,7 +986,7 @@ jobs:
           key: ${{ steps.prepared_keys.outputs.cache_key_d_macro_pit }}
 
       - name: Save prepared D_FRENCH_US cache
-        if: ${{ steps.input_cache_d_french_us.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.input_cache_d_french_us.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -979,7 +994,7 @@ jobs:
           key: ${{ steps.prepared_keys.outputs.cache_key_d_french_us }}
 
       - name: Save prepared D_FED_H15_H10 cache
-        if: ${{ steps.input_cache_d_fed_h15_h10.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.execution_mode == 'prepare' && steps.input_cache_d_fed_h15_h10.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -1396,7 +1411,7 @@ jobs:
         if: ${{ steps.store_index.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: catalog-rebuildable-store-index-v1
+          name: ${{ inputs.execution_mode == 'prepare' && format('catalog-rebuildable-store-index-prepared-{0}', inputs.authority_id) || 'catalog-rebuildable-store-index-v1' }}
           path: ${{ runner.temp }}/catalog-rebuildable-store-index-v1.json
           if-no-files-found: error
           retention-days: 90
@@ -1412,7 +1427,7 @@ jobs:
 
   evaluate_a:
     needs: [engine_verify_sealed_plan, verify_component_store]
-    if: ${{ needs.engine_verify_sealed_plan.outputs.recipe_matrix_a_count != '0' }}
+    if: ${{ inputs.execution_mode == 'run' && needs.engine_verify_sealed_plan.outputs.recipe_matrix_a_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -1435,7 +1450,7 @@ jobs:
 
   evaluate_b:
     needs: [engine_verify_sealed_plan, verify_component_store]
-    if: ${{ needs.engine_verify_sealed_plan.outputs.recipe_matrix_b_count != '0' }}
+    if: ${{ inputs.execution_mode == 'run' && needs.engine_verify_sealed_plan.outputs.recipe_matrix_b_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -1458,7 +1473,7 @@ jobs:
 
   evaluate_c:
     needs: [engine_verify_sealed_plan, verify_component_store]
-    if: ${{ needs.engine_verify_sealed_plan.outputs.recipe_matrix_c_count != '0' }}
+    if: ${{ inputs.execution_mode == 'run' && needs.engine_verify_sealed_plan.outputs.recipe_matrix_c_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -1487,7 +1502,7 @@ jobs:
       - evaluate_b
       - evaluate_c
     if: >-
-      ${{ always() &&
+      ${{ inputs.execution_mode == 'run' && always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.verify_component_store.result == 'success' &&
       needs.evaluate_a.result != 'skipped' &&
@@ -1706,7 +1721,7 @@ jobs:
 
   recovery_wave_1:
     needs: reconcile_wave_0
-    if: ${{ always() && (needs.reconcile_wave_0.outputs.status == 'retry' || needs.reconcile_wave_0.outputs.status == 'replan') }}
+    if: ${{ inputs.execution_mode == 'run' && always() && (needs.reconcile_wave_0.outputs.status == 'retry' || needs.reconcile_wave_0.outputs.status == 'replan') }}
     permissions: {actions: read, contents: read}
     uses: ./.github/workflows/catalog-recovery-wave.yml
     with:
@@ -1726,7 +1741,7 @@ jobs:
 
   recovery_wave_2:
     needs: recovery_wave_1
-    if: ${{ always() && (needs.recovery_wave_1.outputs.status == 'retry' || needs.recovery_wave_1.outputs.status == 'replan') }}
+    if: ${{ inputs.execution_mode == 'run' && always() && (needs.recovery_wave_1.outputs.status == 'retry' || needs.recovery_wave_1.outputs.status == 'replan') }}
     permissions: {actions: read, contents: read}
     uses: ./.github/workflows/catalog-recovery-wave.yml
     with:
@@ -1744,103 +1759,15 @@ jobs:
       checkpoint_manifest_artifacts: ${{ needs.recovery_wave_1.outputs.checkpoint_manifest_artifacts }}
       current_wave: 2
 
-  recovery_wave_3:
-    needs: recovery_wave_2
-    if: ${{ always() && (needs.recovery_wave_2.outputs.status == 'retry' || needs.recovery_wave_2.outputs.status == 'replan') }}
-    permissions: {actions: read, contents: read}
-    uses: ./.github/workflows/catalog-recovery-wave.yml
-    with:
-      request_sha256: ${{ inputs.request_sha256 }}
-      authority_id: ${{ inputs.authority_id }}
-      campaign_id: ${{ inputs.campaign_id }}
-      science_sha256: ${{ inputs.science_sha256 }}
-      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
-      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
-      decision_sha256: ${{ inputs.decision_sha256 }}
-      campaign_state_artifact: ${{ needs.recovery_wave_2.outputs.campaign_state_artifact }}
-      attempt_manifest_artifacts: ${{ needs.recovery_wave_2.outputs.attempt_manifest_artifacts }}
-      failure_manifest_artifacts: ${{ needs.recovery_wave_2.outputs.failure_manifest_artifacts }}
-      checkpoint_manifest_artifacts: ${{ needs.recovery_wave_2.outputs.checkpoint_manifest_artifacts }}
-      current_wave: 3
-
-  recovery_wave_4:
-    needs: recovery_wave_3
-    if: ${{ always() && (needs.recovery_wave_3.outputs.status == 'retry' || needs.recovery_wave_3.outputs.status == 'replan') }}
-    permissions: {actions: read, contents: read}
-    uses: ./.github/workflows/catalog-recovery-wave.yml
-    with:
-      request_sha256: ${{ inputs.request_sha256 }}
-      authority_id: ${{ inputs.authority_id }}
-      campaign_id: ${{ inputs.campaign_id }}
-      science_sha256: ${{ inputs.science_sha256 }}
-      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
-      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
-      decision_sha256: ${{ inputs.decision_sha256 }}
-      campaign_state_artifact: ${{ needs.recovery_wave_3.outputs.campaign_state_artifact }}
-      attempt_manifest_artifacts: ${{ needs.recovery_wave_3.outputs.attempt_manifest_artifacts }}
-      failure_manifest_artifacts: ${{ needs.recovery_wave_3.outputs.failure_manifest_artifacts }}
-      checkpoint_manifest_artifacts: ${{ needs.recovery_wave_3.outputs.checkpoint_manifest_artifacts }}
-      current_wave: 4
-
-  recovery_wave_5:
-    needs: recovery_wave_4
-    if: ${{ always() && (needs.recovery_wave_4.outputs.status == 'retry' || needs.recovery_wave_4.outputs.status == 'replan') }}
-    permissions: {actions: read, contents: read}
-    uses: ./.github/workflows/catalog-recovery-wave.yml
-    with:
-      request_sha256: ${{ inputs.request_sha256 }}
-      authority_id: ${{ inputs.authority_id }}
-      campaign_id: ${{ inputs.campaign_id }}
-      science_sha256: ${{ inputs.science_sha256 }}
-      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
-      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
-      decision_sha256: ${{ inputs.decision_sha256 }}
-      campaign_state_artifact: ${{ needs.recovery_wave_4.outputs.campaign_state_artifact }}
-      attempt_manifest_artifacts: ${{ needs.recovery_wave_4.outputs.attempt_manifest_artifacts }}
-      failure_manifest_artifacts: ${{ needs.recovery_wave_4.outputs.failure_manifest_artifacts }}
-      checkpoint_manifest_artifacts: ${{ needs.recovery_wave_4.outputs.checkpoint_manifest_artifacts }}
-      current_wave: 5
-
-  recovery_wave_6:
-    needs: recovery_wave_5
-    if: ${{ always() && (needs.recovery_wave_5.outputs.status == 'retry' || needs.recovery_wave_5.outputs.status == 'replan') }}
-    permissions: {actions: read, contents: read}
-    uses: ./.github/workflows/catalog-recovery-wave.yml
-    with:
-      request_sha256: ${{ inputs.request_sha256 }}
-      authority_id: ${{ inputs.authority_id }}
-      campaign_id: ${{ inputs.campaign_id }}
-      science_sha256: ${{ inputs.science_sha256 }}
-      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
-      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
-      decision_sha256: ${{ inputs.decision_sha256 }}
-      campaign_state_artifact: ${{ needs.recovery_wave_5.outputs.campaign_state_artifact }}
-      attempt_manifest_artifacts: ${{ needs.recovery_wave_5.outputs.attempt_manifest_artifacts }}
-      failure_manifest_artifacts: ${{ needs.recovery_wave_5.outputs.failure_manifest_artifacts }}
-      checkpoint_manifest_artifacts: ${{ needs.recovery_wave_5.outputs.checkpoint_manifest_artifacts }}
-      current_wave: 6
-
   ready_to_merge:
     needs:
       - reconcile_wave_0
       - recovery_wave_1
       - recovery_wave_2
-      - recovery_wave_3
-      - recovery_wave_4
-      - recovery_wave_5
-      - recovery_wave_6
     if: >-
-      ${{ always() &&
+      ${{ inputs.execution_mode == 'run' && always() &&
       (needs.recovery_wave_1.outputs.status == 'complete' ||
-      needs.recovery_wave_2.outputs.status == 'complete' ||
-      needs.recovery_wave_3.outputs.status == 'complete' ||
-      needs.recovery_wave_4.outputs.status == 'complete' ||
-      needs.recovery_wave_5.outputs.status == 'complete' ||
-      needs.recovery_wave_6.outputs.status == 'complete') }}
+      needs.recovery_wave_2.outputs.status == 'complete') }}
     runs-on: ubuntu-24.04
     environment: catalog-production
     timeout-minutes: 5
@@ -1857,7 +1784,7 @@ jobs:
       - engine_verify_sealed_plan
       - ready_to_merge
     if: >-
-      ${{ always() &&
+      ${{ inputs.execution_mode == 'run' && always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.engine_verify_sealed_plan.outputs.reduction_matrix_count != '0' &&
       needs.ready_to_merge.result == 'success' }}
@@ -1958,7 +1885,7 @@ jobs:
       - verify_component_store
       - reduce_groups
     if: >-
-      ${{ always() &&
+      ${{ inputs.execution_mode == 'run' && always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.verify_component_store.result == 'success' &&
       (needs.reduce_groups.result == 'success' ||
@@ -2039,7 +1966,7 @@ jobs:
   verify_terminal_science:
     needs: [engine_verify_sealed_plan, reduce]
     if: >-
-      ${{ always() &&
+      ${{ inputs.execution_mode == 'run' && always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.reduce.result == 'success' }}
     runs-on: ubuntu-24.04
@@ -2116,7 +2043,7 @@ jobs:
 
   audit_runtime:
     needs: [engine_verify_sealed_plan, reduce, verify_terminal_science]
-    if: ${{ always() && needs.reduce.result == 'success' && needs.verify_terminal_science.result == 'success' }}
+    if: ${{ inputs.execution_mode == 'run' && always() && needs.reduce.result == 'success' && needs.verify_terminal_science.result == 'success' }}
     runs-on: ubuntu-24.04
     environment: catalog-production
     timeout-minutes: 20
@@ -2214,10 +2141,6 @@ jobs:
       - reconcile_wave_0
       - recovery_wave_1
       - recovery_wave_2
-      - recovery_wave_3
-      - recovery_wave_4
-      - recovery_wave_5
-      - recovery_wave_6
       - ready_to_merge
       - reduce_groups
       - reduce
@@ -2229,8 +2152,8 @@ jobs:
     timeout-minutes: 10
     permissions: {actions: read, contents: read}
     outputs:
-      campaign_state: ${{ steps.outcome.outputs.campaign_state }}
-      outcome_evidence_sha256: ${{ steps.outcome.outputs.outcome_evidence_sha256 }}
+      campaign_state: ${{ steps.prepare_outcome.outputs.campaign_state || steps.outcome.outputs.campaign_state }}
+      outcome_evidence_sha256: ${{ steps.prepare_outcome.outputs.outcome_evidence_sha256 || steps.outcome.outputs.outcome_evidence_sha256 }}
       final_evidence_artifact: ${{ steps.outcome.outputs.final_evidence_artifact }}
       runtime_audit_artifact: ${{ steps.outcome.outputs.runtime_audit_artifact }}
       science_evidence_artifact: ${{ steps.outcome.outputs.science_evidence_artifact }}
@@ -2245,7 +2168,82 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: {ref: "${{ inputs.protected_commit_sha }}", persist-credentials: false}
 
+      - name: Expose one preparation-only outcome
+        id: prepare_outcome
+        if: ${{ inputs.execution_mode == 'prepare' }}
+        shell: bash
+        env:
+          RESULT_ENGINE_VERIFY: ${{ needs.engine_verify_sealed_plan.result }}
+          RESULT_PREPARE: ${{ needs.prepare_runtime_and_inputs.result }}
+          RESULT_BUILD_A: ${{ needs.build_components_a.result }}
+          RESULT_BUILD_B: ${{ needs.build_components_b.result }}
+          RESULT_CACHED_A: ${{ needs.materialize_cached_components_a.result }}
+          RESULT_CACHED_B: ${{ needs.materialize_cached_components_b.result }}
+          RESULT_COMPONENT_SEAL: ${{ needs.verify_component_store.result }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          stages = {
+              "engine_verify_sealed_plan": os.environ["RESULT_ENGINE_VERIFY"],
+              "prepare_runtime_and_inputs": os.environ["RESULT_PREPARE"],
+              "build_components_a": os.environ["RESULT_BUILD_A"],
+              "build_components_b": os.environ["RESULT_BUILD_B"],
+              "materialize_cached_components_a": os.environ["RESULT_CACHED_A"],
+              "materialize_cached_components_b": os.environ["RESULT_CACHED_B"],
+              "verify_component_store": os.environ["RESULT_COMPONENT_SEAL"],
+          }
+          reusable = {"success", "skipped"}
+          prepared = (
+              stages["engine_verify_sealed_plan"] == "success"
+              and stages["prepare_runtime_and_inputs"] == "success"
+              and stages["verify_component_store"] == "success"
+              and all(stages[name] in reusable for name in (
+                  "build_components_a",
+                  "build_components_b",
+                  "materialize_cached_components_a",
+                  "materialize_cached_components_b",
+              ))
+          )
+          identity = {
+              "schema_version": "1",
+              "execution_mode": "prepare",
+              "campaign_state": "PREPARED" if prepared else "BLOCKED",
+              "reason_code": (
+                  "CATALOG_PREPARATION_COMPLETE"
+                  if prepared
+                  else "CATALOG_PREPARATION_ENGINE_FAILED"
+              ),
+              "request_sha256": "${{ inputs.request_sha256 }}",
+              "authority_id": "${{ inputs.authority_id }}",
+              "campaign_id": "${{ inputs.campaign_id }}",
+              "science_sha256": "${{ inputs.science_sha256 }}",
+              "execution_plan_sha256": "${{ inputs.execution_plan_sha256 }}",
+              "execution_protocol_sha256": "${{ inputs.execution_protocol_sha256 }}",
+              "protected_commit_sha": "${{ inputs.protected_commit_sha }}",
+              "stage_results": stages,
+              "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+          }
+          raw = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+          receipt = {**identity, "outcome_evidence_sha256": hashlib.sha256(raw).hexdigest()}
+          Path("catalog-engine-outcome-v1.json").write_text(
+              json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"campaign_state={receipt['campaign_state']}\n")
+              output.write(
+                  f"outcome_evidence_sha256={receipt['outcome_evidence_sha256']}\n"
+              )
+          PY
+
       - name: Build one closed engine-outcome input
+        if: ${{ inputs.execution_mode == 'run' }}
         shell: bash
         env:
           RESULT_ENGINE_VERIFY: ${{ needs.engine_verify_sealed_plan.result }}
@@ -2266,34 +2264,14 @@ jobs:
           RECOVERY_0: ${{ needs.reconcile_wave_0.outputs.status }}
           RECOVERY_1: ${{ needs.recovery_wave_1.outputs.status }}
           RECOVERY_2: ${{ needs.recovery_wave_2.outputs.status }}
-          RECOVERY_3: ${{ needs.recovery_wave_3.outputs.status }}
-          RECOVERY_4: ${{ needs.recovery_wave_4.outputs.status }}
-          RECOVERY_5: ${{ needs.recovery_wave_5.outputs.status }}
-          RECOVERY_6: ${{ needs.recovery_wave_6.outputs.status }}
           FAILURE_FP_1: ${{ needs.recovery_wave_1.outputs.failure_fingerprint }}
           FAILURE_FP_2: ${{ needs.recovery_wave_2.outputs.failure_fingerprint }}
-          FAILURE_FP_3: ${{ needs.recovery_wave_3.outputs.failure_fingerprint }}
-          FAILURE_FP_4: ${{ needs.recovery_wave_4.outputs.failure_fingerprint }}
-          FAILURE_FP_5: ${{ needs.recovery_wave_5.outputs.failure_fingerprint }}
-          FAILURE_FP_6: ${{ needs.recovery_wave_6.outputs.failure_fingerprint }}
           FAILURE_COUNT_1: ${{ needs.recovery_wave_1.outputs.failure_occurrence_count }}
           FAILURE_COUNT_2: ${{ needs.recovery_wave_2.outputs.failure_occurrence_count }}
-          FAILURE_COUNT_3: ${{ needs.recovery_wave_3.outputs.failure_occurrence_count }}
-          FAILURE_COUNT_4: ${{ needs.recovery_wave_4.outputs.failure_occurrence_count }}
-          FAILURE_COUNT_5: ${{ needs.recovery_wave_5.outputs.failure_occurrence_count }}
-          FAILURE_COUNT_6: ${{ needs.recovery_wave_6.outputs.failure_occurrence_count }}
           FAILURE_REASON_1: ${{ needs.recovery_wave_1.outputs.failure_reason_code }}
           FAILURE_REASON_2: ${{ needs.recovery_wave_2.outputs.failure_reason_code }}
-          FAILURE_REASON_3: ${{ needs.recovery_wave_3.outputs.failure_reason_code }}
-          FAILURE_REASON_4: ${{ needs.recovery_wave_4.outputs.failure_reason_code }}
-          FAILURE_REASON_5: ${{ needs.recovery_wave_5.outputs.failure_reason_code }}
-          FAILURE_REASON_6: ${{ needs.recovery_wave_6.outputs.failure_reason_code }}
           RETRY_NOT_BEFORE_1: ${{ needs.recovery_wave_1.outputs.retry_not_before }}
           RETRY_NOT_BEFORE_2: ${{ needs.recovery_wave_2.outputs.retry_not_before }}
-          RETRY_NOT_BEFORE_3: ${{ needs.recovery_wave_3.outputs.retry_not_before }}
-          RETRY_NOT_BEFORE_4: ${{ needs.recovery_wave_4.outputs.retry_not_before }}
-          RETRY_NOT_BEFORE_5: ${{ needs.recovery_wave_5.outputs.retry_not_before }}
-          RETRY_NOT_BEFORE_6: ${{ needs.recovery_wave_6.outputs.retry_not_before }}
           FINAL_EVIDENCE_ARTIFACT: ${{ needs.reduce.outputs.final_evidence_artifact }}
         run: |
           set -euo pipefail
@@ -2322,12 +2300,12 @@ jobs:
           }
           recovery = [
               os.environ[f"RECOVERY_{wave}"]
-              for wave in range(7)
+                for wave in range(3)
               if os.environ.get(f"RECOVERY_{wave}")
           ]
           evidence_artifact = None
           completed_waves = [
-              wave for wave in range(1, 7) if os.environ.get(f"RECOVERY_{wave}")
+                wave for wave in range(1, 3) if os.environ.get(f"RECOVERY_{wave}")
           ]
           if completed_waves:
               wave = completed_waves[-1]
@@ -2404,6 +2382,7 @@ jobs:
 
       - name: Select and expose exactly one verified engine outcome
         id: outcome
+        if: ${{ inputs.execution_mode == 'run' }}
         shell: bash
         run: >-
           python scripts/prepare_catalog_engine_outcome.py

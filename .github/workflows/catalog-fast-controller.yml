@@ -1,0 +1,488 @@
+name: AURORA catalog fast controller
+run-name: AURORA catalog request ${{ inputs.issue_number || github.event.issue.number }}
+
+on:
+  issues:
+    types: [opened]
+  workflow_call:
+    inputs:
+      issue_number:
+        required: true
+        type: number
+
+permissions:
+  actions: read
+  contents: read
+  issues: read
+
+concurrency:
+  group: aurora-catalog-fast-request-${{ inputs.issue_number || github.event.issue.number }}
+  cancel-in-progress: false
+
+env:
+  PYTHONPATH: ${{ github.workspace }}/..
+
+jobs:
+  gate:
+    if: >-
+      ${{ inputs.issue_number > 0 ||
+      (github.event_name == 'issues' &&
+      startsWith(github.event.issue.title, '[AURORA CATALOG RUN REQUEST] ')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: aurora-catalog-fast-admission-v1
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    outputs:
+      valid_request: ${{ steps.inspect.outputs.valid_request }}
+      admission_completed: ${{ steps.admit.outputs.admission_completed }}
+      issue_number: ${{ steps.issue.outputs.issue_number }}
+      launch_required: ${{ steps.admit.outputs.launch_required }}
+      campaign_state: ${{ steps.admit.outputs.campaign_state }}
+      reason_code: ${{ steps.admit.outputs.reason_code }}
+      request_sha256: ${{ steps.admit.outputs.request_sha256 }}
+      submission_key_sha256: ${{ steps.admit.outputs.submission_key_sha256 }}
+      prepared_receipt_sha256: ${{ steps.admit.outputs.prepared_receipt_sha256 }}
+      decision_sha256: ${{ steps.admit.outputs.decision_sha256 }}
+      selected_workers: ${{ steps.admit.outputs.selected_workers }}
+      authority_id: ${{ steps.admit.outputs.authority_id }}
+      campaign_id: ${{ steps.admit.outputs.campaign_id }}
+      science_sha256: ${{ steps.admit.outputs.science_sha256 }}
+      execution_plan_sha256: ${{ steps.admit.outputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ steps.admit.outputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ steps.admit.outputs.protected_commit_sha }}
+    steps:
+      - name: Check out the exact protected branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          persist-credentials: false
+
+      - id: commit
+        name: Bind the gate to the checked-out commit
+        shell: bash
+        run: echo "protected_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Use the controller Python family
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+
+      - name: Install only the locked controller dependencies
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r requirements/catalog-controller-linux-py311.lock
+
+      - id: issue
+        name: Fetch exactly one existing request issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number || github.event.issue.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$ISSUE_NUMBER" -gt 0
+          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
+            > "$RUNNER_TEMP/catalog-fast-issue.json"
+          echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - id: inspect
+        name: Authenticate and inspect the signed request once
+        env:
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ steps.commit.outputs.protected_commit_sha }}
+        shell: bash
+        run: |
+          set +e
+          python scripts/inspect_catalog_fast_request.py \
+            --issue "$RUNNER_TEMP/catalog-fast-issue.json" \
+            --repo-root . \
+            --output "$RUNNER_TEMP/catalog-fast-request-context.json" \
+            --github-output "$GITHUB_OUTPUT" \
+            2> "$RUNNER_TEMP/catalog-fast-inspect-error.txt"
+          status=$?
+          set -e
+          if [[ "$status" -eq 0 ]]; then
+            echo "valid_request=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "valid_request=false" >> "$GITHUB_OUTPUT"
+            echo "reason_code=CATALOG_REQUEST_INVALID" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Record an invalid shaped request without running anything
+        if: ${{ steps.inspect.outputs.valid_request != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.issue_number }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {"body": "## AURORA catalog fast path\n\n- State: `BLOCKED`\n- Reason: `CATALOG_REQUEST_INVALID`"}
+          Path(os.environ["RUNNER_TEMP"], "invalid-comment.json").write_text(
+              json.dumps(payload, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          Path(os.environ["RUNNER_TEMP"], "invalid-terminal-label.json").write_text(
+              json.dumps({"labels": ["catalog-run-terminal-v1"]}) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels" \
+            --input "$RUNNER_TEMP/invalid-terminal-label.json" > /dev/null
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+            --input "$RUNNER_TEMP/invalid-comment.json" > /dev/null || true
+
+      - id: restore
+        name: Restore the exact current PREPARED bundle
+        if: ${{ steps.inspect.outputs.valid_request == 'true' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/prepared-bundle
+          key: ${{ steps.inspect.outputs.prepared_cache_restore_prefix }}lookup
+          restore-keys: ${{ steps.inspect.outputs.prepared_cache_restore_prefix }}
+
+      - id: admit
+        name: Run the one live admission gate and materialize the hot plan
+        if: ${{ steps.inspect.outputs.valid_request == 'true' }}
+        continue-on-error: true
+        env:
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ steps.commit.outputs.protected_commit_sha }}
+          CATALOG_CONTROLLER_ENABLED: ${{ vars.CATALOG_CONTROLLER_ENABLED }}
+          CATALOG_CONTROLLER_PRODUCTION_ARMED: ${{ vars.CATALOG_CONTROLLER_PRODUCTION_ARMED }}
+          CATALOG_SAFE_FREE_CAPACITY: "360"
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/admit_catalog_fast_request.py \
+            --request-context "$RUNNER_TEMP/catalog-fast-request-context.json" \
+            --prepared-bundle "$RUNNER_TEMP/prepared-bundle" \
+            --repo-root . \
+            --output-dir "$RUNNER_TEMP/catalog-fast-gate" \
+            --github-output "$GITHUB_OUTPUT"
+          echo "admission_completed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Terminate one unexpected admission failure without retrying it
+        if: ${{ steps.inspect.outputs.valid_request == 'true' && steps.admit.outcome != 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.issue_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          (temp / "admission-failed-label.json").write_text(
+              json.dumps({"labels": ["catalog-run-terminal-v1"]}) + "\n",
+              encoding="utf-8",
+          )
+          (temp / "admission-failed-comment.json").write_text(
+              json.dumps({"body": "## AURORA catalog fast path\n\n- State: `BLOCKED`\n- Reason: `CATALOG_ADMISSION_GATE_FAILED`"}) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels" \
+            --input "$RUNNER_TEMP/admission-failed-label.json" > /dev/null
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+            --input "$RUNNER_TEMP/admission-failed-comment.json" > /dev/null || true
+
+      - name: Stage the small immutable gate evidence
+        if: ${{ steps.inspect.outputs.valid_request == 'true' && steps.admit.outcome == 'success' }}
+        shell: bash
+        run: |
+          cp "$RUNNER_TEMP/catalog-fast-gate/catalog-fast-decision-v1.json" \
+            "$RUNNER_TEMP/catalog-fast-decision-v1.json"
+
+      - id: publish_gate
+        name: Publish the one gate decision
+        if: ${{ steps.inspect.outputs.valid_request == 'true' && steps.admit.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-fast-gate-${{ steps.issue.outputs.issue_number }}
+          path: |
+            ${{ runner.temp }}/catalog-fast-request-context.json
+            ${{ runner.temp }}/catalog-fast-decision-v1.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - id: publish_plan
+        name: Publish the already-materialized sealed plan
+        if: ${{ steps.admit.outputs.launch_required == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-sealed-execution-plan-${{ steps.admit.outputs.authority_id }}
+          path: ${{ runner.temp }}/catalog-fast-gate/sealed-plan
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - id: reserve
+        name: Reserve the campaign atomically and expose QUEUED
+        if: ${{ steps.admit.outputs.launch_required == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.issue_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          (temp / "active-label.json").write_text(
+              json.dumps({"labels": ["catalog-run-active-v1"]}) + "\n",
+              encoding="utf-8",
+          )
+          (temp / "queued-comment.json").write_text(
+              json.dumps({"body": "## AURORA catalog fast path\n\n- State: `QUEUED`\n- The verified hot engine starts automatically."}) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels" \
+            --input "$RUNNER_TEMP/active-label.json" > /dev/null
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+            --input "$RUNNER_TEMP/queued-comment.json" > /dev/null || true
+
+      - name: Close one unexpected gate publication failure
+        if: >-
+          ${{ always() && steps.inspect.outputs.valid_request == 'true' &&
+          steps.admit.outcome == 'success' &&
+          (steps.publish_gate.outcome != 'success' ||
+          (steps.admit.outputs.launch_required == 'true' &&
+          (steps.publish_plan.outcome != 'success' ||
+          steps.reserve.outcome != 'success'))) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.issue_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          (temp / "gate-publication-failed-label.json").write_text(
+              json.dumps({"labels": ["catalog-run-terminal-v1"]}) + "\n",
+              encoding="utf-8",
+          )
+          (temp / "gate-publication-failed-comment.json").write_text(
+              json.dumps({"body": "## AURORA catalog fast path\n\n- State: `BLOCKED`\n- Reason: `CATALOG_GATE_PUBLICATION_FAILED`"}) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels" \
+            --input "$RUNNER_TEMP/gate-publication-failed-label.json" > /dev/null
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+            --input "$RUNNER_TEMP/gate-publication-failed-comment.json" > /dev/null || true
+          gh api --method DELETE \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels/catalog-run-active-v1" \
+            > /dev/null 2>&1 || true
+          exit 1
+
+  engine:
+    needs: gate
+    if: ${{ needs.gate.outputs.launch_required == 'true' }}
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/catalog-optimized-run.yml
+    with:
+      request_sha256: ${{ needs.gate.outputs.request_sha256 }}
+      authority_id: ${{ needs.gate.outputs.authority_id }}
+      campaign_id: ${{ needs.gate.outputs.campaign_id }}
+      science_sha256: ${{ needs.gate.outputs.science_sha256 }}
+      execution_plan_sha256: ${{ needs.gate.outputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ needs.gate.outputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ needs.gate.outputs.protected_commit_sha }}
+      decision_sha256: ${{ needs.gate.outputs.decision_sha256 }}
+      execution_mode: run
+
+  finalize:
+    needs: [gate, engine]
+    if: ${{ always() && needs.gate.result == 'success' && needs.gate.outputs.valid_request == 'true' && needs.gate.outputs.admission_completed == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ needs.gate.outputs.protected_commit_sha }}
+          persist-credentials: false
+
+      - name: Use the controller Python family
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+
+      - name: Install only the locked controller dependencies
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r requirements/catalog-controller-linux-py311.lock
+
+      - name: Download the gate decision
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-fast-gate-${{ needs.gate.outputs.issue_number }}
+          path: ${{ runner.temp }}/catalog-fast-terminal
+
+      - name: Download the unique engine outcome
+        if: ${{ needs.gate.outputs.launch_required == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-engine-outcome-${{ needs.gate.outputs.authority_id }}
+          path: ${{ runner.temp }}/catalog-fast-terminal/engine
+
+      - name: Download terminal science only for a successful engine candidate
+        if: ${{ needs.engine.outputs.campaign_state == 'TERMINAL_CANDIDATE' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.engine.outputs.science_evidence_artifact }}
+          path: ${{ runner.temp }}/catalog-fast-terminal/science
+
+      - name: Fetch one bounded timing snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            > "$RUNNER_TEMP/catalog-fast-terminal/run.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" \
+            > "$RUNNER_TEMP/catalog-fast-terminal/jobs.json"
+
+      - id: terminal
+        name: Create exactly one terminal receipt
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          optional=()
+          if [[ -f "$RUNNER_TEMP/catalog-fast-terminal/engine/catalog-engine-outcome-v1.json" ]]; then
+            optional+=(--engine-outcome "$RUNNER_TEMP/catalog-fast-terminal/engine/catalog-engine-outcome-v1.json")
+          fi
+          if [[ -f "$RUNNER_TEMP/catalog-fast-terminal/science/catalog_terminal_science_index_v1.json" ]]; then
+            optional+=(--science-index "$RUNNER_TEMP/catalog-fast-terminal/science/catalog_terminal_science_index_v1.json")
+          fi
+          python scripts/finalize_catalog_fast_run.py \
+            --request-context "$RUNNER_TEMP/catalog-fast-terminal/catalog-fast-request-context.json" \
+            --decision "$RUNNER_TEMP/catalog-fast-terminal/catalog-fast-decision-v1.json" \
+            --run "$RUNNER_TEMP/catalog-fast-terminal/run.json" \
+            --jobs "$RUNNER_TEMP/catalog-fast-terminal/jobs.json" \
+            --output "$RUNNER_TEMP/catalog-fast-terminal/catalog-terminal-receipt-v1.json" \
+            --comment-output "$RUNNER_TEMP/catalog-fast-terminal/terminal-comment.json" \
+            --github-output "$GITHUB_OUTPUT" \
+            "${optional[@]}"
+
+      - id: publish_receipt
+        name: Publish the terminal receipt before changing the issue
+        if: ${{ steps.terminal.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-terminal-receipt-${{ needs.gate.outputs.request_sha256 }}
+          path: ${{ runner.temp }}/catalog-fast-terminal/catalog-terminal-receipt-v1.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - id: publish_terminal
+        name: Publish the terminal state and release the reservation
+        if: ${{ steps.terminal.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ needs.gate.outputs.issue_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+            --input "$RUNNER_TEMP/catalog-fast-terminal/terminal-comment.json" > /dev/null
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          Path(os.environ["RUNNER_TEMP"], "terminal-label.json").write_text(
+              json.dumps({"labels": ["catalog-run-terminal-v1"]}) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels" \
+            --input "$RUNNER_TEMP/terminal-label.json" > /dev/null
+          gh api --method DELETE \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels/catalog-run-active-v1" \
+            > /dev/null 2>&1 || true
+
+      - name: Fail closed once and release a stuck reservation
+        if: >-
+          ${{ always() &&
+          (steps.terminal.outcome != 'success' ||
+          steps.publish_receipt.outcome != 'success' ||
+          steps.publish_terminal.outcome != 'success') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ needs.gate.outputs.issue_number }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          (temp / "terminalization-failed-comment.json").write_text(
+              json.dumps({"body": "## AURORA catalog fast path\n\n- State: `BLOCKED`\n- Reason: `CATALOG_TERMINALIZATION_FAILED`"}) + "\n",
+              encoding="utf-8",
+          )
+          (temp / "terminalization-failed-label.json").write_text(
+              json.dumps({"labels": ["catalog-run-terminal-v1"]}) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels" \
+            --input "$RUNNER_TEMP/terminalization-failed-label.json" > /dev/null
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+            --input "$RUNNER_TEMP/terminalization-failed-comment.json" > /dev/null || true
+          gh api --method DELETE \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels/catalog-run-active-v1" \
+            > /dev/null 2>&1 || true
+          exit 1

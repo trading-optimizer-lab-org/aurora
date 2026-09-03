@@ -99,6 +99,11 @@
     "required_reviewers": []
   },
   "issue_labels": {
+    "active": {
+      "name": "catalog-run-active-v1",
+      "color": "1d76db",
+      "description": "Controller-reserved active catalog request; do not apply manually"
+    },
     "terminal": {
       "name": "catalog-run-terminal-v1",
       "color": "0e8a16",
@@ -114,18 +119,23 @@
     "only_token_consumer_workflow": ".github/actions/catalog-live-controls-audit/action.yml"
   },
   "entrypoints": {
-    "public_controller": ".github/workflows/catalog-run-controller.yml",
+    "public_controller": ".github/workflows/catalog-fast-controller.yml",
     "request_reconciler": ".github/workflows/catalog-request-reconciler.yml",
     "ledger_guard": ".github/workflows/catalog-ledger-guard.yml",
     "authority_watchdog": ".github/workflows/catalog-run-watchdog.yml",
     "issues_write_workflow_allowlist": [
       ".github/workflows/catalog-run-controller.yml",
+      ".github/workflows/catalog-fast-controller.yml",
       ".github/workflows/catalog-request-reconciler.yml",
       ".github/workflows/catalog-ledger-guard.yml",
       ".github/workflows/catalog-run-watchdog.yml"
     ],
     "issues_write_must_be_job_scoped": true,
     "issues_write_job_allowlist": {
+      ".github/workflows/catalog-fast-controller.yml": [
+        "gate",
+        "finalize"
+      ],
       ".github/workflows/catalog-run-controller.yml": [
         "issue_tamper_guard",
         "reserve",
@@ -148,7 +158,8 @@
       ".github/workflows/catalog-controller-policy-check.yml",
       ".github/workflows/catalog-controller-qualification.yml",
       ".github/workflows/catalog-live-controls-qualification.yml",
-      ".github/workflows/catalog-capacity-calibration.yml"
+      ".github/workflows/catalog-capacity-calibration.yml",
+      ".github/workflows/catalog-prepare.yml"
     ],
     "scheduled_read_only_maintenance_allowlist": [
       ".github/workflows/catalog-artifact-keeper.yml"

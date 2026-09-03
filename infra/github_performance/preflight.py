@@ -521,6 +521,8 @@ def _iter_uses(workflow: Mapping[str, Any]) -> list[tuple[str, str]]:
 
 
 CATALOG_CONTROLLER_WORKFLOW = ".github/workflows/catalog-run-controller.yml"
+CATALOG_FAST_CONTROLLER_WORKFLOW = ".github/workflows/catalog-fast-controller.yml"
+CATALOG_PREPARATION_WORKFLOW = ".github/workflows/catalog-prepare-one.yml"
 CATALOG_RECOVERY_WORKFLOW = ".github/workflows/catalog-recovery-wave.yml"
 CATALOG_WATCHDOG_WORKFLOW = ".github/workflows/catalog-run-watchdog.yml"
 CATALOG_KEEPER_WORKFLOW = ".github/workflows/catalog-artifact-keeper.yml"
@@ -1110,6 +1112,7 @@ def validate_catalog_workflow_topology(
         public = set(item.triggers) & _CATALOG_PUBLIC_HEAVY_TRIGGERS
         public_entrypoint = item.path in {
             CATALOG_CONTROLLER_WORKFLOW,
+            CATALOG_FAST_CONTROLLER_WORKFLOW,
             CATALOG_WATCHDOG_WORKFLOW,
             CATALOG_KEEPER_WORKFLOW,
         }
@@ -1443,7 +1446,12 @@ def validate_catalog_workflow_topology(
                 )
             )
             continue
-        allowed_callers = {CATALOG_CONTROLLER_WORKFLOW, CATALOG_RECOVERY_WORKFLOW}
+        allowed_callers = {
+            CATALOG_CONTROLLER_WORKFLOW,
+            CATALOG_FAST_CONTROLLER_WORKFLOW,
+            CATALOG_PREPARATION_WORKFLOW,
+            CATALOG_RECOVERY_WORKFLOW,
+        }
         actual_callers = callers[engine_path]
         if not actual_callers or not actual_callers <= allowed_callers:
             violations.append(

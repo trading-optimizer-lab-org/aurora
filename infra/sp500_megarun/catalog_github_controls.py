@@ -222,6 +222,7 @@ class TerminalLabelV1(FrozenModel):
 
 
 class IssueLabelsV1(FrozenModel):
+    active: TerminalLabelV1
     terminal: TerminalLabelV1
 
 
@@ -786,21 +787,25 @@ def audit_catalog_github_controls(
     )
 
     labels = _sequence_of_mappings(snapshots.get("labels"))
-    expected_label = desired.issue_labels.terminal.model_dump(mode="json")
-    matching_labels = tuple(
-        label for label in labels if label.get("name") == expected_label["name"]
-    )
-    check("CATALOG_TERMINAL_LABEL_REQUIRED", len(matching_labels) == 1)
-    check(
-        "CATALOG_TERMINAL_LABEL_EXACT",
-        len(matching_labels) == 1
-        and {
-            "name": matching_labels[0].get("name"),
-            "color": str(matching_labels[0].get("color", "")).lower(),
-            "description": matching_labels[0].get("description"),
-        }
-        == expected_label,
-    )
+    for kind, expected in (
+        ("ACTIVE", desired.issue_labels.active),
+        ("TERMINAL", desired.issue_labels.terminal),
+    ):
+        expected_label = expected.model_dump(mode="json")
+        matching_labels = tuple(
+            label for label in labels if label.get("name") == expected_label["name"]
+        )
+        check(f"CATALOG_{kind}_LABEL_REQUIRED", len(matching_labels) == 1)
+        check(
+            f"CATALOG_{kind}_LABEL_EXACT",
+            len(matching_labels) == 1
+            and {
+                "name": matching_labels[0].get("name"),
+                "color": str(matching_labels[0].get("color", "")).lower(),
+                "description": matching_labels[0].get("description"),
+            }
+            == expected_label,
+        )
 
     budgets = _sequence_of_mappings(snapshots.get("budgets"))
     budget_details = _sequence_of_mappings(snapshots.get("budget_details"))
@@ -1356,32 +1361,32 @@ def build_github_controls_mutation_plan(
                     reason_codes=matched,
                 )
             )
-    if "CATALOG_TERMINAL_LABEL_REQUIRED" in failures:
-        mutations.append(
-            GithubControlMutationV1(
-                order=len(mutations) + 1,
-                method="POST",
-                endpoint=f"/repos/{repository}/labels",
-                body=desired.issue_labels.terminal.model_dump(mode="json"),
-                reason_codes=(
-                    "CATALOG_TERMINAL_LABEL_EXACT",
-                    "CATALOG_TERMINAL_LABEL_REQUIRED",
-                ),
+    for kind, label in (
+        ("ACTIVE", desired.issue_labels.active),
+        ("TERMINAL", desired.issue_labels.terminal),
+    ):
+        required = f"CATALOG_{kind}_LABEL_REQUIRED"
+        exact = f"CATALOG_{kind}_LABEL_EXACT"
+        if required in failures:
+            mutations.append(
+                GithubControlMutationV1(
+                    order=len(mutations) + 1,
+                    method="POST",
+                    endpoint=f"/repos/{repository}/labels",
+                    body=label.model_dump(mode="json"),
+                    reason_codes=(exact, required),
+                )
             )
-        )
-    elif "CATALOG_TERMINAL_LABEL_EXACT" in failures:
-        mutations.append(
-            GithubControlMutationV1(
-                order=len(mutations) + 1,
-                method="PATCH",
-                endpoint=(
-                    f"/repos/{repository}/labels/"
-                    f"{desired.issue_labels.terminal.name}"
-                ),
-                body=desired.issue_labels.terminal.model_dump(mode="json"),
-                reason_codes=("CATALOG_TERMINAL_LABEL_EXACT",),
+        elif exact in failures:
+            mutations.append(
+                GithubControlMutationV1(
+                    order=len(mutations) + 1,
+                    method="PATCH",
+                    endpoint=f"/repos/{repository}/labels/{label.name}",
+                    body=label.model_dump(mode="json"),
+                    reason_codes=(exact,),
+                )
             )
-        )
     if (
         "CACHE_RETENTION_POLICY_REQUIRED" in failures
         and "CACHE_RETENTION_UNKNOWN" not in failures

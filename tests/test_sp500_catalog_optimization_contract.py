@@ -154,6 +154,21 @@ def test_optimization_contract_is_frozen_and_hash_stable() -> None:
         first.workload.requested_recipes = 1
 
 
+def test_recovery_wave_limit_accepts_fast_path_and_rejects_unbounded_values() -> None:
+    from aurora.infra.sp500_megarun.catalog_optimization_contract import (
+        RunOptimizationContractV1,
+    )
+
+    payload = _valid_payload()
+    payload["recovery_execution"]["max_total_recovery_waves"] = 2  # type: ignore[index]
+    contract = RunOptimizationContractV1.model_validate(payload)
+    assert contract.recovery_execution.max_total_recovery_waves == 2
+
+    payload["recovery_execution"]["max_total_recovery_waves"] = 7  # type: ignore[index]
+    with pytest.raises(Exception):
+        RunOptimizationContractV1.model_validate(payload)
+
+
 def test_planner_applies_only_three_sample_science_compatible_autotune(
     tmp_path: Path,
 ) -> None:
@@ -978,6 +993,9 @@ def _task10_plan_fixture(
     warm_component_ordinals: set[int],
     warm_bundle_groups: tuple[tuple[int, ...], ...] = (),
     central_reduction_safe: bool = False,
+    qualify_layout: bool = True,
+    preparation_only: bool = False,
+    worker_count_override: int | None = None,
 ):
     from aurora.infra.github_performance.merge_planner import (
         MergeResourceProjectionV1,
@@ -1115,7 +1133,7 @@ def _task10_plan_fixture(
             checkpoint_upload_seconds_p95=5.0,
         )
         for count in (8, 16, 32, 64, 96, 128)
-    )
+    ) if qualify_layout else ()
     return build_global_reuse_execution_plan(
         contract=contract,
         campaign_id="6" * 64,
@@ -1144,6 +1162,9 @@ def _task10_plan_fixture(
             download_fraction_p99=0.40,
             input_count_fraction_p99=0.40,
         ),
+        preparation_only=preparation_only,
+        hot_checkpoint_upload_seconds_p95=(5.0 if not qualify_layout else None),
+        worker_count_override=worker_count_override,
     )
 
 
@@ -1169,6 +1190,68 @@ def test_warm_campaign_schedules_zero_component_compute() -> None:
     assert plan.component_matrix_b == ()
     assert plan.component_assignments == ()
     assert plan.recipe_jobs_depend_on_component_store is True
+
+
+def test_fully_prepared_campaign_does_not_need_legacy_layout_qualification() -> None:
+    plan = _task10_plan_fixture(
+        warm_component_ordinals=set(range(12)),
+        qualify_layout=False,
+    )
+
+    assert plan.pending_component_ids == ()
+    assert plan.component_assignments == ()
+    assert plan.selected_component_bundle_count == 16
+
+
+def test_hot_plan_uses_the_selected_measured_worker_count() -> None:
+    plan = _task10_plan_fixture(
+        warm_component_ordinals=set(range(12)),
+        qualify_layout=False,
+        worker_count_override=7,
+    )
+
+    assert len(plan.recipe_assignments) == 7
+    assert [item.worker_id for item in plan.recipe_assignments] == list(range(7))
+
+
+@pytest.mark.parametrize("invalid", [0, 361])
+def test_worker_override_cannot_exceed_global_limits(invalid: int) -> None:
+    with pytest.raises(ValueError, match="CATALOG_WORKER_CEILING_INVALID"):
+        _task10_plan_fixture(
+            warm_component_ordinals=set(range(12)),
+            qualify_layout=False,
+            worker_count_override=invalid,
+        )
+
+
+def test_preparation_mode_can_build_missing_components_without_run_qualification() -> None:
+    plan = _task10_plan_fixture(
+        warm_component_ordinals=set(),
+        qualify_layout=False,
+        preparation_only=True,
+    )
+
+    assert set(plan.pending_component_ids) == set(plan.required_component_ids)
+    assert plan.selected_component_bundle_count == 96
+
+
+def test_preparation_mode_can_verify_an_already_hot_store_without_run_qualification() -> None:
+    plan = _task10_plan_fixture(
+        warm_component_ordinals=set(range(12)),
+        qualify_layout=False,
+        preparation_only=True,
+    )
+
+    assert plan.pending_component_ids == ()
+    assert plan.component_assignments == ()
+
+
+def test_normal_run_rejects_any_missing_prepared_component() -> None:
+    with pytest.raises(ValueError, match="CATALOG_PREPARATION_REQUIRED"):
+        _task10_plan_fixture(
+            warm_component_ordinals=set(),
+            qualify_layout=False,
+        )
 
 
 def test_warm_component_bundles_are_restored_once_per_exact_group() -> None:

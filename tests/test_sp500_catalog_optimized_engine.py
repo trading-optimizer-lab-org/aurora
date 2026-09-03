@@ -71,7 +71,7 @@ def test_engine_exposes_one_explicit_verified_outcome_even_after_failure() -> No
         "reduce",
         "verify_terminal_science",
         "audit_runtime",
-        "recovery_wave_6",
+        "recovery_wave_2",
     } <= set(outcome["needs"])
     rendered = json.dumps(outcome, sort_keys=True)
     assert "scripts/prepare_catalog_engine_outcome.py" in rendered
