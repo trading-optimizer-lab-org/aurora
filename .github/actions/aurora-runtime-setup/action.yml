@@ -59,10 +59,12 @@ runs:
         RUNTIME_MANIFEST_PATH: ${{ inputs.runtime-manifest-path }}
         DEPENDENCY_LOCK_PATH: ${{ inputs.dependency-lock-path }}
         EXPECTED_RUNTIME_IDENTITY_SHA256: ${{ inputs.expected-runtime-identity-sha256 }}
-        EXPECTED_SOURCE_SHA: ${{ inputs.expected-source-sha }}
+        REQUESTED_SOURCE_SHA: ${{ inputs.expected-source-sha }}
+        EXPECTED_SOURCE_SHA: ${{ github.sha }}
         EXPECTED_NUMERIC_PROFILE_SHA256: ${{ inputs.expected-numeric-profile-sha256 }}
       run: |
         set -euo pipefail
+        test "$REQUESTED_SOURCE_SHA" = "$EXPECTED_SOURCE_SHA"
         started_at="$(date +%s%N)"
         case "$RUNTIME_MODE" in
           verified_relocatable_archive|offline_wheelhouse) ;;

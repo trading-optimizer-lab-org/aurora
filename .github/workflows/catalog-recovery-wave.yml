@@ -67,11 +67,17 @@ jobs:
       - name: Check out the exact original protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ inputs.protected_commit_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Verify the original protected source
-        run: test "$(git rev-parse HEAD)" = "${{ inputs.protected_commit_sha }}"
+        env:
+          REQUESTED_PROTECTED_COMMIT_SHA: ${{ inputs.protected_commit_sha }}
+          TRUSTED_PROTECTED_COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          test "$REQUESTED_PROTECTED_COMMIT_SHA" = "$TRUSTED_PROTECTED_COMMIT_SHA"
+          test "$(git rev-parse HEAD)" = "$TRUSTED_PROTECTED_COMMIT_SHA"
 
       - name: Download the exact sealed execution plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -131,7 +137,7 @@ jobs:
           runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
           dependency-lock-path: requirements/catalog-optimized.lock
           expected-runtime-identity-sha256: ${{ steps.plan.outputs.runtime_identity_sha256 }}
-          expected-source-sha: ${{ inputs.protected_commit_sha }}
+          expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ steps.plan.outputs.numeric_profile_sha256 }}
 
       - name: Build one bounded selective recovery plan
@@ -140,7 +146,7 @@ jobs:
         with:
           authority-id: ${{ inputs.authority_id }}
           campaign-id: ${{ inputs.campaign_id }}
-          protected-commit-sha: ${{ inputs.protected_commit_sha }}
+          protected-commit-sha: ${{ github.sha }}
           execution-protocol-sha256: ${{ inputs.execution_protocol_sha256 }}
           sealed-plan-path: ${{ runner.temp }}/sealed-plan
           campaign-state-artifact-name: ${{ inputs.campaign_state_artifact }}
@@ -167,7 +173,7 @@ jobs:
       science_sha256: ${{ inputs.science_sha256 }}
       execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
       worker_id: ${{ matrix.worker_id }}
       descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
@@ -194,7 +200,7 @@ jobs:
       science_sha256: ${{ inputs.science_sha256 }}
       execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
-      protected_commit_sha: ${{ inputs.protected_commit_sha }}
+      protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ inputs.decision_sha256 }}
       worker_id: ${{ matrix.worker_id }}
       descriptor_bundle_artifact: ${{ matrix.descriptor_bundle_artifact }}
@@ -222,7 +228,7 @@ jobs:
       - name: Check out the exact original protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ inputs.protected_commit_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Build a stable exact inventory for the next reconciliation

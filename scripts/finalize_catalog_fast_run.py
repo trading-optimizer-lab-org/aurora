@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -75,7 +75,7 @@ def _utc(value: object) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("CATALOG_FAST_TERMINAL_TIME_INVALID")
-    return parsed.astimezone(UTC)
+    return parsed.astimezone(timezone.utc)
 
 
 def _job_rows(value: object) -> tuple[Mapping[str, Any], ...]:
@@ -283,7 +283,7 @@ def finalize_fast_run(
         ),
         failure_class=failure_class,
         result_science_sha256=result_science_sha256,
-        created_at=datetime.now(UTC),
+        created_at=datetime.now(timezone.utc),
     )
     output_path.write_text(
         json.dumps(receipt.model_dump(mode="json"), sort_keys=True, separators=(",", ":")) + "\n",

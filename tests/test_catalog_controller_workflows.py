@@ -166,6 +166,7 @@ _WorkflowStep = TypedDict(
         "if": str,
         "shell": str,
         "working-directory": str,
+        "continue-on-error": bool,
     },
     total=False,
 )
@@ -1713,7 +1714,7 @@ def test_engine_preparation_mode_builds_store_but_never_evaluates_recipes() -> N
 def test_preparation_runs_outside_the_request_path_and_reuses_prepared_cache() -> None:
     public = _workflow(WORKFLOWS / "catalog-prepare.yml")
     one = _workflow(WORKFLOWS / "catalog-prepare-one.yml")
-    assert set(public["on"]) == {"push", "schedule", "workflow_dispatch"}
+    assert set(public["on"]) == {"push", "schedule"}
     assert public["on"]["push"] == {"branches": ["main"]}
     assert public["jobs"]["prepare"]["uses"] == (
         "./.github/workflows/catalog-prepare-one.yml"
@@ -1736,6 +1737,57 @@ def test_preparation_runs_outside_the_request_path_and_reuses_prepared_cache() -
     assert "verify_catalog_production_runtime.py" in rendered
     assert "--require-live-caches" in rendered
     assert "finalize_catalog_preparation.py" in rendered
+
+
+def test_fast_path_never_propagates_a_computed_or_manual_code_ref() -> None:
+    public = _workflow(WORKFLOWS / "catalog-prepare.yml")
+    prepare = _workflow(WORKFLOWS / "catalog-prepare-one.yml")
+    controller = _workflow(WORKFLOWS / "catalog-fast-controller.yml")
+
+    assert "workflow_dispatch" not in public["on"]
+    assert public["jobs"]["discover"]["steps"][0]["with"]["ref"] == (
+        "${{ github.sha }}"
+    )
+    assert prepare["jobs"]["prepare_engine"]["with"][
+        "protected_commit_sha"
+    ] == "${{ github.sha }}"
+    assert controller["jobs"]["engine"]["with"][
+        "protected_commit_sha"
+    ] == "${{ github.sha }}"
+    assert "needs.preflight.outputs.protected_commit_sha" not in json.dumps(
+        prepare, sort_keys=True
+    )
+    assert controller["jobs"]["finalize"]["steps"][0]["with"]["ref"] == (
+        "${{ github.sha }}"
+    )
+
+
+def test_reusable_catalog_engine_uses_variable_commit_only_as_a_guard() -> None:
+    for relative in (
+        "catalog-optimized-run.yml",
+        "catalog-component-worker.yml",
+        "catalog-optimized-worker.yml",
+        "catalog-recovery-wave.yml",
+    ):
+        text = (WORKFLOWS / relative).read_text(encoding="utf-8")
+        assert text.count("${{ inputs.protected_commit_sha }}") == 1
+        assert (
+            "REQUESTED_PROTECTED_COMMIT_SHA: "
+            "${{ inputs.protected_commit_sha }}"
+        ) in text
+        assert (
+            "ref: ${{ github.sha }}" in text
+            or 'ref: "${{ github.sha }}"' in text
+        )
+
+    runtime = (
+        ROOT / ".github/actions/aurora-runtime-setup/action.yml"
+    ).read_text(encoding="utf-8")
+    assert runtime.count("${{ inputs.expected-source-sha }}") == 1
+    assert (
+        "REQUESTED_SOURCE_SHA: ${{ inputs.expected-source-sha }}"
+    ) in runtime
+    assert "EXPECTED_SOURCE_SHA: ${{ github.sha }}" in runtime
 
 
 def test_requested_run_never_builds_runtime_or_prepared_inputs() -> None:

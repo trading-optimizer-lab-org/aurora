@@ -787,11 +787,11 @@ def audit_catalog_github_controls(
     )
 
     labels = _sequence_of_mappings(snapshots.get("labels"))
-    for kind, expected in (
+    for kind, expected_label_contract in (
         ("ACTIVE", desired.issue_labels.active),
         ("TERMINAL", desired.issue_labels.terminal),
     ):
-        expected_label = expected.model_dump(mode="json")
+        expected_label = expected_label_contract.model_dump(mode="json")
         matching_labels = tuple(
             label for label in labels if label.get("name") == expected_label["name"]
         )

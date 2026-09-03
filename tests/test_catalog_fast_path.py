@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,7 +36,7 @@ from scripts.select_catalog_preparation_targets import select_targets
 from scripts.verify_catalog_prepared_bundle import missing_required_cache_keys
 
 
-NOW = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+NOW = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
 COMMIT = "a" * 40
 SCIENCE = "b" * 64
 DEFINITION = "c" * 64

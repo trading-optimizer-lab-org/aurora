@@ -9,7 +9,7 @@ user-requested catalog run exists.  Its sealed plan is consumed only in
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
+from datetime import datetime
 import hashlib
 import json
 import os

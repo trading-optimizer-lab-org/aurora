@@ -5,7 +5,7 @@ Este documento registra **todos** los workflows presentes durante la migración 
 ## Resultado
 
 - Workflows inventariados: **184**.
-- Hash canónico del inventario final: `a854ec6f783124ca5191010acc7186da1a8a1e089a7b6c7cd588d50449ea93be`.
+- Hash canónico del inventario final: `a0708e6dda21325b904730ce5e896d6f877be182b8ae1f03a148def3619ba66a`.
 - Estado final del validador de topología: **READY**.
 - Campaña activa: `sp500-optimized-catalog-v1` mediante `optimized_catalog_v1`.
 - Los Atlas antiguos y sus wrappers quedan inactivos y sin disparador público. Su código se conserva para trazabilidad, pero no existe un llamador autorizado.
@@ -54,7 +54,7 @@ Este documento registra **todos** los workflows presentes durante la migración 
 | .github/workflows/catalog-optimized-verify-only.yml | workflow_call | no | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
 | .github/workflows/catalog-optimized-worker.yml | workflow_call | yes | optimized_catalog_v1 | sp500-optimized-catalog-v1 | workflow_call | sealed worker inputs and protected environment | sealed heavy engine and environment tests |
 | .github/workflows/catalog-prepare-one.yml | not present | yes | - | sp500-optimized-catalog-v1 | workflow_call | prepares and seals runtime, inputs, components and balanced plan outside requested runs | preparation and repository topology tests |
-| .github/workflows/catalog-prepare.yml | not present | yes | - | sp500-optimized-catalog-v1 | push, schedule, workflow_dispatch | automatically refreshes PREPARED only when its exact inputs or caches require it | preparation and repository topology tests |
+| .github/workflows/catalog-prepare.yml | not present | yes | - | sp500-optimized-catalog-v1 | push, schedule | automatically refreshes PREPARED only when its exact inputs or caches require it | preparation and repository topology tests |
 | .github/workflows/catalog-recovery-wave.yml | not present | yes | optimized_catalog_v1 | sp500-optimized-catalog-v1 | workflow_call | created as the bounded selective-recovery worker path | recovery policy, sealed inputs and topology tests |
 | .github/workflows/catalog-reference-oracle.yml | workflow_call | no | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
 | .github/workflows/catalog-reference-worker.yml | workflow_call | yes | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
