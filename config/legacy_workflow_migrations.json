@@ -57,8 +57,8 @@
     {
       "path": ".github/workflows/catalog-prepare.yml",
       "previous_sha256": "3e5cb02e4fabfa74ed3340bbb4272d5747a7090646505221f65ca8fff880ab90",
-      "reason": "remove the manually selectable code reference from automatic preparation",
-      "replacement_sha256": "8bdc5a7fedf22e4cbcd90e78e430248f1eb26fba70bf74339b618a70f1bb3a5a"
+      "reason": "remove the manually selectable code reference and make the repository package importable during automatic preparation",
+      "replacement_sha256": "f3e5606d2c3f3ddea347dfba050e08fb431334485021612ff4d33faaafcb841a"
     },
     {
       "path": ".github/workflows/catalog-recovery-wave.yml",
