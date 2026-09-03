@@ -100,6 +100,34 @@ def _read_json(path: Path) -> Mapping[str, Any]:
     return payload
 
 
+def _repository_identity_snapshot(
+    *,
+    client: CatalogGitHubReadOnlyClient,
+    repository: str,
+    variable_name: str,
+) -> tuple[Mapping[str, Any], dict[str, str], Mapping[str, Any]]:
+    repository_raw, _ = client.get_json(f"/repos/{repository}")
+    if variable_name != "CATALOG_AUTHORITY_ISSUE_NUMBER":
+        raise ValueError("CATALOG_ROUTING_GITHUB_SNAPSHOT_INVALID")
+    variable_value = os.environ.get(variable_name, "")
+    try:
+        parsed_variable = int(variable_value)
+    except ValueError:
+        raise ValueError("CATALOG_ROUTING_GITHUB_SNAPSHOT_INVALID") from None
+    if parsed_variable < 1 or variable_value != str(parsed_variable):
+        raise ValueError("CATALOG_ROUTING_GITHUB_SNAPSHOT_INVALID")
+    ref_raw, _ = client.get_json(f"/repos/{repository}/git/ref/heads/main")
+    return (
+        repository_raw,
+        {
+            "name": variable_name,
+            "source": "github_actions_vars_context",
+            "value": variable_value,
+        },
+        ref_raw,
+    )
+
+
 def _canonical_bytes(value: object) -> bytes:
     if hasattr(value, "model_dump"):
         value = value.model_dump(mode="json")
@@ -725,11 +753,11 @@ def capture(
     ):
         raise ValueError("CATALOG_ROUTING_CONFIGURATION_INVALID")
 
-    repository_raw, _ = client.get_json(f"/repos/{repository}")
-    variable_raw, _ = client.get_json(
-        f"/repos/{repository}/actions/variables/{variable_name}"
+    repository_raw, variable_raw, ref_raw = _repository_identity_snapshot(
+        client=client,
+        repository=repository,
+        variable_name=variable_name,
     )
-    ref_raw, _ = client.get_json(f"/repos/{repository}/git/ref/heads/main")
     if not isinstance(repository_raw, dict) or not isinstance(variable_raw, dict):
         raise ValueError("CATALOG_ROUTING_GITHUB_SNAPSHOT_INVALID")
     if not isinstance(ref_raw, dict) or not isinstance(ref_raw.get("object"), dict):
@@ -854,7 +882,7 @@ def capture(
     source_identity = {
         "repository": repository,
         "repository_id": repository_raw.get("id"),
-        "variable_updated_at": variable_raw.get("updated_at"),
+        "repository_variable_sha256": _sha256(variable_raw),
         "protected_head_sha": protected_head_sha,
         "request_comments": request_comments.snapshot_sha256,
         "request_timeline": request_timeline_raw.snapshot_sha256,

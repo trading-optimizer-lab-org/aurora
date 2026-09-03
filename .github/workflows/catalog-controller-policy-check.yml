@@ -49,6 +49,7 @@ jobs:
             tests/test_catalog_controller_reporting.py \
             tests/test_catalog_github_controls.py \
             tests/test_catalog_controller_qualification.py \
+            tests/test_capture_catalog_routing_snapshot.py \
             tests/test_catalog_mirror_delivery.py \
             tests/test_reconcile_catalog_mirror_delivery.py \
             tests/test_prepare_catalog_terminal_request_receipt.py \

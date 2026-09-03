@@ -293,6 +293,14 @@ def test_step_ids_are_unique_case_insensitively_within_each_job() -> None:
             assert len(step_ids) == len(set(step_ids)), f"{path} job {job_id}"
 
 
+def test_controller_routes_with_authority_issue_from_workflow_vars() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+
+    assert workflow["env"]["CATALOG_AUTHORITY_ISSUE_NUMBER"] == (
+        "${{ vars.CATALOG_AUTHORITY_ISSUE_NUMBER }}"
+    )
+
+
 def test_policy_workflow_is_lightweight_read_only_and_exactly_named() -> None:
     workflow = _workflow(POLICY)
     assert workflow["on"] == {
@@ -322,6 +330,7 @@ def test_policy_workflow_is_lightweight_read_only_and_exactly_named() -> None:
         "tests/test_catalog_github_controls.py",
         "tests/test_catalog_controller_reporting.py",
         "tests/test_catalog_controller_qualification.py",
+        "tests/test_capture_catalog_routing_snapshot.py",
         "tests/test_catalog_mirror_delivery.py",
         "tests/test_github_performance_preflight.py",
         "tests/test_github_performance_workflows.py",
