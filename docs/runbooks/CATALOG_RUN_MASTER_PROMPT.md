@@ -1,6 +1,6 @@
 # PROMPT MAESTRO — SOLICITAR UN RUN DE CATÁLOGO AURORA
 
-VERSIÓN: 6.0-CONTROLLER
+VERSIÓN: 7.0-FAST-PATH
 
 Lee este archivo completo. Solo úsalo cuando el usuario haya pedido de forma
 explícita un run nuevo de un catálogo ya registrado.
@@ -22,8 +22,9 @@ Para solicitar el run:
    `C:/ProgramData/AURORA/CatalogRequester/client-venv/Scripts/python.exe -I -s -E C:/ProgramData/AURORA/CatalogRequester/bin/catalog-requester-client.pyz --campaign-key CAMPAIGN_KEY`
 
 4. Lee únicamente el recibo JSON sin secretos que devuelve el cliente.
-5. Si dice `submitted`, `pending` o `existing`, no crees otra solicitud. El
-   controlador de GitHub continuará, recuperará y finalizará automáticamente.
+5. Si dice `submitted`, `pending` o `existing`, no crees otra solicitud. La
+   puerta rápida de GitHub comprobará el recibo `PREPARED`, reservará la
+   campaña y arrancará el motor ya preparado.
 6. Si dice `blocked`, informa del motivo exacto y detente. No modifiques nada
    para eludirlo.
 
@@ -39,10 +40,11 @@ Prohibido:
 - declarar `SUCCESS` por el color de un job o sin el recibo terminal del
   controlador.
 
-El controlador aplica por máquina todas las obligaciones científicas, de
-integridad, capacidad, recuperación, cobertura y evidencia de la versión 5.3
-archivada. Una ausencia o duda termina en `BLOCKED`; una espera segura termina
-en `DEFERRED`; un trabajo equivalente se adopta y nunca se duplica.
+La preparación automática construye datos, entorno, componentes y plan fuera
+del run solicitado. La puerta normal solo admite un recibo `PREPARED` vigente,
+evita duplicados y arranca el motor optimizado. Los únicos estados públicos son
+`PREPARING`, `PREPARED`, `QUEUED`, `RUNNING`, `RECOVERING`, `SUCCESS` y
+`BLOCKED`. Una ausencia o duda termina en `BLOCKED`; nunca se duplica trabajo.
 
 No intentes ayudar al controlador. Solicita una vez y respeta su recibo.
 <!-- solo necesita CAMPAIGN_KEY -->

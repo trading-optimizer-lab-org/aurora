@@ -195,7 +195,10 @@ def protected_snapshots() -> _AuditInputs:
         "branch_protection": desired.branch_protection.model_dump(mode="json"),
         "actions_permissions": desired.actions.model_dump(mode="json"),
         "environment": desired.environment.model_dump(mode="json"),
-        "labels": [desired.issue_labels.terminal.model_dump(mode="json")],
+        "labels": [
+            desired.issue_labels.terminal.model_dump(mode="json"),
+            desired.issue_labels.active.model_dump(mode="json"),
+        ],
         "budgets": budgets,
         "budget_details": deepcopy(budgets),
         "cache_settings": {
@@ -224,9 +227,12 @@ def protected_snapshots() -> _AuditInputs:
             "estimated_paid_actions_cost": 0,
             "billing_snapshot_complete": True,
         },
-        "workflow_documents": {
-            HEAVY_PATH: _safe_heavy_workflow(),
-            ".github/workflows/catalog-run-controller.yml": _safe_issue_writer_workflow(
+          "workflow_documents": {
+              HEAVY_PATH: _safe_heavy_workflow(),
+              ".github/workflows/catalog-fast-controller.yml": _safe_issue_writer_workflow(
+                  ("gate", "finalize")
+              ),
+              ".github/workflows/catalog-run-controller.yml": _safe_issue_writer_workflow(
                 (
                     "issue_tamper_guard",
                     "reserve",
@@ -246,8 +252,9 @@ def protected_snapshots() -> _AuditInputs:
                 ("call_controller",)
             ),
         },
-        "workflow_source_sha256s": {
-            HEAVY_PATH: "b" * 64,
+          "workflow_source_sha256s": {
+              HEAVY_PATH: "b" * 64,
+              ".github/workflows/catalog-fast-controller.yml": "b" * 64,
             ".github/workflows/catalog-run-controller.yml": "b" * 64,
             ".github/workflows/catalog-request-reconciler.yml": "b" * 64,
             ".github/workflows/catalog-ledger-guard.yml": "b" * 64,
@@ -351,10 +358,31 @@ def mutated_protection_snapshots(mutation: str) -> _AuditInputs:
         environment = cast(dict[str, object], snapshot["environment"])
         environment["protected_branches_only"] = False
     elif mutation == "terminal_label_missing":
-        snapshot["labels"] = []
+        snapshot["labels"] = [
+            label
+            for label in cast(list[dict[str, object]], snapshot["labels"])
+            if label.get("name") != "catalog-run-terminal-v1"
+        ]
     elif mutation == "terminal_label_drift":
         labels = cast(list[dict[str, object]], snapshot["labels"])
-        labels[0]["color"] = "ffffff"
+        next(
+            label
+            for label in labels
+            if label.get("name") == "catalog-run-terminal-v1"
+        )["color"] = "ffffff"
+    elif mutation == "active_label_missing":
+        snapshot["labels"] = [
+            label
+            for label in cast(list[dict[str, object]], snapshot["labels"])
+            if label.get("name") != "catalog-run-active-v1"
+        ]
+    elif mutation == "active_label_drift":
+        labels = cast(list[dict[str, object]], snapshot["labels"])
+        next(
+            label
+            for label in labels
+            if label.get("name") == "catalog-run-active-v1"
+        )["color"] = "ffffff"
     elif mutation == "paid_runner_allowed":
         actions["larger_runners_allowed"] = True
     elif mutation == "zero_actions_budget_missing":
@@ -484,12 +512,12 @@ def test_missing_permitted_writer_blocks_closed_topology() -> None:
     assert "ISSUES_WRITE_TOPOLOGY_EXACT" in receipt.failed_controls
 
 
-def test_controller_writer_allowlist_has_exactly_six_schema_items() -> None:
+def test_fast_controller_writer_allowlist_is_minimal_and_legacy_is_closed() -> None:
     payload = json.loads(CONTROLS.read_text("utf-8"))
     schema = json.loads(
         (ROOT / "schemas/catalog_github_controls_v1.schema.json").read_text("utf-8")
     )
-    expected = [
+    legacy_expected = [
         "issue_tamper_guard",
         "reserve",
         "report_nonexecuting_decision",
@@ -497,15 +525,23 @@ def test_controller_writer_allowlist_has_exactly_six_schema_items() -> None:
         "record_nonterminal_wait",
         "finalize",
     ]
-    observed = payload["entrypoints"]["issues_write_job_allowlist"][
+    legacy_observed = payload["entrypoints"]["issues_write_job_allowlist"][
         ".github/workflows/catalog-run-controller.yml"
     ]
-    schema_node = schema["$defs"]["issues_write_job_allowlist"]["properties"][
+    legacy_schema = schema["$defs"]["issues_write_job_allowlist"]["properties"][
         ".github/workflows/catalog-run-controller.yml"
     ]
-    assert observed == expected
-    assert schema_node["minItems"] == 6
-    assert schema_node["maxItems"] == 6
+    fast_observed = payload["entrypoints"]["issues_write_job_allowlist"][
+        ".github/workflows/catalog-fast-controller.yml"
+    ]
+    fast_schema = schema["$defs"]["issues_write_job_allowlist"]["properties"][
+        ".github/workflows/catalog-fast-controller.yml"
+    ]
+    assert legacy_observed == legacy_expected
+    assert legacy_schema["minItems"] == 6
+    assert legacy_schema["maxItems"] == 6
+    assert fast_observed == ["gate", "finalize"]
+    assert fast_schema == {"const": ["gate", "finalize"]}
 
 
 def test_cache_retention_matches_the_90_day_hierarchy_minimum() -> None:
@@ -528,8 +564,10 @@ def test_cache_retention_matches_the_90_day_hierarchy_minimum() -> None:
         ("repository_private", "PUBLIC_REPOSITORY_REQUIRED"),
         ("environment_missing", "CATALOG_ENVIRONMENT_REQUIRED"),
         ("environment_any_branch", "CATALOG_ENVIRONMENT_MAIN_ONLY"),
-        ("terminal_label_missing", "CATALOG_TERMINAL_LABEL_REQUIRED"),
-        ("terminal_label_drift", "CATALOG_TERMINAL_LABEL_EXACT"),
+          ("terminal_label_missing", "CATALOG_TERMINAL_LABEL_REQUIRED"),
+          ("terminal_label_drift", "CATALOG_TERMINAL_LABEL_EXACT"),
+          ("active_label_missing", "CATALOG_ACTIVE_LABEL_REQUIRED"),
+          ("active_label_drift", "CATALOG_ACTIVE_LABEL_EXACT"),
         ("paid_runner_allowed", "PAID_RUNNER_FORBIDDEN"),
         ("zero_actions_budget_missing", "ZERO_ACTIONS_SPEND_BUDGET_REQUIRED"),
         (

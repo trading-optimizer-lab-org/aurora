@@ -13,7 +13,7 @@
     "component_workers": 120,
     "component_processes_per_worker": 4,
     "processes_per_worker": 1,
-    "block_size": 1,
+    "block_size": 256,
     "component_replication_budget": 0,
     "retry_only_unfinished": true,
     "checkpoint_interval_seconds": 120
@@ -83,6 +83,6 @@
     "valid_work_reuse_required": true,
     "global_rerun_allowed": false,
     "max_same_failure_occurrences": 3,
-    "max_total_recovery_waves": 6
+    "max_total_recovery_waves": 2
   }
 }

@@ -222,11 +222,26 @@
         }
       }
     },
+    "active_label": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "color", "description"],
+      "properties": {
+        "name": {"const": "catalog-run-active-v1"},
+        "color": {"const": "1d76db"},
+        "description": {
+          "const": "Controller-reserved active catalog request; do not apply manually"
+        }
+      }
+    },
     "issue_labels": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["terminal"],
-      "properties": {"terminal": {"$ref": "#/$defs/terminal_label"}}
+      "required": ["active", "terminal"],
+      "properties": {
+        "active": {"$ref": "#/$defs/active_label"},
+        "terminal": {"$ref": "#/$defs/terminal_label"}
+      }
     },
     "auditor": {
       "type": "object",
@@ -261,11 +276,15 @@
       "additionalProperties": false,
       "required": [
         ".github/workflows/catalog-run-controller.yml",
+        ".github/workflows/catalog-fast-controller.yml",
         ".github/workflows/catalog-request-reconciler.yml",
         ".github/workflows/catalog-ledger-guard.yml",
         ".github/workflows/catalog-run-watchdog.yml"
       ],
       "properties": {
+        ".github/workflows/catalog-fast-controller.yml": {
+          "const": ["gate", "finalize"]
+        },
         ".github/workflows/catalog-run-controller.yml": {
           "type": "array",
           "minItems": 6,
@@ -300,7 +319,7 @@
         "heavy_workflows_must_be_workflow_call_only"
       ],
       "properties": {
-        "public_controller": {"const": ".github/workflows/catalog-run-controller.yml"},
+        "public_controller": {"const": ".github/workflows/catalog-fast-controller.yml"},
         "request_reconciler": {
           "const": ".github/workflows/catalog-request-reconciler.yml"
         },
@@ -308,8 +327,8 @@
         "authority_watchdog": {"const": ".github/workflows/catalog-run-watchdog.yml"},
         "issues_write_workflow_allowlist": {
           "type": "array",
-          "minItems": 4,
-          "maxItems": 4,
+          "minItems": 5,
+          "maxItems": 5,
           "uniqueItems": true,
           "items": {"type": "string"}
         },
@@ -319,8 +338,8 @@
         },
         "fixed_nonproduction_trigger_exemptions": {
           "type": "array",
-          "minItems": 4,
-          "maxItems": 4,
+          "minItems": 5,
+          "maxItems": 5,
           "uniqueItems": true,
           "items": {"type": "string"}
         },

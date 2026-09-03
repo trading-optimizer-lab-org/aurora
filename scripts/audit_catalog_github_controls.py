@@ -1528,11 +1528,10 @@ def collect_live_snapshot(
             f"/repos/{repository}/environments/{desired.environment.name}"
         )
     )
-    label = _dict(
-        client.get_optional(
-            f"/repos/{repository}/labels/{desired.issue_labels.terminal.name}"
-        )
-    )
+    labels = [
+        _dict(client.get_optional(f"/repos/{repository}/labels/{label.name}"))
+        for label in (desired.issue_labels.active, desired.issue_labels.terminal)
+    ]
     organization = desired.billing.budget_control_plane.organization
     enterprise = desired.billing.budget_control_plane.enterprise
     budgets, budgets_complete = _paginate_object_rows_stable(
@@ -1701,7 +1700,7 @@ def collect_live_snapshot(
                 if isinstance(reviewer, dict) and reviewer.get("login")
             ),
         },
-        "labels": [label] if label else [],
+        "labels": [label for label in labels if label],
         "budgets": list(budgets),
         "budget_details": budget_details,
         "cache_settings": cache_settings,

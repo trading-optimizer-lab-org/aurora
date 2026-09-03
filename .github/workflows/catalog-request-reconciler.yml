@@ -52,7 +52,7 @@ jobs:
       max-parallel: 4
       matrix:
         include: ${{ fromJSON(needs.discover.outputs.matrix) }}
-    uses: ./.github/workflows/catalog-run-controller.yml
+    uses: ./.github/workflows/catalog-fast-controller.yml
     with:
       issue_number: ${{ matrix.issue_number }}
     permissions:

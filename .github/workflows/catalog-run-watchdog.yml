@@ -73,6 +73,6 @@ jobs:
       actions: read
       contents: read
       issues: write
-    uses: ./.github/workflows/catalog-run-controller.yml
+    uses: ./.github/workflows/catalog-fast-controller.yml
     with:
       issue_number: ${{ matrix.issue_number }}

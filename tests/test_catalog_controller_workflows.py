@@ -888,50 +888,33 @@ def test_codeowners_covers_every_catalog_controller_sensitive_path() -> None:
         assert line in text
 
 
-def test_controller_has_only_request_lifecycle_and_reconciler_triggers() -> None:
-    workflow = _workflow(WORKFLOWS / "catalog-run-controller.yml")
-    assert workflow["on"]["issues"] == {
-        "types": [
-            "opened",
-            "edited",
-            "deleted",
-            "transferred",
-            "closed",
-            "reopened",
-            "locked",
-            "unlocked",
-            "labeled",
-            "unlabeled",
-        ]
-    }
+def test_fast_controller_is_the_only_public_request_lifecycle() -> None:
+    legacy = _workflow(WORKFLOWS / "catalog-run-controller.yml")
+    workflow = _workflow(WORKFLOWS / "catalog-fast-controller.yml")
+    assert set(legacy["on"]) == {"workflow_call"}
+    assert workflow["on"]["issues"] == {"types": ["opened"]}
     assert set(workflow["on"]) == {"issues", "workflow_call"}
     assert set(workflow["on"]["workflow_call"]["inputs"]) == {"issue_number"}
-    assert workflow["jobs"]["filter"]["if"] == (
-        "${{ inputs.issue_number > 0 || "
-        "(github.event_name == 'issues' && github.event.action == 'opened') }}"
-    )
     assert workflow["permissions"] == {
         "actions": "read",
         "contents": "read",
         "issues": "read",
     }
-    assert "concurrency" not in workflow
-
-    expected_writers = {
-        "issue_tamper_guard",
-        "reserve",
-        "report_nonexecuting_decision",
-        "record_running",
-        "record_nonterminal_wait",
-        "finalize",
+    assert workflow["concurrency"] == {
+        "group": (
+            "aurora-catalog-fast-request-"
+            "${{ inputs.issue_number || github.event.issue.number }}"
+        ),
+        "cancel-in-progress": False,
     }
-    assert len(expected_writers) == 6
+    assert list(workflow["jobs"]) == ["gate", "engine", "finalize"]
+    expected_writers = {"gate", "finalize"}
     writers = {
         job
         for path, job in jobs_with_issues_write(
-            {".github/workflows/catalog-run-controller.yml": workflow}
+            {".github/workflows/catalog-fast-controller.yml": workflow}
         )
-        if path == ".github/workflows/catalog-run-controller.yml"
+        if path == ".github/workflows/catalog-fast-controller.yml"
     }
     assert writers == expected_writers
     for job_id in expected_writers:
@@ -941,24 +924,14 @@ def test_controller_has_only_request_lifecycle_and_reconciler_triggers() -> None
             "issues": "write",
         }
 
-    for job_id in (
-        "issue_tamper_guard",
-        "reserve",
-        "record_running",
-        "record_nonterminal_wait",
-        "finalize",
-    ):
-        assert workflow["jobs"][job_id]["concurrency"] == {
-            "group": "catalog-authority-admission-v1",
-            "cancel-in-progress": False,
-        }
-    assert workflow["jobs"]["report_nonexecuting_decision"]["concurrency"] == {
-        "group": (
-            "catalog-request-receipt-v1-"
-            "${{ needs.filter.outputs.issue_number }}"
-        ),
+    assert workflow["jobs"]["gate"]["concurrency"] == {
+        "group": "aurora-catalog-fast-admission-v1",
         "cancel-in-progress": False,
     }
+    assert workflow["jobs"]["engine"]["uses"] == (
+        "./.github/workflows/catalog-optimized-run.yml"
+    )
+    assert workflow["jobs"]["engine"]["with"]["execution_mode"] == "run"
 
 
 def test_disabled_controller_uses_one_exact_fail_closed_reason() -> None:
@@ -1302,7 +1275,7 @@ def test_request_reconciler_replays_only_existing_requests() -> None:
     ).read_text("utf-8")
     call = workflow["jobs"]["call_controller"]
     assert "steps" not in call
-    assert call["uses"] == "./.github/workflows/catalog-run-controller.yml"
+    assert call["uses"] == "./.github/workflows/catalog-fast-controller.yml"
     assert call["permissions"] == {
         "actions": "read",
         "contents": "read",
@@ -1369,6 +1342,8 @@ def test_issues_write_is_job_scoped_to_the_exact_governance_jobs() -> None:
         for workflow in workflows.values()
     )
     assert set(jobs_with_issues_write(workflows)) == {
+        (".github/workflows/catalog-fast-controller.yml", "gate"),
+        (".github/workflows/catalog-fast-controller.yml", "finalize"),
         (".github/workflows/catalog-run-controller.yml", "issue_tamper_guard"),
         (".github/workflows/catalog-run-controller.yml", "reserve"),
         (
@@ -1688,23 +1663,184 @@ def test_catalog_recovery_inline_python_is_syntactically_valid() -> None:
     assert found >= 8
 
 
-def test_engine_unrolls_exactly_six_selective_recovery_slots() -> None:
+def test_engine_unrolls_exactly_two_selective_recovery_slots() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-optimized-run.yml")
     jobs = workflow["jobs"]
     assert "reconcile_wave_0" in jobs
-    for wave in range(1, 7):
+    for wave in range(1, 3):
         job = jobs[f"recovery_wave_{wave}"]
         assert job["uses"] == "./.github/workflows/catalog-recovery-wave.yml"
         serialized = json.dumps(job, sort_keys=True)
         assert f"current_wave\": {wave}" in serialized
         assert "retry" in serialized and "replan" in serialized
         assert "always()" in str(job["if"])
-    assert "recovery_wave_7" not in jobs
+    assert "recovery_wave_3" not in jobs
     final_gate = jobs["ready_to_merge"]
-    assert "recovery_wave_6" in final_gate["needs"]
+    assert "recovery_wave_2" in final_gate["needs"]
     text = (WORKFLOWS / "catalog-optimized-run.yml").read_text("utf-8")
     assert "rerun all jobs" not in text.casefold()
     assert "catalog-recovery-wave.yml" in text
+
+
+def test_engine_preparation_mode_builds_store_but_never_evaluates_recipes() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-optimized-run.yml")
+    inputs = workflow["on"]["workflow_call"]["inputs"]
+    assert inputs["execution_mode"] == {
+        "required": False,
+        "type": "string",
+        "default": "run",
+    }
+    jobs = workflow["jobs"]
+    for job_id in (
+        "evaluate_a",
+        "evaluate_b",
+        "evaluate_c",
+        "reconcile_wave_0",
+        "recovery_wave_1",
+        "recovery_wave_2",
+        "ready_to_merge",
+        "reduce_groups",
+        "reduce",
+        "verify_terminal_science",
+        "audit_runtime",
+    ):
+        assert "inputs.execution_mode == 'run'" in str(jobs[job_id].get("if", ""))
+    assert "inputs.execution_mode == 'prepare'" in json.dumps(
+        jobs["campaign_outcome"], sort_keys=True
+    )
+
+
+def test_preparation_runs_outside_the_request_path_and_reuses_prepared_cache() -> None:
+    public = _workflow(WORKFLOWS / "catalog-prepare.yml")
+    one = _workflow(WORKFLOWS / "catalog-prepare-one.yml")
+    assert set(public["on"]) == {"push", "schedule", "workflow_dispatch"}
+    assert public["on"]["push"] == {"branches": ["main"]}
+    assert public["jobs"]["prepare"]["uses"] == (
+        "./.github/workflows/catalog-prepare-one.yml"
+    )
+    assert set(one["on"]) == {"workflow_call"}
+    assert list(one["jobs"]) == [
+        "preflight",
+        "seed",
+        "prepare_engine",
+        "finalize",
+        "finish",
+    ]
+    assert one["jobs"]["prepare_engine"]["uses"] == (
+        "./.github/workflows/catalog-optimized-run.yml"
+    )
+    assert one["jobs"]["prepare_engine"]["with"]["execution_mode"] == "prepare"
+    rendered = json.dumps(one, sort_keys=True)
+    assert "actions/cache/restore@" in rendered
+    assert "actions/cache/save@" in rendered
+    assert "verify_catalog_production_runtime.py" in rendered
+    assert "--require-live-caches" in rendered
+    assert "finalize_catalog_preparation.py" in rendered
+
+
+def test_requested_run_never_builds_runtime_or_prepared_inputs() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-optimized-run.yml")
+    steps = workflow["jobs"]["prepare_runtime_and_inputs"]["steps"]
+    by_name = {step["name"]: step for step in steps}
+    assert "inputs.execution_mode == 'run'" in by_name[
+        "Refuse runtime construction in a requested run"
+    ]["if"]
+    assert "inputs.execution_mode == 'prepare'" in by_name[
+        "Build the one locked runtime store"
+    ]["if"]
+    assert "inputs.execution_mode == 'run'" in by_name[
+        "Refuse input preparation in a requested run"
+    ]["if"]
+    assert "inputs.execution_mode == 'prepare'" in by_name[
+        "Download and verify the frozen train-only source once"
+    ]["if"]
+    for step in steps:
+        if str(step.get("uses", "")).startswith("actions/cache/save@"):
+            assert "inputs.execution_mode == 'prepare'" in str(step.get("if", ""))
+
+
+def test_fast_request_path_has_one_gate_and_no_preparation_or_qualification() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-fast-controller.yml")
+    gate = workflow["jobs"]["gate"]
+    rendered = json.dumps(gate, sort_keys=True)
+    assert "inspect_catalog_fast_request.py" in rendered
+    assert "admit_catalog_fast_request.py" in rendered
+    assert "catalog-run-active-v1" in rendered
+    assert "catalog-run-terminal-v1" in json.dumps(
+        workflow["jobs"]["finalize"], sort_keys=True
+    )
+    for forbidden in (
+        "qualification",
+        "prepare_catalog_campaign.py",
+        "catalog-live-controls-audit",
+        "repair",
+    ):
+        assert forbidden not in rendered.casefold()
+
+
+def test_fast_gate_terminalizes_an_internal_failure_and_cannot_finalize_it() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-fast-controller.yml")
+    gate = workflow["jobs"]["gate"]
+    steps = gate["steps"]
+    admit = next(step for step in steps if step.get("id") == "admit")
+    fallback = next(
+        step
+        for step in steps
+        if step.get("name")
+        == "Terminate one unexpected admission failure without retrying it"
+    )
+    assert admit["continue-on-error"] is True
+    assert "admission_completed=true" in admit["run"]
+    assert "steps.admit.outcome != 'success'" in fallback["if"]
+    assert "CATALOG_ADMISSION_GATE_FAILED" in fallback["run"]
+    assert "needs.gate.outputs.admission_completed == 'true'" in workflow["jobs"][
+        "finalize"
+    ]["if"]
+
+
+def test_fast_gate_closes_publication_failures_without_replaying_the_request() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-fast-controller.yml")
+    steps = workflow["jobs"]["gate"]["steps"]
+    by_name = {step["name"]: step for step in steps}
+    reserve = by_name["Reserve the campaign atomically and expose QUEUED"]
+    fallback = by_name["Close one unexpected gate publication failure"]
+
+    assert "|| true" in reserve["run"]
+    assert "always()" in fallback["if"]
+    assert "steps.publish_gate.outcome != 'success'" in fallback["if"]
+    assert "steps.publish_plan.outcome != 'success'" in fallback["if"]
+    assert "steps.reserve.outcome != 'success'" in fallback["if"]
+    assert "CATALOG_GATE_PUBLICATION_FAILED" in fallback["run"]
+    assert fallback["run"].index(
+        '"repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels"'
+    ) < fallback["run"].index(
+        '"repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments"'
+    )
+    assert "labels/catalog-run-active-v1" in fallback["run"]
+
+
+def test_fast_finalizer_always_releases_a_failed_terminalization() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-fast-controller.yml")
+    steps = workflow["jobs"]["finalize"]["steps"]
+    by_name = {step["name"]: step for step in steps}
+    fallback = by_name["Fail closed once and release a stuck reservation"]
+
+    assert by_name["Publish the terminal receipt before changing the issue"]["id"] == (
+        "publish_receipt"
+    )
+    assert by_name["Publish the terminal state and release the reservation"]["id"] == (
+        "publish_terminal"
+    )
+    assert "always()" in fallback["if"]
+    assert "steps.terminal.outcome != 'success'" in fallback["if"]
+    assert "steps.publish_receipt.outcome != 'success'" in fallback["if"]
+    assert "steps.publish_terminal.outcome != 'success'" in fallback["if"]
+    assert fallback["run"].index(
+        '"repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels"'
+    ) < fallback["run"].index(
+        '"repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments"'
+    )
+    assert "labels/catalog-run-active-v1" in fallback["run"]
 
 
 def test_engine_publishes_one_content_bound_global_reuse_index() -> None:
@@ -1715,10 +1851,15 @@ def test_engine_publishes_one_content_bound_global_reuse_index() -> None:
         step
         for step in steps
         if str(step.get("uses", "")).startswith("actions/upload-artifact@")
-        and step.get("with", {}).get("name")
-        == "catalog-rebuildable-store-index-v1"
+        and step.get("with", {}).get("path")
+        == "${{ runner.temp }}/catalog-rebuildable-store-index-v1.json"
     ]
     assert len(uploads) == 1
+    assert uploads[0]["with"]["name"] == (
+        "${{ inputs.execution_mode == 'prepare' && "
+        "format('catalog-rebuildable-store-index-prepared-{0}', inputs.authority_id) || "
+        "'catalog-rebuildable-store-index-v1' }}"
+    )
     assert uploads[0]["with"]["retention-days"] == 90
     assert "build_catalog_rebuildable_store_index.py" in serialized
     assert "actions/caches?ref=refs/heads/main&per_page=100" in serialized
@@ -1729,6 +1870,18 @@ def test_engine_publishes_one_content_bound_global_reuse_index() -> None:
     ).read_text("utf-8")
     assert "actions/artifacts?name={_STORE_INDEX_ARTIFACT_NAME}" in candidate_source
     assert 'f"/repos/{repository}/actions/artifacts",' not in candidate_source
+
+    prepare = _workflow(WORKFLOWS / "catalog-prepare-one.yml")
+    finalize_steps = prepare["jobs"]["finalize"]["steps"]
+    download = next(
+        step
+        for step in finalize_steps
+        if step.get("name") == "Download the verified global component-store index"
+    )
+    assert download["with"]["name"] == (
+        "catalog-rebuildable-store-index-prepared-"
+        "${{ needs.seed.outputs.authority_id }}"
+    )
 
 
 def test_checkpoint_upload_must_finish_before_the_next_segment() -> None:
@@ -1771,7 +1924,7 @@ def test_watchdog_can_only_reenter_controller_for_existing_authority() -> None:
         "PYTHONPATH": "${{ github.workspace }}/..",
     }
     call = jobs["call_controller"]
-    assert call["uses"] == "./.github/workflows/catalog-run-controller.yml"
+    assert call["uses"] == "./.github/workflows/catalog-fast-controller.yml"
     assert "steps" not in call
     assert call["permissions"] == {
         "actions": "read",
@@ -1810,7 +1963,7 @@ def test_watchdog_uses_two_stable_nonterminal_run_inventories() -> None:
 
 def test_catalog_reusable_workflow_graph_stays_below_github_limits() -> None:
     documents = _all_workflows()
-    root = ".github/workflows/catalog-run-controller.yml"
+    root = ".github/workflows/catalog-fast-controller.yml"
     visited: set[str] = set()
 
     def walk(path: str, depth: int) -> int:

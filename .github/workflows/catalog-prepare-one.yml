@@ -1,0 +1,345 @@
+name: AURORA prepare one catalog
+
+on:
+  workflow_call:
+    inputs:
+      campaign_key: {required: true, type: string}
+    outputs:
+      preparation_state:
+        value: ${{ jobs.finish.outputs.preparation_state }}
+      prepared_receipt_sha256:
+        value: ${{ jobs.finish.outputs.prepared_receipt_sha256 }}
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}/..
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      protected_commit_sha: ${{ steps.commit.outputs.protected_commit_sha }}
+      preparation_key_sha256: ${{ steps.identity.outputs.preparation_key_sha256 }}
+      qualified_workers: ${{ steps.identity.outputs.qualified_workers }}
+      needs_prepare: ${{ steps.route.outputs.needs_prepare }}
+      prepared_receipt_sha256: ${{ steps.verify.outputs.prepared_receipt_sha256 }}
+    steps:
+      - name: Check out the exact protected branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          persist-credentials: false
+
+      - id: commit
+        name: Bind preparation to the checked-out commit
+        shell: bash
+        run: echo "protected_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Use the controller Python family
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+
+      - name: Install only the locked controller dependencies
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r requirements/catalog-controller-linux-py311.lock
+
+      - id: identity
+        name: Derive the exact preparation identity
+        env:
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ steps.commit.outputs.protected_commit_sha }}
+        shell: bash
+        run: >-
+          python scripts/inspect_catalog_preparation.py
+          --campaign-key "${{ inputs.campaign_key }}"
+          --repo-root .
+          --github-output "$GITHUB_OUTPUT"
+
+      - id: restore
+        name: Restore a matching PREPARED bundle when it already exists
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/prepared-bundle
+          key: ${{ steps.identity.outputs.prepared_cache_restore_prefix }}lookup
+          restore-keys: ${{ steps.identity.outputs.prepared_cache_restore_prefix }}
+
+      - id: verify
+        name: Verify every restored byte against current inputs
+        if: ${{ steps.restore.outputs['cache-matched-key'] != '' }}
+        continue-on-error: true
+        env:
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ steps.commit.outputs.protected_commit_sha }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: >-
+          python scripts/verify_catalog_prepared_bundle.py
+          --campaign-key "${{ inputs.campaign_key }}"
+          --repo-root .
+          --bundle "$RUNNER_TEMP/prepared-bundle"
+          --require-live-caches
+          --github-output "$GITHUB_OUTPUT"
+
+      - id: route
+        name: Prepare only when no current verified bundle exists
+        env:
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+        shell: bash
+        run: |
+          if [[ "$VERIFY_OUTCOME" == "success" ]]; then
+            echo "needs_prepare=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_prepare=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  seed:
+    needs: preflight
+    if: ${{ needs.preflight.outputs.needs_prepare == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    outputs:
+      request_sha256: ${{ steps.prepare.outputs.request_sha256 }}
+      authority_id: ${{ steps.prepare.outputs.authority_id }}
+      campaign_id: ${{ steps.prepare.outputs.campaign_id }}
+      science_sha256: ${{ steps.prepare.outputs.science_sha256 }}
+      execution_plan_sha256: ${{ steps.prepare.outputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ steps.prepare.outputs.execution_protocol_sha256 }}
+      decision_sha256: ${{ steps.prepare.outputs.decision_sha256 }}
+      checkpoint_upload_seconds_p95: ${{ steps.probe_elapsed.outputs.seconds }}
+    steps:
+      - name: Check out the exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ needs.preflight.outputs.protected_commit_sha }}
+          persist-credentials: false
+
+      - name: Use the production Python family
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+
+      - name: Install the exact production dependency closure once
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r requirements/catalog-optimized.lock
+
+      - name: Verify the complete production import boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/verify_catalog_production_runtime.py \
+            --lock requirements/catalog-optimized.lock \
+            --output "$RUNNER_TEMP/catalog-production-runtime-smoke.json" \
+            --import numpy --import pandas --import pyarrow --import scipy \
+            --import aurora.infra.sp500_megarun.catalog_fast_path \
+            --import scripts.plan_sp500_optimized_catalog_run \
+            --import scripts.prepare_catalog_admission_candidates \
+            --require-distribution numpy --require-distribution pandas \
+            --require-distribution pyarrow --require-distribution pydantic \
+            --require-distribution scipy
+
+      - id: probe_start
+        name: Start one small checkpoint transport measurement
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import time
+          from pathlib import Path
+
+          Path(os.environ["RUNNER_TEMP"], "checkpoint-probe.bin").write_bytes(
+              bytes(1024 * 1024)
+          )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"started={time.time()}\n")
+          PY
+
+      - name: Measure the real small-artifact upload path
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-checkpoint-probe-${{ needs.preflight.outputs.preparation_key_sha256 }}
+          path: ${{ runner.temp }}/checkpoint-probe.bin
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - id: probe_elapsed
+        name: Record measured checkpoint upload time
+        env:
+          STARTED: ${{ steps.probe_start.outputs.started }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import time
+          from pathlib import Path
+
+          elapsed = max(0.0, time.time() - float(os.environ["STARTED"]))
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"seconds={elapsed:.6f}\n")
+          PY
+
+      - id: prepare
+        name: Build the request-independent preparation plan
+        env:
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ needs.preflight.outputs.protected_commit_sha }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: >-
+          python scripts/prepare_catalog_campaign.py
+          --campaign-key "${{ inputs.campaign_key }}"
+          --repo-root .
+          --runtime-smoke "$RUNNER_TEMP/catalog-production-runtime-smoke.json"
+          --output-dir "$RUNNER_TEMP/catalog-preparation-seed"
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Publish the immutable preparation plan for the engine
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-sealed-execution-plan-${{ steps.prepare.outputs.authority_id }}
+          path: ${{ runner.temp }}/catalog-preparation-seed/sealed-plan
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Publish only the material needed to finalize PREPARED
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-preparation-seed-${{ needs.preflight.outputs.preparation_key_sha256 }}
+          path: |
+            ${{ runner.temp }}/catalog-preparation-seed/preparation-seed.json
+            ${{ runner.temp }}/catalog-preparation-seed/resolved-contract.json
+            ${{ runner.temp }}/catalog-preparation-seed/component-requirements.json
+            ${{ runner.temp }}/catalog-preparation-seed/recipe-requirements.json
+            ${{ runner.temp }}/catalog-preparation-seed/source-artifacts.json
+            ${{ runner.temp }}/catalog-preparation-seed/runtime-smoke.json
+            ${{ runner.temp }}/catalog-preparation-seed/template-admission-evidence.json
+            ${{ runner.temp }}/catalog-preparation-seed/recipe-dag
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  prepare_engine:
+    needs: [preflight, seed]
+    if: ${{ needs.preflight.outputs.needs_prepare == 'true' && needs.seed.result == 'success' }}
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/catalog-optimized-run.yml
+    with:
+      request_sha256: ${{ needs.seed.outputs.request_sha256 }}
+      authority_id: ${{ needs.seed.outputs.authority_id }}
+      campaign_id: ${{ needs.seed.outputs.campaign_id }}
+      science_sha256: ${{ needs.seed.outputs.science_sha256 }}
+      execution_plan_sha256: ${{ needs.seed.outputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ needs.seed.outputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ needs.preflight.outputs.protected_commit_sha }}
+      decision_sha256: ${{ needs.seed.outputs.decision_sha256 }}
+      execution_mode: prepare
+
+  finalize:
+    needs: [preflight, seed, prepare_engine]
+    if: ${{ needs.prepare_engine.outputs.campaign_state == 'PREPARED' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      prepared_receipt_sha256: ${{ steps.finalize.outputs.prepared_receipt_sha256 }}
+    steps:
+      - name: Check out the exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ needs.preflight.outputs.protected_commit_sha }}
+          persist-credentials: false
+
+      - name: Use the production Python family
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: ""
+
+      - name: Install the exact production dependency closure
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r requirements/catalog-optimized.lock
+
+      - name: Download the request-independent preparation material
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-preparation-seed-${{ needs.preflight.outputs.preparation_key_sha256 }}
+          path: ${{ runner.temp }}/catalog-preparation-seed
+
+      - name: Download the verified global component-store index
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-rebuildable-store-index-prepared-${{ needs.seed.outputs.authority_id }}
+          path: ${{ runner.temp }}/catalog-preparation-index
+
+      - id: finalize
+        name: Seal the complete hot execution bundle
+        env:
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ needs.preflight.outputs.protected_commit_sha }}
+        shell: bash
+        run: >-
+          python scripts/finalize_catalog_preparation.py
+          --campaign-key "${{ inputs.campaign_key }}"
+          --repo-root .
+          --seed-dir "$RUNNER_TEMP/catalog-preparation-seed"
+          --store-index "$RUNNER_TEMP/catalog-preparation-index/catalog-rebuildable-store-index-v1.json"
+          --checkpoint-upload-seconds-p95 "${{ needs.seed.outputs.checkpoint_upload_seconds_p95 }}"
+          --qualified-workers "${{ needs.preflight.outputs.qualified_workers }}"
+          --output-dir "$RUNNER_TEMP/prepared-bundle"
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Save the exact PREPARED bundle for immediate launch reuse
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/prepared-bundle
+          key: ${{ steps.finalize.outputs.prepared_cache_key }}
+
+      - name: Publish the PREPARED receipt and bundle as durable evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-prepared-${{ inputs.campaign_key }}-${{ needs.preflight.outputs.preparation_key_sha256 }}
+          path: ${{ runner.temp }}/prepared-bundle
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  finish:
+    needs: [preflight, seed, prepare_engine, finalize]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      preparation_state: ${{ steps.state.outputs.preparation_state }}
+      prepared_receipt_sha256: ${{ steps.state.outputs.prepared_receipt_sha256 }}
+    steps:
+      - id: state
+        name: Emit exactly one preparation state
+        env:
+          NEEDS_PREPARE: ${{ needs.preflight.outputs.needs_prepare }}
+          CACHED_RECEIPT: ${{ needs.preflight.outputs.prepared_receipt_sha256 }}
+          FINALIZE_RESULT: ${{ needs.finalize.result }}
+          FINALIZED_RECEIPT: ${{ needs.finalize.outputs.prepared_receipt_sha256 }}
+        shell: bash
+        run: |
+          if [[ "$NEEDS_PREPARE" == "false" && -n "$CACHED_RECEIPT" ]]; then
+            echo "preparation_state=PREPARED" >> "$GITHUB_OUTPUT"
+            echo "prepared_receipt_sha256=$CACHED_RECEIPT" >> "$GITHUB_OUTPUT"
+          elif [[ "$FINALIZE_RESULT" == "success" && -n "$FINALIZED_RECEIPT" ]]; then
+            echo "preparation_state=PREPARED" >> "$GITHUB_OUTPUT"
+            echo "prepared_receipt_sha256=$FINALIZED_RECEIPT" >> "$GITHUB_OUTPUT"
+          else
+            echo "preparation_state=BLOCKED" >> "$GITHUB_OUTPUT"
+            echo "prepared_receipt_sha256=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fail closed when preparation did not complete
+        if: ${{ steps.state.outputs.preparation_state != 'PREPARED' }}
+        run: exit 1
