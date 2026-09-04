@@ -1815,6 +1815,25 @@ def test_requested_run_never_builds_runtime_or_prepared_inputs() -> None:
             assert "inputs.execution_mode == 'prepare'" in str(step.get("if", ""))
 
 
+def test_preparation_activates_one_offline_runtime_before_python_helpers() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-optimized-run.yml")
+    steps = workflow["jobs"]["prepare_runtime_and_inputs"]["steps"]
+    setup_indices = [
+        index
+        for index, step in enumerate(steps)
+        if step.get("uses") == "./.github/actions/aurora-runtime-setup"
+    ]
+    download_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("name")
+        == "Download and verify the frozen train-only source once"
+    )
+
+    assert len(setup_indices) == 1
+    assert setup_indices[0] < download_index
+
+
 def test_fast_request_path_has_one_gate_and_no_preparation_or_qualification() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-fast-controller.yml")
     gate = workflow["jobs"]["gate"]

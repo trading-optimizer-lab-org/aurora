@@ -634,6 +634,18 @@ jobs:
           path: ${{ runner.temp }}/runtime-store
           key: ${{ steps.runtime_build.outputs.cache_key }}
 
+      - name: Activate and verify the selected runtime before input preparation
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.11"
+          runtime-mode: ${{ needs.engine_verify_sealed_plan.outputs.runtime_mode }}
+          runtime-object-path: ${{ runner.temp }}/runtime-store
+          runtime-manifest-path: ${{ runner.temp }}/runtime-store/runtime_manifest.json
+          dependency-lock-path: requirements/catalog-optimized.lock
+          expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
+          expected-source-sha: ${{ github.sha }}
+          expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
+
       - name: Restore prepared core cache
         id: input_cache_core
         if: ${{ needs.engine_verify_sealed_plan.outputs.prepared_cache_key_core != '' }}
@@ -1005,18 +1017,6 @@ jobs:
         with:
           path: ${{ runner.temp }}/prepared/runtime-fragment-D_FED_H15_H10
           key: ${{ steps.prepared_keys.outputs.cache_key_d_fed_h15_h10 }}
-
-      - name: Verify the selected runtime store before fan-out
-        uses: ./.github/actions/aurora-runtime-setup
-        with:
-          python-version: "3.11"
-          runtime-mode: ${{ needs.engine_verify_sealed_plan.outputs.runtime_mode }}
-          runtime-object-path: ${{ runner.temp }}/runtime-store
-          runtime-manifest-path: ${{ runner.temp }}/runtime-store/runtime_manifest.json
-          dependency-lock-path: requirements/catalog-optimized.lock
-          expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
-          expected-source-sha: ${{ github.sha }}
-          expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
       - name: Publish bound runtime and prepared-input seal
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
