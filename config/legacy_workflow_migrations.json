@@ -39,8 +39,8 @@
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
-      "reason": "add explicit prepared and run modes while preserving the optimized engine",
-      "replacement_sha256": "9b08ada45479510da45e04c7c96059931e7d73debae5f89bfc6029c84d27a055"
+      "reason": "activate the sealed offline runtime before preparation helpers while preserving the optimized engine",
+      "replacement_sha256": "ad76edd706d51189b221a4a16ed38dc4fcdf36985d0c4c5abf2c377a53d0b196"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",
