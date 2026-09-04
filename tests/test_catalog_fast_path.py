@@ -200,6 +200,21 @@ def test_valid_prepared_request_is_admitted_once_with_safe_capacity() -> None:
     assert decision.expires_at == NOW + timedelta(minutes=30) - timedelta(seconds=10)
 
 
+def test_signed_campaign_key_survives_preparation_only_revisions() -> None:
+    decision = decide_fast_catalog_launch(
+        request=_request(campaign_definition_sha256="0" * 64),
+        registry_entry=_entry(),
+        prepared_receipt=_prepared(),
+        expected_preparation_identity=_identity(),
+        snapshot=_snapshot(),
+        issue_created_at=NOW - timedelta(seconds=10),
+    )
+
+    assert decision.state == "QUEUED"
+    assert decision.reason_code == "CATALOG_FAST_PATH_ADMITTED"
+    assert decision.launch_required is True
+
+
 @pytest.mark.parametrize(
     ("prepared", "snapshot", "reason"),
     [

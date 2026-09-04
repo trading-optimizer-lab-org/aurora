@@ -422,8 +422,6 @@ def decide_fast_catalog_launch(
         and identity.campaign_key == registry_entry.campaign_key
         and identity.engine_id == registry_entry.engine_id
         and identity.protected_commit_sha == snapshot.protected_commit_sha
-        and identity.campaign_definition_sha256
-        == request.campaign_definition_sha256
         and identity.scientific_contract_sha256
         == registry_entry.scientific_contract_sha256
     )

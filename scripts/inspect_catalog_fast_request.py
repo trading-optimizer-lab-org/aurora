@@ -155,8 +155,6 @@ def inspect_request(
         registry_entry=entry,
         protected_commit_sha=expected_commit,
     )
-    if request.campaign_definition_sha256 != identity.campaign_definition_sha256:
-        raise ValueError("CATALOG_CAMPAIGN_DEFINITION_MISMATCH")
     catalog_manifest = _mapping(
         _strict_json(root / entry.catalog_dir / "manifest.json"),
         "CATALOG_MANIFEST_INVALID",
