@@ -40,7 +40,7 @@
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
       "reason": "activate the sealed offline runtime, propagate its immutable source run, seal prepared partitions canonically, and republish sealed payloads before workers start",
-      "replacement_sha256": "2f73d84487168794d5d3b2380ad7d40774a8b5394fffc19b3b27b1cea6578b3d"
+      "replacement_sha256": "682c1f9b50d1478644151fe9dd64d326bddaa20b9e397aed59c08a0f875f2782"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",

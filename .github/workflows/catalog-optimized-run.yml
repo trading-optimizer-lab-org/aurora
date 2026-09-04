@@ -1208,6 +1208,10 @@ jobs:
     timeout-minutes: 10
     permissions: {actions: read, contents: read}
     steps:
+      - name: Check out exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+
       - name: Download the controller-sealed execution plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
