@@ -1867,7 +1867,7 @@ def write_sealed_global_reuse_execution_plan(
             "size_bytes": path.stat().st_size,
         }
         for path in sorted(
-            output.iterdir(),
+            output.rglob("*"),
             key=lambda item: item.relative_to(output).as_posix(),
         )
         if path.is_file() and path.name != "execution_plan_receipt.json"
@@ -2035,6 +2035,13 @@ def verify_sealed_global_reuse_execution_plan(
             or hashlib.sha256(target.read_bytes()).hexdigest() != item["sha256"]
         ):
             raise ValueError("CATALOG_SEALED_PLAN_CONTENT_INVALID")
+    all_sealed_files = {
+        path.relative_to(sealed).as_posix()
+        for path in sealed.rglob("*")
+        if path.is_file() and path.name != "execution_plan_receipt.json"
+    }
+    if seen_paths != all_sealed_files:
+        raise ValueError("CATALOG_SEALED_PLAN_MANIFEST_COVERAGE_INVALID")
     if canonical_sha256(tuple(manifest)) != receipt.get(
         "content_manifest_sha256"
     ):
