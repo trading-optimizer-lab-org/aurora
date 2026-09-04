@@ -15,8 +15,8 @@
     {
       "path": ".github/workflows/catalog-component-worker.yml",
       "previous_sha256": "d5f49d95ffdc3c43b66ecc9417226b20e82022826095f5cbed73679b54a665e6",
-      "reason": "bind component construction to the immutable caller revision",
-      "replacement_sha256": "ef114ffad527df8cfe429cfb00fd3bf20c8551760727788fd1dd5722a0047969"
+      "reason": "bind component construction to the immutable caller revision and sealed runtime source run",
+      "replacement_sha256": "a631014ef6b378a30f10d8d7250569dc1c08deee3de26850b38e8cb8c55eda24"
     },
     {
       "path": ".github/workflows/catalog-controller-policy-check.yml",
@@ -39,8 +39,8 @@
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
-      "reason": "activate the sealed offline runtime before preparation helpers while preserving the optimized engine",
-      "replacement_sha256": "ad76edd706d51189b221a4a16ed38dc4fcdf36985d0c4c5abf2c377a53d0b196"
+      "reason": "activate the sealed offline runtime and propagate its immutable source run to component workers",
+      "replacement_sha256": "c98a94d685bca0ca0adde2215ea8f3cc7226fb1f9c7b9e719dcbb446c994dc14"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",

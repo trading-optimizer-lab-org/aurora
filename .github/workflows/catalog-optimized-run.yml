@@ -65,6 +65,7 @@ jobs:
       runtime_identity_sha256: ${{ steps.verify.outputs.runtime_identity_sha256 }}
       runtime_cache_key: ${{ steps.verify.outputs.runtime_cache_key }}
       runtime_transport_artifact: ${{ steps.verify.outputs.runtime_transport_artifact }}
+      runtime_source_run_id: ${{ steps.verify.outputs.runtime_source_run_id }}
       numeric_profile_sha256: ${{ steps.verify.outputs.numeric_profile_sha256 }}
       prepared_input_cache_key: ${{ steps.verify.outputs.prepared_input_cache_key }}
       prepared_input_transport_artifact: ${{ steps.verify.outputs.prepared_input_transport_artifact }}
@@ -236,6 +237,44 @@ jobs:
           }
           if seen != all_sealed_files:
               raise SystemExit("CATALOG_SEALED_PLAN_MANIFEST_COVERAGE_INVALID")
+          source_document = json.loads((root / "source_artifacts.json").read_text())
+          source_payload = source_document.get("payload")
+          source_contract = (
+              source_payload.get("source_contract")
+              if isinstance(source_payload, dict)
+              else None
+          )
+          source_rows = (
+              source_contract.get("artifacts")
+              if isinstance(source_contract, dict)
+              else None
+          )
+          runtime_sources = (
+              [
+                  row
+                  for row in source_rows
+                  if isinstance(row, dict)
+                  and row.get("contract_name") == "runtime_input_pack_v1"
+              ]
+              if isinstance(source_rows, list)
+              else []
+          )
+          runtime_source_run_id = (
+              runtime_sources[0].get("run_id")
+              if len(runtime_sources) == 1
+              else None
+          )
+          if (
+              isinstance(runtime_source_run_id, bool)
+              or not isinstance(runtime_source_run_id, int)
+              or runtime_source_run_id < 1
+              or runtime_sources[0].get("classification") != "training_input"
+              or runtime_sources[0].get("verification_mode")
+              != "runtime_input_manifest_v1"
+              or runtime_sources[0].get("validation_opened") is not False
+              or runtime_sources[0].get("locked_opened") is not False
+          ):
+              raise SystemExit("CATALOG_RUNTIME_SOURCE_DOCUMENT_INVALID")
           manifest_hash = hashlib.sha256(
               json.dumps(
                   manifest,
@@ -408,6 +447,7 @@ jobs:
               "runtime_identity_sha256": receipt["runtime_identity_sha256"],
               "runtime_cache_key": receipt["runtime_cache_key"],
               "runtime_transport_artifact": receipt["runtime_transport_artifact"],
+              "runtime_source_run_id": runtime_source_run_id,
               "numeric_profile_sha256": receipt["numeric_profile_sha256"],
               "prepared_input_cache_key": receipt["prepared_input_cache_key"],
               "prepared_input_transport_artifact": receipt[
@@ -1139,6 +1179,7 @@ jobs:
       descriptor_member: ${{ matrix.descriptor_member }}
       descriptor_sha256: ${{ matrix.descriptor_sha256 }}
       admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
+      runtime_source_run_id: ${{ needs.engine_verify_sealed_plan.outputs.runtime_source_run_id }}
 
   build_components_b:
     needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs]
@@ -1162,6 +1203,7 @@ jobs:
       descriptor_member: ${{ matrix.descriptor_member }}
       descriptor_sha256: ${{ matrix.descriptor_sha256 }}
       admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
+      runtime_source_run_id: ${{ needs.engine_verify_sealed_plan.outputs.runtime_source_run_id }}
 
   materialize_cached_components_a:
     needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs]
@@ -1185,6 +1227,7 @@ jobs:
       descriptor_member: ${{ matrix.descriptor_member }}
       descriptor_sha256: ${{ matrix.descriptor_sha256 }}
       admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
+      runtime_source_run_id: ${{ needs.engine_verify_sealed_plan.outputs.runtime_source_run_id }}
 
   materialize_cached_components_b:
     needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs]
@@ -1208,6 +1251,7 @@ jobs:
       descriptor_member: ${{ matrix.descriptor_member }}
       descriptor_sha256: ${{ matrix.descriptor_sha256 }}
       admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
+      runtime_source_run_id: ${{ needs.engine_verify_sealed_plan.outputs.runtime_source_run_id }}
 
   verify_component_store:
     needs:
