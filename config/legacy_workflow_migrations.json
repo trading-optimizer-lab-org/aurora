@@ -15,8 +15,8 @@
     {
       "path": ".github/workflows/catalog-component-worker.yml",
       "previous_sha256": "d5f49d95ffdc3c43b66ecc9417226b20e82022826095f5cbed73679b54a665e6",
-      "reason": "bind component construction to the immutable caller revision and sealed runtime source run",
-      "replacement_sha256": "a631014ef6b378a30f10d8d7250569dc1c08deee3de26850b38e8cb8c55eda24"
+      "reason": "bind component construction to the immutable caller revision and sealed runtime source run, including valid exact cache hits",
+      "replacement_sha256": "58d4deb2923fa2b451bea9168d900beb95015d14cdc1e355dd275b145210da39"
     },
     {
       "path": ".github/workflows/catalog-controller-policy-check.yml",

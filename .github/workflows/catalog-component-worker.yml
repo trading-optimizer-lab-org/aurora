@@ -225,8 +225,10 @@ jobs:
           compute=false
           if [ "$PREPARATION_REQUIRED" = "true" ]; then
             compute=true
-          elif [ "$SOURCE_STORAGE_KIND" = "actions_cache" ] && [ "$CACHE_HIT" != "true" ]; then
-            compute=true
+          elif [ "$SOURCE_STORAGE_KIND" = "actions_cache" ]; then
+            if [ "$CACHE_HIT" != "true" ]; then
+              compute=true
+            fi
           elif [ "$SOURCE_STORAGE_KIND" = "artifact" ]; then
             test -f "$RUNNER_TEMP/component-bundle/manifest.json"
           else
