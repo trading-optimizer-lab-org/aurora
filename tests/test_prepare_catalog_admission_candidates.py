@@ -131,7 +131,7 @@ def test_candidate_derivation_deduplicates_global_components_without_science_com
 
 
 def test_candidate_derivation_preserves_component_runtime_datasets() -> None:
-    component = _component("F215", "1" * 64)
+    component = _component("F032", "1" * 64)
 
     components, _recipes = derive_catalog_work_requirements(
         contract=_contract(),
@@ -148,10 +148,22 @@ def test_candidate_derivation_preserves_component_runtime_datasets() -> None:
 
     assert components[0].runtime_dataset_ids == (
         "D_CALENDAR",
-        "D_CBOE_PCR",
-        "D_CBOE_VOL",
         "D_CFTC_LEGACY",
+        "D_FINRA_MARGIN",
+        "D_FIN_COND",
+        "D_FOMC_PUBLIC",
+        "D_FRENCH_FACTORS",
+        "D_FRENCH_INDUSTRIES",
+        "D_FX",
+        "D_GOLD",
+        "D_GOYAL",
+        "D_MACRO_PIT",
+        "D_PHILLY_RT",
+        "D_RATES",
+        "D_SHILLER",
         "D_SPY",
+        "D_WTI",
+        "D_Z1",
     )
 
 

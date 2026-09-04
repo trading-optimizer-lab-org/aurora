@@ -269,7 +269,9 @@ def derive_catalog_work_requirements(
                 identity=identity,
                 estimated_bytes=8192,
                 source_configuration_sha256=source_id,
-                runtime_dataset_ids=runtime_dataset_ids_for_lane(lane_id),
+                runtime_dataset_ids=tuple(
+                    sorted(set(runtime_dataset_ids_for_lane(lane_id)))
+                ),
             )
         )
 
