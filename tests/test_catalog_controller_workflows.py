@@ -1727,9 +1727,41 @@ def test_preparation_runs_outside_the_request_path_and_reuses_prepared_cache() -
     assert list(one["jobs"]) == [
         "preflight",
         "seed",
+        "publish_payload_artifacts",
         "prepare_engine",
         "finalize",
         "finish",
+    ]
+    assert one["jobs"]["seed"]["outputs"]["payload_artifact_matrix"] == (
+        "${{ steps.prepare.outputs.payload_artifact_matrix }}"
+    )
+    publisher = one["jobs"]["publish_payload_artifacts"]
+    assert publisher["needs"] == "seed"
+    assert publisher["strategy"]["matrix"] == (
+        "${{ fromJSON(needs.seed.outputs.payload_artifact_matrix) }}"
+    )
+    publisher_steps = publisher["steps"]
+    download = next(
+        step
+        for step in publisher_steps
+        if step.get("name") == "Download the complete sealed plan once per bundle"
+    )
+    assert download["with"]["name"] == (
+        "catalog-sealed-execution-plan-${{ needs.seed.outputs.authority_id }}"
+    )
+    upload = next(
+        step
+        for step in publisher_steps
+        if step.get("name") == "Publish one compact worker payload bundle"
+    )
+    assert upload["with"]["name"] == "${{ matrix.artifact }}"
+    assert upload["with"]["path"] == (
+        "${{ runner.temp }}/sealed-plan/payload_artifacts/${{ matrix.artifact }}"
+    )
+    assert one["jobs"]["prepare_engine"]["needs"] == [
+        "preflight",
+        "seed",
+        "publish_payload_artifacts",
     ]
     assert one["jobs"]["prepare_engine"]["uses"] == (
         "./.github/workflows/catalog-optimized-run.yml"
