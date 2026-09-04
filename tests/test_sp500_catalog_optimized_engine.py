@@ -1007,6 +1007,72 @@ def test_component_worker_accepts_an_exact_actions_cache_hit() -> None:
     assert 'elif [ "$SOURCE_STORAGE_KIND" = "artifact" ]; then' in source_script
 
 
+def test_component_bundle_seal_is_idempotent_after_json_round_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import verify_sp500_component_store as verifier
+
+    source_id = "a" * 64
+    component_id = "b" * 64
+    result_sha256 = "c" * 64
+    store_manifest_sha256 = "d" * 64
+    root = tmp_path / "component-bundle"
+    root.mkdir()
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "component_id": source_id,
+                        "result_sha256": result_sha256,
+                    }
+                ]
+            }
+        ),
+        "utf-8",
+    )
+    assignment = tmp_path / "assignment.json"
+    assignment.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "worker_id": 0,
+                "component_ids": [component_id],
+                "component_sources": [
+                    {
+                        "component_id": component_id,
+                        "source_configuration_sha256": source_id,
+                    }
+                ],
+                "component_schedule": {},
+                "validation_opened": False,
+                "locked_opened": False,
+            }
+        ),
+        "utf-8",
+    )
+    monkeypatch.setattr(
+        verifier,
+        "verify_component_store",
+        lambda *args, **kwargs: {"manifest_sha256": store_manifest_sha256},
+    )
+    kwargs = {
+        "resolved_contract": tmp_path / "unused-contract.json",
+        "assignment_file": assignment,
+        "bundle_identity_sha256": "e" * 64,
+        "expected_component_count": 1,
+    }
+
+    first = verifier.seal_component_bundle(root, **kwargs)
+    second = verifier.seal_component_bundle(
+        root,
+        expected_bundle_manifest_sha256=first["manifest_sha256"],
+        **kwargs,
+    )
+
+    assert second == first
+
+
 def test_rebuildable_cache_persistence_failure_does_not_discard_same_run_bytes() -> None:
     from aurora.infra.github_performance.preflight import load_github_yaml
 

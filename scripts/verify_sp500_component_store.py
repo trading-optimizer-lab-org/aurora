@@ -148,7 +148,7 @@ def seal_component_bundle(
     }
     if set(store_entries) != set(source_ids):
         raise ValueError("COMPONENT_BUNDLE_STORE_COVERAGE_INVALID")
-    components = tuple(
+    components = [
         {
             "component_id": component_id,
             "source_configuration_sha256": source_id,
@@ -156,7 +156,7 @@ def seal_component_bundle(
         }
         for component_id in component_ids
         for source_id in (source_by_component[component_id],)
-    )
+    ]
     identity = {
         "schema_version": "1",
         "bundle_identity_sha256": bundle_identity_sha256,
