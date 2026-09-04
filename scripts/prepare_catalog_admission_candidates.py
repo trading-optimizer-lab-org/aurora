@@ -60,6 +60,9 @@ from aurora.infra.sp500_megarun.catalog_rebuildable_store_index import (
 )
 from aurora.infra.sp500_megarun.catalog_routing import CatalogRoutingCommandV1
 from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_request
+from aurora.infra.sp500_megarun.dehb_lane_registry import (
+    runtime_dataset_ids_for_lane,
+)
 from aurora.infra.sp500_megarun.strategy_catalog import configuration_sha256
 from scripts.compile_sp500_catalog_recipes import write_recipe_dag_artifacts
 from scripts.plan_sp500_optimized_catalog_run import (
@@ -266,6 +269,7 @@ def derive_catalog_work_requirements(
                 identity=identity,
                 estimated_bytes=8192,
                 source_configuration_sha256=source_id,
+                runtime_dataset_ids=runtime_dataset_ids_for_lane(lane_id),
             )
         )
 
