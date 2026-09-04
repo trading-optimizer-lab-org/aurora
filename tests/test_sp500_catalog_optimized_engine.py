@@ -991,6 +991,22 @@ def test_runtime_audit_proves_runner_inventory_commit_and_zero_cost() -> None:
         assert required in text
 
 
+def test_component_worker_accepts_an_exact_actions_cache_hit() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    workflow = load_github_yaml(
+        Path(".github/workflows/catalog-component-worker.yml")
+    )
+    source_script = next(
+        step["run"]
+        for step in workflow["jobs"]["build"]["steps"]
+        if step.get("name") == "Decide whether this exact bundle must be rebuilt"
+    )
+    assert 'elif [ "$SOURCE_STORAGE_KIND" = "actions_cache" ]; then' in source_script
+    assert 'if [ "$CACHE_HIT" != "true" ]; then' in source_script
+    assert 'elif [ "$SOURCE_STORAGE_KIND" = "artifact" ]; then' in source_script
+
+
 def test_rebuildable_cache_persistence_failure_does_not_discard_same_run_bytes() -> None:
     from aurora.infra.github_performance.preflight import load_github_yaml
 
