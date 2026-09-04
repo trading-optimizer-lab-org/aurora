@@ -78,7 +78,7 @@ PREPARED_PARTITIONS = tuple(
             "runtime-fragment-D_CBOE_PCR",
             "runtime-fragment-D_CFTC",
             "runtime-fragment-D_CFTC_LEGACY",
-            "runtime-fragment-D_FED",
+            "runtime-fragment-D_FED_H3_H6_H8_G19_CP",
             "runtime-fragment-D_FED_H15_H10",
             "runtime-fragment-D_FRENCH_US",
             "runtime-fragment-D_MACRO_PIT",

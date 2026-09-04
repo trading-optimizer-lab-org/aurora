@@ -13,6 +13,17 @@ from scripts.prepare_catalog_campaign import (
 
 def test_prepared_partition_ids_are_unique_and_canonically_ordered() -> None:
     assert PREPARED_PARTITIONS == tuple(sorted(set(PREPARED_PARTITIONS)))
+    assert PREPARED_PARTITIONS == (
+        "runtime-fragment-D_CBOE_PCR",
+        "runtime-fragment-D_CFTC",
+        "runtime-fragment-D_CFTC_LEGACY",
+        "runtime-fragment-D_FED_H15_H10",
+        "runtime-fragment-D_FED_H3_H6_H8_G19_CP",
+        "runtime-fragment-D_FRENCH_US",
+        "runtime-fragment-D_MACRO_PIT",
+        "runtime-fragment-D_Z1",
+        "runtime-fragment-core",
+    )
 
 
 def test_canonical_documents_serialize_nested_validated_models() -> None:
