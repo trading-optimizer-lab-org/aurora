@@ -926,6 +926,45 @@ def test_cold_runtime_is_built_at_most_once_and_workers_restore_offline() -> Non
     assert "setup-uv" not in component
 
 
+def test_component_build_binds_fragments_to_the_sealed_runtime_source_run() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    root = Path(".github/workflows")
+    run = load_github_yaml(root / "catalog-optimized-run.yml")
+    component = load_github_yaml(root / "catalog-component-worker.yml")
+
+    verify = run["jobs"]["engine_verify_sealed_plan"]
+    assert verify["outputs"]["runtime_source_run_id"] == (
+        "${{ steps.verify.outputs.runtime_source_run_id }}"
+    )
+    verify_script = next(
+        step["run"]
+        for step in verify["steps"]
+        if step["name"] == "Verify the complete immutable plan without replanning"
+    )
+    assert "source_artifacts.json" in verify_script
+    assert "runtime_input_pack_v1" in verify_script
+
+    for job_name in (
+        "build_components_a",
+        "build_components_b",
+        "materialize_cached_components_a",
+        "materialize_cached_components_b",
+    ):
+        assert run["jobs"][job_name]["with"]["runtime_source_run_id"] == (
+            "${{ needs.engine_verify_sealed_plan.outputs.runtime_source_run_id }}"
+        )
+
+    assert "runtime_source_run_id" in component["on"]["workflow_call"]["inputs"]
+    build_script = next(
+        step["run"]
+        for step in component["jobs"]["build"]["steps"]
+        if step["name"] == "Compute only the sealed missing component bundle"
+    )
+    assert '--runtime-source-run-id "${{ inputs.runtime_source_run_id }}"' in build_script
+    assert '${{ github.run_id }}' not in build_script
+
+
 def test_runtime_audit_proves_runner_inventory_commit_and_zero_cost() -> None:
     from aurora.infra.github_performance.preflight import load_github_yaml
 
