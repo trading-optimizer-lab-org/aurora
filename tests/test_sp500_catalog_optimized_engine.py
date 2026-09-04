@@ -1007,6 +1007,45 @@ def test_component_worker_accepts_an_exact_actions_cache_hit() -> None:
     assert 'elif [ "$SOURCE_STORAGE_KIND" = "artifact" ]; then' in source_script
 
 
+def test_requested_recipe_jobs_survive_skipped_optional_component_families() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    workflow = load_github_yaml(Path(".github/workflows/catalog-optimized-run.yml"))
+    for job_name in ("evaluate_a", "evaluate_b", "evaluate_c"):
+        condition = str(workflow["jobs"][job_name]["if"])
+        assert "always()" in condition
+        assert "needs.engine_verify_sealed_plan.result == 'success'" in condition
+        assert "needs.verify_component_store.result == 'success'" in condition
+
+
+def test_run_outcome_uses_the_sealed_runtime_before_importing_models() -> None:
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    workflow = load_github_yaml(Path(".github/workflows/catalog-optimized-run.yml"))
+    steps = workflow["jobs"]["campaign_outcome"]["steps"]
+    names = [str(step.get("name", "")) for step in steps]
+    download = next(
+        step
+        for step in steps
+        if step.get("name") == "Download the sealed runtime for run outcome"
+    )
+    activate = next(
+        step
+        for step in steps
+        if step.get("name") == "Activate the sealed runtime for run outcome"
+    )
+
+    assert download["if"] == "${{ inputs.execution_mode == 'run' }}"
+    assert download["with"]["name"] == (
+        "${{ needs.engine_verify_sealed_plan.outputs.runtime_transport_artifact }}"
+    )
+    assert activate["if"] == "${{ inputs.execution_mode == 'run' }}"
+    assert activate["uses"] == "./.github/actions/aurora-runtime-setup"
+    assert names.index("Activate the sealed runtime for run outcome") < names.index(
+        "Select and expose exactly one verified engine outcome"
+    )
+
+
 def test_component_bundle_seal_is_idempotent_after_json_round_trip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

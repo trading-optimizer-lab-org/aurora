@@ -1547,7 +1547,11 @@ jobs:
 
   evaluate_a:
     needs: [engine_verify_sealed_plan, verify_component_store]
-    if: ${{ inputs.execution_mode == 'run' && needs.engine_verify_sealed_plan.outputs.recipe_matrix_a_count != '0' }}
+    if: >-
+      ${{ always() && inputs.execution_mode == 'run' &&
+      needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.verify_component_store.result == 'success' &&
+      needs.engine_verify_sealed_plan.outputs.recipe_matrix_a_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -1570,7 +1574,11 @@ jobs:
 
   evaluate_b:
     needs: [engine_verify_sealed_plan, verify_component_store]
-    if: ${{ inputs.execution_mode == 'run' && needs.engine_verify_sealed_plan.outputs.recipe_matrix_b_count != '0' }}
+    if: >-
+      ${{ always() && inputs.execution_mode == 'run' &&
+      needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.verify_component_store.result == 'success' &&
+      needs.engine_verify_sealed_plan.outputs.recipe_matrix_b_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -1593,7 +1601,11 @@ jobs:
 
   evaluate_c:
     needs: [engine_verify_sealed_plan, verify_component_store]
-    if: ${{ inputs.execution_mode == 'run' && needs.engine_verify_sealed_plan.outputs.recipe_matrix_c_count != '0' }}
+    if: >-
+      ${{ always() && inputs.execution_mode == 'run' &&
+      needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.verify_component_store.result == 'success' &&
+      needs.engine_verify_sealed_plan.outputs.recipe_matrix_c_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -2287,6 +2299,26 @@ jobs:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: {ref: "${{ github.sha }}", persist-credentials: false}
+
+      - name: Download the sealed runtime for run outcome
+        if: ${{ inputs.execution_mode == 'run' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.engine_verify_sealed_plan.outputs.runtime_transport_artifact }}
+          path: ${{ runner.temp }}/runtime-transport
+
+      - name: Activate the sealed runtime for run outcome
+        if: ${{ inputs.execution_mode == 'run' }}
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.11"
+          runtime-mode: ${{ needs.engine_verify_sealed_plan.outputs.runtime_mode }}
+          runtime-object-path: ${{ runner.temp }}/runtime-transport
+          runtime-manifest-path: ${{ runner.temp }}/runtime-transport/runtime_manifest.json
+          dependency-lock-path: requirements/catalog-optimized.lock
+          expected-runtime-identity-sha256: ${{ needs.engine_verify_sealed_plan.outputs.runtime_identity_sha256 }}
+          expected-source-sha: ${{ github.sha }}
+          expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
       - name: Expose one preparation-only outcome
         id: prepare_outcome
