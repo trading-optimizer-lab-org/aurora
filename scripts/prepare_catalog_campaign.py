@@ -70,6 +70,7 @@ from scripts.prepare_catalog_admission_candidates import (
 
 _REPOSITORY = "trading-optimizer-lab-org/aurora"
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_ARTIFACT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,179}$")
 _STORE_INDEX_ARTIFACT_NAME = "catalog-rebuildable-store-index-v1"
 PREPARED_PARTITIONS = tuple(
     sorted(
@@ -161,6 +162,36 @@ def _canonical_bytes(value: object) -> bytes:
 
 def _write_json(path: Path, value: object) -> None:
     path.write_bytes(_canonical_bytes(value) + b"\n")
+
+
+def _payload_artifact_matrix(sealed_plan_dir: Path) -> str:
+    payload_root = sealed_plan_dir / "payload_artifacts"
+    if (
+        sealed_plan_dir.is_symlink()
+        or payload_root.is_symlink()
+        or not payload_root.is_dir()
+    ):
+        raise ValueError("CATALOG_PAYLOAD_ARTIFACT_ROOT_INVALID")
+    artifacts: list[str] = []
+    for bundle in sorted(payload_root.iterdir(), key=lambda item: item.name):
+        if (
+            bundle.is_symlink()
+            or not bundle.is_dir()
+            or _ARTIFACT_NAME.fullmatch(bundle.name) is None
+        ):
+            raise ValueError("CATALOG_PAYLOAD_ARTIFACT_INVALID")
+        members = tuple(path for path in bundle.rglob("*") if path.is_file())
+        if not members or any(path.is_symlink() for path in members):
+            raise ValueError("CATALOG_PAYLOAD_ARTIFACT_EMPTY_OR_UNSAFE")
+        artifacts.append(bundle.name)
+    if not artifacts or len(artifacts) > 256:
+        raise ValueError("CATALOG_PAYLOAD_ARTIFACT_MATRIX_INVALID")
+    return json.dumps(
+        {"artifact": artifacts},
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
 
 
 def _document(document_type: str, payload: object) -> dict[str, object]:
@@ -559,6 +590,9 @@ def prepare_campaign(
             "preparation_key_sha256": identity.preparation_key_sha256,
             "science_sha256": science_sha256,
             "execution_protocol_sha256": protocol_sha256,
+            "payload_artifact_matrix": _payload_artifact_matrix(
+                output_dir / "sealed-plan"
+            ),
         }
         with github_output.open("a", encoding="utf-8", newline="\n") as stream:
             for key, value in values.items():

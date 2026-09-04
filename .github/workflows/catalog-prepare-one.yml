@@ -105,6 +105,7 @@ jobs:
       execution_protocol_sha256: ${{ steps.prepare.outputs.execution_protocol_sha256 }}
       decision_sha256: ${{ steps.prepare.outputs.decision_sha256 }}
       checkpoint_upload_seconds_p95: ${{ steps.probe_elapsed.outputs.seconds }}
+      payload_artifact_matrix: ${{ steps.prepare.outputs.payload_artifact_matrix }}
     steps:
       - name: Check out the exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -219,9 +220,45 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+  publish_payload_artifacts:
+    needs: seed
+    if: ${{ needs.seed.result == 'success' }}
+    strategy:
+      fail-fast: true
+      max-parallel: 12
+      matrix: ${{ fromJSON(needs.seed.outputs.payload_artifact_matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions: {actions: read, contents: read}
+    steps:
+      - name: Download the complete sealed plan once per bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-sealed-execution-plan-${{ needs.seed.outputs.authority_id }}
+          path: ${{ runner.temp }}/sealed-plan
+
+      - name: Verify the selected payload bundle exists
+        shell: bash
+        env:
+          PAYLOAD_BUNDLE: ${{ matrix.artifact }}
+        run: |
+          set -euo pipefail
+          test "$PAYLOAD_BUNDLE" = "$(basename "$PAYLOAD_BUNDLE")"
+          test -d "$RUNNER_TEMP/sealed-plan/payload_artifacts/$PAYLOAD_BUNDLE"
+          test -n "$(find "$RUNNER_TEMP/sealed-plan/payload_artifacts/$PAYLOAD_BUNDLE" -type f -print -quit)"
+
+      - name: Publish one compact worker payload bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/sealed-plan/payload_artifacts/${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
   prepare_engine:
-    needs: [preflight, seed]
-    if: ${{ needs.preflight.outputs.needs_prepare == 'true' && needs.seed.result == 'success' }}
+    needs: [preflight, seed, publish_payload_artifacts]
+    if: ${{ needs.preflight.outputs.needs_prepare == 'true' && needs.seed.result == 'success' && needs.publish_payload_artifacts.result == 'success' }}
     permissions:
       actions: read
       contents: read

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -8,6 +9,7 @@ from scripts.prepare_catalog_campaign import (
     PREPARED_PARTITIONS,
     _canonical_bytes,
     _document,
+    _payload_artifact_matrix,
 )
 
 
@@ -35,3 +37,22 @@ def test_canonical_documents_serialize_nested_validated_models() -> None:
 
     assert json.loads(_canonical_bytes(payload)) == {"items": [{"value": 7}]}
     assert document["payload"] == {"items": [{"value": 7}]}
+
+
+def test_payload_artifact_matrix_names_every_materialized_bundle(
+    tmp_path: Path,
+) -> None:
+    payload_root = tmp_path / "sealed-plan" / "payload_artifacts"
+    for name in ("catalog-descriptors-bundle-b", "catalog-descriptors-bundle-a"):
+        member = payload_root / name / "component" / "worker-000.json"
+        member.parent.mkdir(parents=True)
+        member.write_text("{}\n", encoding="utf-8")
+
+    matrix = json.loads(_payload_artifact_matrix(tmp_path / "sealed-plan"))
+
+    assert matrix == {
+        "artifact": [
+            "catalog-descriptors-bundle-a",
+            "catalog-descriptors-bundle-b",
+        ]
+    }
