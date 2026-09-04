@@ -33,14 +33,14 @@
     {
       "path": ".github/workflows/catalog-fast-controller.yml",
       "previous_sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e",
-      "reason": "bind the signed fast path to the protected event commit and close terminal or unexpected admission failures for requester generation advancement",
-      "replacement_sha256": "0b717c42bb59877470113cf3771cb426745728e7e8defe986651291d89dd8da3"
+      "reason": "bind the signed fast path to the protected event commit and close every terminal or failed publication path for requester generation advancement",
+      "replacement_sha256": "43a5aa01f221e2624f84bf1f178eefff6fe7b17cc20d0e3fb1dad597301d5521"
     },
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
-      "reason": "activate the sealed offline runtime, propagate its immutable source run to component workers, and seal prepared partitions in canonical order",
-      "replacement_sha256": "7c2ca79dcd35af05dc0bb30b75da4651c3e7a7eadfdd67a8fab63b457b3a9b62"
+      "reason": "activate the sealed offline runtime, propagate its immutable source run, seal prepared partitions canonically, and republish sealed payloads before workers start",
+      "replacement_sha256": "2f73d84487168794d5d3b2380ad7d40774a8b5394fffc19b3b27b1cea6578b3d"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",

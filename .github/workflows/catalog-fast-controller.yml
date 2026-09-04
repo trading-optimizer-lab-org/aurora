@@ -305,6 +305,10 @@ jobs:
               json.dumps({"body": "## AURORA catalog fast path\n\n- State: `BLOCKED`\n- Reason: `CATALOG_GATE_PUBLICATION_FAILED`"}) + "\n",
               encoding="utf-8",
           )
+          (temp / "gate-publication-failed-close.json").write_text(
+              json.dumps({"state": "closed", "state_reason": "completed"}) + "\n",
+              encoding="utf-8",
+          )
           PY
           gh api --method POST \
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels" \
@@ -315,6 +319,9 @@ jobs:
           gh api --method DELETE \
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels/catalog-run-active-v1" \
             > /dev/null 2>&1 || true
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
+            --input "$RUNNER_TEMP/gate-publication-failed-close.json" > /dev/null
           exit 1
 
   engine:
@@ -489,6 +496,10 @@ jobs:
               json.dumps({"labels": ["catalog-run-terminal-v1"]}) + "\n",
               encoding="utf-8",
           )
+          (temp / "terminalization-failed-close.json").write_text(
+              json.dumps({"state": "closed", "state_reason": "completed"}) + "\n",
+              encoding="utf-8",
+          )
           PY
           gh api --method POST \
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels" \
@@ -499,4 +510,7 @@ jobs:
           gh api --method DELETE \
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels/catalog-run-active-v1" \
             > /dev/null 2>&1 || true
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
+            --input "$RUNNER_TEMP/terminalization-failed-close.json" > /dev/null
           exit 1

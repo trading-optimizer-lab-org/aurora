@@ -1924,6 +1924,9 @@ def test_fast_gate_closes_publication_failures_without_replaying_the_request() -
         '"repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments"'
     )
     assert "labels/catalog-run-active-v1" in fallback["run"]
+    assert "--method PATCH" in fallback["run"]
+    assert '"state": "closed"' in fallback["run"]
+    assert '"state_reason": "completed"' in fallback["run"]
 
 
 def test_fast_finalizer_always_releases_a_failed_terminalization() -> None:
@@ -1948,6 +1951,9 @@ def test_fast_finalizer_always_releases_a_failed_terminalization() -> None:
         '"repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments"'
     )
     assert "labels/catalog-run-active-v1" in fallback["run"]
+    assert "--method PATCH" in fallback["run"]
+    assert '"state": "closed"' in fallback["run"]
+    assert '"state_reason": "completed"' in fallback["run"]
 
 
 def test_fast_finalizer_closes_terminal_request_for_requester_generation_advance() -> None:
@@ -2028,6 +2034,37 @@ def test_engine_publishes_one_content_bound_global_reuse_index() -> None:
         "catalog-rebuildable-store-index-prepared-"
         "${{ needs.seed.outputs.authority_id }}"
     )
+
+
+def test_engine_republishes_sealed_payloads_before_component_workers() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-optimized-run.yml")
+    verifier = workflow["jobs"]["engine_verify_sealed_plan"]
+    assert verifier["outputs"]["payload_artifact_matrix"] == (
+        "${{ steps.verify.outputs.payload_artifact_matrix }}"
+    )
+    assert verifier["outputs"]["payload_artifact_count"] == (
+        "${{ steps.verify.outputs.payload_artifact_count }}"
+    )
+
+    publisher = workflow["jobs"]["publish_sealed_payload_artifacts"]
+    assert publisher["needs"] == ["engine_verify_sealed_plan"]
+    assert publisher["strategy"]["matrix"] == (
+        "${{ fromJSON(needs.engine_verify_sealed_plan.outputs.payload_artifact_matrix) }}"
+    )
+    rendered = json.dumps(publisher, sort_keys=True)
+    assert "catalog-sealed-execution-plan-${{ inputs.authority_id }}" in rendered
+    assert "payload_artifacts/${{ matrix.artifact }}" in rendered
+    assert '\"name\": \"${{ matrix.artifact }}\"' in rendered
+
+    for job_id in (
+        "build_components_a",
+        "build_components_b",
+        "materialize_cached_components_a",
+        "materialize_cached_components_b",
+    ):
+        assert "publish_sealed_payload_artifacts" in workflow["jobs"][job_id][
+            "needs"
+        ]
 
 
 def test_checkpoint_upload_must_finish_before_the_next_segment() -> None:
