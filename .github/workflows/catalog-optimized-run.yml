@@ -95,6 +95,8 @@ jobs:
       recipe_matrix_a: ${{ steps.verify.outputs.recipe_matrix_a }}
       recipe_matrix_b: ${{ steps.verify.outputs.recipe_matrix_b }}
       recipe_matrix_c: ${{ steps.verify.outputs.recipe_matrix_c }}
+      payload_artifact_matrix: ${{ steps.verify.outputs.payload_artifact_matrix }}
+      payload_artifact_count: ${{ steps.verify.outputs.payload_artifact_count }}
       component_matrix_a_count: ${{ steps.verify.outputs.component_matrix_a_count }}
       component_matrix_b_count: ${{ steps.verify.outputs.component_matrix_b_count }}
       cached_component_matrix_a_count: ${{ steps.verify.outputs.cached_component_matrix_a_count }}
@@ -314,6 +316,40 @@ jobs:
               )
               combined_utf16 += len(encoded.encode("utf-16-le"))
               matrices[name] = encoded
+          payload_manifest = json.loads(
+              (root / "payload_bundle_manifest.json").read_text()
+          )
+          payload_rows = payload_manifest.get("payloads")
+          if not isinstance(payload_rows, list) or not payload_rows:
+              raise SystemExit("CATALOG_PAYLOAD_BUNDLE_MANIFEST_INVALID")
+          payload_artifacts = set()
+          for row in payload_rows:
+              if not isinstance(row, dict) or set(row) != {
+                  "artifact",
+                  "member",
+                  "sha256",
+                  "size_bytes",
+              }:
+                  raise SystemExit("CATALOG_PAYLOAD_BUNDLE_MANIFEST_INVALID")
+              artifact = row["artifact"]
+              if (
+                  not isinstance(artifact, str)
+                  or not artifact
+                  or Path(artifact).name != artifact
+              ):
+                  raise SystemExit("CATALOG_PAYLOAD_ARTIFACT_NAME_INVALID")
+              payload_artifacts.add(artifact)
+          payload_artifact_matrix = json.dumps(
+              {
+                  "include": [
+                      {"artifact": artifact}
+                      for artifact in sorted(payload_artifacts)
+                  ]
+              },
+              sort_keys=True,
+              separators=(",", ":"),
+          )
+          combined_utf16 += len(payload_artifact_matrix.encode("utf-16-le"))
           reduction = json.loads((root / "reduction_plan.json").read_text())
           reduction_identity = {
               key: value
@@ -459,6 +495,8 @@ jobs:
               "pending_recipe_count": receipt["pending_recipe_count"],
               "active_recipe_workers": receipt["active_recipe_workers"],
               "final_evidence_artifact": receipt["final_evidence_artifact"],
+              "payload_artifact_matrix": payload_artifact_matrix,
+              "payload_artifact_count": len(payload_artifacts),
               "reduction_matrix": reduction_matrix_encoded,
               "reduction_matrix_count": len(expected_matrix),
               "reduction_artifact_pattern": reduction[
@@ -1158,8 +1196,40 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+  publish_sealed_payload_artifacts:
+    needs: [engine_verify_sealed_plan]
+    if: ${{ needs.engine_verify_sealed_plan.outputs.payload_artifact_count != '0' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.engine_verify_sealed_plan.outputs.payload_artifact_matrix) }}
+    runs-on: ubuntu-24.04
+    environment: catalog-production
+    timeout-minutes: 10
+    permissions: {actions: read, contents: read}
+    steps:
+      - name: Check out exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+
+      - name: Download the controller-sealed execution plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: catalog-sealed-execution-plan-${{ inputs.authority_id }}
+          path: ${{ runner.temp }}/sealed-plan
+
+      - name: Republish one exact sealed payload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/sealed-plan/payload_artifacts/${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: true
+
   build_components_a:
-    needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs]
+    needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs, publish_sealed_payload_artifacts]
     if: ${{ needs.engine_verify_sealed_plan.outputs.component_matrix_a_count != '0' }}
     strategy:
       fail-fast: false
@@ -1183,7 +1253,7 @@ jobs:
       runtime_source_run_id: ${{ needs.engine_verify_sealed_plan.outputs.runtime_source_run_id }}
 
   build_components_b:
-    needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs]
+    needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs, publish_sealed_payload_artifacts]
     if: ${{ needs.engine_verify_sealed_plan.outputs.component_matrix_b_count != '0' }}
     strategy:
       fail-fast: false
@@ -1207,7 +1277,7 @@ jobs:
       runtime_source_run_id: ${{ needs.engine_verify_sealed_plan.outputs.runtime_source_run_id }}
 
   materialize_cached_components_a:
-    needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs]
+    needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs, publish_sealed_payload_artifacts]
     if: ${{ needs.engine_verify_sealed_plan.outputs.cached_component_matrix_a_count != '0' }}
     strategy:
       fail-fast: false
@@ -1231,7 +1301,7 @@ jobs:
       runtime_source_run_id: ${{ needs.engine_verify_sealed_plan.outputs.runtime_source_run_id }}
 
   materialize_cached_components_b:
-    needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs]
+    needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs, publish_sealed_payload_artifacts]
     if: ${{ needs.engine_verify_sealed_plan.outputs.cached_component_matrix_b_count != '0' }}
     strategy:
       fail-fast: false
