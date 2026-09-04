@@ -1421,8 +1421,10 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
         "source_artifacts.json",
         "execution_plan_receipt.json",
     } <= set(first_tree)
-    assert receipt["content_manifest"]
-    assert {item["path"] for item in receipt["content_manifest"]} == (
+    content_manifest = receipt["content_manifest"]
+    assert isinstance(content_manifest, tuple)
+    assert content_manifest
+    assert {item["path"] for item in content_manifest} == (
         set(first_tree) - {"execution_plan_receipt.json"}
     )
     verified = verify_sealed_global_reuse_execution_plan(
