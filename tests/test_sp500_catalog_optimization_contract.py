@@ -1422,6 +1422,9 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
         "execution_plan_receipt.json",
     } <= set(first_tree)
     assert receipt["content_manifest"]
+    assert {item["path"] for item in receipt["content_manifest"]} == (
+        set(first_tree) - {"execution_plan_receipt.json"}
+    )
     verified = verify_sealed_global_reuse_execution_plan(
         first,
         expected_bindings={
@@ -1433,6 +1436,14 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
         },
     )
     assert verified["receipt_sha256"] == receipt["receipt_sha256"]
+
+    unexpected = first / "unexpected.json"
+    unexpected.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(
+        ValueError, match="CATALOG_SEALED_PLAN_MANIFEST_COVERAGE_INVALID"
+    ):
+        verify_sealed_global_reuse_execution_plan(first)
+    unexpected.unlink()
 
     reduction = json.loads((first / "reduction_plan.json").read_text("utf-8"))
     assert reduction["selected_mode"] == "hierarchical"
