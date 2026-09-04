@@ -71,16 +71,20 @@ from scripts.prepare_catalog_admission_candidates import (
 _REPOSITORY = "trading-optimizer-lab-org/aurora"
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _STORE_INDEX_ARTIFACT_NAME = "catalog-rebuildable-store-index-v1"
-PREPARED_PARTITIONS = (
-    "runtime-fragment-core",
-    "runtime-fragment-D_CBOE_PCR",
-    "runtime-fragment-D_CFTC",
-    "runtime-fragment-D_CFTC_LEGACY",
-    "runtime-fragment-D_FED",
-    "runtime-fragment-D_FED_H15_H10",
-    "runtime-fragment-D_FRENCH_US",
-    "runtime-fragment-D_MACRO_PIT",
-    "runtime-fragment-D_Z1",
+PREPARED_PARTITIONS = tuple(
+    sorted(
+        (
+            "runtime-fragment-core",
+            "runtime-fragment-D_CBOE_PCR",
+            "runtime-fragment-D_CFTC",
+            "runtime-fragment-D_CFTC_LEGACY",
+            "runtime-fragment-D_FED",
+            "runtime-fragment-D_FED_H15_H10",
+            "runtime-fragment-D_FRENCH_US",
+            "runtime-fragment-D_MACRO_PIT",
+            "runtime-fragment-D_Z1",
+        )
+    )
 )
 
 
@@ -135,11 +139,19 @@ def _safe_file(root: Path, relative: str) -> Path:
     return resolved
 
 
-def _canonical_bytes(value: object) -> bytes:
+def _jsonable(value: object) -> object:
     if hasattr(value, "model_dump"):
-        value = value.model_dump(mode="json")
+        return _jsonable(value.model_dump(mode="json"))
+    if isinstance(value, Mapping):
+        return {key: _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    return value
+
+
+def _canonical_bytes(value: object) -> bytes:
     return json.dumps(
-        value,
+        _jsonable(value),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
@@ -152,10 +164,11 @@ def _write_json(path: Path, value: object) -> None:
 
 
 def _document(document_type: str, payload: object) -> dict[str, object]:
+    checked_payload = _jsonable(payload)
     identity = {
         "schema_version": "1",
         "document_type": document_type,
-        "payload": payload,
+        "payload": checked_payload,
     }
     return {**identity, "content_sha256": canonical_sha256(identity)}
 
