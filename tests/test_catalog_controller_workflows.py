@@ -1950,6 +1950,16 @@ def test_fast_finalizer_always_releases_a_failed_terminalization() -> None:
     assert "labels/catalog-run-active-v1" in fallback["run"]
 
 
+def test_fast_finalizer_closes_terminal_request_for_requester_generation_advance() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-fast-controller.yml")
+    steps = workflow["jobs"]["finalize"]["steps"]
+    publish = next(step for step in steps if step.get("id") == "publish_terminal")
+
+    assert "--method PATCH" in publish["run"]
+    assert '"state": "closed"' in publish["run"]
+    assert '"state_reason": "completed"' in publish["run"]
+
+
 def test_engine_publishes_one_content_bound_global_reuse_index() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-optimized-run.yml")
     steps = workflow["jobs"]["verify_component_store"]["steps"]
