@@ -130,6 +130,31 @@ def test_candidate_derivation_deduplicates_global_components_without_science_com
     )
 
 
+def test_candidate_derivation_preserves_component_runtime_datasets() -> None:
+    component = _component("F215", "1" * 64)
+
+    components, _recipes = derive_catalog_work_requirements(
+        contract=_contract(),
+        catalog_rows=[
+            {
+                "strategy_id": "strategy-a",
+                "feature_count": 1,
+                "components": [component],
+            }
+        ],
+        selected_rows=[],
+        feature_contract_sha256="6" * 64,
+    )
+
+    assert components[0].runtime_dataset_ids == (
+        "D_CALENDAR",
+        "D_CBOE_PCR",
+        "D_CBOE_VOL",
+        "D_CFTC_LEGACY",
+        "D_SPY",
+    )
+
+
 def test_candidate_derivation_normalizes_selected_strategy_keys_to_component_hashes() -> None:
     selected = {
         "source_strategy_key": "3" * 64,
