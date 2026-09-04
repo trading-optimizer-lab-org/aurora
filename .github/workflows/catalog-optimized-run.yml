@@ -947,6 +947,7 @@ jobs:
           runtime_manifest = Path(os.environ["RUNNER_TEMP"]) / "runtime-store/runtime_manifest.json"
           source_artifacts = Path(os.environ["RUNNER_TEMP"]) / "sealed-plan/source_artifacts.json"
           source_fetch = Path(os.environ["RUNNER_TEMP"]) / "runtime-source-receipt.json"
+          verified_partitions.sort(key=lambda item: item["logical_id"])
           identity = {
               "schema_version": "1",
               "request_sha256": os.environ["REQUEST_SHA256"],

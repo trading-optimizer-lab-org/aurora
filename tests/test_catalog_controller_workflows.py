@@ -1954,6 +1954,20 @@ def test_engine_publishes_one_content_bound_global_reuse_index() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-optimized-run.yml")
     steps = workflow["jobs"]["verify_component_store"]["steps"]
     serialized = json.dumps(steps, sort_keys=True)
+    preparation = next(
+        step
+        for step in workflow["jobs"]["prepare_runtime_and_inputs"]["steps"]
+        if step.get("name")
+        == "Verify every prepared partition and derive immutable save keys"
+    )
+    preparation_script = preparation["run"]
+    canonical_sort = (
+        'verified_partitions.sort(key=lambda item: item["logical_id"])'
+    )
+    assert canonical_sort in preparation_script
+    assert preparation_script.index(canonical_sort) < preparation_script.index(
+        "identity = {"
+    )
     uploads = [
         step
         for step in steps
