@@ -50,7 +50,7 @@ class _RunClient:
                 "run_attempt": 1,
                 "head_branch": "main",
                 "head_sha": HEAD_SHA,
-                "path": ".github/workflows/catalog-optimized-run.yml",
+                "path": ".github/workflows/catalog-prepare.yml",
             },
             object(),
         )

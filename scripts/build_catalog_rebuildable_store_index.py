@@ -414,7 +414,7 @@ def build_index(
     return CatalogRebuildableStoreIndexV1.create(
         artifact_name="catalog-rebuildable-store-index-v1",
         repository=repository,
-        writer_workflow=str(run.get("path", "")),
+        writer_workflow=".github/workflows/catalog-optimized-run.yml",
         writer_run_id=int(run_id),
         writer_run_attempt=int(run_attempt),
         protected_commit_sha=str(run["head_sha"]),
