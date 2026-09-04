@@ -442,6 +442,10 @@ jobs:
               json.dumps({"labels": ["catalog-run-terminal-v1"]}) + "\n",
               encoding="utf-8",
           )
+          Path(os.environ["RUNNER_TEMP"], "terminal-close.json").write_text(
+              json.dumps({"state": "closed", "state_reason": "completed"}) + "\n",
+              encoding="utf-8",
+          )
           PY
           gh api --method POST \
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels" \
@@ -449,6 +453,9 @@ jobs:
           gh api --method DELETE \
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels/catalog-run-active-v1" \
             > /dev/null 2>&1 || true
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
+            --input "$RUNNER_TEMP/terminal-close.json" > /dev/null
 
       - name: Fail closed once and release a stuck reservation
         if: >-
