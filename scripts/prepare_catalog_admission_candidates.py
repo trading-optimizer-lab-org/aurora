@@ -557,6 +557,20 @@ def load_verified_rebuildable_store_inventory(
             if isinstance(run_repository, Mapping)
             else None
         )
+        referenced_workflows = run.get("referenced_workflows")
+        reusable_writer_path = (
+            f"{repository}/{index.writer_workflow}@{index.protected_commit_sha}"
+        )
+        writer_workflow_verified = run.get("path") == index.writer_workflow or (
+            isinstance(referenced_workflows, list)
+            and any(
+                isinstance(reference, Mapping)
+                and reference.get("path") == reusable_writer_path
+                and reference.get("ref") == "refs/heads/main"
+                and reference.get("sha") == index.protected_commit_sha
+                for reference in referenced_workflows
+            )
+        )
         if (
             index.repository != repository
             or workflow_run.get("id") != run_id
@@ -564,7 +578,7 @@ def load_verified_rebuildable_store_inventory(
             or workflow_run.get("head_sha") != index.protected_commit_sha
             or run.get("id") != run_id
             or run.get("run_attempt") != index.writer_run_attempt
-            or run.get("path") != index.writer_workflow
+            or not writer_workflow_verified
             or run.get("head_branch") != "main"
             or run.get("head_sha") != index.protected_commit_sha
             or run.get("status") != "completed"

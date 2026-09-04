@@ -386,6 +386,72 @@ class _StoreIndexClient:
         )
 
 
+class _ReusableStoreIndexClient:
+    def get_json(self, path: str) -> tuple[object, object]:
+        assert path == "/repos/owner/repo/actions/runs/123"
+        return (
+            {
+                "id": 123,
+                "run_attempt": 1,
+                "path": ".github/workflows/catalog-fast-controller.yml",
+                "head_branch": "main",
+                "head_sha": "c" * 40,
+                "status": "completed",
+                "repository": {"full_name": "owner/repo"},
+                "referenced_workflows": [
+                    {
+                        "path": (
+                            "owner/repo/.github/workflows/"
+                            f"catalog-optimized-run.yml@{'c' * 40}"
+                        ),
+                        "ref": "refs/heads/main",
+                        "sha": "c" * 40,
+                    }
+                ],
+            },
+            object(),
+        )
+
+
+def test_store_index_accepts_a_verified_reusable_workflow_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    index, cache_key = _store_index_fixture()
+    archive = _store_index_zip(index)
+
+    def fake_download(**kwargs: object) -> bytes:
+        destination = Path(str(kwargs["destination"]))
+        destination.write_bytes(archive)
+        return archive
+
+    monkeypatch.setattr(
+        "scripts.prepare_catalog_admission_candidates._download_store_index_archive",
+        fake_download,
+    )
+    metadata = {
+        "id": 55,
+        "name": "catalog-rebuildable-store-index-v1",
+        "size_in_bytes": len(archive),
+        "digest": f"sha256:{hashlib.sha256(archive).hexdigest()}",
+        "expired": False,
+        "workflow_run": {
+            "id": 123,
+            "head_branch": "main",
+            "head_sha": "c" * 40,
+        },
+    }
+
+    inventory = load_verified_rebuildable_store_inventory(
+        artifacts=(metadata,),
+        caches=({"id": 77, "key": cache_key, "ref": "refs/heads/main"},),
+        client=_ReusableStoreIndexClient(),  # type: ignore[arg-type]
+        repository="owner/repo",
+        token="test-token",
+        download_root=tmp_path / "reusable",
+    )
+    assert inventory.candidates == index.candidates
+
+
 def test_content_bound_store_index_promotes_only_a_still_live_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
