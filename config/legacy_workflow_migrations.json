@@ -33,8 +33,8 @@
     {
       "path": ".github/workflows/catalog-fast-controller.yml",
       "previous_sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e",
-      "reason": "bind the signed fast path directly to the protected event commit",
-      "replacement_sha256": "5614f473d03e16089796d8e6f55cb1ec3db58496b4852e56513fba45ea203d61"
+      "reason": "bind the signed fast path to the protected event commit and close terminal requests for requester generation advancement",
+      "replacement_sha256": "6b97a0dffaf6fb95a3b16a846922f4de6827ecfa81ff2e6926d108ef68725541"
     },
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
