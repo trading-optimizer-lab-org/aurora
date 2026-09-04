@@ -221,7 +221,7 @@ def materialize_prepared_catalog_plan(
 ) -> dict[str, object]:
     """Copy one verified template and bind only its small controller envelope."""
 
-    from scripts.plan_sp500_optimized_catalog_run import (
+    from .catalog_sealed_plan import (
         verify_sealed_global_reuse_execution_plan,
     )
 

@@ -200,6 +200,10 @@ jobs:
               json.dumps({"body": "## AURORA catalog fast path\n\n- State: `BLOCKED`\n- Reason: `CATALOG_ADMISSION_GATE_FAILED`"}) + "\n",
               encoding="utf-8",
           )
+          (temp / "admission-failed-close.json").write_text(
+              json.dumps({"state": "closed", "state_reason": "completed"}) + "\n",
+              encoding="utf-8",
+          )
           PY
           gh api --method POST \
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels" \
@@ -207,6 +211,9 @@ jobs:
           gh api --method POST \
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
             --input "$RUNNER_TEMP/admission-failed-comment.json" > /dev/null || true
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
+            --input "$RUNNER_TEMP/admission-failed-close.json" > /dev/null
 
       - name: Stage the small immutable gate evidence
         if: ${{ steps.inspect.outputs.valid_request == 'true' && steps.admit.outcome == 'success' }}

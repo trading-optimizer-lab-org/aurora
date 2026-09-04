@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -446,6 +448,57 @@ def test_prepared_bundle_rejects_any_material_tampering(tmp_path: Path) -> None:
             bundle_dir=tmp_path,
             expected_identity=_identity(),
         )
+
+
+def test_fast_plan_verifier_import_does_not_require_pyarrow() -> None:
+    code = """
+import importlib.abc
+import sys
+from pathlib import Path
+from types import ModuleType
+
+repo = Path.cwd()
+for package_name, package_path in (
+    ("aurora", repo),
+    ("aurora.infra", repo / "infra"),
+    ("aurora.infra.sp500_megarun", repo / "infra" / "sp500_megarun"),
+):
+    package = ModuleType(package_name)
+    package.__path__ = [str(package_path)]
+    sys.modules[package_name] = package
+
+class BlockPyArrow(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if fullname == "pyarrow" or fullname.startswith("pyarrow."):
+            raise ModuleNotFoundError("pyarrow blocked in controller gate")
+        return None
+
+sys.meta_path.insert(0, BlockPyArrow())
+from aurora.infra.sp500_megarun.catalog_prepared_bundle import materialize_prepared_catalog_plan
+
+try:
+    materialize_prepared_catalog_plan(
+        bundle_dir=Path("missing-prepared-bundle"),
+        expected_identity=None,
+        request_sha256="a" * 64,
+        decision_sha256="b" * 64,
+        output_dir=Path("unused-output"),
+    )
+except ModuleNotFoundError as exc:
+    if exc.name == "pyarrow":
+        raise
+except (FileNotFoundError, ValueError):
+    pass
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=Path(__file__).resolve().parents[1],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_terminal_success_receipt_requires_exact_coverage_and_separate_times() -> None:

@@ -1960,6 +1960,21 @@ def test_fast_finalizer_closes_terminal_request_for_requester_generation_advance
     assert '"state_reason": "completed"' in publish["run"]
 
 
+def test_fast_gate_closes_an_unexpected_admission_failure() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-fast-controller.yml")
+    steps = workflow["jobs"]["gate"]["steps"]
+    fallback = next(
+        step
+        for step in steps
+        if step.get("name")
+        == "Terminate one unexpected admission failure without retrying it"
+    )
+
+    assert "--method PATCH" in fallback["run"]
+    assert '"state": "closed"' in fallback["run"]
+    assert '"state_reason": "completed"' in fallback["run"]
+
+
 def test_engine_publishes_one_content_bound_global_reuse_index() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-optimized-run.yml")
     steps = workflow["jobs"]["verify_component_store"]["steps"]
