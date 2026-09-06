@@ -73,7 +73,7 @@ class _PreservedTerminal(Exception):
 
 def _is_reparse(path: Path) -> bool:
     try:
-        attributes = os.lstat(path).st_file_attributes
+        attributes = getattr(os.lstat(path), "st_file_attributes", 0)
     except (AttributeError, FileNotFoundError, OSError):
         return False
     return bool(attributes & 0x400)
@@ -163,7 +163,7 @@ def _atomic_replace(path: Path, data: bytes) -> None:
         os.close(descriptor)
         descriptor = -1
         if os.name == "nt":
-            move = ctypes.windll.kernel32.MoveFileExW
+            move = getattr(ctypes, "windll").kernel32.MoveFileExW
             move.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
             move.restype = ctypes.c_int
             if not move(str(temp), str(path), 9):

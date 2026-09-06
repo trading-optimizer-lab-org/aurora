@@ -4,8 +4,8 @@ Este documento registra **todos** los workflows presentes durante la migración 
 
 ## Resultado
 
-- Workflows inventariados: **184**.
-- Hash canónico del inventario final: `73f49716341d2d6946ee5ee1be6ec4f7fdc2c9ea791c9daf6a117bb00b406096`.
+- Workflows inventariados: **185**.
+- Hash canónico del inventario final: `1622fb2f1a3467de85a09e217339dd27880956cb4b11718747298931dd754a61`.
 - Estado final del validador de topología: **READY**.
 - Campaña activa: `sp500-optimized-catalog-v1` mediante `optimized_catalog_v1`.
 - Los Atlas antiguos y sus wrappers quedan inactivos y sin disparador público. Su código se conserva para trazabilidad, pero no existe un llamador autorizado.

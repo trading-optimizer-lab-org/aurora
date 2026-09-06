@@ -34,25 +34,25 @@
       "path": ".github/workflows/catalog-fast-controller.yml",
       "previous_sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e",
       "reason": "bind the signed fast path to the protected event commit and close every terminal or failed publication path for requester generation advancement",
-      "replacement_sha256": "43a5aa01f221e2624f84bf1f178eefff6fe7b17cc20d0e3fb1dad597301d5521"
+      "replacement_sha256": "ed124f19c658049195a3872888d02239ec8592ce60bcbc4e6e28b34728211186"
     },
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
       "reason": "activate the sealed offline runtime, propagate its immutable source run, republish sealed payloads, preserve requested evaluation after optional skips, and finalize with the sealed runtime",
-      "replacement_sha256": "0bb4df9a95aa0e2a825590aef35fcd0f4e7b98ad7364906fa70441bd7bfa083b"
+      "replacement_sha256": "c49bccf4af2ee6c6d640784e4370a5d9fca4ba01fd42aa32a8299a905e240169"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",
       "previous_sha256": "219b28147a66b2932d9cab120dddc5dbd5e41dcaa0017855c3691efa1e481a63",
       "reason": "bind strategy evaluation to the immutable caller revision",
-      "replacement_sha256": "fd3caba0bd1e2bfda0640328ba1560692d94fafa54c76d893ed201f38eb12a61"
+      "replacement_sha256": "c3313b0b3ca3ddc5f5f5d1d93f9bbf1131b8f08f70610de3e903fbcd7da92e97"
     },
     {
       "path": ".github/workflows/catalog-prepare-one.yml",
       "previous_sha256": "3574b886740be21a68bbb62bc6d71744b74d32cb2aaed2716843a70d6ff334f9",
       "reason": "publish every sealed worker payload bundle before catalog preparation fan-out",
-      "replacement_sha256": "151a8c4df902390122457b382939124d987d1aad318870c96afc3385fc573de7"
+      "replacement_sha256": "498bf6868a7a92a7c8299ff90614548866336fa51aabdb42b8813d692dd3779a"
     },
     {
       "path": ".github/workflows/catalog-prepare.yml",
@@ -64,13 +64,13 @@
       "path": ".github/workflows/catalog-recovery-wave.yml",
       "previous_sha256": "3cf909d40daa6f311685d14521c89ab99aa7476691443a84eff4aac2ea66b1b4",
       "reason": "bind selective recovery to the immutable caller revision",
-      "replacement_sha256": "da5a3ab151b9e01853b9811cffaf4dd81dd6ef7d41c7381463a494bfbe435d7f"
+      "replacement_sha256": "bf820bf1e73369ba7e33061f3d208e99a5cce2bc8f15c88d586a94a37ea57d2c"
     },
     {
       "path": ".github/workflows/catalog-request-reconciler.yml",
       "previous_sha256": "4bbe04040bdd9e341a6d7b97ffd386fc8343f952e5e610057335ddb272671d00",
       "reason": "route bounded reconciliation through the signed fast controller",
-      "replacement_sha256": "5cff56d0b37797cf0f72b318f4273c05bd630e8a678b1df9ad180f1317cf81b5"
+      "replacement_sha256": "5619d272617f5f670c799ebb7d213fae4b41725c8a719110fd7e40af4a9cba70"
     },
     {
       "path": ".github/workflows/catalog-run-controller.yml",

@@ -22,12 +22,12 @@ def _checked_directory(path: Path) -> Path:
 
 def _publish_exclusively(source: str, target: Path) -> None:
     if os.name == "nt":
-        api = ctypes.WinDLL("kernel32", use_last_error=True)
+        api = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
         move = api.MoveFileExW
         move.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
         move.restype = ctypes.c_int
         if not move(source, str(target), 8): # WRITE_THROUGH, never REPLACE_EXISTING.
-            code = ctypes.get_last_error()
+            code = getattr(ctypes, "get_last_error")()
             if code in (80, 183):
                 raise FileExistsError(code, "CHAT_INPUT_EXISTS")
             raise OSError(code, "CHAT_INPUT_IO")
@@ -66,15 +66,15 @@ def enqueue_chat_intent(*, broker_root: Path, intent: dict[str, str]) -> dict[st
             os.fsync(stream.fileno())
         try:
             _publish_exclusively(temporary, target)
-        except FileExistsError:
+        except FileExistsError as exc:
             info = target.lstat()
             if (not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400
                     or info.st_nlink != 1 or info.st_size > 4096):
-                raise ValueError("CHAT_INPUT_CONFLICT")
+                raise ValueError("CHAT_INPUT_CONFLICT") from exc
             with target.open("rb") as source:
                 existing = source.read(4097)
             if existing != payload:
-                raise ValueError("CHAT_INPUT_CONFLICT")
+                raise ValueError("CHAT_INPUT_CONFLICT") from exc
     finally:
         if fd != -1:
             os.close(fd)

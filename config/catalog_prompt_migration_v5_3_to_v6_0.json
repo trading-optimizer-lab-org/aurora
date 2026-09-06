@@ -2,8 +2,8 @@
   "schema_version": "1",
   "source_prompt_version": "5.3",
   "source_prompt_sha256": "6be6180a40c82298c7e6eef6f531344d90979aea50364a2056d2ad3dab601a6b",
-  "active_prompt_version": "7.0-FAST-PATH",
-  "active_prompt_sha256": "fac44360844f11413d6dc9e41e036903b5fa94d280289a879ae05561ee00b621",
+  "active_prompt_version": "7.1-CHAT-ENTRY",
+  "active_prompt_sha256": "7eeb12311d4d109bb0da25c617ad1684568c47dd6ff0996f3c4f72cc2e633c49",
   "spans": [
     {
       "start_line": 1,

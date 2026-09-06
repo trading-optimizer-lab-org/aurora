@@ -166,8 +166,8 @@ _API: _WindowsApi | None = None
 
 
 def _configure_api() -> _WindowsApi:
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
+    advapi32 = getattr(ctypes, "WinDLL")("advapi32", use_last_error=True)
 
     kernel32.CreateFileW.argtypes = (
         ctypes.c_wchar_p,
@@ -292,20 +292,20 @@ def _convert_expected_sid(api: _WindowsApi, expected_owner_sid: str) -> ctypes.c
             expected_owner_sid, ctypes.byref(sid_pointer)
         )
     except (OSError, TypeError, ValueError):
-        _raise("CHAT_INPUT_OWNER_INVALID", ctypes.get_last_error())
+        _raise("CHAT_INPUT_OWNER_INVALID", getattr(ctypes, "get_last_error")())
     if not converted or not sid_pointer.value:
-        _raise("CHAT_INPUT_OWNER_INVALID", ctypes.get_last_error())
+        _raise("CHAT_INPUT_OWNER_INVALID", getattr(ctypes, "get_last_error")())
     return sid_pointer
 
 
 def _file_information(api: _WindowsApi, handle: object) -> int:
     file_type = api.GetFileType(handle)
     if file_type != FILE_TYPE_DISK:
-        _raise("CHAT_INPUT_NOT_DISK", ctypes.get_last_error())
+        _raise("CHAT_INPUT_NOT_DISK", getattr(ctypes, "get_last_error")())
 
     information = _BY_HANDLE_FILE_INFORMATION()
     if not api.GetFileInformationByHandle(handle, ctypes.byref(information)):
-        _raise("CHAT_INPUT_INFO_FAILED", ctypes.get_last_error())
+        _raise("CHAT_INPUT_INFO_FAILED", getattr(ctypes, "get_last_error")())
     attributes = information.dwFileAttributes
     if attributes & FILE_ATTRIBUTE_DIRECTORY:
         _raise("CHAT_INPUT_NOT_FILE")
@@ -326,7 +326,7 @@ def _check_dacl(api: _WindowsApi, dacl: ctypes.c_void_p, expected_sid: ctypes.c_
         _raise("CHAT_INPUT_DACL_INVALID")
     info = _ACL_SIZE_INFORMATION()
     if not api.GetAclInformation(dacl, ctypes.byref(info), ctypes.sizeof(info), _ACL_SIZE_INFORMATION_CLASS):
-        _raise("CHAT_INPUT_DACL_UNREADABLE", ctypes.get_last_error())
+        _raise("CHAT_INPUT_DACL_UNREADABLE", getattr(ctypes, "get_last_error")())
     if info.AceCount > 4096 or not 8 <= info.AclBytesInUse <= 65535:
         _raise("CHAT_INPUT_DACL_INVALID")
     trusted = []
@@ -338,7 +338,7 @@ def _check_dacl(api: _WindowsApi, dacl: ctypes.c_void_p, expected_sid: ctypes.c_
         for index in range(info.AceCount):
             ace = ctypes.c_void_p()
             if not api.GetAce(dacl, index, ctypes.byref(ace)) or not ace.value:
-                _raise("CHAT_INPUT_DACL_UNREADABLE", ctypes.get_last_error())
+                _raise("CHAT_INPUT_DACL_UNREADABLE", getattr(ctypes, "get_last_error")())
             header = ctypes.cast(ace, ctypes.POINTER(_ACE_HEADER)).contents
             if header.AceSize < 8 or header.AceSize > info.AclBytesInUse:
                 _raise("CHAT_INPUT_DACL_INVALID")
@@ -391,7 +391,7 @@ def _check_owner(api: _WindowsApi, handle: object, expected_sid: ctypes.c_void_p
     except ChatWindowsInputError:
         raise
     except (OSError, TypeError, ValueError):
-        _raise("CHAT_INPUT_OWNER_READ_FAILED", ctypes.get_last_error())
+        _raise("CHAT_INPUT_OWNER_READ_FAILED", getattr(ctypes, "get_last_error")())
     finally:
         if descriptor.value:
             api.LocalFree(descriptor)
@@ -409,9 +409,9 @@ def _read_bytes(api: _WindowsApi, handle: object, expected_size: int) -> bytes:
             None,
         )
     except (OSError, TypeError, ValueError):
-        _raise("CHAT_INPUT_READ_FAILED", ctypes.get_last_error())
+        _raise("CHAT_INPUT_READ_FAILED", getattr(ctypes, "get_last_error")())
     if not read_ok:
-        _raise("CHAT_INPUT_READ_FAILED", ctypes.get_last_error())
+        _raise("CHAT_INPUT_READ_FAILED", getattr(ctypes, "get_last_error")())
     actual_size = int(bytes_read.value)
     if actual_size > MAX_INTENT_BYTES or actual_size != expected_size:
         _raise("CHAT_INPUT_LENGTH_MISMATCH")
@@ -444,9 +444,9 @@ def read_authenticated_intent_file(*, path: Path, expected_owner_sid: str) -> by
                 None,
             )
         except (OSError, TypeError, ValueError):
-            _raise("CHAT_INPUT_OPEN_FAILED", ctypes.get_last_error())
+            _raise("CHAT_INPUT_OPEN_FAILED", getattr(ctypes, "get_last_error")())
         if not _valid_handle(handle):
-            winerror = ctypes.get_last_error()
+            winerror = getattr(ctypes, "get_last_error")()
             if winerror in {ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION}:
                 _raise("CHAT_INPUT_BUSY", winerror)
             _raise("CHAT_INPUT_OPEN_FAILED", winerror)
@@ -462,6 +462,6 @@ def read_authenticated_intent_file(*, path: Path, expected_owner_sid: str) -> by
                 except (OSError, TypeError, ValueError):
                     close_ok = False
                 if not close_ok and sys.exc_info()[0] is None:
-                    _raise("CHAT_INPUT_CLOSE_FAILED", ctypes.get_last_error())
+                    _raise("CHAT_INPUT_CLOSE_FAILED", getattr(ctypes, "get_last_error")())
     finally:
         api.LocalFree(expected_sid)

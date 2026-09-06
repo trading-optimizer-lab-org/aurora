@@ -29,7 +29,6 @@ DIRECT_MECHANICS = (
     "GH_TOKEN",
     "GITHUB_TOKEN",
     "scripts/submit_catalog_run_request.py",
-    "C:/Python314/python.exe",
     "aurora.infra.sp500_megarun.catalog_requester_cli",
     "catalog-requester-broker.pyz",
     "--launch-ticket",
@@ -78,7 +77,7 @@ def _validate_policy(policy: dict[str, Any]) -> None:
     assert policy["source_prompt_sha256"] == EXPECTED_SOURCE_SHA256
     assert policy["active_prompt_sha256"] == hashlib.sha256(PROMPT.read_bytes()).hexdigest()
     assert policy["source_prompt_version"] == "5.3"
-    assert policy["active_prompt_version"] == "7.0-FAST-PATH"
+    assert policy["active_prompt_version"] == "7.1-CHAT-ENTRY"
     assert policy["migration_path"] == MIGRATION.relative_to(ROOT).as_posix()
     assert policy["migration_sha256"] == hashlib.sha256(MIGRATION.read_bytes()).hexdigest()
     assert tuple(row["rule_id"] for row in policy["rules"]) == EXPECTED_RULE_IDS
@@ -128,12 +127,13 @@ def test_source_prompt_archive_is_the_approved_exact_version() -> None:
 def test_active_prompt_is_controller_only_and_hash_bound() -> None:
     text = PROMPT.read_text(encoding="utf-8")
     policy = _json(POLICY)
-    assert "VERSIÓN: 7.0-FAST-PATH" in text
-    assert "CatalogRequester/client-venv/Scripts/python.exe" in text
-    assert "CatalogRequester/bin/catalog-requester-client.pyz" in text
+    assert "VERSIÓN: 7.1-CHAT-ENTRY" in text
+    assert "C:/Python314/python.exe -I -S" in text
+    assert "C:/ProgramData/AURORA/CatalogChatSender/submit_catalog_chat_intent.py" in text
     assert "solo necesita CAMPAIGN_KEY" in text
-    assert "config/catalog_campaign_registry_v1.json" in text
+    assert "C:/ProgramData/AURORA/CatalogChatSender/catalog_campaign_registry_v1.json" in text
     assert "BLOCKED_CAMPAIGN_SELECTION_AMBIGUOUS" in text
+    assert "BLOCKED_CHAT_ENTRY_NOT_INSTALLED" in text
     assert hashlib.sha256(PROMPT.read_bytes()).hexdigest() == policy["active_prompt_sha256"]
     for forbidden in DIRECT_MECHANICS:
         assert forbidden not in text

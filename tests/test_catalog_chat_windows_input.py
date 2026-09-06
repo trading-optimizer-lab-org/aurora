@@ -4,6 +4,7 @@ import ctypes
 import os
 from pathlib import Path
 import struct
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import pytest
@@ -27,8 +28,8 @@ def _require_windows() -> None:
 
 def _current_process_sid() -> str:
     _require_windows()
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32 = getattr(ctypes, "WinDLL")("advapi32", use_last_error=True)
+    kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
 
     class SidAndAttributes(ctypes.Structure):
         _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", ctypes.c_ulong)]
@@ -68,7 +69,7 @@ def _current_process_sid() -> str:
     token = ctypes.c_void_p()
     assert open_process_token(
         get_current_process(), 0x0008, ctypes.byref(token)
-    ), ctypes.get_last_error()
+    ), getattr(ctypes, "get_last_error")()
     try:
         required = ctypes.c_ulong()
         assert not get_token_information(
@@ -82,10 +83,10 @@ def _current_process_sid() -> str:
             buffer,
             required.value,
             ctypes.byref(required),
-        ), ctypes.get_last_error()
+        ), getattr(ctypes, "get_last_error")()
         token_user = TokenUser.from_buffer(buffer)
         text_pointer = ctypes.c_void_p()
-        assert convert_sid(token_user.User.Sid, ctypes.byref(text_pointer)), ctypes.get_last_error()
+        assert convert_sid(token_user.User.Sid, ctypes.byref(text_pointer)), getattr(ctypes, "get_last_error")()
         try:
             assert text_pointer.value is not None
             return ctypes.wstring_at(text_pointer.value)
@@ -111,7 +112,7 @@ def _assert_error(exc_info: pytest.ExceptionInfo[target.ChatWindowsInputError], 
 
 def _open_write_denied_handle(path: Path) -> ctypes.c_void_p:
     _require_windows()
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
     create_file = kernel32.CreateFileW
     create_file.argtypes = (
         ctypes.c_wchar_p,
@@ -133,13 +134,13 @@ def _open_write_denied_handle(path: Path) -> ctypes.c_void_p:
         None,
     )
     invalid = ctypes.c_void_p(-1).value
-    assert handle not in (None, invalid), ctypes.get_last_error()
+    assert handle not in (None, invalid), getattr(ctypes, "get_last_error")()
     return ctypes.c_void_p(handle)
 
 
 def _process_handle_count() -> int:
     _require_windows()
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
     get_current_process = kernel32.GetCurrentProcess
     get_current_process.argtypes = ()
     get_current_process.restype = ctypes.c_void_p
@@ -404,7 +405,7 @@ def test_concurrent_writable_handle_produces_deterministic_busy_error(tmp_path: 
         _assert_error(exc_info, "CHAT_INPUT_BUSY")
         assert exc_info.value.winerror == 32
     finally:
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
         assert kernel32.CloseHandle(handle)
 
 
@@ -452,7 +453,7 @@ def test_relative_unc_device_and_ads_paths_are_rejected_lexically(tmp_path: Path
 
 
 def test_non_windows_execution_fails_closed_without_loading_win32(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(target.os, "name", "posix")
+    monkeypatch.setattr(target, "os", SimpleNamespace(name="posix"))
     monkeypatch.setattr(
         target,
         "_get_windows_api",

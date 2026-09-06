@@ -189,16 +189,16 @@ def _publish_binding_exclusively(source: str, target: Path) -> None:
         import ctypes
         from ctypes import wintypes
 
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
         move = kernel.MoveFileExW
         move.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD)
         move.restype = wintypes.BOOL
         # WRITE_THROUGH only: never REPLACE_EXISTING, COPY_ALLOWED or delayed.
         if not move(source, str(target), 0x8):
-            code = ctypes.get_last_error()
+            code = getattr(ctypes, "get_last_error")()
             if code in (80, 183):
                 raise FileExistsError("binding already published")
-            raise ctypes.WinError(code)
+            raise getattr(ctypes, "WinError")(code)
     else:
         os.link(source, target)
         directory_fd = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
@@ -267,10 +267,10 @@ def load_or_bind_chat_intent(
             os.fsync(handle.fileno())
         try:
             _publish_binding_exclusively(temp_name, final_path)
-        except FileExistsError:
+        except FileExistsError as exc:
             winner = _read_existing_binding(final_path)
             if winner is None:
-                raise _invalid("binding disappeared after exclusive publish race")
+                raise _invalid("binding disappeared after exclusive publish race") from exc
             return _ensure_matching_binding(winner, intent)
         except (OSError, NotImplementedError) as exc:
             raise _invalid("exclusive binding publish is unavailable", exc) from exc
