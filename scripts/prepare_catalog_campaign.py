@@ -419,6 +419,7 @@ def prepare_campaign(
         root="artifacts",
     ).collection
     inventory = load_verified_rebuildable_store_inventory(
+        expected_commit=expected_commit,
         artifacts=indexes.rows,
         caches=caches.rows,
         client=client,

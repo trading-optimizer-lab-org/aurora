@@ -140,12 +140,21 @@ def inventory_from_verified_indexes(
     indexes: tuple[CatalogRebuildableStoreIndexV1, ...],
     *,
     live_cache_keys: frozenset[str],
+    runtime_source_commit_sha: str | None = None,
 ) -> RebuildableStoreInventoryV1:
     """Keep only exact indexes whose immutable cache key still exists."""
 
     candidates: dict[tuple[str, ...], RebuildableStoreCandidateV1] = {}
     for index in indexes:
         for candidate in index.candidates:
+            # Runtime manifests bind source commits; data/components retain their
+            # independent content identities and remain reusable across commits.
+            if (
+                candidate.object_family == "runtime"
+                and runtime_source_commit_sha is not None
+                and index.protected_commit_sha != runtime_source_commit_sha
+            ):
+                continue
             if candidate.cache_key not in live_cache_keys:
                 continue
             candidates[_candidate_sort_key(candidate)] = candidate

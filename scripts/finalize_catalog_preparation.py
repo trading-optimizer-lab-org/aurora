@@ -344,7 +344,10 @@ def finalize_preparation(
         for candidate in index.candidates
         if candidate.cache_key is not None
     )
-    inventory = inventory_from_verified_indexes((index,), live_cache_keys=live_keys)
+    inventory = inventory_from_verified_indexes(
+        (index,), live_cache_keys=live_keys,
+        runtime_source_commit_sha=expected_commit,
+    )
 
     contract = _effective_contract(_strict_json(seed / "resolved-contract.json"), qualified_workers)
     component_payload = _payload(

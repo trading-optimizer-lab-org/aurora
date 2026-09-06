@@ -480,6 +480,7 @@ def test_store_index_accepts_only_a_verified_reusable_workflow_publication(
     if publication_mutation is not None:
         with pytest.raises(ValueError, match="CATALOG_STORE_INDEX_PUBLICATION_INVALID"):
             load_verified_rebuildable_store_inventory(
+                expected_commit="c" * 40,
                 artifacts=(metadata,),
                 caches=({"id": 77, "key": cache_key, "ref": "refs/heads/main"},),
                 client=client,
@@ -489,6 +490,7 @@ def test_store_index_accepts_only_a_verified_reusable_workflow_publication(
             )
         return
     inventory = load_verified_rebuildable_store_inventory(
+        expected_commit="c" * 40,
         artifacts=(metadata,),
         caches=({"id": 77, "key": cache_key, "ref": "refs/heads/main"},),
         client=client,
@@ -557,6 +559,7 @@ def test_reusable_store_index_rejects_unverified_provenance(
     monkeypatch.setattr(_ReusableStoreIndexClient, "get_json", get_json)
     with pytest.raises(ValueError, match=expected_error):
         load_verified_rebuildable_store_inventory(
+            expected_commit="c" * 40,
             artifacts=(metadata,),
             caches=({"id": 77, "key": cache_key, "ref": "refs/heads/main"},),
             client=_ReusableStoreIndexClient(),
@@ -564,6 +567,65 @@ def test_reusable_store_index_rejects_unverified_provenance(
             token="test-token",
             download_root=tmp_path / mutation,
         )
+
+
+@pytest.mark.parametrize("current_commit", ("c" * 40, "d" * 40))
+def test_runtime_reuse_requires_current_source_but_preserves_other_families(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, current_commit: str
+) -> None:
+    previous, _ = _store_index_fixture()
+    component = previous.candidates[0]
+    candidates = [component]
+    for family, logical_id, digit in (
+        ("runtime", "runtime", "2"),
+        ("prepared_input", "core", "3"),
+    ):
+        identity = digit * 64
+        candidates.append(RebuildableStoreCandidateV1.model_validate({
+            **component.model_dump(mode="json"),
+            "object_family": family,
+            "logical_id": logical_id,
+            "identity_sha256": identity,
+            "cache_key": f"aurora-catalog-v1-{identity}-{component.content_manifest_sha256}-main",
+        }))
+    index = CatalogRebuildableStoreIndexV1.create(
+        **previous.model_dump(mode="json", exclude={"index_sha256", "candidates"}),
+        candidates=candidates,
+    )
+    archive = _store_index_zip(index)
+
+    def fake_download(**kwargs: object) -> bytes:
+        Path(str(kwargs["destination"])).write_bytes(archive)
+        return archive
+
+    monkeypatch.setattr(
+        "scripts.prepare_catalog_admission_candidates._download_store_index_archive",
+        fake_download,
+    )
+    metadata = {
+        "id": 55, "name": "catalog-rebuildable-store-index-v1",
+        "size_in_bytes": len(archive),
+        "digest": f"sha256:{hashlib.sha256(archive).hexdigest()}",
+        "expired": False,
+        "workflow_run": {"id": 123, "head_branch": "main", "head_sha": "c" * 40},
+    }
+    inventory = load_verified_rebuildable_store_inventory(
+        artifacts=(metadata,),
+        caches=tuple(
+            {"id": ordinal, "key": candidate.cache_key, "ref": "refs/heads/main"}
+            for ordinal, candidate in enumerate(index.candidates, start=77)
+        ),
+        client=_StoreIndexClient(),
+        repository="owner/repo", token="test-token",
+        download_root=tmp_path / "verified",
+        expected_commit=current_commit,
+    )
+    expected = tuple(
+        candidate for candidate in index.candidates
+        if candidate.object_family != "runtime" or current_commit == "c" * 40
+    )
+    assert inventory.candidates == expected
+    assert {row.object_family for row in inventory.candidates} >= {"component", "prepared_input"}
 
 
 def test_content_bound_store_index_promotes_only_a_still_live_cache(
@@ -596,6 +658,7 @@ def test_content_bound_store_index_promotes_only_a_still_live_cache(
     cache = {"id": 77, "key": cache_key, "ref": "refs/heads/main"}
 
     warm = load_verified_rebuildable_store_inventory(
+        expected_commit="c" * 40,
         artifacts=(metadata,),
         caches=(cache,),
         client=_StoreIndexClient(),  # type: ignore[arg-type]
@@ -606,6 +669,7 @@ def test_content_bound_store_index_promotes_only_a_still_live_cache(
     assert warm.candidates == index.candidates
 
     cold = load_verified_rebuildable_store_inventory(
+        expected_commit="c" * 40,
         artifacts=(metadata,),
         caches=({**cache, "key": "unrelated"},),
         client=_StoreIndexClient(),  # type: ignore[arg-type]
@@ -645,6 +709,7 @@ def test_store_index_rejects_archive_digest_or_writer_provenance_drift(
     }
     with pytest.raises(ValueError, match="CATALOG_STORE_INDEX_ARTIFACT_DIGEST_INVALID"):
         load_verified_rebuildable_store_inventory(
+            expected_commit="c" * 40,
             artifacts=(metadata,),
             caches=(
                 {"id": 77, "key": cache_key, "ref": "refs/heads/main"},
