@@ -489,19 +489,29 @@ def _validate_contract(
         names = campaign.get("source_artifact_contracts")
         if not isinstance(names, list):
             raise KeeperError("KEEPER_REGISTRY_SOURCE_CONTRACT_INVALID")
+        campaign_contracts: set[str] = set()
         for name in names:
-            if name in required_contracts:
-                raise KeeperError("KEEPER_SOURCE_CONTRACT_CONFLICT")
             if name == "runtime_input_pack_v1":
-                required_contracts[str(name)] = _positive_int(
+                contract_name = str(name)
+                run_id = _positive_int(
                     campaign.get("runtime_input_run_id"), "KEEPER_RUNTIME_RUN_ID_INVALID"
                 )
             elif name == "reference_oracle_v1":
-                required_contracts[str(name)] = _positive_int(
+                contract_name = str(name)
+                run_id = _positive_int(
                     campaign.get("reference_run_id"), "KEEPER_REFERENCE_RUN_ID_INVALID"
                 )
             else:
                 raise KeeperError("KEEPER_SOURCE_CONTRACT_UNSUPPORTED")
+            if contract_name in campaign_contracts:
+                raise KeeperError("KEEPER_SOURCE_CONTRACT_CONFLICT")
+            campaign_contracts.add(contract_name)
+            if (
+                contract_name in required_contracts
+                and required_contracts[contract_name] != run_id
+            ):
+                raise KeeperError("KEEPER_SOURCE_CONTRACT_CONFLICT")
+            required_contracts[contract_name] = run_id
     rows: dict[str, dict[str, Any]] = {}
     for raw in payload["artifacts"]:
         if not isinstance(raw, dict):

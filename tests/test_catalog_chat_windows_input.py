@@ -4,6 +4,7 @@ import ctypes
 import os
 from pathlib import Path
 import struct
+import subprocess
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, TypeAlias
 
@@ -298,13 +299,30 @@ class _MockAclApi:
         return 0
 
 
+def _assign_test_file_to_sender(path: Path) -> str:
+    """CI administrators may create files owned by their group, unlike HP."""
+    sid = _current_process_sid()
+    subprocess.run(
+        ["icacls", str(path), "/setowner", "*" + sid],
+        check=True, capture_output=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW"),
+    )
+    subprocess.run(
+        ["icacls", str(path), "/grant:r", "*" + sid + ":(F)"],
+        check=True, capture_output=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW"),
+    )
+    return sid
+
+
 def test_correct_owner_reads_nonempty_bytes_from_real_windows_file(tmp_path: Path) -> None:
     _require_windows()
     path = tmp_path / "intent.bin"
     path.write_bytes(b"hello authenticated input")
+    sender_sid = _assign_test_file_to_sender(path)
 
     assert target.read_authenticated_intent_file(
-        path=path, expected_owner_sid=_current_process_sid()
+        path=path, expected_owner_sid=sender_sid
     ) == b"hello authenticated input"
 
 
@@ -322,6 +340,9 @@ def test_real_windows_sender_to_consumer_without_production_submission(tmp_path:
         intent_id="018f47a2-6e91-4c34-8000-000000000001",
     )
     enqueue_chat_intent(broker_root=tmp_path, intent=intent)
+    sender_sid = _assign_test_file_to_sender(
+        tmp_path / "chat-inbox" / f"{intent.intent_id}.intent.json"
+    )
     seen = []
     def record(**kwargs):
         seen.append(kwargs["intent"])
@@ -329,7 +350,7 @@ def test_real_windows_sender_to_consumer_without_production_submission(tmp_path:
     monkeypatch.setattr(consumer, "submit_registered_chat_intent", record)
     assert consumer.consume_authenticated_chat_file(
         broker_root=tmp_path, input_name=f"{intent.intent_id}.intent.json",
-        expected_sender_sid=_current_process_sid(), observed_at=datetime.now(timezone.utc),
+        expected_sender_sid=sender_sid, observed_at=datetime.now(timezone.utc),
     ) == "local-no-production"
     assert seen == [intent]
 
@@ -472,6 +493,13 @@ _MOCK_OWNER = "S-1-5-21-111-222-333-1001"
 _MOCK_FOREIGN = "S-1-5-21-111-222-333-1002"
 
 
+def _mock_windows_api(monkeypatch: pytest.MonkeyPatch, api: object) -> None:
+    """Replace the complete Win32 boundary, without changing global os.name."""
+    monkeypatch.setattr(target, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(target, "_get_windows_api", lambda: api)
+    monkeypatch.setattr(target.ctypes, "get_last_error", lambda: 5, raising=False)
+
+
 @pytest.mark.parametrize(
     ("case_name", "ace", "expected_code"),
     [
@@ -511,7 +539,7 @@ def test_mocked_acl_cases_fail_closed_or_allow_read_only(
 ) -> None:
     del case_name  # The parameter gives each ACL decision a readable pytest id.
     fake = _MockAclApi(expected_owner_sid=_MOCK_OWNER, aces=[ace])
-    monkeypatch.setattr(target, "_get_windows_api", lambda: fake)
+    _mock_windows_api(monkeypatch, fake)
 
     if expected_code is None:
         assert target.read_authenticated_intent_file(
@@ -537,7 +565,7 @@ def test_mocked_acl_allows_dangerous_write_for_explicit_trusted_sid(
         expected_owner_sid=_MOCK_OWNER,
         aces=[_build_ace(ace_type=0, sid=allowed_sid, mask=0x0002 | 0x00010000)],
     )
-    monkeypatch.setattr(target, "_get_windows_api", lambda: fake)
+    _mock_windows_api(monkeypatch, fake)
 
     assert target.read_authenticated_intent_file(
         path=tmp_path / "mocked-intent.bin", expected_owner_sid=_MOCK_OWNER
@@ -560,7 +588,7 @@ def test_mocked_acl_rejects_null_or_unreadable_dacl(
     fake = _MockAclApi(
         expected_owner_sid=_MOCK_OWNER, aces=[], dacl_state=dacl_state
     )
-    monkeypatch.setattr(target, "_get_windows_api", lambda: fake)
+    _mock_windows_api(monkeypatch, fake)
 
     with pytest.raises(target.ChatWindowsInputError) as exc_info:
         target.read_authenticated_intent_file(
@@ -622,7 +650,7 @@ def test_simulated_reparse_attribute_is_rejected_before_read_mocked_api(
     fake = FakeApi()
     path = tmp_path / "reparse-simulation.bin"
     path.write_bytes(b"x")
-    monkeypatch.setattr(target, "_get_windows_api", lambda: fake)
+    _mock_windows_api(monkeypatch, fake)
 
     with pytest.raises(target.ChatWindowsInputError) as exc_info:
         target.read_authenticated_intent_file(

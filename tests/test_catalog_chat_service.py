@@ -91,6 +91,8 @@ def test_service_restart_observes_durable_reply_without_second_submission(tmp_pa
     import json
     from aurora.infra.sp500_megarun.catalog_requester import CatalogRequesterReceiptV1
 
+    monkeypatch.setattr(service, "_exclusive_service_lock", lambda root: nullcontext())
+
     for name in ("chat-inbox", "chat-replies", "chat-intents"):
         (tmp_path / name).mkdir()
     source = tmp_path / "chat-inbox" / f"{IDENTIFIER}.intent.json"
