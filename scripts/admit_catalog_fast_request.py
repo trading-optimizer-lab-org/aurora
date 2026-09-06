@@ -9,7 +9,9 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
+import tempfile
 from typing import Any, Mapping
 
 
@@ -19,6 +21,8 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 
 from aurora.infra.github_performance.contracts import canonical_sha256
+from aurora.infra.sp500_megarun.catalog_gate_budget import gate_timeout
+from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityStateV1
 from aurora.infra.sp500_megarun.catalog_campaign_registry import (
     load_catalog_campaign_registry,
     resolve_catalog_campaign,
@@ -27,6 +31,7 @@ from aurora.infra.sp500_megarun.catalog_fast_path import (
     CatalogFastGateSnapshotV1,
     CatalogFastLaunchDecisionV1,
     CatalogPreparationIdentityV1,
+    CatalogTerminalReceipt,
     decide_fast_catalog_launch,
 )
 from aurora.infra.sp500_megarun.catalog_github_snapshot import (
@@ -42,6 +47,9 @@ from aurora.infra.sp500_megarun.catalog_rebuildable_store_index import (
 )
 from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
 from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_request
+from aurora.infra.sp500_megarun.catalog_fast_reservation import (
+    FastGateAliasEvidence, load_fast_gate_owner, load_owner_terminal_receipt,
+)
 
 
 _REPOSITORY = "trading-optimizer-lab-org/aurora"
@@ -123,6 +131,58 @@ def _blocked(
     )
 
 
+def _download_owner_archive(repository: str, token: str, artifact_id: int) -> bytes:
+    """Read a metadata-bounded archive via gh without exposing the bearer token."""
+    if repository != _REPOSITORY or type(artifact_id) is not int or artifact_id < 1:
+        raise ValueError("CATALOG_FAST_OWNER_DOWNLOAD_INVALID")
+    with tempfile.TemporaryFile() as stream:
+        result = subprocess.run(
+            ["gh", "api", f"repos/{repository}/actions/artifacts/{artifact_id}/zip"],
+            stdout=stream, stderr=subprocess.PIPE, env={**os.environ, "GH_TOKEN": token},
+            timeout=gate_timeout(20), check=False,
+        )
+        if result.returncode != 0:
+            raise ValueError("CATALOG_FAST_OWNER_DOWNLOAD_FAILED")
+        stream.seek(0)
+        raw = stream.read(2 * 1024 * 1024 + 1)
+    if not raw or len(raw) > 2 * 1024 * 1024:
+        raise ValueError("CATALOG_FAST_OWNER_ARCHIVE_SIZE_INVALID")
+    return raw
+
+
+def _historical_owner_commit_approved(client: CatalogGitHubReadOnlyClient, candidate: str, protected: str) -> bool:
+    # Authenticate ancestry to the independently bound protected checkout. The
+    # artifact's own head_sha is only a query, never its approval evidence.
+    comparison, _ = client.get_json(f"/repos/{_REPOSITORY}/compare/{candidate}...{protected}")
+    return (
+        isinstance(comparison, Mapping)
+        and comparison.get("status") in {"ahead", "identical"}
+        and comparison.get("base_commit", {}).get("sha") == candidate
+        and comparison.get("merge_base_commit", {}).get("sha") == candidate
+    )
+
+
+def _write_replay_decision(
+    decision: CatalogFastLaunchDecisionV1, *, output_dir: Path, github_output: Path,
+    terminal_receipt: CatalogTerminalReceipt | None = None,
+) -> None:
+    output_dir.mkdir(parents=False, exist_ok=False)
+    (output_dir / "catalog-fast-decision-v1.json").write_text(decision.model_dump_json() + "\n", encoding="utf-8")
+    outputs = {
+        "preserve_issue": "true", "launch_required": "false", "selected_workers": "0",
+        "existing_run_id": str(decision.existing_run_id) if decision.existing_run_id else "",
+        "campaign_state": decision.state, "reason_code": decision.reason_code,
+        "request_sha256": decision.request_sha256, "submission_key_sha256": decision.submission_key_sha256,
+        "prepared_receipt_sha256": decision.prepared_receipt_sha256 or "",
+        "decision_sha256": decision.decision_sha256,
+        "terminal_receipt_sha256": terminal_receipt.receipt_sha256 if terminal_receipt else "",
+        "existing_run_url": terminal_receipt.run_url if terminal_receipt else "",
+    }
+    with github_output.open("a", encoding="utf-8", newline="\n") as stream:
+        for key, value in outputs.items():
+            stream.write(f"{key}={value}\n")
+
+
 def admit_request(
     *,
     request_context_path: Path,
@@ -167,22 +227,11 @@ def admit_request(
         or context.get("document_type") != "catalog_fast_request_context_v1"
         or context.get("protected_commit_sha") != expected_commit
         or context.get("content_sha256") != canonical_sha256(context_identity)
+        or context.get("request_mode") not in {None, "admit_new", "lookup_existing"}
     ):
         raise ValueError("CATALOG_FAST_REQUEST_CONTEXT_INVALID")
     request = CatalogRunRequestV1.model_validate(context.get("request"))
-    identity = CatalogPreparationIdentityV1.model_validate(context.get("identity"))
-    registry = load_catalog_campaign_registry(
-        root / "config/catalog_campaign_registry_v1.json"
-    )
-    entry = resolve_catalog_campaign(registry, request.campaign_key, root)
-
     client = CatalogGitHubReadOnlyClient(repository, token)
-    active_issues = client.stable_paginated(
-        f"/repos/{repository}/issues?state=open&labels=catalog-run-active-v1",
-        root="list",
-    ).collection
-    if client.observed_at is None:
-        raise ValueError("CATALOG_FAST_GATE_GITHUB_TIME_INVALID")
     actors = _mapping(
         _strict_json(root / "config/catalog_controller_actors_v1.json"),
         "CATALOG_FAST_REQUEST_ACTOR_INVALID",
@@ -192,41 +241,220 @@ def admit_request(
         raise ValueError("CATALOG_REQUESTER_KEY_UNAVAILABLE")
     public_key = (root / public_key_path).read_bytes()
     current_issue_number = context.get("issue_number")
+    if type(current_issue_number) is not int or current_issue_number < 1:
+        raise ValueError("CATALOG_FAST_REQUEST_CONTEXT_INVALID")
+    # Until absence of ownership is established, failures must not terminalize
+    # the original request through a workflow fallback.
+    with github_output.open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write("preserve_issue=true\n")
+    issue_raw, _ = client.get_json(f"/repos/{repository}/issues/{current_issue_number}")
+    issue = _mapping(issue_raw, "CATALOG_FAST_REQUEST_CONTEXT_INVALID")
+    if (
+        issue.get("number") != current_issue_number
+        or issue.get("user", {}).get("login") != context.get("actor")
+        or context.get("actor") not in actors.get("request_actors", ())
+        or not isinstance(issue.get("title"), str) or not isinstance(issue.get("body"), str)
+        or parse_catalog_run_request(issue["title"], issue["body"], public_key) != request
+        or issue.get("created_at") != context.get("issue_created_at")
+    ):
+        raise ValueError("CATALOG_FAST_REQUEST_LIVE_BINDING_INVALID")
+    labels = {row.get("name") for row in issue.get("labels", ()) if isinstance(row, Mapping)}
+    if client.observed_at is None:
+        raise ValueError("CATALOG_FAST_GATE_GITHUB_TIME_INVALID")
+    owner = None
+    lookup_error = None
+    owner_issue_number = current_issue_number
     active_campaigns: set[str] = set()
-    for row in active_issues.rows:
-        if row.get("number") == current_issue_number:
-            continue
-        title = row.get("title")
-        body = row.get("body")
-        if not isinstance(title, str) or not isinstance(body, str):
-            raise ValueError("CATALOG_ACTIVE_REQUEST_INVALID")
-        try:
-            active_request = parse_catalog_run_request(title, body, public_key)
-        except ValueError as exc:
-            raise ValueError("CATALOG_ACTIVE_REQUEST_INVALID") from exc
-        active_campaigns.add(active_request.campaign_key)
+    terminal_generations: list[tuple[CatalogRunRequestV1, Mapping[str, Any]]] = []
+    pinned_terminal_sha256 = None
+    existing_issue_state = (
+        bool(labels & {"catalog-run-active-v1", "catalog-run-terminal-v1"})
+        or issue.get("state") == "closed"
+    )
+    durable_owner = existing_issue_state or context.get("request_mode") == "lookup_existing"
 
-    terminal_issues = client.stable_paginated(
-        f"/repos/{repository}/issues?state=all&labels=catalog-run-terminal-v1",
-        root="list",
-    ).collection
-    terminal_submission_keys: set[str] = set()
-    for row in terminal_issues.rows:
-        if row.get("number") == current_issue_number:
-            continue
-        title = row.get("title")
-        body = row.get("body")
-        if not isinstance(title, str) or not isinstance(body, str):
-            continue
-        try:
-            terminal_request = parse_catalog_run_request(title, body, public_key)
-        except ValueError:
-            continue
-        terminal_submission_keys.add(terminal_request.submission_key_sha256)
+    def lookup_owner(number: int, signed_request: CatalogRunRequestV1):
+        return load_fast_gate_owner(
+            client=client, issue_number=number, request=signed_request,
+            approved_commits=frozenset({expected_commit}),
+            approve_historical_commit=lambda candidate: _historical_owner_commit_approved(client, candidate, expected_commit),
+            download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
+        )
 
-    labels = set(str(item) for item in context.get("issue_labels", ()))
-    active_label = "catalog-run-active-v1"
-    terminal_label = "catalog-run-terminal-v1"
+    try:
+        evidence = lookup_owner(current_issue_number, request)
+        alias_target = evidence.target_run_id if isinstance(evidence, FastGateAliasEvidence) else None
+        owner = None if isinstance(evidence, FastGateAliasEvidence) else evidence
+        if alias_target is not None:
+            durable_owner = True
+        compact_handled = False
+        authority_path = runner_temp / "catalog-fast-authority-current.json"
+        if owner is None and authority_path.exists():
+            # Same-job output of verify_catalog_fast_authority.py, never request
+            # content or a downloaded user artifact. The writer revalidates the
+            # live edition under the shared lock before reserving or launching.
+            try:
+                if authority_path.is_symlink() or authority_path.stat().st_size > 256 * 1024:
+                    raise ValueError("invalid snapshot file")
+                authority = FastAuthorityStateV1.model_validate(_strict_json(authority_path))
+            except (ValueError, OSError) as exc:
+                raise ValueError("CATALOG_FAST_AUTHORITY_SNAPSHOT_INVALID") from exc
+            current = next((row for row in authority.campaigns
+                            if row.request.campaign_key == request.campaign_key), None)
+            if current is not None and current.request.request_id == request.request_id:
+                if current.request.intent_sha256 != request.intent_sha256:
+                    raise ValueError("CATALOG_FAST_INTENT_CONFLICT")
+                durable_owner = True
+                owner_issue_number = current.owner_issue_number
+                resolved = lookup_owner(owner_issue_number, current.request)
+                if isinstance(resolved, FastGateAliasEvidence):
+                    raise ValueError("CATALOG_FAST_ALIAS_CHAIN_NOT_ALLOWED")
+                if resolved is not None and resolved.run_id != current.owner_run_id:
+                    raise ValueError("CATALOG_FAST_AUTHORITY_OWNER_MISMATCH")
+                if alias_target is not None and (resolved is None or resolved.run_id != alias_target):
+                    raise ValueError("CATALOG_FAST_ALIAS_TARGET_CONFLICT")
+                owner = resolved
+                pinned_terminal_sha256 = current.terminal_receipt_sha256
+                compact_handled = True
+            # Absence from a partial maintenance baseline is NOT proof of an
+            # empty campaign history. Older intents retain original evidence.
+            elif current is not None and not durable_owner and request.launch_generation > current.generation:
+                publisher = os.environ.get("GITHUB_RUN_ID", "")
+                if not publisher.isascii() or not publisher.isdecimal() or int(publisher) < 1:
+                    raise ValueError("CATALOG_FAST_GATE_INVOCATION_INVALID")
+                authority.reserve(request=request, issue_number=current_issue_number, run_id=int(publisher))
+                active_campaigns.update(row.request.campaign_key for row in authority.campaigns if not row.is_terminal)
+                compact_handled = True
+        if owner is None and not compact_handled and (not existing_issue_state or alias_target is not None):
+            active_inventory = client.stable_paginated(
+                f"/repos/{repository}/issues?state=open&labels=catalog-run-active-v1", root="list",
+            )
+            if active_inventory.stable is not True or active_inventory.collection.complete is not True:
+                raise ValueError("CATALOG_ACTIVE_REQUEST_INVENTORY_INCOMPLETE")
+            matches: list[tuple[int, CatalogRunRequestV1]] = []
+            for row in active_inventory.collection.rows:
+                number = row.get("number")
+                if number == current_issue_number:
+                    continue
+                if (
+                    type(number) is not int or number < 1
+                    or row.get("user", {}).get("login") not in actors.get("request_actors", ())
+                    or not isinstance(row.get("title"), str) or not isinstance(row.get("body"), str)
+                ):
+                    raise ValueError("CATALOG_ACTIVE_REQUEST_INVALID")
+                active_request = parse_catalog_run_request(row["title"], row["body"], public_key)
+                active_campaigns.add(active_request.campaign_key)
+                if active_request.request_id == request.request_id:
+                    if active_request.intent_sha256 != request.intent_sha256:
+                        raise ValueError("CATALOG_FAST_INTENT_CONFLICT")
+                    matches.append((number, active_request))
+            if not matches:
+                terminal_inventory = client.stable_paginated(
+                    f"/repos/{repository}/issues?state=all&labels=catalog-run-terminal-v1", root="list",
+                )
+                if terminal_inventory.stable is not True or terminal_inventory.collection.complete is not True:
+                    raise ValueError("CATALOG_TERMINAL_REQUEST_INVENTORY_INCOMPLETE")
+                for row in terminal_inventory.collection.rows:
+                    number = row.get("number")
+                    if (
+                        number == current_issue_number or type(number) is not int or number < 1
+                        or row.get("user", {}).get("login") not in actors.get("request_actors", ())
+                        or not isinstance(row.get("title"), str) or not isinstance(row.get("body"), str)
+                    ):
+                        continue
+                    try:
+                        terminal_request = parse_catalog_run_request(row["title"], row["body"], public_key)
+                    except ValueError:
+                        continue
+                    if terminal_request.campaign_key == request.campaign_key:
+                        terminal_generations.append((terminal_request, row))
+                    if terminal_request.request_id == request.request_id:
+                        if terminal_request.intent_sha256 != request.intent_sha256:
+                            raise ValueError("CATALOG_FAST_INTENT_CONFLICT")
+                        matches.append((number, terminal_request))
+            if len(matches) > 1:
+                raise ValueError("CATALOG_FAST_OWNER_AMBIGUOUS")
+            if matches:
+                owner_issue_number, original_request = matches[0]
+                durable_owner = True
+                resolved = lookup_owner(owner_issue_number, original_request)
+                if isinstance(resolved, FastGateAliasEvidence):
+                    raise ValueError("CATALOG_FAST_ALIAS_CHAIN_NOT_ALLOWED")
+                if alias_target is not None and (resolved is None or resolved.run_id != alias_target):
+                    raise ValueError("CATALOG_FAST_ALIAS_TARGET_CONFLICT")
+                owner = resolved
+            if not matches and not durable_owner and request.campaign_key not in active_campaigns:
+                latest_generation = max((item.launch_generation for item, _ in terminal_generations), default=0)
+                if request.launch_generation != latest_generation + 1:
+                    raise ValueError("CATALOG_FAST_GENERATION_CONFLICT")
+                previous = [pair for pair in terminal_generations if pair[0].launch_generation == latest_generation]
+                if len(previous) > 1:
+                    raise ValueError("CATALOG_FAST_OWNER_AMBIGUOUS")
+                previous_hash = previous[0][0].request_sha256 if previous else None
+                if request.previous_terminal_request_sha256 != previous_hash:
+                    raise ValueError("CATALOG_FAST_PREDECESSOR_CONFLICT")
+                if previous:
+                    previous_request, previous_row = previous[0]
+                    number = previous_row["number"]
+                    previous_raw, _ = client.get_json(f"/repos/{repository}/issues/{number}")
+                    previous_issue = _mapping(previous_raw, "CATALOG_FAST_PREDECESSOR_INVALID")
+                    previous_closer = _mapping(previous_issue.get("closed_by"), "CATALOG_FAST_PREDECESSOR_INVALID")
+                    previous_actor = _mapping(previous_issue.get("user"), "CATALOG_FAST_PREDECESSOR_INVALID")
+                    if (
+                        previous_issue.get("number") != number
+                        or previous_issue.get("state") != "closed"
+                        or previous_issue.get("state_reason") != "completed"
+                        or not isinstance(actors.get("ledger_actor"), str)
+                        or previous_closer.get("login") != actors["ledger_actor"]
+                        or previous_actor.get("login") not in actors.get("request_actors", ())
+                        or not isinstance(previous_issue.get("title"), str) or not isinstance(previous_issue.get("body"), str)
+                        or parse_catalog_run_request(previous_issue["title"], previous_issue["body"], public_key) != previous_request
+                        or "catalog-run-terminal-v1" not in {label.get("name") for label in previous_issue.get("labels", ()) if isinstance(label, Mapping)}
+                        or not _utc(previous_issue.get("created_at")) <= _utc(previous_issue.get("closed_at")) <= _utc(issue.get("created_at")) <= client.observed_at
+                    ):
+                        raise ValueError("CATALOG_FAST_PREDECESSOR_INVALID")
+    except (CatalogGitHubSnapshotError, ValueError, OSError, subprocess.SubprocessError) as exc:
+        lookup_error = str(exc).split(":", 1)[0]
+        if not re.fullmatch(r"CATALOG_[A-Z0-9_]+", lookup_error):
+            lookup_error = "CATALOG_FAST_OWNER_LOOKUP_UNAVAILABLE"
+    if owner is not None or lookup_error is not None or durable_owner:
+        terminal_receipt = None
+        state = "BLOCKED"
+        reason = lookup_error or "CATALOG_FAST_OWNER_ORIGINAL_EVIDENCE_MISSING"
+        preparation_error = context.get("preparation_error")
+        if owner is None and lookup_error is None and isinstance(preparation_error, str) and re.fullmatch(r"CATALOG_[A-Z0-9_]+", preparation_error):
+            reason = preparation_error
+        if owner is not None:
+            if owner.run.get("status") in {"queued", "in_progress", "waiting", "pending", "requested"}:
+                state, reason = "QUEUED", "CATALOG_FAST_EXISTING_RUN"
+            else:
+                reason = "CATALOG_FAST_OWNER_TERMINAL_EVIDENCE_REQUIRED"
+                try:
+                    terminal_receipt = load_owner_terminal_receipt(
+                        client=client, owner=owner, issue_number=owner_issue_number,
+                        download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
+                    )
+                    if terminal_receipt is not None and pinned_terminal_sha256 is not None and terminal_receipt.receipt_sha256 != pinned_terminal_sha256:
+                        terminal_receipt = None
+                        raise ValueError("CATALOG_FAST_AUTHORITY_TERMINAL_CONFLICT")
+                except (CatalogGitHubSnapshotError, ValueError, OSError, subprocess.SubprocessError) as exc:
+                    reason = str(exc).split(":", 1)[0]
+                    if not re.fullmatch(r"CATALOG_[A-Z0-9_]+", reason):
+                        reason = "CATALOG_FAST_OWNER_TERMINAL_LOOKUP_UNAVAILABLE"
+                if terminal_receipt is not None:
+                    state, reason = terminal_receipt.state, terminal_receipt.reason_code
+        replay = CatalogFastLaunchDecisionV1.create(
+            state=state, reason_code=reason, request_sha256=request.request_sha256,
+            submission_key_sha256=request.submission_key_sha256, campaign_key=request.campaign_key,
+            prepared_receipt_sha256=owner.decision.prepared_receipt_sha256 if owner else None,
+            selected_workers=0, launch_required=False, existing_run_id=owner.run_id if owner else None,
+            decided_at=client.observed_at, expires_at=_utc(context.get("issue_created_at")) + timedelta(minutes=30),
+        )
+        _write_replay_decision(replay, output_dir=output_dir, github_output=github_output, terminal_receipt=terminal_receipt)
+        return replay
+    identity = CatalogPreparationIdentityV1.model_validate(context.get("identity"))
+    registry = load_catalog_campaign_registry(root / "config/catalog_campaign_registry_v1.json")
+    entry = resolve_catalog_campaign(registry, request.campaign_key, root)
     safe_capacity_raw = os.environ.get("CATALOG_SAFE_FREE_CAPACITY", "")
     try:
         safe_capacity = int(safe_capacity_raw)
@@ -245,26 +473,7 @@ def admit_request(
     issue_created_at = _utc(context.get("issue_created_at"))
     expires_at = issue_created_at + timedelta(minutes=30)
     prepared = None
-    if (
-        terminal_label in labels
-        or request.submission_key_sha256 in terminal_submission_keys
-    ):
-        decision = _blocked(
-            request=request,
-            prepared_receipt_sha256=None,
-            now=snapshot.observed_at,
-            expires_at=expires_at,
-            reason_code="CATALOG_REQUEST_ALREADY_TERMINAL",
-        )
-    elif active_label in labels:
-        decision = _blocked(
-            request=request,
-            prepared_receipt_sha256=None,
-            now=snapshot.observed_at,
-            expires_at=expires_at,
-            reason_code="CATALOG_REQUEST_ALREADY_ACTIVE",
-        )
-    elif request.campaign_key in active_campaigns:
+    if request.campaign_key in active_campaigns:
         decision = _blocked(
             request=request,
             prepared_receipt_sha256=None,
@@ -302,10 +511,11 @@ def admit_request(
                 reason_code="CATALOG_PREPARATION_INVALID",
             )
         else:
-            caches = client.stable_paginated(
+            cache_inventory = client.stable_paginated(
                 f"/repos/{repository}/actions/caches?ref=refs/heads/main",
                 root="actions_caches",
-            ).collection
+            )
+            caches = cache_inventory.collection
             live_cache_keys = {
                 str(row.get("key"))
                 for row in caches.rows
@@ -317,7 +527,15 @@ def admit_request(
                 if candidate.cache_key is not None
             }
             required_cache_keys = set(prepared.required_cache_keys)
-            if indexed_cache_keys != required_cache_keys:
+            if cache_inventory.stable is not True or caches.complete is not True:
+                decision = _blocked(
+                    request=request,
+                    prepared_receipt_sha256=prepared.receipt_sha256,
+                    now=snapshot.observed_at,
+                    expires_at=expires_at,
+                    reason_code="CATALOG_PREPARATION_CACHE_INVENTORY_INCOMPLETE",
+                )
+            elif indexed_cache_keys != required_cache_keys:
                 decision = _blocked(
                     request=request,
                     prepared_receipt_sha256=prepared.receipt_sha256,
@@ -374,7 +592,9 @@ def admit_request(
             output_dir=output_dir / "sealed-plan",
         )
     outputs = {
+        "preserve_issue": "false",
         "launch_required": str(decision.launch_required).lower(),
+        "existing_run_id": str(decision.existing_run_id) if decision.existing_run_id is not None else "",
         "campaign_state": decision.state,
         "reason_code": decision.reason_code,
         "request_sha256": request.request_sha256,
@@ -402,6 +622,16 @@ def admit_request(
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        runner_temp = os.environ.get("RUNNER_TEMP", "")
+        authority_path = Path(runner_temp) / "catalog-fast-authority-current.json"
+        if not runner_temp or authority_path.is_symlink() or not authority_path.is_file():
+            raise ValueError("CATALOG_FAST_AUTHORITY_SNAPSHOT_REQUIRED")
+        try:
+            if authority_path.stat().st_size > 256 * 1024:
+                raise ValueError("snapshot too large")
+            FastAuthorityStateV1.model_validate(_strict_json(authority_path))
+        except (ValueError, OSError) as exc:
+            raise ValueError("CATALOG_FAST_AUTHORITY_SNAPSHOT_INVALID") from exc
         admit_request(
             request_context_path=args.request_context,
             prepared_bundle=args.prepared_bundle,

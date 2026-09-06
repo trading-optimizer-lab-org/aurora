@@ -126,6 +126,50 @@ def test_long_retry_after_releases_the_runner() -> None:
     assert plan.retry_not_before == NOW + timedelta(seconds=300)
 
 
+def test_changing_failure_fingerprint_does_not_reset_worker_retry_budget() -> None:
+    receipts = tuple(build_catalog_worker_failure_receipt(
+        authority_id='authority-1', campaign_id='campaign-1',
+        execution_plan_sha256=PLAN, protected_commit_sha=COMMIT,
+        worker_id=7, attempt_id=f'authority-1:worker:007:attempt:{attempt}',
+        stage='recipe_worker', reason_code='CONNECTION_RESET', exit_code=1,
+        exception_type='ConnectionResetError', normalized_frame=f'network:stage{attempt}',
+        created_at=NOW + timedelta(seconds=attempt),
+    ) for attempt in (1, 2, 3))
+    assert len({item.failure_fingerprint for item in receipts}) == 3
+    for count in (1, 2, 3):
+        plan = decide_catalog_worker_recovery(
+            expected_worker_ids=(0, 7), completed_worker_ids=(0,),
+            failure_receipts=receipts[:count], current_wave=count,
+            max_waves=6, now=NOW + timedelta(minutes=1),
+        )
+        assert plan.decisions[0].action == 'complete'
+        if count < 3:
+            assert plan.status == 'retry'
+        else:
+            assert plan.status == 'blocked'
+            assert plan.decisions[1].reason_code == 'WORKER_ATTEMPT_BUDGET_EXHAUSTED'
+
+
+@pytest.mark.parametrize('wave,expected_status', [(1, 'retry'), (2, 'retry'), (3, 'blocked')])
+def test_actual_recovery_action_call_limits_dispatch_to_two_retries(wave, expected_status):
+    import ast
+    from aurora.infra.github_performance.preflight import load_github_yaml
+
+    path = Path(__file__).resolve().parents[1] / '.github/actions/aurora-recovery-plan/action.yml'
+    action = load_github_yaml(path)
+    step = next(s for s in action['runs']['steps'] if s.get('id') == 'reconcile')
+    source = step['run'].split("python - <<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+    tree = ast.parse(source)
+    call = next(node for node in tree.body if isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == 'recovery_plan' for target in node.targets))
+    namespace = dict(decide_catalog_worker_recovery=decide_catalog_worker_recovery,
+                     original_by_worker={7: {}}, completed_workers=set(),
+                     failure_receipts=[_receipt()], current_wave=wave,
+                     datetime=datetime, UTC=timezone.utc)
+    exec(compile(ast.Module(body=[call], type_ignores=[]), str(path), 'exec'), namespace)
+    assert namespace['recovery_plan'].status == expected_status
+
+
 @pytest.mark.parametrize(
     ("error", "reason"),
     [

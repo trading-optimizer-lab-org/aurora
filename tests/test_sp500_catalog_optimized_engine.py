@@ -1342,6 +1342,50 @@ def test_keeper_source_contract_is_closed_and_covers_active_registry() -> None:
     assert all(row["locked_opened"] is False for row in rows)
 
 
+def test_keeper_source_contract_rejects_divergent_shared_canary_binding() -> None:
+    from scripts.run_catalog_artifact_keeper import KeeperError, _validate_contract
+
+    registry = json.loads(Path("config/catalog_campaign_registry_v1.json").read_text("utf-8"))
+    source_contract = json.loads(
+        Path("config/catalog_keeper_source_artifacts_v1.json").read_text("utf-8")
+    )
+    canary = next(
+        campaign
+        for campaign in registry["campaigns"]
+        if campaign["campaign_key"] == "catalog-fast-canary-v1"
+    )
+    canary["runtime_input_run_id"] += 1
+
+    with pytest.raises(KeeperError, match="KEEPER_SOURCE_CONTRACT_CONFLICT"):
+        _validate_contract(
+            source_contract,
+            repository="trading-optimizer-lab-org/aurora",
+            registry=registry,
+        )
+
+
+def test_keeper_source_contract_rejects_duplicate_within_one_campaign() -> None:
+    from scripts.run_catalog_artifact_keeper import KeeperError, _validate_contract
+
+    registry = json.loads(Path("config/catalog_campaign_registry_v1.json").read_text("utf-8"))
+    source_contract = json.loads(
+        Path("config/catalog_keeper_source_artifacts_v1.json").read_text("utf-8")
+    )
+    campaign = next(
+        campaign
+        for campaign in registry["campaigns"]
+        if campaign["campaign_key"] == "catalog-fast-canary-v1"
+    )
+    campaign["source_artifact_contracts"].append("runtime_input_pack_v1")
+
+    with pytest.raises(KeeperError, match="KEEPER_SOURCE_CONTRACT_CONFLICT"):
+        _validate_contract(
+            source_contract,
+            repository="trading-optimizer-lab-org/aurora",
+            registry=registry,
+        )
+
+
 def test_keeper_closed_file_verifier_rejects_one_changed_byte(tmp_path: Path) -> None:
     from scripts.run_catalog_artifact_keeper import (
         KeeperError,

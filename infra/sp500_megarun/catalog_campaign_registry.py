@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path, PurePosixPath
 from typing import Literal, TypeAlias
 
@@ -178,3 +179,45 @@ def resolve_catalog_campaign(
     except Exception as exc:
         raise ValueError(f"CATALOG_CAMPAIGN_PATH_INVALID: {exc}") from None
     return entry
+
+
+def resolve_catalog_for_reduction(
+    *, repo_root: Path, scientific_contract_sha256: str,
+    catalog_manifest_sha256: str,
+) -> Path:
+    """Resolve the registered catalog bound to the admitted scientific identity."""
+    root = repo_root.resolve(strict=True)
+    registry = load_catalog_campaign_registry(root / "config/catalog_campaign_registry_v1.json")
+    matches = [entry for entry in registry.campaigns
+               if entry.active and entry.scientific_contract_sha256 == scientific_contract_sha256]
+    if len(matches) != 1:
+        raise ValueError("CATALOG_REDUCER_CATALOG_UNRESOLVED")
+    entry = resolve_catalog_campaign(registry, matches[0].campaign_key, root)
+    try:
+        manifest_path = (root / entry.catalog_dir / "manifest.json").resolve(strict=True)
+        catalog_path = (root / entry.catalog_dir / "catalog.jsonl").resolve(strict=True)
+        if not manifest_path.is_relative_to(root) or not catalog_path.is_relative_to(root):
+            raise ValueError("CATALOG_REDUCER_CATALOG_PATH_INVALID")
+        raw_manifest = manifest_path.read_bytes()
+        if hashlib.sha256(raw_manifest).hexdigest() != catalog_manifest_sha256:
+            raise ValueError("CATALOG_REDUCER_CATALOG_MANIFEST_MISMATCH")
+        manifest = json.loads(
+            raw_manifest, object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_nonfinite,
+        )
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("validation_opened") is not False
+            or manifest.get("locked_opened") is not False
+            or not isinstance(manifest.get("artifacts_sha256"), dict)
+        ):
+            raise ValueError("CATALOG_REDUCER_CATALOG_MANIFEST_INVALID")
+        digest = hashlib.sha256()
+        with catalog_path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != manifest["artifacts_sha256"].get("catalog.jsonl"):
+            raise ValueError("CATALOG_REDUCER_CATALOG_CONTENT_MISMATCH")
+        return catalog_path
+    except OSError as exc:
+        raise ValueError("CATALOG_REDUCER_CATALOG_UNAVAILABLE") from exc

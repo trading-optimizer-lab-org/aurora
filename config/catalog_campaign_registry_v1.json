@@ -24,6 +24,27 @@
       "component_store_family": "sp500_component_store_v1",
       "reducer_family": "catalog_hierarchical_reducer_v1",
       "active": true
+    },
+    {
+      "campaign_key": "catalog-fast-canary-v1",
+      "engine_id": "optimized_catalog_v1",
+      "definition_manifest_path": "config/catalog_campaign_definitions/catalog-fast-canary-v1.manifest.json",
+      "optimization_policy_path": "config/catalog_fast_canary_optimization_policy_v1.json",
+      "campaign_contract_path": "config/sp500_megarun_dehb_campaign_v1.json",
+      "catalog_dir": "tests/fixtures/catalog_fast_canary_v1/production-catalog",
+      "selected_config_path": "config/catalog_fast_canary_selected_v1.json",
+      "admission_evidence_path": "config/sp500_catalog_admission_evidence_current_v1.json",
+      "data_contract_path": "config/sp500_megarun_free_data_240.json",
+      "feature_contract_path": "config/sp500_megarun_feature_contract_240.json",
+      "runtime_input_run_id": 31418682679,
+      "reference_run_id": 31948898747,
+      "scientific_contract_sha256": "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2",
+      "max_free_workers": 4,
+      "allowed_protected_branch": "main",
+      "source_artifact_contracts": ["runtime_input_pack_v1", "reference_oracle_v1"],
+      "component_store_family": "sp500_component_store_v1",
+      "reducer_family": "catalog_hierarchical_reducer_v1",
+      "active": true
     }
   ]
 }

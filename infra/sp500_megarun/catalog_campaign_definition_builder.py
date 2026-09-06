@@ -19,7 +19,7 @@ from .catalog_campaign_definition_contract import (
     CatalogDefinitionRole,
     registry_entry_sha256,
 )
-from .catalog_campaign_registry import CatalogCampaignEntryV1
+from .catalog_campaign_registry import CatalogCampaignEntryV1, load_catalog_campaign_registry
 
 
 _ENGINE_ROOTS: dict[str, tuple[str, ...]] = {
@@ -188,10 +188,20 @@ class _ClosureBuilder:
             self.add(path)
 
     def _scan_json(self, relative: str, content: bytes) -> None:
-        try:
-            payload = json.loads(content.decode("utf-8-sig"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError(f"CATALOG_DEFINITION_JSON_INVALID:{relative}:{exc}") from None
+        if relative == "config/catalog_campaign_registry_v1.json":
+            # Hash the complete registry, but follow only this campaign's inputs.
+            # Generated definition manifests are outputs, never closure inputs.
+            registry = load_catalog_campaign_registry(self.root / relative)
+            matches = [row for row in registry.campaigns
+                       if row.campaign_key == self.registry_entry.campaign_key]
+            if len(matches) != 1 or matches[0] != self.registry_entry:
+                raise ValueError("CATALOG_REGISTRY_ROW_MISMATCH")
+            payload = matches[0].model_dump(mode="json", exclude={"definition_manifest_path"})
+        else:
+            try:
+                payload = json.loads(content.decode("utf-8-sig"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError(f"CATALOG_DEFINITION_JSON_INVALID:{relative}:{exc}") from None
 
         def walk(value: object, key: str | None = None) -> None:
             if isinstance(value, dict):
@@ -685,13 +695,13 @@ class _ClosureBuilder:
         if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
             return frozenset((expression.value,))
         if isinstance(expression, (ast.Tuple, ast.List, ast.Set)):
-            values = tuple(
+            literal_values = tuple(
                 item.value
                 for item in expression.elts
                 if isinstance(item, ast.Constant) and isinstance(item.value, str)
             )
-            if len(values) == len(expression.elts) and values:
-                return frozenset(values)
+            if len(literal_values) == len(expression.elts) and literal_values:
+                return frozenset(literal_values)
             return None
         if not isinstance(expression, ast.Name):
             return None

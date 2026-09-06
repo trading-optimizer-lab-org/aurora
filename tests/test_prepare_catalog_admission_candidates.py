@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 import zipfile
 
 import pytest
@@ -383,6 +384,185 @@ class _StoreIndexClient:
                 "repository": {"full_name": "owner/repo"},
             },
             object(),
+        )
+
+
+class _ReusableStoreIndexClient:
+    publication_mutation: str | None = None
+
+    def paginated(self, path: str, *, root: str) -> SimpleNamespace:
+        assert path == "/repos/owner/repo/actions/runs/123/attempts/1/jobs"
+        assert root == "jobs"
+        job = {
+            "run_id": 123,
+            "run_attempt": 1,
+            "head_sha": "c" * 40,
+            "name": "engine / verify_component_store",
+            "status": "completed",
+            "conclusion": "success",
+            "steps": [{
+                "name": "Publish the immutable global reuse index when cache read-back succeeded",
+                "status": "completed",
+                "conclusion": "success",
+            }],
+        }
+        mutation = self.publication_mutation
+        if mutation == "missing":
+            return SimpleNamespace(rows=(), complete=True)
+        if mutation == "run":
+            job["run_id"] = 124
+        elif mutation == "attempt":
+            job["run_attempt"] = 2
+        elif mutation == "commit":
+            job["head_sha"] = "d" * 40
+        elif mutation == "skipped":
+            job["steps"] = []
+        rows = (job, job) if mutation == "duplicate" else (job,)
+        return SimpleNamespace(rows=rows, complete=True)
+
+    def get_json(self, path: str) -> tuple[object, object]:
+        assert path == "/repos/owner/repo/actions/runs/123"
+        return (
+            {
+                "id": 123,
+                "run_attempt": 1,
+                "path": ".github/workflows/catalog-fast-controller.yml",
+                "head_branch": "main",
+                "head_sha": "c" * 40,
+                "status": "completed",
+                "repository": {"full_name": "owner/repo"},
+                "referenced_workflows": [
+                    {
+                        "path": (
+                            "owner/repo/.github/workflows/"
+                            f"catalog-optimized-run.yml@{'c' * 40}"
+                        ),
+                        "ref": "refs/heads/main",
+                        "sha": "c" * 40,
+                    }
+                ],
+            },
+            object(),
+        )
+
+
+@pytest.mark.parametrize("publication_mutation", (None, "missing", "run", "attempt", "commit", "skipped", "duplicate"))
+def test_store_index_accepts_only_a_verified_reusable_workflow_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, publication_mutation: str | None
+) -> None:
+    index, cache_key = _store_index_fixture()
+    archive = _store_index_zip(index)
+
+    def fake_download(**kwargs: object) -> bytes:
+        destination = Path(str(kwargs["destination"]))
+        destination.write_bytes(archive)
+        return archive
+
+    monkeypatch.setattr(
+        "scripts.prepare_catalog_admission_candidates._download_store_index_archive",
+        fake_download,
+    )
+    metadata = {
+        "id": 55,
+        "name": "catalog-rebuildable-store-index-v1",
+        "size_in_bytes": len(archive),
+        "digest": f"sha256:{hashlib.sha256(archive).hexdigest()}",
+        "expired": False,
+        "workflow_run": {
+            "id": 123,
+            "head_branch": "main",
+            "head_sha": "c" * 40,
+        },
+    }
+
+    client = _ReusableStoreIndexClient()
+    client.publication_mutation = publication_mutation
+    if publication_mutation is not None:
+        with pytest.raises(ValueError, match="CATALOG_STORE_INDEX_PUBLICATION_INVALID"):
+            load_verified_rebuildable_store_inventory(
+                artifacts=(metadata,),
+                caches=({"id": 77, "key": cache_key, "ref": "refs/heads/main"},),
+                client=client,
+                repository="owner/repo",
+                token="test-token",
+                download_root=tmp_path / "reusable",
+            )
+        return
+    inventory = load_verified_rebuildable_store_inventory(
+        artifacts=(metadata,),
+        caches=({"id": 77, "key": cache_key, "ref": "refs/heads/main"},),
+        client=client,
+        repository="owner/repo",
+        token="test-token",
+        download_root=tmp_path / "reusable",
+    )
+    assert inventory.candidates == index.candidates
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("repository", "sha", "ref", "missing_reference", "digest", "artifact_run"),
+)
+def test_reusable_store_index_rejects_unverified_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    index, cache_key = _store_index_fixture()
+    archive = _store_index_zip(index)
+    run, response = _ReusableStoreIndexClient().get_json(
+        "/repos/owner/repo/actions/runs/123"
+    )
+    assert isinstance(run, dict)
+    reference = run["referenced_workflows"][0]
+    metadata = {
+        "id": 55,
+        "name": "catalog-rebuildable-store-index-v1",
+        "size_in_bytes": len(archive),
+        "digest": f"sha256:{hashlib.sha256(archive).hexdigest()}",
+        "expired": False,
+        "workflow_run": {
+            "id": 123,
+            "head_branch": "main",
+            "head_sha": "c" * 40,
+        },
+    }
+    expected_error = "CATALOG_STORE_INDEX_WRITER_RUN_INVALID"
+    if mutation == "repository":
+        reference["path"] = reference["path"].replace("owner/repo/", "other/repo/")
+    elif mutation == "sha":
+        reference["sha"] = "d" * 40
+    elif mutation == "ref":
+        reference["ref"] = "refs/heads/untrusted"
+    elif mutation == "missing_reference":
+        run.pop("referenced_workflows")
+    elif mutation == "digest":
+        metadata["digest"] = f"sha256:{'0' * 64}"
+        expected_error = "CATALOG_STORE_INDEX_ARTIFACT_DIGEST_INVALID"
+    elif mutation == "artifact_run":
+        metadata["workflow_run"] = {
+            "id": 124, "head_branch": "main", "head_sha": "c" * 40
+        }
+
+    def fake_download(**kwargs: object) -> bytes:
+        Path(str(kwargs["destination"])).write_bytes(archive)
+        return archive
+
+    def get_json(self: object, path: str) -> tuple[object, object]:
+        assert path == "/repos/owner/repo/actions/runs/123"
+        return run, response
+
+    monkeypatch.setattr(
+        "scripts.prepare_catalog_admission_candidates._download_store_index_archive",
+        fake_download,
+    )
+    monkeypatch.setattr(_ReusableStoreIndexClient, "get_json", get_json)
+    with pytest.raises(ValueError, match=expected_error):
+        load_verified_rebuildable_store_inventory(
+            artifacts=(metadata,),
+            caches=({"id": 77, "key": cache_key, "ref": "refs/heads/main"},),
+            client=_ReusableStoreIndexClient(),
+            repository="owner/repo",
+            token="test-token",
+            download_root=tmp_path / mutation,
         )
 
 

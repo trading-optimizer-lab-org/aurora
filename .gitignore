@@ -41,6 +41,9 @@ env/
 *.sqlite
 *.sqlite3
 *.jsonl
+!tests/fixtures/catalog_fast_canary_v1/catalog.jsonl
+!tests/fixtures/catalog_fast_canary_v1/reference.jsonl
+!tests/fixtures/catalog_fast_canary_v1/production-catalog/catalog.jsonl
 !campaigns/sp500_long_short_daily/research_input/candidate_strategy_pack.jsonl
 !docs/readiness/gtbi-v7/task_events.jsonl
 !docs/readiness/gtbi-v7/task_attempts.jsonl

@@ -16,6 +16,7 @@ import pyarrow.parquet as pq
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.github_performance.shard_planner import sha256_file
 from aurora.infra.sp500_megarun.catalog_admission import verify_catalog_plan_token
+from aurora.infra.sp500_megarun.catalog_resources import aggregate_worker_evaluation
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
@@ -344,6 +345,7 @@ def _checkpoint_receipts(
     worker_ids: list[int],
     checkpoint_rows: dict[int, dict[str, Any]],
     assignments: dict[int, dict[str, Any]],
+    recovery_policy: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     expected_artifacts = {
         artifact
@@ -397,11 +399,35 @@ def _checkpoint_receipts(
                 root / "checkpoint_chain_manifest.json",
                 "REDUCTION_CHECKPOINT_CHAIN_INVALID",
             )
+            attempt_id = receipt.get("attempt_id")
+            if (
+                not isinstance(attempt_id, str)
+                or not attempt_id.strip()
+                or attempt.get("attempt_id") != attempt_id
+                or chain.get("attempt_id") != attempt_id
+            ):
+                raise SystemExit("REDUCTION_CHECKPOINT_ATTEMPT_INVALID")
             result_sha256 = sha256_file(result_path)
             receipt_sha256 = sha256_file(receipt_path)
             start = (len(strategy_ids) * (slot_index - 1)) // slot_count
             stop = (len(strategy_ids) * slot_index) // slot_count
             expected_strategy_ids = strategy_ids[start:stop]
+            recovery_block_id = None
+            if recovery_policy is not None:
+                from aurora.infra.sp500_megarun.catalog_recovery_blocks import resolve_recovery_block
+
+                try:
+                    recovery_block_id = resolve_recovery_block(
+                        recovery_policy,
+                        science_sha256=recovery_policy["science_sha256"],
+                        worker_id=worker_id, slot_index=slot_index,
+                        strategy_ids=expected_strategy_ids,
+                    )
+                except (ValueError, TypeError, KeyError) as exc:
+                    raise SystemExit("REDUCTION_RECOVERY_BLOCK_INVALID") from exc
+                if any(document.get("recovery_block_id") != recovery_block_id
+                       for document in (receipt, attempt, chain)):
+                    raise SystemExit("REDUCTION_RECOVERY_BLOCK_INVALID")
             table_ids = [
                 str(value)
                 for value in pq.read_table(
@@ -450,6 +476,8 @@ def _checkpoint_receipts(
                     "slot_index": slot_index,
                     "receipt_sha256": receipt_sha256,
                     "result_sha256": result_sha256,
+                    "recovery_block_id": recovery_block_id,
+                    "attempt_id": attempt_id,
                 }
             )
             previous_receipt_sha256 = receipt_sha256
@@ -570,6 +598,7 @@ def main() -> int:
         worker_ids=worker_ids,
         checkpoint_rows=checkpoint_rows,
         assignments=assignments,
+        recovery_policy=(checkpoint_policy if "recovery_blocks_v1" in checkpoint_policy else None),
     )
     science_identity_sha256 = canonical_sha256(resolved.science)
     index = load_resume_index(
@@ -666,6 +695,8 @@ def main() -> int:
         json.dumps(group_manifest, indent=2, sort_keys=True) + "\n",
         "utf-8",
     )
+    from aurora.infra.sp500_megarun.catalog_recovery_blocks import recovery_metrics_from_checkpoints
+
     receipt_identity = {
         "schema_version": "1",
         "reduction_group_id": args.group_id,
@@ -673,6 +704,10 @@ def main() -> int:
         "worker_ids": worker_ids,
         "source_worker_receipt_count": len(worker_ids),
         "source_checkpoint_receipt_count": len(receipts),
+        "execution_metrics": aggregate_worker_evaluation(receipts),
+        "recovery_metrics": recovery_metrics_from_checkpoints(
+            receipt_manifest, authority_id=checkpoint_policy["authority_id"],
+        ),
         "strategy_count": len(ordered),
         "selected_strategy_count": len(selected_by_key),
         "result_bytes": result_path.stat().st_size,

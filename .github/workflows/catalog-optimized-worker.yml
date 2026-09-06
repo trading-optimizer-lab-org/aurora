@@ -443,8 +443,25 @@ jobs:
           --prepared-input-identity-sha256 "${{ steps.descriptor.outputs.prepared_input_identity_sha256 }}"
           --expected-artifact-manifest-sha256 "${{ steps.descriptor.outputs.data_partition_manifest_sha256 }}"
 
+      - name: Resolve verified registered campaign inputs
+        id: campaign_inputs
+        shell: bash
+        env:
+          CATALOG_ADMISSION_TOKEN: ${{ inputs.admission_token_sha256 }}
+        run: >-
+          python scripts/resolve_catalog_worker_inputs.py
+          --repo-root .
+          --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
+          --run-plan "$RUNNER_TEMP/assignment/run_plan.json"
+          --admission-token "$CATALOG_ADMISSION_TOKEN"
+          --github-output "$GITHUB_OUTPUT"
+
       - name: Compute checkpoint segment 1
         id: compute_1
+        env:
+          CATALOG_CAMPAIGN_CONTRACT: ${{ steps.campaign_inputs.outputs.campaign_contract_path }}
+          CATALOG_DIRECTORY: ${{ steps.campaign_inputs.outputs.catalog_dir }}
+          CATALOG_SELECTED_CONFIG: ${{ steps.campaign_inputs.outputs.selected_config_path }}
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 1 &&
           fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 1 }}
@@ -460,9 +477,9 @@ jobs:
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
           --
-          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
-          --catalog-dir config/sp500_megarun_strategy_catalog_v1
-          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --campaign-contract "$CATALOG_CAMPAIGN_CONTRACT"
+          --catalog-dir "$CATALOG_DIRECTORY"
+          --selected-config "$CATALOG_SELECTED_CONFIG"
           --component-store "$RUNNER_TEMP/components"
           --runtime-input-pack "$RUNNER_TEMP/runtime"
           --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
@@ -473,6 +490,7 @@ jobs:
           --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
           --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
           --checkpoint-slot-index 1
+          --checkpoint-policy "$RUNNER_TEMP/sealed-plan/checkpoint_policy.json"
           --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
           --admission-token "${{ inputs.admission_token_sha256 }}"
           --shard-index "${{ inputs.worker_id }}"
@@ -496,6 +514,10 @@ jobs:
 
       - name: Compute checkpoint segment 2
         id: compute_2
+        env:
+          CATALOG_CAMPAIGN_CONTRACT: ${{ steps.campaign_inputs.outputs.campaign_contract_path }}
+          CATALOG_DIRECTORY: ${{ steps.campaign_inputs.outputs.catalog_dir }}
+          CATALOG_SELECTED_CONFIG: ${{ steps.campaign_inputs.outputs.selected_config_path }}
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 2 &&
           fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 2 &&
@@ -516,9 +538,9 @@ jobs:
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
           --
-          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
-          --catalog-dir config/sp500_megarun_strategy_catalog_v1
-          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --campaign-contract "$CATALOG_CAMPAIGN_CONTRACT"
+          --catalog-dir "$CATALOG_DIRECTORY"
+          --selected-config "$CATALOG_SELECTED_CONFIG"
           --component-store "$RUNNER_TEMP/components"
           --runtime-input-pack "$RUNNER_TEMP/runtime"
           --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
@@ -529,6 +551,7 @@ jobs:
           --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
           --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
           --checkpoint-slot-index 2
+          --checkpoint-policy "$RUNNER_TEMP/sealed-plan/checkpoint_policy.json"
           --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
           --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-1/receipt.json"
           --admission-token "${{ inputs.admission_token_sha256 }}"
@@ -553,6 +576,10 @@ jobs:
 
       - name: Compute checkpoint segment 3
         id: compute_3
+        env:
+          CATALOG_CAMPAIGN_CONTRACT: ${{ steps.campaign_inputs.outputs.campaign_contract_path }}
+          CATALOG_DIRECTORY: ${{ steps.campaign_inputs.outputs.catalog_dir }}
+          CATALOG_SELECTED_CONFIG: ${{ steps.campaign_inputs.outputs.selected_config_path }}
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 3 &&
           fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 3 &&
@@ -573,9 +600,9 @@ jobs:
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
           --
-          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
-          --catalog-dir config/sp500_megarun_strategy_catalog_v1
-          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --campaign-contract "$CATALOG_CAMPAIGN_CONTRACT"
+          --catalog-dir "$CATALOG_DIRECTORY"
+          --selected-config "$CATALOG_SELECTED_CONFIG"
           --component-store "$RUNNER_TEMP/components"
           --runtime-input-pack "$RUNNER_TEMP/runtime"
           --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
@@ -586,6 +613,7 @@ jobs:
           --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
           --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
           --checkpoint-slot-index 3
+          --checkpoint-policy "$RUNNER_TEMP/sealed-plan/checkpoint_policy.json"
           --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
           --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-2/receipt.json"
           --admission-token "${{ inputs.admission_token_sha256 }}"
@@ -610,6 +638,10 @@ jobs:
 
       - name: Compute checkpoint segment 4
         id: compute_4
+        env:
+          CATALOG_CAMPAIGN_CONTRACT: ${{ steps.campaign_inputs.outputs.campaign_contract_path }}
+          CATALOG_DIRECTORY: ${{ steps.campaign_inputs.outputs.catalog_dir }}
+          CATALOG_SELECTED_CONFIG: ${{ steps.campaign_inputs.outputs.selected_config_path }}
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 4 &&
           fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 4 &&
@@ -630,9 +662,9 @@ jobs:
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
           --
-          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
-          --catalog-dir config/sp500_megarun_strategy_catalog_v1
-          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --campaign-contract "$CATALOG_CAMPAIGN_CONTRACT"
+          --catalog-dir "$CATALOG_DIRECTORY"
+          --selected-config "$CATALOG_SELECTED_CONFIG"
           --component-store "$RUNNER_TEMP/components"
           --runtime-input-pack "$RUNNER_TEMP/runtime"
           --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
@@ -643,6 +675,7 @@ jobs:
           --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
           --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
           --checkpoint-slot-index 4
+          --checkpoint-policy "$RUNNER_TEMP/sealed-plan/checkpoint_policy.json"
           --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
           --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-3/receipt.json"
           --admission-token "${{ inputs.admission_token_sha256 }}"
@@ -667,6 +700,10 @@ jobs:
 
       - name: Compute checkpoint segment 5
         id: compute_5
+        env:
+          CATALOG_CAMPAIGN_CONTRACT: ${{ steps.campaign_inputs.outputs.campaign_contract_path }}
+          CATALOG_DIRECTORY: ${{ steps.campaign_inputs.outputs.catalog_dir }}
+          CATALOG_SELECTED_CONFIG: ${{ steps.campaign_inputs.outputs.selected_config_path }}
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 5 &&
           fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 5 &&
@@ -687,9 +724,9 @@ jobs:
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
           --
-          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
-          --catalog-dir config/sp500_megarun_strategy_catalog_v1
-          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --campaign-contract "$CATALOG_CAMPAIGN_CONTRACT"
+          --catalog-dir "$CATALOG_DIRECTORY"
+          --selected-config "$CATALOG_SELECTED_CONFIG"
           --component-store "$RUNNER_TEMP/components"
           --runtime-input-pack "$RUNNER_TEMP/runtime"
           --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
@@ -700,6 +737,7 @@ jobs:
           --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
           --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
           --checkpoint-slot-index 5
+          --checkpoint-policy "$RUNNER_TEMP/sealed-plan/checkpoint_policy.json"
           --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
           --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-4/receipt.json"
           --admission-token "${{ inputs.admission_token_sha256 }}"
@@ -724,6 +762,10 @@ jobs:
 
       - name: Compute checkpoint segment 6
         id: compute_6
+        env:
+          CATALOG_CAMPAIGN_CONTRACT: ${{ steps.campaign_inputs.outputs.campaign_contract_path }}
+          CATALOG_DIRECTORY: ${{ steps.campaign_inputs.outputs.catalog_dir }}
+          CATALOG_SELECTED_CONFIG: ${{ steps.campaign_inputs.outputs.selected_config_path }}
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 6 &&
           fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 6 &&
@@ -744,9 +786,9 @@ jobs:
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
           --
-          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
-          --catalog-dir config/sp500_megarun_strategy_catalog_v1
-          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --campaign-contract "$CATALOG_CAMPAIGN_CONTRACT"
+          --catalog-dir "$CATALOG_DIRECTORY"
+          --selected-config "$CATALOG_SELECTED_CONFIG"
           --component-store "$RUNNER_TEMP/components"
           --runtime-input-pack "$RUNNER_TEMP/runtime"
           --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
@@ -757,6 +799,7 @@ jobs:
           --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
           --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
           --checkpoint-slot-index 6
+          --checkpoint-policy "$RUNNER_TEMP/sealed-plan/checkpoint_policy.json"
           --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
           --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-5/receipt.json"
           --admission-token "${{ inputs.admission_token_sha256 }}"
@@ -781,6 +824,10 @@ jobs:
 
       - name: Compute checkpoint segment 7
         id: compute_7
+        env:
+          CATALOG_CAMPAIGN_CONTRACT: ${{ steps.campaign_inputs.outputs.campaign_contract_path }}
+          CATALOG_DIRECTORY: ${{ steps.campaign_inputs.outputs.catalog_dir }}
+          CATALOG_SELECTED_CONFIG: ${{ steps.campaign_inputs.outputs.selected_config_path }}
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 7 &&
           fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 7 &&
@@ -801,9 +848,9 @@ jobs:
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
           --
-          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
-          --catalog-dir config/sp500_megarun_strategy_catalog_v1
-          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --campaign-contract "$CATALOG_CAMPAIGN_CONTRACT"
+          --catalog-dir "$CATALOG_DIRECTORY"
+          --selected-config "$CATALOG_SELECTED_CONFIG"
           --component-store "$RUNNER_TEMP/components"
           --runtime-input-pack "$RUNNER_TEMP/runtime"
           --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
@@ -814,6 +861,7 @@ jobs:
           --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
           --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
           --checkpoint-slot-index 7
+          --checkpoint-policy "$RUNNER_TEMP/sealed-plan/checkpoint_policy.json"
           --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
           --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-6/receipt.json"
           --admission-token "${{ inputs.admission_token_sha256 }}"
@@ -838,6 +886,10 @@ jobs:
 
       - name: Compute checkpoint segment 8
         id: compute_8
+        env:
+          CATALOG_CAMPAIGN_CONTRACT: ${{ steps.campaign_inputs.outputs.campaign_contract_path }}
+          CATALOG_DIRECTORY: ${{ steps.campaign_inputs.outputs.catalog_dir }}
+          CATALOG_SELECTED_CONFIG: ${{ steps.campaign_inputs.outputs.selected_config_path }}
         if: >-
           ${{ fromJSON(steps.descriptor.outputs.checkpoint_slot_count) >= 8 &&
           fromJSON(steps.descriptor.outputs.resume_completed_slot_count) < 8 &&
@@ -858,9 +910,9 @@ jobs:
           --attempt-id "${{ steps.descriptor.outputs.attempt_id }}"
           --stage recipe_worker
           --
-          --campaign-contract config/sp500_megarun_dehb_campaign_v1.json
-          --catalog-dir config/sp500_megarun_strategy_catalog_v1
-          --selected-config config/sp500_megarun_selected_dehb_13.json
+          --campaign-contract "$CATALOG_CAMPAIGN_CONTRACT"
+          --catalog-dir "$CATALOG_DIRECTORY"
+          --selected-config "$CATALOG_SELECTED_CONFIG"
           --component-store "$RUNNER_TEMP/components"
           --runtime-input-pack "$RUNNER_TEMP/runtime"
           --resolved-contract "$RUNNER_TEMP/assignment/resolved_contract.json"
@@ -871,6 +923,7 @@ jobs:
           --payload-descriptor "$RUNNER_TEMP/descriptor-bundle/recipe-descriptor.json"
           --assignment-file "$RUNNER_TEMP/assignment/${{ steps.descriptor.outputs.assignment_member }}"
           --checkpoint-slot-index 8
+          --checkpoint-policy "$RUNNER_TEMP/sealed-plan/checkpoint_policy.json"
           --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
           --previous-checkpoint-receipt "$RUNNER_TEMP/checkpoint-7/receipt.json"
           --admission-token "${{ inputs.admission_token_sha256 }}"

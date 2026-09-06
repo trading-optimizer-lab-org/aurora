@@ -124,6 +124,7 @@
     "ledger_guard": ".github/workflows/catalog-ledger-guard.yml",
     "authority_watchdog": ".github/workflows/catalog-run-watchdog.yml",
     "issues_write_workflow_allowlist": [
+      ".github/workflows/catalog-fast-authority-maintenance.yml",
       ".github/workflows/catalog-run-controller.yml",
       ".github/workflows/catalog-fast-controller.yml",
       ".github/workflows/catalog-request-reconciler.yml",
@@ -132,6 +133,9 @@
     ],
     "issues_write_must_be_job_scoped": true,
     "issues_write_job_allowlist": {
+      ".github/workflows/catalog-fast-authority-maintenance.yml": [
+        "bootstrap"
+      ],
       ".github/workflows/catalog-fast-controller.yml": [
         "gate",
         "finalize"

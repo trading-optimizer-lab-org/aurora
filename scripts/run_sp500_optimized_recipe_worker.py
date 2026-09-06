@@ -26,6 +26,7 @@ from aurora.infra.sp500_megarun.catalog_admission import (
 )
 from aurora.infra.sp500_megarun.catalog_component_store import CatalogComponentStore
 from aurora.infra.sp500_megarun.catalog_fast_objective import FastTrainObjective
+from aurora.infra.sp500_megarun.catalog_recovery_blocks import resolve_recovery_block
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
@@ -401,6 +402,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--total-shards", type=int, required=True)
     parser.add_argument("--payload-descriptor", type=Path)
     parser.add_argument("--assignment-file", type=Path)
+    parser.add_argument("--checkpoint-policy", type=Path)
     parser.add_argument("--checkpoint-slot-index", type=int)
     parser.add_argument("--checkpoint-slot-count", type=int)
     parser.add_argument("--previous-checkpoint-receipt", type=Path)
@@ -547,6 +549,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         assigned_ids = assignment_ids[start:stop]
         if not assigned_ids:
             raise SystemExit("RECIPE_CHECKPOINT_SEGMENT_EMPTY")
+    recovery_block_id = None
+    if args.checkpoint_policy is not None:
+        try:
+            checkpoint_policy = json.loads(args.checkpoint_policy.read_text("utf-8"))
+            if not isinstance(checkpoint_policy, dict):
+                raise ValueError("RECOVERY_BLOCK_POLICY_INVALID")
+            recovery_block_id = resolve_recovery_block(
+                checkpoint_policy, science_sha256=canonical_sha256(resolved.science),
+                worker_id=args.shard_index, slot_index=checkpoint_slot_index,
+                strategy_ids=assigned_ids,
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            raise SystemExit("RECIPE_RECOVERY_BLOCK_INVALID") from exc
     try:
         assigned = [by_strategy_id[strategy_id] for strategy_id in assigned_ids]
     except KeyError as exc:
@@ -741,6 +756,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
                 "result_sha256": sha256_file(result_path),
                 "science_identity_sha256": science_identity_sha256,
+                "recovery_block_id": recovery_block_id,
                 "catalog_manifest_sha256": resolved.science.catalog_manifest_sha256,
                 "work_manifest_sha256": work_manifest.manifest_sha256,
                 "recipe_dag_manifest_sha256": dag_manifest["manifest_sha256"],
@@ -813,6 +829,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     attempt_manifest = {
         "schema_version": "1",
+        "recovery_block_id": recovery_block_id,
         "worker_id": args.shard_index,
         "attempt_id": attempt_id,
         "checkpoint_slot_index": checkpoint_slot_index,
@@ -832,6 +849,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     checkpoint_chain = {
         "schema_version": "1",
+        "recovery_block_id": recovery_block_id,
         "worker_id": args.shard_index,
         "attempt_id": attempt_id,
         "slot_index": checkpoint_slot_index,

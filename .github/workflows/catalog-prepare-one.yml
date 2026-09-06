@@ -131,10 +131,17 @@ jobs:
           python scripts/verify_catalog_production_runtime.py \
             --lock requirements/catalog-optimized.lock \
             --output "$RUNNER_TEMP/catalog-production-runtime-smoke.json" \
-            --import numpy --import pandas --import pyarrow --import scipy \
+            --import cryptography --import numpy --import pandas --import pyarrow --import pydantic --import scipy \
             --import aurora.infra.sp500_megarun.catalog_fast_path \
             --import scripts.plan_sp500_optimized_catalog_run \
             --import scripts.prepare_catalog_admission_candidates \
+            --import scripts.run_catalog_recipe_worker_guarded \
+            --import scripts.reduce_sp500_optimized_catalog_group \
+            --import scripts.reduce_sp500_optimized_catalog_run \
+            --import scripts.audit_catalog_runtime \
+            --import scripts.verify_catalog_terminal_science \
+            --import scripts.finalize_catalog_controller_run \
+            --require-distribution cryptography \
             --require-distribution numpy --require-distribution pandas \
             --require-distribution pyarrow --require-distribution pydantic \
             --require-distribution scipy

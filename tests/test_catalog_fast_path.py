@@ -282,6 +282,46 @@ def test_expired_request_is_rejected_instead_of_starting_late() -> None:
     assert decision.launch_required is False
 
 
+@pytest.mark.parametrize("state", ("QUEUED", "RUNNING", "RECOVERING", "SUCCESS", "BLOCKED"))
+def test_known_launch_is_readable_after_expiry_and_environment_changes(state: str) -> None:
+    request = _request()
+    existing = ExistingCatalogLaunchV1.model_validate({
+        "submission_key_sha256": request.submission_key_sha256,
+        "campaign_key": request.campaign_key,
+        "state": state,
+        "run_id": 12345,
+    })
+    decision = decide_fast_catalog_launch(
+        request=request,
+        registry_entry=_entry(),
+        prepared_receipt=_prepared(),
+        expected_preparation_identity=_identity(protected_commit_sha="b" * 40),
+        snapshot=_snapshot(
+            existing_launches=(existing,), controller_enabled=False,
+            production_armed=False, current_safe_free_capacity=0,
+        ),
+        issue_created_at=NOW - timedelta(hours=2),
+    )
+    assert decision.existing_run_id == 12345
+    assert decision.launch_required is False
+    assert decision.selected_workers == 0
+    assert decision.state == state
+
+
+def test_existing_launch_with_another_campaign_is_not_adopted() -> None:
+    request = _request()
+    existing = ExistingCatalogLaunchV1(
+        submission_key_sha256=request.submission_key_sha256,
+        campaign_key="other-catalog-v1", state="RUNNING", run_id=12345,
+    )
+    with pytest.raises(ValueError, match="CATALOG_EXISTING_LAUNCH_BINDING_INVALID"):
+        decide_fast_catalog_launch(
+            request=request, registry_entry=_entry(), prepared_receipt=_prepared(),
+            expected_preparation_identity=_identity(),
+            snapshot=_snapshot(existing_launches=(existing,)), issue_created_at=NOW,
+        )
+
+
 def test_existing_submission_is_adopted_without_duplicate_launch() -> None:
     request = _request()
     existing = ExistingCatalogLaunchV1(
@@ -303,6 +343,108 @@ def test_existing_submission_is_adopted_without_duplicate_launch() -> None:
     assert decision.reason_code == "CATALOG_REQUEST_ALREADY_RUNNING"
     assert decision.launch_required is False
     assert decision.existing_run_id == 123
+
+
+def test_replayed_request_cannot_write_a_new_terminal_receipt(tmp_path: Path) -> None:
+    from aurora.infra.github_performance.contracts import canonical_sha256
+    from scripts.finalize_catalog_fast_run import finalize_fast_run
+
+    request = _request()
+    existing = ExistingCatalogLaunchV1(
+        submission_key_sha256=request.submission_key_sha256,
+        campaign_key=request.campaign_key, state="RUNNING", run_id=123,
+    )
+    decision = decide_fast_catalog_launch(
+        request=request, registry_entry=_entry(), prepared_receipt=_prepared(),
+        expected_preparation_identity=_identity(),
+        snapshot=_snapshot(existing_launches=(existing,)), issue_created_at=NOW,
+    )
+    context = {"request": request.model_dump(mode="json"), "logical_recipe_count": 8}
+    context_path = tmp_path / "context.json"
+    context_path.write_text(json.dumps({**context, "content_sha256": canonical_sha256(context)}))
+    decision_path = tmp_path / "decision.json"
+    decision_path.write_text(decision.model_dump_json())
+    terminal = tmp_path / "terminal.json"
+    comment = tmp_path / "comment.json"
+    output = tmp_path / "github-output"
+    with pytest.raises(ValueError, match="CATALOG_FAST_TERMINAL_NOT_RUN_OWNER"):
+        finalize_fast_run(
+            request_context_path=context_path, decision_path=decision_path,
+            run_path=tmp_path / "not-needed-run.json", jobs_path=tmp_path / "not-needed-jobs.json",
+            engine_outcome_path=None, science_index_path=None,
+            output_path=terminal, comment_output_path=comment, github_output=output,
+        )
+    assert not terminal.exists()
+    assert not comment.exists()
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("corruption", (None, "digest", "issue", "extra_member", "duplicate_member"))
+def test_gate_archive_reader_binds_exact_request_and_bytes(corruption: str | None) -> None:
+    import hashlib
+    import io
+    import zipfile
+    import warnings
+    from aurora.infra.github_performance.contracts import canonical_sha256
+    from aurora.infra.sp500_megarun.catalog_fast_reservation import read_fast_gate_archive
+
+    request = _request()
+    decision = decide_fast_catalog_launch(
+        request=request, registry_entry=_entry(), prepared_receipt=_prepared(),
+        expected_preparation_identity=_identity(), snapshot=_snapshot(), issue_created_at=NOW,
+    )
+    context = {"request": request.model_dump(mode="json"), "issue_number": 249}
+    context_bytes = json.dumps({**context, "content_sha256": canonical_sha256(context)}).encode()
+    buffer = io.BytesIO()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("catalog-fast-request-context.json", context_bytes)
+            archive.writestr("catalog-fast-decision-v1.json", decision.model_dump_json())
+            if corruption == "extra_member":
+                archive.writestr("unexpected.json", "{}")
+            if corruption == "duplicate_member":
+                archive.writestr("catalog-fast-request-context.json", context_bytes)
+    raw = buffer.getvalue()
+    digest = "0" * 64 if corruption == "digest" else hashlib.sha256(raw).hexdigest()
+    if corruption is not None:
+        with pytest.raises(ValueError, match="CATALOG_FAST_OWNER_"):
+            read_fast_gate_archive(raw, expected_sha256=digest, expected_request=request,
+                                   expected_issue_number=250 if corruption == "issue" else 249)
+    else:
+        observed = read_fast_gate_archive(raw, expected_sha256=digest,
+            expected_request=request, expected_issue_number=249)
+        assert observed == decision
+
+
+@pytest.mark.parametrize("case", ("empty", "incomplete", "unapproved_source"))
+def test_owner_lookup_checks_inventory_before_downloading(case: str) -> None:
+    from aurora.infra.sp500_megarun.catalog_fast_reservation import load_fast_gate_owner
+
+    class Client:
+        repository = "trading-optimizer-lab-org/aurora"
+
+        def stable_paginated(self, path, *, root):
+            assert path == "/repos/trading-optimizer-lab-org/aurora/actions/artifacts?name=catalog-fast-gate-249"
+            assert root == "artifacts"
+            rows = () if case != "unapproved_source" else ({
+                "id": 11, "name": "catalog-fast-gate-249", "workflow_run": {"id": 22, "head_sha": "b" * 40},
+            },)
+            return SimpleNamespace(stable=True, collection=SimpleNamespace(complete=case != "incomplete", rows=rows))
+
+        def get_json(self, path):
+            raise AssertionError("unapproved source must stop before run lookup")
+
+    def download(artifact_id: int) -> bytes:
+        raise AssertionError("unverified inventory must not trigger a download")
+
+    if case == "empty":
+        assert load_fast_gate_owner(client=Client(), issue_number=249, request=_request(),
+            approved_commits=frozenset({COMMIT}), download_archive=download) is None
+    else:
+        with pytest.raises(ValueError, match="CATALOG_FAST_OWNER_"):
+            load_fast_gate_owner(client=Client(), issue_number=249, request=_request(),
+                approved_commits=frozenset({COMMIT}), download_archive=download)
 
 
 def test_any_preparation_input_drift_is_rejected_before_launch() -> None:
@@ -501,6 +643,44 @@ except (FileNotFoundError, ValueError):
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("mutation", (None, "other_run", "other_preparation", "other_request", "other_url"))
+def test_owner_terminal_receipt_cannot_adopt_another_result(mutation: str | None) -> None:
+    from aurora.infra.sp500_megarun.catalog_fast_reservation import FastGateOwnerEvidence, bind_owner_terminal_receipt
+    request = _request()
+    decision = decide_fast_catalog_launch(
+        request=request, registry_entry=_entry(), prepared_receipt=_prepared(),
+        expected_preparation_identity=_identity(), snapshot=_snapshot(), issue_created_at=NOW,
+    )
+    owner = FastGateOwnerEvidence(123, {"id": 123}, decision)
+    values = dict(
+        state="BLOCKED", reason_code="CATALOG_ENGINE_FAILED",
+        request_sha256=request.request_sha256, submission_key_sha256=request.submission_key_sha256,
+        campaign_key=request.campaign_key, prepared_receipt_sha256=decision.prepared_receipt_sha256,
+        engine_run_id=123, run_url="https://github.com/trading-optimizer-lab-org/aurora/actions/runs/123",
+        expected_recipe_count=8, observed_recipe_count=0, queue_seconds=0.0,
+        preparation_seconds=0.0, computation_seconds=0.0, recovery_seconds=0.0,
+        reduction_seconds=0.0, recovered_block_count=0, failure_class="infrastructure",
+        result_science_sha256=None, created_at=NOW,
+    )
+    if mutation == "other_run":
+        values["engine_run_id"] = 124
+    elif mutation == "other_preparation":
+        values["prepared_receipt_sha256"] = "b" * 64
+    elif mutation == "other_request":
+        values["request_sha256"] = "b" * 64
+    elif mutation == "other_url":
+        values["run_url"] = "https://github.com/other/repo/actions/runs/123"
+    receipt = CatalogTerminalReceiptV1.create(**values)
+    if mutation is None:
+        existing = bind_owner_terminal_receipt(owner=owner, receipt=receipt)
+        assert existing.run_id == 123
+        assert existing.state == "BLOCKED"
+        assert existing.submission_key_sha256 == request.submission_key_sha256
+    else:
+        with pytest.raises(ValueError, match="CATALOG_FAST_OWNER_TERMINAL_BINDING_INVALID"):
+            bind_owner_terminal_receipt(owner=owner, receipt=receipt)
+
+
 def test_terminal_success_receipt_requires_exact_coverage_and_separate_times() -> None:
     receipt = CatalogTerminalReceiptV1.create(
         state="SUCCESS",
@@ -618,5 +798,5 @@ def test_preparation_target_selection_includes_only_active_registered_catalogs(
 
     selected = select_targets(repo_root=root, campaign_key="", github_output=output)
 
-    assert selected == ("sp500-optimized-catalog-v1",)
-    assert "target_count=1" in output.read_text("utf-8")
+    assert selected == ("catalog-fast-canary-v1", "sp500-optimized-catalog-v1")
+    assert "target_count=2" in output.read_text("utf-8")

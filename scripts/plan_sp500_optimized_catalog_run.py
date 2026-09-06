@@ -907,6 +907,9 @@ def build_global_reuse_execution_plan(
             projected_worker_seconds_p99=recipe_loads[worker_id],
             upload_verify_seconds_p95=checkpoint_upload_seconds_p95,
         )
+        # Checkpoints partition indivisible recipes; an empty segment cannot run.
+        slots = max(value for value in (1, 2, 4, 8)
+                    if value <= slots and value <= len(strategy_ids))
         assignment_artifact = _payload_bundle_artifact(
             family="recipe-assignments",
             execution_plan_sha256=execution_plan_sha256,
@@ -1613,10 +1616,18 @@ def write_sealed_global_reuse_execution_plan(
         }
         for item in plan.recipe_assignments
     }
+    from aurora.infra.sp500_megarun.catalog_recovery_blocks import build_recovery_blocks
+
     checkpoint_policy = _plan_document(
         plan,
         "checkpoint_policy",
         {
+            "recovery_blocks_v1": build_recovery_blocks(
+                science_sha256=plan.science_sha256,
+                runtime_identity_sha256=plan.runtime.identity_sha256,
+                prepared_input_identity_sha256=plan.prepared_inputs.identity_sha256,
+                assignments=[item.model_dump(mode="python") for item in plan.recipe_assignments],
+            ),
             "maximum_unpersisted_seconds_p99": (
                 contract.recovery_execution.maximum_unpersisted_seconds_p99
             ),

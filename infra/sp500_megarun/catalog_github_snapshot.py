@@ -12,6 +12,7 @@ from typing import Any, Literal, Mapping, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from .catalog_gate_budget import gate_timeout
 
 
 API_ROOT = "https://api.github.com"
@@ -52,7 +53,7 @@ class UrllibGitHubGetTransport:
     def get(self, url: str, headers: dict[str, str]) -> GitHubGetResponse:
         request = Request(url, method="GET", headers=headers)
         try:
-            with self._opener.open(request, timeout=self.timeout_seconds) as response:
+            with self._opener.open(request, timeout=gate_timeout(self.timeout_seconds)) as response:
                 return GitHubGetResponse(
                     status=int(response.status),
                     requested_url=url,
@@ -202,6 +203,7 @@ class CatalogGitHubReadOnlyClient:
 
     def _request(self, path_or_url: str) -> GitHubGetResponse:
         url = self._url(path_or_url)
+        gate_timeout(60)
         response = self._transport.get(
             url,
             {
@@ -211,6 +213,7 @@ class CatalogGitHubReadOnlyClient:
                 "User-Agent": "aurora-catalog-controller-v1",
             },
         )
+        gate_timeout(60)
         if response.requested_url != url or response.final_url != url:
             raise CatalogGitHubSnapshotError("CATALOG_GITHUB_REDIRECT_INVALID")
         remaining = _header(response.headers, "X-RateLimit-Remaining")

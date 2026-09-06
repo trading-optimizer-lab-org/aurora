@@ -275,6 +275,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        ".github/workflows/catalog-fast-authority-maintenance.yml",
         ".github/workflows/catalog-run-controller.yml",
         ".github/workflows/catalog-fast-controller.yml",
         ".github/workflows/catalog-request-reconciler.yml",
@@ -282,6 +283,9 @@
         ".github/workflows/catalog-run-watchdog.yml"
       ],
       "properties": {
+        ".github/workflows/catalog-fast-authority-maintenance.yml": {
+          "const": ["bootstrap"]
+        },
         ".github/workflows/catalog-fast-controller.yml": {
           "const": ["gate", "finalize"]
         },
@@ -327,8 +331,8 @@
         "authority_watchdog": {"const": ".github/workflows/catalog-run-watchdog.yml"},
         "issues_write_workflow_allowlist": {
           "type": "array",
-          "minItems": 5,
-          "maxItems": 5,
+          "minItems": 6,
+          "maxItems": 6,
           "uniqueItems": true,
           "items": {"type": "string"}
         },

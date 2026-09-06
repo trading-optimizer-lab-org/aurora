@@ -195,6 +195,7 @@ runs:
             write_campaign_state,
         )
         from aurora.infra.github_performance.contracts import canonical_sha256
+        from aurora.infra.sp500_megarun.catalog_recovery_blocks import verify_persisted_recovery_block
         from aurora.infra.github_performance.recovery import (
             CheckpointSlotEvidence,
             RecoveryEvidenceError,
@@ -352,6 +353,7 @@ runs:
                 }
             )
 
+        checkpoint_policy = json.loads((plan_root / "checkpoint_policy.json").read_text("utf-8"))
         checkpoint_slots: dict[int, list[CheckpointSlotEvidence]] = {}
         for artifact_name in expected_checkpoints:
             roots = list(
@@ -390,6 +392,12 @@ runs:
                 != descriptor["checkpoint_slot_artifacts"][slot_index - 1]
             ):
                 raise SystemExit("RECOVERY_CHECKPOINT_CHAIN_INVALID")
+            if "recovery_blocks_v1" in checkpoint_policy:
+                verify_persisted_recovery_block(
+                    chain_path.parent, policy=checkpoint_policy,
+                    science_sha256=checkpoint_policy["science_sha256"],
+                    worker_id=worker_id, slot_index=slot_index,
+                )
             checkpoint_slots.setdefault(worker_id, []).append(
                 CheckpointSlotEvidence(
                     logical_scope_id=f"worker:{worker_id}",
@@ -457,7 +465,8 @@ runs:
             completed_worker_ids=tuple(sorted(completed_workers)),
             failure_receipts=tuple(failure_receipts),
             current_wave=current_wave,
-            max_waves=6,
+              # Waves 1 and 2 dispatch attempts 2 and 3; wave 3 must stop.
+              max_waves=3,
             now=datetime.now(UTC),
         )
         decisions = {

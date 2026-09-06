@@ -1187,6 +1187,7 @@ def _installed_broker_tree(tmp_path: Path) -> Path:
         "config/catalog_campaign_registry_v1.json",
         "config/catalog_run_prompt_policy_v1.json",
         "config/catalog_campaign_definitions/sp500-optimized-catalog-v1.manifest.json",
+        "config/catalog_campaign_definitions/catalog-fast-canary-v1.manifest.json",
         "docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md",
     ):
         shutil.copyfile(ROOT / relative, root / relative)
@@ -1268,7 +1269,7 @@ def _installed_broker_tree(tmp_path: Path) -> Path:
         observed_at=NOW,
         client=_client(_HistoryHttp([]), bootstrap_key),
     )
-    assert len(tickets) == 1
+    assert len(tickets) == 2
     return root
 
 
@@ -1820,8 +1821,10 @@ def test_qualification_ticket_is_unique_then_permanently_sealed_before_productio
         observed_at=NOW,
         client=_client(_HistoryHttp([]), history_key),
     )
-    assert len(production) == 1
-    assert production[0].campaign_key == "sp500-optimized-catalog-v1"
+    assert len(production) == 2
+    assert {ticket.campaign_key for ticket in production} == {
+        "sp500-optimized-catalog-v1", "catalog-fast-canary-v1"
+    }
 
 
 @pytest.mark.parametrize(
@@ -2897,6 +2900,8 @@ def test_restart_during_open_history_rebuild_repairs_missing_signed_state(
         observed_at=NOW + timedelta(minutes=11),
         client=client,
     )
-    assert recovered == ()
+    assert tuple(ticket.campaign_key for ticket in recovered) == (
+        "catalog-fast-canary-v1",
+    )
     assert signed_path.is_file()
     assert fake.issue_posts == 0

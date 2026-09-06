@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aurora.infra.sp500_megarun.catalog_recovery_blocks import aggregate_recovery_metrics
+
 import argparse
 import csv
 import json
@@ -14,6 +16,9 @@ import pyarrow.parquet as pq
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.github_performance.shard_planner import sha256_file
 from aurora.infra.sp500_megarun.catalog_admission import verify_catalog_plan_token
+from aurora.infra.sp500_megarun.catalog_resources import aggregate_worker_evaluation
+from aurora.infra.sp500_megarun.catalog_campaign_registry import resolve_catalog_for_reduction
+from aurora.infra.sp500_megarun.catalog_selected_results import resolve_registered_selected_result_keys
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
@@ -85,7 +90,7 @@ def _validate_worker_runtime_contract(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-root", type=Path, required=True)
-    parser.add_argument("--catalog", type=Path, required=True)
+    parser.add_argument("--catalog", type=Path)
     parser.add_argument("--resolved-contract", type=Path, required=True)
     parser.add_argument("--resume-work-manifest", type=Path, required=True)
     parser.add_argument("--resume-root", type=Path, action="append", default=[])
@@ -322,6 +327,40 @@ def _verify_group_reduction_inputs(
     return receipts, root_node_hash
 
 
+def expected_selected_result_count(
+    catalog_path: Path, *, expected_manifest_sha256: str, qualification_only: bool,
+) -> int:
+    """Keep parent auxiliaries mandatory except for the bound eight-row canary.
+
+    This does not establish admission authority: the caller must first verify
+    the run token and resolved contract. A CLI flag alone cannot opt out.
+    """
+    if not qualification_only:
+        return 13
+    from aurora.infra.sp500_megarun.strategy_catalog import verify_strategy_catalog_directory
+
+    root = catalog_path.parent
+    if catalog_path.name != "catalog.jsonl" or sha256_file(root / "manifest.json") != expected_manifest_sha256:
+        raise ValueError("REDUCTION_CANARY_MANIFEST_BINDING_INVALID")
+    verify_strategy_catalog_directory(root)
+    coverage = json.loads((root / "coverage.json").read_text("utf-8"))
+    if coverage.get("scope") != "selected_canary_only":
+        return 13
+    rows = [json.loads(line) for line in catalog_path.read_text("utf-8").splitlines() if line]
+    ids = [row["strategy_id"] for row in rows]
+    source = coverage.get("source_catalog_sha256")
+    if (
+        len(ids) != 8 or len(set(ids)) != 8
+        or coverage.get("expected_strategy_ids") != sorted(ids)
+        or sum(row["strategy_kind"] == "single" for row in rows) != 4
+        or sum(row["strategy_kind"] == "cross" for row in rows) != 4
+        or not isinstance(source, str) or len(source) != 64
+        or any(character not in "0123456789abcdef" for character in source)
+    ):
+        raise ValueError("REDUCTION_CANARY_COVERAGE_INVALID")
+    return 0
+
+
 def main() -> int:
     args = _parser().parse_args()
     plan = verify_catalog_plan_token(
@@ -344,9 +383,31 @@ def main() -> int:
         or work_manifest.manifest_sha256 != plan.work_manifest_sha256
     ):
         raise SystemExit("OPTIMIZED_REDUCER_PLAN_INVALID")
+    catalog_path = args.catalog
+    if catalog_path is None:
+        catalog_path = resolve_catalog_for_reduction(
+            repo_root=Path(__file__).resolve().parents[1],
+            scientific_contract_sha256=canonical_sha256(resolved.science),
+            catalog_manifest_sha256=resolved.science.catalog_manifest_sha256,
+        )
+    selected_result_keys: tuple[str, ...] | None = None
+    if plan.qualification_only:
+        selected_result_count = expected_selected_result_count(
+            catalog_path,
+            expected_manifest_sha256=resolved.science.catalog_manifest_sha256,
+            qualification_only=True,
+        )
+    else:
+        selected_result_keys = resolve_registered_selected_result_keys(
+            repo_root=Path(__file__).resolve().parents[1],
+            scientific_contract_sha256=canonical_sha256(resolved.science),
+            catalog_manifest_sha256=resolved.science.catalog_manifest_sha256,
+            catalog_path=catalog_path,
+        )
+        selected_result_count = len(selected_result_keys)
     expected_rows = [
         json.loads(line)
-        for line in args.catalog.read_text("utf-8").splitlines()
+        for line in catalog_path.read_text("utf-8").splitlines()
         if line
     ]
     expected_ids = [str(row["strategy_id"]) for row in expected_rows]
@@ -430,8 +491,10 @@ def main() -> int:
                 raise SystemExit("OPTIMIZED_SELECTED_RESULT_CONFLICT")
             selected_by_key[key] = row
     selected = [selected_by_key[key] for key in sorted(selected_by_key)]
-    if len(selected) != 13:
+    if len(selected) != selected_result_count:
         raise SystemExit(f"OPTIMIZED_SELECTED_RESULT_SET_INVALID:{len(selected)}")
+    if selected_result_keys is not None and tuple(sorted(selected_by_key)) != selected_result_keys:
+        raise SystemExit("OPTIMIZED_SELECTED_RESULT_KEYS_INVALID")
     (args.output_dir / "selected_results.jsonl").write_text(
         "".join(
             json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n"
@@ -571,6 +634,8 @@ def main() -> int:
         "block_size": plan.block_size,
         "scientific_stage_seconds": scientific_stage_seconds,
         "scientific_wall_stage_seconds": scientific_wall_stage_seconds,
+        "execution_metrics": aggregate_worker_evaluation(worker_receipts),
+        "recovery_metrics": aggregate_recovery_metrics(worker_receipts),
         "scientific_attribution_difference_ratio": (
             scientific_attribution_difference_ratio
         ),

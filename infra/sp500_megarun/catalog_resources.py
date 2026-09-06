@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ctypes
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import os
+import math
 import sys
 import time
 
@@ -113,4 +115,44 @@ def resource_usage_delta(
     }
 
 
-__all__ = ["ResourceUsageSnapshot", "resource_usage_delta"]
+def aggregate_worker_evaluation(receipts: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    """Sum complete measured durations, never treating missing telemetry as zero.
+
+    Callers must first verify the source receipts and their non-overlap. A legacy
+    reduction's stage sum alone cannot prove all its source measurements existed.
+    """
+    unavailable: dict[str, object] = {"schema_version": "1", "worker_evaluation_seconds": None, "basis": "unavailable"}
+    if not receipts:
+        return unavailable
+    values: list[float] = []
+    for receipt in receipts:
+        if "execution_metrics" in receipt:
+            metric = receipt["execution_metrics"]
+            if (not isinstance(metric, Mapping) or metric.get("schema_version") != "1"
+                    or metric.get("basis") != "sum_of_verified_worker_evaluation_durations"):
+                return unavailable
+            value = metric.get("worker_evaluation_seconds")
+        elif ("shard_index" in receipt and "checkpoint_slot_index" in receipt
+              and "source_worker_receipt_count" not in receipt):
+            stages = receipt.get("scientific_wall_stage_seconds")
+            value = stages.get("evaluation") if isinstance(stages, Mapping) else None
+        else:
+            return unavailable
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return unavailable
+        try:
+            duration = float(value)
+        except OverflowError:
+            return unavailable
+        if not math.isfinite(duration) or duration < 0:
+            return unavailable
+        values.append(duration)
+    try:
+        total = math.fsum(values)
+    except OverflowError:
+        return unavailable
+    return {"schema_version": "1", "worker_evaluation_seconds": total,
+            "basis": "sum_of_verified_worker_evaluation_durations"}
+
+
+__all__ = ["ResourceUsageSnapshot", "resource_usage_delta", "aggregate_worker_evaluation"]

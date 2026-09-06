@@ -1,0 +1,100 @@
+{
+  "acceptance": {
+    "max_performance_regression_ratio": 0.05,
+    "require_cold_and_hot_benchmarks": true,
+    "require_reference_equivalence": true,
+    "require_verified_manifest": true
+  },
+  "allow_unoptimized_run": false,
+  "component_store_execution": {
+    "build_before_recipe_evaluation": true,
+    "component_download_amplification_receipt_required": true,
+    "conflicting_successes_block": true,
+    "consumer_hypergraph_partition_required": true,
+    "exact_component_bundles": true,
+    "global_deduplication": true,
+    "qualified_bundle_count_required": true,
+    "recipe_worker_build_allowed": false
+  },
+  "execution": {
+    "block_size": 256,
+    "checkpoint_interval_seconds": 120,
+    "component_processes_per_worker": 1,
+    "component_replication_budget": 0,
+    "component_workers": 1,
+    "processes_per_worker": 1,
+    "retry_only_unfinished": true,
+    "scheduler_version": "weighted-lpt-v1",
+    "workers": 4
+  },
+  "limits": {
+    "max_expected_tail_ratio_p99_p50": 2,
+    "max_memory_fraction": 0.7,
+    "max_redundant_component_build_ratio": 0.01,
+    "max_result_bytes_per_recipe": 512
+  },
+  "numeric_profile": "derived:dehb_numeric_runtime_v1",
+  "optimization_mode": "required",
+  "payload_execution": {
+    "download_all_attempts_allowed": false,
+    "download_all_checkpoints_allowed": false,
+    "exact_assignment_member_only": true,
+    "exact_component_bundles_only": true,
+    "exact_data_partitions_only": true
+  },
+  "prepared_input_execution": {
+    "approximate_substitution_allowed": false,
+    "partial_store_build_missing_only": true,
+    "prepare_once_per_input_identity": true,
+    "reuse_verified_partitions_required": true
+  },
+  "rebuildable_store_execution": {
+    "actions_cache_preferred": true,
+    "cache_authoritative_evidence_allowed": false,
+    "component_cache_bundle_count_options": [
+      8,
+      16,
+      32,
+      64,
+      96,
+      128
+    ],
+    "maximum_cache_download_requests_per_minute": 1200,
+    "maximum_cache_upload_requests_per_minute": 160,
+    "maximum_component_cache_bundles_per_campaign": 128,
+    "maximum_new_cache_entries_per_campaign": 160,
+    "paid_cache_storage_allowed": false,
+    "persistent_duplicate_payload_artifact_allowed": false,
+    "repository_cache_limit_gb": 10,
+    "repository_cache_retention_days": 90,
+    "same_run_transport_artifact_max_retention_days": 1
+  },
+  "recovery_execution": {
+    "checkpoint_required": true,
+    "checkpoint_slot_options": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "global_rerun_allowed": false,
+    "max_same_failure_occurrences": 3,
+    "max_total_recovery_waves": 2,
+    "maximum_checkpoint_overhead_fraction_p95": 0.05,
+    "maximum_unpersisted_seconds_p99": 600,
+    "valid_work_reuse_required": true
+  },
+  "runtime_preparation": {
+    "build_once_per_runtime_identity": true,
+    "dependency_lock_required": true,
+    "reuse_verified_runtime_store_required": true,
+    "runtime_mode": "offline_wheelhouse",
+    "wheelhouse_sha256_required": true,
+    "worker_network_install_allowed": false
+  },
+  "schema_version": "1",
+  "workload_estimates": {
+    "estimated_position_equivalences": 0,
+    "expected_prior_cache_hits": 0
+  }
+}

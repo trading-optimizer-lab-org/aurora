@@ -278,6 +278,16 @@ def test_all_concurrency_blocks_use_only_supported_github_actions_keys() -> None
                 assert block.get("cancel-in-progress") is not True
 
 
+def test_fast_admission_and_request_queues_do_not_replace_waiting_requests() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-fast-controller.yml")
+    # GitHub defaults to replacing the single pending entry without queue=max.
+    # This checks the submitted API contract; overflow reconciliation is separate.
+    for block in (workflow["concurrency"], workflow["jobs"]["gate"]["concurrency"]):
+        assert isinstance(block, dict)
+        assert block.get("queue") == "max"
+        assert block.get("cancel-in-progress") is False
+
+
 def test_step_ids_are_unique_case_insensitively_within_each_job() -> None:
     for path, workflow in _all_workflows().items():
         jobs = workflow.get("jobs", {})
@@ -907,6 +917,7 @@ def test_fast_controller_is_the_only_public_request_lifecycle() -> None:
             "${{ inputs.issue_number || github.event.issue.number }}"
         ),
         "cancel-in-progress": False,
+        "queue": "max",
     }
     assert list(workflow["jobs"]) == ["gate", "engine", "finalize"]
     expected_writers = {"gate", "finalize"}
@@ -928,6 +939,7 @@ def test_fast_controller_is_the_only_public_request_lifecycle() -> None:
     assert workflow["jobs"]["gate"]["concurrency"] == {
         "group": "aurora-catalog-fast-admission-v1",
         "cancel-in-progress": False,
+        "queue": "max",
     }
     assert workflow["jobs"]["engine"]["uses"] == (
         "./.github/workflows/catalog-optimized-run.yml"
@@ -1248,6 +1260,11 @@ def test_legacy_catalog_launchers_have_no_public_trigger() -> None:
     assert violations == {}
 
 
+def test_request_reconciler_names_each_owner_gate_by_exact_issue() -> None:
+    workflow = _workflow(WORKFLOWS / "catalog-request-reconciler.yml")
+    assert workflow["jobs"]["call_controller"].get("name") == "catalog-request-${{ matrix.issue_number }}"
+
+
 def test_request_reconciler_replays_only_existing_requests() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-request-reconciler.yml")
     assert set(workflow["on"]) == {"workflow_dispatch", "schedule"}
@@ -1343,6 +1360,7 @@ def test_issues_write_is_job_scoped_to_the_exact_governance_jobs() -> None:
         for workflow in workflows.values()
     )
     assert set(jobs_with_issues_write(workflows)) == {
+        (".github/workflows/catalog-fast-authority-maintenance.yml", "bootstrap"),
         (".github/workflows/catalog-fast-controller.yml", "gate"),
         (".github/workflows/catalog-fast-controller.yml", "finalize"),
         (".github/workflows/catalog-run-controller.yml", "issue_tamper_guard"),
@@ -1664,6 +1682,33 @@ def test_catalog_recovery_inline_python_is_syntactically_valid() -> None:
     assert found >= 8
 
 
+@pytest.mark.parametrize("job_id", (
+    "verify_component_store", "evaluate_a", "evaluate_b", "evaluate_c",
+    "reconcile_wave_0", "recovery_wave_1", "recovery_wave_2",
+    "ready_to_merge", "reduce_groups", "reduce",
+))
+def test_engine_dispatch_contract_blocks_new_work_after_cancellation(job_id: str) -> None:
+    # Validate the boundary sent to GitHub, not a substitute scheduler.
+    # Actual cancellation propagation is still an integrated acceptance case.
+    job = _workflow(WORKFLOWS / "catalog-optimized-run.yml")["jobs"][job_id]
+    condition = str(job["if"])
+    assert re.match(r"\$\{\{\s*!cancelled\(\)\s*&&", condition), job_id
+
+
+def test_final_reduction_requires_verified_readiness_even_without_group_jobs() -> None:
+    job = _workflow(WORKFLOWS / "catalog-optimized-run.yml")["jobs"]["reduce"]
+    assert "ready_to_merge" in job["needs"]
+    condition = str(job["if"])
+    assert "needs.ready_to_merge.result == 'success' &&" in condition
+
+
+def test_cancellation_keeps_terminal_diagnostics_available() -> None:
+    jobs = _workflow(WORKFLOWS / "catalog-optimized-run.yml")["jobs"]
+    assert "always()" in str(jobs["campaign_outcome"]["if"])
+    recovery = _workflow(WORKFLOWS / "catalog-recovery-wave.yml")["jobs"]
+    assert "always()" in str(recovery["finalize_wave"]["if"])
+
+
 def test_engine_unrolls_exactly_two_selective_recovery_slots() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-optimized-run.yml")
     jobs = workflow["jobs"]
@@ -1883,6 +1928,35 @@ def test_fast_request_path_has_one_gate_and_no_preparation_or_qualification() ->
         "repair",
     ):
         assert forbidden not in rendered.casefold()
+
+
+def test_replay_owner_id_reaches_the_finalizer_dispatch_guard() -> None:
+    jobs = _workflow(WORKFLOWS / "catalog-fast-controller.yml")["jobs"]
+    assert jobs["gate"]["outputs"].get("existing_run_id") == "${{ steps.admit.outputs.existing_run_id }}"
+    assert jobs["gate"]["outputs"].get("terminal_receipt_sha256") == "${{ steps.admit.outputs.terminal_receipt_sha256 }}"
+    assert jobs["gate"]["outputs"].get("existing_run_url") == "${{ steps.admit.outputs.existing_run_url }}"
+    assert "needs.gate.outputs.existing_run_id == ''" in str(jobs["finalize"]["if"])
+
+
+def test_uncertain_owner_cannot_be_terminalized_by_replay_workflow() -> None:
+    jobs = _workflow(WORKFLOWS / "catalog-fast-controller.yml")["jobs"]
+    assert jobs["gate"]["outputs"].get("preserve_issue") == "${{ steps.admit.outputs.preserve_issue }}"
+    assert "needs.gate.outputs.preserve_issue != 'true'" in jobs["finalize"]["if"]
+    for name in (
+        "Terminate one unexpected admission failure without retrying it",
+        "Close one unexpected gate publication failure",
+    ):
+        handler = next(step for step in jobs["gate"]["steps"] if step.get("name") == name)
+        assert "steps.admit.outputs.preserve_issue != 'true'" in handler["if"]
+
+
+def test_replay_publication_failure_cannot_close_original_request() -> None:
+    jobs = _workflow(WORKFLOWS / "catalog-fast-controller.yml")["jobs"]
+    failure_handler = next(
+        step for step in jobs["gate"]["steps"]
+        if step.get("name") == "Close one unexpected gate publication failure"
+    )
+    assert "steps.admit.outputs.existing_run_id == '' &&" in str(failure_handler["if"])
 
 
 def test_fast_gate_terminalizes_an_internal_failure_and_cannot_finalize_it() -> None:
