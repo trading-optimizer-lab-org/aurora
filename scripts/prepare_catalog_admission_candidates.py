@@ -513,6 +513,7 @@ def _verify_reusable_store_publication(
 
 def load_verified_rebuildable_store_inventory(
     *,
+    expected_commit: str,
     artifacts: Sequence[Mapping[str, Any]],
     caches: Sequence[Mapping[str, Any]],
     client: CatalogGitHubReadOnlyClient,
@@ -644,6 +645,7 @@ def load_verified_rebuildable_store_inventory(
     return inventory_from_verified_indexes(
         tuple(indexes),
         live_cache_keys=frozenset(cache_keys),
+        runtime_source_commit_sha=expected_commit,
     )
 
 
@@ -815,6 +817,7 @@ def prepare(
         root="artifacts",
     ).collection
     store_inventory = load_verified_rebuildable_store_inventory(
+        expected_commit=expected_commit,
         artifacts=store_indexes.rows,
         caches=caches.rows,
         client=client,
