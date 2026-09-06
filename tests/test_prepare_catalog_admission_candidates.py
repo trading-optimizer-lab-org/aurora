@@ -615,7 +615,7 @@ def test_runtime_reuse_requires_current_source_but_preserves_other_families(
             {"id": ordinal, "key": candidate.cache_key, "ref": "refs/heads/main"}
             for ordinal, candidate in enumerate(index.candidates, start=77)
         ),
-        client=_StoreIndexClient(),  # type: ignore[arg-type]
+        client=_StoreIndexClient(),
         repository="owner/repo", token="test-token",
         download_root=tmp_path / "verified",
         expected_commit=current_commit,
