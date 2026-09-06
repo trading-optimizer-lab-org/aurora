@@ -11,6 +11,7 @@ import sys
 
 from aurora.infra.sp500_megarun.catalog_request_contract import canonical_model_bytes
 from aurora.infra.sp500_megarun.catalog_runtime_audit import (
+    allowed_skips_from_verified_outputs,
     build_catalog_runtime_audit,
 )
 
@@ -24,6 +25,7 @@ def _json(path: Path) -> object:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Verify one catalog runtime.")
     parser.add_argument("--binding", required=True, type=Path)
+    parser.add_argument("--verified-skip-evidence", required=True, type=Path)
     parser.add_argument("--run", required=True, type=Path)
     parser.add_argument("--repository", required=True, type=Path)
     parser.add_argument("--jobs", required=True, type=Path)
@@ -51,6 +53,9 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(binding, dict) or not isinstance(run, dict) or not isinstance(repository, dict):
             raise ValueError("CATALOG_RUNTIME_AUDIT_INPUT_INVALID")
         receipt = build_catalog_runtime_audit(
+            allowed_skipped_job_names=allowed_skips_from_verified_outputs(
+                _json(args.verified_skip_evidence), binding=binding,
+            ),
             binding=binding,
             run=run,
             repository=repository,

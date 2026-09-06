@@ -146,26 +146,6 @@ def inspect_request(
     )
     if request.launch_ticket_sha256 != ticket.launch_ticket_sha256:
         raise ValueError("CATALOG_LAUNCH_TICKET_INVALID")
-    registry = load_catalog_campaign_registry(
-        root / "config/catalog_campaign_registry_v1.json"
-    )
-    entry = resolve_catalog_campaign(registry, request.campaign_key, root)
-    identity = build_catalog_preparation_identity(
-        repo_root=root,
-        registry_entry=entry,
-        protected_commit_sha=expected_commit,
-    )
-    catalog_manifest = _mapping(
-        _strict_json(root / entry.catalog_dir / "manifest.json"),
-        "CATALOG_MANIFEST_INVALID",
-    )
-    logical_recipe_count = catalog_manifest.get("strategy_count")
-    if (
-        isinstance(logical_recipe_count, bool)
-        or not isinstance(logical_recipe_count, int)
-        or logical_recipe_count < 1
-    ):
-        raise ValueError("CATALOG_MANIFEST_INVALID")
     labels = issue.get("labels", [])
     label_names = tuple(
         sorted(
@@ -174,6 +154,34 @@ def inspect_request(
             if isinstance(row, Mapping) and isinstance(row.get("name"), str)
         )
     )
+    # A hint may only narrow this invocation to reading an existing owner. The
+    # live admission reader still authenticates ownership; these labels do not.
+    lookup_existing = bool(set(label_names) & {"catalog-run-active-v1", "catalog-run-terminal-v1"}) or issue.get("state") == "closed"
+    identity = None
+    logical_recipe_count = None
+    preparation_error = None
+    if not lookup_existing:
+        try:
+            registry = load_catalog_campaign_registry(root / "config/catalog_campaign_registry_v1.json")
+            entry = resolve_catalog_campaign(registry, request.campaign_key, root)
+            identity = build_catalog_preparation_identity(
+                repo_root=root, registry_entry=entry, protected_commit_sha=expected_commit,
+            )
+            catalog_manifest = _mapping(
+                _strict_json(root / entry.catalog_dir / "manifest.json"), "CATALOG_MANIFEST_INVALID",
+            )
+            logical_recipe_count = catalog_manifest.get("strategy_count")
+            if isinstance(logical_recipe_count, bool) or not isinstance(logical_recipe_count, int) or logical_recipe_count < 1:
+                raise ValueError("CATALOG_MANIFEST_INVALID")
+        except (ValueError, OSError) as exc:
+            # Authentication above already succeeded. Unavailable current
+            # preparation must not prevent reading a previously admitted run.
+            # Restrict this context to lookup: it can never authorize fresh work.
+            code = str(exc).split(":", 1)[0]
+            preparation_error = code if re.fullmatch(r"CATALOG_[A-Z0-9_]+", code) else "CATALOG_PREPARATION_UNAVAILABLE"
+            lookup_existing = True
+            identity = None
+            logical_recipe_count = None
     context_identity = {
         "schema_version": "1",
         "document_type": "catalog_fast_request_context_v1",
@@ -183,7 +191,9 @@ def inspect_request(
         "issue_labels": label_names,
         "actor": actor,
         "request": request.model_dump(mode="json"),
-        "identity": identity.model_dump(mode="json"),
+        "identity": identity.model_dump(mode="json") if identity is not None else None,
+        "request_mode": "lookup_existing" if lookup_existing else "admit_new",
+        "preparation_error": preparation_error,
         "logical_recipe_count": logical_recipe_count,
         "protected_commit_sha": expected_commit,
     }
@@ -196,9 +206,10 @@ def inspect_request(
         "campaign_key": request.campaign_key,
         "request_sha256": request.request_sha256,
         "submission_key_sha256": request.submission_key_sha256,
-        "preparation_key_sha256": identity.preparation_key_sha256,
+        "preparation_key_sha256": identity.preparation_key_sha256 if identity is not None else "",
         "prepared_cache_restore_prefix": (
             f"aurora-catalog-prepared-v1-{identity.preparation_key_sha256}-"
+            if identity is not None else ""
         ),
     }
     with github_output.open("a", encoding="utf-8", newline="\n") as stream:

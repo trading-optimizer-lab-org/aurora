@@ -60,6 +60,72 @@ def _rows(value: object, *, root: str) -> tuple[Mapping[str, Any], ...]:
     return tuple(output)
 
 
+_MATRIX_SKIP_JOBS = {
+    "component_matrix_a_count": "build_components_a",
+    "component_matrix_b_count": "build_components_b",
+    "cached_component_matrix_a_count": "materialize_cached_components_a",
+    "cached_component_matrix_b_count": "materialize_cached_components_b",
+    "recipe_matrix_a_count": "evaluate_a",
+    "recipe_matrix_b_count": "evaluate_b",
+    "recipe_matrix_c_count": "evaluate_c",
+    "payload_artifact_count": "publish_sealed_payload_artifacts",
+    "reduction_matrix_count": "reduce_groups",
+}
+
+
+def allowed_skips_from_verified_outputs(
+    evidence: object, *, binding: Mapping[str, str],
+) -> frozenset[str]:
+    """Consume protected workflow outputs, never the jobs being audited.
+
+    The caller must obtain these facts from the plan-verification and recovery
+    jobs in the same protected run. Matching a binding does not authenticate an
+    arbitrary caller-supplied document.
+    """
+    error = "CATALOG_RUNTIME_AUDIT_SKIP_POLICY_INVALID"
+    if (
+        not isinstance(evidence, Mapping)
+        or set(evidence) != {"binding", "matrix_counts", "reconcile_status", "recovery"}
+        or evidence.get("binding") != dict(binding)
+    ):
+        raise ValueError(error)
+    counts = evidence.get("matrix_counts")
+    if not isinstance(counts, Mapping) or set(counts) != set(_MATRIX_SKIP_JOBS):
+        raise ValueError(error)
+    if any(type(count) is not int or count < 0 for count in counts.values()):
+        raise ValueError(error)
+    allowed = {
+        f"engine / {job}" for count_name, job in _MATRIX_SKIP_JOBS.items()
+        if counts[count_name] == 0
+    }
+    waves = evidence.get("recovery")
+    if not isinstance(waves, list) or len(waves) != 2:
+        raise ValueError(error)
+    previous = evidence.get("reconcile_status")
+    if previous not in {"retry", "replan"}:
+        raise ValueError(error)
+    for wave_number, wave in enumerate(waves, 1):
+        if not isinstance(wave, Mapping) or set(wave) != {"status", "has_matrix_a", "has_matrix_b"}:
+            raise ValueError(error)
+        if previous == "complete":
+            if any(value != "" for value in wave.values()):
+                raise ValueError(error)
+            allowed.add(f"engine / recovery_wave_{wave_number}")
+            continue
+        if wave["status"] not in {"complete", "retry", "replan"}:
+            raise ValueError(error)
+        for suffix in ("a", "b"):
+            needed = wave[f"has_matrix_{suffix}"]
+            if needed not in {"true", "false"}:
+                raise ValueError(error)
+            if needed == "false":
+                allowed.add(f"engine / recovery_wave_{wave_number} / retry_{suffix}")
+        previous = wave["status"]
+    if previous != "complete":
+        raise ValueError(error)
+    return frozenset(allowed)
+
+
 class CatalogRuntimeAuditV1(FrozenModel):
     schema_version: Literal["1"] = "1"
     request_sha256: Sha256
@@ -124,6 +190,7 @@ def build_catalog_runtime_audit(
     components_reused: int | None = None,
     components_computed_once: int | None = None,
     selective_retries: int | None = None,
+    allowed_skipped_job_names: frozenset[str] = frozenset(),
 ) -> CatalogRuntimeAuditV1:
     """Build a receipt only from two complete, stable inventories."""
 
@@ -155,8 +222,24 @@ def build_catalog_runtime_audit(
         raise ValueError("CATALOG_RUNTIME_AUDIT_ARTIFACT_INVENTORY_UNSTABLE")
     if not jobs:
         raise ValueError("CATALOG_RUNTIME_AUDIT_JOB_INVENTORY_INVALID")
+    if not isinstance(allowed_skipped_job_names, frozenset) or any(
+        not isinstance(name, str) or not name for name in allowed_skipped_job_names
+    ):
+        raise ValueError("CATALOG_RUNTIME_AUDIT_SKIP_POLICY_INVALID")
+    confirmation_by_id = {job["id"]: job for job in jobs_confirmation}
     for job in jobs:
         labels = job.get("labels")
+        if job.get("conclusion") == "skipped":
+            if job.get("name") not in allowed_skipped_job_names:
+                raise ValueError("CATALOG_RUNTIME_AUDIT_UNEXPECTED_SKIPPED_JOB")
+            confirmation = confirmation_by_id[job["id"]]
+            if any(
+                confirmation.get(key) != job.get(key)
+                for key in ("name", "conclusion", "labels", "status")
+            ):
+                raise ValueError("CATALOG_RUNTIME_AUDIT_JOB_INVENTORY_UNSTABLE")
+            if labels == []:
+                continue
         if (
             not isinstance(labels, Sequence)
             or isinstance(labels, (str, bytes))
@@ -195,6 +278,7 @@ def build_catalog_runtime_audit(
                 (
                     int(row["id"]),
                     str(row.get("name")),
+                    str(row.get("conclusion")),
                     tuple(str(label) for label in row.get("labels", ())),
                     str(row.get("runner_group_name")),
                 )
@@ -228,4 +312,4 @@ def build_catalog_runtime_audit(
     return CatalogRuntimeAuditV1.model_validate(payload)
 
 
-__all__ = ["CatalogRuntimeAuditV1", "build_catalog_runtime_audit"]
+__all__ = ["CatalogRuntimeAuditV1", "build_catalog_runtime_audit", "allowed_skips_from_verified_outputs"]

@@ -7,11 +7,26 @@ import hashlib
 import importlib
 import json
 from pathlib import Path
+import platform
 import re
-from typing import Sequence
+from tempfile import TemporaryDirectory
+from typing import Mapping, Sequence
 
 
 _LOCKED_DISTRIBUTION = re.compile(r"^([A-Za-z0-9_.-]+)==[^\s\\]+(?:\s|\\|$)")
+_REQUIRED_PRODUCTION_DISTRIBUTIONS = frozenset({"cryptography", "numpy", "pandas", "pyarrow", "pydantic", "scipy"})
+_REQUIRED_PRODUCTION_IMPORTS = frozenset({
+    *_REQUIRED_PRODUCTION_DISTRIBUTIONS,
+    "aurora.infra.sp500_megarun.catalog_fast_path",
+    "scripts.plan_sp500_optimized_catalog_run",
+    "scripts.prepare_catalog_admission_candidates",
+    "scripts.run_catalog_recipe_worker_guarded",
+    "scripts.reduce_sp500_optimized_catalog_group",
+    "scripts.reduce_sp500_optimized_catalog_run",
+    "scripts.audit_catalog_runtime",
+    "scripts.verify_catalog_terminal_science",
+    "scripts.finalize_catalog_controller_run",
+})
 
 
 def _normalize_distribution(value: str) -> str:
@@ -50,6 +65,75 @@ def _canonical_sha256(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def validate_production_runtime_receipt(
+    receipt: Mapping[str, object], *, lock_path: Path,
+) -> None:
+    """Validate protected preparation evidence without repeating its probe."""
+    error = "CATALOG_PRODUCTION_RUNTIME_SMOKE_INVALID"
+    identity = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    version = receipt.get("runtime_python_version")
+    lock_bytes = lock_path.read_bytes()
+    if (
+        receipt.get("receipt_sha256") != _canonical_sha256(identity)
+        or receipt.get("schema_version") != "1"
+        or receipt.get("status") != "PREPARED"
+        or receipt.get("production_dependency_smoke_passed") is not True
+        or receipt.get("parquet_roundtrip_verified") is not True
+        or receipt.get("network_install_performed") is not False
+        or receipt.get("runtime_platform") != "Linux"
+        or not isinstance(version, str)
+        or re.fullmatch(r"3\.11\.\d+", version) is None
+        or receipt.get("verification_scope") != "dependency_and_result_transport_only"
+        or receipt.get("dependency_lock_sha256") != hashlib.sha256(lock_bytes).hexdigest()
+    ):
+        raise ValueError(error)
+    sets: dict[str, set[str]] = {}
+    for field in ("verified_imports", "required_distributions", "locked_distributions"):
+        values = receipt.get(field)
+        if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+            raise ValueError(error)
+        if len(values) != len(set(values)):
+            raise ValueError(error)
+        sets[field] = set(values)
+    if (
+        not _REQUIRED_PRODUCTION_IMPORTS <= sets["verified_imports"]
+        or not _REQUIRED_PRODUCTION_DISTRIBUTIONS <= sets["required_distributions"]
+        or sets["locked_distributions"] != _locked_distributions(lock_bytes.decode("utf-8"))
+        or not sets["required_distributions"] <= sets["locked_distributions"]
+    ):
+        raise ValueError(error)
+
+
+def _verify_result_transport() -> None:
+    """Exercise production Parquet encoding and manifest reopening, not science."""
+    try:
+        import pyarrow.parquet as parquet
+        from aurora.infra.sp500_megarun.catalog_result_store import (
+            CatalogResultStore, CatalogResultWriter,
+        )
+
+        rows = [{
+            "strategy_id": f"runtime-transport-probe-{index}",
+            "recipe_sha256": str(index) * 64,
+            "position_sha256": "a" * 64,
+            "annualized_return": 0.125 * index,
+            "weekly_positive_rate": 0.5,
+        } for index in (1, 2)]
+        with TemporaryDirectory(prefix="aurora-runtime-transport-") as temporary:
+            root = Path(temporary) / "results"
+            writer = CatalogResultWriter(root, contract_sha256="b" * 64)
+            for row in rows:
+                writer.add(row)
+            manifest = writer.commit()
+            reopened = CatalogResultStore.open(root)
+            if reopened.manifest != manifest or list(reopened.iter_rows()) != rows:
+                raise ValueError("RESULT_TRANSPORT_ROUNDTRIP_MISMATCH")
+            if parquet.read_table(root / manifest.partitions[0].path).to_pylist() != rows:
+                raise ValueError("PARQUET_ROUNDTRIP_MISMATCH")
+    except Exception as exc:
+        raise ValueError("CATALOG_PRODUCTION_PARQUET_FAILED") from exc
+
+
 def verify_production_runtime(
     *,
     lock_path: Path,
@@ -84,6 +168,7 @@ def verify_production_runtime(
         except Exception as exc:
             raise ValueError(f"CATALOG_PRODUCTION_IMPORT_FAILED:{module_name}") from exc
 
+    _verify_result_transport()
     identity: dict[str, object] = {
         "schema_version": "1",
         "status": "PREPARED",
@@ -92,6 +177,10 @@ def verify_production_runtime(
         "required_distributions": list(required),
         "verified_imports": list(imports),
         "production_dependency_smoke_passed": True,
+        "parquet_roundtrip_verified": True,
+        "runtime_platform": platform.system(),
+        "runtime_python_version": platform.python_version(),
+        "verification_scope": "dependency_and_result_transport_only",
         "network_install_performed": False,
     }
     receipt = {**identity, "receipt_sha256": _canonical_sha256(identity)}

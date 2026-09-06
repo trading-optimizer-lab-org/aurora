@@ -17,6 +17,7 @@ permissions:
 
 concurrency:
   group: aurora-catalog-fast-request-${{ inputs.issue_number || github.event.issue.number }}
+  queue: max
   cancel-in-progress: false
 
 env:
@@ -32,6 +33,7 @@ jobs:
     timeout-minutes: 10
     concurrency:
       group: aurora-catalog-fast-admission-v1
+      queue: max
       cancel-in-progress: false
     permissions:
       actions: read
@@ -40,8 +42,13 @@ jobs:
     outputs:
       valid_request: ${{ steps.inspect.outputs.valid_request }}
       admission_completed: ${{ steps.admit.outputs.admission_completed }}
+      authority_reserved: ${{ steps.admit.outputs.launch_required == 'true' && steps.verify_authority.outcome == 'success' }}
       issue_number: ${{ steps.issue.outputs.issue_number }}
       launch_required: ${{ steps.admit.outputs.launch_required }}
+      existing_run_id: ${{ steps.admit.outputs.existing_run_id }}
+      preserve_issue: ${{ steps.admit.outputs.preserve_issue }}
+      terminal_receipt_sha256: ${{ steps.admit.outputs.terminal_receipt_sha256 }}
+      existing_run_url: ${{ steps.admit.outputs.existing_run_url }}
       campaign_state: ${{ steps.admit.outputs.campaign_state }}
       reason_code: ${{ steps.admit.outputs.reason_code }}
       request_sha256: ${{ steps.admit.outputs.request_sha256 }}
@@ -56,6 +63,13 @@ jobs:
       execution_protocol_sha256: ${{ steps.admit.outputs.execution_protocol_sha256 }}
       protected_commit_sha: ${{ steps.admit.outputs.protected_commit_sha }}
     steps:
+      - name: Start the admission time budget
+        shell: bash
+        run: |
+          gate_first_step_epoch=$(date +%s)
+          echo "CATALOG_GATE_FIRST_STEP_UNIX=$gate_first_step_epoch" >> "$GITHUB_ENV"
+          echo "CATALOG_GATE_DEADLINE_UNIX=$((gate_first_step_epoch + 55))" >> "$GITHUB_ENV"
+
       - name: Check out the exact protected branch
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -87,7 +101,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$ISSUE_NUMBER" -gt 0
-          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
+          python scripts/catalog_gate_github.py "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
             > "$RUNNER_TEMP/catalog-fast-issue.json"
           echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
 
@@ -148,9 +162,22 @@ jobs:
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
             --input "$RUNNER_TEMP/invalid-comment.json" > /dev/null || true
 
+      - id: authority
+        name: Verify the current protected authority before admission
+        if: ${{ steps.inspect.outputs.valid_request == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ steps.commit.outputs.protected_commit_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/verify_catalog_fast_authority.py \
+            --repo-root . \
+            --output "$RUNNER_TEMP/catalog-fast-authority-current.json"
+
       - id: restore
         name: Restore the exact current PREPARED bundle
-        if: ${{ steps.inspect.outputs.valid_request == 'true' }}
+        if: ${{ steps.inspect.outputs.valid_request == 'true' && steps.inspect.outputs.prepared_cache_restore_prefix != '' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/prepared-bundle
@@ -179,7 +206,7 @@ jobs:
           echo "admission_completed=true" >> "$GITHUB_OUTPUT"
 
       - name: Terminate one unexpected admission failure without retrying it
-        if: ${{ steps.inspect.outputs.valid_request == 'true' && steps.admit.outcome != 'success' }}
+        if: ${{ steps.inspect.outputs.valid_request == 'true' && steps.admit.outcome != 'success' && steps.admit.outputs.preserve_issue != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ steps.issue.outputs.issue_number }}
@@ -246,6 +273,75 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+      - id: write_authority
+        name: Write current authority edition
+        if: ${{ steps.admit.outputs.launch_required == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ steps.commit.outputs.protected_commit_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/publish_catalog_fast_authority.py \
+            --repo-root . --phase gate \
+            --request-context "$RUNNER_TEMP/catalog-fast-request-context.json" \
+            --decision "$RUNNER_TEMP/catalog-fast-gate/catalog-fast-decision-v1.json" \
+              --output "$RUNNER_TEMP/catalog-fast-authority-publication-v1.json" \
+              --github-output "$GITHUB_OUTPUT"
+
+      - id: publish_authority
+        name: Publish current authority edition
+        continue-on-error: true
+        if: ${{ steps.admit.outputs.launch_required == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.write_authority.outputs.authority_artifact_name }}
+          path: ${{ runner.temp }}/catalog-fast-authority-publication-v1.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - id: inspect_publication
+        name: Check current authority publication
+        if: ${{ steps.admit.outputs.launch_required == 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ steps.commit.outputs.protected_commit_sha }}
+        shell: bash
+        run: |
+          set +e
+          python scripts/verify_catalog_fast_authority.py --repo-root . --output "$RUNNER_TEMP/catalog-fast-authority-reserved.json"
+          verification_exit=$?
+          echo "verification_exit=$verification_exit" >> "$GITHUB_OUTPUT"
+          exit "$verification_exit"
+
+      - id: recover_authority
+        name: Recover missing authority publication
+        if: ${{ steps.write_authority.outcome == 'success' && steps.inspect_publication.outputs.verification_exit == '4' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.write_authority.outputs.authority_artifact_name }}
+          path: ${{ runner.temp }}/catalog-fast-authority-publication-v1.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - id: verify_authority
+        name: Verify the uploaded reservation before exposing QUEUED
+        if: ${{ steps.admit.outputs.launch_required == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ steps.commit.outputs.protected_commit_sha }}
+          PUBLICATION_CHECK_EXIT: ${{ steps.inspect_publication.outputs.verification_exit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$PUBLICATION_CHECK_EXIT" == "0" ]]; then exit 0; fi
+          test "$PUBLICATION_CHECK_EXIT" = "4"
+          python scripts/verify_catalog_fast_authority.py \
+              --repo-root . \
+              --output "$RUNNER_TEMP/catalog-fast-authority-reserved.json"
+
       - id: reserve
         name: Reserve the campaign atomically and expose QUEUED
         if: ${{ steps.admit.outputs.launch_required == 'true' }}
@@ -270,10 +366,10 @@ jobs:
               encoding="utf-8",
           )
           PY
-          gh api --method POST \
+          python scripts/catalog_gate_github.py --method POST \
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/labels" \
             --input "$RUNNER_TEMP/active-label.json" > /dev/null
-          gh api --method POST \
+          python scripts/catalog_gate_github.py --method POST \
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
             --input "$RUNNER_TEMP/queued-comment.json" > /dev/null || true
 
@@ -281,6 +377,8 @@ jobs:
         if: >-
           ${{ always() && steps.inspect.outputs.valid_request == 'true' &&
           steps.admit.outcome == 'success' &&
+          steps.admit.outputs.existing_run_id == '' &&
+          steps.admit.outputs.preserve_issue != 'true' &&
           (steps.publish_gate.outcome != 'success' ||
           (steps.admit.outputs.launch_required == 'true' &&
           (steps.publish_plan.outcome != 'success' ||
@@ -344,9 +442,13 @@ jobs:
 
   finalize:
     needs: [gate, engine]
-    if: ${{ always() && needs.gate.result == 'success' && needs.gate.outputs.valid_request == 'true' && needs.gate.outputs.admission_completed == 'true' }}
+    if: ${{ always() && (needs.gate.result == 'success' || needs.gate.outputs.authority_reserved == 'true') && needs.gate.outputs.valid_request == 'true' && needs.gate.outputs.admission_completed == 'true' && needs.gate.outputs.existing_run_id == '' && needs.gate.outputs.preserve_issue != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    concurrency:
+      group: aurora-catalog-fast-admission-v1
+      queue: max
+      cancel-in-progress: false
     permissions:
       actions: read
       contents: read
@@ -377,6 +479,9 @@ jobs:
 
       - name: Download the unique engine outcome
         if: ${{ needs.gate.outputs.launch_required == 'true' }}
+        # A missing outcome must reach the fail-closed terminal producer.
+        # This does not make missing or invalid science eligible for SUCCESS.
+        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: catalog-engine-outcome-${{ needs.gate.outputs.authority_id }}
@@ -384,6 +489,7 @@ jobs:
 
       - name: Download terminal science only for a successful engine candidate
         if: ${{ needs.engine.outputs.campaign_state == 'TERMINAL_CANDIDATE' }}
+        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ needs.engine.outputs.science_evidence_artifact }}
@@ -418,7 +524,8 @@ jobs:
             --request-context "$RUNNER_TEMP/catalog-fast-terminal/catalog-fast-request-context.json" \
             --decision "$RUNNER_TEMP/catalog-fast-terminal/catalog-fast-decision-v1.json" \
             --run "$RUNNER_TEMP/catalog-fast-terminal/run.json" \
-            --jobs "$RUNNER_TEMP/catalog-fast-terminal/jobs.json" \
+              --jobs "$RUNNER_TEMP/catalog-fast-terminal/jobs.json" \
+              --gate-result "${{ needs.gate.result }}" \
             --output "$RUNNER_TEMP/catalog-fast-terminal/catalog-terminal-receipt-v1.json" \
             --comment-output "$RUNNER_TEMP/catalog-fast-terminal/terminal-comment.json" \
             --github-output "$GITHUB_OUTPUT" \
@@ -434,6 +541,76 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
+
+      - id: write_authority
+        name: Write current authority edition
+        if: ${{ steps.terminal.outcome == 'success' && needs.gate.outputs.launch_required == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ needs.gate.outputs.protected_commit_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/publish_catalog_fast_authority.py \
+            --repo-root . --phase finalize \
+            --request-context "$RUNNER_TEMP/catalog-fast-terminal/catalog-fast-request-context.json" \
+            --decision "$RUNNER_TEMP/catalog-fast-terminal/catalog-fast-decision-v1.json" \
+            --terminal-receipt "$RUNNER_TEMP/catalog-fast-terminal/catalog-terminal-receipt-v1.json" \
+              --output "$RUNNER_TEMP/catalog-fast-authority-publication-v1.json" \
+              --github-output "$GITHUB_OUTPUT"
+
+      - id: publish_authority
+        name: Publish current authority edition
+        continue-on-error: true
+        if: ${{ steps.terminal.outcome == 'success' && needs.gate.outputs.launch_required == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.write_authority.outputs.authority_artifact_name }}
+          path: ${{ runner.temp }}/catalog-fast-authority-publication-v1.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - id: inspect_publication
+        name: Check current authority publication
+        if: ${{ steps.terminal.outcome == 'success' && needs.gate.outputs.launch_required == 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ needs.gate.outputs.protected_commit_sha }}
+        shell: bash
+        run: |
+          set +e
+          python scripts/verify_catalog_fast_authority.py --repo-root . --output "$RUNNER_TEMP/catalog-fast-authority-terminal.json"
+          verification_exit=$?
+          echo "verification_exit=$verification_exit" >> "$GITHUB_OUTPUT"
+          exit "$verification_exit"
+
+      - id: recover_authority
+        name: Recover missing authority publication
+        if: ${{ steps.write_authority.outcome == 'success' && steps.inspect_publication.outputs.verification_exit == '4' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.write_authority.outputs.authority_artifact_name }}
+          path: ${{ runner.temp }}/catalog-fast-authority-publication-v1.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - id: verify_authority
+        name: Verify the terminal publication before releasing the campaign
+        if: ${{ steps.terminal.outcome == 'success' && needs.gate.outputs.launch_required == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ needs.gate.outputs.protected_commit_sha }}
+          PUBLICATION_CHECK_EXIT: ${{ steps.inspect_publication.outputs.verification_exit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$PUBLICATION_CHECK_EXIT" == "0" ]]; then exit 0; fi
+          test "$PUBLICATION_CHECK_EXIT" = "4"
+          python scripts/verify_catalog_fast_authority.py \
+              --repo-root . \
+              --output "$RUNNER_TEMP/catalog-fast-authority-terminal.json"
 
       - id: publish_terminal
         name: Publish the terminal state and release the reservation

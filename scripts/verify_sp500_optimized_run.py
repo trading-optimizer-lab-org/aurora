@@ -196,8 +196,20 @@ def _compare(
 def verify_equivalence(
     optimized: Path,
     reference: Path,
+    *,
+    expected_strategy_ids: tuple[str, ...] | None = None,
 ) -> dict[str, object]:
     expected = _load_results(reference)
+    if expected_strategy_ids is not None:
+        # Callers bind this selection to their approved plan, never to outputs.
+        if (
+            not expected_strategy_ids
+            or any(not isinstance(key, str) or not key for key in expected_strategy_ids)
+            or len(set(expected_strategy_ids)) != len(expected_strategy_ids)
+            or not set(expected_strategy_ids).issubset(expected)
+        ):
+            raise ValueError("REFERENCE_SELECTION_INVALID_OR_MISSING")
+        expected = {key: expected[key] for key in expected_strategy_ids}
     observed = _load_results(optimized)
     differences: list[str] = []
     affected_strategy_ids: set[str] = set()

@@ -46,6 +46,7 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
   call_controller:
+    name: catalog-request-${{ matrix.issue_number }}
     needs: discover
     if: ${{ needs.discover.outputs.has_candidates == 'true' }}
     strategy:

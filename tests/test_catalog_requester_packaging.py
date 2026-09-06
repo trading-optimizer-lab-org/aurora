@@ -32,11 +32,39 @@ CLIENT_CLI = ROOT / "infra/sp500_megarun/catalog_requester_cli.py"
 
 CLIENT_SOURCES = {
     "infra/sp500_megarun/catalog_request_contract.py",
+    "infra/sp500_megarun/catalog_chat_intent.py",
+    "infra/sp500_megarun/catalog_chat_submission.py",
+    "infra/sp500_megarun/catalog_chat_windows_input.py",
+    "infra/sp500_megarun/catalog_chat_consumer.py",
+    "infra/sp500_megarun/catalog_chat_delivery.py",
+    "infra/sp500_megarun/catalog_chat_service.py",
     "infra/sp500_megarun/catalog_campaign_registry.py",
     "infra/sp500_megarun/catalog_campaign_definition_contract.py",
     "infra/sp500_megarun/catalog_requester.py",
     "infra/sp500_megarun/catalog_requester_cli.py",
 }
+
+
+def test_builder_orders_definition_inputs_without_reordering_registry() -> None:
+    import runpy
+
+    read_paths = runpy.run_path(str(BUILDER))["_active_definition_paths"]
+    registry = (ROOT / "config/catalog_campaign_registry_v1.json").read_bytes()
+    expected = tuple(sorted(
+        item["definition_manifest_path"] for item in json.loads(registry)["campaigns"]
+        if item["active"] is True
+    ))
+    assert read_paths(registry) == expected
+    assert (ROOT / "config/catalog_campaign_registry_v1.json").read_bytes() == registry
+
+
+def test_builder_still_rejects_duplicate_definition_inputs() -> None:
+    import runpy
+
+    read_paths = runpy.run_path(str(BUILDER))["_active_definition_paths"]
+    entry = {"active": True, "definition_manifest_path": "config/example.json"}
+    with pytest.raises(ValueError, match="REQUESTER_BUILD_REGISTRY_INVALID"):
+        read_paths(json.dumps({"campaigns": [entry, entry]}).encode())
 BROKER_SOURCES = {
     "infra/sp500_megarun/catalog_request_contract.py",
     "infra/sp500_megarun/catalog_campaign_registry.py",
@@ -575,6 +603,25 @@ def test_two_clean_builds_are_identical_closed_and_schema_valid(tmp_path: Path) 
             check=False,
         )
         assert help_result.returncode == 0, help_result.stderr
+        if kind == "client":
+            import pydantic
+
+            # --help exits before loading the new path; import from the archive
+            # with the test environment's dependency site explicitly supplied.
+            # This proves archive closure, not the installed production runtime.
+            import_result = subprocess.run(
+                [sys.executable, "-I", "-c",
+                 "import sys; sys.path[:0] = sys.argv[1:3]; "
+                 "from aurora_catalog_requester_client.catalog_chat_submission "
+                 "import submit_registered_chat_intent; "
+                 "from aurora_catalog_requester_client.catalog_chat_service "
+                 "import serve_chat_entry; "
+                 "assert callable(serve_chat_entry); "
+                 "assert callable(submit_registered_chat_intent)",
+                 str(first / app_name), str(Path(pydantic.__file__).resolve().parents[1])],
+                cwd=tmp_path, text=True, capture_output=True, check=False,
+            )
+            assert import_result.returncode == 0, import_result.stderr
 
 
 def test_external_manifest_schema_recursively_closes_the_embedded_core(

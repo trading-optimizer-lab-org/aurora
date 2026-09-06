@@ -12,14 +12,20 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Submit one registered catalog campaign through the locked broker."
     )
-    parser.add_argument("--campaign-key", required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--campaign-key")
+    mode.add_argument("--serve-chat", action="store_true", help="Run the fixed campaign-only protected entry.")
+    parser.add_argument("--intent-id", help="Stable chat intention UUID; reused on delivery retries.")
     return parser
 
 
 def main() -> int:
-    args = _parser().parse_args()
+    parser = _parser()
+    args = parser.parse_args()
+    if args.serve_chat and args.intent_id is not None:
+        parser.error("--intent-id requires --campaign-key")
     import ctypes
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone
     import os
     from pathlib import Path
     import sys
@@ -132,11 +138,30 @@ def main() -> int:
         application_path=Path(sys.argv[0]),
     )
 
-    receipt = submit_registered_catalog_campaign(
-        broker_root=root,
-        campaign_key=args.campaign_key,
-        observed_at=datetime.now(UTC),
-    )
+    if args.serve_chat:
+        from .catalog_chat_service import serve_chat_entry
+
+        serve_chat_entry(broker_root=root)
+        return 0
+    if args.intent_id is not None:
+        from .catalog_chat_intent import CatalogChatIntentV1
+        from .catalog_chat_submission import submit_registered_chat_intent
+
+        receipt = submit_registered_chat_intent(
+            broker_root=root,
+            intent=CatalogChatIntentV1(
+                schema_version="1", campaign_key=args.campaign_key,
+                intent_id=args.intent_id,
+            ),
+            observed_at=datetime.now(timezone.utc),
+        )
+    else:
+        receipt = submit_registered_catalog_campaign(
+            broker_root=root,
+            campaign_key=args.campaign_key,
+            observed_at=datetime.now(timezone.utc),
+            _wait_for_refresh=False,
+        )
     print(canonical_model_bytes(receipt).decode("utf-8"))
     return 0
 

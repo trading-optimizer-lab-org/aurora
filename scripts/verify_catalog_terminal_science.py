@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from aurora.infra.sp500_megarun.catalog_recovery_blocks import aggregate_recovery_metrics
+
 import argparse
 import hashlib
 import json
@@ -17,6 +19,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 
 from aurora.infra.github_performance.contracts import canonical_sha256
+from aurora.infra.sp500_megarun.catalog_resources import aggregate_worker_evaluation
 from scripts.verify_sp500_optimized_run import (
     _load_results,
     scientific_results_sha256,
@@ -235,8 +238,12 @@ def _verify_logical_manifest(
     ):
         if document.get(field) != receipt.get(field):
             raise ValueError("CATALOG_TERMINAL_LOGICAL_MANIFEST_BINDING_INVALID")
+    # The production plan writer emits fields at the document root. Older
+    # fixtures/documents wrapped them in payload; never accept both layouts.
+    if "payload" in document and any(key in document for key in ("recipes", "strategy_count")):
+        raise ValueError("CATALOG_TERMINAL_LOGICAL_MANIFEST_AMBIGUOUS")
     payload = _mapping(
-        document.get("payload"),
+        document["payload"] if "payload" in document else document,
         "CATALOG_TERMINAL_LOGICAL_MANIFEST_INVALID",
     )
     recipes = payload.get("recipes")
@@ -342,7 +349,9 @@ def verify(
         plan_receipt,
         expected_ids,
     )
-    equivalence = verify_equivalence(final, reference)
+    equivalence = verify_equivalence(
+        final, reference, expected_strategy_ids=expected_ids,
+    )
     if not equivalence.get("equivalent"):
         raise ValueError("CATALOG_TERMINAL_REFERENCE_EQUIVALENCE_FAILED")
     binding = {
@@ -364,6 +373,8 @@ def verify(
             "strategy_count": count,
             "scientific_results_sha256": scientific_sha256,
             "reduction_receipt_sha256": final_receipt["receipt_sha256"],
+              "execution_metrics": aggregate_worker_evaluation([final_receipt]),
+              "recovery_metrics": aggregate_recovery_metrics([final_receipt]),
             "schemas_valid": True,
             "validation_opened": False,
             "locked_opened": False,

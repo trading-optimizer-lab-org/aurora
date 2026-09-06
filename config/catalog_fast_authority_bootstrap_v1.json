@@ -1,0 +1,6 @@
+{
+  "schema_version": "1",
+  "campaign_key": "sp500-optimized-catalog-v1",
+  "expected_tail_sha256": "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
+  "expected_state_sha256": "32f5f233e1a53bcc50c7f1f05756d6fa1dcf308c2f130829b34ca88a389c3dcf"
+}

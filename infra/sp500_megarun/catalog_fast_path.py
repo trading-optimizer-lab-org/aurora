@@ -381,6 +381,28 @@ def decide_fast_catalog_launch(
             reason_code="CATALOG_REQUEST_TIME_INVALID",
             prepared_receipt_sha256=prepared_hash,
         )
+    # A verified existing reservation is a read-only adoption, not admission.
+    # Never lose its owner because the original request or preparation aged.
+    existing_by_key = {
+        item.submission_key_sha256: item for item in snapshot.existing_launches
+    }
+    existing = existing_by_key.get(request.submission_key_sha256)
+    if existing is not None:
+        if existing.campaign_key != request.campaign_key:
+            raise ValueError("CATALOG_EXISTING_LAUNCH_BINDING_INVALID")
+        return CatalogFastLaunchDecisionV1.create(
+            state=existing.state,
+            reason_code=f"CATALOG_REQUEST_ALREADY_{existing.state}",
+            request_sha256=request.request_sha256,
+            submission_key_sha256=request.submission_key_sha256,
+            campaign_key=request.campaign_key,
+            prepared_receipt_sha256=None,
+            selected_workers=0,
+            launch_required=False,
+            existing_run_id=existing.run_id,
+            decided_at=snapshot.observed_at,
+            expires_at=expires_at,
+        )
     if snapshot.observed_at > expires_at:
         return _blocked_decision(
             request=request,
@@ -434,24 +456,6 @@ def decide_fast_catalog_launch(
             prepared_receipt_sha256=prepared_hash,
         )
 
-    existing_by_key = {
-        item.submission_key_sha256: item for item in snapshot.existing_launches
-    }
-    existing = existing_by_key.get(request.submission_key_sha256)
-    if existing is not None:
-        return CatalogFastLaunchDecisionV1.create(
-            state=existing.state,
-            reason_code=f"CATALOG_REQUEST_ALREADY_{existing.state}",
-            request_sha256=request.request_sha256,
-            submission_key_sha256=request.submission_key_sha256,
-            campaign_key=request.campaign_key,
-            prepared_receipt_sha256=prepared_hash,
-            selected_workers=0,
-            launch_required=False,
-            existing_run_id=existing.run_id,
-            decided_at=snapshot.observed_at,
-            expires_at=expires_at,
-        )
     if request.campaign_key in snapshot.active_campaign_keys:
         return _blocked_decision(
             request=request,
@@ -567,8 +571,8 @@ def should_retry_catalog_failure(reason_code: str, *, occurrences: int) -> bool:
     return reason_code in _TRANSIENT_FAILURES and occurrences < 3
 
 
-class CatalogTerminalReceiptV1(FrozenModel):
-    """One content-bound terminal result with complete timing separation."""
+class _CatalogTerminalContentV1(FrozenModel):
+    """Validate and normalize terminal content before its producer hashes it."""
 
     schema_version: Literal["1"] = "1"
     state: Literal["SUCCESS", "BLOCKED"]
@@ -584,21 +588,26 @@ class CatalogTerminalReceiptV1(FrozenModel):
     ] | None = None
     expected_recipe_count: int = Field(ge=1)
     observed_recipe_count: int = Field(ge=0)
-    queue_seconds: float = Field(ge=0)
-    preparation_seconds: float = Field(ge=0)
-    computation_seconds: float = Field(ge=0)
-    recovery_seconds: float = Field(ge=0)
-    reduction_seconds: float = Field(ge=0)
+    queue_seconds: float = Field(ge=0, allow_inf_nan=False)
+    preparation_seconds: float = Field(ge=0, allow_inf_nan=False)
+    computation_seconds: float = Field(ge=0, allow_inf_nan=False)
+    recovery_seconds: float = Field(ge=0, allow_inf_nan=False)
+    reduction_seconds: float = Field(ge=0, allow_inf_nan=False)
     recovered_block_count: int = Field(ge=0)
     failure_class: Literal["request", "infrastructure", "scientific"] | None
     result_science_sha256: Sha256 | None
     created_at: datetime
-    receipt_sha256: Sha256
 
     @field_validator("created_at")
     @classmethod
     def _created_at_is_utc(cls, value: datetime) -> datetime:
         return _as_utc(value, code="CATALOG_TERMINAL_TIME_INVALID")
+
+
+class CatalogTerminalReceiptV1(_CatalogTerminalContentV1):
+    """One content-bound terminal result with complete timing separation."""
+
+    receipt_sha256: Sha256
 
     @model_validator(mode="after")
     def _terminal_shape_and_hash_are_exact(self) -> "CatalogTerminalReceiptV1":
@@ -627,17 +636,98 @@ class CatalogTerminalReceiptV1(FrozenModel):
 
     @classmethod
     def create(cls, **values: object) -> "CatalogTerminalReceiptV1":
-        identity = {"schema_version": "1", **values}
-        identity["created_at"] = _as_utc(
-            identity["created_at"],  # type: ignore[arg-type]
-            code="CATALOG_TERMINAL_TIME_INVALID",
-        ).isoformat().replace("+00:00", "Z")
+        identity = _CatalogTerminalContentV1.model_validate(values).model_dump(mode="json")
         return cls.model_validate(
             {**identity, "receipt_sha256": _canonical_sha256(identity)}
         )
 
 
+class CatalogTerminalTimingV2(FrozenModel):
+    """Wall windows and accumulated evaluation are distinct; None is unknown."""
+
+    initial_queue_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    preparation_jobs_window_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    evaluation_jobs_window_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    recovery_jobs_window_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    reduction_jobs_window_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    worker_evaluation_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+
+
+class _CatalogTerminalContentV2(FrozenModel):
+    schema_version: Literal["2"] = "2"
+    state: Literal["SUCCESS", "BLOCKED"]
+    reason_code: ReasonCode
+    request_sha256: Sha256
+    submission_key_sha256: Sha256
+    campaign_key: str = Field(pattern=CAMPAIGN_KEY_PATTERN)
+    prepared_receipt_sha256: Sha256 | None
+    engine_run_id: int | None = Field(default=None, ge=1)
+    run_url: Annotated[str, StringConstraints(pattern=r"^https://[^\s]+$")] | None = None
+    expected_recipe_count: int = Field(ge=1)
+    observed_recipe_count: int = Field(ge=0)
+    timing: CatalogTerminalTimingV2
+    recovered_block_ids: tuple[Sha256, ...] | None
+    failure_class: Literal["request", "infrastructure", "scientific"] | None
+    result_science_sha256: Sha256 | None
+    created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def _created_at_is_utc(cls, value: datetime) -> datetime:
+        return _as_utc(value, code="CATALOG_TERMINAL_TIME_INVALID")
+
+    @field_validator("recovered_block_ids")
+    @classmethod
+    def _blocks_are_canonical(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if value is not None and value != tuple(sorted(set(value))):
+            raise ValueError("CATALOG_TERMINAL_RECOVERY_IDS_INVALID")
+        return value
+
+
+class CatalogTerminalReceiptV2(_CatalogTerminalContentV2):
+    receipt_sha256: Sha256
+
+    @property
+    def recovered_block_count(self) -> int | None:
+        return None if self.recovered_block_ids is None else len(self.recovered_block_ids)
+
+    @model_validator(mode="after")
+    def _terminal_shape_and_hash_are_exact(self) -> "CatalogTerminalReceiptV2":
+        if self.observed_recipe_count > self.expected_recipe_count:
+            raise ValueError("CATALOG_TERMINAL_COVERAGE_INVALID")
+        if self.state == "SUCCESS":
+            if (self.reason_code != "CATALOG_RUN_SUCCESS" or self.prepared_receipt_sha256 is None
+                    or self.observed_recipe_count != self.expected_recipe_count
+                    or self.failure_class is not None or self.result_science_sha256 is None
+                    or self.engine_run_id is None or self.run_url is None):
+                raise ValueError("CATALOG_TERMINAL_COVERAGE_INVALID")
+        elif self.reason_code == "CATALOG_RUN_SUCCESS" or self.failure_class is None:
+            raise ValueError("CATALOG_TERMINAL_BLOCK_REASON_REQUIRED")
+        if self.receipt_sha256 != _canonical_sha256(self.model_dump(mode="json", exclude={"receipt_sha256"})):
+            raise ValueError("CATALOG_TERMINAL_RECEIPT_HASH_INVALID")
+        return self
+
+    @classmethod
+    def create(cls, **values: object) -> "CatalogTerminalReceiptV2":
+        identity = _CatalogTerminalContentV2.model_validate(values).model_dump(mode="json")
+        return cls.model_validate({**identity, "receipt_sha256": _canonical_sha256(identity)})
+
+
+CatalogTerminalReceipt = CatalogTerminalReceiptV1 | CatalogTerminalReceiptV2
+
+
+def parse_catalog_terminal_receipt(value: object) -> CatalogTerminalReceipt:
+    if not isinstance(value, dict):
+        raise ValueError("CATALOG_TERMINAL_RECEIPT_VERSION_INVALID")
+    if value.get("schema_version") == "1":
+        return CatalogTerminalReceiptV1.model_validate(value)
+    if value.get("schema_version") == "2":
+        return CatalogTerminalReceiptV2.model_validate(value)
+    raise ValueError("CATALOG_TERMINAL_RECEIPT_VERSION_INVALID")
+
+
 __all__ = [
+    "CatalogTerminalReceiptV2", "CatalogTerminalTimingV2", "CatalogTerminalReceipt", "parse_catalog_terminal_receipt",
     "CatalogExecutionSampleV1",
     "CatalogFastGateSnapshotV1",
     "CatalogFastLaunchDecisionV1",

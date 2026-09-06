@@ -67,23 +67,24 @@ def _identity() -> CatalogPreparationIdentityV1:
     )
 
 
-def _signed_request(private_key: rsa.RSAPrivateKey) -> tuple[str, str]:
+def _signed_request(private_key: rsa.RSAPrivateKey, *, request_id: str = REQUEST_ID,
+                    launch_generation: int = 1, previous_terminal_request_sha256: str | None = None) -> tuple[str, str]:
     ticket = CatalogLaunchTicketV1(
         schema_version="1",
-        request_id=REQUEST_ID,
+        request_id=request_id,
         campaign_key=_entry().campaign_key,
-        launch_generation=1,
+        launch_generation=launch_generation,
         campaign_definition_sha256=INSTALLED_DEFINITION,
         prompt_sha256="4" * 64,
-        previous_terminal_request_sha256=None,
+        previous_terminal_request_sha256=previous_terminal_request_sha256,
     )
     intent = CatalogRunIntentV1(
         schema_version="1",
-        request_id=REQUEST_ID,
+        request_id=request_id,
         campaign_key=_entry().campaign_key,
-        launch_generation=1,
+        launch_generation=launch_generation,
         launch_ticket_sha256=ticket.launch_ticket_sha256,
-        previous_terminal_request_sha256=None,
+        previous_terminal_request_sha256=previous_terminal_request_sha256,
         campaign_definition_sha256=INSTALLED_DEFINITION,
         prompt_sha256="4" * 64,
         authorization="USER_EXPLICITLY_REQUESTED_NEW_CATALOG_RUN",
@@ -91,7 +92,7 @@ def _signed_request(private_key: rsa.RSAPrivateKey) -> tuple[str, str]:
         automatic_recovery=True,
         max_same_failure_count=3,
     )
-    title = f"[AURORA CATALOG RUN REQUEST] {REQUEST_ID}"
+    title = f"[AURORA CATALOG RUN REQUEST] {request_id}"
     signature = private_key.sign(
         _attestation_payload(title, intent),
         padding.PSS(

@@ -393,6 +393,9 @@ def decide_catalog_worker_recovery(
         if occurrence >= 3:
             action = "blocked"
             reason = "SAME_FAILURE_OCCURRENCE_LIMIT"
+        elif len(receipts) >= 3:
+            action = "blocked"
+            reason = "WORKER_ATTEMPT_BUDGET_EXHAUSTED"
         elif current_wave >= max_waves:
             action = "blocked"
             reason = "RECOVERY_WAVE_BUDGET_EXHAUSTED"

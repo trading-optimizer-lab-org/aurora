@@ -110,6 +110,7 @@ jobs:
       pending_recipe_count: ${{ steps.verify.outputs.pending_recipe_count }}
       active_recipe_workers: ${{ steps.verify.outputs.active_recipe_workers }}
       final_evidence_artifact: ${{ steps.verify.outputs.final_evidence_artifact }}
+      runtime_skip_matrix_counts: ${{ steps.verify.outputs.runtime_skip_matrix_counts }}
     steps:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -541,6 +542,14 @@ jobs:
                   for name, value in matrices.items()
               }
           )
+          outputs["runtime_skip_matrix_counts"] = json.dumps({
+              name: outputs[name] for name in (
+                  "component_matrix_a_count", "component_matrix_b_count",
+                  "cached_component_matrix_a_count", "cached_component_matrix_b_count",
+                  "recipe_matrix_a_count", "recipe_matrix_b_count", "recipe_matrix_c_count",
+                  "payload_artifact_count", "reduction_matrix_count",
+              )
+          }, sort_keys=True, separators=(",", ":"))
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
               for key, value in outputs.items():
                   out.write(f"{key}={value}\n")
@@ -1333,7 +1342,7 @@ jobs:
       - materialize_cached_components_a
       - materialize_cached_components_b
     if: >-
-      ${{ always() &&
+      ${{ !cancelled() && always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.prepare_runtime_and_inputs.result == 'success' &&
       (needs.build_components_a.result == 'success' || needs.build_components_a.result == 'skipped') &&
@@ -1548,7 +1557,7 @@ jobs:
   evaluate_a:
     needs: [engine_verify_sealed_plan, verify_component_store]
     if: >-
-      ${{ always() && inputs.execution_mode == 'run' &&
+      ${{ !cancelled() && always() && inputs.execution_mode == 'run' &&
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.verify_component_store.result == 'success' &&
       needs.engine_verify_sealed_plan.outputs.recipe_matrix_a_count != '0' }}
@@ -1575,7 +1584,7 @@ jobs:
   evaluate_b:
     needs: [engine_verify_sealed_plan, verify_component_store]
     if: >-
-      ${{ always() && inputs.execution_mode == 'run' &&
+      ${{ !cancelled() && always() && inputs.execution_mode == 'run' &&
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.verify_component_store.result == 'success' &&
       needs.engine_verify_sealed_plan.outputs.recipe_matrix_b_count != '0' }}
@@ -1602,7 +1611,7 @@ jobs:
   evaluate_c:
     needs: [engine_verify_sealed_plan, verify_component_store]
     if: >-
-      ${{ always() && inputs.execution_mode == 'run' &&
+      ${{ !cancelled() && always() && inputs.execution_mode == 'run' &&
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.verify_component_store.result == 'success' &&
       needs.engine_verify_sealed_plan.outputs.recipe_matrix_c_count != '0' }}
@@ -1634,7 +1643,7 @@ jobs:
       - evaluate_b
       - evaluate_c
     if: >-
-      ${{ inputs.execution_mode == 'run' && always() &&
+      ${{ !cancelled() && inputs.execution_mode == 'run' && always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.verify_component_store.result == 'success' &&
       needs.evaluate_a.result != 'skipped' &&
@@ -1853,7 +1862,7 @@ jobs:
 
   recovery_wave_1:
     needs: reconcile_wave_0
-    if: ${{ inputs.execution_mode == 'run' && always() && (needs.reconcile_wave_0.outputs.status == 'retry' || needs.reconcile_wave_0.outputs.status == 'replan') }}
+    if: ${{ !cancelled() && inputs.execution_mode == 'run' && always() && (needs.reconcile_wave_0.outputs.status == 'retry' || needs.reconcile_wave_0.outputs.status == 'replan') }}
     permissions: {actions: read, contents: read}
     uses: ./.github/workflows/catalog-recovery-wave.yml
     with:
@@ -1873,7 +1882,7 @@ jobs:
 
   recovery_wave_2:
     needs: recovery_wave_1
-    if: ${{ inputs.execution_mode == 'run' && always() && (needs.recovery_wave_1.outputs.status == 'retry' || needs.recovery_wave_1.outputs.status == 'replan') }}
+    if: ${{ !cancelled() && inputs.execution_mode == 'run' && always() && (needs.recovery_wave_1.outputs.status == 'retry' || needs.recovery_wave_1.outputs.status == 'replan') }}
     permissions: {actions: read, contents: read}
     uses: ./.github/workflows/catalog-recovery-wave.yml
     with:
@@ -1897,7 +1906,7 @@ jobs:
       - recovery_wave_1
       - recovery_wave_2
     if: >-
-      ${{ inputs.execution_mode == 'run' && always() &&
+      ${{ !cancelled() && inputs.execution_mode == 'run' && always() &&
       (needs.recovery_wave_1.outputs.status == 'complete' ||
       needs.recovery_wave_2.outputs.status == 'complete') }}
     runs-on: ubuntu-24.04
@@ -1916,7 +1925,7 @@ jobs:
       - engine_verify_sealed_plan
       - ready_to_merge
     if: >-
-      ${{ inputs.execution_mode == 'run' && always() &&
+      ${{ !cancelled() && inputs.execution_mode == 'run' && always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.engine_verify_sealed_plan.outputs.reduction_matrix_count != '0' &&
       needs.ready_to_merge.result == 'success' }}
@@ -2015,11 +2024,13 @@ jobs:
     needs:
       - engine_verify_sealed_plan
       - verify_component_store
+      - ready_to_merge
       - reduce_groups
     if: >-
-      ${{ inputs.execution_mode == 'run' && always() &&
+      ${{ !cancelled() && inputs.execution_mode == 'run' && always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.verify_component_store.result == 'success' &&
+      needs.ready_to_merge.result == 'success' &&
       (needs.reduce_groups.result == 'success' ||
       (needs.engine_verify_sealed_plan.outputs.reduction_matrix_count == '0' &&
       needs.reduce_groups.result == 'skipped')) }}
@@ -2071,7 +2082,6 @@ jobs:
         run: >-
           python scripts/reduce_sp500_optimized_catalog_run.py
           --input-root "$RUNNER_TEMP/reduction-groups"
-          --catalog config/sp500_megarun_strategy_catalog_v1/catalog.jsonl
           --resolved-contract "$RUNNER_TEMP/sealed-plan/resolved_contract.json"
           --resume-work-manifest "$RUNNER_TEMP/sealed-plan/resume_work_manifest.json"
           --run-plan "$RUNNER_TEMP/sealed-plan/run_plan.json"
@@ -2174,7 +2184,7 @@ jobs:
           compression-level: 0
 
   audit_runtime:
-    needs: [engine_verify_sealed_plan, reduce, verify_terminal_science]
+    needs: [engine_verify_sealed_plan, reduce, verify_terminal_science, reconcile_wave_0, recovery_wave_1, recovery_wave_2]
     if: ${{ inputs.execution_mode == 'run' && always() && needs.reduce.result == 'success' && needs.verify_terminal_science.result == 'success' }}
     runs-on: ubuntu-24.04
     environment: catalog-production
@@ -2199,6 +2209,14 @@ jobs:
       - name: Collect complete current-run metadata
         env:
           GH_TOKEN: ${{ github.token }}
+          VERIFIED_MATRIX_COUNTS: ${{ needs.engine_verify_sealed_plan.outputs.runtime_skip_matrix_counts }}
+          VERIFIED_RECONCILE_STATUS: ${{ needs.reconcile_wave_0.outputs.status }}
+          VERIFIED_WAVE_1_STATUS: ${{ needs.recovery_wave_1.outputs.status }}
+          VERIFIED_WAVE_1_MATRIX_A: ${{ needs.recovery_wave_1.outputs.has_matrix_a }}
+          VERIFIED_WAVE_1_MATRIX_B: ${{ needs.recovery_wave_1.outputs.has_matrix_b }}
+          VERIFIED_WAVE_2_STATUS: ${{ needs.recovery_wave_2.outputs.status }}
+          VERIFIED_WAVE_2_MATRIX_A: ${{ needs.recovery_wave_2.outputs.has_matrix_a }}
+          VERIFIED_WAVE_2_MATRIX_B: ${{ needs.recovery_wave_2.outputs.has_matrix_b }}
         shell: bash
         run: |
           set -euo pipefail
@@ -2226,6 +2244,20 @@ jobs:
               json.dumps(binding, sort_keys=True, separators=(",", ":")) + "\n",
               encoding="utf-8",
           )
+          skip_evidence = {
+              "binding": binding,
+              "matrix_counts": json.loads(os.environ["VERIFIED_MATRIX_COUNTS"]),
+              "reconcile_status": os.environ["VERIFIED_RECONCILE_STATUS"],
+              "recovery": [{
+                  "status": os.environ[f"VERIFIED_WAVE_{wave}_STATUS"],
+                  "has_matrix_a": os.environ[f"VERIFIED_WAVE_{wave}_MATRIX_A"],
+                  "has_matrix_b": os.environ[f"VERIFIED_WAVE_{wave}_MATRIX_B"],
+              } for wave in (1, 2)],
+          }
+          Path("runtime-skip-evidence.json").write_text(
+              json.dumps(skip_evidence, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n",
+              encoding="utf-8",
+          )
           plan = Path(os.environ["RUNNER_TEMP"]) / "sealed-plan"
           pending = json.loads((plan / "pending_component_manifest.json").read_text("utf-8"))
           cached = json.loads((plan / "cached_component_manifest.json").read_text("utf-8"))
@@ -2238,6 +2270,7 @@ jobs:
           . runtime-metrics.env
           python scripts/audit_catalog_runtime.py \
             --binding runtime-binding.json \
+            --verified-skip-evidence runtime-skip-evidence.json \
             --run run.json \
             --repository repository.json \
             --jobs jobs.json \

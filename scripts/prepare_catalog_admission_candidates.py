@@ -468,6 +468,49 @@ def _store_index_payload_from_archive(path: Path) -> bytes:
     return payload
 
 
+def _verify_reusable_store_publication(
+    *,
+    client: CatalogGitHubReadOnlyClient,
+    repository: str,
+    index: CatalogRebuildableStoreIndexV1,
+) -> None:
+    """Bind the referenced writer to its successful publication in this attempt."""
+    jobs = client.paginated(
+        f"/repos/{repository}/actions/runs/{index.writer_run_id}"
+        f"/attempts/{index.writer_run_attempt}/jobs",
+        root="jobs",
+    )
+    publishers = [
+        job for job in jobs.rows
+        if job.get("name") == "engine / verify_component_store"
+    ]
+    if not jobs.complete or len(publishers) != 1:
+        raise ValueError("CATALOG_STORE_INDEX_PUBLICATION_INVALID")
+    job = publishers[0]
+    steps = job.get("steps")
+    if (
+        job.get("run_id") != index.writer_run_id
+        or job.get("run_attempt") != index.writer_run_attempt
+        or job.get("head_sha") != index.protected_commit_sha
+        or job.get("status") != "completed"
+        or job.get("conclusion") != "success"
+        or not isinstance(steps, list)
+    ):
+        raise ValueError("CATALOG_STORE_INDEX_PUBLICATION_INVALID")
+    publications = [
+        step for step in steps
+        if isinstance(step, Mapping)
+        and step.get("name")
+        == "Publish the immutable global reuse index when cache read-back succeeded"
+    ]
+    if (
+        len(publications) != 1
+        or publications[0].get("status") != "completed"
+        or publications[0].get("conclusion") != "success"
+    ):
+        raise ValueError("CATALOG_STORE_INDEX_PUBLICATION_INVALID")
+
+
 def load_verified_rebuildable_store_inventory(
     *,
     artifacts: Sequence[Mapping[str, Any]],
@@ -508,6 +551,7 @@ def load_verified_rebuildable_store_inventory(
     download_root.mkdir(parents=False)
     indexes: list[CatalogRebuildableStoreIndexV1] = []
     runs: dict[int, Mapping[str, Any]] = {}
+    verified_publications: set[tuple[int, int, str]] = set()
     artifact_ids: set[int] = set()
     for metadata in sorted(artifacts, key=lambda row: int(row.get("id", 0))):
         artifact_id = metadata.get("id")
@@ -585,6 +629,17 @@ def load_verified_rebuildable_store_inventory(
             or run_repository_name != repository
         ):
             raise ValueError("CATALOG_STORE_INDEX_WRITER_RUN_INVALID")
+        if run.get("path") != index.writer_workflow:
+            publication_key = (
+                index.writer_run_id,
+                index.writer_run_attempt,
+                index.protected_commit_sha,
+            )
+            if publication_key not in verified_publications:
+                _verify_reusable_store_publication(
+                    client=client, repository=repository, index=index,
+                )
+                verified_publications.add(publication_key)
         indexes.append(index)
     return inventory_from_verified_indexes(
         tuple(indexes),

@@ -69,6 +69,12 @@ _APPLICATION_CORE_KEYS = frozenset(
 _APPLICATION_SOURCES = {
     "client": (
         "infra/sp500_megarun/catalog_request_contract.py",
+        "infra/sp500_megarun/catalog_chat_intent.py",
+        "infra/sp500_megarun/catalog_chat_submission.py",
+        "infra/sp500_megarun/catalog_chat_windows_input.py",
+        "infra/sp500_megarun/catalog_chat_consumer.py",
+        "infra/sp500_megarun/catalog_chat_delivery.py",
+        "infra/sp500_megarun/catalog_chat_service.py",
         "infra/sp500_megarun/catalog_campaign_registry.py",
         "infra/sp500_megarun/catalog_campaign_definition_contract.py",
         "infra/sp500_megarun/catalog_requester.py",

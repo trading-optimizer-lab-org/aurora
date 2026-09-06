@@ -237,6 +237,11 @@ def materialize_prepared_catalog_plan(
         raise ValueError("CATALOG_PREPARED_TEMPLATE_MISSING")
     original = verify_sealed_global_reuse_execution_plan(template)
     if (
+        original.get("science_sha256") != expected_identity.scientific_contract_sha256
+        or original.get("protected_commit_sha") != expected_identity.protected_commit_sha
+    ):
+        raise ValueError("CATALOG_PREPARED_TEMPLATE_IDENTITY_MISMATCH")
+    if (
         original.get("global_reuse_plan_sha256")
         != receipt.execution_plan_template_sha256
     ):

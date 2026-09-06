@@ -17,6 +17,10 @@ on:
       checkpoint_manifest_artifacts: {required: true, type: string}
       current_wave: {required: true, type: number}
     outputs:
+      has_matrix_a:
+        value: ${{ jobs.reconcile.outputs.has_matrix_a }}
+      has_matrix_b:
+        value: ${{ jobs.reconcile.outputs.has_matrix_b }}
       status:
         value: ${{ jobs.finalize_wave.outputs.status }}
       campaign_state_artifact:

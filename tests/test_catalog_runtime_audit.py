@@ -116,3 +116,55 @@ def test_runtime_audit_rejects_wrong_commit_or_nonpublic_repository() -> None:
                 "private": True,
             }
         )
+
+
+def test_runtime_audit_accepts_only_proven_optional_skipped_job() -> None:
+    pages = _pages("jobs")
+    jobs = pages[0]["jobs"]
+    assert isinstance(jobs, list)
+    jobs.append({
+        "id": 12, "name": "engine / build_components_b",
+        "conclusion": "skipped", "labels": [],
+    })
+    receipt = _build(
+        jobs_pages=pages, jobs_confirmation_pages=pages,
+        allowed_skipped_job_names=frozenset({"engine / build_components_b"}),
+    )
+    assert receipt.job_ids == (10, 11, 12)
+
+
+@pytest.mark.parametrize("labels", ([], ["ubuntu-24.04"]))
+def test_runtime_audit_rejects_unapproved_skips_even_with_standard_labels(labels) -> None:
+    pages = [{"jobs": [{
+        "id": 12, "name": "engine / evaluate_a",
+        "conclusion": "skipped", "labels": labels,
+    }]}]
+    with pytest.raises(ValueError, match="CATALOG_RUNTIME_AUDIT_UNEXPECTED_SKIPPED_JOB"):
+        _build(jobs_pages=pages, jobs_confirmation_pages=pages,
+               allowed_skipped_job_names=frozenset({"engine / build_components_b"}))
+
+
+def test_runtime_audit_does_not_excuse_executed_optional_job_without_runner() -> None:
+    name = "engine / build_components_b"
+    pages = [{"jobs": [{"id": 12, "name": name, "conclusion": "success", "labels": []}]}]
+    with pytest.raises(ValueError, match="CATALOG_RUNTIME_AUDIT_NONSTANDARD_RUNNER"):
+        _build(jobs_pages=pages, jobs_confirmation_pages=pages,
+               allowed_skipped_job_names=frozenset({name}))
+
+
+def test_cancelled_run_cannot_excuse_a_required_evaluation() -> None:
+    run = _run()
+    run["conclusion"] = "cancelled"
+    pages = [{"jobs": [{"id": 12, "name": "engine / evaluate_a", "conclusion": "skipped", "labels": []}]}]
+    with pytest.raises(ValueError, match="CATALOG_RUNTIME_AUDIT_UNEXPECTED_SKIPPED_JOB"):
+        _build(run=run, jobs_pages=pages, jobs_confirmation_pages=pages,
+               allowed_skipped_job_names=frozenset({"engine / build_components_b"}))
+
+
+def test_optional_skip_requires_consistent_confirmation() -> None:
+    name = "engine / build_components_b"
+    pages = [{"jobs": [{"id": 12, "name": name, "conclusion": "skipped", "labels": []}]}]
+    confirmation = [{"jobs": [{"id": 12, "name": name, "conclusion": "success", "labels": []}]}]
+    with pytest.raises(ValueError, match="CATALOG_RUNTIME_AUDIT_JOB_INVENTORY_UNSTABLE"):
+        _build(jobs_pages=pages, jobs_confirmation_pages=confirmation,
+               allowed_skipped_job_names=frozenset({name}))

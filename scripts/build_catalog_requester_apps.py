@@ -15,6 +15,12 @@ import zipfile
 
 CLIENT_SOURCES = (
     "infra/sp500_megarun/catalog_request_contract.py",
+    "infra/sp500_megarun/catalog_chat_intent.py",
+    "infra/sp500_megarun/catalog_chat_submission.py",
+    "infra/sp500_megarun/catalog_chat_windows_input.py",
+    "infra/sp500_megarun/catalog_chat_consumer.py",
+    "infra/sp500_megarun/catalog_chat_delivery.py",
+    "infra/sp500_megarun/catalog_chat_service.py",
     "infra/sp500_megarun/catalog_campaign_registry.py",
     "infra/sp500_megarun/catalog_campaign_definition_contract.py",
     "infra/sp500_megarun/catalog_requester.py",
@@ -169,9 +175,9 @@ def _active_definition_paths(registry_bytes: bytes) -> tuple[str, ...]:
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
         raise ValueError("REQUESTER_BUILD_REGISTRY_INVALID") from exc
     checked = tuple(_safe_relative_path(str(path)) for path in paths)
-    if checked != tuple(sorted(checked)) or len(checked) != len(set(checked)):
+    if len(checked) != len(set(checked)):
         raise ValueError("REQUESTER_BUILD_REGISTRY_INVALID")
-    return checked
+    return tuple(sorted(checked))
 
 
 def _zip_info(name: str) -> zipfile.ZipInfo:

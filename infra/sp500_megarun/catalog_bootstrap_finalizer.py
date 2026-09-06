@@ -7,7 +7,7 @@ import hashlib
 import json
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from .catalog_request_contract import FrozenModel, Sha256
 
@@ -68,6 +68,30 @@ class CatalogBootstrapCompletionReceiptV1(FrozenModel):
     ready_receipt_file_sha256: Sha256
     broker_production_seal_sha256: Sha256
     completion_receipt_sha256: Sha256
+
+
+class CatalogRequesterMaintenanceReceiptV1(FrozenModel):
+    """Binding audit only, authored by protected maintenance; not runtime READY."""
+
+    schema_version: Literal["1"]
+    result: Literal["UPDATED"]
+    verification_scope: Literal["APPLICATION_BINDING_ONLY"]
+    repository: Literal["trading-optimizer-lab-org/aurora"]
+    bootstrap_commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    protected_commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    ready_receipt_file_sha256: Sha256
+    previous_production_seal_sha256: Sha256
+    production_seal_sha256: Sha256
+    client_application_sha256: Sha256
+    broker_application_sha256: Sha256
+    maintenance_receipt_sha256: Sha256
+
+    @model_validator(mode="after")
+    def _verify_hash(self) -> "CatalogRequesterMaintenanceReceiptV1":
+        payload = self.model_dump(mode="json", exclude={"maintenance_receipt_sha256"})
+        if hashlib.sha256(_canonical_bytes(payload)).hexdigest() != self.maintenance_receipt_sha256:
+            raise ValueError("CATALOG_MAINTENANCE_RECEIPT_HASH_INVALID")
+        return self
 
 
 def _canonical_bytes(value: dict[str, object]) -> bytes:
@@ -177,3 +201,60 @@ def complete_sealed_bootstrap(
             ).hexdigest(),
         }
     )
+
+
+def complete_requester_maintenance(
+    receipt: CatalogBootstrapFinalReceiptV1,
+    previous_seal: CatalogBootstrapObservedProductionSealV1,
+    production_seal: CatalogBootstrapObservedProductionSealV1,
+    *,
+    expected_commit_sha: str,
+    client_application_sha256: str,
+    broker_application_sha256: str,
+    previous_maintenance: CatalogRequesterMaintenanceReceiptV1 | None = None,
+) -> CatalogRequesterMaintenanceReceiptV1:
+    """Bind a release without rewriting its original bootstrap history.
+
+    Caller must authenticate protected original files, approved release and
+    actual installed apps/ACLs first. Hash-valid caller data is not authority.
+    This pure audit does not grant installation permission or scientific READY.
+    The last protected maintenance receipt suffices for later updates; no scan.
+    """
+    ready = CatalogBootstrapFinalReceiptV1.model_validate(receipt.model_dump(mode="json"))
+    old = CatalogBootstrapObservedProductionSealV1.model_validate(previous_seal.model_dump(mode="json"))
+    new = CatalogBootstrapObservedProductionSealV1.model_validate(production_seal.model_dump(mode="json"))
+    ready_hash = hashlib.sha256(canonical_ready_receipt_bytes(ready)).hexdigest()
+    for seal in (old, new):
+        unsigned = seal.model_copy(update={"production_seal_sha256": "0" * 64})
+        digest = hashlib.sha256(_canonical_bytes(unsigned.model_dump(mode="json"))).hexdigest()
+        if digest != seal.production_seal_sha256 or seal.bootstrap_receipt_sha256 != ready_hash:
+            raise ValueError("CATALOG_MAINTENANCE_SEAL_INVALID")
+    if previous_maintenance is None:
+        complete_sealed_bootstrap(ready, old)
+    else:
+        previous = CatalogRequesterMaintenanceReceiptV1.model_validate(previous_maintenance.model_dump(mode="json"))
+        if (previous.bootstrap_commit_sha != ready.protected_commit_sha
+                or previous.ready_receipt_file_sha256 != ready_hash
+                or previous.protected_commit_sha != old.protected_commit_sha
+                or previous.production_seal_sha256 != old.production_seal_sha256
+                or previous.client_application_sha256 != old.requester_client_application_sha256
+                or previous.broker_application_sha256 != old.requester_broker_application_sha256):
+            raise ValueError("CATALOG_MAINTENANCE_PREDECESSOR_INVALID")
+    if (new.protected_commit_sha != expected_commit_sha
+            or new.requester_client_application_sha256 != client_application_sha256
+            or new.requester_broker_application_sha256 != broker_application_sha256):
+        raise ValueError("CATALOG_MAINTENANCE_TARGET_INVALID")
+    payload: dict[str, object] = {
+        "schema_version": "1", "result": "UPDATED",
+        "verification_scope": "APPLICATION_BINDING_ONLY", "repository": ready.repository,
+        "bootstrap_commit_sha": ready.protected_commit_sha,
+        "protected_commit_sha": new.protected_commit_sha,
+        "ready_receipt_file_sha256": ready_hash,
+        "previous_production_seal_sha256": old.production_seal_sha256,
+        "production_seal_sha256": new.production_seal_sha256,
+        "client_application_sha256": client_application_sha256,
+        "broker_application_sha256": broker_application_sha256,
+    }
+    return CatalogRequesterMaintenanceReceiptV1.model_validate({
+        **payload, "maintenance_receipt_sha256": hashlib.sha256(_canonical_bytes(payload)).hexdigest(),
+    })

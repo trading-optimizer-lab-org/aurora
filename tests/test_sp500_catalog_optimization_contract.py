@@ -655,6 +655,7 @@ def test_repository_workflows_have_one_guarded_public_entrypoint() -> None:
     assert set(jobs["reduce"]["needs"]) == {
         "engine_verify_sealed_plan",
         "verify_component_store",
+        "ready_to_merge",
         "reduce_groups",
     }
 
@@ -1397,6 +1398,24 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
         if path.is_file()
     }
     assert first_tree == second_tree
+    policy = json.loads(first_tree["checkpoint_policy.json"])
+    assert "recovery_blocks_v1" in policy
+    from aurora.infra.sp500_megarun.catalog_recovery_blocks import resolve_recovery_block
+
+    recovered_ids = []
+    for assignment in plan.recipe_assignments:
+        assert assignment.checkpoint_slot_count <= len(assignment.strategy_ids)
+        for slot in range(1, assignment.checkpoint_slot_count + 1):
+            start = len(assignment.strategy_ids) * (slot - 1) // assignment.checkpoint_slot_count
+            stop = len(assignment.strategy_ids) * slot // assignment.checkpoint_slot_count
+            block_id = resolve_recovery_block(
+                policy, science_sha256=plan.science_sha256,
+                worker_id=assignment.worker_id, slot_index=slot,
+                strategy_ids=assignment.strategy_ids[start:stop],
+            )
+            assert len(block_id) == 64
+            recovered_ids.append(block_id)
+    assert len(recovered_ids) == len(set(recovered_ids))
     assert {
         "resolved_contract.json",
         "controller_binding.json",

@@ -56,6 +56,7 @@ from aurora.infra.sp500_megarun.catalog_github_snapshot import (
 from aurora.infra.sp500_megarun.catalog_request_contract import canonical_model_bytes
 from aurora.infra.sp500_megarun.catalog_resume import build_resume_work_manifest
 from scripts.compile_sp500_catalog_recipes import write_recipe_dag_artifacts
+from scripts.verify_catalog_production_runtime import validate_production_runtime_receipt
 from scripts.plan_sp500_optimized_catalog_run import (
     build_global_reuse_execution_plan,
     build_repository_contract,
@@ -327,12 +328,10 @@ def prepare_campaign(
         _strict_json(smoke_path),
         "CATALOG_PRODUCTION_RUNTIME_SMOKE_INVALID",
     )
-    if (
-        runtime_smoke.get("status") != "PREPARED"
-        or runtime_smoke.get("production_dependency_smoke_passed") is not True
-        or runtime_smoke.get("network_install_performed") is not False
-    ):
-        raise ValueError("CATALOG_PRODUCTION_RUNTIME_SMOKE_INVALID")
+    validate_production_runtime_receipt(
+        runtime_smoke,
+        lock_path=_safe_file(root, "requirements/catalog-optimized.lock"),
+    )
 
     registry = load_catalog_campaign_registry(
         _safe_file(root, "config/catalog_campaign_registry_v1.json")

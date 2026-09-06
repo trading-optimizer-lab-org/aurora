@@ -229,6 +229,7 @@ def protected_snapshots() -> _AuditInputs:
         },
           "workflow_documents": {
               HEAVY_PATH: _safe_heavy_workflow(),
+              ".github/workflows/catalog-fast-authority-maintenance.yml": _safe_issue_writer_workflow(("bootstrap",)),
               ".github/workflows/catalog-fast-controller.yml": _safe_issue_writer_workflow(
                   ("gate", "finalize")
               ),
@@ -254,6 +255,7 @@ def protected_snapshots() -> _AuditInputs:
         },
           "workflow_source_sha256s": {
               HEAVY_PATH: "b" * 64,
+              ".github/workflows/catalog-fast-authority-maintenance.yml": "b" * 64,
               ".github/workflows/catalog-fast-controller.yml": "b" * 64,
             ".github/workflows/catalog-run-controller.yml": "b" * 64,
             ".github/workflows/catalog-request-reconciler.yml": "b" * 64,
@@ -492,6 +494,23 @@ def test_auditor_runtime_topology_rejects_an_extra_caller() -> None:
 
     assert receipt.status == "blocked"
     assert "CATALOG_AUDITOR_TOPOLOGY_INVALID" in receipt.failed_controls
+
+
+@pytest.mark.parametrize("extra_writer", [False, True])
+def test_bootstrap_writer_is_permitted_but_no_other_maintenance_writer(extra_writer: bool) -> None:
+    inputs = protected_snapshots()
+    snapshots = inputs["snapshots"]
+    assert isinstance(snapshots, dict)
+    workflows = snapshots["workflow_documents"]
+    assert isinstance(workflows, dict)
+    if extra_writer:
+        workflows[".github/workflows/catalog-fast-authority-maintenance.yml"] = _safe_issue_writer_workflow(("bootstrap", "unexpected"))
+    receipt = audit_catalog_github_controls(**inputs)
+    if extra_writer:
+        assert "ISSUES_WRITE_TOPOLOGY_EXACT" in receipt.failed_controls
+    else:
+        assert receipt.status == "ready"
+        assert receipt.failed_controls == ()
 
 
 def test_missing_permitted_writer_blocks_closed_topology() -> None:

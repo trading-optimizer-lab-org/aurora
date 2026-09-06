@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import pytest
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -15,6 +16,64 @@ from scripts.fetch_catalog_reference_artifact import verify_reference_metadata
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize(("measurement", "expected", "basis"), [
+    (17.25, 17.25, "sum_of_verified_worker_evaluation_durations"),
+    (None, None, "unavailable"), (-1.0, None, "unavailable"), (True, None, "unavailable"),
+])
+def test_science_publication_preserves_measured_worker_time(tmp_path: Path, measurement, expected, basis) -> None:
+    from scripts.verify_catalog_terminal_science import verify
+    from aurora.infra.sp500_megarun.catalog_resources import aggregate_worker_evaluation
+    final, reference, sealed = _fixture(tmp_path)
+    receipt_path = final / "receipt.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt.pop("receipt_sha256")
+    receipt["scientific_wall_stage_seconds"] = {"evaluation": measurement}
+    receipt["execution_metrics"] = aggregate_worker_evaluation([
+        {"shard_index": 0, "checkpoint_slot_index": 1,
+         "scientific_wall_stage_seconds": {"evaluation": measurement}}
+    ])
+    from aurora.infra.sp500_megarun.catalog_recovery_blocks import (
+        recovery_metrics_from_checkpoints, aggregate_recovery_metrics,
+    )
+    group_recovery = recovery_metrics_from_checkpoints([
+        {"recovery_block_id": "b" * 64, "worker_id": 0, "attempt_id": "authority:worker:000:attempt:1"},
+        {"recovery_block_id": "c" * 64, "worker_id": 0, "attempt_id": "authority:worker:000:attempt:2"},
+    ], authority_id="authority")
+    receipt["recovery_metrics"] = aggregate_recovery_metrics([{"recovery_metrics": group_recovery}])
+    _write_json(receipt_path, {**receipt, "receipt_sha256": canonical_sha256(receipt)})
+    output = tmp_path / "science"
+    index = verify(final_root=final, reference_root=reference, sealed_plan=sealed, output_dir=output)
+    audit = json.loads((output / "catalog_scientific_audit_receipt_v1.json").read_text())
+    assert audit["execution_metrics"] == {
+        "schema_version": "1", "worker_evaluation_seconds": expected,
+        "basis": basis,
+    }
+    assert audit["recovery_metrics"] == {
+        "schema_version": "1", "verified_block_ids": ["b" * 64, "c" * 64],
+        "recovered_block_ids": ["c" * 64],
+    }
+    files = index["files"]
+    assert isinstance(files, list)
+    row = next(row for row in files if row["path"] == "catalog_scientific_audit_receipt_v1.json")
+    assert row["sha256"] == hashlib.sha256((output / row["path"]).read_bytes()).hexdigest()
+
+
+def test_incomplete_worker_measurement_stays_unknown_through_reduction() -> None:
+    from aurora.infra.sp500_megarun.catalog_resources import aggregate_worker_evaluation
+    measured = {"shard_index": 0, "checkpoint_slot_index": 1,
+                "scientific_wall_stage_seconds": {"evaluation": 3.5}}
+    missing = {"shard_index": 1, "checkpoint_slot_index": 1}
+    partial = aggregate_worker_evaluation([measured, missing])
+    assert partial["worker_evaluation_seconds"] is None
+    parent = aggregate_worker_evaluation([{"execution_metrics": partial}, measured])
+    assert parent["worker_evaluation_seconds"] is None
+    assert parent["basis"] == "unavailable"
+    complete = aggregate_worker_evaluation([measured, measured])
+    assert complete["worker_evaluation_seconds"] == 7.0
+    assert aggregate_worker_evaluation([{"execution_metrics": complete}, measured])["worker_evaluation_seconds"] == 10.5
+    assert aggregate_worker_evaluation([{"scientific_wall_stage_seconds": {"evaluation": 8.0}}])["worker_evaluation_seconds"] is None
 
 
 def test_reference_download_metadata_must_match_every_sealed_identity() -> None:
