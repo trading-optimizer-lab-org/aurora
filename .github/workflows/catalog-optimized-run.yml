@@ -1387,11 +1387,55 @@ jobs:
           expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
+      - name: Select sealed-plan component transport IDs
+        id: component_transports
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          plan = json.loads((Path(os.environ["RUNNER_TEMP"]) / "sealed-plan/component_store_input_manifest.json").read_text())
+          names = [row["component_transport_artifact"] for row in plan["bundles"]]
+          if (not names or len(names) != len(set(names))
+              or any(not isinstance(name, str) or not re.fullmatch(r"catalog-component-transport-[a-z0-9-]+", name) for name in names)):
+              raise SystemExit("COMPONENT_TRANSPORT_NAMES_INVALID")
+          pages = json.loads(subprocess.check_output([
+              "gh", "api",
+              f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}/artifacts?per_page=100",
+              "--paginate", "--slurp",
+          ], text=True))
+          expected = set(names)
+          selected = {}
+          for page in pages:
+              for artifact in page["artifacts"]:
+                  name = artifact["name"]
+                  if name not in expected:
+                      continue
+                  artifact_id = artifact["id"]
+                  if (name in selected or artifact.get("expired") is not False
+                      or type(artifact_id) is not int or artifact_id <= 0):
+                      raise SystemExit("COMPONENT_TRANSPORT_ARTIFACT_INVALID")
+                  selected[name] = artifact_id
+          if set(selected) != expected or len(set(selected.values())) != len(names):
+              raise SystemExit("COMPONENT_TRANSPORT_ARTIFACTS_INCOMPLETE")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
+              out.write("artifact_ids=" + ",".join(str(selected[name]) for name in names) + "\n")
+              out.write("download_directory=" + (names[0] if len(names) == 1 else ".") + "\n")
+          PY
+
       - name: Download every current-run exact component transport
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          pattern: catalog-component-transport-*
-          path: ${{ runner.temp }}/component-transports
+          artifact-ids: ${{ steps.component_transports.outputs.artifact_ids }}
+          merge-multiple: false
+          path: ${{ runner.temp }}/component-transports/${{ steps.component_transports.outputs.download_directory }}
 
       - name: Reconcile and verify the complete global component store
         shell: bash

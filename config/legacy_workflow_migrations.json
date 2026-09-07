@@ -40,7 +40,7 @@
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
       "reason": "retain the sealed offline runtime and immutable source binding; authenticate complete pinned component bundles while reconciling only the selected component subset",
-      "replacement_sha256": "10f9ab9d80f005ffce00c54f6f3fe8c61c40d2a44d77363c9914afee14927a56"
+      "replacement_sha256": "0f3d7d6c493366a820774b156bd940c9bcac41013ba12eb70d823dd8e0b61f28"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",
