@@ -817,6 +817,8 @@ function Get-CatalogChatEntryExpectedBrokerAction {
         execute = Join-Path $root 'broker-venv\Scripts\pythonw.exe'
         arguments = '-I -s -E "' + (Join-Path $root 'bin\catalog-requester-broker.pyz') + '"'
         working_directory = $root
+        # The original protected broker installer leaves this field unset.
+        allow_empty_working_directory = $true
     }
 }
 
@@ -831,10 +833,15 @@ function Test-CatalogChatEntryTaskAction {
     $action = $actions[0]
     $principals = Get-CatalogChatEntryIdentityCandidates $IdentityName
     $principal = Get-CatalogChatEntryProperty $Task 'Principal'
+    $workingDirectory = [string](Get-CatalogChatEntryProperty $action 'WorkingDirectory')
+    $workingDirectoryMatches = $workingDirectory -ceq [string]$ExpectedAction.working_directory
+    if ([bool](Get-CatalogChatEntryProperty $ExpectedAction 'allow_empty_working_directory')) {
+        $workingDirectoryMatches = $workingDirectoryMatches -or $workingDirectory -ceq ''
+    }
     return (
         [string](Get-CatalogChatEntryProperty $action 'Execute') -ceq [string]$ExpectedAction.execute -and
         [string](Get-CatalogChatEntryProperty $action 'Arguments') -ceq [string]$ExpectedAction.arguments -and
-        [string](Get-CatalogChatEntryProperty $action 'WorkingDirectory') -ceq [string]$ExpectedAction.working_directory -and
+        $workingDirectoryMatches -and
         [string](Get-CatalogChatEntryProperty $principal 'UserId') -in $principals -and
         [string](Get-CatalogChatEntryProperty $principal 'RunLevel') -ceq 'Limited' -and
         [string](Get-CatalogChatEntryProperty $principal 'LogonType') -ceq 'Password'
