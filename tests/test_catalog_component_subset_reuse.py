@@ -74,7 +74,7 @@ def test_component_download_selects_exact_ids_from_shared_run(
         selected = [row for row in rows if row["id"] in ids]
         # Pinned action extracts a singleton directly at path; multiple IDs
         # retain artifact-name directories when merge-multiple is false.
-        observed = [Path(path) if len(selected) == 1 else Path(path) / row["name"] for row in selected]
+        observed = [Path(path) if len(selected) == 1 else Path(path) / str(row["name"]) for row in selected]
         assert observed == [tmp_path / "component-transports" / name for name in names]
     else:
         with pytest.raises(SystemExit, match="COMPONENT_TRANSPORT_"):
