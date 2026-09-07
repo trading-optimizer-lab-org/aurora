@@ -80,6 +80,7 @@
     "checkpoint_slot_options": [1, 2, 4, 8],
     "maximum_unpersisted_seconds_p99": 600,
     "maximum_checkpoint_overhead_fraction_p95": 0.05,
+    "checkpoint_overhead_gate": "report_only_r1",
     "valid_work_reuse_required": true,
     "global_rerun_allowed": false,
     "max_same_failure_occurrences": 3,

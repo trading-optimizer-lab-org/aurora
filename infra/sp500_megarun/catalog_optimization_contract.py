@@ -143,6 +143,8 @@ class RecoveryExecutionV1(FrozenModel):
     checkpoint_slot_options: tuple[Literal[1, 2, 4, 8], ...]
     maximum_unpersisted_seconds_p99: Literal[600]
     maximum_checkpoint_overhead_fraction_p95: Literal[0.05]
+    # R1 readiness can precede transport-performance qualification (plan 1.4).
+    checkpoint_overhead_gate: Literal["required", "report_only_r1"] = "required"
     valid_work_reuse_required: Literal[True]
     global_rerun_allowed: Literal[False]
     max_same_failure_occurrences: Literal[3]

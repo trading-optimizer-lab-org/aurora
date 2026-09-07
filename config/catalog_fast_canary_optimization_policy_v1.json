@@ -81,6 +81,7 @@
     "max_same_failure_occurrences": 3,
     "max_total_recovery_waves": 2,
     "maximum_checkpoint_overhead_fraction_p95": 0.05,
+    "checkpoint_overhead_gate": "report_only_r1",
     "maximum_unpersisted_seconds_p99": 600,
     "valid_work_reuse_required": true
   },
