@@ -1395,7 +1395,7 @@ function Invoke-CatalogChatEntryInstallation {
         $verificationRoot = New-CatalogChatEntryVerificationTree -Candidate $candidate -HistoricalReadyBytes $historicalReadyBytes
 
         $phase = 'CANDIDATE_VERIFY'
-        $candidateVerification = Invoke-CatalogChatEntryOfficialVerification -Candidate $candidate -VerificationRoot $verificationRoot -Runtime $runtime
+        $candidateVerification = Invoke-CatalogChatEntryOfficialVerification -Candidate $candidate -VerificationRoot (Join-Path $verificationRoot 'CatalogRequester') -Runtime $runtime
         $transactionFiles = @(Get-CatalogChatEntryTransactionFiles -Candidate $candidate)
 
         if (-not $Apply) {

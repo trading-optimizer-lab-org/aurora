@@ -301,6 +301,11 @@ function Invoke-CatalogChatEntryVerifierProcess {
     param([string]$RuntimePython, [string]$ApplicationKind, [string]$VerificationRoot, [string]$ExpectedCommitSha)
     $global:VerifierCalls++
     $global:Calls.Add("verify:$ApplicationKind")
+    foreach ($relative in @("bin/catalog-requester-$ApplicationKind.pyz", "bin/catalog-requester-$ApplicationKind.manifest.json", 'receipts/controller-bootstrap-v1.receipt.json')) {
+        if (-not [IO.File]::Exists((Join-Path $VerificationRoot $relative))) {
+            throw "TEST_VERIFIER_INPUT_MISSING:$relative"
+        }
+    }
     if ($global:FailPostVerify -and $global:VerifierCalls -ge 3) {
         if ($global:UndoBlocked) {
             [IO.File]::WriteAllText((Join-Path $global:LiveRoot 'CatalogRequester/config/catalog_requester_v1.json'), 'drifted config', [Text.UTF8Encoding]::new($false))
