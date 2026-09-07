@@ -448,7 +448,10 @@ function Get-CatalogChatMaintenancePreflight {
             $null = $issues.Add('PREFLIGHT_ANCESTOR_NOT_DIRECTORY')
         }
         else {
-            $ancestorAcl = Get-CatalogChatAclObservation -Path $ancestorPath -Ancestor
+            # AURORA owns installation targets, unlike the Windows ancestors.
+            # Match the installer's strict protection requirement before UAC.
+            $isInstallationRoot = $ancestorPath -ieq 'C:\ProgramData\AURORA'
+            $ancestorAcl = Get-CatalogChatAclObservation -Path $ancestorPath -Ancestor:(-not $isInstallationRoot)
             $ancestorRecord['acl'] = $ancestorAcl
             if (-not $ancestorAcl.observation_available) {
                 $null = $issues.Add('PREFLIGHT_ACL_UNAVAILABLE')

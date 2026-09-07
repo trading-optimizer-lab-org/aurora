@@ -19,6 +19,8 @@ CASES = (
     ("wrongwriter", "BLOCKED", "PREFLIGHT_UNAUTHORIZED_EFFECTIVE_WRITER"),
     ("wrongowner", "BLOCKED", "PREFLIGHT_UNAUTHORIZED_EFFECTIVE_WRITER"),
     ("ancestorwriter", "BLOCKED", "PREFLIGHT_UNAUTHORIZED_EFFECTIVE_WRITER"),
+    ("aurorawrite", "BLOCKED", "PREFLIGHT_UNAUTHORIZED_EFFECTIVE_WRITER"),
+    ("programdatawrite", "PREFLIGHT", "PREFLIGHT_TASK_ABSENT"),
     ("trustedancestor", "PREFLIGHT", "PREFLIGHT_TASK_ABSENT"),
     ("denied", "BLOCKED", "PREFLIGHT_PUBLIC_FILE_OBSERVATION_UNAVAILABLE"),
     ("directoryisfile", "BLOCKED", "PREFLIGHT_DIRECTORY_TYPE_INVALID"),
@@ -119,6 +121,17 @@ function Get-Acl {
             AccessControlType = 'Allow'
             IsInherited = $false
             InheritanceFlags = 'None'
+            PropagationFlags = 'None'
+        }
+    }
+    if (($global:FixtureFault -eq 'aurorawrite' -and $LiteralPath -eq 'C:\ProgramData\AURORA') -or
+        ($global:FixtureFault -eq 'programdatawrite' -and $LiteralPath -eq 'C:\ProgramData')) {
+        $access += [pscustomobject]@{
+            IdentityReference = 'S-1-5-32-545'
+            FileSystemRights = 'Write'
+            AccessControlType = 'Allow'
+            IsInherited = $true
+            InheritanceFlags = 'ContainerInherit'
             PropagationFlags = 'None'
         }
     }

@@ -487,6 +487,40 @@ def test_candidate_pin_mismatch_blocks_before_any_live_mutation(tmp_path: Path) 
     assert outcome["calls"] == []
 
 
+@pytest.mark.parametrize("owner_sid, accepted", [
+    ("S-1-5-32-544", True),
+    ("S-1-5-32-545", False),
+])
+def test_protected_owner_uses_native_account_identity_not_english_name(
+    tmp_path: Path, owner_sid: str, accepted: bool,
+) -> None:
+    # Resolve the actual OS-localised name; only observation I/O is replaced.
+    script = r'''
+function Get-CatalogChatEntryAclObservation {
+    param([string]$Path)
+    $owner = ([Security.Principal.SecurityIdentifier]::new('OWNER_SID')).Translate(
+        [Security.Principal.NTAccount]).Value
+    return [pscustomobject]@{
+        observation_available = $true
+        owner = $owner
+        sddl = 'O:OWNER_SIDG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)'
+        unauthorized_effective_writers = @()
+    }
+}
+. 'INSTALLER'
+try {
+    $null = Assert-CatalogChatEntryProtectedAcl -LogicalPath 'fixture'
+    @{ accepted = $true } | ConvertTo-Json -Compress
+} catch {
+    @{ accepted = $false; reason = $_.Exception.Message } | ConvertTo-Json -Compress
+}
+'''.replace("OWNER_SID", owner_sid).replace("INSTALLER", str(INSTALLER))
+    outcome = _run_ps(tmp_path, script)
+    assert outcome["accepted"] is accepted, outcome
+    if not accepted:
+        assert outcome["reason"] == "PROTECTED_ACL_OWNER_INVALID"
+
+
 def test_mismatched_existing_task_blocks_before_content_transaction(tmp_path: Path) -> None:
     candidate, candidate_hash, live, _ = _candidate_fixture(tmp_path)
     outcome = _run_ps(

@@ -273,9 +273,8 @@ function Assert-CatalogChatEntryProtectedAcl {
         @($acl.unauthorized_effective_writers).Count -ne 0) {
         throw 'PROTECTED_ACL_INVALID'
     }
-    $owner = [string]$acl.owner
-    if ($owner -notin @('S-1-5-32-544', 'BUILTIN\Administrators', 'Administrators') -and
-        $owner -notmatch '(?i)(^|\\)Administrators$') {
+    $ownerSid = ConvertTo-CatalogChatEntrySid -Identity ([string]$acl.owner)
+    if ($ownerSid -ne 'S-1-5-32-544') {
         throw 'PROTECTED_ACL_OWNER_INVALID'
     }
     return $acl
