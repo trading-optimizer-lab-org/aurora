@@ -508,6 +508,128 @@ $accepted = Test-CatalogChatEntryTaskAction -Task $task -ExpectedAction $expecte
     assert _run_ps(tmp_path, script)["accepted"] is accepted
 
 
+@pytest.mark.parametrize("executable_path, command, owner_status, affected", [
+    (r"C:\Python314\python.exe", r'"C:\Python314\python.exe" C:\tools\efficient_runner.py wait fixture', 0, False),
+    (r"C:\Python314\python.exe", r'"C:\Python314\python.exe" C:\ProgramData\AURORA\CatalogRequester\bin\catalog-requester-client.pyz', 0, True),
+    (r"C:\Python314\python.exe", "", 0, True),
+    (r"C:\Python314\python.exe", r'"C:\Python314\python.exe" C:\tools\worker.py', 2, True),
+    (r"C:\ProgramData\AURORA_backup\python.exe", r'"C:\ProgramData\AURORA_backup\python.exe" C:\tools\worker.py', 0, False),
+    (r"C:\Python314\python.exe", r'"C:\Python314\python.exe" C:\tools\worker.py --label CatalogRequester', 0, False),
+    (r"C:\Python314\python.exe", r'"C:\Python314\python.exe" catalog-requester-client.pyz', 0, True),
+])
+def test_affected_work_distinguishes_unrelated_python_from_unobservable_work(
+    tmp_path: Path, executable_path: str, command: str, owner_status: int, affected: bool,
+) -> None:
+    script = r'''
+. 'INSTALLER'
+function Get-ScheduledTask { param($TaskPath) @() }
+function Get-LocalUser {
+    param($Name)
+    $sid = if ($Name -eq 'AURORARequester') { 'S-1-5-21-1-2-3-1015' } else { 'S-1-5-21-1-2-3-1014' }
+    [pscustomobject]@{ SID = $sid }
+}
+function Get-CimInstance {
+    param($ClassName, $Filter)
+    [pscustomobject]@{
+        ProcessId = 100; ParentProcessId = 50; Name = 'python.exe'
+        ExecutablePath = 'EXECUTABLE_PATH'; CommandLine = 'COMMAND'
+        CreationDate = [datetime]'2026-09-07T14:00:00Z'
+    }
+}
+function Invoke-CimMethod {
+    param($InputObject, $MethodName)
+    if ($MethodName -ne 'GetOwnerSid') { throw 'UNEXPECTED_PROCESS_OPERATION' }
+    [pscustomobject]@{ ReturnValue = OWNER_STATUS; Sid = 'S-1-5-21-1-2-3-1001' }
+}
+$work = @(Get-CatalogChatEntryAffectedWork -AllowAuthenticatedBroker)
+@{ affected = $work.Count -gt 0 } | ConvertTo-Json -Compress
+'''.replace("INSTALLER", str(INSTALLER).replace("'", "''"))
+    script = script.replace("COMMAND", command.replace("'", "''")).replace("OWNER_STATUS", str(owner_status))
+    script = script.replace("EXECUTABLE_PATH", executable_path.replace("'", "''"))
+    assert _run_ps(tmp_path, script)["affected"] is affected
+
+
+@pytest.mark.parametrize("scenario, affected", [
+    ("native_child", False),
+    ("root_only", True),
+    ("wrong_owner", True),
+    ("changed_command", True),
+    ("orphan", True),
+    ("reused_parent_pid", True),
+    ("revalidated_parent_reused", True),
+    ("hidden_command", True),
+    ("hidden_creation", True),
+    ("wrong_base_runtime", True),
+    ("unauthenticated_task", True),
+])
+def test_affected_work_authenticates_native_broker_launcher_child(
+    tmp_path: Path, scenario: str, affected: bool,
+) -> None:
+    script = r'''
+. 'INSTALLER'
+function Get-CatalogChatEntryBrokerBasePythonw { 'C:\Python314\pythonw.exe' }
+function Get-LocalUser {
+    param($Name)
+    $sid = if ($Name -eq 'AURORARequester') { 'S-1-5-21-1-2-3-1015' } else { 'S-1-5-21-1-2-3-1014' }
+    [pscustomobject]@{ SID = $sid }
+}
+function Get-ScheduledTask {
+    param($TaskPath)
+    if ('SCENARIO' -eq 'unauthenticated_task') { return }
+    [pscustomobject]@{
+        TaskName = 'AURORA Catalog Requester Broker'; State = 'Running'
+        Principal = [pscustomobject]@{ UserId = 'AURORARequester'; RunLevel = 'Limited'; LogonType = 'Password' }
+        Actions = @([pscustomobject]@{
+            Execute = 'C:\ProgramData\AURORA\CatalogRequester\broker-venv\Scripts\pythonw.exe'
+            Arguments = '-I -s -E "C:\ProgramData\AURORA\CatalogRequester\bin\catalog-requester-broker.pyz"'
+            WorkingDirectory = $null
+        })
+    }
+}
+$command = '"C:\ProgramData\AURORA\CatalogRequester\broker-venv\Scripts\pythonw.exe" -I -s -E "C:\ProgramData\AURORA\CatalogRequester\bin\catalog-requester-broker.pyz"'
+$root = [pscustomobject]@{
+    ProcessId = 100; ParentProcessId = 50; Name = 'pythonw.exe'
+    ExecutablePath = 'C:\ProgramData\AURORA\CatalogRequester\broker-venv\Scripts\pythonw.exe'
+    CommandLine = $command; CreationDate = [datetime]'2026-09-07T14:00:00Z'
+    OwnerSid = 'S-1-5-21-1-2-3-1015'
+}
+$child = [pscustomobject]@{
+    ProcessId = 101; ParentProcessId = 100; Name = 'pythonw.exe'
+    ExecutablePath = 'C:\Python314\pythonw.exe'
+    CommandLine = $command; CreationDate = [datetime]'2026-09-07T14:00:02Z'
+    OwnerSid = 'S-1-5-21-1-2-3-1015'
+}
+switch ('SCENARIO') {
+    'wrong_owner' { $child.OwnerSid = 'S-1-5-21-1-2-3-1001' }
+    'changed_command' { $child.CommandLine += ' --unexpected' }
+    'orphan' { $child.ParentProcessId = 99 }
+    'reused_parent_pid' { $root.CreationDate = [datetime]'2026-09-07T14:00:03Z' }
+    'hidden_command' { $child.CommandLine = $null }
+    'hidden_creation' { $child.CreationDate = $null }
+    'wrong_base_runtime' { $child.ExecutablePath = 'C:\Users\Public\pythonw.exe' }
+}
+$global:ProcessFixture = @($root, $child)
+if ('SCENARIO' -eq 'root_only') { $global:ProcessFixture = @($root) }
+function Get-CimInstance {
+    param($ClassName, $Filter)
+    if ($Filter -match '^ProcessId\s*=\s*(\d+)$') {
+        if ('SCENARIO' -eq 'revalidated_parent_reused') {
+            $global:ProcessFixture[0].CreationDate = [datetime]'2026-09-07T14:00:03Z'
+        }
+        $global:ProcessFixture | Where-Object ProcessId -eq ([int]$Matches[1])
+    } else { $global:ProcessFixture }
+}
+function Invoke-CimMethod {
+    param($InputObject, $MethodName)
+    if ($MethodName -ne 'GetOwnerSid') { throw 'UNEXPECTED_PROCESS_OPERATION' }
+    [pscustomobject]@{ ReturnValue = 0; Sid = $InputObject.OwnerSid }
+}
+$work = @(Get-CatalogChatEntryAffectedWork -AllowAuthenticatedBroker)
+@{ affected = $work.Count -gt 0 } | ConvertTo-Json -Compress
+'''.replace("INSTALLER", str(INSTALLER).replace("'", "''"))
+    assert _run_ps(tmp_path, script.replace("SCENARIO", scenario))["affected"] is affected
+
+
 def test_candidate_pin_mismatch_blocks_before_any_live_mutation(tmp_path: Path) -> None:
     candidate, _, live, _ = _candidate_fixture(tmp_path)
     outcome = _run_ps(

@@ -110,6 +110,17 @@ if ($null -eq (Get-Command -Name Set-CatalogChatEntryAcl -CommandType Function -
     }
 }
 
+function Get-CatalogChatEntryBrokerBasePythonw {
+    $python = Resolve-CatalogChatEntryPhysicalPath $script:CatalogChatEntryRuntimeLogicalPaths.broker_python
+    $output = @(& $python -I -s -E -c "import pathlib,sys; print(pathlib.Path(sys.base_prefix) / 'pythonw.exe')" 2>&1)
+    if ($LASTEXITCODE -ne 0 -or $output.Count -ne 1) { throw 'BROKER_BASE_RUNTIME_UNAVAILABLE' }
+    $path = [string]$output[0]
+    if (-not [IO.Path]::IsPathRooted($path) -or [IO.Path]::GetFileName($path) -cne 'pythonw.exe') {
+        throw 'BROKER_BASE_RUNTIME_INVALID'
+    }
+    return [IO.Path]::GetFullPath($path)
+}
+
 if ($null -eq (Get-Command -Name Get-CatalogChatEntryAffectedWork -CommandType Function -ErrorAction SilentlyContinue)) {
     function Get-CatalogChatEntryAffectedWork {
         param([switch]$AllowAuthenticatedBroker)
@@ -129,19 +140,74 @@ if ($null -eq (Get-Command -Name Get-CatalogChatEntryAffectedWork -CommandType F
                 -not ($AllowAuthenticatedBroker -and [string]$_.TaskName -ceq $script:CatalogChatEntryBrokerTaskName -and $authenticatedBrokerRunning)
             } | ForEach-Object { [pscustomobject]@{ kind = 'task'; name = [string]$_.TaskName } })
 
-        $clientPython = Resolve-CatalogChatEntryPhysicalPath -LogicalPath $script:CatalogChatEntryRuntimeLogicalPaths.client_python
         $brokerPythonw = Resolve-CatalogChatEntryPhysicalPath -LogicalPath $script:CatalogChatEntryRuntimeLogicalPaths.broker_pythonw
-        $processes = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'python.exe' OR Name = 'pythonw.exe'" -ErrorAction Stop | ForEach-Object {
-            $path = [string]$_.ExecutablePath
-            $isBroker = $path -ieq $brokerPythonw
-            if ($AllowAuthenticatedBroker -and $isBroker -and $authenticatedBrokerRunning) { return }
-            if ([string]::IsNullOrWhiteSpace($path) -or ($path -ine $clientPython -and -not $isBroker)) {
-                [pscustomobject]@{ kind = 'unknown_process'; process_id = [int]$_.ProcessId; executable_path = $path }
-                return
-            }
+        $requesterSid = [string](Get-LocalUser -Name $script:CatalogChatEntryRequesterIdentity -ErrorAction Stop).SID
+        $agentSid = [string](Get-LocalUser -Name $script:CatalogChatEntryAgentIdentity -ErrorAction Stop).SID
+        if ([string]::IsNullOrWhiteSpace($requesterSid) -or [string]::IsNullOrWhiteSpace($agentSid)) {
+            throw 'PROCESS_IDENTITIES_UNAVAILABLE'
+        }
+        $basePythonw = if ($authenticatedBrokerRunning) { Get-CatalogChatEntryBrokerBasePythonw } else { '' }
+        $snapshot = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'python.exe' OR Name = 'pythonw.exe'" -ErrorAction Stop)
+        $records = @($snapshot | ForEach-Object {
+            $process = $_
+            $ownerSid = ''
+            try {
+                $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop
+                if ($owner.ReturnValue -eq 0) { $ownerSid = [string]$owner.Sid }
+            } catch { }
+            $created = $null
+            try { if ($null -ne $process.CreationDate) { $created = [datetime]$process.CreationDate } } catch { }
             [pscustomobject]@{
-                kind = 'process'; process_id = [int]$_.ProcessId
-                executable_path = $path
+                pid = [int]$process.ProcessId; parent_pid = [int]$process.ParentProcessId
+                path = [string]$process.ExecutablePath; command = [string]$process.CommandLine
+                sid = $ownerSid; created = $created
+            }
+        })
+        if (@($records | Group-Object pid | Where-Object Count -gt 1).Count -gt 0) { throw 'PROCESS_SNAPSHOT_AMBIGUOUS' }
+
+        # Windows venv pythonw is a launcher: authenticate its one base-runtime
+        # child by identity, command, parent lifetime and the runtime's base path.
+        $brokerAction = Get-CatalogChatEntryExpectedBrokerAction
+        $brokerCommands = @(($brokerAction.execute + ' ' + $brokerAction.arguments), ('"' + $brokerAction.execute + '" ' + $brokerAction.arguments))
+        $roots = @($records | Where-Object {
+            $_.path -ieq $brokerPythonw -and $_.sid -ceq $requesterSid -and
+            $null -ne $_.created -and $brokerCommands -ccontains $_.command
+        })
+        $allowed = @{}
+        if ($authenticatedBrokerRunning -and $roots.Count -eq 1) {
+            $root = $roots[0]
+            # Revalidate (PID, creation time), not just a potentially reused PID.
+            $liveRoot = @(Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = ' + $root.pid) -ErrorAction Stop)
+            if ($liveRoot.Count -eq 1 -and $null -ne $liveRoot[0].CreationDate -and
+                [datetime]$liveRoot[0].CreationDate -eq $root.created -and
+                [string]$liveRoot[0].ExecutablePath -ieq $root.path -and
+                [string]$liveRoot[0].CommandLine -ceq $root.command) {
+                $children = @($records | Where-Object {
+                    $_.parent_pid -eq $root.pid -and $_.path -ieq $basePythonw -and
+                    $_.sid -ceq $requesterSid -and $_.command -ceq $root.command -and
+                    $null -ne $_.created -and $_.created -ge $root.created
+                })
+                if ($children.Count -eq 1) {
+                    $allowed[$root.pid] = $root.created
+                    $allowed[$children[0].pid] = $children[0].created
+                }
+            }
+        }
+        $affectedRoot = [IO.Path]::GetFullPath($script:CatalogChatEntryAuroraRoot).TrimEnd('\')
+        $affectedPrefix = $affectedRoot + '\'
+        $rootReference = '(?:^|[\s"''=])' + [regex]::Escape($affectedRoot) + '(?:\\|[\s"'']|$)'
+        $appReference = '(?:^|[\s"''\\])catalog-requester-(?:broker|client)\.pyz(?:[\s"'']|$)'
+        $processes = @($records | ForEach-Object {
+            if ($allowed.ContainsKey($_.pid) -and $allowed[$_.pid] -eq $_.created) { return }
+            $unknown = [string]::IsNullOrWhiteSpace($_.path) -or [string]::IsNullOrWhiteSpace($_.command) -or
+                [string]::IsNullOrWhiteSpace($_.sid) -or $null -eq $_.created
+            $related = $_.sid -in @($requesterSid, $agentSid) -or
+                $_.path -ieq $affectedRoot -or $_.path.StartsWith($affectedPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+                $_.command.Replace('/', '\') -imatch $rootReference -or $_.command.Replace('/', '\') -imatch $appReference
+            if (-not $unknown -and -not $related) { return }
+            [pscustomobject]@{
+                kind = $(if ($unknown) { 'unknown_process' } else { 'process' })
+                process_id = $_.pid; executable_path = $_.path
             }
         })
         return @($runningTasks + $processes)
