@@ -17,6 +17,71 @@ from aurora.infra.sp500_megarun.catalog_optimization_contract import RunOptimiza
 from scripts.verify_sp500_component_store import seal_component_bundle
 
 
+@pytest.mark.parametrize("case", ["shared", "single", "missing", "duplicate", "expired", "empty", "invalid"])
+def test_component_download_selects_exact_ids_from_shared_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    import yaml
+
+    workflow = yaml.safe_load(Path(".github/workflows/catalog-optimized-run.yml").read_text())
+    steps = workflow["jobs"]["verify_component_store"]["steps"]
+    selector = next((step for step in steps if step.get("id") == "component_transports"), None)
+    assert selector is not None, "Shared-run download must select the sealed plan's exact artifacts"
+    download = next(step for step in steps if step["name"] == "Download every current-run exact component transport")
+    assert download["with"]["artifact-ids"] == "${{ steps.component_transports.outputs.artifact_ids }}"
+    assert "pattern" not in download["with"]
+    plan = tmp_path / "sealed-plan"
+    plan.mkdir()
+    names = ["catalog-component-transport-canary-cached-000", "catalog-component-transport-canary-new-001"]
+    rows = [{"id": 11, "name": names[0], "expired": False},
+            {"id": 22, "name": names[1], "expired": False},
+            {"id": 33, "name": "catalog-component-transport-sp500-cached-000", "expired": False}]
+    if case == "single":
+        names = names[:1]
+    elif case == "missing":
+        rows.pop(1)
+    elif case == "duplicate":
+        rows.append({"id": 44, "name": names[0], "expired": False})
+    elif case == "expired":
+        rows[0]["expired"] = True
+    elif case == "empty":
+        names = []
+    elif case == "invalid":
+        names = ["../foreign"]
+    (plan / "component_store_input_manifest.json").write_text(json.dumps({
+        "bundles": [{"component_transport_artifact": name} for name in names],
+    }))
+    output = tmp_path / "output"
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv("GITHUB_RUN_ID", "123")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "test/aurora")
+
+    def inventory(command, **kwargs):
+        assert command == ["gh", "api", "repos/test/aurora/actions/runs/123/artifacts?per_page=100", "--paginate", "--slurp"]
+        return json.dumps([{"artifacts": rows[:1]}, {"artifacts": rows[1:]}])
+
+    monkeypatch.setattr(subprocess, "check_output", inventory)
+    code = textwrap.dedent(selector["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0])
+    if case in {"shared", "single"}:
+        exec(compile(code, "actual-component-selector", "exec"), {})
+        outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        assert outputs["artifact_ids"] == ("11" if case == "single" else "11,22")
+        path = download["with"]["path"].replace("${{ runner.temp }}", str(tmp_path))
+        for key, value in outputs.items():
+            path = path.replace("${{ steps.component_transports.outputs." + key + " }}", value)
+        ids = set(map(int, outputs["artifact_ids"].split(",")))
+        selected = [row for row in rows if row["id"] in ids]
+        # Pinned action extracts a singleton directly at path; multiple IDs
+        # retain artifact-name directories when merge-multiple is false.
+        observed = [Path(path) if len(selected) == 1 else Path(path) / str(row["name"]) for row in selected]
+        assert observed == [tmp_path / "component-transports" / name for name in names]
+    else:
+        with pytest.raises(SystemExit, match="COMPONENT_TRANSPORT_"):
+            exec(compile(code, "actual-component-selector", "exec"), {})
+        assert not output.exists()
+
+
 @pytest.fixture
 def sealed_bundle(tmp_path: Path):
     policy = json.loads(Path("config/sp500_catalog_optimization_policy_v1.json").read_text())
