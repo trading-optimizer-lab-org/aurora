@@ -1454,13 +1454,30 @@ jobs:
               if wrapper["component_store_manifest_sha256"] != store.manifest.manifest_sha256:
                   raise SystemExit("COMPONENT_BUNDLE_MANIFEST_INVALID")
               expected_bundle = expected_bundles[artifact_name]
+              selected_ids = set(expected_bundle["component_ids"])
+              bundle_ids = [row["component_id"] for row in wrapper["components"]]
+              expected_manifest = expected_bundle["expected_store_manifest_sha256"]
               if (
                   wrapper["bundle_identity_sha256"]
                   != expected_bundle["bundle_identity_sha256"]
-                  or sorted(row["component_id"] for row in wrapper["components"])
-                  != expected_bundle["component_ids"]
+                  or len(bundle_ids) != len(set(bundle_ids))
+                  or expected_bundle["component_ids"] != sorted(selected_ids)
+                  or not selected_ids.issubset(bundle_ids)
+                  or (expected_manifest is None and selected_ids != set(bundle_ids))
+                  or (expected_manifest is not None
+                      and expected_manifest != wrapper["manifest_sha256"])
               ):
                   raise SystemExit("COMPONENT_BUNDLE_IDENTITY_INVALID")
+              source_ids = [row["source_configuration_sha256"] for row in wrapper["components"]]
+              if (
+                  wrapper.get("schema_version") != "1"
+                  or wrapper.get("validation_opened") is not False
+                  or wrapper.get("locked_opened") is not False
+                  or wrapper.get("component_count") != store.manifest.component_count
+                  or len(source_ids) != len(set(source_ids))
+                  or set(source_ids) != {row.component_id for row in store.manifest.entries}
+              ):
+                  raise SystemExit("COMPONENT_BUNDLE_STORE_COVERAGE_INVALID")
               for entry in wrapper["components"]:
                   component_id = entry["component_id"]
                   source_id = entry["source_configuration_sha256"]
@@ -1473,6 +1490,8 @@ jobs:
                   result_hash = store_entry.result_sha256
                   if result_hash != entry["result_sha256"]:
                       raise SystemExit("COMPONENT_BUNDLE_RESULT_INVALID")
+                  if component_id not in selected_ids:
+                      continue
                   previous = observed.get(component_id)
                   if previous is not None:
                       raise SystemExit("COMPONENT_STORE_IDENTITY_CONFLICT")

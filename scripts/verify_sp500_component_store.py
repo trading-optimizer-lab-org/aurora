@@ -91,10 +91,18 @@ def seal_component_bundle(
 ) -> dict[str, object]:
     """Bind rich component identities to the exact stored signal rows."""
 
+    store_document = json.loads((root / "manifest.json").read_text("utf-8"))
+    stored_count = store_document.get("component_count", expected_component_count)
+    reuse_subset = (
+        expected_bundle_manifest_sha256 is not None
+        and isinstance(stored_count, int)
+        and not isinstance(stored_count, bool)
+        and stored_count > expected_component_count
+    )
     verified = verify_component_store(
         root,
         resolved_contract=resolved_contract,
-        expected_component_count=expected_component_count,
+        expected_component_count=stored_count if reuse_subset else expected_component_count,
     )
     try:
         assignment = json.loads(assignment_file.read_text("utf-8"))
@@ -146,6 +154,52 @@ def seal_component_bundle(
         for item in store_manifest.get("entries", ())
         if isinstance(item, dict)
     }
+    if reuse_subset:
+        # The pinned source bundle remains immutable. Assignment coverage is a
+        # subset, but the source manifest and every stored result stay exact.
+        target = root / "component_bundle_manifest.json"
+        wrapper = json.loads(target.read_text("utf-8"))
+        required_wrapper = {
+            "schema_version", "bundle_identity_sha256", "component_store_manifest_sha256",
+            "component_count", "components", "validation_opened", "locked_opened",
+            "manifest_sha256",
+        }
+        if not isinstance(wrapper, dict) or set(wrapper) != required_wrapper:
+            raise ValueError("COMPONENT_BUNDLE_MANIFEST_INVALID")
+        wrapper_identity = {key: value for key, value in wrapper.items() if key != "manifest_sha256"}
+        if (
+            wrapper["schema_version"] != "1"
+            or wrapper["bundle_identity_sha256"] != bundle_identity_sha256
+            or wrapper["component_store_manifest_sha256"] != verified["manifest_sha256"]
+            or wrapper["component_count"] != stored_count
+            or wrapper["validation_opened"] is not False
+            or wrapper["locked_opened"] is not False
+            or canonical_sha256(wrapper_identity) != expected_bundle_manifest_sha256
+            or wrapper["manifest_sha256"] != expected_bundle_manifest_sha256
+        ):
+            raise ValueError("COMPONENT_BUNDLE_MANIFEST_IDENTITY_INVALID")
+        rows = wrapper["components"]
+        if not isinstance(rows, list) or len(rows) != stored_count:
+            raise ValueError("COMPONENT_BUNDLE_STORE_COVERAGE_INVALID")
+        original_sources: dict[str, str] = {}
+        original_results: dict[str, str] = {}
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != {
+                "component_id", "source_configuration_sha256", "result_sha256",
+            } or any(not isinstance(value, str) for value in row.values()):
+                raise ValueError("COMPONENT_BUNDLE_MANIFEST_INVALID")
+            component_id = row["component_id"]
+            source_id = row["source_configuration_sha256"]
+            if component_id in original_sources or source_id in original_results:
+                raise ValueError("COMPONENT_BUNDLE_STORE_COVERAGE_INVALID")
+            original_sources[component_id] = source_id
+            original_results[source_id] = row["result_sha256"]
+        if original_results != store_entries or len(store_entries) != stored_count:
+            raise ValueError("COMPONENT_BUNDLE_STORE_COVERAGE_INVALID")
+        if any(original_sources.get(component_id) != source_id
+               for component_id, source_id in source_by_component.items()):
+            raise ValueError("COMPONENT_BUNDLE_ASSIGNMENT_INVALID")
+        return {**wrapper, "content_sha256": hashlib.sha256(target.read_bytes()).hexdigest()}
     if set(store_entries) != set(source_ids):
         raise ValueError("COMPONENT_BUNDLE_STORE_COVERAGE_INVALID")
     components = [

@@ -138,12 +138,22 @@ def _signals_for_components(
 class _ExactComponentPayload:
     """Read several exact mmap bundles without copying them into one matrix."""
 
-    def __init__(self, stores: tuple[CatalogComponentStore, ...]) -> None:
+    def __init__(
+        self,
+        stores: tuple[CatalogComponentStore, ...],
+        required_source_ids: Sequence[str] | None = None,
+    ) -> None:
         if not stores:
             raise ValueError("COMPONENT_PAYLOAD_INCOMPLETE")
+        selected_ids = (
+            None
+            if required_source_ids is None
+            else frozenset(str(source_id) for source_id in required_source_ids)
+        )
         entries: dict[str, CatalogComponentStore] = {}
+        result_hashes: dict[str, str] = {}
         bundle_manifests: list[str] = []
-        for store in stores:
+        for store in sorted(stores, key=lambda item: item.root.as_posix()):
             wrapper_path = store.root / "component_bundle_manifest.json"
             try:
                 wrapper = json.loads(wrapper_path.read_text("utf-8"))
@@ -174,11 +184,25 @@ class _ExactComponentPayload:
             }
             if source_ids != manifest_ids:
                 raise ValueError("COMPONENT_BUNDLE_STORE_COVERAGE_INVALID")
-            for component_id in sorted(manifest_ids):
+            manifest_entries = {
+                entry.component_id: entry for entry in store.manifest.entries
+            }
+            indexed_ids = manifest_ids if selected_ids is None else (
+                manifest_ids & selected_ids
+            )
+            for component_id in sorted(indexed_ids):
+                result_sha256 = manifest_entries[component_id].result_sha256
                 if component_id in entries:
-                    raise ValueError("COMPONENT_PAYLOAD_DUPLICATE")
+                    if selected_ids is None:
+                        raise ValueError("COMPONENT_PAYLOAD_DUPLICATE")
+                    if result_hashes[component_id] != result_sha256:
+                        raise ValueError("COMPONENT_PAYLOAD_RESULT_CONFLICT")
+                    continue
                 entries[component_id] = store
+                result_hashes[component_id] = result_sha256
             bundle_manifests.append(str(wrapper["manifest_sha256"]))
+        if selected_ids is not None and not selected_ids.issubset(entries):
+            raise ValueError("COMPONENT_PAYLOAD_INCOMPLETE")
         self._entries = entries
         self.manifest = SimpleNamespace(
             manifest_sha256=canonical_sha256(
@@ -202,14 +226,22 @@ def _open_exact_component_payload(
     *,
     data_snapshot_sha256: str,
     evaluator_sha256: str,
+    required_source_ids: Sequence[str] | None = None,
 ) -> CatalogComponentStore | _ExactComponentPayload:
     payload_root = Path(root)
     if (payload_root / "manifest.json").is_file():
-        return CatalogComponentStore.open(
+        store = CatalogComponentStore.open(
             payload_root,
             expected_data_snapshot_sha256=data_snapshot_sha256,
             expected_evaluator_sha256=evaluator_sha256,
         )
+        if required_source_ids is not None:
+            available_ids = {
+                entry.component_id for entry in store.manifest.entries
+            }
+            if not set(map(str, required_source_ids)).issubset(available_ids):
+                raise ValueError("COMPONENT_PAYLOAD_INCOMPLETE")
+        return store
     store_roots = tuple(
         sorted(
             {
@@ -228,7 +260,7 @@ def _open_exact_component_payload(
         )
         for store_root in store_roots
     )
-    return _ExactComponentPayload(stores)
+    return _ExactComponentPayload(stores, required_source_ids)
 
 
 def _evaluate(
@@ -310,6 +342,7 @@ def _initialize_recipe_process(
     search_end: str,
     snapshot_manifest_sha256: str,
     spy_sha256: str,
+    required_source_ids: Sequence[str] | None = None,
 ) -> None:
     """Load immutable mmap and train-only ledger once per persistent process."""
 
@@ -318,6 +351,7 @@ def _initialize_recipe_process(
         Path(component_store),
         data_snapshot_sha256=data_snapshot_sha256,
         evaluator_sha256=evaluator_sha256,
+        required_source_ids=required_source_ids,
     )
     _PROCESS_LEDGER = load_train_total_return_ledger(
         Path(snapshot),
@@ -447,11 +481,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     receipt = verify_strategy_catalog_directory(args.catalog_dir)
     if receipt["validation_opened"] or receipt["locked_opened"]:
         raise SystemExit("RECIPE_CATALOG_BOUNDARY_OPEN")
-    store = _open_exact_component_payload(
-        args.component_store,
-        data_snapshot_sha256=resolved.science.data_snapshot_sha256,
-        evaluator_sha256=resolved.science.evaluator_sha256,
-    )
     runtime_input_pack = args.runtime_input_pack or args.component_store
     snapshot = runtime_input_pack / "train_snapshot_1993_2010"
     ledger = load_train_total_return_ledger(
@@ -566,6 +595,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         assigned = [by_strategy_id[strategy_id] for strategy_id in assigned_ids]
     except KeyError as exc:
         raise SystemExit("RECIPE_WORK_MANIFEST_STRATEGY_UNKNOWN") from exc
+    required_source_ids = tuple(
+        sorted(
+            {
+                str(component["configuration_sha256"])
+                for row in assigned
+                for component in row["components"]
+            }
+        )
+    )
+    store = _open_exact_component_payload(
+        args.component_store,
+        data_snapshot_sha256=resolved.science.data_snapshot_sha256,
+        evaluator_sha256=resolved.science.evaluator_sha256,
+        required_source_ids=required_source_ids,
+    )
     process_count = (
         args.processes_per_worker_override
         if args.processes_per_worker_override is not None
@@ -591,6 +635,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         campaign.search_end,
         campaign.train_snapshot_manifest_sha256,
         campaign.train_spy_sha256,
+        required_source_ids,
     )
     args.output_dir.mkdir(parents=True, exist_ok=False)
     recovery_root = args.output_dir / "recovery_microshards"
