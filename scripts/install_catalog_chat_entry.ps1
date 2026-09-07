@@ -182,22 +182,28 @@ if ($null -eq (Get-Command -Name Get-CatalogChatEntryAffectedWork -CommandType F
                 [datetime]$liveRoot[0].CreationDate -eq $root.created -and
                 [string]$liveRoot[0].ExecutablePath -ieq $root.path -and
                 [string]$liveRoot[0].CommandLine -ceq $root.command) {
-                $allowed[$root.pid] = $root.created
                 $children = @($records | Where-Object {
                     $_.parent_pid -eq $root.pid -and $_.path -ieq $basePythonw -and
                     $_.sid -ceq $requesterSid -and $_.command -ceq $root.command -and
                     $null -ne $_.created -and $_.created -ge $root.created
                 })
-                if ($children.Count -eq 1) { $allowed[$children[0].pid] = $children[0].created }
+                if ($children.Count -eq 1) {
+                    $allowed[$root.pid] = $root.created
+                    $allowed[$children[0].pid] = $children[0].created
+                }
             }
         }
+        $affectedRoot = [IO.Path]::GetFullPath($script:CatalogChatEntryAuroraRoot).TrimEnd('\')
+        $affectedPrefix = $affectedRoot + '\'
+        $rootReference = '(?:^|[\s"''=])' + [regex]::Escape($affectedRoot) + '(?:\\|[\s"'']|$)'
+        $appReference = '(?:^|[\s"''\\])catalog-requester-(?:broker|client)\.pyz(?:[\s"'']|$)'
         $processes = @($records | ForEach-Object {
             if ($allowed.ContainsKey($_.pid) -and $allowed[$_.pid] -eq $_.created) { return }
             $unknown = [string]::IsNullOrWhiteSpace($_.path) -or [string]::IsNullOrWhiteSpace($_.command) -or
                 [string]::IsNullOrWhiteSpace($_.sid) -or $null -eq $_.created
             $related = $_.sid -in @($requesterSid, $agentSid) -or
-                $_.path.IndexOf($script:CatalogChatEntryAuroraRoot, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                $_.command -imatch 'CatalogRequester|CatalogAgent|CatalogChatSender|catalog-requester-(broker|client)\.pyz'
+                $_.path -ieq $affectedRoot -or $_.path.StartsWith($affectedPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+                $_.command.Replace('/', '\') -imatch $rootReference -or $_.command.Replace('/', '\') -imatch $appReference
             if (-not $unknown -and -not $related) { return }
             [pscustomobject]@{
                 kind = $(if ($unknown) { 'unknown_process' } else { 'process' })

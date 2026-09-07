@@ -508,14 +508,17 @@ $accepted = Test-CatalogChatEntryTaskAction -Task $task -ExpectedAction $expecte
     assert _run_ps(tmp_path, script)["accepted"] is accepted
 
 
-@pytest.mark.parametrize("command, owner_status, affected", [
-    (r'"C:\Python314\python.exe" C:\tools\efficient_runner.py wait fixture', 0, False),
-    (r'"C:\Python314\python.exe" C:\ProgramData\AURORA\CatalogRequester\bin\catalog-requester-client.pyz', 0, True),
-    ("", 0, True),
-    (r'"C:\Python314\python.exe" C:\tools\worker.py', 2, True),
+@pytest.mark.parametrize("executable_path, command, owner_status, affected", [
+    (r"C:\Python314\python.exe", r'"C:\Python314\python.exe" C:\tools\efficient_runner.py wait fixture', 0, False),
+    (r"C:\Python314\python.exe", r'"C:\Python314\python.exe" C:\ProgramData\AURORA\CatalogRequester\bin\catalog-requester-client.pyz', 0, True),
+    (r"C:\Python314\python.exe", "", 0, True),
+    (r"C:\Python314\python.exe", r'"C:\Python314\python.exe" C:\tools\worker.py', 2, True),
+    (r"C:\ProgramData\AURORA_backup\python.exe", r'"C:\ProgramData\AURORA_backup\python.exe" C:\tools\worker.py', 0, False),
+    (r"C:\Python314\python.exe", r'"C:\Python314\python.exe" C:\tools\worker.py --label CatalogRequester', 0, False),
+    (r"C:\Python314\python.exe", r'"C:\Python314\python.exe" catalog-requester-client.pyz', 0, True),
 ])
 def test_affected_work_distinguishes_unrelated_python_from_unobservable_work(
-    tmp_path: Path, command: str, owner_status: int, affected: bool,
+    tmp_path: Path, executable_path: str, command: str, owner_status: int, affected: bool,
 ) -> None:
     script = r'''
 . 'INSTALLER'
@@ -529,7 +532,7 @@ function Get-CimInstance {
     param($ClassName, $Filter)
     [pscustomobject]@{
         ProcessId = 100; ParentProcessId = 50; Name = 'python.exe'
-        ExecutablePath = 'C:\Python314\python.exe'; CommandLine = 'COMMAND'
+        ExecutablePath = 'EXECUTABLE_PATH'; CommandLine = 'COMMAND'
         CreationDate = [datetime]'2026-09-07T14:00:00Z'
     }
 }
@@ -542,11 +545,13 @@ $work = @(Get-CatalogChatEntryAffectedWork -AllowAuthenticatedBroker)
 @{ affected = $work.Count -gt 0 } | ConvertTo-Json -Compress
 '''.replace("INSTALLER", str(INSTALLER).replace("'", "''"))
     script = script.replace("COMMAND", command.replace("'", "''")).replace("OWNER_STATUS", str(owner_status))
+    script = script.replace("EXECUTABLE_PATH", executable_path.replace("'", "''"))
     assert _run_ps(tmp_path, script)["affected"] is affected
 
 
 @pytest.mark.parametrize("scenario, affected", [
     ("native_child", False),
+    ("root_only", True),
     ("wrong_owner", True),
     ("changed_command", True),
     ("orphan", True),
@@ -604,6 +609,7 @@ switch ('SCENARIO') {
     'wrong_base_runtime' { $child.ExecutablePath = 'C:\Users\Public\pythonw.exe' }
 }
 $global:ProcessFixture = @($root, $child)
+if ('SCENARIO' -eq 'root_only') { $global:ProcessFixture = @($root) }
 function Get-CimInstance {
     param($ClassName, $Filter)
     if ($Filter -match '^ProcessId\s*=\s*(\d+)$') {
