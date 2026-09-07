@@ -39,6 +39,7 @@ def _candidate_fixture(
     *,
     chat_dirs_present: bool = True,
     config_present: bool = True,
+    maintenance_receipt_present: bool = False,
 ) -> tuple[Path, str, Path, Path]:
     candidate = tmp_path / "candidate"
     payload = candidate / "payload"
@@ -141,6 +142,11 @@ def _candidate_fixture(
         (live_requester / "config/chat-entry-v1.json").write_bytes(
             b'{"schema_version":"1","sender_sid":"S-1-5-21-1-2-3-1001"}\n'
         )
+    previous_receipt = b"pre-existing-maintenance-receipt\n"
+    if maintenance_receipt_present:
+        (live_requester / "receipts/requester-maintenance-v1.receipt.json").write_bytes(
+            previous_receipt
+        )
     (live_requester / "client-venv/Scripts/python.exe").write_bytes(b"client-runtime\n")
     (live_requester / "broker-venv/Scripts/python.exe").write_bytes(b"broker-runtime-console\n")
     (live_requester / "broker-venv/Scripts/pythonw.exe").write_bytes(b"broker-runtime\n")
@@ -157,6 +163,15 @@ def _candidate_fixture(
         "baseline_file_sha256": {
             "receipts/controller-bootstrap-v1.receipt.json": _sha256(ready),
             "config/production-enabled-v1.seal.json": _sha256(old_seal),
+            **(
+                {
+                    "receipts/requester-maintenance-v1.receipt.json": _sha256(
+                        previous_receipt
+                    )
+                }
+                if maintenance_receipt_present
+                else {}
+            ),
         },
         "files": [
             *[
@@ -189,6 +204,7 @@ def _transport_fixture(
     broker_start_failure: bool = False,
     chat_stop_failure: bool = False,
     bad_resource_acl: bool = False,
+    receipt_acl_failure: bool = False,
 ) -> str:
     return (r'''
 $ErrorActionPreference = 'Stop'
@@ -203,11 +219,14 @@ $global:BrokerStopFailure = BROKER_STOP_FAILURE
 $global:BrokerStartFailure = BROKER_START_FAILURE
 $global:ChatStopFailure = CHAT_STOP_FAILURE
 $global:BadResourceAcl = BAD_RESOURCE_ACL
+$global:ReceiptAclFailure = RECEIPT_ACL_FAILURE_PLACEHOLDER
 $global:TaskExists = $false
 $global:TaskState = 'Ready'
 $global:BrokerState = if ($global:BrokerRunning) { 'Running' } else { 'Ready' }
 $global:BrokerEnabled = $true
 $global:VerifierCalls = 0
+$global:MaintenanceReceiptAclProtected = $false
+$global:MaintenanceReceiptExistedBefore = [IO.File]::Exists((Join-Path $global:LiveRoot 'CatalogRequester/receipts/requester-maintenance-v1.receipt.json'))
 $global:Calls = [System.Collections.Generic.List[string]]::new()
 $global:FixedDirectories = @(
     'C:\', 'C:\ProgramData', 'C:\ProgramData\AURORA',
@@ -253,11 +272,29 @@ function Get-CatalogChatEntryPathObservation {
 }
 function Get-CatalogChatEntryAclObservation {
     param([Parameter(Mandatory = $true)][string]$Path)
+    $unauthorized = @()
     $rules = @(
         [pscustomobject]@{ identity = 'S-1-5-32-544'; rights = 'FullControl'; access_type = 'Allow'; is_inherited = $false; inheritance_flags = 'None'; propagation_flags = 'None' },
         [pscustomobject]@{ identity = 'S-1-5-18'; rights = 'FullControl'; access_type = 'Allow'; is_inherited = $false; inheritance_flags = 'None'; propagation_flags = 'None' }
     )
-    if ($Path -like '*CatalogChatSender') {
+    if ($Path -like '*requester-maintenance-v1.receipt.json') {
+        if ($global:MaintenanceReceiptExistedBefore) {
+            # A pre-existing receipt has a deliberately different, valid ACL.
+            $rules += [pscustomobject]@{ identity = 'S-1-5-21-1-2-3-1014'; rights = 'Modify'; access_type = 'Allow'; is_inherited = $false; inheritance_flags = 'None'; propagation_flags = 'None' }
+            $rules += [pscustomobject]@{ identity = 'S-1-5-21-1-2-3-1001'; rights = 'ReadAndExecute'; access_type = 'Allow'; is_inherited = $false; inheritance_flags = 'None'; propagation_flags = 'None' }
+        }
+        elseif ($global:MaintenanceReceiptAclProtected) {
+            $rules += [pscustomobject]@{ identity = 'S-1-5-21-1-2-3-1014'; rights = 'ReadAndExecute'; access_type = 'Allow'; is_inherited = $false; inheritance_flags = 'None'; propagation_flags = 'None' }
+            $rules += [pscustomobject]@{ identity = 'S-1-5-21-1-2-3-1015'; rights = 'ReadAndExecute'; access_type = 'Allow'; is_inherited = $false; inheritance_flags = 'None'; propagation_flags = 'None' }
+        }
+        else {
+            # This models the real boundary: a new file inherits requester write.
+            $rules += [pscustomobject]@{ identity = 'S-1-5-21-1-2-3-1014'; rights = 'ReadAndExecute'; access_type = 'Allow'; is_inherited = $true; inheritance_flags = 'ObjectInherit'; propagation_flags = 'None' }
+            $rules += [pscustomobject]@{ identity = 'S-1-5-21-1-2-3-1015'; rights = 'Modify'; access_type = 'Allow'; is_inherited = $true; inheritance_flags = 'ObjectInherit'; propagation_flags = 'None' }
+            $unauthorized = @('S-1-5-21-1-2-3-1015')
+        }
+    }
+    elseif ($Path -like '*CatalogChatSender') {
         $rules += [pscustomobject]@{ identity = 'S-1-5-21-1-2-3-1001'; rights = 'ReadAndExecute'; access_type = 'Allow'; is_inherited = $false; inheritance_flags = 'ContainerInherit, ObjectInherit'; propagation_flags = 'None' }
     }
     elseif ($Path -like '*chat-entry-v1.json') {
@@ -281,13 +318,17 @@ function Get-CatalogChatEntryAclObservation {
         observation_available = $true
         owner = 'S-1-5-32-544'
         sddl = 'O:BAG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)'
-        unauthorized_effective_writers = @()
+        unauthorized_effective_writers = $unauthorized
         effective_writers = @('S-1-5-18', 'S-1-5-32-544')
         access_rules = $rules
     }
 }
 function Set-CatalogChatEntryAcl {
     param([string]$Path, $AclObject)
+    if ($Path -like '*requester-maintenance-v1.receipt.json') {
+        if ($global:ReceiptAclFailure) { throw 'TEST_RECEIPT_ACL_FAILURE' }
+        $global:MaintenanceReceiptAclProtected = $true
+    }
     $global:Calls.Add("acl:$Path")
 }
 function Get-CatalogChatEntryAffectedWork { param([switch]$AllowAuthenticatedBroker) @() }
@@ -455,8 +496,9 @@ $result = Invoke-CatalogChatEntryInstallation -CandidateRoot $global:CandidateFi
         .replace("BROKER_RUNNING", "$true" if broker_running else "$false")
         .replace("BROKER_STOP_FAILURE", "$true" if broker_stop_failure else "$false")
         .replace("BROKER_START_FAILURE", "$true" if broker_start_failure else "$false")
-        .replace("CHAT_STOP_FAILURE", "$true" if chat_stop_failure else "$false")
-        .replace("BAD_RESOURCE_ACL", "$true" if bad_resource_acl else "$false"))
+    .replace("CHAT_STOP_FAILURE", "$true" if chat_stop_failure else "$false")
+    .replace("BAD_RESOURCE_ACL", "$true" if bad_resource_acl else "$false")
+    .replace("RECEIPT_ACL_FAILURE_PLACEHOLDER", "$true" if receipt_acl_failure else "$false"))
 
 
 def _run_ps(tmp_path: Path, script: str) -> dict:
@@ -768,6 +810,232 @@ def test_positive_controlled_install_uses_real_transaction_and_fixed_task_action
     assert (tmp_path / "AURORA-CatalogChatMaintenance" / "manifest.json").is_file()
 
 
+def test_new_maintenance_receipt_is_protected_before_postinstall_verification(
+    tmp_path: Path,
+) -> None:
+    candidate, candidate_hash, live, _ = _candidate_fixture(tmp_path)
+    outcome = _run_ps(
+        tmp_path,
+        _transport_fixture(
+            installer=INSTALLER,
+            candidate=candidate,
+            live=live,
+            task_mode="absent",
+        ).replace("EXPECTED_HASH", candidate_hash),
+    )
+    assert outcome["result"]["status"] == "INSTALLED_NOT_QUALIFIED"
+    receipt_acl_calls = [
+        call
+        for call in outcome["calls"]
+        if call.endswith("requester-maintenance-v1.receipt.json")
+    ]
+    assert len(receipt_acl_calls) == 1
+
+
+def test_new_receipt_security_has_fixed_narrow_native_acl(tmp_path: Path) -> None:
+    script = r'''
+function Get-LocalUser {
+    param([string]$Name)
+    $sid = @{
+        AURORAAgent = 'S-1-5-21-1-2-3-1014'
+        AURORARequester = 'S-1-5-21-1-2-3-1015'
+    }[$Name]
+    [pscustomobject]@{ SID = $sid }
+}
+. 'INSTALLER'
+try {
+    $security = New-CatalogChatEntryMaintenanceReceiptSecurity
+    $rules = @($security.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    [pscustomobject]@{
+        available = $true
+        protected = [bool]$security.AreAccessRulesProtected
+        owner = $security.GetOwner([Security.Principal.SecurityIdentifier]).Value
+        rules = @($rules | ForEach-Object {
+            [pscustomobject]@{
+                sid = $_.IdentityReference.Value
+                rights = [string]$_.FileSystemRights
+                inherited = [bool]$_.IsInherited
+            }
+        })
+    } | ConvertTo-Json -Depth 10 -Compress
+} catch {
+    @{ available = $false; reason = $_.Exception.Message } | ConvertTo-Json -Compress
+}
+'''.replace("INSTALLER", str(INSTALLER).replace("'", "''"))
+    outcome = _run_ps(tmp_path, script)
+    assert outcome["available"] is True, outcome
+    assert outcome["protected"] is True
+    assert outcome["owner"] == "S-1-5-32-544"
+    assert sorted(rule["sid"] for rule in outcome["rules"]) == sorted(
+        [
+            "S-1-5-18",
+            "S-1-5-32-544",
+            "S-1-5-21-1-2-3-1014",
+            "S-1-5-21-1-2-3-1015",
+        ]
+    )
+    assert all(rule["inherited"] is False for rule in outcome["rules"])
+    rights_by_sid = {rule["sid"]: rule["rights"] for rule in outcome["rules"]}
+    assert rights_by_sid["S-1-5-18"] == "FullControl"
+    assert rights_by_sid["S-1-5-32-544"] == "FullControl"
+    assert rights_by_sid["S-1-5-21-1-2-3-1014"].startswith("ReadAndExecute")
+    assert rights_by_sid["S-1-5-21-1-2-3-1015"].startswith("ReadAndExecute")
+
+
+def test_temp_receipt_reproduces_inherited_requester_write_boundary(tmp_path: Path) -> None:
+    script = r'''
+$ErrorActionPreference = 'Stop'
+$env:PSModulePath = Join-Path $PSHOME 'Modules'
+$root = 'TEMP_ROOT'
+$receipts = Join-Path $root 'receipts'
+New-Item -ItemType Directory -Path $receipts -Force | Out-Null
+$requesterSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-21-1-2-3-1015')
+$agentSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-21-1-2-3-1014')
+$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$security = New-Object System.Security.AccessControl.DirectorySecurity
+$security.SetAccessRuleProtection($true, $false)
+foreach ($entry in @(
+    [pscustomobject]@{ sid = $currentSid; rights = [Security.AccessControl.FileSystemRights]::FullControl },
+    [pscustomobject]@{ sid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18'); rights = [Security.AccessControl.FileSystemRights]::FullControl },
+    [pscustomobject]@{ sid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'); rights = [Security.AccessControl.FileSystemRights]::FullControl }
+)) {
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $entry.sid, $entry.rights,
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit,
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow))
+}
+$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+    $agentSid, [Security.AccessControl.FileSystemRights]::ReadAndExecute,
+    [Security.AccessControl.InheritanceFlags]::ObjectInherit,
+    [Security.AccessControl.PropagationFlags]::None,
+    [Security.AccessControl.AccessControlType]::Allow))
+$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+    $requesterSid, [Security.AccessControl.FileSystemRights]::Modify,
+    [Security.AccessControl.InheritanceFlags]::ObjectInherit,
+    [Security.AccessControl.PropagationFlags]::None,
+    [Security.AccessControl.AccessControlType]::Allow))
+Set-Acl -LiteralPath $receipts -AclObject $security
+$receipt = Join-Path $receipts 'requester-maintenance-v1.receipt.json'
+New-Item -ItemType File -Path $receipt | Out-Null
+$acl = Get-Acl -LiteralPath $receipt
+$requesterRules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object {
+    [string]$_.IdentityReference.Value -eq $requesterSid.Value
+})
+if ($requesterRules.Count -ne 1) { throw 'EXPECTED_ONE_INHERITED_REQUESTER_RULE' }
+$requesterRule = $requesterRules[0]
+[pscustomobject]@{
+    inherited = [bool]$requesterRule.IsInherited
+    requester_has_write = (([long]$requesterRule.FileSystemRights -band
+        [long][Security.AccessControl.FileSystemRights]::Write) -eq
+        [long][Security.AccessControl.FileSystemRights]::Write)
+} | ConvertTo-Json -Compress
+Remove-Item -LiteralPath $root -Recurse -Force
+'''.replace("TEMP_ROOT", str(tmp_path / "native-acl-boundary").replace("'", "''"))
+    outcome = _run_ps(tmp_path, script)
+    assert outcome == {"inherited": True, "requester_has_write": True}
+
+
+def test_existing_maintenance_receipt_acl_is_preserved(tmp_path: Path) -> None:
+    candidate, candidate_hash, live, requester = _candidate_fixture(
+        tmp_path, maintenance_receipt_present=True
+    )
+    before = (requester / "receipts/requester-maintenance-v1.receipt.json").read_bytes()
+    outcome = _run_ps(
+        tmp_path,
+        _transport_fixture(
+            installer=INSTALLER,
+            candidate=candidate,
+            live=live,
+            task_mode="absent",
+        ).replace("EXPECTED_HASH", candidate_hash),
+    )
+    assert outcome["result"]["status"] == "INSTALLED_NOT_QUALIFIED"
+    assert (requester / "receipts/requester-maintenance-v1.receipt.json").read_bytes() != before
+    assert not any(
+        call.endswith("requester-maintenance-v1.receipt.json") for call in outcome["calls"]
+    )
+
+
+def test_receipt_acl_failure_rolls_back_created_receipt_before_task_creation(
+    tmp_path: Path,
+) -> None:
+    candidate, candidate_hash, live, requester = _candidate_fixture(tmp_path)
+    outcome = _run_ps(
+        tmp_path,
+        _transport_fixture(
+            installer=INSTALLER,
+            candidate=candidate,
+            live=live,
+            task_mode="absent",
+            receipt_acl_failure=True,
+        ).replace("EXPECTED_HASH", candidate_hash),
+    )
+    result = outcome["result"]
+    assert result["status"] == "BLOCKED"
+    assert result["reason_code"] == "RECEIPT_ACL_FAILED"
+    assert result["cause"] == "TEST_RECEIPT_ACL_FAILURE"
+    assert "register" not in outcome["calls"]
+    assert "start" not in outcome["calls"]
+    assert not (requester / "receipts/requester-maintenance-v1.receipt.json").exists()
+    assert outcome["target_config"] == "old config\n"
+    assert result["rollback"]["status"] == "ROLLED_BACK"
+
+
+@pytest.mark.parametrize("case", ["nonowned", "changed"])
+def test_receipt_ownership_guard_rejects_nonowned_or_changed_file(
+    tmp_path: Path, case: str
+) -> None:
+    candidate, candidate_hash, live, _ = _candidate_fixture(tmp_path)
+    script = _transport_fixture(
+        installer=INSTALLER,
+        candidate=candidate,
+        live=live,
+        task_mode="absent",
+    ).replace("EXPECTED_HASH", candidate_hash)
+    injected = r'''
+$relative = 'CatalogRequester/receipts/requester-maintenance-v1.receipt.json'
+if ('CASE' -eq 'nonowned') {
+    $transaction = [pscustomobject]@{
+        status = 'APPLIED'
+        created_paths = @('CatalogRequester/receipts/other.receipt.json')
+        files = @([pscustomobject]@{
+            path = $relative; created = $false; new_sha256 = ('A' * 64); identity_after = 'not-used'
+        })
+    }
+} else {
+    $physical = Join-Path $global:LiveRoot $relative
+    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($physical)) | Out-Null
+    [IO.File]::WriteAllText($physical, 'before', [Text.UTF8Encoding]::new($false))
+    $logical = Join-Path 'C:\ProgramData\AURORA' $relative
+    $expectedHash = Get-CatalogChatEntryFileHash -LogicalPath $logical
+    $identity = Get-CatalogChatEntryFileIdentity -LogicalPath $logical
+    [IO.File]::WriteAllText($physical, 'changed', [Text.UTF8Encoding]::new($false))
+    $transaction = [pscustomobject]@{
+        status = 'APPLIED'
+        created_paths = @($relative)
+        files = @([pscustomobject]@{
+            path = $relative; created = $true; new_sha256 = $expectedHash
+            identity_after = ($identity -replace ':[^:]+$', '')
+        })
+    }
+}
+try {
+    Assert-CatalogChatEntryMaintenanceReceiptOwnership -Transaction $transaction -ExpectedHash $transaction.files[0].new_sha256
+    @{ rejected = $false } | ConvertTo-Json -Compress
+} catch {
+    @{ rejected = $true; reason = $_.Exception.Message } | ConvertTo-Json -Compress
+}
+exit
+'''.replace("CASE", case)
+    script = script.replace(
+        "$result = Invoke-CatalogChatEntryInstallation",
+        injected + "`n$result = Invoke-CatalogChatEntryInstallation",
+    )
+    outcome = _run_ps(tmp_path, script)
+    assert outcome["rejected"] is True, outcome
+
+
 def test_first_install_provisions_only_chat_config_and_missing_directories(tmp_path: Path) -> None:
     candidate, candidate_hash, live, live_requester = _candidate_fixture(
         tmp_path, chat_dirs_present=False, config_present=False
@@ -824,7 +1092,9 @@ def test_existing_valid_chat_resources_are_not_modified(tmp_path: Path) -> None:
     assert {
         name: (live_requester / name).stat().st_mtime_ns for name in directory_names
     } == directory_markers
-    assert not any(call.startswith("acl:") for call in outcome["calls"])
+    assert [call for call in outcome["calls"] if call.startswith("acl:")] == [
+        r"acl:C:\ProgramData\AURORA\CatalogRequester\receipts\requester-maintenance-v1.receipt.json"
+    ]
 
 
 def test_acl_failure_after_config_creation_cleans_owned_file(tmp_path: Path) -> None:
