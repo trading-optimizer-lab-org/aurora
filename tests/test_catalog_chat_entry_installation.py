@@ -471,6 +471,43 @@ def _run_ps(tmp_path: Path, script: str) -> dict:
     return json.loads(result.stdout)
 
 
+@pytest.mark.parametrize("kind, working_directory, accepted", [
+    ("broker", "", True),
+    ("broker", r"C:\ProgramData\AURORA\CatalogRequester", True),
+    ("broker", r"C:\Users\Public", False),
+    ("chat", "", False),
+    ("chat", r"C:\ProgramData\AURORA\CatalogRequester", True),
+])
+def test_native_task_action_preserves_original_broker_working_directory(
+    tmp_path: Path, kind: str, working_directory: str, accepted: bool,
+) -> None:
+    # Construct native task objects, without registering or starting a task.
+    script = r'''
+$env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
+. 'INSTALLER'
+function Get-LocalUser { param($Name) [pscustomobject]@{ SID = 'S-1-5-21-1-2-3-1015' } }
+$root = 'C:\ProgramData\AURORA\CatalogRequester'
+if ('KIND' -eq 'broker') {
+    $execute = $root + '\broker-venv\Scripts\pythonw.exe'
+    $arguments = '-I -s -E "' + $root + '\bin\catalog-requester-broker.pyz"'
+    $expected = Get-CatalogChatEntryExpectedBrokerAction
+} else {
+    $execute = $root + '\client-venv\Scripts\python.exe'
+    $arguments = '-I -s -E "' + $root + '\bin\catalog-requester-client.pyz" --serve-chat'
+    $expected = Get-CatalogChatEntryExpectedChatAction
+}
+$parameters = @{ Execute = $execute; Argument = $arguments }
+if ('WORKING_DIRECTORY' -ne '') { $parameters.WorkingDirectory = 'WORKING_DIRECTORY' }
+$action = New-ScheduledTaskAction @parameters
+$principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-21-1-2-3-1015' -LogonType Password -RunLevel Limited
+$task = New-ScheduledTask -Action $action -Principal $principal
+$accepted = Test-CatalogChatEntryTaskAction -Task $task -ExpectedAction $expected -IdentityName 'AURORARequester'
+@{ accepted = $accepted } | ConvertTo-Json -Compress
+'''.replace("INSTALLER", str(INSTALLER).replace("'", "''"))
+    script = script.replace("WORKING_DIRECTORY", working_directory).replace("KIND", kind)
+    assert _run_ps(tmp_path, script)["accepted"] is accepted
+
+
 def test_candidate_pin_mismatch_blocks_before_any_live_mutation(tmp_path: Path) -> None:
     candidate, _, live, _ = _candidate_fixture(tmp_path)
     outcome = _run_ps(
