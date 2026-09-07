@@ -997,6 +997,9 @@ def _task10_plan_fixture(
     qualify_layout: bool = True,
     preparation_only: bool = False,
     worker_count_override: int | None = None,
+    recipe_seconds: float = 100.0,
+    recipe_count: int = 24,
+    overhead_gate: str = "required",
 ):
     from aurora.infra.github_performance.merge_planner import (
         MergeResourceProjectionV1,
@@ -1014,7 +1017,11 @@ def _task10_plan_fixture(
         build_global_reuse_execution_plan,
     )
 
-    contract = RunOptimizationContractV1.model_validate(_task10_contract_payload())
+    contract_payload = _task10_contract_payload()
+    recovery_payload = contract_payload["recovery_execution"]
+    assert isinstance(recovery_payload, dict)
+    recovery_payload["checkpoint_overhead_gate"] = overhead_gate
+    contract = RunOptimizationContractV1.model_validate(contract_payload)
     requirements = []
     for ordinal in range(12):
         identity = CatalogComponentIdentityV1(
@@ -1044,9 +1051,9 @@ def _task10_plan_fixture(
                     )
                 )
             ),
-            estimated_seconds_p99=840.0,
+            estimated_seconds_p99=recipe_seconds,
         )
-        for ordinal in range(24)
+        for ordinal in range(recipe_count)
     )
     candidates = []
     grouped_ordinals = {item for group in warm_bundle_groups for item in group}
@@ -1308,8 +1315,10 @@ def test_catalog_reduction_selects_central_only_with_complete_margin() -> None:
     assert central.reduction_selection.mode == "central"
 
 
+@pytest.mark.parametrize("overhead_gate", ["required", "report_only_r1"])
 def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
     tmp_path: Path,
+    overhead_gate: str,
 ) -> None:
     from aurora.infra.github_performance.contracts import canonical_sha256
     from aurora.infra.sp500_megarun.catalog_optimization_contract import (
@@ -1320,8 +1329,12 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
         write_sealed_global_reuse_execution_plan,
     )
 
-    plan = _task10_plan_fixture(warm_component_ordinals={0, 2, 4})
-    contract = RunOptimizationContractV1.model_validate(_task10_contract_payload())
+    plan = _task10_plan_fixture(warm_component_ordinals={0, 2, 4}, overhead_gate=overhead_gate)
+    contract_payload = _task10_contract_payload()
+    recovery_payload = contract_payload["recovery_execution"]
+    assert isinstance(recovery_payload, dict)
+    recovery_payload["checkpoint_overhead_gate"] = overhead_gate
+    contract = RunOptimizationContractV1.model_validate(contract_payload)
     bindings = {
         "request_sha256": "a" * 64,
         "execution_protocol_sha256": "b" * 64,
@@ -1381,6 +1394,17 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
     }
     first = tmp_path / "first"
     second = tmp_path / "second"
+    mismatched_contract = contract.model_copy(update={
+        "recovery_execution": contract.recovery_execution.model_copy(update={
+            "checkpoint_overhead_gate": "required" if overhead_gate != "required" else "report_only_r1",
+        }),
+    })
+    rejected = tmp_path / "mismatched-policy"
+    with pytest.raises(ValueError, match="CATALOG_CHECKPOINT_POLICY_MISMATCH"):
+        write_sealed_global_reuse_execution_plan(
+            output_dir=rejected, **{**common, "contract": mismatched_contract},
+        )
+    assert not rejected.exists()
     receipt = write_sealed_global_reuse_execution_plan(
         output_dir=first,
         **common,
@@ -1399,6 +1423,10 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
     }
     assert first_tree == second_tree
     policy = json.loads(first_tree["checkpoint_policy.json"])
+    assert policy["checkpoint_overhead_gate"] == overhead_gate
+    assert policy["timing_evidence_kind"] == "projection_not_benchmark"
+    assert policy["checkpoint_upload_seconds_estimate"] == 5.0
+    assert all(row["projected_checkpoint_overhead_fraction"] == 0.05 for row in policy["workers"])
     assert "recovery_blocks_v1" in policy
     from aurora.infra.sp500_megarun.catalog_recovery_blocks import resolve_recovery_block
 
@@ -1503,6 +1531,7 @@ def test_sealed_global_plan_is_complete_deterministic_and_byte_verified(
     central_plan = _task10_plan_fixture(
         warm_component_ordinals={0, 2, 4},
         central_reduction_safe=True,
+        overhead_gate=overhead_gate,
     )
     central_dir = tmp_path / "central"
     write_sealed_global_reuse_execution_plan(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from math import isclose, isfinite
 import re
 import zipfile
 from collections.abc import Mapping
@@ -202,6 +203,8 @@ class CatalogGlobalReuseExecutionPlanV1(FrozenModel):
     hierarchical_reduction_projection: MergeResourceProjectionV1
     reduction_selection: ReductionSelectionV1
     recipe_jobs_depend_on_component_store: Literal[True]
+    checkpoint_overhead_gate: Literal["required", "report_only_r1"] = "required"
+    checkpoint_upload_seconds_estimate: float = Field(default=0.0, ge=0)
     validation_opened: Literal[False] = False
     locked_opened: Literal[False] = False
     plan_sha256: Sha256
@@ -247,17 +250,39 @@ def select_checkpoint_slot_count(
     *,
     projected_worker_seconds_p99: float,
     upload_verify_seconds_p95: float,
+    overhead_gate: Literal["required", "report_only_r1"] = "required",
+    recipe_seconds: tuple[float, ...] | None = None,
 ) -> Literal[1, 2, 4, 8]:
-    """Use the fewest slots meeting both loss-window and overhead limits."""
+    """Keep the loss-window gate; R1 may explicitly defer the performance gate."""
 
     total = float(projected_worker_seconds_p99)
     upload = float(upload_verify_seconds_p95)
-    if total <= 0 or upload < 0:
+    if not isfinite(total) or not isfinite(upload) or total <= 0 or upload < 0:
+        raise ValueError("CHECKPOINT_PROJECTION_INVALID")
+    if overhead_gate not in ("required", "report_only_r1"):
+        raise ValueError("CHECKPOINT_OVERHEAD_GATE_INVALID")
+    if recipe_seconds is not None and (
+        not recipe_seconds
+        or any(not isfinite(value) or value <= 0 for value in recipe_seconds)
+        or not isclose(sum(recipe_seconds), total, rel_tol=1e-9, abs_tol=1e-9)
+    ):
         raise ValueError("CHECKPOINT_PROJECTION_INVALID")
     for slots in (1, 2, 4, 8):
-        unpersisted = total / slots
+        if recipe_seconds is None:
+            unpersisted = total / slots
+        else:
+            count = len(recipe_seconds)
+            if slots > count:
+                continue
+            # Match the worker's exact, contiguous strategy-ID partition.
+            unpersisted = max(
+                sum(recipe_seconds[count * index // slots:count * (index + 1) // slots])
+                for index in range(slots)
+            )
         overhead_fraction = (upload * slots) / total
-        if unpersisted <= 600.0 and overhead_fraction <= 0.05:
+        if unpersisted <= 600.0 and (
+            overhead_gate == "report_only_r1" or overhead_fraction <= 0.05
+        ):
             return slots
     raise ValueError("CHECKPOINT_OVERHEAD_OR_DURABILITY_UNQUALIFIED")
 
@@ -906,10 +931,12 @@ def build_global_reuse_execution_plan(
         slots = select_checkpoint_slot_count(
             projected_worker_seconds_p99=recipe_loads[worker_id],
             upload_verify_seconds_p95=checkpoint_upload_seconds_p95,
+            overhead_gate=contract.recovery_execution.checkpoint_overhead_gate,
+            recipe_seconds=tuple(
+                recipe.estimated_seconds_p99
+                for recipe in sorted(recipe_bins[worker_id], key=lambda item: item.strategy_id)
+            ),
         )
-        # Checkpoints partition indivisible recipes; an empty segment cannot run.
-        slots = max(value for value in (1, 2, 4, 8)
-                    if value <= slots and value <= len(strategy_ids))
         assignment_artifact = _payload_bundle_artifact(
             family="recipe-assignments",
             execution_plan_sha256=execution_plan_sha256,
@@ -1131,6 +1158,8 @@ def build_global_reuse_execution_plan(
         ),
         "reduction_selection": reduction_selection,
         "recipe_jobs_depend_on_component_store": True,
+        "checkpoint_overhead_gate": contract.recovery_execution.checkpoint_overhead_gate,
+        "checkpoint_upload_seconds_estimate": checkpoint_upload_seconds_p95,
         "validation_opened": False,
         "locked_opened": False,
     }
@@ -1352,6 +1381,8 @@ def write_sealed_global_reuse_execution_plan(
     plan_identity = plan.model_dump(mode="python", exclude={"plan_sha256"})
     if canonical_sha256(plan_identity) != plan.plan_sha256:
         raise ValueError("CATALOG_GLOBAL_REUSE_PLAN_HASH_INVALID")
+    if plan.checkpoint_overhead_gate != contract.recovery_execution.checkpoint_overhead_gate:
+        raise ValueError("CATALOG_CHECKPOINT_POLICY_MISMATCH")
     if contract.science.validation_opened or contract.science.locked_opened:
         raise ValueError("CATALOG_SEALED_PLAN_BOUNDARY_OPEN")
     source_identity = {
@@ -1622,6 +1653,9 @@ def write_sealed_global_reuse_execution_plan(
         plan,
         "checkpoint_policy",
         {
+            "checkpoint_overhead_gate": plan.checkpoint_overhead_gate,
+            "timing_evidence_kind": "projection_not_benchmark",
+            "checkpoint_upload_seconds_estimate": plan.checkpoint_upload_seconds_estimate,
             "recovery_blocks_v1": build_recovery_blocks(
                 science_sha256=plan.science_sha256,
                 runtime_identity_sha256=plan.runtime.identity_sha256,
@@ -1637,6 +1671,10 @@ def write_sealed_global_reuse_execution_plan(
             "workers": tuple(
                 {
                     "worker_id": item.worker_id,
+                    "projected_checkpoint_overhead_fraction": (
+                        plan.checkpoint_upload_seconds_estimate
+                        * item.checkpoint_slot_count / item.projected_seconds_p99
+                    ),
                     "checkpoint_slot_count": item.checkpoint_slot_count,
                     "checkpoint_slot_artifacts": item.checkpoint_slot_artifacts,
                     "checkpoint_slot_manifest_sha256": (
