@@ -23,6 +23,7 @@ $script:CatalogChatEntryExpectedConfirmation = 'AURORA_CATALOG_CHAT_ENTRY_V1'
 $script:CatalogChatEntryHistoricalReady = 'receipts/controller-bootstrap-v1.receipt.json'
 $script:CatalogChatEntryProductionSeal = 'config/production-enabled-v1.seal.json'
 $script:CatalogChatEntryMaintenanceReceipt = 'receipts/requester-maintenance-v1.receipt.json'
+$script:CatalogChatEntryMaintenanceReceiptRelativePath = 'CatalogRequester/' + $script:CatalogChatEntryMaintenanceReceipt
 $script:CatalogChatEntryPublicKey = 'config/catalog_requester_public_key_v1.pem'
 $script:CatalogChatEntryMaxJsonBytes = 1048576
 $script:CatalogChatEntryMaxFileBytes = 67108864
@@ -523,6 +524,162 @@ function Set-CatalogChatEntryResourceAcl {
         $security.AddAccessRule($rule)
     }
     Set-CatalogChatEntryAcl -Path $LogicalPath -AclObject $security
+}
+
+function New-CatalogChatEntryMaintenanceReceiptSecurity {
+    $security = New-Object System.Security.AccessControl.FileSecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $security.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
+
+    $agent = Get-LocalUser -Name $script:CatalogChatEntryAgentIdentity -ErrorAction Stop
+    $requester = Get-LocalUser -Name $script:CatalogChatEntryRequesterIdentity -ErrorAction Stop
+    $agentSid = [string](Get-CatalogChatEntryProperty $agent 'SID')
+    $requesterSid = [string](Get-CatalogChatEntryProperty $requester 'SID')
+    if ($agentSid -notmatch '^S-1-' -or $requesterSid -notmatch '^S-1-') {
+        throw 'RECEIPT_ACL_IDENTITY_UNAVAILABLE'
+    }
+
+    foreach ($entry in @(
+        [pscustomobject]@{ sid = 'S-1-5-18'; rights = [Security.AccessControl.FileSystemRights]::FullControl },
+        [pscustomobject]@{ sid = 'S-1-5-32-544'; rights = [Security.AccessControl.FileSystemRights]::FullControl },
+        [pscustomobject]@{ sid = $agentSid; rights = [Security.AccessControl.FileSystemRights]::ReadAndExecute },
+        [pscustomobject]@{ sid = $requesterSid; rights = [Security.AccessControl.FileSystemRights]::ReadAndExecute }
+    )) {
+        $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+            [Security.Principal.SecurityIdentifier]::new([string]$entry.sid),
+            [Security.AccessControl.FileSystemRights]$entry.rights,
+            [Security.AccessControl.InheritanceFlags]::None,
+            [Security.AccessControl.PropagationFlags]::None,
+            [Security.AccessControl.AccessControlType]::Allow
+        ))
+    }
+    return $security
+}
+
+function Assert-CatalogChatEntryMaintenanceReceiptAcl {
+    param([Parameter(Mandatory = $true)][string]$LogicalPath)
+    $acl = Get-CatalogChatEntryAclContractObservation -Path $LogicalPath
+    if ((ConvertTo-CatalogChatEntrySid -Identity ([string]$acl.owner)) -cne 'S-1-5-32-544' -or
+        @($acl.unauthorized_effective_writers).Count -ne 0) {
+        throw 'RECEIPT_ACL_INVALID'
+    }
+
+    $agent = Get-LocalUser -Name $script:CatalogChatEntryAgentIdentity -ErrorAction Stop
+    $requester = Get-LocalUser -Name $script:CatalogChatEntryRequesterIdentity -ErrorAction Stop
+    $agentSid = [string](Get-CatalogChatEntryProperty $agent 'SID')
+    $requesterSid = [string](Get-CatalogChatEntryProperty $requester 'SID')
+    if ($agentSid -notmatch '^S-1-' -or $requesterSid -notmatch '^S-1-') {
+        throw 'RECEIPT_ACL_IDENTITY_UNAVAILABLE'
+    }
+
+    $sync = [long][Security.AccessControl.FileSystemRights]::Synchronize
+    $full = [long][Security.AccessControl.FileSystemRights]::FullControl
+    $read = [long][Security.AccessControl.FileSystemRights]::ReadAndExecute
+    $expected = @(
+        [pscustomobject]@{ sid = 'S-1-5-18'; mask = $full },
+        [pscustomobject]@{ sid = 'S-1-5-32-544'; mask = $full },
+        [pscustomobject]@{ sid = $agentSid; mask = $read },
+        [pscustomobject]@{ sid = $requesterSid; mask = $read }
+    )
+    $expectedBySid = @{}
+    foreach ($item in @($expected)) { $expectedBySid[[string]$item.sid] = [long]$item.mask }
+    $observedBySid = @{}
+    $rules = @($acl.access_rules)
+    if ($rules.Count -ne $expectedBySid.Count) { throw 'RECEIPT_ACL_RULES_INVALID' }
+    foreach ($rule in $rules) {
+        if ([string](Get-CatalogChatEntryProperty $rule 'access_type') -cne 'Allow' -or
+            [bool](Get-CatalogChatEntryProperty $rule 'is_inherited') -or
+            [string](Get-CatalogChatEntryProperty $rule 'inheritance_flags') -cne 'None' -or
+            [string](Get-CatalogChatEntryProperty $rule 'propagation_flags') -cne 'None') {
+            throw 'RECEIPT_ACL_RULES_INVALID'
+        }
+        $sid = ConvertTo-CatalogChatEntrySid -Identity ([string](Get-CatalogChatEntryProperty $rule 'identity'))
+        if (-not $expectedBySid.ContainsKey($sid) -or $observedBySid.ContainsKey($sid)) {
+            throw 'RECEIPT_ACL_PRINCIPAL_INVALID'
+        }
+        try { $mask = [long][Security.AccessControl.FileSystemRights]([string](Get-CatalogChatEntryProperty $rule 'rights')) }
+        catch { throw 'RECEIPT_ACL_RIGHTS_INVALID' }
+        $required = [long]$expectedBySid[$sid]
+        $allowed = $required -bor $sync
+        if (($mask -band $required) -ne $required -or ($mask -bor $allowed) -ne $allowed) {
+            throw 'RECEIPT_ACL_MASK_INVALID'
+        }
+        $observedBySid[$sid] = $mask
+    }
+    foreach ($sid in @($expectedBySid.Keys)) {
+        if (-not $observedBySid.ContainsKey([string]$sid)) { throw 'RECEIPT_ACL_RULE_MISSING' }
+    }
+    return $acl
+}
+
+function Assert-CatalogChatEntryMaintenanceReceiptOwnership {
+    param(
+        [Parameter(Mandatory = $true)]$Transaction,
+        [Parameter(Mandatory = $true)][string]$ExpectedHash
+    )
+    if ($ExpectedHash -notmatch '^[0-9a-fA-F]{64}$') { throw 'RECEIPT_OWNERSHIP_INVALID' }
+    if ($null -eq $Transaction -or [string]$Transaction.status -cne 'APPLIED') {
+        throw 'RECEIPT_OWNERSHIP_INVALID'
+    }
+    $createdProperty = $Transaction.PSObject.Properties['created_paths']
+    $filesProperty = $Transaction.PSObject.Properties['files']
+    if ($null -eq $createdProperty -or $null -eq $filesProperty) { throw 'RECEIPT_OWNERSHIP_INVALID' }
+    $relativePath = $script:CatalogChatEntryMaintenanceReceiptRelativePath
+    $createdMatches = @($createdProperty.Value | Where-Object {
+        ([string]$_).Replace('\', '/') -ieq $relativePath
+    })
+    if ($createdMatches.Count -ne 1) { throw 'RECEIPT_OWNERSHIP_INVALID' }
+    $records = @($filesProperty.Value | Where-Object {
+        [string](Get-CatalogChatEntryProperty $_ 'path') -ieq $relativePath
+    })
+    if ($records.Count -ne 1 -or
+        -not [bool](Get-CatalogChatEntryProperty $records[0] 'created')) {
+        throw 'RECEIPT_OWNERSHIP_INVALID'
+    }
+    $record = $records[0]
+    $recordHash = [string](Get-CatalogChatEntryProperty $record 'new_sha256')
+    $identityAfter = [string](Get-CatalogChatEntryProperty $record 'identity_after')
+    if ($recordHash -cne $ExpectedHash -or $identityAfter -notmatch '^[^:]+:[^:]+$') {
+        throw 'RECEIPT_OWNERSHIP_INVALID'
+    }
+
+    $logicalPath = Join-Path $script:CatalogChatEntryAuroraRoot $relativePath.Replace('/', '\')
+    $observation = Get-CatalogChatEntryPathObservation -Path $logicalPath
+    if (-not $observation.observation_available -or -not $observation.exists -or
+        $observation.is_directory -or $observation.is_reparse) {
+        throw 'RECEIPT_OWNERSHIP_INVALID'
+    }
+    $actualHash = Get-CatalogChatEntryFileHash -LogicalPath $logicalPath
+    if ($actualHash -cne $ExpectedHash) { throw 'RECEIPT_OWNERSHIP_INVALID' }
+    $actualIdentity = Get-CatalogChatEntryFileIdentity -LogicalPath $logicalPath
+    if (($actualIdentity -replace ':[^:]+$', '') -cne $identityAfter -or
+        $actualIdentity -notmatch ':[^:]+:1$') {
+        throw 'RECEIPT_OWNERSHIP_INVALID'
+    }
+    $after = Get-CatalogChatEntryPathObservation -Path $logicalPath
+    if (-not $after.observation_available -or -not $after.exists -or
+        $after.is_directory -or $after.is_reparse) {
+        throw 'RECEIPT_OWNERSHIP_INVALID'
+    }
+    return [pscustomobject][ordered]@{
+        logical_path = $logicalPath
+        relative_path = $relativePath
+        sha256 = $actualHash
+        identity = $actualIdentity
+    }
+}
+
+function Set-CatalogChatEntryMaintenanceReceiptAcl {
+    param(
+        [Parameter(Mandatory = $true)]$Transaction,
+        [Parameter(Mandatory = $true)][string]$ExpectedHash
+    )
+    $ownership = Assert-CatalogChatEntryMaintenanceReceiptOwnership -Transaction $Transaction -ExpectedHash $ExpectedHash
+    $security = New-CatalogChatEntryMaintenanceReceiptSecurity
+    Set-CatalogChatEntryAcl -Path ([string]$ownership.logical_path) -AclObject $security
+    [void](Assert-CatalogChatEntryMaintenanceReceiptOwnership -Transaction $Transaction -ExpectedHash $ExpectedHash)
+    [void](Assert-CatalogChatEntryMaintenanceReceiptAcl -LogicalPath ([string]$ownership.logical_path))
+    return $true
 }
 
 function Get-CatalogChatEntryFileIdentity {
@@ -1433,6 +1590,17 @@ function Invoke-CatalogChatEntryInstallation {
         }
         $transactionApplied = $true
 
+        $phase = 'RECEIPT_ACL'
+        $receiptRecord = $candidate.records[$script:CatalogChatEntryMaintenanceReceiptRelativePath]
+        if ($null -eq $receiptRecord) { throw 'RECEIPT_CANDIDATE_RECORD_MISSING' }
+        $receiptTransactionRecords = @($transaction.files | Where-Object {
+            [string](Get-CatalogChatEntryProperty $_ 'path') -ieq $script:CatalogChatEntryMaintenanceReceiptRelativePath
+        })
+        if ($receiptTransactionRecords.Count -ne 1) { throw 'RECEIPT_TRANSACTION_RECORD_INVALID' }
+        if ([bool](Get-CatalogChatEntryProperty $receiptTransactionRecords[0] 'created')) {
+            [void](Set-CatalogChatEntryMaintenanceReceiptAcl -Transaction $transaction -ExpectedHash ([string]$receiptRecord.sha256))
+        }
+
         $phase = 'TASK_CREATE'
         if ($chatBefore.exists) {
             $task = $chatBefore.task
@@ -1486,6 +1654,7 @@ function Invoke-CatalogChatEntryInstallation {
             'POSTINSTALL_VERIFY' { 'POSTINSTALL_VERIFY_FAILED'; break }
             'TASK_CREATE' { 'TASK_CREATE_FAILED'; break }
             'TASK_START' { 'TASK_START_FAILED'; break }
+            'RECEIPT_ACL' { 'RECEIPT_ACL_FAILED'; break }
             'CONTENT_TRANSACTION' { 'CONTENT_TRANSACTION_FAILED'; break }
             'BROKER_PAUSE' { 'BROKER_STOP_FAILED'; break }
             'BROKER_RESUME' { 'BROKER_RESTORE_FAILED'; break }
