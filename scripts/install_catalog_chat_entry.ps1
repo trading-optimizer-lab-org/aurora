@@ -1454,7 +1454,7 @@ function New-CatalogChatEntryTask {
     $expected = Get-CatalogChatEntryExpectedChatAction
     $action = New-ScheduledTaskAction -Execute $expected.execute -Argument $expected.arguments -WorkingDirectory $expected.working_directory
     $principal = New-ScheduledTaskPrincipal -UserId $script:CatalogChatEntryAgentIdentity -LogonType Password -RunLevel Limited
-    $settings = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Days 3650)
+    $settings = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Days 3650) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     $trigger = New-ScheduledTaskTrigger -AtStartup
     $task = New-ScheduledTask -Action $action -Principal $principal -Settings $settings -Trigger $trigger
     $password = $null

@@ -444,7 +444,7 @@ function Get-ScheduledTask {
 }
 function New-ScheduledTaskAction { param($Execute, $Argument, $WorkingDirectory) [pscustomobject]@{ Execute = $Execute; Arguments = $Argument; WorkingDirectory = $WorkingDirectory } }
 function New-ScheduledTaskPrincipal { param($UserId, $LogonType, $RunLevel) [pscustomobject]@{ UserId = $UserId; LogonType = $LogonType; RunLevel = $RunLevel } }
-function New-ScheduledTaskSettingsSet { param([switch]$Hidden, $MultipleInstances, [switch]$StartWhenAvailable, $ExecutionTimeLimit) [pscustomobject]@{} }
+function New-ScheduledTaskSettingsSet { param([switch]$Hidden, $MultipleInstances, [switch]$StartWhenAvailable, $ExecutionTimeLimit, [switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries) [pscustomobject]@{} }
 function New-ScheduledTaskTrigger { param([switch]$AtStartup) [pscustomobject]@{} }
 function New-ScheduledTask { param($Action, $Principal, $Settings, $Trigger) [pscustomobject]@{ Actions = @($Action); Principal = $Principal; Settings = $Settings; Triggers = @($Trigger) } }
 function Register-ScheduledTask {
@@ -559,6 +559,35 @@ def _run_ps(tmp_path: Path, script: str) -> dict:
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
+
+
+def test_created_chat_task_keeps_running_when_ac_power_is_removed(tmp_path: Path) -> None:
+    # Native task settings, but never register or start an OS task.
+    script = r'''
+$env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
+$ErrorActionPreference = 'Stop'
+Import-Module ScheduledTasks -ErrorAction Stop
+. 'INSTALLER'
+$global:CapturedTask = $null
+function global:Register-ScheduledTask {
+    param($TaskName, $TaskPath, $InputObject, $User, $Password)
+    $global:CapturedTask = $InputObject
+}
+function Get-CatalogChatEntryTaskSnapshot {
+    param($Kind)
+    [pscustomobject]@{ exists = ($null -ne $global:CapturedTask); task = $global:CapturedTask }
+}
+$password = ConvertTo-SecureString 'local-test-only' -AsPlainText -Force
+$credential = [pscredential]::new('local-test-only', $password)
+$task = New-CatalogChatEntryTask -Credential $credential
+@{
+    disallow_start_on_batteries = $task.Settings.DisallowStartIfOnBatteries
+    stop_on_batteries = $task.Settings.StopIfGoingOnBatteries
+} | ConvertTo-Json -Compress
+'''.replace("INSTALLER", str(INSTALLER).replace("'", "''"))
+    result = _run_ps(tmp_path, script)
+    assert result["disallow_start_on_batteries"] is False
+    assert result["stop_on_batteries"] is False
 
 
 @pytest.mark.parametrize("kind, working_directory, accepted", [
