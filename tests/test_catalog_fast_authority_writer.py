@@ -49,3 +49,50 @@ def test_writer_commits_once_or_stops_without_resetting_state(fault):
         with pytest.raises(ValueError, match="CATALOG_FAST_AUTHORITY_"):
             write()
         assert len(writes) == (0 if fault == "stale_edit" else 1)
+
+
+@pytest.mark.parametrize("approved", [True, False])
+def test_lineage_writer_rechecks_approval_and_production_reader_reopens_bytes(approved):
+    from aurora.infra.sp500_megarun.catalog_fast_authority_github import (
+        load_current_fast_authority, write_current_fast_authority,
+    )
+    from tests.test_catalog_fast_authority import _lineage_boundary
+
+    current, request, approval = _lineage_boundary()
+    candidate = current.reserve(request=request, issue_number=280, run_id=123,
+                                lineage_transition=approval)
+    fixture = publication_transport(state=current)
+    issue = fixture.edit["data"]["repository"]["issue"]
+    writes = []
+
+    def write_body(body):
+        writes.append(body)
+        issue["body"] = body
+        issue["userContentEdits"]["nodes"][0]["id"] = "E_written"
+
+    def publish():
+        return write_current_fast_authority(
+            current=current, candidate=candidate, expected_edit_id="E_current",
+            anchor=fixture.anchor, run_id=123, run_attempt=1, job_id=789,
+            phase="gate", commit="a" * 40, read_edit=lambda: fixture.edit,
+            write_body=write_body, lineage_transition=approval if approved else None,
+        )
+
+    if not approved:
+        with pytest.raises(ValueError, match="LINEAGE_CHANGE_REQUIRES_MAINTENANCE"):
+            publish()
+        assert writes == []
+        return
+    publication = publish()
+    uploaded = publication_transport(
+        state=candidate, phase="gate", edit_id="E_written",
+        publication_bytes=publication.model_dump_json(),
+    )
+    assert writes == [uploaded.edit["data"]["repository"]["issue"]["body"]]
+    reopened = load_current_fast_authority(
+        client=uploaded.client, anchor=uploaded.anchor, protected_commit="a" * 40,
+        read_edit=lambda: uploaded.edit, download_archive=lambda _: uploaded.raw,
+    )
+    assert reopened == candidate
+    assert reopened.previous_state_sha256 == current.state_sha256
+    assert reopened.campaigns[0].generation == 7

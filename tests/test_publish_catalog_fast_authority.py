@@ -11,7 +11,7 @@ import pytest
 
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.github_performance.preflight import load_github_yaml
-from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityEditBindingV1, FastAuthorityStateV1
+from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityCampaignV1, FastAuthorityEditBindingV1, FastAuthorityStateV1
 from aurora.infra.sp500_megarun.catalog_fast_authority_github import load_current_fast_authority
 from aurora.infra.sp500_megarun.catalog_fast_path import CatalogFastLaunchDecisionV1, CatalogTerminalReceiptV1, CatalogTerminalReceiptV2, CatalogTerminalReceipt
 from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_request
@@ -22,7 +22,8 @@ from tests.test_catalog_fast_path import NOW
 
 @pytest.mark.parametrize(("phase", "fault", "version"), [(phase, fault, "1") for phase in ("gate", "finalize")
     for fault in (None, "write_rejected", "foreign_decision", "reusable")] + [("finalize", "foreign_receipt", "1")]
-    + [("finalize", fault, "2") for fault in (None, "write_rejected", "foreign_decision", "reusable", "foreign_receipt")])
+    + [("finalize", fault, "2") for fault in (None, "write_rejected", "foreign_decision", "reusable", "foreign_receipt")]
+    + [("gate", fault, "1") for fault in ("lineage_approved", "lineage_missing")])
 def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeypatch, fault, phase, version):
     from scripts import publish_catalog_fast_authority as command
 
@@ -37,6 +38,27 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
         "requester_public_key_path": "requester.pem", "request_actors": ["requester"]}))
     title, body = _signed_request(private)
     request = parse_catalog_run_request(title, body, public)
+    if fault in {"lineage_approved", "lineage_missing"}:
+        old_title, old_body = _signed_request(private, campaign_definition_sha256="f" * 64)
+        previous = parse_catalog_run_request(old_title, old_body, public)
+        title, body = _signed_request(private, request_id="018f47a2-6e91-7c34-8000-000000000002",
+            launch_generation=2, previous_terminal_request_sha256=previous.request_sha256)
+        request = parse_catalog_run_request(title, body, public)
+        current = FastAuthorityStateV1.bootstrap(campaigns=(FastAuthorityCampaignV1(
+            request=previous, owner_issue_number=279, owner_run_id=123,
+            legacy_closure_evidence_sha256="d" * 64,
+        ),))
+        fixture = publication_transport(state=current)
+        if fault == "lineage_approved":
+            (root / "config/catalog_lineage_transitions_v1.json").write_text(json.dumps({
+                "schema_version": "1", "transitions": [{
+                    "campaign_key": request.campaign_key,
+                    "previous_request_sha256": previous.request_sha256,
+                    "next_generation": 2,
+                    "target_definition_sha256": request.campaign_definition_sha256,
+                    "target_prompt_sha256": request.prompt_sha256,
+                }],
+            }))
     run_id = 234 if phase == "gate" else 123
     if phase == "finalize":
         current = FastAuthorityStateV1.bootstrap(campaigns=()).reserve(request=request, issue_number=280, run_id=123)
@@ -112,7 +134,7 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
     code = command.main(["--repo-root", str(root), "--phase", phase, "--request-context", str(context_path),
         "--decision", str(decision_path), "--output", str(output), "--github-output", str(github_output)] +
         (["--terminal-receipt", str(receipt_path)] if phase == "finalize" else []))
-    if fault in {None, "reusable"}:
+    if fault in {None, "reusable", "lineage_approved"}:
         assert code == 0
         assert github_output.read_text().strip() == f"authority_artifact_name=catalog-fast-authority-{run_id}-1-{phase}-790"
         publication = FastAuthorityEditBindingV1.model_validate_json(output.read_text())

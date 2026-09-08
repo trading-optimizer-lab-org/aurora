@@ -82,6 +82,8 @@ _APPLICATION_SOURCES = {
     ),
     "broker": (
         "infra/sp500_megarun/catalog_request_contract.py",
+        "infra/sp500_megarun/catalog_lineage_transition.py",
+        "infra/sp500_megarun/catalog_lineage_migration.py",
         "infra/sp500_megarun/catalog_campaign_registry.py",
         "infra/sp500_megarun/catalog_campaign_definition_contract.py",
         "infra/sp500_megarun/catalog_requester.py",
@@ -107,6 +109,7 @@ _APPLICATION_PUBLIC_INPUTS = (
     "config/catalog_requester_v1.json",
     "config/catalog_controller_actors_v1.json",
     "config/catalog_github_controls_v1.json",
+    "config/catalog_lineage_transitions_v1.json",
     "config/catalog_requester_public_key_v1.pem",
     "schemas/catalog_requester_app_manifest_v1.schema.json",
     "schemas/catalog_campaign_definition_manifest_v1.schema.json",

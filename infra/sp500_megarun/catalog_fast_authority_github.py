@@ -16,7 +16,7 @@ import zipfile
 from datetime import datetime
 from typing import Any, Callable, Mapping, Protocol
 
-from .catalog_fast_authority import FastAuthorityStateV1, FastAuthorityEditBindingV1, bind_authority_edit, verify_authority_edit
+from .catalog_fast_authority import CatalogLineageTransitionV1, FastAuthorityStateV1, FastAuthorityEditBindingV1, bind_authority_edit, verify_authority_edit
 
 
 _REPOSITORY = "trading-optimizer-lab-org/aurora"
@@ -210,6 +210,7 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
     expected_edit_id: str, anchor: Mapping[str, Any], run_id: int, run_attempt: int, job_id: int,
     phase: str, commit: str, read_edit: Callable[[], Mapping[str, Any]],
     write_body: Callable[[str], None],
+    lineage_transition: CatalogLineageTransitionV1 | None = None,
 ) -> FastAuthorityEditBindingV1:
     """Mutate under the workflow's shared writer lock, then bind the observed edit.
 
@@ -226,7 +227,8 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
         raise ValueError("CATALOG_FAST_AUTHORITY_TRANSITION_INVALID")
     row = changed[0]
     if phase == "gate":
-        expected = current.reserve(request=row.request, issue_number=row.owner_issue_number, run_id=run_id)
+        expected = current.reserve(request=row.request, issue_number=row.owner_issue_number, run_id=run_id,
+                                   lineage_transition=lineage_transition)
     else:
         if row.terminal_receipt_sha256 is None:
             raise ValueError("CATALOG_FAST_AUTHORITY_TERMINAL_REQUIRED")

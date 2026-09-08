@@ -1,0 +1,12 @@
+{
+  "schema_version": "1",
+  "transitions": [
+    {
+      "campaign_key": "sp500-optimized-catalog-v1",
+      "previous_request_sha256": "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
+      "next_generation": 7,
+      "target_definition_sha256": "eaac0a9e83365ba572848c7587427cf72bc9f4852c7eb46b5374c3d0fce561cb",
+      "target_prompt_sha256": "7eeb12311d4d109bb0da25c617ad1684568c47dd6ff0996f3c4f72cc2e633c49"
+    }
+  ]
+}

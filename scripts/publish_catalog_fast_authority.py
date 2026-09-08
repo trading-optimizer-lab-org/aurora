@@ -17,6 +17,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from aurora.infra.github_performance.contracts import canonical_sha256
+from aurora.infra.sp500_megarun.catalog_fast_authority import load_lineage_transition
 from aurora.infra.sp500_megarun.catalog_fast_authority_github import load_current_fast_authority, write_current_fast_authority
 from aurora.infra.sp500_megarun.catalog_fast_path import CatalogFastLaunchDecisionV1, parse_catalog_terminal_receipt
 from aurora.infra.sp500_megarun.catalog_github_snapshot import CatalogGitHubReadOnlyClient, CatalogGitHubSnapshotError
@@ -145,7 +146,9 @@ def main(argv: list[str] | None = None) -> int:
             read_edit=read, download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
             approve_historical_commit=lambda candidate: _historical_owner_commit_approved(client, candidate, commit))
         expected_edit_id = latest["data"]["repository"]["issue"]["userContentEdits"]["nodes"][0]["id"]
-        candidate = (current.reserve(request=request, issue_number=number, run_id=run_id) if receipt is None
+        transition = load_lineage_transition(root, request) if receipt is None else None
+        candidate = (current.reserve(request=request, issue_number=number, run_id=run_id,
+                                    lineage_transition=transition) if receipt is None
             else current.terminalize(request=request, run_id=run_id, terminal_receipt_sha256=receipt.receipt_sha256))
         job_id = _publisher_job(client, run_id, attempt, commit, args.phase, number)
 
@@ -157,7 +160,8 @@ def main(argv: list[str] | None = None) -> int:
 
         publication = write_current_fast_authority(current=current, candidate=candidate,
             expected_edit_id=expected_edit_id, anchor=anchor, run_id=run_id, run_attempt=attempt,
-            job_id=job_id, phase=args.phase, commit=commit, read_edit=read, write_body=write)
+            job_id=job_id, phase=args.phase, commit=commit, read_edit=read, write_body=write,
+            lineage_transition=transition)
         with args.output.open("x", encoding="utf-8") as stream:
             stream.write(publication.model_dump_json() + "\n")
         if args.github_output is not None:

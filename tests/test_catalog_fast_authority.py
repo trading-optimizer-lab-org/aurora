@@ -110,3 +110,121 @@ def test_live_terminal_does_not_fabricate_legacy_closure() -> None:
     closed = reserved.terminalize(request=_request(), run_id=100, terminal_receipt_sha256="c" * 64)
     assert closed.campaigns[0].legacy_closure_evidence_sha256 is None
     assert closed.campaigns[0].terminal_receipt_sha256 == "c" * 64
+
+
+def test_definition_change_cannot_reuse_imported_generation_without_maintenance() -> None:
+    """Regression: fixing only the local generation-seven ticket is insufficient."""
+    old_request = _request(launch_generation=6, previous_terminal_request_sha256="e" * 64)
+    imported = FastAuthorityCampaignV1(
+        request=old_request, owner_issue_number=276, owner_run_id=33910681070,
+        legacy_closure_evidence_sha256="d" * 64,
+    )
+    state = FastAuthorityStateV1.bootstrap(campaigns=(imported,))
+    before = state.model_dump_json()
+    successor = _request(
+        request_id="018f47a2-6e91-7c34-8000-000000000002", launch_generation=7,
+        previous_terminal_request_sha256=old_request.request_sha256,
+        campaign_definition_sha256="a" * 64,
+    )
+    assert successor.campaign_definition_sha256 != old_request.campaign_definition_sha256
+    with pytest.raises(ValueError, match="^CATALOG_FAST_AUTHORITY_LINEAGE_CHANGE_REQUIRES_MAINTENANCE$"):
+        state.reserve(request=successor, issue_number=280, run_id=100)
+    assert state.model_dump_json() == before
+
+
+def _lineage_boundary():
+    from aurora.infra.sp500_megarun.catalog_fast_authority import CatalogLineageTransitionV1
+
+    old = _request(launch_generation=6, previous_terminal_request_sha256="e" * 64)
+    state = FastAuthorityStateV1.bootstrap(campaigns=(FastAuthorityCampaignV1(
+        request=old, owner_issue_number=276, owner_run_id=100,
+        legacy_closure_evidence_sha256="d" * 64,
+    ),))
+    new = _request(
+        request_id="018f47a2-6e91-7c34-8000-000000000002", launch_generation=7,
+        previous_terminal_request_sha256=old.request_sha256,
+        campaign_definition_sha256="a" * 64, prompt_sha256="b" * 64,
+    )
+    approval = CatalogLineageTransitionV1(
+        campaign_key=old.campaign_key, previous_request_sha256=old.request_sha256,
+        next_generation=7, target_definition_sha256=new.campaign_definition_sha256,
+        target_prompt_sha256=new.prompt_sha256,
+    )
+    return state, new, approval
+
+
+def test_approved_lineage_boundary_preserves_old_request_and_revision_chain() -> None:
+    state, request, approval = _lineage_boundary()
+    original = state.model_dump_json()
+    reserved = state.reserve(request=request, issue_number=280, run_id=101,
+                             lineage_transition=approval)
+    assert state.model_dump_json() == original
+    assert reserved.previous_state_sha256 == state.state_sha256
+    assert reserved.revision == state.revision + 1
+    assert reserved.campaigns[0].request == request
+    assert reserved.campaigns[0].generation == 7
+    assert not reserved.campaigns[0].is_terminal
+    assert reserved.reserve(request=request, issue_number=281, run_id=102) == reserved
+
+
+@pytest.mark.parametrize("field,value", [
+    ("campaign_key", "another-campaign"),
+    ("previous_request_sha256", "f" * 64),
+    ("next_generation", 8),
+    ("target_definition_sha256", "f" * 64),
+    ("target_prompt_sha256", "f" * 64),
+])
+def test_lineage_approval_must_match_every_boundary_field(field, value) -> None:
+    state, request, approval = _lineage_boundary()
+    approval = type(approval).model_validate({**approval.model_dump(), field: value})
+    with pytest.raises(ValueError, match="LINEAGE_CHANGE_REQUIRES_MAINTENANCE"):
+        state.reserve(request=request, issue_number=280, run_id=101,
+                      lineage_transition=approval)
+
+
+def test_lineage_approval_cannot_release_active_owner() -> None:
+    state, request, approval = _lineage_boundary()
+    active = FastAuthorityStateV1.bootstrap(campaigns=(FastAuthorityCampaignV1(
+        request=state.campaigns[0].request, owner_issue_number=276, owner_run_id=100,
+    ),))
+    with pytest.raises(ValueError, match="CATALOG_CAMPAIGN_BUSY"):
+        active.reserve(request=request, issue_number=280, run_id=101,
+                       lineage_transition=approval)
+
+
+def test_lineage_permission_is_loaded_only_from_fixed_protected_config(tmp_path) -> None:
+    import json
+    from aurora.infra.sp500_megarun.catalog_fast_authority import load_lineage_transition
+
+    state, request, approval = _lineage_boundary()
+    assert load_lineage_transition(tmp_path, request) is None
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "catalog_lineage_transitions_v1.json").write_text(json.dumps({
+        "schema_version": "1", "transitions": [approval.model_dump(mode="json")],
+    }))
+    loaded = load_lineage_transition(tmp_path, request)
+    assert state.reserve(request=request, issue_number=280, run_id=101,
+                         lineage_transition=loaded).campaigns[0].generation == 7
+
+
+@pytest.mark.parametrize("defect", ["duplicate_field", "duplicate_boundary", "unknown_field", "oversized"])
+def test_ambiguous_or_malformed_lineage_config_never_authorizes(tmp_path, defect) -> None:
+    import json
+    from aurora.infra.sp500_megarun.catalog_fast_authority import load_lineage_transition
+
+    _, request, approval = _lineage_boundary()
+    payload = {"schema_version": "1", "transitions": [approval.model_dump(mode="json")]}
+    if defect == "duplicate_boundary":
+        payload["transitions"].append(approval.model_dump(mode="json"))
+    if defect == "unknown_field":
+        payload["allow_any_version"] = True
+    raw = json.dumps(payload)
+    if defect == "duplicate_field":
+        raw = raw.replace('"schema_version": "1"', '"schema_version": "1", "schema_version": "1"')
+    if defect == "oversized":
+        raw += " " * 65536
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/catalog_lineage_transitions_v1.json").write_text(raw)
+    with pytest.raises(ValueError, match="CATALOG_LINEAGE_CONFIG_INVALID"):
+        load_lineage_transition(tmp_path, request)

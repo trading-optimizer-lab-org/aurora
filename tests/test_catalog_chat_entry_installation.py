@@ -65,6 +65,7 @@ def _candidate_fixture(
         "config/catalog_requester_v1.json": b"candidate requester config\n",
         "config/catalog_controller_actors_v1.json": b"actors\n",
         "config/catalog_github_controls_v1.json": b"controls\n",
+        "config/catalog_lineage_transitions_v1.json": b'{"schema_version":"1","transitions":[]}\n',
         "config/catalog_requester_public_key_v1.pem": b"-----BEGIN PUBLIC KEY-----\nfixed-key\n",
         "schemas/catalog_requester_app_manifest_v1.schema.json": b"schema-app\n",
         "schemas/catalog_campaign_definition_manifest_v1.schema.json": b"schema-campaign\n",
@@ -205,6 +206,10 @@ def _transport_fixture(
     chat_stop_failure: bool = False,
     bad_resource_acl: bool = False,
     receipt_acl_failure: bool = False,
+    lineage_records: list[dict] | None = None,
+    lineage_idle_failure: bool = False,
+    lineage_hold_lock: bool = False,
+    check_candidate_freeze: bool = False,
 ) -> str:
     return (r'''
 $ErrorActionPreference = 'Stop'
@@ -341,6 +346,13 @@ function Get-CatalogChatEntryCredential {
 function Invoke-CatalogChatEntryVerifierProcess {
     param([string]$RuntimePython, [string]$ApplicationKind, [string]$VerificationRoot, [string]$ExpectedCommitSha)
     $global:VerifierCalls++
+    if ($global:VerifierCalls -eq 1) { $global:VerifiedCandidateRoot = $VerificationRoot }
+    if (CHECK_CANDIDATE_FREEZE -and $global:VerifierCalls -le 2) {
+        $writeBlocked = $false
+        try { [IO.File]::WriteAllBytes((Join-Path $VerificationRoot "bin/catalog-requester-$ApplicationKind.pyz"), [byte[]]@(0)) }
+        catch [IO.IOException] { $writeBlocked = $true }
+        if (-not $writeBlocked) { throw 'TEST_VERIFIED_PAYLOAD_MUTABLE' }
+    }
     $global:Calls.Add("verify:$ApplicationKind")
     foreach ($relative in @("bin/catalog-requester-$ApplicationKind.pyz", "bin/catalog-requester-$ApplicationKind.manifest.json", 'receipts/controller-bootstrap-v1.receipt.json')) {
         if (-not [IO.File]::Exists((Join-Path $VerificationRoot $relative))) {
@@ -479,9 +491,34 @@ function Stop-ScheduledTask {
 }
 function Unregister-ScheduledTask { [CmdletBinding()] param($TaskName, $TaskPath, $Confirm) $global:Calls.Add('unregister'); $global:TaskExists = $false; $global:TaskMode = 'absent' }
 function Start-Sleep { param([int]$Milliseconds) }
+function Invoke-CatalogChatEntryLineageProcess {
+    param($RuntimePython, $VerificationRoot, $BrokerRoot)
+    $global:Calls.Add('prepare-lineage')
+    if (CHECK_CANDIDATE_FREEZE -and $VerificationRoot -cne $global:VerifiedCandidateRoot) { throw 'TEST_LINEAGE_NOT_USING_VERIFIED_COPY' }
+    return ('LINEAGE_RESPONSE' | ConvertFrom-Json)
+}
+function Invoke-CatalogChatEntryIdleProcess {
+    param($Candidate, $Runtime, $VerificationRoot)
+    if (CHECK_CANDIDATE_FREEZE -and $VerificationRoot -cne $global:VerifiedCandidateRoot) { throw 'TEST_IDLE_NOT_USING_VERIFIED_COPY' }
+    $global:Calls.Add('check-chat-idle')
+    $path = Join-Path $global:LiveRoot 'CatalogRequester/chat-intents/.service.lock'
+    $other = $null
+    try { $other = [IO.File]::Open($path, 'Open', 'ReadWrite', 'None') }
+    catch [IO.IOException] {
+        if (LINEAGE_IDLE_FAILURE) { throw 'LINEAGE_CHAT_NOT_IDLE' }
+        return
+    }
+    if ($null -ne $other) { $other.Dispose() }
+    throw 'TEST_CHAT_LOCK_NOT_HELD'
+}
 
 . 'INSTALLER'
+$busyLock = $null
+if (LINEAGE_HOLD_LOCK) {
+    $busyLock = [IO.File]::Open((Join-Path $global:LiveRoot 'CatalogRequester/chat-intents/.service.lock'), 'Open', 'ReadWrite', 'None')
+}
 $result = Invoke-CatalogChatEntryInstallation -CandidateRoot $global:CandidateFixtureRoot -ExpectedCandidateSha256 'EXPECTED_HASH' -ExpectedApprovedCommitSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -Apply -Confirm 'AURORA_CATALOG_CHAT_ENTRY_V1'
+if ($null -ne $busyLock) { $busyLock.Dispose() }
 [pscustomobject]@{
     result = $result
     calls = @($global:Calls)
@@ -498,7 +535,11 @@ $result = Invoke-CatalogChatEntryInstallation -CandidateRoot $global:CandidateFi
         .replace("BROKER_START_FAILURE", "$true" if broker_start_failure else "$false")
     .replace("CHAT_STOP_FAILURE", "$true" if chat_stop_failure else "$false")
     .replace("BAD_RESOURCE_ACL", "$true" if bad_resource_acl else "$false")
-    .replace("RECEIPT_ACL_FAILURE_PLACEHOLDER", "$true" if receipt_acl_failure else "$false"))
+      .replace("RECEIPT_ACL_FAILURE_PLACEHOLDER", "$true" if receipt_acl_failure else "$false")
+      .replace("LINEAGE_IDLE_FAILURE", "$true" if lineage_idle_failure else "$false")
+      .replace("LINEAGE_HOLD_LOCK", "$true" if lineage_hold_lock else "$false")
+      .replace("CHECK_CANDIDATE_FREEZE", "$true" if check_candidate_freeze else "$false")
+      .replace("LINEAGE_RESPONSE", json.dumps({"schema_version": "1", "records": lineage_records or []}).replace("'", "''")))
 
 
 def _run_ps(tmp_path: Path, script: str) -> dict:
@@ -808,6 +849,46 @@ def test_positive_controlled_install_uses_real_transaction_and_fixed_task_action
     assert outcome["calls"].count("verify:broker") >= 2
     assert outcome["target_config"] == "candidate requester config\n"
     assert (tmp_path / "AURORA-CatalogChatMaintenance" / "manifest.json").is_file()
+
+
+@pytest.mark.parametrize("failure", [None, "postverify", "cas", "pending_intent", "busy_lock", "frozen_candidate"])
+def test_lineage_files_share_application_transaction_and_rollback(tmp_path: Path, failure: str | None) -> None:
+    import base64
+
+    candidate, candidate_hash, live, _ = _candidate_fixture(tmp_path)
+    original_config = (live / "CatalogRequester/config/catalog_requester_v1.json").read_bytes()
+    rows = []
+    (live / 'CatalogRequester/chat-intents/.service.lock').touch()
+    for directory, suffix in (("launch-tickets", "ticket"), ("campaign-status", "journal"), ("campaign-status", "status")):
+        relative = f"CatalogRequester/{directory}/example-v1.{suffix}.json"
+        path = live / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"old lineage\n")
+        new = b"new lineage\n"
+        rows.append({"path": relative, "expected_old_sha256": _sha256(path.read_bytes()),
+            "sha256": _sha256(new), "content_base64": base64.b64encode(new).decode()})
+    if failure == "cas":
+        rows[-1]["expected_old_sha256"] = "f" * 64
+    outcome = _run_ps(tmp_path, _transport_fixture(installer=INSTALLER, candidate=candidate,
+        live=live, task_mode="absent", broker_running=True, fail_postverify=failure == "postverify",
+        lineage_idle_failure=failure == "pending_intent", lineage_hold_lock=failure == "busy_lock",
+        check_candidate_freeze=failure == "frozen_candidate",
+        lineage_records=rows).replace("EXPECTED_HASH", candidate_hash))
+    if failure == "frozen_candidate":
+        failure = None
+    expected = "BLOCKED" if failure else "INSTALLED_NOT_QUALIFIED"
+    assert outcome["result"]["status"] == expected, outcome
+    assert outcome["calls"].index("stop-broker") < outcome["calls"].index("prepare-lineage")
+    for row in rows:
+        assert (live / row["path"]).read_bytes() == (b"old lineage\n" if failure else b"new lineage\n")
+    if failure:
+        assert (live / "CatalogRequester/config/catalog_requester_v1.json").read_bytes() == original_config
+    if failure == "postverify":
+        assert outcome["result"]["rollback"]["status"] == "ROLLED_BACK", outcome
+    elif failure is None:
+        installed = {row["path"] for row in outcome["result"]["transaction"]["files"]}
+        assert {row["path"] for row in rows} <= installed
+        assert "CatalogChatSender/submit_catalog_chat_intent.py" in installed
 
 
 def test_new_maintenance_receipt_is_protected_before_postinstall_verification(
