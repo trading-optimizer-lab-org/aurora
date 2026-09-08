@@ -253,6 +253,29 @@ def _icacls(tool: Path, *arguments: object) -> None:
         raise RuntimeError(f"icacls failed with {result.returncode}: {detail}")
 
 
+def _require_private_parent_resolution(root: Path, inbox: Path) -> None:
+    root.lstat()
+    try:
+        root.resolve(strict=True)
+    except PermissionError as denied:
+        assert getattr(denied, "winerror", None) == 5
+    else:
+        pytest.skip("exact ACL precondition unavailable: root.resolve() remained accessible")
+    inbox.lstat()
+    assert inbox.resolve(strict=True) == inbox.absolute()
+
+
+def test_acl_precondition_skips_when_parent_is_accessible(tmp_path: Path) -> None:
+    root = tmp_path / "private-root"
+    inbox = root / "chat-inbox"
+    inbox.mkdir(parents=True)
+    with pytest.raises(
+        pytest.skip.Exception,
+        match=r"root\.resolve\(\) remained accessible",
+    ):
+        _require_private_parent_resolution(root, inbox)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="requires real Windows ACL semantics")
 def test_public_sender_publishes_one_closed_intent_with_private_parent(tmp_path: Path) -> None:
     tool = _icacls_path()
@@ -278,12 +301,7 @@ def test_public_sender_publishes_one_closed_intent_with_private_parent(tmp_path:
             _icacls(tool, root, "/inheritance:r", "/grant:r", f"*{sid}:(RA,X)")
 
             # Explicitly prove the security boundary before calling the public API.
-            root.lstat()
-            with pytest.raises(PermissionError) as denied:
-                root.resolve(strict=True)
-            assert getattr(denied.value, "winerror", None) == 5
-            inbox.lstat()
-            assert inbox.resolve(strict=True) == inbox.absolute()
+            _require_private_parent_resolution(root, inbox)
         except (OSError, RuntimeError, AssertionError) as exc:
             pytest.skip(f"exact ACL precondition is unavailable without elevation: {exc}")
 
