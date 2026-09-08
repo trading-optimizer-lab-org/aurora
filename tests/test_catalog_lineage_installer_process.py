@@ -35,7 +35,7 @@ def test_installer_maintenance_subprocesses_use_real_isolated_packages(tmp_path:
             assert relative.suffix != ".pth", "isolated runtime must not import external paths"
             destination = site.joinpath(*relative.parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(distribution.locate_file(relative), destination)
+            shutil.copyfile(str(distribution.locate_file(relative)), destination)
     source, _ = _isolated_source_tree(tmp_path)
     live = tmp_path / "live"
     live.mkdir()

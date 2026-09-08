@@ -214,9 +214,10 @@ def test_ambiguous_or_malformed_lineage_config_never_authorizes(tmp_path, defect
     from aurora.infra.sp500_megarun.catalog_fast_authority import load_lineage_transition
 
     _, request, approval = _lineage_boundary()
-    payload = {"schema_version": "1", "transitions": [approval.model_dump(mode="json")]}
+    transitions = [approval.model_dump(mode="json")]
+    payload: dict[str, object] = {"schema_version": "1", "transitions": transitions}
     if defect == "duplicate_boundary":
-        payload["transitions"].append(approval.model_dump(mode="json"))
+        transitions.append(approval.model_dump(mode="json"))
     if defect == "unknown_field":
         payload["allow_any_version"] = True
     raw = json.dumps(payload)

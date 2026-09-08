@@ -38,7 +38,7 @@ def prepare_candidate_lineage_files(
         registry = load_catalog_campaign_registry(candidate_root / "config/catalog_campaign_registry_v1.json")
         tickets = _broker_directory(broker_root, config.broker.launch_tickets)
         statuses = _broker_directory(broker_root, config.broker.campaign_status)
-        records = []
+        records: list[dict[str, object]] = []
         for entry in registry.campaigns:
             if not entry.active:
                 continue
@@ -48,6 +48,8 @@ def prepare_candidate_lineage_files(
                     raise ValueError("partial installed lineage")
                 continue
             ticket = _read_canonical_model(ticket_path, CatalogLaunchTicketV1, maximum_bytes=16_384)
+            if not isinstance(ticket, CatalogLaunchTicketV1):
+                raise ValueError("invalid ticket model")
             if ticket.campaign_key != entry.campaign_key:
                 raise ValueError("campaign mismatch")
             manifest = parse_catalog_campaign_definition_bytes(
@@ -137,10 +139,18 @@ def prepare_available_lineage_files(
         ticket = _read_canonical_model(paths[0], CatalogLaunchTicketV1, maximum_bytes=16_384)
         journal = _read_canonical_model(paths[1], CatalogBrokerTicketJournalV1, maximum_bytes=16_384)
         status = _read_canonical_model(paths[2], CatalogRequesterCampaignStatusV1, maximum_bytes=16_384)
+        if not isinstance(ticket, CatalogLaunchTicketV1):
+            raise ValueError("invalid ticket model")
+        if not isinstance(journal, CatalogBrokerTicketJournalV1):
+            raise ValueError("invalid journal model")
+        if not isinstance(status, CatalogRequesterCampaignStatusV1):
+            raise ValueError("invalid status model")
         terminal = _read_canonical_model(
             statuses / f"{key}.generation-{transition.next_generation - 1:010d}.terminal.json",
             CatalogBrokerTicketJournalV1, maximum_bytes=16_384,
         )
+        if not isinstance(terminal, CatalogBrokerTicketJournalV1):
+            raise ValueError("invalid terminal model")
         if (terminal.state != "terminal" or terminal.request_sha256 != transition.previous_request_sha256
             or terminal.launch_generation != transition.next_generation - 1
             or terminal.campaign_key != key or terminal.updated_at > journal.created_at):
@@ -149,6 +159,8 @@ def prepare_available_lineage_files(
             processing / f"{terminal.submission_key_sha256}.signed.json",
             CatalogBrokerProcessingRecordV1, maximum_bytes=64_000,
         )
+        if not isinstance(signed, CatalogBrokerProcessingRecordV1):
+            raise ValueError("invalid signed model")
         previous = parse_catalog_run_request(signed.title, signed.body, public_key)
         if (previous != signed.request or previous.request_sha256 != terminal.request_sha256
             or previous.submission_key_sha256 != terminal.submission_key_sha256
@@ -157,7 +169,7 @@ def prepare_available_lineage_files(
             raise ValueError("signed predecessor mismatch")
         updated = prepare_available_lineage_models(previous_request=previous, transition=transition,
             ticket=ticket, journal=journal, status=status, observed_at=observed_at)
-        records = []
+        records: list[dict[str, object]] = []
         for path, old, new in zip(paths, (ticket, journal, status), updated, strict=True):
             before = canonical_model_bytes(old) + b"\n"
             after = canonical_model_bytes(new) + b"\n"
