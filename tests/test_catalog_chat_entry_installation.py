@@ -306,7 +306,9 @@ function Get-CatalogChatEntryAclObservation {
         $rules += [pscustomobject]@{ identity = 'S-1-5-21-1-2-3-1014'; rights = 'ReadAndExecute'; access_type = 'Allow'; is_inherited = $false; inheritance_flags = 'None'; propagation_flags = 'None' }
     }
     elseif ($Path -like '*chat-inbox') {
+        foreach ($rule in $rules) { $rule.inheritance_flags = 'ContainerInherit, ObjectInherit' }
         $rules += [pscustomobject]@{ identity = 'S-1-5-21-1-2-3-1001'; rights = 'ReadAndExecute, Write, Synchronize'; access_type = 'Allow'; is_inherited = $false; inheritance_flags = 'ContainerInherit, ObjectInherit'; propagation_flags = 'None' }
+        $rules += [pscustomobject]@{ identity = 'S-1-5-21-1-2-3-1001'; rights = 'Delete, Synchronize'; access_type = 'Allow'; is_inherited = $false; inheritance_flags = 'ObjectInherit'; propagation_flags = 'InheritOnly' }
         $rules += [pscustomobject]@{ identity = 'S-1-5-21-1-2-3-1014'; rights = 'ReadAndExecute'; access_type = 'Allow'; is_inherited = $false; inheritance_flags = 'ContainerInherit, ObjectInherit'; propagation_flags = 'None' }
     }
     elseif ($Path -like '*chat-intents') {
@@ -1216,6 +1218,52 @@ def test_final_result_failure_stops_resumed_broker_before_undo(tmp_path: Path, s
     else:
         assert outcome["target_config"] == "old config\n"
         assert outcome["result"]["rollback"]["status"] == "ROLLED_BACK"
+
+
+@pytest.mark.parametrize("defect, accepted", [
+    ("none", True),
+    ("missing_file_delete", False),
+    ("delete_on_inbox", False),
+    ("delete_on_subdirectories", False),
+    ("write_dacl", False),
+    ("agent_delete", False),
+])
+def test_inbox_acl_requires_file_only_sender_delete(
+    tmp_path: Path, defect: str, accepted: bool,
+) -> None:
+    script = r'''
+. 'INSTALLER_PATH'
+function Get-LocalUser {
+    param([string]$Name)
+    $sid = @{ HP = 'S-1-5-21-1-2-3-1001'; AURORAAgent = 'S-1-5-21-1-2-3-1014' }[$Name]
+    [pscustomobject]@{ SID = $sid }
+}
+function Get-CatalogChatEntryAclObservation {
+    param([string]$Path)
+    $rules = @(
+        [pscustomobject]@{ identity='S-1-5-18'; rights='FullControl'; access_type='Allow'; is_inherited=$false; inheritance_flags='ContainerInherit, ObjectInherit'; propagation_flags='None' },
+        [pscustomobject]@{ identity='S-1-5-32-544'; rights='FullControl'; access_type='Allow'; is_inherited=$false; inheritance_flags='ContainerInherit, ObjectInherit'; propagation_flags='None' },
+        [pscustomobject]@{ identity='S-1-5-21-1-2-3-1001'; rights='ReadAndExecute, Write, Synchronize'; access_type='Allow'; is_inherited=$false; inheritance_flags='ContainerInherit, ObjectInherit'; propagation_flags='None' },
+        [pscustomobject]@{ identity='S-1-5-21-1-2-3-1014'; rights='ReadAndExecute'; access_type='Allow'; is_inherited=$false; inheritance_flags='ContainerInherit, ObjectInherit'; propagation_flags='None' }
+    )
+    $delete = [pscustomobject]@{ identity='S-1-5-21-1-2-3-1001'; rights='Delete, Synchronize'; access_type='Allow'; is_inherited=$false; inheritance_flags='ObjectInherit'; propagation_flags='InheritOnly' }
+    switch ('DEFECT') {
+        'delete_on_inbox' { $delete.propagation_flags = 'None' }
+        'delete_on_subdirectories' { $delete.inheritance_flags = 'ContainerInherit, ObjectInherit' }
+        'write_dacl' { $delete.rights = 'Delete, ChangePermissions, Synchronize' }
+        'agent_delete' { $delete.identity = 'S-1-5-21-1-2-3-1014' }
+    }
+    if ('DEFECT' -cne 'missing_file_delete') { $rules += $delete }
+    [pscustomobject]@{ observation_available=$true; owner='S-1-5-32-544'; sddl='O:BAG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)'; access_rules=$rules }
+}
+try {
+    [void](Assert-CatalogChatEntryResourceAcl -LogicalPath 'test-inbox' -Kind inbox)
+    [pscustomobject]@{accepted=$true;cause=$null} | ConvertTo-Json -Compress
+}
+catch { [pscustomobject]@{accepted=$false;cause=$_.Exception.Message} | ConvertTo-Json -Compress }
+'''.replace("INSTALLER_PATH", str(INSTALLER)).replace("DEFECT", defect)
+    outcome = _run_ps(tmp_path, script)
+    assert outcome["accepted"] is accepted, outcome
 
 
 def test_incorrect_chat_resource_acl_blocks_before_payload_bytes(tmp_path: Path) -> None:
