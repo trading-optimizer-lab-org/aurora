@@ -484,6 +484,7 @@ function Get-CatalogChatEntryResourceAclEntries {
                 [pscustomobject]@{ identity = 'S-1-5-18'; rights = [Security.AccessControl.FileSystemRights]::FullControl },
                 [pscustomobject]@{ identity = 'S-1-5-32-544'; rights = [Security.AccessControl.FileSystemRights]::FullControl },
                 [pscustomobject]@{ identity = 'HP'; rights = ([Security.AccessControl.FileSystemRights]::ReadAndExecute -bor [Security.AccessControl.FileSystemRights]::Write) },
+                [pscustomobject]@{ identity = 'HP'; rights = [Security.AccessControl.FileSystemRights]::Delete; inheritance_flags = [Security.AccessControl.InheritanceFlags]::ObjectInherit; propagation_flags = [Security.AccessControl.PropagationFlags]::InheritOnly },
                 [pscustomobject]@{ identity = 'AURORAAgent'; rights = [Security.AccessControl.FileSystemRights]::ReadAndExecute }
             )
         }
@@ -550,21 +551,42 @@ function Assert-CatalogChatEntryResourceAcl {
     $expectedBySid = @{}
     foreach ($item in @($expected)) { $expectedBySid[[string]$item.sid] = [long]$item.mask }
     $observedBySid = @{}
+    $senderFileDeleteRules = 0
     $rules = @($acl.access_rules)
     if ($rules.Count -eq 0) { throw 'RESOURCE_ACL_RULES_INVALID' }
     foreach ($rule in $rules) {
         if ([string](Get-CatalogChatEntryProperty $rule 'access_type') -cne 'Allow' -or
-            [bool](Get-CatalogChatEntryProperty $rule 'is_inherited') -or
-            [string](Get-CatalogChatEntryProperty $rule 'propagation_flags') -match 'InheritOnly') {
+            [bool](Get-CatalogChatEntryProperty $rule 'is_inherited')) {
             throw 'RESOURCE_ACL_RULES_INVALID'
         }
         $sid = ConvertTo-CatalogChatEntrySid -Identity ([string](Get-CatalogChatEntryProperty $rule 'identity'))
         if (-not $expectedBySid.ContainsKey($sid)) { throw 'RESOURCE_ACL_PRINCIPAL_INVALID' }
         try { $mask = [long][Security.AccessControl.FileSystemRights]([string](Get-CatalogChatEntryProperty $rule 'rights')) }
         catch { throw 'RESOURCE_ACL_RIGHTS_INVALID' }
+        $propagation = [Security.AccessControl.PropagationFlags]([string](Get-CatalogChatEntryProperty $rule 'propagation_flags'))
+        $inheritance = [Security.AccessControl.InheritanceFlags]([string](Get-CatalogChatEntryProperty $rule 'inheritance_flags'))
+        if ($propagation -band [Security.AccessControl.PropagationFlags]::InheritOnly) {
+            # Only child files need DELETE for atomic publication and cleanup.
+            # Never grant DELETE on the inbox or FILE_DELETE_CHILD on its parent.
+            $delete = [long][Security.AccessControl.FileSystemRights]::Delete
+            if ($Kind -cne 'inbox' -or $sid -cne $hpSid -or
+                $propagation -ne [Security.AccessControl.PropagationFlags]::InheritOnly -or
+                $inheritance -ne [Security.AccessControl.InheritanceFlags]::ObjectInherit -or
+                ($mask -band $delete) -ne $delete -or ($mask -bor ($delete -bor $sync)) -ne ($delete -bor $sync)) {
+                throw 'RESOURCE_ACL_FILE_DELETE_INVALID'
+            }
+            $senderFileDeleteRules++
+            continue
+        }
+        if ($Kind -ceq 'inbox' -and
+            ($propagation -ne [Security.AccessControl.PropagationFlags]::None -or
+             $inheritance -ne ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit))) {
+            throw 'RESOURCE_ACL_INHERITANCE_INVALID'
+        }
         if ($observedBySid.ContainsKey($sid)) { $observedBySid[$sid] = $observedBySid[$sid] -bor $mask }
         else { $observedBySid[$sid] = $mask }
     }
+    if ($Kind -ceq 'inbox' -and $senderFileDeleteRules -ne 1) { throw 'RESOURCE_ACL_FILE_DELETE_MISSING' }
     foreach ($item in @($expected)) {
         $sid = [string]$item.sid
         if (-not $observedBySid.ContainsKey($sid)) { throw 'RESOURCE_ACL_RULE_MISSING' }
@@ -604,8 +626,8 @@ function Set-CatalogChatEntryResourceAcl {
         $rule = [Security.AccessControl.FileSystemAccessRule]::new(
             $identity,
             [Security.AccessControl.FileSystemRights]$entry.rights,
-            $inheritance,
-            $propagation,
+            $(if ($null -ne $entry.PSObject.Properties['inheritance_flags']) { $entry.inheritance_flags } else { $inheritance }),
+            $(if ($null -ne $entry.PSObject.Properties['propagation_flags']) { $entry.propagation_flags } else { $propagation }),
             [Security.AccessControl.AccessControlType]::Allow
         )
         $security.AddAccessRule($rule)
