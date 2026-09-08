@@ -14,8 +14,7 @@ _BROKER_ROOT = Path("C:/ProgramData/AURORA/CatalogRequester")
 
 def _checked_directory(path: Path) -> Path:
     info = path.lstat()
-    if (not stat.S_ISDIR(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400
-            or path.resolve(strict=True) != path.absolute()):
+    if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
         raise ValueError("CHAT_ENTRY_NOT_INSTALLED_OR_UNSAFE")
     return path
 
@@ -53,6 +52,10 @@ def enqueue_chat_intent(*, broker_root: Path, intent: dict[str, str]) -> dict[st
     try:
         root = _checked_directory(broker_root)
         inbox = _checked_directory(root / "chat-inbox")
+        # Resolve the complete path through the accessible inbox handle; the
+        # private parent need not grant the sender permission to open it.
+        if inbox.resolve(strict=True) != inbox.absolute():
+            raise ValueError("CHAT_ENTRY_NOT_INSTALLED_OR_UNSAFE")
     except (OSError, ValueError) as exc:
         raise ValueError("CHAT_ENTRY_NOT_INSTALLED_OR_UNSAFE") from exc
     payload = json.dumps(intent, sort_keys=True, separators=(",", ":")).encode("utf-8")
