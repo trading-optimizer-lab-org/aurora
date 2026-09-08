@@ -16,7 +16,10 @@ import pytest
 
 from aurora.infra.sp500_megarun.catalog_chat_intent import CatalogChatIntentV1, parse_chat_intent
 from aurora.infra.sp500_megarun.catalog_chat_sender import enqueue_chat_intent
-from aurora.infra.sp500_megarun.catalog_chat_windows_input import read_authenticated_intent_file
+from aurora.infra.sp500_megarun.catalog_chat_windows_input import (
+    ChatWindowsInputError,
+    read_authenticated_intent_file,
+)
 
 
 INTENT = CatalogChatIntentV1(
@@ -37,6 +40,7 @@ _OBJECT_INHERIT = 0x2
 _CONTAINER_INHERIT = 0x1
 _INHERIT_ONLY = 0x2
 _AGENT_SID = "S-1-5-21-1-2-3-4242"
+_ADMINISTRATORS_SID = "S-1-5-32-544"
 
 
 class _AclRule(TypedDict):
@@ -382,6 +386,46 @@ $rules = @($acl.Access | ForEach-Object {{
     return cast(_AclObservation, observation)
 
 
+def _set_file_owner(path: Path, owner_sid: str, script_path: Path) -> None:
+    script = f"""
+$ErrorActionPreference = 'Stop'
+$acl = [System.IO.File]::GetAccessControl({_ps_literal(path)})
+$acl.SetOwner([System.Security.Principal.SecurityIdentifier]::new({_ps_literal(owner_sid)}))
+[System.IO.File]::SetAccessControl({_ps_literal(path)}, $acl)
+"""
+    script_path.write_text(script, encoding="utf-8")
+    result = subprocess.run(
+        [_powershell(), "-NoProfile", "-NonInteractive", "-File", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"fixture owner normalization failed with {result.returncode}: {detail}")
+
+
+def _acl_dacl_signature(
+    acl: _AclObservation,
+) -> tuple[bool, tuple[tuple[str, int, bool, int, int, str], ...]]:
+    return (
+        acl["protected"],
+        tuple(
+            sorted(
+                (
+                    rule["sid"],
+                    rule["mask"],
+                    rule["inherited"],
+                    rule["inheritance_flags"],
+                    rule["propagation_flags"],
+                    rule["access_type"],
+                )
+                for rule in acl["rules"]
+            )
+        ),
+    )
+
+
 def _rules_for(acl: _AclObservation, sid: str) -> list[_AclRule]:
     return [rule for rule in acl["rules"] if rule["sid"] == sid]
 
@@ -530,6 +574,17 @@ def test_public_sender_round_trips_under_installed_inbox_acl_and_child_delete_ru
             "campaign_key": INTENT.campaign_key,
         }
         target_acl = _read_acl_rules(target, acl_script)
+        if target_acl["owner"] == _ADMINISTRATORS_SID:
+            with pytest.raises(ChatWindowsInputError) as mismatch:
+                read_authenticated_intent_file(path=target, expected_owner_sid=sid)
+            assert mismatch.value.code == "CHAT_INPUT_OWNER_MISMATCH"
+            before_dacl = _acl_dacl_signature(target_acl)
+            _set_file_owner(target, sid, acl_script)
+            target_acl = _read_acl_rules(target, acl_script)
+            assert target_acl["owner"] == sid
+            assert _acl_dacl_signature(target_acl) == before_dacl
+        elif target_acl["owner"] != sid:
+            raise AssertionError(f"unexpected published-file owner: {target_acl['owner']}")
         target_hp_rules = _rules_for(target_acl, sid)
         assert target_hp_rules
         assert all(rule["inherited"] for rule in target_hp_rules)
