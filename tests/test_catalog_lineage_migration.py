@@ -77,7 +77,7 @@ def test_available_migration_rejects_inconsistent_or_claimed_state(defect):
             observed_at=NOW - timedelta(seconds=1) if defect == "time" else NOW)
 
 
-def _disk_state(tmp_path):
+def _disk_state(tmp_path, *, use_request_hash_as_submission_key=False):
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     from aurora.infra.sp500_megarun.catalog_request_contract import canonical_model_bytes, canonical_sha256
@@ -93,6 +93,10 @@ def _disk_state(tmp_path):
     public = private.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
     title, body = _signed_request(private, launch_generation=6, previous_terminal_request_sha256="e" * 64)
     previous = parse_catalog_run_request(title, body, public)
+    submission_key = previous.intent.submission_key_sha256
+    assert submission_key != previous.request_sha256
+    if use_request_hash_as_submission_key:
+        submission_key = previous.request_sha256
     record = CatalogBrokerProcessingRecordV1.model_construct(
         schema_version="1", stage="signed_before_post", title=title, body=body,
         intent_sha256=previous.intent_sha256, request_sha256=previous.request_sha256,
@@ -110,7 +114,7 @@ def _disk_state(tmp_path):
     journal = _ticket_journal(ticket=ticket, state="available", submission_key_sha256=None,
         request_sha256=None, issue_number=None, created_at=NOW, updated_at=NOW)
     terminal = _ticket_journal(ticket=old_ticket, state="terminal",
-        submission_key_sha256=previous.submission_key_sha256, request_sha256=previous.request_sha256,
+        submission_key_sha256=submission_key, request_sha256=previous.request_sha256,
         issue_number=276, created_at=NOW, updated_at=NOW)
     status = CatalogRequesterCampaignStatusV1.create(campaign_key=ticket.campaign_key,
         state="ticket_available", launch_generation=7, launch_ticket_sha256=ticket.launch_ticket_sha256, updated_at=NOW)
@@ -121,7 +125,7 @@ def _disk_state(tmp_path):
         f"{config.broker.campaign_status}/{ticket.campaign_key}.status.json": status,
         f"{config.broker.launch_tickets}/{ticket.campaign_key}.ticket.json": ticket,
         f"{config.broker.campaign_status}/{ticket.campaign_key}.generation-0000000006.terminal.json": terminal,
-        f"{config.broker.processing}/{previous.submission_key_sha256}.signed.json": record,
+        f"{config.broker.processing}/{submission_key}.signed.json": record,
     }
     for relative, model in files.items():
         (tmp_path / relative).write_bytes(canonical_model_bytes(model) + b"\n")
@@ -131,11 +135,12 @@ def _disk_state(tmp_path):
     return config, public, transition, files
 
 
-@pytest.mark.parametrize("defect", [None, "pending_input", "unverified_signature", "missing_terminal"])
+@pytest.mark.parametrize("defect", [None, "pending_input", "unverified_signature", "missing_terminal", "request_hash_as_submission_key"])
 def test_migration_file_proposal_authenticates_history_without_writing_spool(tmp_path, defect):
     from aurora.infra.sp500_megarun.catalog_lineage_migration import prepare_available_lineage_files
 
-    config, public, transition, files = _disk_state(tmp_path)
+    config, public, transition, files = _disk_state(tmp_path,
+        use_request_hash_as_submission_key=defect == "request_hash_as_submission_key")
     if defect == "pending_input":
         (tmp_path / config.broker.inbox / "pending.json").write_text("{}")
     elif defect == "unverified_signature":
