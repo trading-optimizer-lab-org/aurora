@@ -22,7 +22,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.catalog_gate_budget import gate_timeout
-from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityStateV1
+from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityStateV1, load_lineage_transition
 from aurora.infra.sp500_megarun.catalog_campaign_registry import (
     load_catalog_campaign_registry,
     resolve_catalog_campaign,
@@ -322,7 +322,8 @@ def admit_request(
                 publisher = os.environ.get("GITHUB_RUN_ID", "")
                 if not publisher.isascii() or not publisher.isdecimal() or int(publisher) < 1:
                     raise ValueError("CATALOG_FAST_GATE_INVOCATION_INVALID")
-                authority.reserve(request=request, issue_number=current_issue_number, run_id=int(publisher))
+                authority.reserve(request=request, issue_number=current_issue_number, run_id=int(publisher),
+                                  lineage_transition=load_lineage_transition(root, request))
                 active_campaigns.update(row.request.campaign_key for row in authority.campaigns if not row.is_terminal)
                 compact_handled = True
         if owner is None and not compact_handled and (not existing_issue_state or alias_target is not None):

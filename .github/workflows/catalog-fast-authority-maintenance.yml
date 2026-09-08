@@ -22,6 +22,7 @@ jobs:
       queue: max
       cancel-in-progress: false
     env:
+      PYTHONPATH: ${{ github.workspace }}/..
       GH_TOKEN: ${{ github.token }}
       CATALOG_PROTECTED_COMMIT_SHA: ${{ github.sha }}
     steps:

@@ -22,7 +22,7 @@ from aurora.tests.test_inspect_catalog_fast_request import _entry, _signed_reque
 from scripts import admit_catalog_fast_request as admission
 
 
-@pytest.mark.parametrize("inventory_state", ("complete", "incomplete", "unstable", "complete_with_previous", "stale_generation", "wrong_predecessor", "invalid_terminal_author", "missing_terminal_author", "compact_valid", "compact_busy", "compact_wrong_predecessor", "compact_corrupt", "compact_missing_cli"))
+@pytest.mark.parametrize("inventory_state", ("complete", "incomplete", "unstable", "complete_with_previous", "stale_generation", "wrong_predecessor", "invalid_terminal_author", "missing_terminal_author", "compact_valid", "compact_busy", "compact_wrong_predecessor", "compact_corrupt", "compact_missing_cli", "compact_lineage_approved", "compact_lineage_missing"))
 def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monkeypatch, capsys, inventory_state):
     """Ignoring inventory completeness/stability must fail the negative cases."""
     bundle, template, plan, identity, prepared = prepared_transport_fixture(tmp_path)
@@ -63,6 +63,8 @@ def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monke
     (root / "config/catalog_controller_actors_v1.json").write_text(json.dumps({
         "requester_public_key_path": "requester.pem", "request_actors": ["requester"], "ledger_actor": "github-actions[bot]"}), encoding="utf-8")
     title, body = _signed_request(private)
+    if inventory_state.startswith("compact_lineage_"):
+        title, body = _signed_request(private, campaign_definition_sha256="f" * 64)
     previous_issue = None
     if inventory_state.startswith("compact_") or inventory_state in {"complete_with_previous", "stale_generation", "wrong_predecessor", "invalid_terminal_author", "missing_terminal_author"}:
         previous_request = parse_catalog_run_request(title, body, public)
@@ -91,6 +93,16 @@ def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monke
         if inventory_state != "compact_missing_cli":
             (tmp_path / "catalog-fast-authority-current.json").write_text(json.dumps(snapshot), encoding="utf-8")
     request = parse_catalog_run_request(title, body, public)
+    if inventory_state == "compact_lineage_approved":
+        (root / "config/catalog_lineage_transitions_v1.json").write_text(json.dumps({
+            "schema_version": "1", "transitions": [{
+                "campaign_key": request.campaign_key,
+                "previous_request_sha256": previous_request.request_sha256,
+                "next_generation": 2,
+                "target_definition_sha256": request.campaign_definition_sha256,
+                "target_prompt_sha256": request.prompt_sha256,
+            }],
+        }))
     issue = {"number": 280, "title": title, "body": body, "user": {"login": "requester"},
              "state": "open", "labels": [], "created_at": "2026-09-05T12:00:00Z"}
     context = {"schema_version": "1", "document_type": "catalog_fast_request_context_v1",
@@ -151,7 +163,7 @@ def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monke
     else:
         result = admission.admit_request(request_context_path=context_path, prepared_bundle=bundle,
             repo_root=root, output_dir=target, github_output=tmp_path / "github-output")
-    if inventory_state in {"complete", "complete_with_previous", "compact_valid"}:
+    if inventory_state in {"complete", "complete_with_previous", "compact_valid", "compact_lineage_approved"}:
         assert result.launch_required is True
         assert result.selected_workers == 7
         verify_sealed_global_reuse_execution_plan(target / "sealed-plan", expected_bindings={
@@ -159,6 +171,7 @@ def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monke
     else:
         assert result.launch_required is False
         assert result.reason_code == ("CATALOG_CAMPAIGN_BUSY" if inventory_state == "compact_busy" else
+            "CATALOG_FAST_AUTHORITY_LINEAGE_CHANGE_REQUIRES_MAINTENANCE" if inventory_state == "compact_lineage_missing" else
             "CATALOG_FAST_AUTHORITY_SNAPSHOT_INVALID" if inventory_state == "compact_corrupt" else
             "CATALOG_FAST_GENERATION_CONFLICT" if inventory_state == "stale_generation" else
             "CATALOG_FAST_PREDECESSOR_CONFLICT" if inventory_state in {"wrong_predecessor", "compact_wrong_predecessor"} else

@@ -18,9 +18,9 @@ import re
 
 from pydantic import Field
 
-from .catalog_chat_intent import CHAT_INTENT_ID_PATTERN, _parse_json_object
+from .catalog_chat_intent import CHAT_INTENT_ID_PATTERN, _parse_json_object, _read_existing_binding
 from .catalog_chat_consumer import consume_authenticated_chat_file
-from .catalog_chat_delivery import process_chat_delivery
+from .catalog_chat_delivery import process_chat_delivery, _load_state, _InvalidState
 from .catalog_chat_submission import read_bound_chat_receipt
 from .catalog_chat_windows_input import (
     _BY_HANDLE_FILE_INFORMATION, _get_windows_api, read_authenticated_intent_file,
@@ -54,6 +54,34 @@ def _load_config(root: Path) -> ChatServiceConfigV1:
     return ChatServiceConfigV1.model_validate(
         _parse_json_object(payload, max_bytes=4096, label="chat service config"), strict=True,
     )
+
+
+def _assert_no_pending_prebound_chat_intents_locked(root: Path) -> None:
+    """Read-only maintenance check; caller holds the service lock throughout writes.
+
+    New campaign-only inbox files are intentionally preserved for the resumed
+    service. Only already-bound intents can retain the ticket being migrated.
+    """
+    intents = _fixed_directory(root / "chat-intents")
+    replies = _fixed_directory(root / "chat-replies")
+    with os.scandir(intents) as entries:
+        for entry in entries:
+            if entry.name == ".service.lock":
+                continue
+            if not entry.name.endswith(".json"):
+                raise ValueError("CHAT_INTENT_STATE_INVALID")
+            intent_id = entry.name[:-5]
+            if re.fullmatch(CHAT_INTENT_ID_PATTERN, intent_id) is None:
+                raise ValueError("CHAT_INTENT_STATE_INVALID")
+            binding = _read_existing_binding(Path(entry.path))
+            if binding is None or binding.intent.intent_id != intent_id:
+                raise ValueError("CHAT_INTENT_STATE_INVALID")
+            try:
+                delivery = _load_state(replies / f"{intent_id}.delivery.json")
+            except _InvalidState as exc:
+                raise ValueError("CHAT_DELIVERY_STATE_INVALID") from exc
+            if delivery is None or delivery.status not in _TERMINAL_STATUSES:
+                raise ValueError("CHAT_INTENT_PENDING")
 
 
 @contextmanager

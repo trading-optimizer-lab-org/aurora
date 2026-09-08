@@ -1,7 +1,12 @@
 """Maintenance CLI imports authentic fixture history and mutates only a pristine anchor."""
 
 import json
+import os
 from pathlib import Path
+import shutil
+import site
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -103,3 +108,29 @@ def test_maintenance_writer_shares_lock_and_has_no_engine():
     assert job["concurrency"] == controller["jobs"]["gate"]["concurrency"]
     ids = [step.get("id") for step in job["steps"]]
     assert ids.index("write_authority") < ids.index("publish_authority") < ids.index("verify_authority")
+
+
+def test_maintenance_commands_start_with_checkout_workflow_environment(tmp_path: Path) -> None:
+    """A missing checkout-parent import path must fail outside pytest's imports."""
+    root = Path(__file__).resolve().parents[1]
+    checkout = tmp_path / "aurora"
+    checkout.mkdir()
+    shutil.copyfile(root / "__init__.py", checkout / "__init__.py")
+    for directory in ("infra", "scripts"):
+        shutil.copytree(root / directory, checkout / directory,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    workflow = load_github_yaml(root / ".github/workflows/catalog-fast-authority-maintenance.yml")
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+    for settings in (workflow.get("env", {}), workflow["jobs"]["bootstrap"].get("env", {})):
+        if "PYTHONPATH" in settings:
+            environment["PYTHONPATH"] = settings["PYTHONPATH"].replace("${{ github.workspace }}", str(checkout))
+    for command in ("publish_catalog_fast_authority_bootstrap.py", "verify_catalog_fast_authority.py"):
+        # Keep installed dependencies, but do not execute editable-install .pth hooks.
+        boot = "import json,runpy,sys; sys.path.extend(json.loads(sys.argv[1])); sys.argv=sys.argv[2:]; runpy.run_path(sys.argv[0], run_name='__main__')"
+        dependency_paths = json.dumps([*site.getsitepackages(), site.getusersitepackages()])
+        result = subprocess.run([sys.executable, "-S", "-c", boot, dependency_paths,
+                                 str(checkout / "scripts" / command), "--help"],
+                                cwd=checkout, env=environment, capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        assert "--repo-root" in result.stdout

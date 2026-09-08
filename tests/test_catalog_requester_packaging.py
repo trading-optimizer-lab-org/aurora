@@ -67,6 +67,8 @@ def test_builder_still_rejects_duplicate_definition_inputs() -> None:
         read_paths(json.dumps({"campaigns": [entry, entry]}).encode())
 BROKER_SOURCES = {
     "infra/sp500_megarun/catalog_request_contract.py",
+    "infra/sp500_megarun/catalog_lineage_transition.py",
+    "infra/sp500_megarun/catalog_lineage_migration.py",
     "infra/sp500_megarun/catalog_campaign_registry.py",
     "infra/sp500_megarun/catalog_campaign_definition_contract.py",
     "infra/sp500_megarun/catalog_requester.py",
@@ -342,6 +344,7 @@ def _isolated_source_tree(tmp_path: Path) -> tuple[Path, str]:
             "config/catalog_requester_v1.json",
             "config/catalog_controller_actors_v1.json",
             "config/catalog_github_controls_v1.json",
+            "config/catalog_lineage_transitions_v1.json",
             "schemas/catalog_requester_app_manifest_v1.schema.json",
             "schemas/catalog_campaign_definition_manifest_v1.schema.json",
             "schemas/catalog_run_prompt_policy_v1.schema.json",
@@ -399,6 +402,25 @@ def _install_built_apps(source: Path, output: Path) -> Path:
     ):
         shutil.copyfile(output / name, installed_bin / name)
     return installed_bin
+
+
+def test_packaged_broker_can_prepare_lineage_without_repository_imports(tmp_path: Path) -> None:
+    source, commit = _isolated_source_tree(tmp_path)
+    output = tmp_path / "apps"
+    result = _build_apps(source, output, commit)
+    assert result.returncode == 0, result.stderr
+    archive = output / "catalog-requester-broker.pyz"
+    result = subprocess.run([sys.executable, "-c",
+        "import sys; sys.path.insert(0,sys.argv[1]); "
+        "from aurora_catalog_requester_broker.catalog_lineage_migration import prepare_available_lineage_files; "
+        "print(prepare_available_lineage_files.__module__)", str(archive)],
+        cwd=tmp_path, text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "aurora_catalog_requester_broker.catalog_lineage_migration"
+    manifest = json.loads((output / "catalog-requester-broker.manifest.json").read_text())
+    inputs = {row["path"]: row["sha256"] for row in manifest["manifest_core"]["public_inputs"]}
+    assert inputs["config/catalog_lineage_transitions_v1.json"] == hashlib.sha256(
+        (source / "config/catalog_lineage_transitions_v1.json").read_bytes()).hexdigest()
 
 
 def _rewrite_installed_manifest_core(

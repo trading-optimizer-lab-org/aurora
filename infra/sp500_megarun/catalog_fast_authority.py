@@ -13,6 +13,7 @@ from pydantic import Field, model_validator
 
 from ..github_performance.contracts import canonical_sha256
 from .catalog_request_contract import CatalogRunRequestV1, FrozenModel, Sha256
+from .catalog_lineage_transition import CatalogLineageTransitionV1, load_lineage_transition as load_lineage_transition
 
 
 _PREFIX = "AURORA CATALOG FAST AUTHORITY V1\n"
@@ -78,7 +79,8 @@ class FastAuthorityStateV1(_AuthorityContent):
         return self._create(revision=self.revision + 1, previous_state_sha256=self.state_sha256,
                             campaigns=tuple(campaigns[key] for key in sorted(campaigns)))
 
-    def reserve(self, *, request: CatalogRunRequestV1, issue_number: int, run_id: int) -> "FastAuthorityStateV1":
+    def reserve(self, *, request: CatalogRunRequestV1, issue_number: int, run_id: int,
+                lineage_transition: CatalogLineageTransitionV1 | None = None) -> "FastAuthorityStateV1":
         old = next((row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
         if old is not None:
             if old.request.request_id == request.request_id:
@@ -87,8 +89,11 @@ class FastAuthorityStateV1(_AuthorityContent):
                 return self
             if not old.is_terminal:
                 raise ValueError("CATALOG_CAMPAIGN_BUSY")
-            if old.request.campaign_definition_sha256 != request.campaign_definition_sha256:
-                raise ValueError("CATALOG_FAST_AUTHORITY_LINEAGE_CHANGE_REQUIRES_MAINTENANCE")
+            if (old.request.campaign_definition_sha256, old.request.prompt_sha256) != (
+                request.campaign_definition_sha256, request.prompt_sha256
+            ):
+                if lineage_transition is None or not lineage_transition.authorizes(old.request, request):
+                    raise ValueError("CATALOG_FAST_AUTHORITY_LINEAGE_CHANGE_REQUIRES_MAINTENANCE")
         if request.launch_generation != (old.generation + 1 if old else 1):
             raise ValueError("CATALOG_FAST_GENERATION_CONFLICT")
         if request.previous_terminal_request_sha256 != (old.request.request_sha256 if old else None):

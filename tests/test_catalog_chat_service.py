@@ -86,6 +86,42 @@ def test_real_windows_exclusive_lock_releases_after_context(tmp_path):
         pass
 
 
+@pytest.mark.parametrize("status", ["missing", "corrupt", "delivering", "retryable", "pending", "blocked", "submitted", "existing"])
+def test_maintenance_idle_check_preserves_terminal_bindings_and_unbound_inputs(tmp_path, status):
+    from datetime import datetime, timezone
+    from aurora.infra.sp500_megarun.catalog_chat_delivery import ChatDeliveryV1
+    from aurora.infra.sp500_megarun.catalog_chat_intent import load_or_bind_chat_intent
+    from aurora.infra.sp500_megarun.catalog_request_contract import canonical_model_bytes
+    from aurora.infra.sp500_megarun.catalog_requester import CatalogRequesterReceiptV1
+    from tests.test_catalog_chat_intent import _intent, _draft
+
+    for name in ("chat-intents", "chat-replies", "chat-inbox"):
+        (tmp_path / name).mkdir()
+    load_or_bind_chat_intent(state_dir=tmp_path / "chat-intents", intent=_intent(), resolve_draft=_draft)
+    (tmp_path / "chat-inbox/new.intent.json").write_text("new campaign-only input remains unbound")
+    (tmp_path / "chat-intents/.service.lock").touch()
+    path = tmp_path / "chat-replies" / f"{IDENTIFIER}.delivery.json"
+    if status == "corrupt":
+        path.write_text("corrupt")
+    elif status != "missing":
+        receipt = None
+        if status in {"pending", "submitted", "existing"}:
+            receipt = CatalogRequesterReceiptV1.create(status=status, reason_code="REQUEST_BROKER_PENDING" if status == "pending" else "REQUEST_SUBMITTED",
+                submission_key_sha256="a" * 64, request_id=_draft().request_id, campaign_key=_draft().campaign_key,
+                launch_generation=1, observed_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+                issue_number=7 if status != "pending" else None, request_sha256="b" * 64 if status != "pending" else None)
+        delivery = ChatDeliveryV1(intent_id=IDENTIFIER, status=status, attempts=1,
+            receipt=receipt, reason_code="REQUEST_BROKER_PENDING")
+        path.write_bytes(canonical_model_bytes(delivery) + b"\n")
+    before = {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    if status in {"blocked", "submitted", "existing"}:
+        service._assert_no_pending_prebound_chat_intents_locked(tmp_path)
+    else:
+        with pytest.raises(ValueError, match="CHAT_(INTENT|DELIVERY)_"):
+            service._assert_no_pending_prebound_chat_intents_locked(tmp_path)
+    assert {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+
+
 def test_service_restart_observes_durable_reply_without_second_submission(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     import json

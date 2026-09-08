@@ -35,6 +35,7 @@ $script:CatalogChatEntryPublicInputs = @(
     'config/catalog_requester_v1.json',
     'config/catalog_controller_actors_v1.json',
     'config/catalog_github_controls_v1.json',
+    'config/catalog_lineage_transitions_v1.json',
     'config/catalog_requester_public_key_v1.pem',
     'schemas/catalog_requester_app_manifest_v1.schema.json',
     'schemas/catalog_campaign_definition_manifest_v1.schema.json',
@@ -274,6 +275,92 @@ function Get-CatalogChatEntryProperty {
     $property = $InputObject.PSObject.Properties[$Name]
     if ($null -eq $property) { return $null }
     return $property.Value
+}
+
+if ($null -eq (Get-Command -Name Invoke-CatalogChatEntryLineageProcess -CommandType Function -ErrorAction SilentlyContinue)) {
+    function Invoke-CatalogChatEntryLineageProcess {
+        param(
+            [Parameter(Mandatory = $true)][string]$RuntimePython,
+            [Parameter(Mandatory = $true)][string]$VerificationRoot,
+            [Parameter(Mandatory = $true)][string]$BrokerRoot
+        )
+        $source = @'
+import base64,json,sys
+from datetime import datetime,timezone
+from pathlib import Path
+candidate=Path(sys.argv[1])
+sys.path.insert(0,str(candidate/'bin/catalog-requester-broker.pyz'))
+from aurora_catalog_requester_broker.catalog_lineage_migration import prepare_candidate_lineage_files
+rows=prepare_candidate_lineage_files(broker_root=Path(sys.argv[2]),candidate_root=candidate,observed_at=datetime.now(timezone.utc))
+print(json.dumps({'schema_version':'1','records':[{**{k:v for k,v in row.items() if k!='content'},'content_base64':base64.b64encode(row['content']).decode('ascii')} for row in rows]},separators=(',',':')))
+'@
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($source))
+        $bootstrap = "import base64,sys;exec(compile(base64.b64decode(sys.argv[3]),'<aurora-lineage-maintenance>','exec'))"
+        $output = @(& $RuntimePython -I -s -E -c $bootstrap $VerificationRoot $BrokerRoot $encoded 2>&1)
+        if ($LASTEXITCODE -ne 0 -or $output.Count -ne 1) { throw 'LINEAGE_PREPARATION_FAILED' }
+        try { return ([string]$output[0] | ConvertFrom-Json -ErrorAction Stop) }
+        catch { throw 'LINEAGE_PREPARATION_OUTPUT_INVALID' }
+    }
+}
+
+function New-CatalogChatEntryLineageTransactionFiles {
+    param(
+        [Parameter(Mandatory = $true)][string]$VerificationRoot,
+        [Parameter(Mandatory = $true)]$Runtime
+    )
+    $brokerRoot = Resolve-CatalogChatEntryPhysicalPath -LogicalPath $script:CatalogChatEntryRequesterRoot
+    $proposal = Invoke-CatalogChatEntryLineageProcess -RuntimePython $Runtime.broker_python -VerificationRoot (Join-Path $VerificationRoot 'CatalogRequester') -BrokerRoot $brokerRoot
+    if ([string]$proposal.schema_version -cne '1' -or $null -eq $proposal.records) { throw 'LINEAGE_PREPARATION_OUTPUT_INVALID' }
+    $rows = @($proposal.records)
+    if ($rows.Count -gt 384 -or $rows.Count % 3 -ne 0) { throw 'LINEAGE_RECORD_COUNT_INVALID' }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $files = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($row in $rows) {
+        $relative = [string]$row.path
+        if ($relative -cnotmatch '^CatalogRequester/(launch-tickets/[a-z0-9-]+\.ticket|campaign-status/[a-z0-9-]+\.(journal|status))\.json$' -or
+            -not $seen.Add($relative) -or [string]$row.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [string]$row.expected_old_sha256 -cnotmatch '^[0-9a-f]{64}$' -or ([string]$row.content_base64).Length -gt 24000) {
+            throw 'LINEAGE_RECORD_INVALID'
+        }
+        try { $bytes = [Convert]::FromBase64String([string]$row.content_base64) }
+        catch { throw 'LINEAGE_RECORD_INVALID' }
+        if ($bytes.Length -gt 16384 -or (Get-CatalogChatEntryBytesHash -Bytes $bytes) -cne [string]$row.sha256) { throw 'LINEAGE_RECORD_HASH_INVALID' }
+        $destination = Join-Path $VerificationRoot $relative.Replace('/', '\')
+        [IO.Directory]::CreateDirectory((Split-Path $destination -Parent)) | Out-Null
+        if ([IO.File]::Exists($destination)) { throw 'LINEAGE_PAYLOAD_COLLISION' }
+        [IO.File]::WriteAllBytes($destination, $bytes)
+        [void]$files.Add([pscustomobject]@{ path = $relative; sha256 = [string]$row.sha256; expected_old_sha256 = [string]$row.expected_old_sha256 })
+    }
+    return $files.ToArray()
+}
+
+function Open-CatalogChatEntryLineageLock {
+    $directory = Join-Path $script:CatalogChatEntryRequesterRoot 'chat-intents'
+    [void](Assert-CatalogChatEntryDirectory $directory)
+    $logical = Join-Path $directory '.service.lock'
+    [void](Assert-CatalogChatEntryFile $logical)
+    $physical = Resolve-CatalogChatEntryPhysicalPath -LogicalPath $logical
+    $stream = [IO.FileStream]::new($physical, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        $identity = [CatalogChatContentNative]::GetIdentity($stream.SafeFileHandle)
+        if ($stream.Length -ne 0 -or $identity.NumberOfLinks -ne 1) { throw 'LINEAGE_CHAT_LOCK_INVALID' }
+        [void](Assert-CatalogChatEntryFile $logical)
+        return $stream
+    }
+    catch { $stream.Dispose(); throw }
+}
+
+if ($null -eq (Get-Command -Name Invoke-CatalogChatEntryIdleProcess -CommandType Function -ErrorAction SilentlyContinue)) {
+    function Invoke-CatalogChatEntryIdleProcess {
+        param(
+            [Parameter(Mandatory = $true)][string]$VerificationRoot,
+            [Parameter(Mandatory = $true)]$Runtime
+        )
+        $brokerRoot = Resolve-CatalogChatEntryPhysicalPath -LogicalPath $script:CatalogChatEntryRequesterRoot
+        $source = "import sys;from pathlib import Path;sys.path.insert(0,str(Path(sys.argv[1])/'bin/catalog-requester-client.pyz'));from aurora_catalog_requester_client.catalog_chat_service import _assert_no_pending_prebound_chat_intents_locked;_assert_no_pending_prebound_chat_intents_locked(Path(sys.argv[2]));print('CHAT_LINEAGE_IDLE')"
+        $output = @(& $Runtime.client_python -I -s -E -c $source $VerificationRoot $brokerRoot 2>&1)
+        if ($LASTEXITCODE -ne 0 -or $output.Count -ne 1 -or [string]$output[0] -cne 'CHAT_LINEAGE_IDLE') { throw 'LINEAGE_CHAT_NOT_IDLE' }
+    }
 }
 
 function Get-CatalogChatEntryBytesHash {
@@ -1233,7 +1320,7 @@ function New-CatalogChatEntryVerificationTree {
     $root = Join-Path ([IO.Path]::GetTempPath()) ('aurora-catalog-chat-verify-' + [Guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($root) | Out-Null
     try {
-        foreach ($record in @($Candidate.records.Values | Where-Object { $_.path.StartsWith('CatalogRequester/', [StringComparison]::Ordinal) })) {
+        foreach ($record in @($Candidate.records.Values)) {
             $source = Join-Path $Candidate.payload_root $record.path.Replace('/', '\')
             $destination = Join-Path $root $record.path.Replace('/', '\')
             [IO.Directory]::CreateDirectory((Split-Path -Path $destination -Parent)) | Out-Null
@@ -1246,6 +1333,41 @@ function New-CatalogChatEntryVerificationTree {
     }
     catch {
         try { if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) } } catch { }
+        throw
+    }
+}
+
+function Lock-CatalogChatEntryVerificationFiles {
+    param(
+        [Parameter(Mandatory = $true)]$Candidate,
+        [Parameter(Mandatory = $true)][string]$VerificationRoot,
+        [Parameter(Mandatory = $true)][byte[]]$HistoricalReadyBytes
+    )
+    $streams = New-Object 'System.Collections.Generic.List[object]'
+    $records = @($Candidate.records.Values) + @([pscustomobject]@{
+        path = 'CatalogRequester/' + $script:CatalogChatEntryHistoricalReady
+        sha256 = Get-CatalogChatEntryBytesHash -Bytes $HistoricalReadyBytes
+    })
+    try {
+        foreach ($record in $records) {
+            $path = Join-Path $VerificationRoot $record.path.Replace('/', '\')
+            [void](Assert-CatalogChatEntryFile $path)
+            $stream = [IO.FileStream]::new($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+            [void]$streams.Add($stream)
+            if ($stream.Length -gt $script:CatalogChatEntryMaxFileBytes -or
+                ([CatalogChatContentNative]::GetIdentity($stream.SafeFileHandle)).NumberOfLinks -ne 1) { throw 'VERIFICATION_FILE_INVALID' }
+            [void](Assert-CatalogChatEntryFile $path)
+            $buffer = New-Object IO.MemoryStream
+            try {
+                $stream.CopyTo($buffer)
+                if ((Get-CatalogChatEntryBytesHash -Bytes $buffer.ToArray()) -cne [string]$record.sha256) { throw 'VERIFICATION_FILE_HASH_MISMATCH' }
+            }
+            finally { $buffer.Dispose() }
+        }
+        return $streams.ToArray()
+    }
+    catch {
+        foreach ($stream in $streams) { $stream.Dispose() }
         throw
     }
 }
@@ -1493,7 +1615,9 @@ function Invoke-CatalogChatEntryInstallation {
     $candidate = $null
     $credential = $null
     $verificationRoot = $null
+    $verificationLocks = @()
     $transaction = $null
+    $lineageLock = $null
     $transactionApplied = $false
     $transactionAttempted = $false
     $createdTask = $false
@@ -1550,6 +1674,7 @@ function Invoke-CatalogChatEntryInstallation {
         $baseline = Assert-CatalogChatEntryBaseline -Candidate $candidate
         $historicalReadyBytes = Get-CatalogChatEntryFileBytes (Join-Path $script:CatalogChatEntryRequesterRoot $script:CatalogChatEntryHistoricalReady)
         $verificationRoot = New-CatalogChatEntryVerificationTree -Candidate $candidate -HistoricalReadyBytes $historicalReadyBytes
+        $verificationLocks = @(Lock-CatalogChatEntryVerificationFiles -Candidate $candidate -VerificationRoot $verificationRoot -HistoricalReadyBytes $historicalReadyBytes)
 
         $phase = 'CANDIDATE_VERIFY'
         $candidateVerification = Invoke-CatalogChatEntryOfficialVerification -Candidate $candidate -VerificationRoot (Join-Path $verificationRoot 'CatalogRequester') -Runtime $runtime
@@ -1582,9 +1707,18 @@ function Invoke-CatalogChatEntryInstallation {
         [void](Invoke-CatalogChatEntryResourceProvisioning -Plan $resourcePlan -OwnedResources $ownedResources -SenderSid $senderSid)
         $serviceConfig = Assert-CatalogChatEntryServiceConfig
 
+        $phase = 'LINEAGE_PREPARE'
+        $lineageFiles = @(New-CatalogChatEntryLineageTransactionFiles -VerificationRoot $verificationRoot -Runtime $runtime)
+        if ($lineageFiles.Count -gt 0) {
+            $phase = 'LINEAGE_QUIESCENCE'
+            $lineageLock = Open-CatalogChatEntryLineageLock
+            [void](Invoke-CatalogChatEntryIdleProcess -VerificationRoot (Join-Path $verificationRoot 'CatalogRequester') -Runtime $runtime)
+            $transactionFiles += $lineageFiles
+        }
+
         $phase = 'CONTENT_TRANSACTION'
         $transactionAttempted = $true
-        $transaction = Invoke-CatalogChatContentTransaction -PayloadRoot $candidate.payload_root -TargetRoot $targetRootPhysical -BackupRoot $backupRootPhysical -Files $transactionFiles
+        $transaction = Invoke-CatalogChatContentTransaction -PayloadRoot $verificationRoot -TargetRoot $targetRootPhysical -BackupRoot $backupRootPhysical -Files $transactionFiles
         if ($null -eq $transaction -or [string]$transaction.status -cne 'APPLIED') {
             throw ('CONTENT_TRANSACTION_NOT_APPLIED:' + [string](Get-CatalogChatEntryProperty $transaction 'status') + ':' + [string](Get-CatalogChatEntryProperty $transaction 'cause'))
         }
@@ -1616,6 +1750,7 @@ function Invoke-CatalogChatEntryInstallation {
         $installedVerification = Invoke-CatalogChatEntryOfficialVerification -Candidate $candidate -VerificationRoot $installedRequesterRoot -Runtime $runtime
 
         $phase = 'TASK_START'
+        if ($null -ne $lineageLock) { $lineageLock.Dispose(); $lineageLock = $null }
         $startAttempted = $true
         Start-ScheduledTask -TaskName $script:CatalogChatEntryTaskName -TaskPath '\' -ErrorAction Stop
         $startedTask = $true
@@ -1813,6 +1948,8 @@ function Invoke-CatalogChatEntryInstallation {
         }
     }
     finally {
+        if ($null -ne $lineageLock) { $lineageLock.Dispose() }
+        foreach ($stream in $verificationLocks) { $stream.Dispose() }
         if ($null -ne $verificationRoot) {
             try { if ([IO.Directory]::Exists($verificationRoot)) { [IO.Directory]::Delete($verificationRoot, $true) } } catch { }
         }
