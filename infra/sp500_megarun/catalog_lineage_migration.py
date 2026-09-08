@@ -163,7 +163,7 @@ def prepare_available_lineage_files(
             raise ValueError("invalid signed model")
         previous = parse_catalog_run_request(signed.title, signed.body, public_key)
         if (previous != signed.request or previous.request_sha256 != terminal.request_sha256
-            or previous.submission_key_sha256 != terminal.submission_key_sha256
+            or previous.intent.submission_key_sha256 != terminal.submission_key_sha256
             or previous.launch_ticket_sha256 != terminal.ticket.launch_ticket_sha256
             or signed.signed_at > terminal.updated_at):
             raise ValueError("signed predecessor mismatch")
