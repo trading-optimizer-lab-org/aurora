@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from aurora.infra.github_performance.contracts import canonical_sha256
-from aurora.infra.github_performance.shard_planner import sha256_file
 
 
 def _digest(value: object) -> str:
@@ -126,6 +125,7 @@ def verify_persisted_recovery_block(
     No evaluation, mutation, transport or retries are performed here.
     """
     import pyarrow.parquet as pq
+    from aurora.infra.github_performance.shard_planner import sha256_file
 
     paths = {name: root / name for name in (
         "receipt.json", "shard_attempt_manifest.json",
