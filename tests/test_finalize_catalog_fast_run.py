@@ -2,6 +2,8 @@
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 import pytest
 
@@ -14,6 +16,59 @@ from scripts.finalize_catalog_fast_run import finalize_fast_run
 from tests.test_catalog_fast_path import NOW, _entry, _identity, _prepared, _request, _snapshot
 from tests.test_catalog_engine_outcome import _base
 from aurora.infra.sp500_megarun.catalog_engine_outcome import select_catalog_engine_outcome
+
+
+@pytest.mark.parametrize("case", [None, "science_recovered"])
+def test_finalizer_cli_writes_terminal_receipt_without_pyarrow(tmp_path: Path, case) -> None:
+    # Reuse transport fixtures, not scientific acceptance evidence. The subprocess
+    # must enter the real CLI without inheriting this test process's imports.
+    test_missing_engine_outcome_produces_bound_blocked_receipt(tmp_path, case)
+    code = """
+import importlib.abc
+import importlib.util
+from pathlib import Path
+import runpy
+import sys
+
+class ControllerDependencies(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if fullname == "pyarrow" or fullname.startswith("pyarrow."):
+            raise ModuleNotFoundError("pyarrow is not in the controller runtime", name=fullname)
+        return None
+
+sys.meta_path.insert(0, ControllerDependencies())
+repo = Path.cwd()
+spec = importlib.util.spec_from_file_location("aurora", repo / "__init__.py",
+                                            submodule_search_locations=[str(repo)])
+module = importlib.util.module_from_spec(spec)
+sys.modules["aurora"] = module
+spec.loader.exec_module(module)
+sys.argv[0] = str(repo / "scripts" / "finalize_catalog_fast_run.py")
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+    arguments = [
+        "--request-context", str(tmp_path / "context.json"),
+        "--decision", str(tmp_path / "decision.json"),
+        "--run", str(tmp_path / "run.json"), "--jobs", str(tmp_path / "jobs.json"),
+        "--engine-outcome", str(tmp_path / "missing-outcome.json"),
+        "--output", str(tmp_path / "controller-terminal.json"),
+        "--comment-output", str(tmp_path / "controller-comment.json"),
+        "--github-output", str(tmp_path / "controller-output"),
+    ]
+    if case == "science_recovered":
+        arguments.extend(["--science-index", str(tmp_path / "science.json")])
+    result = subprocess.run(
+        [sys.executable, "-c", code, *arguments],
+        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
+        check=False, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    receipt = parse_catalog_terminal_receipt(json.loads((tmp_path / "controller-terminal.json").read_text()))
+    assert receipt.state == ("SUCCESS" if case else "BLOCKED")
+    assert receipt.reason_code == ("CATALOG_RUN_SUCCESS" if case else "CATALOG_ENGINE_OUTCOME_MISSING")
+    assert receipt.recovered_block_ids == (("c" * 64,) if case else None)
+    assert json.loads((tmp_path / "controller-comment.json").read_text())["body"]
+    assert f"terminal_state={receipt.state}" in (tmp_path / "controller-output").read_text()
 
 
 @pytest.mark.parametrize("gate_result", [None, "failure", "science_missing", "science_file_absent", "science_invalid", "science_malformed", "science_valid", "science_recovered", "science_no_recovery", "gate_failure_invalid", "science_unindexed"])
