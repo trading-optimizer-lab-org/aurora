@@ -95,13 +95,15 @@ def _historical_steps(shape: tuple[tuple[int, str, str, str], ...]) -> list[dict
 
 
 def _historical_jobs(run: Mapping[str, Any], *, extra_job: bool = False,
-                     extra_step: bool = False) -> list[dict[str, Any]]:
+                     extra_step: bool = False,
+                     empty_engine_steps: bool = False) -> list[dict[str, Any]]:
     jobs: list[dict[str, Any]] = [
         {"id": 102351822548, "name": "gate", "run_id": run["id"], "run_attempt": run["run_attempt"],
          "head_sha": run["head_sha"], "status": "completed", "conclusion": "success",
          "steps": _historical_steps(_HISTORICAL_GATE_STEPS)},
         {"id": 102351929745, "name": "engine", "run_id": run["id"], "run_attempt": run["run_attempt"],
-         "head_sha": run["head_sha"], "status": "completed", "conclusion": "skipped", "steps": None},
+         "head_sha": run["head_sha"], "status": "completed", "conclusion": "skipped",
+         "steps": [] if empty_engine_steps else None},
         {"id": 102351929239, "name": "finalize", "run_id": run["id"], "run_attempt": run["run_attempt"],
          "head_sha": run["head_sha"], "status": "completed", "conclusion": "failure",
          "steps": _historical_steps(_HISTORICAL_FINALIZE_STEPS)},
@@ -161,6 +163,17 @@ def test_reconciliation_is_idempotent_and_conflict_safe() -> None:
 def test_nonreserving_execution_accepts_unpublished_local_receipt_creation() -> None:
     run = {"id": 34315861130, "run_attempt": 1, "head_sha": "a" * 40, "head_branch": "main"}
     gate, engine, finalize = _historical_jobs(run)
+    verify_nonreserving_fast_gate_execution(
+        jobs=(gate, engine, finalize), run=run,
+        expected_gate_job_id=gate["id"], expected_engine_job_id=engine["id"],
+        expected_finalize_job_id=finalize["id"],
+    )
+
+
+def test_nonreserving_execution_accepts_empty_engine_steps_from_github() -> None:
+    run = {"id": 34315861130, "run_attempt": 1, "head_sha": "a" * 40, "head_branch": "main"}
+    gate, engine, finalize = _historical_jobs(run, empty_engine_steps=True)
+    assert engine["steps"] == []
     verify_nonreserving_fast_gate_execution(
         jobs=(gate, engine, finalize), run=run,
         expected_gate_job_id=gate["id"], expected_engine_job_id=engine["id"],
@@ -571,7 +584,10 @@ def test_reconciliation_rejects_edit_concurrency_before_post() -> None:
     assert posts == 0
 
 
-@pytest.mark.parametrize("defect", ["engine_success", "reservation_success", "extra_job", "extra_step"])
+@pytest.mark.parametrize(
+    "defect", ["engine_success", "reservation_success", "engine_steps_nonempty", "engine_steps_invalid",
+                "extra_job", "extra_step"],
+)
 def test_nonreserving_execution_rejects_engine_or_reservation(defect: str) -> None:
     run = {"id": 34315861130, "run_attempt": 1, "head_sha": "a" * 40, "head_branch": "main"}
     jobs = _historical_jobs(run, extra_job=defect == "extra_job", extra_step=defect == "extra_step")
@@ -580,6 +596,10 @@ def test_nonreserving_execution_rejects_engine_or_reservation(defect: str) -> No
         engine["conclusion"] = "success"
     if defect == "reservation_success":
         next(step for step in gate["steps"] if step["name"] == "Reserve the campaign atomically and expose QUEUED")["conclusion"] = "success"
+    if defect == "engine_steps_nonempty":
+        engine["steps"] = [{"number": 1, "name": "unexpected", "status": "completed", "conclusion": "success"}]
+    if defect == "engine_steps_invalid":
+        engine["steps"] = {}
     with pytest.raises(ValueError, match="CATALOG_FAST_NONRESERVING_EXECUTION_INVALID"):
         verify_nonreserving_fast_gate_execution(
             jobs=jobs, run=run, expected_gate_job_id=102351822548,
