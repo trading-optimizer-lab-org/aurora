@@ -1,0 +1,14 @@
+{
+  "schema_version": "catalog-fast-canary-recovery-policy-v1",
+  "campaign_key": "catalog-fast-canary-v1",
+  "controlled_generation": 3,
+  "expected_worker_count": 4,
+  "target_worker_id": 3,
+  "target_checkpoint_slot_index": 1,
+  "expected_checkpoint_slot_count": 1,
+  "expected_strategy_count": 2,
+  "initial_attempt_suffix": ":attempt:1",
+  "failure_exception": "ConnectionResetError",
+  "failure_source_code": "CATALOG_CANARY_CONTROLLED_TRANSIENT_FAILURE",
+  "failure_stage": "recipe_worker"
+}

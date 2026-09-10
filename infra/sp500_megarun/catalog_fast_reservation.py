@@ -22,6 +22,65 @@ from aurora.infra.sp500_megarun.catalog_github_snapshot import CatalogStableInve
 _MEMBERS = frozenset({"catalog-fast-request-context.json", "catalog-fast-decision-v1.json"})
 _MAX_MEMBER_BYTES = 1024 * 1024
 
+# The reconciler is allowed to import only the one observed non-reserving
+# controller execution.  Keep this topology fixed here: accepting an
+# unrecognised job or step would turn a same-run evaluation into a false
+# historical negative.  The values below are the exact GitHub API snapshot
+# for controller run 34315861130 attempt 1.
+_HISTORICAL_NONRESERVING_STEPS: dict[str, tuple[tuple[int, str, str, str], ...]] = {
+    "gate": (
+        (1, "Set up job", "completed", "success"),
+        (2, "Start the admission time budget", "completed", "success"),
+        (3, "Check out the exact protected branch", "completed", "success"),
+        (4, "Bind the gate to the checked-out commit", "completed", "success"),
+        (5, "Use the controller Python family", "completed", "success"),
+        (6, "Install only the locked controller dependencies", "completed", "success"),
+        (7, "Fetch exactly one existing request issue", "completed", "success"),
+        (8, "Authenticate and inspect the signed request once", "completed", "success"),
+        (9, "Record an invalid shaped request without running anything", "completed", "skipped"),
+        (10, "Verify the current protected authority before admission", "completed", "success"),
+        (11, "Restore the exact current PREPARED bundle", "completed", "success"),
+        (12, "Run the one live admission gate and materialize the hot plan", "completed", "success"),
+        (13, "Terminate one unexpected admission failure without retrying it", "completed", "skipped"),
+        (14, "Stage the small immutable gate evidence", "completed", "success"),
+        (15, "Publish the one gate decision", "completed", "success"),
+        (16, "Publish the already-materialized sealed plan", "completed", "skipped"),
+        (17, "Write current authority edition", "completed", "skipped"),
+        (18, "Publish current authority edition", "completed", "skipped"),
+        (19, "Check current authority publication", "completed", "skipped"),
+        (20, "Recover missing authority publication", "completed", "skipped"),
+        (21, "Verify the uploaded reservation before exposing QUEUED", "completed", "skipped"),
+        (22, "Reserve the campaign atomically and expose QUEUED", "completed", "skipped"),
+        (23, "Close one unexpected gate publication failure", "completed", "skipped"),
+        (45, "Post Use the controller Python family", "completed", "success"),
+        (46, "Post Check out the exact protected branch", "completed", "success"),
+        (47, "Complete job", "completed", "success"),
+    ),
+    "engine": (),
+    "finalize": (
+        (1, "Set up job", "completed", "success"),
+        (2, "Check out the exact protected source", "completed", "success"),
+        (3, "Use the controller Python family", "completed", "success"),
+        (4, "Install only the locked controller dependencies", "completed", "success"),
+        (5, "Download the gate decision", "completed", "success"),
+        (6, "Download the unique engine outcome", "completed", "skipped"),
+        (7, "Download terminal science only for a successful engine candidate", "completed", "skipped"),
+        (8, "Fetch one bounded timing snapshot", "completed", "success"),
+        (9, "Create exactly one terminal receipt", "completed", "success"),
+        (10, "Publish the terminal receipt before changing the issue", "completed", "skipped"),
+        (11, "Write current authority edition", "completed", "skipped"),
+        (12, "Publish current authority edition", "completed", "skipped"),
+        (13, "Check current authority publication", "completed", "skipped"),
+        (14, "Recover missing authority publication", "completed", "skipped"),
+        (15, "Verify the terminal publication before releasing the campaign", "completed", "skipped"),
+        (16, "Publish the terminal state and release the reservation", "completed", "skipped"),
+        (17, "Fail closed once and release a stuck reservation", "completed", "failure"),
+        (33, "Post Use the controller Python family", "completed", "skipped"),
+        (34, "Post Check out the exact protected source", "completed", "success"),
+        (35, "Complete job", "completed", "success"),
+    ),
+}
+
 
 class _OwnerReader(Protocol):
     repository: str
@@ -372,6 +431,135 @@ def _verify_fast_gate_publication_metadata(
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise ValueError("CATALOG_FAST_OWNER_PROVENANCE_INVALID") from exc
     return run_id
+
+
+def verify_nonreserving_fast_gate_execution(
+    *, jobs: Sequence[Mapping[str, Any]], run: Mapping[str, Any],
+    expected_gate_job_id: int | None = None,
+    expected_engine_job_id: int | None = None,
+    expected_finalize_job_id: int | None = None,
+) -> None:
+    """Prove a historical gate stopped before reservation or evaluation.
+
+    This check is intentionally separate from the normal reservation verifier,
+    but it still accepts only the exact historical job and step topology.  A
+    same-run evaluator job or an unrecognised evaluator step is evidence that
+    the snapshot is not the fixed non-reserving event and must fail closed.
+    """
+    try:
+        if not isinstance(run, Mapping) or type(run.get("id")) is not int or run["id"] < 1:
+            raise ValueError
+        if type(run.get("run_attempt")) is not int or run["run_attempt"] < 1:
+            raise ValueError
+        if not re.fullmatch(r"[0-9a-f]{40}", str(run.get("head_sha"))) or run.get("head_branch") != "main":
+            raise ValueError
+        named: dict[str, list[Mapping[str, Any]]] = {}
+        seen_ids: set[int] = set()
+        if not isinstance(jobs, Sequence) or isinstance(jobs, (str, bytes)):
+            raise ValueError
+        for job in jobs:
+            if not isinstance(job, Mapping) or type(job.get("id")) is not int or job["id"] < 1:
+                raise ValueError
+            if job["id"] in seen_ids:
+                raise ValueError
+            seen_ids.add(job["id"])
+            if (job.get("run_id") != run["id"] or job.get("run_attempt") != run["run_attempt"]
+                    or job.get("head_sha") != run["head_sha"]):
+                raise ValueError
+            name = job.get("name")
+            if name not in _HISTORICAL_NONRESERVING_STEPS or name in named:
+                raise ValueError
+            named[name] = [job]
+        if len(jobs) != len(_HISTORICAL_NONRESERVING_STEPS) or set(named) != set(_HISTORICAL_NONRESERVING_STEPS):
+            raise ValueError
+        expected_ids = {
+            "gate": expected_gate_job_id,
+            "engine": expected_engine_job_id,
+            "finalize": expected_finalize_job_id,
+        }
+        for name, expected_id in expected_ids.items():
+            if expected_id is not None and named[name][0]["id"] != expected_id:
+                raise ValueError
+
+        gate = named["gate"][0]
+        if gate.get("status") != "completed" or gate.get("conclusion") != "success":
+            raise ValueError
+        _require_exact_historical_steps(gate, _HISTORICAL_NONRESERVING_STEPS["gate"])
+        _require_skipped_if_present(
+            gate,
+            {
+                "Write current authority edition",
+                "Publish current authority edition",
+                "Check current authority publication",
+                "Recover missing authority publication",
+                "Verify the uploaded reservation before exposing QUEUED",
+                "Reserve the campaign atomically and expose QUEUED",
+            },
+        )
+
+        engine = named["engine"][0]
+        if engine.get("status") != "completed" or engine.get("conclusion") != "skipped":
+            raise ValueError
+        _require_exact_historical_steps(engine, _HISTORICAL_NONRESERVING_STEPS["engine"])
+
+        finalizer = named["finalize"][0]
+        if finalizer.get("status") != "completed" or finalizer.get("conclusion") not in {"failure", "skipped"}:
+            raise ValueError
+        _require_exact_historical_steps(finalizer, _HISTORICAL_NONRESERVING_STEPS["finalize"])
+        _require_skipped_if_present(
+            finalizer,
+            {
+                "Download the unique engine outcome",
+                "Download terminal science only for a successful engine candidate",
+                "Publish the terminal receipt before changing the issue",
+                "Write current authority edition",
+                "Publish current authority edition",
+                "Check current authority publication",
+                "Recover missing authority publication",
+                "Verify the terminal publication before releasing the campaign",
+                "Publish the terminal state and release the reservation",
+            },
+        )
+        # A historical finalizer may have created an unpublished local
+        # receipt before failing closed (for example, while uploading the
+        # gate artifact).  Creation alone is not terminal publication and is
+        # therefore not evidence of scientific evaluation.  The reconciler
+        # separately proves that no terminal-receipt artifact exists.
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        raise ValueError("CATALOG_FAST_NONRESERVING_EXECUTION_INVALID") from exc
+
+
+def _require_exact_historical_steps(
+    job: Mapping[str, Any], expected: tuple[tuple[int, str, str, str], ...],
+) -> None:
+    steps = job.get("steps")
+    if not expected:
+        # GitHub returned null for the skipped engine job in the pinned run.
+        if steps is not None:
+            raise ValueError
+        return
+    if not isinstance(steps, Sequence) or isinstance(steps, (str, bytes)) or len(steps) != len(expected):
+        raise ValueError
+    for step, (number, name, status, conclusion) in zip(steps, expected, strict=True):
+        if not isinstance(step, Mapping) or (
+            step.get("number"), step.get("name"), step.get("status"), step.get("conclusion")
+        ) != (number, name, status, conclusion):
+            raise ValueError
+
+
+def _require_skipped_if_present(job: Mapping[str, Any], labels: set[str]) -> None:
+    steps = job.get("steps", ())
+    if not isinstance(steps, Sequence) or isinstance(steps, (str, bytes)):
+        raise ValueError
+    for label in labels:
+        matches = [step for step in steps if isinstance(step, Mapping) and step.get("name") == label]
+        if len(matches) > 1:
+            raise ValueError
+        if matches and (
+            matches[0].get("conclusion") != "skipped"
+            or matches[0].get("status") not in {"skipped", "completed"}
+        ):
+            raise ValueError
 
 
 def _object(pairs: list[tuple[str, object]]) -> dict[str, object]:

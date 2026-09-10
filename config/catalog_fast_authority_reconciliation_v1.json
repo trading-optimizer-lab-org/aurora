@@ -1,0 +1,108 @@
+{
+  "schema_version": "1",
+  "document_type": "catalog_fast_authority_reconciliation_v1",
+  "operation": "reconcile",
+  "current_authority": {
+    "revision": 1,
+    "state_sha256": "32f5f233e1a53bcc50c7f1f05756d6fa1dcf308c2f130829b34ca88a389c3dcf",
+    "campaign": {
+      "campaign_key": "sp500-optimized-catalog-v1",
+      "request_sha256": "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
+      "launch_generation": 6,
+      "previous_terminal_request_sha256": "ae697e22d4d7cf0f60970f57321a484543a8b20aeffd3d65638d155973a5c360",
+      "owner_issue_number": 276,
+      "owner_run_id": 33910681070,
+      "terminal_receipt_sha256": null,
+      "legacy_closure_evidence_sha256": "7a0b72b1fef68ff8a4b8bf7470c7ca760cdf3ee0b807aa0908a0b993d87ba9a3"
+    }
+  },
+  "request": {
+    "issue_number": 294,
+    "issue_node_id": "I_kwDOSXi2RM8AAAABQZhMjQ",
+    "title": "[AURORA CATALOG RUN REQUEST] 01a08088-f094-73f7-a8e8-0e7f03f8b195",
+    "request_id": "01a08088-f094-73f7-a8e8-0e7f03f8b195",
+    "request_sha256": "cfa1a701068724bb6bc987c72584921ef8544adc905af9bf3f253fd1f9bc12d4",
+    "campaign_key": "catalog-fast-canary-v1",
+    "launch_generation": 1,
+    "previous_terminal_request_sha256": null,
+    "actor": "aurora-catalog-request-f10c7b40e1[bot]",
+    "protected_commit_sha": "476221d5efab95532f2eb7c720f7194a3df198c6"
+  },
+  "issue": {
+    "state": "closed",
+    "state_reason": "completed",
+    "closed_at": "2026-09-09T05:41:50Z",
+    "closed_by": "github-actions[bot]",
+    "terminal_label": "catalog-run-terminal-v1",
+    "created_at": "2026-09-09T05:40:51Z",
+    "updated_at": "2026-09-09T05:41:50Z"
+  },
+  "gate": {
+    "run": {
+    "run_id": 34315861130,
+    "run_attempt": 1,
+    "path": ".github/workflows/catalog-fast-controller.yml",
+    "event": "issues",
+    "head_branch": "main",
+    "head_sha": "476221d5efab95532f2eb7c720f7194a3df198c6",
+    "status": "completed",
+    "conclusion": "failure",
+    "gate_job_id": 102351822548,
+    "engine_job_id": 102351929745,
+      "finalize_job_id": 102351929239
+    },
+    "artifact": {
+    "id": 10090035553,
+    "name": "catalog-fast-gate-294",
+    "size_in_bytes": 3463,
+    "digest": "sha256:74c4150e61211e1edc638eb4a41d3624765de22ebf4f689323e67d60d47df666",
+    "created_at": "2026-09-09T05:41:25Z",
+      "expires_at": "2026-12-08T05:40:55Z"
+    }
+  },
+  "context": {
+    "schema_version": "1",
+    "document_type": "catalog_fast_request_context_v1",
+    "content_sha256": "bae7c67d3a2c45ed637e298a8e2845b21bf8b1c53c9a77f41b5760b3e24dc3e6",
+    "protected_commit_sha": "476221d5efab95532f2eb7c720f7194a3df198c6",
+    "issue_number": 294,
+    "logical_recipe_count": 8,
+    "preparation_error": null,
+    "request_mode": "admit_new",
+    "identity": {
+      "schema_version": "1",
+      "campaign_key": "catalog-fast-canary-v1",
+      "campaign_definition_sha256": "8d402ec1933a0c6c5e52f81e5f2b008ff5b64628c9dccfb7e3d9781c3618aafc",
+      "catalog_manifest_sha256": "2de5b6a09fb10b71adff0f45af450f30c7f3dbfb196bfea8f01f92d4cf3cb981",
+      "data_contract_sha256": "9b2a971c1d1ad0374ad63e03e03c91127bf634e0ed822195c06180140acfa2c8",
+      "dependency_lock_sha256": "6da502ae3f4fa26258b4b8f3053865638b23fcb3752dd4a5dc426731ec806895",
+      "engine_id": "optimized_catalog_v1",
+      "feature_contract_sha256": "58dd6dba2857223c2040ef383b7ec0513b957675f4ba104ffc408ab5f47ad62c",
+      "optimization_policy_sha256": "9ac8af9ffa0f0ad5a9e264ab0cd6ed30b0e642bfbd85bfe3e7241cd029b81b59",
+      "protected_commit_sha": "476221d5efab95532f2eb7c720f7194a3df198c6",
+      "scientific_contract_sha256": "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2",
+      "selected_config_sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    "decision": {
+      "schema_version": "1",
+      "state": "BLOCKED",
+      "reason_code": "CATALOG_CONTROLLER_DISABLED",
+      "request_sha256": "cfa1a701068724bb6bc987c72584921ef8544adc905af9bf3f253fd1f9bc12d4",
+      "submission_key_sha256": "cfa1a701068724bb6bc987c72584921ef8544adc905af9bf3f253fd1f9bc12d4",
+      "campaign_key": "catalog-fast-canary-v1",
+      "prepared_receipt_sha256": "f325ad0a9bd9b00c6fa61ad64727a8c98e1970c4a71155cfda609454490b16da",
+      "selected_workers": 0,
+      "launch_required": false,
+      "existing_run_id": null,
+      "decided_at": "2026-09-09T05:41:24Z",
+      "expires_at": "2026-09-09T06:10:51Z",
+      "decision_sha256": "8d8a4e05e66c68a182bf97e4c62367a728651fa7dc214c8f7cfb1cf0b78770a7"
+    },
+    "decision_sha256": "8d8a4e05e66c68a182bf97e4c62367a728651fa7dc214c8f7cfb1cf0b78770a7"
+  },
+  "evidence": {
+    "schema_version": "1",
+    "document_type": "catalog_fast_legacy_closure_evidence_v1",
+    "legacy_closure_evidence_sha256": "55fbc5fdb2d92a13c926cb9162ff10f019c67dc8825821dd624cfc6862065a09"
+  }
+}

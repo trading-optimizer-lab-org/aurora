@@ -62,6 +62,7 @@ jobs:
       execution_plan_sha256: ${{ steps.admit.outputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ steps.admit.outputs.execution_protocol_sha256 }}
       protected_commit_sha: ${{ steps.admit.outputs.protected_commit_sha }}
+      canary_gate_artifact: ${{ steps.inspect.outputs.campaign_key == 'catalog-fast-canary-v1' && format('catalog-fast-gate-{0}', steps.issue.outputs.issue_number) || '' }}
     steps:
       - name: Start the admission time budget
         shell: bash
@@ -439,6 +440,7 @@ jobs:
       protected_commit_sha: ${{ github.sha }}
       decision_sha256: ${{ needs.gate.outputs.decision_sha256 }}
       execution_mode: run
+      canary_gate_artifact: ${{ needs.gate.outputs.canary_gate_artifact }}
 
   finalize:
     needs: [gate, engine]

@@ -20,16 +20,19 @@ from .catalog_fast_authority import CatalogLineageTransitionV1, FastAuthoritySta
 
 
 _REPOSITORY = "trading-optimizer-lab-org/aurora"
-_LOCATOR = re.compile(r"\n<!-- AURORA_FAST_PUBLICATION:([1-9][0-9]*):([1-9][0-9]*):(bootstrap|gate|finalize):([0-9a-f]{40}):([1-9][0-9]*) -->\Z")
+_LOCATOR = re.compile(r"\n<!-- AURORA_FAST_PUBLICATION:([1-9][0-9]*):([1-9][0-9]*):(bootstrap|gate|finalize|reconcile):([0-9a-f]{40}):([1-9][0-9]*) -->\Z")
 _MAX_ARCHIVE = 2 * 1024 * 1024
 
 
 def authority_publisher_job_name(run: Mapping[str, Any], *, commit: str, phase: str,
                                issue_number: int | None = None) -> str:
     """Accept only the direct writer or its exact protected reusable caller."""
-    if phase == "bootstrap":
+    if phase in {"bootstrap", "reconcile"}:
         if run.get("path") == ".github/workflows/catalog-fast-authority-maintenance.yml" and run.get("event") == "workflow_dispatch":
-            return phase
+            # Reconciliation deliberately reuses the protected maintenance
+            # job.  The operation is selected by a fixed workflow choice, not
+            # by a caller-controlled job name.
+            return "bootstrap"
     elif phase in {"gate", "finalize"}:
         if run.get("path") == ".github/workflows/catalog-fast-controller.yml" and run.get("event") == "issues":
             return phase
@@ -218,22 +221,31 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
     Returns staging content, not publication success: upload and a full protected
     read-back are still required before evaluation or freeing a campaign.
     """
-    if (phase not in {"gate", "finalize"} or not re.fullmatch(r"[0-9a-f]{40}", commit)
+    if (phase not in {"gate", "finalize", "reconcile"} or not re.fullmatch(r"[0-9a-f]{40}", commit)
         or any(type(value) is not int or value < 1 for value in (run_id, run_attempt, job_id))):
         raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_INVALID")
     old_rows = {row.request.campaign_key: row for row in current.campaigns}
     changed = [row for row in candidate.campaigns if old_rows.get(row.request.campaign_key) != row]
-    if len(changed) != 1 or changed[0].owner_run_id != run_id:
+    if len(changed) != 1 or (phase != "reconcile" and changed[0].owner_run_id != run_id):
         raise ValueError("CATALOG_FAST_AUTHORITY_TRANSITION_INVALID")
     row = changed[0]
     if phase == "gate":
         expected = current.reserve(request=row.request, issue_number=row.owner_issue_number, run_id=run_id,
                                    lineage_transition=lineage_transition)
-    else:
+    elif phase == "finalize":
         if row.terminal_receipt_sha256 is None:
             raise ValueError("CATALOG_FAST_AUTHORITY_TERMINAL_REQUIRED")
         expected = current.terminalize(request=row.request, run_id=run_id,
             terminal_receipt_sha256=row.terminal_receipt_sha256)
+    else:
+        if row.legacy_closure_evidence_sha256 is None or row.terminal_receipt_sha256 is not None:
+            raise ValueError("CATALOG_FAST_AUTHORITY_RECONCILIATION_CANDIDATE_INVALID")
+        expected = current.reconcile_legacy_closure(
+            request=row.request,
+            issue_number=row.owner_issue_number,
+            historical_run_id=row.owner_run_id,
+            legacy_closure_evidence_sha256=row.legacy_closure_evidence_sha256,
+        )
     if expected != candidate:
         raise ValueError("CATALOG_FAST_AUTHORITY_TRANSITION_INVALID")
     before = _edition(read_edit(), anchor)

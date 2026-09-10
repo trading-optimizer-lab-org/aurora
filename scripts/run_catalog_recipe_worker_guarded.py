@@ -13,6 +13,9 @@ from aurora.infra.sp500_megarun.catalog_worker_failure import (
     classify_worker_exception,
     normalized_exception_frame,
 )
+from aurora.infra.sp500_megarun.catalog_fast_canary_acceptance import (
+    controlled_failure_source_code,
+)
 from scripts.run_sp500_optimized_recipe_worker import main as worker_main
 
 
@@ -54,6 +57,12 @@ def execute_guarded(
         raise SystemExit(result)
     except (Exception, SystemExit) as exc:
         reason_code, exit_code, exception_type = classify_worker_exception(exc)
+        source_error_code = None
+        if (
+            isinstance(exc, ConnectionResetError)
+            and str(exc) == controlled_failure_source_code()
+        ):
+            source_error_code = controlled_failure_source_code()
         receipt = build_catalog_worker_failure_receipt(
             authority_id=args.authority_id,
             campaign_id=args.campaign_id,
@@ -67,9 +76,12 @@ def execute_guarded(
             exception_type=exception_type,
             normalized_frame=normalized_exception_frame(exc),
             source_error_code=(
-                str(exc.code).strip().upper()
-                if isinstance(exc, SystemExit) and isinstance(exc.code, str)
-                else None
+                source_error_code
+                or (
+                    str(exc.code).strip().upper()
+                    if isinstance(exc, SystemExit) and isinstance(exc.code, str)
+                    else None
+                )
             ),
             created_at=created_at or datetime.now(UTC),
         )

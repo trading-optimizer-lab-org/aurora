@@ -100,6 +100,48 @@ class FastAuthorityStateV1(_AuthorityContent):
             raise ValueError("CATALOG_FAST_PREDECESSOR_CONFLICT")
         return self._replace(FastAuthorityCampaignV1(request=request, owner_issue_number=issue_number, owner_run_id=run_id))
 
+    def reconcile_legacy_closure(
+        self, *, request: CatalogRunRequestV1, issue_number: int, historical_run_id: int,
+        legacy_closure_evidence_sha256: str,
+    ) -> "FastAuthorityStateV1":
+        """Add one independently verified historical closure to the high-water state.
+
+        This transition is deliberately separate from ``bootstrap`` and
+        ``reserve``.  It can only import a first-generation request that has no
+        predecessor and carries operational closure evidence, never a
+        scientific terminal receipt.  Repeating the exact candidate is a
+        no-op; any disagreement is a fail-closed conflict.
+        """
+        if (
+            type(issue_number) is not int or issue_number < 1
+            or type(historical_run_id) is not int or historical_run_id < 1
+            or not isinstance(legacy_closure_evidence_sha256, str)
+            or len(legacy_closure_evidence_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in legacy_closure_evidence_sha256)
+        ):
+            raise ValueError("CATALOG_FAST_AUTHORITY_RECONCILIATION_INPUT_INVALID")
+        old = next((row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
+        if old is not None:
+            if (
+                old.request == request
+                and old.owner_issue_number == issue_number
+                and old.owner_run_id == historical_run_id
+                and old.terminal_receipt_sha256 is None
+                and old.legacy_closure_evidence_sha256 == legacy_closure_evidence_sha256
+            ):
+                return self
+            raise ValueError("CATALOG_FAST_AUTHORITY_RECONCILIATION_CONFLICT")
+        if request.launch_generation != 1:
+            raise ValueError("CATALOG_FAST_GENERATION_CONFLICT")
+        if request.previous_terminal_request_sha256 is not None:
+            raise ValueError("CATALOG_FAST_PREDECESSOR_CONFLICT")
+        return self._replace(FastAuthorityCampaignV1(
+            request=request,
+            owner_issue_number=issue_number,
+            owner_run_id=historical_run_id,
+            legacy_closure_evidence_sha256=legacy_closure_evidence_sha256,
+        ))
+
     def terminalize(self, *, request: CatalogRunRequestV1, run_id: int,
                     terminal_receipt_sha256: str) -> "FastAuthorityStateV1":
         old = next((row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
