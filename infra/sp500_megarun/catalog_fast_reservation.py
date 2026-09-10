@@ -534,8 +534,8 @@ def _require_exact_historical_steps(
 ) -> None:
     steps = job.get("steps")
     if not expected:
-        # GitHub returned null for the skipped engine job in the pinned run.
-        if steps is not None:
+        # GitHub may return null or an empty array for a skipped job with no steps.
+        if steps is not None and (not isinstance(steps, list) or steps):
             raise ValueError
         return
     if not isinstance(steps, Sequence) or isinstance(steps, (str, bytes)) or len(steps) != len(expected):
