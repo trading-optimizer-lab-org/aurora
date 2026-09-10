@@ -19,6 +19,14 @@ on:
       recovery_descriptor_artifact: {required: false, type: string, default: ""}
       recovery_descriptor_member: {required: false, type: string, default: ""}
       recovery_descriptor_sha256: {required: false, type: string, default: ""}
+      canary_fault_enabled: {required: false, type: string, default: ""}
+      canary_acceptance_campaign_key: {required: false, type: string, default: ""}
+      canary_acceptance_generation: {required: false, type: number, default: 0}
+      canary_acceptance_context_sha256: {required: false, type: string, default: ""}
+      canary_acceptance_request_sha256: {required: false, type: string, default: ""}
+      canary_acceptance_plan_sha256: {required: false, type: string, default: ""}
+      canary_acceptance_token: {required: false, type: string, default: ""}
+      canary_gate_artifact: {required: false, type: string, default: ""}
 
 permissions: {actions: read, contents: read}
 
@@ -39,6 +47,13 @@ jobs:
       OPENBLAS_CORETYPE: "NEHALEM"
       NPY_DISABLE_CPU_FEATURES: "AVX,F16C,FMA3,AVX2,AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL"
       PYTHONPATH: ${{ github.workspace }}/..
+      CANARY_FAULT_ENABLED: ${{ inputs.canary_fault_enabled }}
+      CANARY_ACCEPTANCE_CAMPAIGN_KEY: ${{ inputs.canary_acceptance_campaign_key }}
+      CANARY_ACCEPTANCE_GENERATION: ${{ inputs.canary_acceptance_generation }}
+      CANARY_ACCEPTANCE_CONTEXT_SHA256: ${{ inputs.canary_acceptance_context_sha256 }}
+      CANARY_ACCEPTANCE_REQUEST_SHA256: ${{ inputs.canary_acceptance_request_sha256 }}
+      CANARY_ACCEPTANCE_PLAN_SHA256: ${{ inputs.canary_acceptance_plan_sha256 }}
+      CANARY_ACCEPTANCE_TOKEN: ${{ inputs.canary_acceptance_token }}
     steps:
       - name: Check out the protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -71,6 +86,13 @@ jobs:
         with:
           name: ${{ inputs.recovery_descriptor_artifact }}
           path: ${{ runner.temp }}/recovery-descriptor
+
+      - name: Download the signed gate evidence for the controlled canary block
+        if: ${{ inputs.canary_fault_enabled == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.canary_gate_artifact }}
+          path: ${{ runner.temp }}/canary-gate
 
       - name: Verify exact recipe descriptor and frozen plan
         id: descriptor
@@ -492,6 +514,15 @@ jobs:
           --checkpoint-slot-index 1
           --checkpoint-policy "$RUNNER_TEMP/sealed-plan/checkpoint_policy.json"
           --checkpoint-slot-count "${{ steps.descriptor.outputs.checkpoint_slot_count }}"
+          --canary-acceptance-enabled "$CANARY_FAULT_ENABLED"
+          --canary-acceptance-campaign-key "$CANARY_ACCEPTANCE_CAMPAIGN_KEY"
+          --canary-acceptance-generation "$CANARY_ACCEPTANCE_GENERATION"
+          --canary-acceptance-context-sha256 "$CANARY_ACCEPTANCE_CONTEXT_SHA256"
+          --canary-acceptance-request-sha256 "$CANARY_ACCEPTANCE_REQUEST_SHA256"
+          --canary-acceptance-plan-sha256 "$CANARY_ACCEPTANCE_PLAN_SHA256"
+          --canary-acceptance-token "$CANARY_ACCEPTANCE_TOKEN"
+          --canary-acceptance-context "$RUNNER_TEMP/canary-gate/catalog-fast-request-context.json"
+          --canary-acceptance-sealed-plan "$RUNNER_TEMP/sealed-plan"
           --admission-token "${{ inputs.admission_token_sha256 }}"
           --shard-index "${{ inputs.worker_id }}"
           --total-shards "${{ steps.descriptor.outputs.active_recipe_workers }}"

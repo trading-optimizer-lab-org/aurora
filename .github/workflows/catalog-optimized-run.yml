@@ -12,6 +12,7 @@ on:
       protected_commit_sha: {required: true, type: string}
       decision_sha256: {required: true, type: string}
       execution_mode: {required: false, type: string, default: run}
+      canary_gate_artifact: {required: false, type: string, default: ""}
     outputs:
       campaign_state:
         value: ${{ jobs.campaign_outcome.outputs.campaign_state }}
@@ -111,6 +112,13 @@ jobs:
       active_recipe_workers: ${{ steps.verify.outputs.active_recipe_workers }}
       final_evidence_artifact: ${{ steps.verify.outputs.final_evidence_artifact }}
       runtime_skip_matrix_counts: ${{ steps.verify.outputs.runtime_skip_matrix_counts }}
+      canary_fault_enabled: ${{ steps.canary.outputs.fault_enabled }}
+      canary_acceptance_campaign_key: ${{ steps.canary.outputs.campaign_key }}
+      canary_acceptance_generation: ${{ steps.canary.outputs.generation }}
+      canary_acceptance_context_sha256: ${{ steps.canary.outputs.context_sha256 }}
+      canary_acceptance_request_sha256: ${{ steps.canary.outputs.request_sha256 }}
+      canary_acceptance_plan_sha256: ${{ steps.canary.outputs.plan_sha256 }}
+      canary_acceptance_token: ${{ steps.canary.outputs.acceptance_token }}
     steps:
       - name: Check out exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -130,6 +138,102 @@ jobs:
         with:
           name: catalog-sealed-execution-plan-${{ inputs.authority_id }}
           path: ${{ runner.temp }}/sealed-plan
+
+      - name: Download the authenticated canary gate context when selected
+        if: ${{ inputs.canary_gate_artifact != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.canary_gate_artifact }}
+          path: ${{ runner.temp }}/canary-gate
+
+      - name: Derive the one protected canary fault activation
+        id: canary
+        shell: bash
+        env:
+          CANARY_GATE_ARTIFACT: ${{ inputs.canary_gate_artifact }}
+          EXPECTED_REQUEST_SHA256: ${{ inputs.request_sha256 }}
+          EXPECTED_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
+          EXPECTED_PROTECTED_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          # This pre-runtime step only routes a hint. The selected worker
+          # independently verifies the existing requester signature and plan.
+          def canonical_sha256(value):
+              raw = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False, allow_nan=False).encode("utf-8")
+              return hashlib.sha256(raw).hexdigest()
+
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          values = {
+              "fault_enabled": "false",
+              "campaign_key": "",
+              "generation": "0",
+              "context_sha256": "",
+              "request_sha256": "",
+              "plan_sha256": "",
+              "acceptance_token": "",
+          }
+          artifact = os.environ["CANARY_GATE_ARTIFACT"]
+          if artifact:
+              if not re.fullmatch(r"catalog-fast-gate-[1-9][0-9]*", artifact):
+                  raise SystemExit("CATALOG_CANARY_GATE_ARTIFACT_INVALID")
+              root = Path(os.environ["RUNNER_TEMP"]) / "canary-gate"
+              context_path = root / "catalog-fast-request-context.json"
+              if context_path.is_symlink() or not context_path.is_file():
+                  raise SystemExit("CATALOG_CANARY_GATE_CONTEXT_MISSING")
+              context = json.loads(context_path.read_text("utf-8"))
+              if not isinstance(context, dict) or "content_sha256" not in context:
+                  raise SystemExit("CATALOG_CANARY_GATE_CONTEXT_INVALID")
+              identity = {key: value for key, value in context.items() if key != "content_sha256"}
+              context_sha = context["content_sha256"]
+              request = context.get("request")
+              if (
+                  context.get("schema_version") != "1"
+                  or context.get("document_type") != "catalog_fast_request_context_v1"
+                  or context.get("protected_commit_sha") != os.environ["EXPECTED_PROTECTED_COMMIT_SHA"]
+                  or canonical_sha256(identity) != context_sha
+                  or context.get("request_mode") != "admit_new"
+                  or not isinstance(request, dict)
+                  or type(request.get("launch_generation")) is not int
+                  or canonical_sha256(request) != os.environ["EXPECTED_REQUEST_SHA256"]
+              ):
+                  raise SystemExit("CATALOG_CANARY_GATE_CONTEXT_BINDING_INVALID")
+              if (
+                  request["campaign_key"] != "catalog-fast-canary-v1"
+              ):
+                  with output.open("a", encoding="utf-8", newline="\n") as stream:
+                      for key, value in values.items():
+                          stream.write(f"{key}={value}\n")
+                  raise SystemExit(0)
+              generation = request["launch_generation"]
+              values["generation"] = str(generation)
+              policy = json.loads(Path("config/catalog_fast_canary_recovery_policy_v1.json").read_text("utf-8"))
+              if generation == policy["controlled_generation"]:
+                  values.update(
+                      campaign_key=request["campaign_key"],
+                      context_sha256=context_sha,
+                      request_sha256=canonical_sha256(request),
+                      plan_sha256=os.environ["EXPECTED_PLAN_SHA256"],
+                  )
+                  values["fault_enabled"] = "true"
+                  values["acceptance_token"] = canonical_sha256({
+                      "schema_version": "catalog-fast-canary-acceptance-token-v1",
+                      "policy_sha256": canonical_sha256(policy),
+                      "campaign_key": request["campaign_key"], "generation": generation,
+                      "context_sha256": context_sha, "request_sha256": canonical_sha256(request),
+                      "execution_plan_sha256": os.environ["EXPECTED_PLAN_SHA256"],
+                  })
+          with output.open("a", encoding="utf-8", newline="\n") as stream:
+              for key, value in values.items():
+                  stream.write(f"{key}={value}\n")
+          PY
 
       - name: Verify the complete immutable plan without replanning
         id: verify
@@ -1643,6 +1747,14 @@ jobs:
       descriptor_member: ${{ matrix.descriptor_member }}
       descriptor_sha256: ${{ matrix.descriptor_sha256 }}
       admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
+      canary_fault_enabled: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_fault_enabled || 'false' }}
+      canary_gate_artifact: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_fault_enabled == 'true' && inputs.canary_gate_artifact || '' }}
+      canary_acceptance_campaign_key: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_campaign_key || '' }}
+      canary_acceptance_generation: ${{ matrix.worker_id == 3 && fromJSON(needs.engine_verify_sealed_plan.outputs.canary_acceptance_generation) || 0 }}
+      canary_acceptance_context_sha256: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_context_sha256 || '' }}
+      canary_acceptance_request_sha256: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_request_sha256 || '' }}
+      canary_acceptance_plan_sha256: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_plan_sha256 || '' }}
+      canary_acceptance_token: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_token || '' }}
 
   evaluate_b:
     needs: [engine_verify_sealed_plan, verify_component_store]
@@ -1670,6 +1782,14 @@ jobs:
       descriptor_member: ${{ matrix.descriptor_member }}
       descriptor_sha256: ${{ matrix.descriptor_sha256 }}
       admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
+      canary_fault_enabled: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_fault_enabled || 'false' }}
+      canary_gate_artifact: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_fault_enabled == 'true' && inputs.canary_gate_artifact || '' }}
+      canary_acceptance_campaign_key: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_campaign_key || '' }}
+      canary_acceptance_generation: ${{ matrix.worker_id == 3 && fromJSON(needs.engine_verify_sealed_plan.outputs.canary_acceptance_generation) || 0 }}
+      canary_acceptance_context_sha256: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_context_sha256 || '' }}
+      canary_acceptance_request_sha256: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_request_sha256 || '' }}
+      canary_acceptance_plan_sha256: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_plan_sha256 || '' }}
+      canary_acceptance_token: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_token || '' }}
 
   evaluate_c:
     needs: [engine_verify_sealed_plan, verify_component_store]
@@ -1697,6 +1817,14 @@ jobs:
       descriptor_member: ${{ matrix.descriptor_member }}
       descriptor_sha256: ${{ matrix.descriptor_sha256 }}
       admission_token_sha256: ${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}
+      canary_fault_enabled: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_fault_enabled || 'false' }}
+      canary_gate_artifact: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_fault_enabled == 'true' && inputs.canary_gate_artifact || '' }}
+      canary_acceptance_campaign_key: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_campaign_key || '' }}
+      canary_acceptance_generation: ${{ matrix.worker_id == 3 && fromJSON(needs.engine_verify_sealed_plan.outputs.canary_acceptance_generation) || 0 }}
+      canary_acceptance_context_sha256: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_context_sha256 || '' }}
+      canary_acceptance_request_sha256: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_request_sha256 || '' }}
+      canary_acceptance_plan_sha256: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_plan_sha256 || '' }}
+      canary_acceptance_token: ${{ matrix.worker_id == 3 && needs.engine_verify_sealed_plan.outputs.canary_acceptance_token || '' }}
 
   reconcile_wave_0:
     needs:

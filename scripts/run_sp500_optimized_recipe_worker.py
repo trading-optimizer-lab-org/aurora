@@ -27,6 +27,9 @@ from aurora.infra.sp500_megarun.catalog_admission import (
 from aurora.infra.sp500_megarun.catalog_component_store import CatalogComponentStore
 from aurora.infra.sp500_megarun.catalog_fast_objective import FastTrainObjective
 from aurora.infra.sp500_megarun.catalog_recovery_blocks import resolve_recovery_block
+from aurora.infra.sp500_megarun.catalog_fast_canary_acceptance import (
+    should_inject_canary_failure,
+)
 from aurora.infra.sp500_megarun.catalog_optimization_contract import (
     RunOptimizationContractV1,
 )
@@ -440,6 +443,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-slot-index", type=int)
     parser.add_argument("--checkpoint-slot-count", type=int)
     parser.add_argument("--previous-checkpoint-receipt", type=Path)
+    # Emitted only by the protected controller context; never a global
+    # environment switch inherited by ordinary or recovery workers.
+    parser.add_argument("--canary-acceptance-enabled", default="")
+    parser.add_argument("--canary-acceptance-campaign-key", default="")
+    parser.add_argument("--canary-acceptance-generation", type=int)
+    parser.add_argument("--canary-acceptance-context-sha256", default="")
+    parser.add_argument("--canary-acceptance-request-sha256", default="")
+    parser.add_argument("--canary-acceptance-plan-sha256", default="")
+    parser.add_argument("--canary-acceptance-token", default="")
+    parser.add_argument("--canary-acceptance-context", type=Path)
+    parser.add_argument("--canary-acceptance-sealed-plan", type=Path)
     parser.add_argument("--processes-per-worker-override", type=int)
     parser.add_argument("--block-size-override", type=int)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -450,7 +464,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     scientific_wall_started = time.perf_counter()
     resource_started = ResourceUsageSnapshot.capture()
-    numeric_runtime = verify_numeric_runtime_environment()
     plan = verify_catalog_worker_admission(
         args.run_plan,
         admission_token_sha256=args.admission_token,
@@ -477,42 +490,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         or work_manifest.active_workers != plan.active_workers
     ):
         raise SystemExit("RECIPE_WORK_MANIFEST_INVALID")
-    campaign = load_and_validate_campaign_contract(args.campaign_contract)
-    receipt = verify_strategy_catalog_directory(args.catalog_dir)
-    if receipt["validation_opened"] or receipt["locked_opened"]:
-        raise SystemExit("RECIPE_CATALOG_BOUNDARY_OPEN")
-    runtime_input_pack = args.runtime_input_pack or args.component_store
-    snapshot = runtime_input_pack / "train_snapshot_1993_2010"
-    ledger = load_train_total_return_ledger(
-        snapshot,
-        allowed_end=campaign.search_end,
-        expected_manifest_sha256=campaign.train_snapshot_manifest_sha256,
-        expected_spy_sha256=campaign.train_spy_sha256,
-    )
-    rows = [
-        json.loads(line)
-        for line in (args.catalog_dir / "catalog.jsonl").read_text("utf-8").splitlines()
-        if line
-    ]
-    dag_manifest = verify_recipe_dag_artifacts(
-        args.recipe_dag,
-        args.recipe_dag_manifest,
-    )
-    dag_table = pq.read_table(args.recipe_dag)
-    dag_strategy_ids = dag_table.column("strategy_id").to_pylist()
-    dag_science_ids = dag_table.column("scientific_recipe_sha256").to_pylist()
-    dag_index = dict(zip(dag_strategy_ids, dag_science_ids, strict=True))
-    if (
-        int(dag_manifest["recipe_count"]) != len(rows)
-        or len(dag_index) != len(rows)
-        or any(
-            dag_index.get(str(row["strategy_id"]))
-            != str(row["scientific_recipe_sha256"])
-            for row in rows
-        )
-    ):
-        raise SystemExit("RECIPE_DAG_CATALOG_MISMATCH")
-    by_strategy_id = {str(row["strategy_id"]): row for row in rows}
     payload_descriptor: dict[str, object] | None = None
     checkpoint_slot_index = 1
     checkpoint_slot_count = 1
@@ -591,6 +568,75 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         except (OSError, ValueError, TypeError) as exc:
             raise SystemExit("RECIPE_RECOVERY_BLOCK_INVALID") from exc
+    if should_inject_canary_failure(
+        enabled=args.canary_acceptance_enabled,
+        campaign_key=args.canary_acceptance_campaign_key,
+        generation=args.canary_acceptance_generation or 0,
+        context_sha256=args.canary_acceptance_context_sha256,
+        request_sha256=args.canary_acceptance_request_sha256,
+        execution_plan_sha256=args.canary_acceptance_plan_sha256,
+        acceptance_token=args.canary_acceptance_token,
+        worker_id=args.shard_index,
+        total_workers=args.total_shards,
+        checkpoint_slot_index=checkpoint_slot_index,
+        checkpoint_slot_count=checkpoint_slot_count,
+        strategy_ids=assigned_ids,
+        attempt_id=(
+            str(payload_descriptor.get("attempt_id", ""))
+            if payload_descriptor is not None
+            else ""
+        ),
+        recovery_block_id=recovery_block_id,
+        request_context_path=args.canary_acceptance_context,
+        sealed_plan_root=args.canary_acceptance_sealed_plan,
+        resolved_contract_path=args.resolved_contract,
+        run_plan_path=args.run_plan,
+        payload_descriptor_path=args.payload_descriptor,
+        assignment_path=args.assignment_file,
+        checkpoint_policy_path=args.checkpoint_policy,
+    ):
+        # Admission, descriptor/assignment identity, and block binding have
+        # passed; no scientific input has been opened or evaluated yet.
+        raise ConnectionResetError(
+            "CATALOG_CANARY_CONTROLLED_TRANSIENT_FAILURE"
+        )
+    numeric_runtime = verify_numeric_runtime_environment()
+    campaign = load_and_validate_campaign_contract(args.campaign_contract)
+    receipt = verify_strategy_catalog_directory(args.catalog_dir)
+    if receipt["validation_opened"] or receipt["locked_opened"]:
+        raise SystemExit("RECIPE_CATALOG_BOUNDARY_OPEN")
+    runtime_input_pack = args.runtime_input_pack or args.component_store
+    snapshot = runtime_input_pack / "train_snapshot_1993_2010"
+    ledger = load_train_total_return_ledger(
+        snapshot,
+        allowed_end=campaign.search_end,
+        expected_manifest_sha256=campaign.train_snapshot_manifest_sha256,
+        expected_spy_sha256=campaign.train_spy_sha256,
+    )
+    rows = [
+        json.loads(line)
+        for line in (args.catalog_dir / "catalog.jsonl").read_text("utf-8").splitlines()
+        if line
+    ]
+    dag_manifest = verify_recipe_dag_artifacts(
+        args.recipe_dag,
+        args.recipe_dag_manifest,
+    )
+    dag_table = pq.read_table(args.recipe_dag)
+    dag_strategy_ids = dag_table.column("strategy_id").to_pylist()
+    dag_science_ids = dag_table.column("scientific_recipe_sha256").to_pylist()
+    dag_index = dict(zip(dag_strategy_ids, dag_science_ids, strict=True))
+    if (
+        int(dag_manifest["recipe_count"]) != len(rows)
+        or len(dag_index) != len(rows)
+        or any(
+            dag_index.get(str(row["strategy_id"]))
+            != str(row["scientific_recipe_sha256"])
+            for row in rows
+        )
+    ):
+        raise SystemExit("RECIPE_DAG_CATALOG_MISMATCH")
+    by_strategy_id = {str(row["strategy_id"]): row for row in rows}
     try:
         assigned = [by_strategy_id[strategy_id] for strategy_id in assigned_ids]
     except KeyError as exc:

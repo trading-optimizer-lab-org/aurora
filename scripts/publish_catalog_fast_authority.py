@@ -30,7 +30,7 @@ from aurora.infra.sp500_megarun.catalog_gate_budget import gate_timeout
 
 def _publisher_job(client: CatalogGitHubReadOnlyClient, run_id: int, attempt: int, commit: str, phase: str, issue_number: int | None = None) -> int:
     from aurora.infra.sp500_megarun.catalog_fast_authority_github import authority_publisher_job_name
-    if phase not in {"bootstrap", "gate", "finalize"}:
+    if phase not in {"bootstrap", "gate", "finalize", "reconcile"}:
         raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_PHASE_INVALID")
     prefix = f"/repos/{client.repository}/actions/runs/{run_id}"
     run, _ = client.get_json(prefix)

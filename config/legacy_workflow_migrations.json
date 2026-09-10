@@ -33,20 +33,20 @@
     {
       "path": ".github/workflows/catalog-fast-controller.yml",
       "previous_sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e",
-      "reason": "bind the signed fast path to the protected event commit and close every terminal or failed publication path for requester generation advancement",
-      "replacement_sha256": "ed124f19c658049195a3872888d02239ec8592ce60bcbc4e6e28b34728211186"
+      "reason": "bind the signed fast path to the protected event commit and pass its authenticated gate artifact to the bounded canary acceptance consumer",
+      "replacement_sha256": "ea7c156823c489ef98b0d31bcbc9db15f0caf3cf018c394a8fa0e35d68bde6cf"
     },
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
-      "reason": "retain the sealed offline runtime and immutable source binding; authenticate complete pinned component bundles while reconciling only the selected component subset",
-      "replacement_sha256": "0f3d7d6c493366a820774b156bd940c9bcac41013ba12eb70d823dd8e0b61f28"
+      "reason": "retain the sealed runtime and exact component reuse while deriving the one controlled canary recovery activation from the authenticated request context",
+      "replacement_sha256": "6befe10655aa265e3e90f09444404b5100dbacc90ed2e05bf2fc8d50d8dbc7c5"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",
       "previous_sha256": "219b28147a66b2932d9cab120dddc5dbd5e41dcaa0017855c3691efa1e481a63",
-      "reason": "bind strategy evaluation to the immutable caller revision",
-      "replacement_sha256": "c3313b0b3ca3ddc5f5f5d1d93f9bbf1131b8f08f70610de3e903fbcd7da92e97"
+      "reason": "bind strategy evaluation to the immutable caller revision and constrain the authenticated canary fault to one initial recipe block",
+      "replacement_sha256": "07a6c65b415b52ee473f007866e7271cd199aa0c9f6b7dcc0400f16bab73eed8"
     },
     {
       "path": ".github/workflows/catalog-prepare-one.yml",
