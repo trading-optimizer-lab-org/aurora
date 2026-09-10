@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import subprocess
 from typing import Any, Mapping, cast
 import zipfile
 
@@ -218,8 +219,12 @@ def test_reconcile_cli_uses_real_actor_pin_and_controlled_github_snapshot(tmp_pa
         "workflow_run": {"id": 34315861130, "repository_id": 1232647748, "head_repository_id": 1232647748,
                           "head_branch": "main", "head_sha": historical_run["head_sha"]},
     }
+    maintenance_commit = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        capture_output=True, check=True, text=True,
+    ).stdout.strip()
     maintenance_run = {
-        "id": 999, "run_attempt": 1, "head_sha": "a24aace1e3ba14c7b416d8da9f995542bbdb9de1",
+        "id": 999, "run_attempt": 1, "head_sha": maintenance_commit,
         "head_branch": "main", "path": ".github/workflows/catalog-fast-authority-maintenance.yml",
         "event": "workflow_dispatch", "repository": {"full_name": "trading-optimizer-lab-org/aurora"},
     }
