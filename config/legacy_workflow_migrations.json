@@ -45,8 +45,8 @@
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",
       "previous_sha256": "219b28147a66b2932d9cab120dddc5dbd5e41dcaa0017855c3691efa1e481a63",
-      "reason": "bind strategy evaluation to the immutable caller revision and constrain the authenticated canary fault to one initial recipe block",
-      "replacement_sha256": "07a6c65b415b52ee473f007866e7271cd199aa0c9f6b7dcc0400f16bab73eed8"
+      "reason": "retain immutable caller binding and bounded canary activation while preserving pre-runtime failure receipts and guarding absent descriptor outputs",
+      "replacement_sha256": "f4b085b666a08fbb93612ee4faddebbe6256bd0dcdff2951dd77ddc9dc297330"
     },
     {
       "path": ".github/workflows/catalog-prepare-one.yml",

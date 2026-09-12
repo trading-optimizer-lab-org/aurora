@@ -20,6 +20,8 @@ def verify_sealed_global_reuse_execution_plan(
     sealed = Path(root).resolve(strict=True)
     required_files = {
         "resolved_contract.json",
+        "run_plan.json",
+        "resume_work_manifest.json",
         "controller_binding.json",
         "rebuildable_store_plan.json",
         "logical_recipe_manifest.json",
@@ -117,6 +119,10 @@ def verify_sealed_global_reuse_execution_plan(
         "recipe_matrix_c",
     )
     combined_utf16 = 0
+    frozen_inputs = {
+        member: (sealed / member).read_bytes()
+        for member in ("run_plan.json", "resume_work_manifest.json")
+    }
     route_keys: set[tuple[str, str]] = set()
     for name in matrix_names:
         try:
@@ -155,6 +161,24 @@ def verify_sealed_global_reuse_execution_plan(
                 != row["descriptor_sha256"]
             ):
                 raise ValueError("CATALOG_SEALED_PLAN_CONTENT_INVALID")
+            descriptor_payload = json.loads(descriptor.read_text("utf-8"))
+            assignment_artifact = (
+                descriptor_payload.get("assignment_artifact")
+                if isinstance(descriptor_payload, dict) else None
+            )
+            if not isinstance(assignment_artifact, str) or not assignment_artifact:
+                raise ValueError("CATALOG_SEALED_PLAN_INPUT_COPY_INVALID")
+            input_members = (
+                tuple(frozen_inputs) if name.startswith("recipe_")
+                else ("run_plan.json",)
+            )
+            for member in input_members:
+                relative_copy = f"payload_artifacts/{assignment_artifact}/{member}"
+                if (
+                    relative_copy not in seen_paths
+                    or (sealed / relative_copy).read_bytes() != frozen_inputs[member]
+                ):
+                    raise ValueError("CATALOG_SEALED_PLAN_INPUT_COPY_INVALID")
     if combined_utf16 > 512 * 1024:
         raise ValueError("CATALOG_MATRIX_OUTPUT_BUDGET_EXCEEDED")
 
