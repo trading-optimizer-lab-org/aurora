@@ -133,7 +133,7 @@ class RealCanaryFixture(TypedDict):
     attempt_id: str
 
 
-def _token(*, generation: int = 3, campaign_key: str = "catalog-fast-canary-v1") -> str:
+def _token(*, generation: int = 4, campaign_key: str = "catalog-fast-canary-v1") -> str:
     return build_canary_acceptance_token(
         campaign_key=campaign_key,
         generation=generation,
@@ -147,7 +147,7 @@ def _scope(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "enabled": "true",
         "campaign_key": "catalog-fast-canary-v1",
-        "generation": 3,
+        "generation": 4,
         "context_sha256": _CONTEXT,
         "request_sha256": _REQUEST,
         "execution_plan_sha256": _PLAN,
@@ -215,6 +215,10 @@ def _real_canary_fixture(
         _PREPARED_INPUTS / "local-worker-qualification/run_plan.json",
         plan_root / "run_plan.json",
     )
+    shutil.copy2(
+        _PREPARED_INPUTS / "execution-inputs/resume_work_manifest.json",
+        plan_root / "resume_work_manifest.json",
+    )
     resolved = RunOptimizationContractV1.model_validate_json(
         (plan_root / "resolved_contract.json").read_text(encoding="utf-8")
     )
@@ -232,6 +236,24 @@ def _real_canary_fixture(
     run_plan["admission_token_sha256"] = admission_token
     run_plan_path.write_text(
         json.dumps(run_plan, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    # Keep the historical fixture's transport copies aligned with the root
+    # inputs required by the current verifier; only the temporary copy changes.
+    payload_manifest_path = plan_root / "payload_bundle_manifest.json"
+    payload_manifest = json.loads(payload_manifest_path.read_text(encoding="utf-8"))
+    for payload in payload_manifest["payloads"]:
+        if payload["member"] not in {"run_plan.json", "resume_work_manifest.json"}:
+            continue
+        target = plan_root / "payload_artifacts" / payload["artifact"] / payload["member"]
+        shutil.copy2(plan_root / payload["member"], target)
+        data = target.read_bytes()
+        payload.update(sha256=hashlib.sha256(data).hexdigest(), size_bytes=len(data))
+    payload_manifest["content_sha256"] = canonical_sha256(
+        {key: value for key, value in payload_manifest.items() if key != "content_sha256"}
+    )
+    payload_manifest_path.write_text(
+        json.dumps(payload_manifest, sort_keys=True, separators=(",", ":")) + "\n",
         encoding="utf-8",
     )
 
@@ -270,7 +292,7 @@ def _real_canary_fixture(
     request = sign_canary_request(
         private,
         definition_sha256=definition.campaign_definition_sha256,
-        generation=3,
+        generation=4,
     )
     commit = "a" * 40
     identity = CatalogPreparationIdentityV1(
@@ -383,7 +405,7 @@ def test_policy_is_literal_and_targets_prepared_four_by_two_shape() -> None:
     assert policy["expected_checkpoint_slot_count"] == 1
 
 
-def test_only_authenticated_generation_three_target_block_is_selected() -> None:
+def test_only_authenticated_generation_four_target_block_is_selected() -> None:
     with pytest.raises(ValueError, match="AUTHENTICATED_INPUTS_REQUIRED"):
         should_inject_canary_failure(**_scope())
 
@@ -393,7 +415,8 @@ def test_only_authenticated_generation_three_target_block_is_selected() -> None:
     [
         {"campaign_key": "sp500-optimized-catalog-v1"},
         {"generation": 2, "acceptance_token": _token(generation=2)},
-        {"generation": 4, "acceptance_token": _token(generation=4)},
+        {"generation": 3, "acceptance_token": _token(generation=3)},
+        {"generation": 5, "acceptance_token": _token(generation=5)},
         {"worker_id": 2},
         {"checkpoint_slot_index": 2},
         {"checkpoint_slot_count": 2},
@@ -414,7 +437,7 @@ def test_scope_or_binding_mutation_fails_closed(overrides: dict[str, object]) ->
     [
         {"enabled": ""},
         {"enabled": "false"},
-        {"enabled": "false", "generation": 4},
+        {"enabled": "false", "generation": 5},
         {
             "enabled": "",
             "campaign_key": "",
@@ -511,13 +534,13 @@ def test_controlled_exception_keeps_deliberate_marker_in_existing_receipt(
         "--output-dir", str(tmp_path / "worker-3"),
         "--canary-acceptance-enabled", "true",
         "--canary-acceptance-campaign-key", "catalog-fast-canary-v1",
-        "--canary-acceptance-generation", "3",
+        "--canary-acceptance-generation", "4",
         "--canary-acceptance-context-sha256", str(fixture["context_sha256"]),
         "--canary-acceptance-request-sha256", fixture["request"].request_sha256,
         "--canary-acceptance-plan-sha256", str(fixture["plan_sha256"]),
         "--canary-acceptance-token", build_canary_acceptance_token(
             campaign_key="catalog-fast-canary-v1",
-            generation=3,
+            generation=4,
             context_sha256=str(fixture["context_sha256"]),
             request_sha256=fixture["request"].request_sha256,
             execution_plan_sha256=str(fixture["plan_sha256"]),
