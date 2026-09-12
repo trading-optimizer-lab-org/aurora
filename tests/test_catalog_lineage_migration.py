@@ -16,6 +16,42 @@ from tests.test_catalog_fast_authority import _lineage_boundary
 NOW = datetime(2026, 9, 8, tzinfo=timezone.utc)
 
 
+@pytest.mark.parametrize("campaign,generation,predecessor,installed_definition", [
+    ("catalog-fast-canary-v1", 3,
+     "7f7592487ff5c846d3c1dd0c89f2ff8232b384e053838a227a15901cca812d83",
+     "2911eba05f40dff8a4e4e6f20424a846213dd8d1a97a548f12a2248cba590f76"),
+    ("sp500-optimized-catalog-v1", 7,
+     "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
+     "4a98ce3a732c66a130ac2e28f7c6dabc15c21f22ebb6df23d67485ec8ac14eea"),
+])
+def test_release_transition_resolves_installed_unused_ticket_to_packaged_definition(
+    campaign, generation, predecessor, installed_definition,
+):
+    from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import parse_catalog_campaign_definition_bytes
+    from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
+
+    root = Path(__file__).resolve().parents[1]
+    prompt_hash = hashlib.sha256((root / "docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md").read_bytes()).hexdigest()
+    ticket = CatalogLaunchTicketV1(
+        schema_version="1", request_id="018f47a2-6e91-7c34-8000-000000000002",
+        campaign_key=campaign, launch_generation=generation,
+        previous_terminal_request_sha256=predecessor,
+        campaign_definition_sha256=installed_definition, prompt_sha256=prompt_hash,
+    )
+    approval = load_lineage_transition(root, ticket)
+    assert approval is not None
+    definition = parse_catalog_campaign_definition_bytes(
+        (root / f"config/catalog_campaign_definitions/{campaign}.manifest.json").read_bytes())
+    assert approval.previous_request_sha256 == predecessor
+    assert approval.target_definition_sha256 == definition.campaign_definition_sha256
+    assert approval.target_prompt_sha256 == prompt_hash
+    if campaign == "sp500-optimized-catalog-v1":
+        assert (installed_definition, prompt_hash) in {
+            (context.campaign_definition_sha256, context.prompt_sha256)
+            for context in approval.source_ticket_contexts
+        }
+
+
 def _available_models():
     state, request, approval = _lineage_boundary()
     previous = state.campaigns[0].request
