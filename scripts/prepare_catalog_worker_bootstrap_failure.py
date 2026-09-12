@@ -8,7 +8,7 @@ it cannot label a failure transient or authorize a retry.
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -73,7 +73,7 @@ def main() -> int:
         "source_error_code": "WORKER_STEP_FAILED_WITHOUT_CLASSIFIED_RECEIPT",
         "retry_after_seconds": None,
         "rate_limit_reset": None,
-        "created_at": datetime.now(UTC).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "validation_opened": False,
         "locked_opened": False,
     }
