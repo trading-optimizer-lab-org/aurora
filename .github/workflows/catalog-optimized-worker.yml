@@ -319,6 +319,7 @@ jobs:
           path: ${{ runner.temp }}/runtime-transport
 
       - name: Activate sealed offline runtime
+        id: runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.11"
@@ -981,6 +982,7 @@ jobs:
         id: durable_chain
         if: >-
           ${{ always() &&
+          steps.descriptor.outcome == 'success' &&
           ((fromJSON(steps.descriptor.outputs.resume_completed_slot_count) ==
           fromJSON(steps.descriptor.outputs.checkpoint_slot_count) &&
           steps.descriptor.outputs.prior_checkpoint_chain_artifact != '') ||
@@ -1027,6 +1029,7 @@ jobs:
           PROTECTED_COMMIT_SHA: ${{ github.sha }}
           WORKER_ID: ${{ inputs.worker_id }}
           VERIFIED_ATTEMPT_ID: ${{ steps.descriptor.outputs.attempt_id }}
+          RUNTIME_OUTCOME: ${{ steps.runtime.outcome }}
           COMPUTE_1: ${{ steps.compute_1.outcome }}
           COMPUTE_2: ${{ steps.compute_2.outcome }}
           COMPUTE_3: ${{ steps.compute_3.outcome }}
@@ -1047,7 +1050,8 @@ jobs:
           set -euo pipefail
           attempt_id="$VERIFIED_ATTEMPT_ID"
           if [ -z "$attempt_id" ]; then
-            attempt_id="$AUTHORITY_ID:worker:$WORKER_ID:unverified:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT"
+            printf -v worker_id_padded '%03d' "$WORKER_ID"
+            attempt_id="$AUTHORITY_ID:worker:$worker_id_padded:unverified:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT"
           fi
           common=(
             --authority-id "$AUTHORITY_ID"
@@ -1063,6 +1067,10 @@ jobs:
             python -m scripts.prepare_catalog_worker_failure \
               "${common[@]}" \
               --existing "$RUNNER_TEMP/catalog-worker-failure.json"
+            exit 0
+          fi
+          if [ "$RUNTIME_OUTCOME" != "success" ]; then
+            python -S -m scripts.prepare_catalog_worker_bootstrap_failure "${common[@]}"
             exit 0
           fi
           reason="UNKNOWN_WORKER_FAILURE"
