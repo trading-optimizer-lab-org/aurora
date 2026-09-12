@@ -57,6 +57,67 @@ def test_available_migration_preserves_identity_predecessor_and_old_models():
         observed_at=NOW + timedelta(seconds=2)) == updated
 
 
+@pytest.mark.parametrize("permission", ["exact", "missing", "wrong_definition", "wrong_prompt",
+    "wrong_generation", "wrong_predecessor", "claimed"])
+def test_unused_intermediate_ticket_requires_exact_protected_source_permission(permission):
+    from aurora.infra.sp500_megarun.catalog_lineage_migration import prepare_available_lineage_models
+
+    previous, approval, ticket, _, _ = _available_models()
+    ticket = CatalogLaunchTicketV1.model_validate({**ticket.model_dump(),
+        "campaign_definition_sha256": "c" * 64, "prompt_sha256": "d" * 64})
+    if permission == "wrong_generation":
+        ticket = CatalogLaunchTicketV1.model_validate({**ticket.model_dump(), "launch_generation": 8})
+    elif permission == "wrong_predecessor":
+        ticket = CatalogLaunchTicketV1.model_validate({**ticket.model_dump(), "previous_terminal_request_sha256": "e" * 64})
+    journal = _ticket_journal(ticket=ticket, state="claiming" if permission == "claimed" else "available",
+        submission_key_sha256="e" * 64 if permission == "claimed" else None,
+        request_sha256=None, issue_number=None, created_at=NOW, updated_at=NOW)
+    status = CatalogRequesterCampaignStatusV1.create(campaign_key=ticket.campaign_key,
+        state="ticket_available", launch_generation=ticket.launch_generation, launch_ticket_sha256=ticket.launch_ticket_sha256,
+        updated_at=NOW)
+    if permission != "missing":
+        approval = type(approval).model_validate({**approval.model_dump(), "source_ticket_contexts": [{
+            "campaign_definition_sha256": ("e" if permission == "wrong_definition" else "c") * 64,
+            "prompt_sha256": ("e" if permission == "wrong_prompt" else "d") * 64,
+        }]})
+    before = [model.model_dump_json() for model in (previous, ticket, journal, status)]
+    def prepare():
+        return prepare_available_lineage_models(previous_request=previous, transition=approval,
+            ticket=ticket, journal=journal, status=status, observed_at=NOW + timedelta(seconds=1))
+    if permission == "exact":
+        migrated, next_journal, next_status = prepare()
+        assert migrated.request_id == ticket.request_id
+        assert migrated.launch_generation == 7
+        assert migrated.previous_terminal_request_sha256 == previous.request_sha256
+        assert (migrated.campaign_definition_sha256, migrated.prompt_sha256) == ("a" * 64, "b" * 64)
+        assert next_journal.state == "available"
+        assert next_journal.ticket == migrated
+        assert next_status.launch_ticket_sha256 == migrated.launch_ticket_sha256
+        assert not approval.authorizes(previous, ticket)
+        assert approval.authorizes(previous, migrated)
+    else:
+        with pytest.raises(ValueError, match="REQUESTER_LINEAGE_MIGRATION_INVALID"):
+            prepare()
+    assert [model.model_dump_json() for model in (previous, ticket, journal, status)] == before
+
+
+@pytest.mark.parametrize("defect", ["duplicate", "oversized", "extra_field", "invalid_digest"])
+def test_source_ticket_permission_rejects_ambiguous_or_malformed_contexts(defect):
+    _, approval, _, _, _ = _available_models()
+    context = {"campaign_definition_sha256": "c" * 64, "prompt_sha256": "d" * 64}
+    contexts = [context]
+    if defect == "duplicate":
+        contexts *= 2
+    elif defect == "oversized":
+        contexts = [{**context, "campaign_definition_sha256": f"{index:064x}"} for index in range(17)]
+    elif defect == "extra_field":
+        contexts = [{**context, "allow_any_source": True}]
+    else:
+        contexts = [{**context, "prompt_sha256": "invalid"}]
+    with pytest.raises(ValueError):
+        type(approval).model_validate({**approval.model_dump(), "source_ticket_contexts": contexts})
+
+
 @pytest.mark.parametrize("defect", ["claiming", "status_ticket", "ticket_context", "predecessor", "time"])
 def test_available_migration_rejects_inconsistent_or_claimed_state(defect):
     from aurora.infra.sp500_megarun.catalog_lineage_migration import prepare_available_lineage_models
@@ -169,14 +230,35 @@ def test_migration_file_proposal_authenticates_history_without_writing_spool(tmp
     assert {path.relative_to(tmp_path).as_posix(): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
 
 
+@pytest.mark.parametrize("intermediate", [False, True])
 @pytest.mark.parametrize("defect", [None, "target_definition", "target_prompt", "public_key", "approval_missing"])
-def test_candidate_migration_binds_approval_to_packaged_context(tmp_path, defect):
+def test_candidate_migration_binds_approval_to_packaged_context(tmp_path, defect, intermediate):
     from aurora.infra.sp500_megarun.catalog_lineage_migration import prepare_candidate_lineage_files
     from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import parse_catalog_campaign_definition_bytes
 
     live = tmp_path / "live"
     live.mkdir()
-    config, public, transition, _ = _disk_state(live)
+    config, public, transition, files = _disk_state(live)
+    if intermediate:
+        from aurora.infra.sp500_megarun.catalog_request_contract import canonical_model_bytes
+
+        ticket = next(model for relative, model in files.items() if relative.endswith(".ticket.json"))
+        ticket = CatalogLaunchTicketV1.model_validate({**ticket.model_dump(),
+            "campaign_definition_sha256": "c" * 64, "prompt_sha256": "d" * 64})
+        updated = {
+            f"{config.broker.launch_tickets}/{ticket.campaign_key}.ticket.json": ticket,
+            f"{config.broker.campaign_status}/{ticket.campaign_key}.journal.json": _ticket_journal(
+                ticket=ticket, state="available", submission_key_sha256=None, request_sha256=None,
+                issue_number=None, created_at=NOW, updated_at=NOW),
+            f"{config.broker.campaign_status}/{ticket.campaign_key}.status.json": CatalogRequesterCampaignStatusV1.create(
+                campaign_key=ticket.campaign_key, state="ticket_available", launch_generation=7,
+                launch_ticket_sha256=ticket.launch_ticket_sha256, updated_at=NOW),
+        }
+        for relative, model in updated.items():
+            (live / relative).write_bytes(canonical_model_bytes(model) + b"\n")
+        transition = type(transition).model_validate({**transition.model_dump(), "source_ticket_contexts": [{
+            "campaign_definition_sha256": "c" * 64, "prompt_sha256": "d" * 64,
+        }]})
     source = Path(__file__).resolve().parents[1]
     candidate = tmp_path / "candidate"
     registry = json.loads((source / "config/catalog_campaign_registry_v1.json").read_bytes())

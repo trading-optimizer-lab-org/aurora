@@ -82,13 +82,18 @@ def prepare_available_lineage_models(
     now = _utc(observed_at)
     old_context = (previous_request.campaign_definition_sha256, previous_request.prompt_sha256)
     target_context = (transition.target_definition_sha256, transition.target_prompt_sha256)
+    permitted_contexts = {old_context, target_context}
+    # A still-unused ticket may have crossed an earlier protected installation.
+    # Extra sources are explicit permissions on this same predecessor/generation boundary.
+    permitted_contexts.update((context.campaign_definition_sha256, context.prompt_sha256)
+        for context in transition.source_ticket_contexts)
     if (
         journal.state != "available" or journal.ticket != ticket
         or status.state != "ticket_available" or status.campaign_key != ticket.campaign_key
         or status.launch_generation != ticket.launch_generation
         or status.launch_ticket_sha256 != ticket.launch_ticket_sha256
         or now < journal.updated_at or now < status.updated_at
-        or (ticket.campaign_definition_sha256, ticket.prompt_sha256) not in {old_context, target_context}
+        or (ticket.campaign_definition_sha256, ticket.prompt_sha256) not in permitted_contexts
     ):
         raise ValueError("REQUESTER_LINEAGE_MIGRATION_INVALID")
     next_ticket = CatalogLaunchTicketV1.model_validate({

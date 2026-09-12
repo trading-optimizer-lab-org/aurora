@@ -5,9 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from .catalog_request_contract import CatalogLaunchTicketV1, CatalogRunRequestV1, FrozenModel, Sha256
+
+
+class CatalogLineageTicketContextV1(FrozenModel):
+    campaign_definition_sha256: Sha256
+    prompt_sha256: Sha256
 
 
 class CatalogLineageTransitionV1(FrozenModel):
@@ -22,6 +27,17 @@ class CatalogLineageTransitionV1(FrozenModel):
     next_generation: int = Field(strict=True, ge=2)
     target_definition_sha256: Sha256
     target_prompt_sha256: Sha256
+    source_ticket_contexts: tuple[CatalogLineageTicketContextV1, ...] = Field(default=(), max_length=16)
+
+    @field_validator("source_ticket_contexts")
+    @classmethod
+    def unique_source_ticket_contexts(
+        cls, contexts: tuple[CatalogLineageTicketContextV1, ...],
+    ) -> tuple[CatalogLineageTicketContextV1, ...]:
+        keys = [(context.campaign_definition_sha256, context.prompt_sha256) for context in contexts]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate source ticket context")
+        return contexts
 
     def authorizes(self, previous: CatalogRunRequestV1, request: CatalogRunRequestV1 | CatalogLaunchTicketV1) -> bool:
         return (
