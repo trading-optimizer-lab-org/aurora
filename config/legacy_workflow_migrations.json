@@ -63,8 +63,8 @@
     {
       "path": ".github/workflows/catalog-recovery-wave.yml",
       "previous_sha256": "3cf909d40daa6f311685d14521c89ab99aa7476691443a84eff4aac2ea66b1b4",
-      "reason": "bind selective recovery to the immutable caller revision",
-      "replacement_sha256": "bf820bf1e73369ba7e33061f3d208e99a5cce2bc8f15c88d586a94a37ea57d2c"
+      "reason": "retain immutable caller binding and make the protected source package importable in the dependency-only recovery runtime",
+      "replacement_sha256": "30f82b7ecf2cb38638205c8d4a796d16fe358430486200b883b49d3f2bb2b946"
     },
     {
       "path": ".github/workflows/catalog-request-reconciler.yml",
