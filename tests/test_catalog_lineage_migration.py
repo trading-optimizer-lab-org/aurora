@@ -20,6 +20,12 @@ NOW = datetime(2026, 9, 8, tzinfo=timezone.utc)
     ("catalog-fast-canary-v1", 5,
      "b0b7ccec0aa237cf8d84b39914c52d1db58a75e6d83f619ec174cf820f5fa82e",
      "9e4a252ff18d8cd9cc2e47917fcc46aa00a12dc12b9d139c1217ff3016593979"),
+    ("catalog-fast-canary-v1", 5,
+     "b0b7ccec0aa237cf8d84b39914c52d1db58a75e6d83f619ec174cf820f5fa82e",
+     "452dcdce598620547ec44a035610b653167c7e4226de89ff35af3b45716da37a"),
+    ("sp500-optimized-catalog-v1", 7,
+     "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
+     "13c9fa8f2cbaf1762b05104d338f7be2def612a4824c1c7ab0a678616d5a7db3"),
     ("sp500-optimized-catalog-v1", 7,
      "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
      "684f349ba2e97f1f6fe03a78c7649f44baf22111691c11cc92909102cd7e0334"),
@@ -48,7 +54,7 @@ def test_release_transition_resolves_installed_unused_ticket_to_packaged_definit
     assert approval.previous_request_sha256 == predecessor
     assert approval.target_definition_sha256 == definition.campaign_definition_sha256
     assert approval.target_prompt_sha256 == prompt_hash
-    if campaign == "sp500-optimized-catalog-v1":
+    if campaign == "sp500-optimized-catalog-v1" or installed_definition == "452dcdce598620547ec44a035610b653167c7e4226de89ff35af3b45716da37a":
         assert (installed_definition, prompt_hash) in {
             (context.campaign_definition_sha256, context.prompt_sha256)
             for context in approval.source_ticket_contexts

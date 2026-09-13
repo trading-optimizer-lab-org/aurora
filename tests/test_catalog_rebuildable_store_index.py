@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
 
 import pytest
+import yaml
 
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.catalog_rebuildable_store import (
@@ -155,14 +161,122 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, set[str]]:
         caches,
         [
             {
+                "total_count": len(live_keys),
                 "actions_caches": [
-                    {"id": index, "key": key, "ref": "refs/heads/main"}
+                    {"id": index, "key": key, "ref": "refs/heads/main", "version": "v1", "size_in_bytes": 100}
                     for index, key in enumerate(sorted(live_keys), start=1)
                 ]
             }
         ],
     )
     return seal_path, runtime, component.parent, caches, live_keys
+
+
+def _workflow_steps() -> dict[str, dict]:
+    workflow = Path(__file__).resolve().parents[1] / ".github/workflows/catalog-optimized-run.yml"
+    jobs = yaml.safe_load(workflow.read_text(encoding="utf-8-sig"))["jobs"]
+    return {step["id"]: step for step in jobs["verify_component_store"]["steps"] if "id" in step}
+
+
+def _set_builder_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key, value in {
+        "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "token",
+        "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+        "CATALOG_AUTHORITY_ID": AUTHORITY_ID, "CATALOG_CAMPAIGN_ID": CAMPAIGN_ID,
+        "CATALOG_SCIENCE_SHA256": SCIENCE_SHA, "CATALOG_EXECUTION_PLAN_SHA256": PLAN_SHA,
+        "CATALOG_EXECUTION_PROTOCOL_SHA256": PROTOCOL_SHA,
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(builder, "CatalogGitHubReadOnlyClient", _RunClient)
+
+
+def test_real_workflow_capture_and_index_accept_access_time_and_unrelated_cache_churn(tmp_path, monkeypatch):
+    seal, runtime, components, caches, expected_keys = _fixture(tmp_path)
+    first = json.loads(caches.read_text())
+    second = json.loads(caches.read_text())
+    first[0]["actions_caches"].append({"id": 98, "key": "removed-ci", "ref": "refs/heads/main", "version": "v1", "size_in_bytes": 100})
+    first[0]["total_count"] += 1
+    for row in second[0]["actions_caches"]:
+        row["last_accessed_at"] = "2026-09-13T18:50:43Z"
+    second[0]["actions_caches"].reverse()
+    second[0]["actions_caches"].append({"id": 99, "key": "unrelated-ci", "ref": "refs/heads/main", "version": "v1", "size_in_bytes": 100})
+    second[0]["total_count"] += 1
+    second_rows = second[0]["actions_caches"]
+    second = [
+        {"total_count": len(second_rows), "actions_caches": second_rows[:2]},
+        {"total_count": len(second_rows), "actions_caches": second_rows[2:]},
+    ]
+    _write_json(tmp_path / "inventory-1.json", first)
+    _write_json(tmp_path / "inventory-2.json", second)
+    steps = _workflow_steps()
+    bash = "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else shutil.which("bash")
+    if bash is None or not Path(bash).is_file():
+        pytest.skip("Bash required for the actual workflow capture script")
+    _set_builder_context(monkeypatch)
+    monkeypatch.setenv("RUNNER_TEMP", ".")
+    capture = subprocess.run(
+        [bash, "-c", 'gh() { cat "inventory-$snapshot.json"; };\n' + steps["cache_inventory"]["run"]],
+        cwd=tmp_path, capture_output=True, text=True, timeout=30,
+    )
+    assert capture.returncode == 0, capture.stderr
+    (tmp_path / "runtime-prepared-seal").mkdir()
+    seal.rename(tmp_path / "runtime-prepared-seal/runtime-prepared-seal.json")
+    runtime.rename(tmp_path / "runtime-transport")
+    components.rename(tmp_path / "component-transports")
+    monkeypatch.chdir(tmp_path)
+    argv = shlex.split(steps["store_index"]["run"])
+    monkeypatch.setattr(sys, "argv", [arg.replace("$RUNNER_TEMP", ".") for arg in argv[1:]])
+    assert builder.main() == 0
+    output = tmp_path / "catalog-rebuildable-store-index-v1.json"
+    index = CatalogRebuildableStoreIndexV1.model_validate_json(output.read_text())
+    assert {row.cache_key for row in index.candidates} == expected_keys
+
+
+@pytest.mark.parametrize("changed", [{"id": 999}, {"version": "v2"}, {"size_in_bytes": 101}, {"ref": "refs/heads/other"}, None])
+def test_changed_or_removed_cache_is_not_published_as_reusable(tmp_path, monkeypatch, changed):
+    seal, runtime, components, caches, live_keys = _fixture(tmp_path)
+    second = json.loads(caches.read_text())
+    changed_key = second[0]["actions_caches"][0]["key"]
+    if changed is None:
+        second[0]["actions_caches"].pop(0)
+        second[0]["total_count"] -= 1
+    else:
+        second[0]["actions_caches"][0].update(changed)
+    confirmation = tmp_path / "confirmation.json"
+    _write_json(confirmation, second)
+    _set_builder_context(monkeypatch)
+    index = builder.build_index(runtime_prepared_seal=seal, runtime_root=runtime, component_root=components, cache_inventory=caches, cache_inventory_confirmation=confirmation)
+    assert {row.cache_key for row in index.candidates} == live_keys - {changed_key}
+    from scripts.finalize_catalog_preparation import required_prepared_cache_keys
+    receipt = {
+        "runtime_cache_key": next(key for key in live_keys if RUNTIME_IDENTITY in key),
+        "prepared_input_cache_keys": (("runtime-fragment-core", next(key for key in live_keys if PREPARED_IDENTITY in key)),),
+    }
+    with pytest.raises(ValueError, match="CATALOG_PREPARATION_CACHE_COVERAGE_INVALID"):
+        required_prepared_cache_keys(index, receipt)
+
+
+@pytest.mark.parametrize("invalid_first", [False, True])
+@pytest.mark.parametrize("mutation", ["truncated", "duplicate_id", "duplicate_key", "missing_version"])
+def test_index_rejects_incomplete_or_ambiguous_confirmation(tmp_path, monkeypatch, mutation, invalid_first):
+    seal, runtime, components, caches, _ = _fixture(tmp_path)
+    second = json.loads(caches.read_text())
+    rows = second[0]["actions_caches"]
+    if mutation == "truncated":
+        rows.pop()
+    elif mutation == "duplicate_id":
+        rows[1]["id"] = rows[0]["id"]
+    elif mutation == "duplicate_key":
+        rows[1]["key"] = rows[0]["key"]
+    else:
+        rows[0].pop("version")
+    confirmation = tmp_path / "confirmation.json"
+    _write_json(confirmation, second)
+    if invalid_first:
+        caches, confirmation = confirmation, caches
+    _set_builder_context(monkeypatch)
+    with pytest.raises(ValueError, match="CATALOG_STORE_INDEX_CACHE"):
+        builder.build_index(runtime_prepared_seal=seal, runtime_root=runtime, component_root=components, cache_inventory=caches, cache_inventory_confirmation=confirmation)
 
 
 def test_builder_emits_runtime_prepared_and_component_cache_evidence(
@@ -185,6 +299,7 @@ def test_builder_emits_runtime_prepared_and_component_cache_evidence(
         runtime_root=runtime,
         component_root=components,
         cache_inventory=caches,
+        cache_inventory_confirmation=caches,
     )
 
     assert isinstance(index, CatalogRebuildableStoreIndexV1)
@@ -206,6 +321,7 @@ def test_builder_omits_a_cache_not_confirmed_by_the_live_inventory(
     seal, runtime, components, caches, _ = _fixture(tmp_path)
     payload = json.loads(caches.read_text(encoding="utf-8"))
     payload[0]["actions_caches"] = payload[0]["actions_caches"][:1]
+    payload[0]["total_count"] = 1
     _write_json(caches, payload)
     monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
     monkeypatch.setenv("GH_TOKEN", "token")
@@ -223,6 +339,7 @@ def test_builder_omits_a_cache_not_confirmed_by_the_live_inventory(
         runtime_root=runtime,
         component_root=components,
         cache_inventory=caches,
+        cache_inventory_confirmation=caches,
     )
 
     assert len(index.candidates) == 1

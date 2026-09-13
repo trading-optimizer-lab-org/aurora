@@ -39,8 +39,8 @@
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
-      "reason": "retain the sealed runtime and exact component reuse while deriving the one controlled canary recovery activation from the authenticated request context",
-      "replacement_sha256": "6befe10655aa265e3e90f09444404b5100dbacc90ed2e05bf2fc8d50d8dbc7c5"
+      "reason": "retain sealed runtime, exact component reuse and authenticated canary activation while confirming reusable cache identities across two complete inventories",
+      "replacement_sha256": "1acd3c4a70e553645243bfeb6d00e6b2949f4a0440aa468b9f538a3bfa055412"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",
