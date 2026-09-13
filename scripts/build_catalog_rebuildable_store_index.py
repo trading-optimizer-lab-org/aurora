@@ -43,6 +43,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--component-root", type=Path, required=True)
     parser.add_argument("--cache-inventory", type=Path, required=True)
+    parser.add_argument("--cache-inventory-confirmation", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -112,35 +113,54 @@ def _candidate_file_hashes(
     return tuple((str(row["path"]), str(row["sha256"])) for row in rows)
 
 
-def _live_main_cache_keys(payload: object) -> frozenset[str]:
+def _live_main_cache_entries(payload: object) -> dict[str, tuple[int, str, int]]:
     pages = payload if isinstance(payload, list) else [payload]
+    if not pages:
+        raise ValueError("CATALOG_STORE_INDEX_CACHE_INVENTORY_INVALID")
     rows: list[Mapping[str, Any]] = []
+    totals: set[int] = set()
     for page in pages:
-        if isinstance(page, Mapping):
-            raw_rows = page.get("actions_caches")
-        elif isinstance(page, list):
-            raw_rows = page
-        else:
-            raw_rows = None
-        if not isinstance(raw_rows, list):
+        page = _mapping(page, "CATALOG_STORE_INDEX_CACHE_INVENTORY_INVALID")
+        raw_rows = page.get("actions_caches")
+        total = page.get("total_count")
+        if not isinstance(raw_rows, list) or type(total) is not int or total < 0:
             raise ValueError("CATALOG_STORE_INDEX_CACHE_INVENTORY_INVALID")
+        totals.add(total)
         rows.extend(
             _mapping(row, "CATALOG_STORE_INDEX_CACHE_INVENTORY_INVALID")
             for row in raw_rows
         )
     ids = tuple(row.get("id") for row in rows)
-    if any(isinstance(value, bool) or not isinstance(value, int) for value in ids):
+    if any(type(value) is not int or value <= 0 for value in ids):
         raise ValueError("CATALOG_STORE_INDEX_CACHE_INVENTORY_INVALID")
     if len(ids) != len(set(ids)):
         raise ValueError("CATALOG_STORE_INDEX_CACHE_INVENTORY_DUPLICATE")
-    keys = tuple(
-        str(row.get("key"))
-        for row in rows
-        if row.get("ref") == "refs/heads/main"
-    )
-    if any(not key or key == "None" for key in keys) or len(keys) != len(set(keys)):
-        raise ValueError("CATALOG_STORE_INDEX_CACHE_KEY_INVALID")
-    return frozenset(keys)
+    if totals != {len(rows)}:
+        raise ValueError("CATALOG_STORE_INDEX_CACHE_INVENTORY_INCOMPLETE")
+    entries: dict[str, tuple[int, str, int]] = {}
+    for row in rows:
+        key, ref, version, size = (row.get(field) for field in ("key", "ref", "version", "size_in_bytes"))
+        if (
+            not isinstance(key, str) or not key
+            or not isinstance(ref, str) or not ref
+            or not isinstance(version, str) or not version
+            or type(size) is not int or size < 0
+        ):
+            raise ValueError("CATALOG_STORE_INDEX_CACHE_INVENTORY_INVALID")
+        if ref != "refs/heads/main":
+            continue
+        if key in entries:
+            raise ValueError("CATALOG_STORE_INDEX_CACHE_KEY_INVALID")
+        entries[key] = (row["id"], version, size)
+    return entries
+
+
+def _stable_live_main_cache_keys(first: object, second: object) -> frozenset[str]:
+    before = _live_main_cache_entries(first)
+    after = _live_main_cache_entries(second)
+    # Access timestamps and unrelated cache churn cannot change these objects.
+    # A replaced, resized or missing entry is not evidence of reusable content.
+    return frozenset(key for key, identity in before.items() if after.get(key) == identity)
 
 
 def _verify_seal(path: Path) -> Mapping[str, Any]:
@@ -354,6 +374,7 @@ def build_index(
     runtime_root: Path,
     component_root: Path,
     cache_inventory: Path,
+    cache_inventory_confirmation: Path,
 ) -> CatalogRebuildableStoreIndexV1:
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     token = os.environ.get("GH_TOKEN", "")
@@ -392,7 +413,9 @@ def build_index(
     if any(str(seal.get(key, "")) != value for key, value in expected_bindings.items()):
         raise ValueError("CATALOG_STORE_INDEX_SEAL_BINDING_INVALID")
 
-    live_keys = _live_main_cache_keys(_strict_json(cache_inventory))
+    live_keys = _stable_live_main_cache_keys(
+        _strict_json(cache_inventory), _strict_json(cache_inventory_confirmation)
+    )
     candidates = tuple(
         item
         for item in (
@@ -435,6 +458,7 @@ def main() -> int:
         runtime_root=args.runtime_root,
         component_root=args.component_root,
         cache_inventory=args.cache_inventory,
+        cache_inventory_confirmation=args.cache_inventory_confirmation,
     )
     if args.output.exists() or args.output.is_symlink():
         raise ValueError("CATALOG_STORE_INDEX_OUTPUT_EXISTS")

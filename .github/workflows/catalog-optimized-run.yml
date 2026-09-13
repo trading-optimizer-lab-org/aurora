@@ -1666,7 +1666,7 @@ jobs:
           PY
 
       - id: cache_inventory
-        name: Capture two identical complete main-cache inventories for reuse
+        name: Capture two complete main-cache inventories for stable reuse
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1678,9 +1678,6 @@ jobs:
               "repos/$GITHUB_REPOSITORY/actions/caches?ref=refs/heads/main&per_page=100" \
               > "$RUNNER_TEMP/catalog-main-caches-$snapshot.json"
           done
-          cmp --silent \
-            "$RUNNER_TEMP/catalog-main-caches-1.json" \
-            "$RUNNER_TEMP/catalog-main-caches-2.json"
 
       - id: store_index
         name: Build a small content-bound index for every cache proven reusable
@@ -1701,6 +1698,7 @@ jobs:
           --runtime-root "$RUNNER_TEMP/runtime-transport"
           --component-root "$RUNNER_TEMP/component-transports"
           --cache-inventory "$RUNNER_TEMP/catalog-main-caches-1.json"
+          --cache-inventory-confirmation "$RUNNER_TEMP/catalog-main-caches-2.json"
           --output "$RUNNER_TEMP/catalog-rebuildable-store-index-v1.json"
 
       - name: Publish the immutable global reuse index when cache read-back succeeded
