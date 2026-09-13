@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -31,13 +32,21 @@ def _run_ps(tmp_path: Path, setup: str, files: str, *, patch: str = "", after_tr
     script.write_text(
         """
 $ErrorActionPreference = 'Stop'
+$fixtureClock = [Diagnostics.Stopwatch]::StartNew()
+function Write-FixturePhase([string]$phase) {
+    [Console]::Error.WriteLine(('phase={0};elapsed_ms={1}' -f $phase, $fixtureClock.ElapsedMilliseconds))
+    [Console]::Error.Flush()
+}
+Write-FixturePhase 'started'
 $base = $PSScriptRoot
 $payload = Join-Path $base 'payload'
 $target = Join-Path $base 'target'
 $backup = Join-Path $base 'backup'
 New-Item -ItemType Directory -Force -Path $payload, $target | Out-Null
 SETUP
+Write-FixturePhase 'setup_complete'
 $module = Import-Module MODULE -PassThru
+Write-FixturePhase 'module_imported'
 PATCH
 $files = @(
 FILES
@@ -51,7 +60,9 @@ foreach ($relative in @('first.txt', 'second.txt', 'third.txt', 'long.txt')) {
         $aclBefore[$relative] = ([IO.FileInfo]::new($path)).GetAccessControl().GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::All)
     }
 }
+Write-FixturePhase 'transaction_started'
 $result = Invoke-CatalogChatContentTransaction -PayloadRoot $payload -TargetRoot $target -BackupRoot $backup -Files $files
+Write-FixturePhase 'transaction_complete'
 $restore = $null
 AFTER_TRANSACTION
 $journal = $null
@@ -67,6 +78,7 @@ foreach ($relative in @('first.txt', 'second.txt', 'third.txt', 'long.txt', 'new
         $aclAfter[$relative] = ([IO.FileInfo]::new($path)).GetAccessControl().GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::All)
     }
 }
+Write-FixturePhase 'output_ready'
 [pscustomobject]@{
     result = $result
     before = $before
@@ -83,15 +95,43 @@ foreach ($relative in @('first.txt', 'second.txt', 'third.txt', 'long.txt', 'new
         .replace("FILES", files),
         encoding="utf-8",
     )
-    completed = subprocess.run(
-        [shell, "-NoProfile", "-NonInteractive", "-File", str(script)],
-        cwd=tmp_path,
-        text=True,
-        capture_output=True,
-        timeout=30,
-    )
+    try:
+        completed = subprocess.run(
+            [shell, "-NoProfile", "-NonInteractive", "-File", str(script)],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as exc:
+        trace = exc.stderr or ""
+        if isinstance(trace, bytes):
+            trace = trace.decode("utf-8", errors="replace")
+        print("PowerShell fixture phase trace:\n" + (trace[-8192:] or "<no fixture phase emitted>"), file=sys.stderr)
+        raise
     assert completed.returncode == 0, completed.stderr
     return json.loads(completed.stdout)
+
+
+def test_failed_fixture_reports_its_last_completed_phase(tmp_path: Path) -> None:
+    with pytest.raises(AssertionError, match="phase=module_imported"):
+        _run_ps(tmp_path, "", "", patch="throw 'TEST_DIAGNOSTIC_ABORT'")
+
+
+@pytest.mark.parametrize("partial_stderr", [b"phase=transaction_started;elapsed_ms=10", None])
+def test_timeout_keeps_original_exception_and_partial_phase_trace(tmp_path: Path, monkeypatch, capsys, partial_stderr) -> None:
+    failure = subprocess.TimeoutExpired("powershell", 30, stderr=partial_stderr)
+
+    def timed_out(*args, **kwargs):
+        assert kwargs["timeout"] == 30
+        raise failure
+
+    monkeypatch.setattr(subprocess, "run", timed_out)
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        _run_ps(tmp_path, "", "")
+    assert caught.value is failure
+    expected = "phase=transaction_started" if partial_stderr else "no fixture phase emitted"
+    assert expected in capsys.readouterr().err
 
 
 def _record(relative: str, new: bytes, old: bytes | None) -> str:

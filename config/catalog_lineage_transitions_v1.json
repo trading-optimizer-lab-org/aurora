@@ -12,9 +12,13 @@
       "campaign_key": "sp500-optimized-catalog-v1",
       "previous_request_sha256": "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
       "next_generation": 7,
-      "target_definition_sha256": "a1552e41117d918ce8e1886d2a75d2cfb09fbc0f46a79cefbe3d16c6e5b774ad",
+      "target_definition_sha256": "13c9fa8f2cbaf1762b05104d338f7be2def612a4824c1c7ab0a678616d5a7db3",
       "target_prompt_sha256": "7eeb12311d4d109bb0da25c617ad1684568c47dd6ff0996f3c4f72cc2e633c49",
       "source_ticket_contexts": [
+        {
+          "campaign_definition_sha256": "a1552e41117d918ce8e1886d2a75d2cfb09fbc0f46a79cefbe3d16c6e5b774ad",
+          "prompt_sha256": "7eeb12311d4d109bb0da25c617ad1684568c47dd6ff0996f3c4f72cc2e633c49"
+        },
         {
           "campaign_definition_sha256": "684f349ba2e97f1f6fe03a78c7649f44baf22111691c11cc92909102cd7e0334",
           "prompt_sha256": "7eeb12311d4d109bb0da25c617ad1684568c47dd6ff0996f3c4f72cc2e633c49"
@@ -41,6 +45,13 @@
       "previous_request_sha256": "b253c84105c6c221d1b8e2068cd5951c03cd564eaf9699d3fb5a841fa48eb37e",
       "next_generation": 4,
       "target_definition_sha256": "9e4a252ff18d8cd9cc2e47917fcc46aa00a12dc12b9d139c1217ff3016593979",
+      "target_prompt_sha256": "7eeb12311d4d109bb0da25c617ad1684568c47dd6ff0996f3c4f72cc2e633c49"
+    },
+    {
+      "campaign_key": "catalog-fast-canary-v1",
+      "previous_request_sha256": "b0b7ccec0aa237cf8d84b39914c52d1db58a75e6d83f619ec174cf820f5fa82e",
+      "next_generation": 5,
+      "target_definition_sha256": "452dcdce598620547ec44a035610b653167c7e4226de89ff35af3b45716da37a",
       "target_prompt_sha256": "7eeb12311d4d109bb0da25c617ad1684568c47dd6ff0996f3c4f72cc2e633c49"
     }
   ]

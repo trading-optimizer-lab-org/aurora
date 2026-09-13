@@ -17,12 +17,15 @@ NOW = datetime(2026, 9, 8, tzinfo=timezone.utc)
 
 
 @pytest.mark.parametrize("campaign,generation,predecessor,installed_definition", [
-    ("catalog-fast-canary-v1", 4,
-     "b253c84105c6c221d1b8e2068cd5951c03cd564eaf9699d3fb5a841fa48eb37e",
-     "fd0d9904b66458be9bd1ecfea5a8224f85669def9beaf379c7450d475cb26ace"),
+    ("catalog-fast-canary-v1", 5,
+     "b0b7ccec0aa237cf8d84b39914c52d1db58a75e6d83f619ec174cf820f5fa82e",
+     "9e4a252ff18d8cd9cc2e47917fcc46aa00a12dc12b9d139c1217ff3016593979"),
     ("sp500-optimized-catalog-v1", 7,
      "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
      "684f349ba2e97f1f6fe03a78c7649f44baf22111691c11cc92909102cd7e0334"),
+    ("sp500-optimized-catalog-v1", 7,
+     "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
+     "a1552e41117d918ce8e1886d2a75d2cfb09fbc0f46a79cefbe3d16c6e5b774ad"),
 ])
 def test_release_transition_resolves_installed_unused_ticket_to_packaged_definition(
     campaign, generation, predecessor, installed_definition,
@@ -50,6 +53,25 @@ def test_release_transition_resolves_installed_unused_ticket_to_packaged_definit
             (context.campaign_definition_sha256, context.prompt_sha256)
             for context in approval.source_ticket_contexts
         }
+
+
+def test_consumed_canary_generation_keeps_its_original_release_boundary():
+    """A repair must not reinterpret the already consumed generation four."""
+    from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
+
+    root = Path(__file__).resolve().parents[1]
+    ticket = CatalogLaunchTicketV1(
+        schema_version="1", request_id="018f47a2-6e91-7c34-8000-000000000002",
+        campaign_key="catalog-fast-canary-v1", launch_generation=4,
+        previous_terminal_request_sha256="b253c84105c6c221d1b8e2068cd5951c03cd564eaf9699d3fb5a841fa48eb37e",
+        campaign_definition_sha256="9e4a252ff18d8cd9cc2e47917fcc46aa00a12dc12b9d139c1217ff3016593979",
+        prompt_sha256="7eeb12311d4d109bb0da25c617ad1684568c47dd6ff0996f3c4f72cc2e633c49",
+    )
+    approval = load_lineage_transition(root, ticket)
+    assert approval is not None
+    assert approval.previous_request_sha256 == ticket.previous_terminal_request_sha256
+    assert approval.target_definition_sha256 == ticket.campaign_definition_sha256
+    assert approval.target_prompt_sha256 == ticket.prompt_sha256
 
 
 def _available_models():
