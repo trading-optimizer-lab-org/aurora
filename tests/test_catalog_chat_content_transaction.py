@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -106,7 +107,7 @@ Write-FixturePhase 'output_ready'
         trace = exc.stderr or ""
         if isinstance(trace, bytes):
             trace = trace.decode("utf-8", errors="replace")
-        exc.add_note("PowerShell fixture phase trace:\n" + (trace[-8192:] or "<no fixture phase emitted>"))
+        print("PowerShell fixture phase trace:\n" + (trace[-8192:] or "<no fixture phase emitted>"), file=sys.stderr)
         raise
     assert completed.returncode == 0, completed.stderr
     return json.loads(completed.stdout)
@@ -118,7 +119,7 @@ def test_failed_fixture_reports_its_last_completed_phase(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize("partial_stderr", [b"phase=transaction_started;elapsed_ms=10", None])
-def test_timeout_keeps_original_exception_and_partial_phase_trace(tmp_path: Path, monkeypatch, partial_stderr) -> None:
+def test_timeout_keeps_original_exception_and_partial_phase_trace(tmp_path: Path, monkeypatch, capsys, partial_stderr) -> None:
     failure = subprocess.TimeoutExpired("powershell", 30, stderr=partial_stderr)
 
     def timed_out(*args, **kwargs):
@@ -130,7 +131,7 @@ def test_timeout_keeps_original_exception_and_partial_phase_trace(tmp_path: Path
         _run_ps(tmp_path, "", "")
     assert caught.value is failure
     expected = "phase=transaction_started" if partial_stderr else "no fixture phase emitted"
-    assert expected in "\n".join(getattr(caught.value, "__notes__", []))
+    assert expected in capsys.readouterr().err
 
 
 def _record(relative: str, new: bytes, old: bytes | None) -> str:
