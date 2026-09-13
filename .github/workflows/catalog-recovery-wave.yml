@@ -52,6 +52,8 @@ jobs:
     environment: catalog-production
     timeout-minutes: 30
     permissions: {actions: read, contents: read}
+    env:
+      PYTHONPATH: ${{ github.workspace }}/..
     outputs:
       matrix_a: ${{ steps.recovery.outputs.matrix_a }}
       matrix_b: ${{ steps.recovery.outputs.matrix_b }}

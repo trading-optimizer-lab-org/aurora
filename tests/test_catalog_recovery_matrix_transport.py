@@ -3,13 +3,40 @@
 import ast
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 
 import pytest
 
 from aurora.infra.github_performance.preflight import load_github_yaml
 from tests.test_catalog_prepared_materialization import prepared_transport_fixture
+
+
+def test_recovery_job_resolves_source_package_without_an_installed_aurora(tmp_path):
+    """The offline dependency runtime must find Aurora in the protected checkout."""
+    repo = Path(__file__).resolve().parents[1]
+    workflow = load_github_yaml(repo / ".github/workflows/catalog-recovery-wave.yml")
+    job = workflow["jobs"]["reconcile"]
+    # Mirror Actions' owner/repository checkout layout. Import the actual package
+    # initializer, with site packages disabled so developer installs cannot help.
+    workspace = tmp_path / "aurora" / "aurora"
+    workspace.mkdir(parents=True)
+    shutil.copyfile(repo / "__init__.py", workspace / "__init__.py")
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    configured = job.get("env", {}).get("PYTHONPATH")
+    if configured is not None:
+        env["PYTHONPATH"] = configured.replace("${{ github.workspace }}", str(workspace))
+    result = subprocess.run(
+        [sys.executable, "-S", "-c", "import aurora; print(aurora.__file__)"],
+        cwd=workspace, env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()).resolve() == (workspace / "__init__.py").resolve()
 
 
 @pytest.mark.parametrize("consumer", ["download", "reconcile"])
