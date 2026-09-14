@@ -19,6 +19,12 @@ NOW = datetime(2026, 9, 8, tzinfo=timezone.utc)
 @pytest.mark.parametrize("campaign,generation,predecessor,installed_definition", [
     ("catalog-fast-canary-v1", 5,
      "b0b7ccec0aa237cf8d84b39914c52d1db58a75e6d83f619ec174cf820f5fa82e",
+     "5974d90710e3f62b0b4fb554dbd751df6fec472543e28bd7aca651cf11a2368e"),
+    ("sp500-optimized-catalog-v1", 7,
+     "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
+     "f4bd664a2755e6586c0376c2fb358c6e5a557e96f753b5f0c8dae78cf02d13f8"),
+    ("catalog-fast-canary-v1", 5,
+     "b0b7ccec0aa237cf8d84b39914c52d1db58a75e6d83f619ec174cf820f5fa82e",
      "9e4a252ff18d8cd9cc2e47917fcc46aa00a12dc12b9d139c1217ff3016593979"),
     ("catalog-fast-canary-v1", 5,
      "b0b7ccec0aa237cf8d84b39914c52d1db58a75e6d83f619ec174cf820f5fa82e",
@@ -54,7 +60,10 @@ def test_release_transition_resolves_installed_unused_ticket_to_packaged_definit
     assert approval.previous_request_sha256 == predecessor
     assert approval.target_definition_sha256 == definition.campaign_definition_sha256
     assert approval.target_prompt_sha256 == prompt_hash
-    if campaign == "sp500-optimized-catalog-v1" or installed_definition == "452dcdce598620547ec44a035610b653167c7e4226de89ff35af3b45716da37a":
+    if campaign == "sp500-optimized-catalog-v1" or installed_definition in {
+        "452dcdce598620547ec44a035610b653167c7e4226de89ff35af3b45716da37a",
+        "5974d90710e3f62b0b4fb554dbd751df6fec472543e28bd7aca651cf11a2368e",
+    }:
         assert (installed_definition, prompt_hash) in {
             (context.campaign_definition_sha256, context.prompt_sha256)
             for context in approval.source_ticket_contexts
