@@ -287,13 +287,30 @@ def _checkpoint_rows(
     selected: dict[int, dict[str, Any]] = {}
     for worker_id in worker_ids:
         row = by_worker[worker_id]
-        if set(row) != {
+        required_keys = {
             "worker_id",
             "checkpoint_slot_count",
             "checkpoint_slot_artifacts",
             "checkpoint_slot_manifest_sha256",
-        }:
+        }
+        row_keys = set(row)
+        if (
+            row_keys != required_keys
+            and row_keys != required_keys | {"projected_checkpoint_overhead_fraction"}
+        ):
             raise SystemExit("REDUCTION_CHECKPOINT_POLICY_INVALID")
+        if "projected_checkpoint_overhead_fraction" in row:
+            projected_overhead = row["projected_checkpoint_overhead_fraction"]
+            if (
+                isinstance(projected_overhead, bool)
+                or not isinstance(projected_overhead, (int, float))
+                or (
+                    isinstance(projected_overhead, float)
+                    and not math.isfinite(projected_overhead)
+                )
+                or projected_overhead < 0
+            ):
+                raise SystemExit("REDUCTION_CHECKPOINT_POLICY_INVALID")
         slot_count = row.get("checkpoint_slot_count")
         artifacts = row.get("checkpoint_slot_artifacts")
         if (
