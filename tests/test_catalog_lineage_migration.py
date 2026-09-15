@@ -17,18 +17,9 @@ NOW = datetime(2026, 9, 8, tzinfo=timezone.utc)
 
 
 @pytest.mark.parametrize("campaign,generation,predecessor,installed_definition", [
-    ("catalog-fast-canary-v1", 5,
-     "b0b7ccec0aa237cf8d84b39914c52d1db58a75e6d83f619ec174cf820f5fa82e",
-     "5974d90710e3f62b0b4fb554dbd751df6fec472543e28bd7aca651cf11a2368e"),
     ("sp500-optimized-catalog-v1", 7,
      "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
      "f4bd664a2755e6586c0376c2fb358c6e5a557e96f753b5f0c8dae78cf02d13f8"),
-    ("catalog-fast-canary-v1", 5,
-     "b0b7ccec0aa237cf8d84b39914c52d1db58a75e6d83f619ec174cf820f5fa82e",
-     "9e4a252ff18d8cd9cc2e47917fcc46aa00a12dc12b9d139c1217ff3016593979"),
-    ("catalog-fast-canary-v1", 5,
-     "b0b7ccec0aa237cf8d84b39914c52d1db58a75e6d83f619ec174cf820f5fa82e",
-     "452dcdce598620547ec44a035610b653167c7e4226de89ff35af3b45716da37a"),
     ("sp500-optimized-catalog-v1", 7,
      "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
      "13c9fa8f2cbaf1762b05104d338f7be2def612a4824c1c7ab0a678616d5a7db3"),
@@ -38,6 +29,9 @@ NOW = datetime(2026, 9, 8, tzinfo=timezone.utc)
     ("sp500-optimized-catalog-v1", 7,
      "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
      "a1552e41117d918ce8e1886d2a75d2cfb09fbc0f46a79cefbe3d16c6e5b774ad"),
+    ("sp500-optimized-catalog-v1", 7,
+     "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
+     "e8fa1cb7e37eef683044b1f9a3c537e02bb0ca338adfe063af3e433ca8de893e"),
 ])
 def test_release_transition_resolves_installed_unused_ticket_to_packaged_definition(
     campaign, generation, predecessor, installed_definition,
@@ -71,15 +65,15 @@ def test_release_transition_resolves_installed_unused_ticket_to_packaged_definit
 
 
 def test_consumed_canary_generation_keeps_its_original_release_boundary():
-    """A repair must not reinterpret the already consumed generation four."""
+    """A repair must not reinterpret the already consumed generation five."""
     from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
 
     root = Path(__file__).resolve().parents[1]
     ticket = CatalogLaunchTicketV1(
-        schema_version="1", request_id="018f47a2-6e91-7c34-8000-000000000002",
-        campaign_key="catalog-fast-canary-v1", launch_generation=4,
-        previous_terminal_request_sha256="b253c84105c6c221d1b8e2068cd5951c03cd564eaf9699d3fb5a841fa48eb37e",
-        campaign_definition_sha256="9e4a252ff18d8cd9cc2e47917fcc46aa00a12dc12b9d139c1217ff3016593979",
+        schema_version="1", request_id="01a09a8f-edbd-731a-960b-07d35093f827",
+        campaign_key="catalog-fast-canary-v1", launch_generation=5,
+        previous_terminal_request_sha256="b0b7ccec0aa237cf8d84b39914c52d1db58a75e6d83f619ec174cf820f5fa82e",
+        campaign_definition_sha256="cfd429946702b469aaef76d4a8d1573d51a6aeafde915c72c51fb24d9b79da00",
         prompt_sha256="7eeb12311d4d109bb0da25c617ad1684568c47dd6ff0996f3c4f72cc2e633c49",
     )
     approval = load_lineage_transition(root, ticket)
@@ -87,6 +81,43 @@ def test_consumed_canary_generation_keeps_its_original_release_boundary():
     assert approval.previous_request_sha256 == ticket.previous_terminal_request_sha256
     assert approval.target_definition_sha256 == ticket.campaign_definition_sha256
     assert approval.target_prompt_sha256 == ticket.prompt_sha256
+
+
+def test_post308_canary_preserves_consumed_generation_and_requires_generation_six_boundary():
+    """The failed #308 boundary stays historical; only its successor may migrate."""
+    from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import parse_catalog_campaign_definition_bytes
+    from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
+
+    root = Path(__file__).resolve().parents[1]
+    prompt_hash = hashlib.sha256((root / "docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md").read_bytes()).hexdigest()
+    consumed = CatalogLaunchTicketV1(
+        schema_version="1", request_id="01a09a8f-edbd-731a-960b-07d35093f827",
+        campaign_key="catalog-fast-canary-v1", launch_generation=5,
+        previous_terminal_request_sha256="b0b7ccec0aa237cf8d84b39914c52d1db58a75e6d83f619ec174cf820f5fa82e",
+        campaign_definition_sha256="cfd429946702b469aaef76d4a8d1573d51a6aeafde915c72c51fb24d9b79da00",
+        prompt_sha256=prompt_hash,
+    )
+    consumed_boundary = load_lineage_transition(root, consumed)
+    assert consumed_boundary is not None
+    assert consumed_boundary.next_generation == 5
+    assert consumed_boundary.previous_request_sha256 == consumed.previous_terminal_request_sha256
+    assert consumed_boundary.target_definition_sha256 == consumed.campaign_definition_sha256
+
+    manifest = parse_catalog_campaign_definition_bytes(
+        (root / "config/catalog_campaign_definitions/catalog-fast-canary-v1.manifest.json").read_bytes())
+    successor = CatalogLaunchTicketV1(
+        schema_version="1", request_id="01a09a8f-edbd-731a-960b-07d35093f828",
+        campaign_key=consumed.campaign_key, launch_generation=6,
+        previous_terminal_request_sha256="362e3456c1ccbb00e1c40b0331ba53f8fdf697731ecb83a0537b4b30fda5fbfc",
+        campaign_definition_sha256=consumed.campaign_definition_sha256,
+        prompt_sha256=prompt_hash,
+    )
+    successor_boundary = load_lineage_transition(root, successor)
+    assert successor_boundary is not None
+    assert successor_boundary.previous_request_sha256 == "362e3456c1ccbb00e1c40b0331ba53f8fdf697731ecb83a0537b4b30fda5fbfc"
+    assert successor_boundary.next_generation == 6
+    assert successor_boundary.target_definition_sha256 == manifest.campaign_definition_sha256
+    assert successor_boundary.target_prompt_sha256 == prompt_hash
 
 
 def _available_models():
