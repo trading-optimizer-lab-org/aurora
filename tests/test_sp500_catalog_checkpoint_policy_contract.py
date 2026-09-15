@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import math
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -13,7 +14,7 @@ from scripts.reduce_sp500_optimized_catalog_group import (
 from tests.test_catalog_prepared_materialization import prepared_transport_fixture
 
 
-def _producer_policy(tmp_path: Path) -> dict[str, object]:
+def _producer_policy(tmp_path: Path) -> dict[str, Any]:
     _bundle, template, _plan, _identity, _prepared = prepared_transport_fixture(
         tmp_path
     )
