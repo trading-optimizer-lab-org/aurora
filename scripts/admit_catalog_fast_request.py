@@ -131,6 +131,22 @@ def _blocked(
     )
 
 
+def _require_cloud_admission_mode(authority: FastAuthorityStateV1, request: CatalogRunRequestV1) -> None:
+    mode = os.environ.get("CATALOG_CLOUD_INTAKE_MODE", "OFF")
+    # During cutover, old signed but unadmitted requests must not escape the
+    # canary restriction. Existing scientific owners never call this guard.
+    if mode == "CANARY_ONLY" and request.campaign_key != "catalog-fast-canary-v1":
+        raise ValueError("CATALOG_CLOUD_INTAKE_DISABLED")
+    cloud_request = any(row.request.request_sha256 == request.request_sha256 for row in authority.emissions)
+    if not cloud_request:
+        return
+    if mode == "OPEN_REGISTERED":
+        return
+    if mode == "CANARY_ONLY" and request.campaign_key == "catalog-fast-canary-v1":
+        return
+    raise ValueError("CATALOG_CLOUD_INTAKE_DISABLED")
+
+
 def _download_owner_archive(repository: str, token: str, artifact_id: int) -> bytes:
     """Read a metadata-bounded archive via gh without exposing the bearer token."""
     if repository != _REPOSITORY or type(artifact_id) is not int or artifact_id < 1:
@@ -301,6 +317,11 @@ def admit_request(
                 raise ValueError("CATALOG_FAST_AUTHORITY_SNAPSHOT_INVALID") from exc
             current = next((row for row in authority.campaigns
                             if row.request.campaign_key == request.campaign_key), None)
+            if not durable_owner and (current is None or current.request.request_id != request.request_id):
+                _require_cloud_admission_mode(authority, request)
+                if any(row.request.request_sha256 == request.request_sha256 for row in authority.emissions):
+                    from scripts.verify_catalog_cloud_qualification import require_cloud_qualification
+                    require_cloud_qualification(repo_root, client, expected_commit)
             if current is not None and current.request.request_id == request.request_id:
                 if current.request.intent_sha256 != request.intent_sha256:
                     raise ValueError("CATALOG_FAST_INTENT_CONFLICT")

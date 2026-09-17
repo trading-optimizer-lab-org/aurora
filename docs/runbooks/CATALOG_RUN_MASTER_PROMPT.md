@@ -1,9 +1,10 @@
 # PROMPT MAESTRO — SOLICITAR UN RUN DE CATÁLOGO AURORA
 
-VERSIÓN: 7.1-CHAT-ENTRY
+VERSIÓN: 8.0-CLOUD-ENTRY
 
-Este protocolo solo es operativo después de instalar y aceptar la entrada
-protegida de esta versión. Su presencia en el repositorio no demuestra READY.
+Este protocolo solo es operativo después de aceptar el origen remoto, la
+custodia protegida y el retiro del emisor anterior. Su presencia en el
+repositorio no demuestra READY. OFF significa que no se admiten runs nuevos.
 
 Lee este archivo completo. Solo úsalo cuando el usuario haya pedido de forma
 explícita un run nuevo de un catálogo ya registrado.
@@ -15,39 +16,48 @@ científicos. Todo eso procede del registro protegido y lo verifica GitHub.
 Para solicitar el run:
 
 1. Comprueba que el usuario pidió este run en el mensaje actual.
-2. Lee la copia pública instalada en
-   `C:/ProgramData/AURORA/CatalogChatSender/catalog_campaign_registry_v1.json`
+2. Lee `config/catalog_campaign_registry_v1.json` del main protegido de
+   `trading-optimizer-lab-org/aurora`
    y selecciona la única fila
    activa que coincida exactamente con el catálogo pedido. Si coinciden cero o
    más de una, no adivines ni ejecutes: informa
    `BLOCKED_CAMPAIGN_SELECTION_AMBIGUOUS`.
 3. Crea un UUIDv4 para esta intención y consérvalo antes de enviar. Recupera
    el mismo ID si se interrumpe la conversación; nunca inventes otro para
-   reintentar una solicitud ambigua. Desde HP ejecuta una sola vez el emisor
-   público instalado, sin activar un entorno de desarrollo:
+   reintentar una solicitud ambigua. Usa únicamente la capacidad del chat/API
+   ya acreditada para este repositorio e incidencias. Si su aislamiento no
+   está acreditado, informa `BLOCKED_ORIGIN_SCOPE_UNPROVEN`. No sustituyas esa
+   capacidad por la sesión administrativa de mantenimiento.
+4. Crea UNA incidencia de intención con título exacto
+   `[AURORA CATALOG INTENT] INTENT_ID` y cuerpo de JSON puro, sin fences:
 
-   `C:/Python314/python.exe -I -S C:/ProgramData/AURORA/CatalogChatSender/submit_catalog_chat_intent.py --campaign-key CAMPAIGN_KEY --intent-id INTENT_ID`
+   {"schema_version":"1","campaign_key":"CAMPAIGN_KEY","intent_id":"INTENT_ID"}
 
-   Si falta el emisor, el intérprete o el registro, informa
-   `BLOCKED_CHAT_ENTRY_NOT_INSTALLED`. No uses el cliente AURORAAgent desde HP,
-   no uses el checkout como sustituto y no instales ni pidas UAC para lanzar.
-4. Lee la respuesta JSON sin secretos. `pending` solo confirma que se publicó
-   la intención local, no que GitHub la aceptó. Si el proceso falla, informa
-   de su causa observable y detente; no repitas el envío.
-5. Consulta exclusivamente la respuesta del mismo ID en
-   `C:/ProgramData/AURORA/CatalogRequester/chat-replies/INTENT_ID.delivery.json`.
-   Una respuesta pendiente o todavía ausente nunca autoriza otro envío.
-   Si dice `submitted`, `pending` o `existing`, no crees otra solicitud. La
-   puerta rápida de GitHub comprobará el recibo `PREPARED`, reservará la
-   campaña y arrancará el motor ya preparado.
-6. Si dice `blocked`, informa de `reason_code` y detente. No modifiques nada
-   para eludirlo.
+   Conserva su número/URL. No añadas parámetros, comandos, rutas ni campos.
+   Esta incidencia NO es la solicitud científica firmada. El workflow
+   protegido autentica el origen y conserva el ticket; solo la App existente
+   firma y publica la solicitud científica.
+5. Observa esa misma intención y su enlace verificado a la solicitud
+   científica. Firmada, publicación incierta y publicada son estados de
+   transporte: ninguno equivale a éxito científico. Si se pierde la respuesta
+   de creación, busca la intención exacta por ID y autor; no repitas el POST.
+   Una ausencia o ambigüedad no autoriza otra intención ni otro ticket.
+6. Para reanudar una emisión ya registrada, usa como máximo un comentario
+   exacto en la incidencia original: `AURORA_REANUDAR_INTENCION INTENT_ID`.
+   No edites título ni cuerpo. La reanudación solo recupera los mismos bytes;
+   no vuelve a firmar ni a publicar una solicitud incierta. Una intención
+   desconocida no puede originar una emisión mediante ese comentario.
+7. Si está bloqueada, informa de la causa observable y detente sin eludirla.
+   Para otro run, exige una nueva petición explícita del usuario y un terminal
+   verificado del anterior; no avances generaciones por tu cuenta.
 
 Prohibido:
 
-- usar credenciales de GitHub, `gh`, navegador o llamadas API para lanzar;
+- usar credenciales administrativas, secretos, PEM, tokens de mantenimiento,
+  Windows, spool local o UAC para un lanzamiento ordinario;
 - invocar, reejecutar, cancelar o despachar workflows;
-- crear o editar issues manualmente;
+- crear directamente la incidencia científica firmada, editar intenciones o
+  crear incidencias fuera del contrato de intención anterior;
 - modificar código, contratos, ciencia, datos, permisos o protecciones;
 - abrir validation u OOS locked;
 - usar runners de pago;

@@ -1,0 +1,210 @@
+name: Catalog cloud intake
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  actions: read
+  issues: read
+
+jobs:
+  validate:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      vars.CATALOG_CLOUD_INTAKE_MODE != '' &&
+      vars.CATALOG_CLOUD_INTAKE_MODE != 'OFF' &&
+      startsWith(github.event.issue.title, '[AURORA CATALOG INTENT] ') &&
+      (github.event_name == 'issues' || startsWith(github.event.comment.body, 'AURORA_REANUDAR_INTENCION ')) &&
+      !github.event.issue.pull_request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      PYTHONPATH: ${{ github.workspace }}/..
+      GH_TOKEN: ${{ github.token }}
+      CATALOG_PROTECTED_COMMIT_SHA: ${{ github.sha }}
+      CATALOG_CLOUD_INTAKE_MODE: ${{ vars.CATALOG_CLOUD_INTAKE_MODE }}
+      CATALOG_CLOUD_QUALIFICATION_RUN_ID: ${{ vars.CATALOG_CLOUD_QUALIFICATION_RUN_ID }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.11'
+          cache: ''
+      - name: Install locked intake dependencies
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r requirements/catalog-controller-linux-py311.lock
+      - name: Authenticate intention before accessing requester secret
+        run: >-
+          python scripts/validate_catalog_cloud_intent.py --repo-root .
+          --output "$RUNNER_TEMP/cloud-intent-validation.json"
+
+  intake:
+    needs: validate
+    if: ${{ needs.validate.result == 'success' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: catalog-cloud-intake
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    concurrency:
+      group: aurora-catalog-fast-admission-v1
+      queue: max
+      cancel-in-progress: false
+    env:
+      PYTHONPATH: ${{ github.workspace }}/..
+      GH_TOKEN: ${{ github.token }}
+      CATALOG_PROTECTED_COMMIT_SHA: ${{ github.sha }}
+      CATALOG_CLOUD_INTAKE_MODE: ${{ vars.CATALOG_CLOUD_INTAKE_MODE }}
+      CATALOG_CLOUD_QUALIFICATION_RUN_ID: ${{ vars.CATALOG_CLOUD_QUALIFICATION_RUN_ID }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.11'
+          cache: ''
+      - name: Install locked intake dependencies
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r requirements/catalog-controller-linux-py311.lock
+      - id: signed
+        name: Write current authority edition (intake-signed)
+        env:
+          CATALOG_REQUESTER_PRIVATE_KEY: ${{ secrets.CATALOG_REQUESTER_PRIVATE_KEY }}
+        run: >-
+          python scripts/catalog_cloud_intake.py --repo-root . --phase signed
+          --work-dir "$RUNNER_TEMP/cloud-intake" --github-output "$GITHUB_OUTPUT"
+      - id: upload_signed
+        name: Publish current authority edition (intake-signed)
+        if: ${{ steps.signed.outputs.changed == 'true' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.signed.outputs.authority_artifact_name }}
+          path: ${{ runner.temp }}/cloud-intake/intake-signed/catalog-fast-authority-publication-v1.json
+          if-no-files-found: error
+          retention-days: 90
+      - id: inspect_signed
+        name: Inspect signed publication
+        if: ${{ steps.signed.outputs.changed == 'true' }}
+        continue-on-error: true
+        run: |
+          set +e
+          python scripts/verify_catalog_fast_authority.py --repo-root . --output "$RUNNER_TEMP/cloud-signed-verified.json"
+          result=$?
+          echo "verification_exit=$result" >> "$GITHUB_OUTPUT"
+          exit "$result"
+      - name: Recover missing authority publication (intake-signed)
+        if: ${{ steps.signed.outputs.changed == 'true' && steps.inspect_signed.outputs.verification_exit == '4' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.signed.outputs.authority_artifact_name }}
+          path: ${{ runner.temp }}/cloud-intake/intake-signed/catalog-fast-authority-publication-v1.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Require signed publication
+        if: ${{ steps.signed.outputs.changed == 'true' && steps.inspect_signed.outputs.verification_exit != '0' }}
+        run: >-
+          python scripts/verify_catalog_fast_authority.py --repo-root .
+          --output "$RUNNER_TEMP/cloud-signed-recovered.json"
+      - id: uncertain
+        name: Write current authority edition (intake-uncertain)
+        run: >-
+          python scripts/catalog_cloud_intake.py --repo-root . --phase uncertain
+          --work-dir "$RUNNER_TEMP/cloud-intake" --github-output "$GITHUB_OUTPUT"
+      - id: upload_uncertain
+        name: Publish current authority edition (intake-uncertain)
+        if: ${{ steps.uncertain.outputs.changed == 'true' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.uncertain.outputs.authority_artifact_name }}
+          path: ${{ runner.temp }}/cloud-intake/intake-uncertain/catalog-fast-authority-publication-v1.json
+          if-no-files-found: error
+          retention-days: 90
+      - id: inspect_uncertain
+        name: Inspect uncertain publication before any POST
+        if: ${{ steps.uncertain.outputs.changed == 'true' }}
+        continue-on-error: true
+        run: |
+          set +e
+          python scripts/verify_catalog_fast_authority.py --repo-root . --output "$RUNNER_TEMP/cloud-uncertain-verified.json"
+          result=$?
+          echo "verification_exit=$result" >> "$GITHUB_OUTPUT"
+          exit "$result"
+      - name: Recover missing authority publication (intake-uncertain)
+        if: ${{ steps.uncertain.outputs.changed == 'true' && steps.inspect_uncertain.outputs.verification_exit == '4' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.uncertain.outputs.authority_artifact_name }}
+          path: ${{ runner.temp }}/cloud-intake/intake-uncertain/catalog-fast-authority-publication-v1.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Require uncertain publication before any POST
+        if: ${{ steps.uncertain.outputs.changed == 'true' && steps.inspect_uncertain.outputs.verification_exit != '0' }}
+        run: >-
+          python scripts/verify_catalog_fast_authority.py --repo-root .
+          --output "$RUNNER_TEMP/cloud-uncertain-recovered.json"
+      - name: Submit once or reconcile exact signed request
+        env:
+          CATALOG_REQUESTER_PRIVATE_KEY: ${{ secrets.CATALOG_REQUESTER_PRIVATE_KEY }}
+        run: >-
+          python scripts/catalog_cloud_intake.py --repo-root . --phase post
+          --work-dir "$RUNNER_TEMP/cloud-intake"
+      - id: published
+        name: Write current authority edition (intake-published)
+        run: >-
+          python scripts/catalog_cloud_intake.py --repo-root . --phase published
+          --work-dir "$RUNNER_TEMP/cloud-intake" --github-output "$GITHUB_OUTPUT"
+      - id: upload_published
+        name: Publish current authority edition (intake-published)
+        if: ${{ steps.published.outputs.changed == 'true' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.published.outputs.authority_artifact_name }}
+          path: ${{ runner.temp }}/cloud-intake/intake-published/catalog-fast-authority-publication-v1.json
+          if-no-files-found: error
+          retention-days: 90
+      - id: inspect_published
+        name: Inspect published authority through production reader
+        if: ${{ steps.published.outputs.changed == 'true' }}
+        continue-on-error: true
+        run: |
+          set +e
+          python scripts/verify_catalog_fast_authority.py --repo-root . --output "$RUNNER_TEMP/cloud-published-verified.json"
+          result=$?
+          echo "verification_exit=$result" >> "$GITHUB_OUTPUT"
+          exit "$result"
+      - name: Recover missing authority publication (intake-published)
+        if: ${{ steps.published.outputs.changed == 'true' && steps.inspect_published.outputs.verification_exit == '4' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.published.outputs.authority_artifact_name }}
+          path: ${{ runner.temp }}/cloud-intake/intake-published/catalog-fast-authority-publication-v1.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Require published authority through production reader
+        if: ${{ steps.published.outputs.changed == 'true' && steps.inspect_published.outputs.verification_exit != '0' }}
+        run: >-
+          python scripts/verify_catalog_fast_authority.py --repo-root .
+          --output "$RUNNER_TEMP/cloud-published-recovered.json"
+      - name: Report the verified scientific request locator
+        run: >-
+          python scripts/catalog_cloud_intake.py --repo-root . --phase report
+          --work-dir "$RUNNER_TEMP/cloud-intake"

@@ -21,8 +21,8 @@
     {
       "path": ".github/workflows/catalog-controller-policy-check.yml",
       "previous_sha256": "71db33aaf25a1e09da29f70098c9cb1280b1ebf81f3de46c6fe8ae1c997ac593",
-      "reason": "run the routing snapshot regression tests in the protected controller policy check",
-      "replacement_sha256": "fd62a22fea0cf5ea1ea7f13e665feaf0d0837c9c1d2b726337385e1cbd1d5991"
+      "reason": "verify routing and native cloud intake contracts in the protected controller policy check",
+      "replacement_sha256": "437bc4c756f6cdd429aa6aa2c25eaedf4c9b376a19c5af7bf1476365d4862a1f"
     },
     {
       "path": ".github/workflows/catalog-controller-qualification.yml",
@@ -33,8 +33,8 @@
     {
       "path": ".github/workflows/catalog-fast-controller.yml",
       "previous_sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e",
-      "reason": "bind the signed fast path to the protected event commit and pass its authenticated gate artifact to the bounded canary acceptance consumer",
-      "replacement_sha256": "ea7c156823c489ef98b0d31bcbc9db15f0caf3cf018c394a8fa0e35d68bde6cf"
+      "reason": "retain protected event binding and authenticated canary acceptance while enforcing the cloud campaign admission mode",
+      "replacement_sha256": "1280729d0dfb162fca34855673ccf18b8b1cc4c87ba7553da7e47056d4fb33a2"
     },
     {
       "path": ".github/workflows/catalog-optimized-run.yml",

@@ -228,6 +228,7 @@ def protected_snapshots() -> _AuditInputs:
             "billing_snapshot_complete": True,
         },
           "workflow_documents": {
+              ".github/workflows/catalog-cloud-intake.yml": _safe_issue_writer_workflow(("intake",)),
               HEAVY_PATH: _safe_heavy_workflow(),
               ".github/workflows/catalog-fast-authority-maintenance.yml": _safe_issue_writer_workflow(("bootstrap",)),
               ".github/workflows/catalog-fast-controller.yml": _safe_issue_writer_workflow(
@@ -254,6 +255,7 @@ def protected_snapshots() -> _AuditInputs:
             ),
         },
           "workflow_source_sha256s": {
+              ".github/workflows/catalog-cloud-intake.yml": "b" * 64,
               HEAVY_PATH: "b" * 64,
               ".github/workflows/catalog-fast-authority-maintenance.yml": "b" * 64,
               ".github/workflows/catalog-fast-controller.yml": "b" * 64,

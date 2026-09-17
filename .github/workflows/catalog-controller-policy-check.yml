@@ -41,6 +41,24 @@ jobs:
           python -m pytest -q \
             tests/test_catalog_run_prompt_policy.py \
             tests/test_catalog_run_request.py \
+            tests/test_catalog_cloud_intake.py \
+            tests/test_catalog_cloud_authority.py \
+            tests/test_catalog_cloud_transport.py \
+            tests/test_catalog_cloud_replay.py \
+            tests/test_catalog_cloud_ticket.py \
+            tests/test_catalog_cloud_cutover.py \
+            tests/test_catalog_cloud_app.py \
+            tests/test_catalog_cloud_qualification.py \
+            tests/test_qualify_catalog_cloud_origin.py \
+            tests/test_catalog_cloud_intake_pipeline.py \
+            tests/test_catalog_cloud_phase_bounds.py \
+            tests/test_export_catalog_cloud_retirement.py \
+            tests/test_catalog_cloud_admission_mode.py \
+            tests/test_catalog_cloud_token_lifetime.py \
+            tests/test_catalog_cloud_workflow.py \
+            tests/test_validate_catalog_cloud_intent.py \
+            tests/test_catalog_cloud_scientific_consumers.py \
+            tests/test_catalog_cloud_prepared_fallback.py \
             tests/test_catalog_campaign_definition.py \
             tests/test_catalog_campaign_registry.py \
             tests/test_catalog_authority_ledger.py \

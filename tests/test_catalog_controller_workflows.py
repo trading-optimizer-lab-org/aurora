@@ -1360,6 +1360,7 @@ def test_issues_write_is_job_scoped_to_the_exact_governance_jobs() -> None:
         for workflow in workflows.values()
     )
     assert set(jobs_with_issues_write(workflows)) == {
+        (".github/workflows/catalog-cloud-intake.yml", "intake"),
         (".github/workflows/catalog-fast-authority-maintenance.yml", "bootstrap"),
         (".github/workflows/catalog-fast-controller.yml", "gate"),
         (".github/workflows/catalog-fast-controller.yml", "finalize"),
@@ -1922,7 +1923,10 @@ def test_fast_request_path_has_one_gate_and_no_preparation_or_qualification() ->
         workflow["jobs"]["finalize"], sort_keys=True
     )
     for forbidden in (
-        "qualification",
+        # Reading an already authenticated receipt is an admission check;
+        # producing a new qualification must remain outside the fast gate.
+        "qualify_catalog_cloud_origin.py",
+        "catalog-controller-qualification.yml",
         "prepare_catalog_campaign.py",
         "catalog-live-controls-audit",
         "repair",

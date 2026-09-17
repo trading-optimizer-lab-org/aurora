@@ -2209,6 +2209,8 @@ class CatalogBrokerGithubClient:
         return hashlib.sha256(public_der).hexdigest()
 
     def _path_allowed(self, method: str, path: str) -> bool:
+        if method == "DELETE" and path == "/installation/token":
+            return True
         token_path = f"/app/installations/{self.installation_id}/access_tokens"
         exact_issue_prefix = self._issues_path + "/"
         if method == "POST" and path in {token_path, self._issues_path}:
@@ -2295,6 +2297,14 @@ class CatalogBrokerGithubClient:
         if not isinstance(token, str) or not token:
             raise ValueError("REQUESTER_INSTALLATION_TOKEN_UNPROVEN")
         return token
+
+    def revoke_installation_token(self, token: str) -> None:
+        """Revoke only this ephemeral token, never the App or its installation."""
+        if not isinstance(token, str) or not token or "\r" in token or "\n" in token:
+            raise ValueError("REQUESTER_INSTALLATION_TOKEN_INVALID")
+        response = self.request_fixed("DELETE", "/installation/token", token=token)
+        if response.status_code != 204:
+            raise ValueError("REQUESTER_INSTALLATION_TOKEN_REVOCATION_UNPROVEN")
 
 
 def _parse_github_time(value: object) -> datetime:
