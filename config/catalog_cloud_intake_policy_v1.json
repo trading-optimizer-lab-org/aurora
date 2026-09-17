@@ -1,0 +1,8 @@
+{
+  "schema_version": "1",
+  "repository_id": 1232647748,
+  "repository": "trading-optimizer-lab-org/aurora",
+  "allowed_actor_ids": [271768688],
+  "ttl_seconds": 86400,
+  "max_body_bytes": 1024
+}

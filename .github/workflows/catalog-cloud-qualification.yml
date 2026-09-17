@@ -1,0 +1,48 @@
+name: Catalog cloud origin qualification
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+  issues: read
+
+jobs:
+  qualify:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (vars.CATALOG_CLOUD_INTAKE_MODE == '' || vars.CATALOG_CLOUD_INTAKE_MODE == 'OFF')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: catalog-cloud-intake
+    env:
+      PYTHONPATH: ${{ github.workspace }}/..
+      GH_TOKEN: ${{ github.token }}
+      CATALOG_CLOUD_INTAKE_MODE: ${{ vars.CATALOG_CLOUD_INTAKE_MODE }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.11'
+          cache: ''
+      - name: Install locked qualification dependencies
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r requirements/catalog-controller-linux-py311.lock
+      - name: Qualify existing requester App without scientific publication
+        env:
+          CATALOG_REQUESTER_PRIVATE_KEY: ${{ secrets.CATALOG_REQUESTER_PRIVATE_KEY }}
+        run: >-
+          python scripts/qualify_catalog_cloud_origin.py --repo-root .
+          --output "$RUNNER_TEMP/catalog-cloud-qualification-v1.json"
+      - name: Publish public cloud qualification receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-cloud-qualification-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/catalog-cloud-qualification-v1.json
+          if-no-files-found: error
+          retention-days: 90

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+from pathlib import Path
 import re
 import subprocess
 import zipfile
@@ -20,13 +21,35 @@ from .catalog_fast_authority import CatalogLineageTransitionV1, FastAuthoritySta
 
 
 _REPOSITORY = "trading-optimizer-lab-org/aurora"
-_LOCATOR = re.compile(r"\n<!-- AURORA_FAST_PUBLICATION:([1-9][0-9]*):([1-9][0-9]*):(bootstrap|gate|finalize|reconcile):([0-9a-f]{40}):([1-9][0-9]*) -->\Z")
+_LOCATOR = re.compile(r"\n<!-- AURORA_FAST_PUBLICATION:([1-9][0-9]*):([1-9][0-9]*):(bootstrap|gate|finalize|reconcile|intake-signed|intake-uncertain|intake-published):([0-9a-f]{40}):([1-9][0-9]*) -->\Z")
 _MAX_ARCHIVE = 2 * 1024 * 1024
+_INTAKE_PHASES = {"intake-signed", "intake-uncertain", "intake-published"}
+
+
+def authority_publication_step_names(phase: str) -> tuple[str, str]:
+    suffix = f" ({phase})" if phase in _INTAKE_PHASES else ""
+    return ("Write current authority edition" + suffix, "Publish current authority edition" + suffix)
 
 
 def authority_publisher_job_name(run: Mapping[str, Any], *, commit: str, phase: str,
                                issue_number: int | None = None) -> str:
     """Accept only the direct writer or its exact protected reusable caller."""
+    if phase in _INTAKE_PHASES:
+        # This module is loaded from the checked-out protected code, never issue data.
+        path = Path(__file__).resolve().parents[2] / "config/catalog_cloud_intake_policy_v1.json"
+        from .catalog_cloud_intake import CloudIntakePolicyV1
+        policy = CloudIntakePolicyV1.model_validate_json(path.read_bytes())
+        if (run.get("path") == ".github/workflows/catalog-cloud-intake.yml"
+                and run.get("event") in {"issues", "issue_comment"}
+                and run.get("head_sha") == commit and run.get("head_branch") == "main"
+                and run.get("repository", {}).get("id") == policy.repository_id
+                and run.get("repository", {}).get("full_name") == policy.repository
+                and type(run.get("actor", {}).get("id")) is int
+                and run["actor"]["id"] in policy.allowed_actor_ids
+                and type(run.get("triggering_actor", {}).get("id")) is int
+                and run["triggering_actor"]["id"] in policy.allowed_actor_ids):
+            return "intake"
+        raise ValueError("CATALOG_FAST_AUTHORITY_PRODUCER_INVALID")
     if phase in {"bootstrap", "reconcile"}:
         if run.get("path") == ".github/workflows/catalog-fast-authority-maintenance.yml" and run.get("event") == "workflow_dispatch":
             # Reconciliation deliberately reuses the protected maintenance
@@ -162,16 +185,18 @@ def load_current_fast_authority(*, client: _Reader, anchor: Mapping[str, Any], p
         ):
             raise ValueError("CATALOG_FAST_AUTHORITY_PRODUCER_INVALID")
         stages = []
-        for label in ("Write current authority edition", "Publish current authority edition"):
+        write_label, upload_label = authority_publication_step_names(phase)
+        for label in (write_label, upload_label):
             steps = [step for step in writer["steps"] if step.get("name") == label]
-            conclusions = {"success", "failure"} if label == "Publish current authority edition" else {"success"}
+            conclusions = {"success", "failure"} if label == upload_label else {"success"}
             # Lost upload acknowledgement is not absence: the exact stored
             # archive, digest, producer window and current edit below decide.
             if len(steps) != 1 or steps[0]["status"] != "completed" or steps[0]["conclusion"] not in conclusions:
                 raise ValueError("CATALOG_FAST_AUTHORITY_PUBLICATION_INCOMPLETE")
             stages.append(steps[0])
         write, upload = stages
-        recovered = [step for step in writer["steps"] if step.get("name") == "Recover missing authority publication"]
+        recovery_label = "Recover missing authority publication" + (f" ({phase})" if phase in _INTAKE_PHASES else "")
+        recovered = [step for step in writer["steps"] if step.get("name") == recovery_label]
         if len(recovered) > 1:
             raise ValueError("CATALOG_FAST_AUTHORITY_PUBLICATION_AMBIGUOUS")
         if not _time(upload["started_at"]) <= _time(artifact["created_at"]) <= _time(upload["completed_at"]):
@@ -221,9 +246,33 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
     Returns staging content, not publication success: upload and a full protected
     read-back are still required before evaluation or freeing a campaign.
     """
-    if (phase not in {"gate", "finalize", "reconcile"} or not re.fullmatch(r"[0-9a-f]{40}", commit)
+    if (phase not in {"gate", "finalize", "reconcile"} | _INTAKE_PHASES or not re.fullmatch(r"[0-9a-f]{40}", commit)
         or any(type(value) is not int or value < 1 for value in (run_id, run_attempt, job_id))):
         raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_INVALID")
+    if phase in _INTAKE_PHASES:
+        old_emissions = {row.intent_id: row for row in current.emissions}
+        changed_emissions = [row for row in candidate.emissions if old_emissions.get(row.intent_id) != row]
+        if len(changed_emissions) != 1 or candidate.campaigns != current.campaigns:
+            raise ValueError("CATALOG_FAST_AUTHORITY_TRANSITION_INVALID")
+        emission = changed_emissions[0]
+        if phase == "intake-signed":
+            if emission.producer_run_id != run_id or emission.producer_commit != commit:
+                raise ValueError("CATALOG_FAST_AUTHORITY_PRODUCER_INVALID")
+            expected = current.stage_emission(emission, lineage_transition=lineage_transition)
+        else:
+            expected_state = "PUBLICACION_INCIERTA" if phase == "intake-uncertain" else "PUBLICADO"
+            if emission.state != expected_state:
+                raise ValueError("CATALOG_FAST_AUTHORITY_TRANSITION_INVALID")
+            if phase == "intake-uncertain" and (emission.post_run_id, emission.post_run_attempt) != (run_id, run_attempt):
+                raise ValueError("CATALOG_FAST_AUTHORITY_PRODUCER_INVALID")
+            expected = current.advance_emission(intent_id=emission.intent_id, state=expected_state,
+                issue_number=emission.issue_number, post_run_id=emission.post_run_id,
+                post_run_attempt=emission.post_run_attempt)
+        if expected != candidate:
+            raise ValueError("CATALOG_FAST_AUTHORITY_TRANSITION_INVALID")
+        return _write_validated_authority(current=current, candidate=candidate, expected_edit_id=expected_edit_id,
+            anchor=anchor, run_id=run_id, run_attempt=run_attempt, job_id=job_id, phase=phase, commit=commit,
+            read_edit=read_edit, write_body=write_body)
     old_rows = {row.request.campaign_key: row for row in current.campaigns}
     changed = [row for row in candidate.campaigns if old_rows.get(row.request.campaign_key) != row]
     if len(changed) != 1 or (phase != "reconcile" and changed[0].owner_run_id != run_id):
@@ -248,6 +297,13 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
         )
     if expected != candidate:
         raise ValueError("CATALOG_FAST_AUTHORITY_TRANSITION_INVALID")
+    return _write_validated_authority(current=current, candidate=candidate, expected_edit_id=expected_edit_id,
+        anchor=anchor, run_id=run_id, run_attempt=run_attempt, job_id=job_id, phase=phase, commit=commit,
+        read_edit=read_edit, write_body=write_body)
+
+
+def _write_validated_authority(*, current, candidate, expected_edit_id, anchor,
+                              run_id, run_attempt, job_id, phase, commit, read_edit, write_body):
     before = _edition(read_edit(), anchor)
     locator = _LOCATOR.search(before[0])
     if (locator is None or before[1] != expected_edit_id

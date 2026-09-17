@@ -4,8 +4,8 @@ Este documento registra **todos** los workflows presentes durante la migración 
 
 ## Resultado
 
-- Workflows inventariados: **185**.
-- Hash canónico del inventario final: `9d71c56889d17b2ec1af4ab0cfd558934fd234702ec75a8fab1c54fb1a17f458`.
+- Workflows inventariados: **187**.
+- Hash canónico del inventario final: `1fe0b3e8a44354abfeb51f8cceeec5471197a5a728f585c75509dc1d87f3ed13`.
 - Estado final del validador de topología: **READY**.
 - Campaña activa: `sp500-optimized-catalog-v1` mediante `optimized_catalog_v1`.
 - Los Atlas antiguos y sus wrappers quedan inactivos y sin disparador público. Su código se conserva para trazabilidad, pero no existe un llamador autorizado.
@@ -24,6 +24,8 @@ Este documento registra **todos** los workflows presentes durante la migración 
 
 | path | current triggers (antes) | heavy | engine_id | registered campaign keys | target trigger | migration action | test enforcing it |
 |---|---|---:|---|---|---|---|---|
+| .github/workflows/catalog-cloud-intake.yml | issues, issue_comment | no | - | protected registry | issues, issue_comment | native intent intake; signed App request only; no scientific dispatch | test_catalog_cloud_workflow.py |
+| .github/workflows/catalog-cloud-qualification.yml | workflow_dispatch | no | - | - | workflow_dispatch | protected non-scientific App/signature qualification; no issue or authority writes | test_qualify_catalog_cloud_origin.py |
 | .github/workflows/_aurora-future-run-v3.yml | workflow_call, workflow_dispatch | no | - | - | workflow_call, workflow_dispatch | outside catalog execution scope; inventoried with no change | repository topology receipt |
 | .github/workflows/_aurora-merge-level-v3.yml | workflow_call | no | - | - | workflow_call | outside catalog execution scope; inventoried with no change | repository topology receipt |
 | .github/workflows/_aurora-recovery-plan-v3.yml | workflow_call | no | - | - | workflow_call | outside catalog execution scope; inventoried with no change | repository topology receipt |

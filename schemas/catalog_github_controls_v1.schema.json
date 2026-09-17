@@ -275,6 +275,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        ".github/workflows/catalog-cloud-intake.yml",
         ".github/workflows/catalog-fast-authority-maintenance.yml",
         ".github/workflows/catalog-run-controller.yml",
         ".github/workflows/catalog-fast-controller.yml",
@@ -283,6 +284,9 @@
         ".github/workflows/catalog-run-watchdog.yml"
       ],
       "properties": {
+        ".github/workflows/catalog-cloud-intake.yml": {
+          "const": ["intake"]
+        },
         ".github/workflows/catalog-fast-authority-maintenance.yml": {
           "const": ["bootstrap"]
         },
@@ -331,8 +335,8 @@
         "authority_watchdog": {"const": ".github/workflows/catalog-run-watchdog.yml"},
         "issues_write_workflow_allowlist": {
           "type": "array",
-          "minItems": 6,
-          "maxItems": 6,
+          "minItems": 7,
+          "maxItems": 7,
           "uniqueItems": true,
           "items": {"type": "string"}
         },

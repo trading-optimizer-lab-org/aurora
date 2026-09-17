@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, model_serializer, model_validator
 
 from ..github_performance.contracts import canonical_sha256
 from .catalog_request_contract import CatalogRunRequestV1, FrozenModel, Sha256
+from .catalog_cloud_emission import CatalogCloudEmissionV1, CatalogCloudCompletedIntentV1
 from .catalog_lineage_transition import CatalogLineageTransitionV1, load_lineage_transition as load_lineage_transition
 
 
@@ -43,12 +44,30 @@ class _AuthorityContent(FrozenModel):
     revision: int = Field(strict=True, ge=1)
     previous_state_sha256: Sha256 | None
     campaigns: tuple[FastAuthorityCampaignV1, ...] = Field(max_length=128)
+    emissions: tuple[CatalogCloudEmissionV1, ...] = Field(default=(), max_length=128)
+    completed_intents: tuple[CatalogCloudCompletedIntentV1, ...] = Field(default=(), max_length=128)
+
+    @model_serializer(mode="wrap")
+    def _legacy_wire_shape(self, handler):
+        payload = handler(self)
+        if not self.emissions:
+            payload.pop("emissions", None)
+        if not self.completed_intents:
+            payload.pop("completed_intents", None)
+        return payload
 
     @model_validator(mode="after")
     def _shape(self) -> "_AuthorityContent":
         keys = tuple(row.request.campaign_key for row in self.campaigns)
         if keys != tuple(sorted(set(keys))):
             raise ValueError("CATALOG_FAST_AUTHORITY_CAMPAIGNS_INVALID")
+        emission_keys = tuple(row.request.campaign_key for row in self.emissions)
+        intent_ids = tuple(row.intent_id for row in self.emissions)
+        if emission_keys != tuple(sorted(set(emission_keys))) or len(intent_ids) != len(set(intent_ids)):
+            raise ValueError("CATALOG_CLOUD_EMISSIONS_INVALID")
+        archived_ids = tuple(row.intent_id for row in self.completed_intents)
+        if archived_ids != tuple(sorted(set(archived_ids))) or set(archived_ids) & set(intent_ids):
+            raise ValueError("CATALOG_CLOUD_EMISSIONS_INVALID")
         if (self.revision == 1) != (self.previous_state_sha256 is None):
             raise ValueError("CATALOG_FAST_AUTHORITY_REVISION_INVALID")
         return self
@@ -77,10 +96,77 @@ class FastAuthorityStateV1(_AuthorityContent):
         campaigns = {item.request.campaign_key: item for item in self.campaigns}
         campaigns[row.request.campaign_key] = row
         return self._create(revision=self.revision + 1, previous_state_sha256=self.state_sha256,
-                            campaigns=tuple(campaigns[key] for key in sorted(campaigns)))
+                            campaigns=tuple(campaigns[key] for key in sorted(campaigns)), emissions=self.emissions,
+                            completed_intents=self.completed_intents)
+
+    def stage_emission(self, emission: CatalogCloudEmissionV1, *,
+                       lineage_transition: CatalogLineageTransitionV1 | None = None) -> "FastAuthorityStateV1":
+        """Persist one signed request before posting; caller verifies its signature.
+
+        Completed intent bindings remain in this same authenticated state; full
+        signed bytes remain in the verified scientific issue and its artifacts.
+        """
+        if emission.state != "SIGNED":
+            raise ValueError("CATALOG_CLOUD_EMISSION_TRANSITION_INVALID")
+        archived = next((row for row in self.completed_intents if row.intent_id == emission.intent_id), None)
+        if archived is not None:
+            raise ValueError("CATALOG_CLOUD_INTENT_ALREADY_COMPLETED")
+        matching = next((row for row in self.emissions if row.intent_id == emission.intent_id), None)
+        if matching is not None:
+            mutable = {"state", "issue_number", "post_run_id", "post_run_attempt"}
+            if matching.model_dump(exclude=mutable) != emission.model_dump(exclude=mutable):
+                raise ValueError("CATALOG_CLOUD_INTENT_CONFLICT")
+            return self
+        prior = next((row for row in self.emissions if row.request.campaign_key == emission.request.campaign_key), None)
+        owner = next((row for row in self.campaigns if row.request.campaign_key == emission.request.campaign_key), None)
+        if prior is not None and (owner is None or not owner.is_terminal
+                                  or owner.request.request_sha256 != prior.request.request_sha256):
+            raise ValueError("CATALOG_CAMPAIGN_BUSY")
+        if owner is not None and owner.request.request_id == emission.request.request_id:
+            raise ValueError("CATALOG_CLOUD_INTENT_CONFLICT")
+        completed = {row.intent_id: row for row in self.completed_intents}
+        if prior is not None:
+            if owner is None or owner.terminal_receipt_sha256 is None:
+                raise ValueError("CATALOG_CLOUD_TERMINAL_REQUIRED")
+            if len(completed) >= 128:
+                raise ValueError("CATALOG_CLOUD_HISTORY_CAPACITY_EXCEEDED")
+            completed[prior.intent_id] = CatalogCloudCompletedIntentV1.from_emission(prior, owner.terminal_receipt_sha256)
+        # Reuse the scientific generation/lineage transition solely for validation.
+        # Its returned reservation is discarded: transport is never a run owner.
+        without_emissions = self._create(
+            revision=self.revision, previous_state_sha256=self.previous_state_sha256,
+            campaigns=self.campaigns,
+        )
+        without_emissions.reserve(request=emission.request, issue_number=emission.intent_issue_number,
+                                  run_id=emission.producer_run_id, lineage_transition=lineage_transition)
+        rows = {row.request.campaign_key: row for row in self.emissions}
+        rows[emission.request.campaign_key] = emission
+        return self._create(revision=self.revision + 1, previous_state_sha256=self.state_sha256,
+                            campaigns=self.campaigns, emissions=tuple(rows[key] for key in sorted(rows)),
+                            completed_intents=tuple(completed[key] for key in sorted(completed)))
+
+    def advance_emission(self, *, intent_id: str, state: str,
+                         issue_number: int | None = None, post_run_id: int | None = None,
+                         post_run_attempt: int | None = None) -> "FastAuthorityStateV1":
+        item = next((row for row in self.emissions if row.intent_id == intent_id), None)
+        if item is None:
+            raise ValueError("CATALOG_CLOUD_EMISSION_UNKNOWN")
+        updated = item.advance(state, issue_number, post_run_id=post_run_id, post_run_attempt=post_run_attempt)
+        if updated == item:
+            return self
+        return self._create(revision=self.revision + 1, previous_state_sha256=self.state_sha256,
+                            campaigns=self.campaigns,
+                            emissions=tuple(updated if row.intent_id == intent_id else row for row in self.emissions),
+                            completed_intents=self.completed_intents)
 
     def reserve(self, *, request: CatalogRunRequestV1, issue_number: int, run_id: int,
                 lineage_transition: CatalogLineageTransitionV1 | None = None) -> "FastAuthorityStateV1":
+        emission = next((row for row in self.emissions if row.request.campaign_key == request.campaign_key), None)
+        if emission is not None and request.launch_generation >= emission.request.launch_generation:
+            if request != emission.request or emission.state not in {"PUBLICACION_INCIERTA", "PUBLICADO"}:
+                raise ValueError("CATALOG_CLOUD_EMISSION_REQUEST_MISMATCH")
+            if emission.issue_number is not None and emission.issue_number != issue_number:
+                raise ValueError("CATALOG_CLOUD_EMISSION_REQUEST_MISMATCH")
         old = next((row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
         if old is not None:
             if old.request.request_id == request.request_id:
