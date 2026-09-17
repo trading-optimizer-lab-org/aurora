@@ -41,11 +41,14 @@ def test_release_transition_resolves_installed_unused_ticket_to_packaged_definit
 
     root = Path(__file__).resolve().parents[1]
     prompt_hash = hashlib.sha256((root / "docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md").read_bytes()).hexdigest()
+    # Installed tickets retain their historical prompt; only the target uses
+    # the current prompt. Mixing an old manifest with new prompt grants nothing.
+    installed_prompt_hash = "7eeb12311d4d109bb0da25c617ad1684568c47dd6ff0996f3c4f72cc2e633c49"
     ticket = CatalogLaunchTicketV1(
         schema_version="1", request_id="018f47a2-6e91-7c34-8000-000000000002",
         campaign_key=campaign, launch_generation=generation,
         previous_terminal_request_sha256=predecessor,
-        campaign_definition_sha256=installed_definition, prompt_sha256=prompt_hash,
+        campaign_definition_sha256=installed_definition, prompt_sha256=installed_prompt_hash,
     )
     approval = load_lineage_transition(root, ticket)
     assert approval is not None
@@ -58,10 +61,13 @@ def test_release_transition_resolves_installed_unused_ticket_to_packaged_definit
         "452dcdce598620547ec44a035610b653167c7e4226de89ff35af3b45716da37a",
         "5974d90710e3f62b0b4fb554dbd751df6fec472543e28bd7aca651cf11a2368e",
     }:
-        assert (installed_definition, prompt_hash) in {
+        contexts = {
             (context.campaign_definition_sha256, context.prompt_sha256)
             for context in approval.source_ticket_contexts
         }
+        assert (installed_definition, installed_prompt_hash) in contexts
+        assert installed_prompt_hash != prompt_hash
+        assert (installed_definition, prompt_hash) not in contexts
 
 
 def test_consumed_canary_generation_keeps_its_original_release_boundary():
