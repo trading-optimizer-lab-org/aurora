@@ -46,7 +46,8 @@ CLOUD_INTENT_ID_PATTERN = (
 CLOUD_INTENT_TITLE_PREFIX = "[AURORA CATALOG INTENT] "
 CLOUD_RESUME_COMMAND_PREFIX = "AURORA_REANUDAR_INTENCION "
 CLOUD_REPOSITORY_API_PREFIX = "https://api.github.com/repos/"
-_ALLOWED_EVENT_NAMES = {"issues", "issue_comment"}
+CloudEventName = Literal["issues", "issue_comment"]
+_ALLOWED_EVENT_NAMES: frozenset[CloudEventName] = frozenset({"issues", "issue_comment"})
 
 
 class _CloudModel(FrozenModel):
@@ -152,7 +153,11 @@ class AuthenticatedCloudIntentV1(CloudIntentV1):
     def actor_id(self) -> int:
         """The actor that caused the accepted transport event."""
 
-        return self.comment_actor_id if self.is_resume else self.sender_id
+        if self.is_resume:
+            if self.comment_actor_id is None:
+                raise ValueError("resume intent is missing its comment actor")
+            return self.comment_actor_id
+        return self.sender_id
 
     @property
     def resumed(self) -> bool:
@@ -339,7 +344,7 @@ def _validate_issue_identity(
         raise _invalid("pull requests are not cloud-intake issues")
 
     title = _strict_text(_required(issue, "title", "issue"), "issue title")
-    body = _required(issue, "body", "issue")
+    body = _strict_text(_required(issue, "body", "issue"), "issue body")
     author = _mapping(_required(issue, "user", "issue"), "issue.user")
     author_id = _strict_id(_required(author, "id", "issue.user"), "issue author id")
     created_at = _timestamp(_required(issue, "created_at", "issue"), "issue.created_at")
@@ -395,7 +400,7 @@ def _validate_live_issue(
 
 
 def validate_cloud_event(
-    event_name: str,
+    event_name: CloudEventName,
     event: Mapping[str, object],
     live_issue: Mapping[str, object],
     policy: CloudIntakePolicyV1,

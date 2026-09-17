@@ -20,7 +20,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from typing import Literal
+from typing import Literal, cast
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +41,7 @@ from aurora.infra.sp500_megarun.catalog_cloud_emission import (
 )
 from aurora.infra.sp500_megarun.catalog_cloud_intake import (
     AuthenticatedCloudIntentV1,
+    CloudEventName,
     CloudIntentV1,
     CloudIntakePolicyV1,
     validate_cloud_event,
@@ -273,7 +274,7 @@ def _verify_actions_origin(root: Path, policy: CloudIntakePolicyV1) -> str:
     return commit
 
 
-def _event_file() -> tuple[str, Mapping[str, object]]:
+def _event_file() -> tuple[CloudEventName, Mapping[str, object]]:
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
     if event_name not in {"issues", "issue_comment"}:
         raise _invalid("GITHUB_EVENT_NAME is invalid")
@@ -284,7 +285,7 @@ def _event_file() -> tuple[str, Mapping[str, object]]:
     value = _strict_json_file(path)
     if not isinstance(value, Mapping):
         raise _invalid("GitHub event must be an object")
-    return event_name, value
+    return cast(CloudEventName, event_name), value
 
 
 def _strict_positive_int(value: object, label: str) -> int:
@@ -300,7 +301,7 @@ def _mapping(value: object, label: str) -> Mapping[str, object]:
 
 
 def _preview_event(
-    event_name: str,
+    event_name: CloudEventName,
     event: Mapping[str, object],
     policy: CloudIntakePolicyV1,
 ) -> tuple[CloudIntentV1, int]:
@@ -367,11 +368,14 @@ def _make_client(repository: str, token: str) -> CatalogGitHubReadOnlyClient:
 
 def _authority_edit_id(payload: object) -> str:
     try:
-        data = _mapping(payload, "authority response")["data"]
-        repository = _mapping(data, "authority response.data")["repository"]
-        issue = _mapping(repository, "authority response.repository")["issue"]
-        edits = _mapping(issue, "authority response.issue")["userContentEdits"]
-        nodes = edits["nodes"]
+        data = _mapping(
+            _mapping(payload, "authority response").get("data"),
+            "authority response.data",
+        )
+        repository = _mapping(data.get("repository"), "authority response.repository")
+        issue = _mapping(repository.get("issue"), "authority response.repository.issue")
+        edits = _mapping(issue.get("userContentEdits"), "authority response.issue.userContentEdits")
+        nodes = edits.get("nodes")
     except (KeyError, TypeError) as exc:
         raise _invalid("authority edit response is malformed") from exc
     if not isinstance(nodes, list) or len(nodes) != 1:

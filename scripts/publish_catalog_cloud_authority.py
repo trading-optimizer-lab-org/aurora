@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from typing import Any, cast
 
 from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityStateV1
 from aurora.infra.sp500_megarun.catalog_fast_authority_github import write_current_fast_authority
@@ -38,9 +39,16 @@ def publish_cloud_candidate(
     commit = os.environ["GITHUB_SHA"]
     if os.environ.get("CATALOG_PROTECTED_COMMIT_SHA") != commit:
         raise ValueError("CATALOG_CLOUD_PUBLICATION_CONTEXT_INVALID")
-    anchor = _strict_json(root / "config/catalog_authority_anchor_v1.json")
-    actors = _strict_json(root / "config/catalog_controller_actors_v1.json")
-    public_path = root / actors["requester_public_key_path"]
+    anchor_raw = _strict_json(root / "config/catalog_authority_anchor_v1.json")
+    actors_raw = _strict_json(root / "config/catalog_controller_actors_v1.json")
+    if not isinstance(anchor_raw, dict) or not isinstance(actors_raw, dict):
+        raise ValueError("CATALOG_CLOUD_PUBLICATION_CONFIG_INVALID")
+    anchor = cast(dict[str, Any], anchor_raw)
+    actors = cast(dict[str, Any], actors_raw)
+    public_key_path = actors.get("requester_public_key_path")
+    if type(public_key_path) is not str or not public_key_path:
+        raise ValueError("CATALOG_CLOUD_PUBLIC_KEY_INVALID")
+    public_path = root / public_key_path
     if public_path.is_symlink() or not public_path.resolve(strict=True).is_relative_to(root):
         raise ValueError("CATALOG_CLOUD_PUBLIC_KEY_INVALID")
     public_key = public_path.read_bytes()

@@ -9,7 +9,7 @@ key, calls a broker, writes GitHub state, or reads authority/science state.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import hashlib
 import io
 import json
@@ -18,7 +18,7 @@ import re
 import subprocess
 import tempfile
 import zipfile
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Literal, Protocol, cast
 
 from pydantic import Field, StrictInt, field_validator, model_validator
 
@@ -47,15 +47,17 @@ class CloudQualificationReceiptV1(FrozenModel):
     """Canonical public proof produced by the remote App-only qualification."""
 
     schema_version: Literal["1"] = "1"
-    repository: Literal[_REPOSITORY] = _REPOSITORY
-    repository_id: Literal[_REPOSITORY_ID] = _REPOSITORY_ID
+    repository: Literal["trading-optimizer-lab-org/aurora"] = (
+        "trading-optimizer-lab-org/aurora"
+    )
+    repository_id: Literal[1232647748] = 1232647748
     producer_run_id: PositiveInt
     producer_run_attempt: PositiveInt
     producer_job_id: PositiveInt
     producer_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
     actor_id: PositiveInt
-    app_id: Literal[_APP_ID] = _APP_ID
-    installation_id: Literal[_INSTALLATION_ID] = _INSTALLATION_ID
+    app_id: Literal[4693452] = 4693452
+    installation_id: Literal[155982969] = 155982969
     requester_public_key_sha256: Sha256
     permissions: tuple[
         tuple[Literal["issues"], Literal["write"]],
@@ -70,7 +72,7 @@ class CloudQualificationReceiptV1(FrozenModel):
     def _require_aware_utc(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("CLOUD_QUALIFICATION_TIME_INVALID")
-        return value.astimezone(UTC)
+        return value.astimezone(timezone.utc)
 
     @model_validator(mode="after")
     def _require_closed_permissions_and_hash(self) -> "CloudQualificationReceiptV1":
@@ -119,7 +121,7 @@ def _time(value: object) -> datetime:
         raise _fail("CLOUD_QUALIFICATION_TIME_INVALID") from None
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise _fail("CLOUD_QUALIFICATION_TIME_INVALID")
-    return parsed.astimezone(UTC)
+    return parsed.astimezone(timezone.utc)
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -341,14 +343,18 @@ def _artifact(
         raise _fail("CLOUD_QUALIFICATION_ARTIFACT_AMBIGUOUS")
     artifact = _mapping(raw_rows[0])
     artifact_id = _positive_int(artifact.get("id"))
+    size_in_bytes = artifact.get("size_in_bytes")
+    digest = artifact.get("digest")
     if (
         artifact.get("name") != name
         or artifact.get("expired") is not False
-        or type(artifact.get("size_in_bytes")) is not int
-        or not 0 < artifact["size_in_bytes"] <= _MAX_ARCHIVE_BYTES
-        or type(artifact.get("digest")) is not str
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", artifact["digest"]) is None
+        or type(size_in_bytes) is not int
+        or type(digest) is not str
     ):
+        raise _fail("CLOUD_QUALIFICATION_ARTIFACT_METADATA_INVALID")
+    if not 0 < size_in_bytes <= _MAX_ARCHIVE_BYTES:
+        raise _fail("CLOUD_QUALIFICATION_ARTIFACT_METADATA_INVALID")
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
         raise _fail("CLOUD_QUALIFICATION_ARTIFACT_METADATA_INVALID")
     created_at = _time(artifact.get("created_at"))
     expires_at = _time(artifact.get("expires_at"))
@@ -359,7 +365,7 @@ def _artifact(
         or observed_at.utcoffset() is None
     ):
         raise _fail("CLOUD_QUALIFICATION_OBSERVATION_TIME_INVALID")
-    observed_at = observed_at.astimezone(UTC)
+    observed_at = observed_at.astimezone(timezone.utc)
     if (
         expires_at <= created_at
         or expires_at <= observed_at
@@ -546,8 +552,10 @@ def verify_cloud_qualification(
         if type(raw_archive) is not bytes:
             raise _fail("CLOUD_QUALIFICATION_ARCHIVE_INVALID")
         if (
-            len(raw_archive) != first_artifact.get("size_in_bytes")
-            or _sha256_bytes(raw_archive) != str(first_artifact.get("digest"))[7:]
+            len(raw_archive)
+            != cast(int, first_artifact.get("size_in_bytes"))
+            or _sha256_bytes(raw_archive)
+            != cast(str, first_artifact.get("digest"))[7:]
         ):
             raise _fail("CLOUD_QUALIFICATION_ARTIFACT_DIGEST_INVALID")
         receipt = _receipt_from_archive(raw_archive)

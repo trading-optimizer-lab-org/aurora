@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import hashlib
 import io
 import json
@@ -75,7 +75,7 @@ def make_qualification_receipt(
         "requester_public_key_sha256": PUBLIC_KEY_SHA256,
         "permissions": (("issues", "write"), ("metadata", "read")),
         "signed_test_request_sha256": qualification_test_request_sha256(),
-        "observed_at": datetime(2026, 9, 17, 12, 0, 3, tzinfo=UTC),
+        "observed_at": datetime(2026, 9, 17, 12, 0, 3, tzinfo=timezone.utc),
         "receipt_sha256": "0" * 64,
     }
     values.update(updates)
@@ -122,7 +122,7 @@ class SyntheticQualificationClient:
 
     repository = REPOSITORY
     _token = "synthetic-only-token"
-    observed_at = datetime(2026, 9, 17, 12, 0, 30, tzinfo=UTC)
+    observed_at = datetime(2026, 9, 17, 12, 0, 30, tzinfo=timezone.utc)
 
     def __init__(
         self,
@@ -140,8 +140,11 @@ class SyntheticQualificationClient:
         self.second_snapshot = dict(second_snapshot or {})
         self.calls: list[str] = []
         self._reads = {"run": 0, "jobs": 0, "artifact": 0}
+        self.remote_error: Exception | None = None
 
     def get_json(self, path: str) -> tuple[object, object]:
+        if self.remote_error is not None:
+            raise self.remote_error
         self.calls.append(path)
         prefix = f"/repos/{REPOSITORY}/actions"
         if path == f"{prefix}/runs/{RUN_ID}":
@@ -396,7 +399,7 @@ def test_archive_receipt_must_be_canonical_and_self_hashed() -> None:
 def test_receipt_observation_and_public_key_are_bound_to_the_step() -> None:
     receipt = make_qualification_receipt(
         requester_public_key_sha256="c" * 64,
-        observed_at=datetime(2026, 9, 17, 12, 0, 8, tzinfo=UTC),
+        observed_at=datetime(2026, 9, 17, 12, 0, 8, tzinfo=timezone.utc),
     )
     fixture = make_qualification_fixture(receipt=receipt)
 
@@ -425,11 +428,7 @@ def test_second_remote_snapshot_must_be_identical() -> None:
 
 def test_remote_errors_are_sanitized() -> None:
     fixture = make_qualification_fixture()
-
-    def fail(_path: str) -> tuple[object, object]:
-        raise RuntimeError("bearer super-secret-token")
-
-    fixture.client.get_json = fail  # type: ignore[method-assign]
+    fixture.client.remote_error = RuntimeError("bearer super-secret-token")
 
     with pytest.raises(ValueError) as error:
         _verify(fixture)
