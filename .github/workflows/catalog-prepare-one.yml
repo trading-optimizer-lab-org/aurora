@@ -65,7 +65,6 @@ jobs:
 
       - id: verify
         name: Verify every restored byte against current inputs
-        if: ${{ steps.restore.outputs['cache-matched-key'] != '' }}
         continue-on-error: true
         env:
           CATALOG_PROTECTED_COMMIT_SHA: ${{ github.sha }}
@@ -76,6 +75,7 @@ jobs:
           --campaign-key "${{ inputs.campaign_key }}"
           --repo-root .
           --bundle "$RUNNER_TEMP/prepared-bundle"
+          --restore-artifact-on-miss
           --require-live-caches
           --github-output "$GITHUB_OUTPUT"
 
