@@ -21,8 +21,8 @@
     {
       "path": ".github/workflows/catalog-controller-policy-check.yml",
       "previous_sha256": "71db33aaf25a1e09da29f70098c9cb1280b1ebf81f3de46c6fe8ae1c997ac593",
-      "reason": "verify routing and native cloud intake contracts in the protected controller policy check",
-      "replacement_sha256": "437bc4c756f6cdd429aa6aa2c25eaedf4c9b376a19c5af7bf1476365d4862a1f"
+      "reason": "verify routing, native cloud intake and exact PREPARED artifact fallback in the protected controller policy check",
+      "replacement_sha256": "4218c4317f427dc4499dad162c395fa880b99b4500e8632aebd9ab5656dd3b2d"
     },
     {
       "path": ".github/workflows/catalog-controller-qualification.yml",
@@ -33,8 +33,8 @@
     {
       "path": ".github/workflows/catalog-fast-controller.yml",
       "previous_sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e",
-      "reason": "retain protected event binding and authenticated canary acceptance while enforcing the cloud campaign admission mode",
-      "replacement_sha256": "1280729d0dfb162fca34855673ccf18b8b1cc4c87ba7553da7e47056d4fb33a2"
+      "reason": "retain protected admission and campaign restrictions while recovering an authenticated exact PREPARED artifact only on cache miss",
+      "replacement_sha256": "7d703f0142058ec31466cd9b189e791610a209684908006f85622a6eb174f3f1"
     },
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
@@ -51,8 +51,8 @@
     {
       "path": ".github/workflows/catalog-prepare-one.yml",
       "previous_sha256": "3574b886740be21a68bbb62bc6d71744b74d32cb2aaed2716843a70d6ff334f9",
-      "reason": "publish every sealed worker payload bundle before catalog preparation fan-out",
-      "replacement_sha256": "498bf6868a7a92a7c8299ff90614548866336fa51aabdb42b8813d692dd3779a"
+      "reason": "retain sealed payload publication and verify an exact durable PREPARED artifact before rebuilding after a bundle cache miss",
+      "replacement_sha256": "4829665ffe8473a45de8543777c66e5c646f52edaa40ab9396e5bd31951b65ac"
     },
     {
       "path": ".github/workflows/catalog-prepare.yml",

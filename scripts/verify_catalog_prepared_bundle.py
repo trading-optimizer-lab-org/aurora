@@ -45,6 +45,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--bundle", required=True, type=Path)
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--require-live-caches", action="store_true")
+    parser.add_argument("--restore-artifact-on-miss", action="store_true")
     return parser
 
 
@@ -82,6 +83,7 @@ def verify_bundle(
     bundle: Path,
     github_output: Path | None,
     require_live_caches: bool = False,
+    restore_artifact_on_miss: bool = False,
 ) -> str:
     expected_commit = os.environ.get("CATALOG_PROTECTED_COMMIT_SHA", "")
     if not _COMMIT.fullmatch(expected_commit):
@@ -105,6 +107,20 @@ def verify_bundle(
         registry_entry=entry,
         protected_commit_sha=expected_commit,
     )
+    if restore_artifact_on_miss and not bundle.exists():
+        if bundle.is_symlink():
+            raise ValueError("CATALOG_PREPARED_BUNDLE_PATH_INVALID")
+        repository = os.environ.get("GITHUB_REPOSITORY", "")
+        token = os.environ.get("GH_TOKEN", "")
+        if not _REPOSITORY.fullmatch(repository) or not token:
+            raise ValueError("CATALOG_PREPARED_ARTIFACT_INVOCATION_INVALID")
+        from aurora.infra.sp500_megarun.catalog_prepared_artifact import restore_prepared_artifact
+
+        restore_prepared_artifact(
+            client=CatalogGitHubReadOnlyClient(repository, token),
+            expected_identity=identity,
+            destination=bundle,
+        )
     receipt, manifest = verify_prepared_catalog_bundle(
         bundle_dir=bundle,
         expected_identity=identity,
@@ -132,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
             bundle=args.bundle,
             github_output=args.github_output,
             require_live_caches=args.require_live_caches,
+            restore_artifact_on_miss=args.restore_artifact_on_miss,
         )
         return 0
     except (

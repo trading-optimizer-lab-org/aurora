@@ -59,6 +59,8 @@ jobs:
             tests/test_validate_catalog_cloud_intent.py \
             tests/test_catalog_cloud_scientific_consumers.py \
             tests/test_catalog_cloud_prepared_fallback.py \
+            tests/test_catalog_prepared_artifact.py \
+            tests/test_verify_catalog_prepared_artifact.py \
             tests/test_catalog_campaign_definition.py \
             tests/test_catalog_campaign_registry.py \
             tests/test_catalog_authority_ledger.py \
