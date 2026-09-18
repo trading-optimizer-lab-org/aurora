@@ -565,10 +565,11 @@ jobs:
 
       - id: write_authority
         name: Write current authority edition
-        if: ${{ steps.terminal.outcome == 'success' && needs.gate.outputs.launch_required == 'true' }}
+        if: ${{ steps.terminal.outcome == 'success' && steps.publish_receipt.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           CATALOG_PROTECTED_COMMIT_SHA: ${{ needs.gate.outputs.protected_commit_sha }}
+          CATALOG_TERMINAL_ARTIFACT_ID: ${{ steps.publish_receipt.outputs.artifact-id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -583,7 +584,7 @@ jobs:
       - id: publish_authority
         name: Publish current authority edition
         continue-on-error: true
-        if: ${{ steps.terminal.outcome == 'success' && needs.gate.outputs.launch_required == 'true' }}
+        if: ${{ steps.write_authority.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.write_authority.outputs.authority_artifact_name }}
@@ -593,7 +594,7 @@ jobs:
 
       - id: inspect_publication
         name: Check current authority publication
-        if: ${{ steps.terminal.outcome == 'success' && needs.gate.outputs.launch_required == 'true' }}
+        if: ${{ steps.write_authority.outcome == 'success' }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -619,7 +620,7 @@ jobs:
 
       - id: verify_authority
         name: Verify the terminal publication before releasing the campaign
-        if: ${{ steps.terminal.outcome == 'success' && needs.gate.outputs.launch_required == 'true' }}
+        if: ${{ steps.write_authority.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           CATALOG_PROTECTED_COMMIT_SHA: ${{ needs.gate.outputs.protected_commit_sha }}
@@ -635,7 +636,7 @@ jobs:
 
       - id: publish_terminal
         name: Publish the terminal state and release the reservation
-        if: ${{ steps.terminal.outcome == 'success' }}
+        if: ${{ steps.terminal.outcome == 'success' && steps.verify_authority.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ needs.gate.outputs.issue_number }}
@@ -671,7 +672,7 @@ jobs:
 
       - name: Fail closed once and release a stuck reservation
         if: >-
-          ${{ always() &&
+          ${{ always() && steps.verify_authority.outcome == 'success' &&
           (steps.terminal.outcome != 'success' ||
           steps.publish_receipt.outcome != 'success' ||
           steps.publish_terminal.outcome != 'success') }}

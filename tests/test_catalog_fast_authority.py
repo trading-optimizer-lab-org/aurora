@@ -5,6 +5,7 @@ import pytest
 from aurora.infra.sp500_megarun.catalog_fast_authority import (
     FastAuthorityCampaignV1, FastAuthorityStateV1, bind_authority_edit, verify_authority_edit,
 )
+from tests.test_catalog_cloud_authority import emission, signed_request
 from tests.test_catalog_fast_path import _request
 
 
@@ -72,6 +73,117 @@ def test_new_generation_requires_exact_terminal_predecessor() -> None:
     successor = state.reserve(request=next_request, issue_number=281, run_id=101)
     assert successor.campaigns[0].generation == 2
     assert successor.campaigns[0].owner_run_id == 101
+
+
+def _published_unlaunched_request_state(*, publish: bool = True) -> tuple[FastAuthorityStateV1, object]:
+    previous = _request()
+    state = FastAuthorityStateV1.bootstrap(campaigns=()).reserve(
+        request=previous, issue_number=400, run_id=500,
+    )
+    state = state.terminalize(request=previous, run_id=500, terminal_receipt_sha256="c" * 64)
+    request = signed_request(
+        request_id="018f47a2-6e91-7c34-8000-000000000002",
+        launch_generation=2,
+        previous_terminal_request_sha256=previous.request_sha256,
+    )
+    item = emission(
+        intent_id="e844851d-11dd-4408-96c5-3dd7dd08eac1",
+        intent_issue_number=401,
+        request=request,
+    )
+    state = state.stage_emission(item)
+    state = state.advance_emission(
+        intent_id=item.intent_id, state="PUBLICACION_INCIERTA", post_run_id=700, post_run_attempt=1,
+    )
+    if publish:
+        state = state.advance_emission(
+            intent_id=item.intent_id, state="PUBLICADO", issue_number=401,
+        )
+    return state, request
+
+
+def test_close_unlaunched_published_request_commits_one_terminal_revision() -> None:
+    state, request = _published_unlaunched_request_state()
+
+    closed = state.close_unlaunched(
+        request=request, issue_number=401, run_id=901, terminal_receipt_sha256="d" * 64,
+    )
+
+    row = next(item for item in closed.campaigns if item.request == request)
+    assert closed.revision == state.revision + 1
+    assert closed.previous_state_sha256 == state.state_sha256
+    assert closed.emissions == state.emissions
+    assert row.owner_issue_number == 401
+    assert row.owner_run_id == 901
+    assert row.terminal_receipt_sha256 == "d" * 64
+    assert row.legacy_closure_evidence_sha256 is None
+
+
+@pytest.mark.parametrize("defect, expected", [
+    ("uncertain", "CATALOG_FAST_UNLAUNCHED_EMISSION_INVALID"),
+    ("wrong_issue", "CATALOG_FAST_UNLAUNCHED_EMISSION_INVALID"),
+    ("owner_same_request", "CATALOG_FAST_UNLAUNCHED_OWNER_EXISTS"),
+    ("owner_active_predecessor", "CATALOG_CAMPAIGN_BUSY"),
+    ("lineage", "CATALOG_FAST_AUTHORITY_LINEAGE_CHANGE_REQUIRES_MAINTENANCE"),
+])
+def test_close_unlaunched_rejects_invalid_or_owned_continuations(defect: str, expected: str) -> None:
+    state, request = _published_unlaunched_request_state()
+    if defect == "uncertain":
+        state, request = _published_unlaunched_request_state(publish=False)
+    elif defect == "wrong_issue":
+        with pytest.raises(ValueError, match=expected):
+            state.close_unlaunched(
+                request=request, issue_number=402, run_id=901, terminal_receipt_sha256="d" * 64,
+            )
+        return
+    elif defect == "owner_same_request":
+        state = state.reserve(request=request, issue_number=401, run_id=800)
+    elif defect == "owner_active_predecessor":
+        previous = state.campaigns[0].request
+        active = FastAuthorityStateV1.bootstrap(campaigns=()).reserve(
+            request=previous, issue_number=400, run_id=500,
+        )
+        state = FastAuthorityStateV1._create(
+            revision=active.revision + 1,
+            previous_state_sha256=active.state_sha256,
+            campaigns=active.campaigns,
+            emissions=state.emissions,
+        )
+    elif defect == "lineage":
+        request = signed_request(
+            request_id="018f47a2-6e91-7c34-8000-000000000003",
+            launch_generation=2,
+            previous_terminal_request_sha256=state.campaigns[0].request.request_sha256,
+            campaign_definition_sha256="f" * 64,
+            prompt_sha256="e" * 64,
+        )
+        item = emission(
+            intent_id="e844851d-11dd-4408-96c5-3dd7dd08eac2",
+            intent_issue_number=401,
+            request=request,
+        )
+        item = item.advance("PUBLICACION_INCIERTA", post_run_id=700, post_run_attempt=1)
+        item = item.advance("PUBLICADO", issue_number=401)
+        state = state._create(
+            revision=state.revision + 1,
+            previous_state_sha256=state.state_sha256,
+            campaigns=state.campaigns,
+            emissions=(item,),
+        )
+    with pytest.raises(ValueError, match=expected):
+        state.close_unlaunched(
+            request=request, issue_number=401, run_id=901, terminal_receipt_sha256="d" * 64,
+        )
+
+
+def test_close_unlaunched_rejects_existing_same_request_even_if_terminal() -> None:
+    state, request = _published_unlaunched_request_state()
+    state = state.reserve(request=request, issue_number=401, run_id=800)
+    state = state.terminalize(request=request, run_id=800, terminal_receipt_sha256="e" * 64)
+    with pytest.raises(ValueError, match="CATALOG_FAST_UNLAUNCHED_OWNER_EXISTS"):
+        state.close_unlaunched(
+            request=request, issue_number=401, run_id=901, terminal_receipt_sha256="d" * 64,
+        )
 
 
 def test_state_hash_is_verified_not_repaired_on_input() -> None:

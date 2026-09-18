@@ -233,7 +233,7 @@ def load_fast_gate_owner(
 ) -> FastGateOwnerEvidence | FastGateAliasEvidence | None:
     """Look up existing publication, not all historical runs or terminal issues.
 
-    None means no gate artifacts were found, NOT authorization to launch: the
+    None means no reserving publication was found, NOT authorization to launch: the
     caller must also inspect durable request state for expired/deleted evidence.
     More than sixteen publications requires offline reconciliation, not a long
     discovery loop in admission. Terminal run conclusion is not science proof.
@@ -279,8 +279,6 @@ def load_fast_gate_owner(
             download_archive(artifact_id), expected_sha256=digest[7:],
             expected_request=request, expected_issue_number=issue_number,
         )
-        if not decision.launch_required and decision.existing_run_id is None:
-            continue
         run, _ = client.get_json(f"{prefix}/actions/runs/{run_id}")
         if not isinstance(run, Mapping) or type(run.get("run_attempt")) is not int or run["run_attempt"] < 1:
             raise ValueError("CATALOG_FAST_OWNER_RUN_INVALID")
@@ -294,6 +292,25 @@ def load_fast_gate_owner(
             expected_issue_number=issue_number, expected_commit=source["head_sha"],
             requires_reservation=decision.launch_required,
         )
+        if not decision.launch_required and decision.existing_run_id is None:
+            if (decision.state != "BLOCKED"
+                    or decision.reason_code == "CATALOG_FAST_EXISTING_RUN"
+                    or decision.reason_code.startswith("CATALOG_REQUEST_ALREADY_")):
+                raise ValueError("CATALOG_FAST_OWNER_ORIGINAL_EVIDENCE_MISSING")
+            prefix_name = "" if run["path"] == ".github/workflows/catalog-fast-controller.yml" else f"catalog-request-{issue_number} / "
+            for job in jobs.collection.rows:
+                name = str(job.get("name", ""))
+                if name == prefix_name + "gate":
+                    for step in job.get("steps", ()):
+                        if step.get("name") in {"Write current authority edition", "Publish current authority edition",
+                                                "Verify the uploaded reservation before exposing QUEUED"}:
+                            if step.get("conclusion") != "skipped":
+                                raise ValueError("CATALOG_FAST_OWNER_ORIGINAL_EVIDENCE_MISSING")
+                if (name == prefix_name + "engine" or name.startswith(prefix_name + "engine /")) and job.get("conclusion") != "skipped":
+                    raise ValueError("CATALOG_FAST_OWNER_ORIGINAL_EVIDENCE_MISSING")
+            # A verified rejection is not a lost reservation. Durable authority
+            # and issue-state checks in admission still protect missing owners.
+            continue
         if decision.launch_required:
             owners.append(FastGateOwnerEvidence(publisher_id, dict(run), decision, tuple(jobs.collection.rows)))
         else:
@@ -306,8 +323,6 @@ def load_fast_gate_owner(
         raise ValueError("CATALOG_FAST_ALIAS_TARGET_CONFLICT")
     if not owners and alias_targets:
         return FastGateAliasEvidence(next(iter(alias_targets)))
-    if rows and not owners:
-        raise ValueError("CATALOG_FAST_OWNER_ORIGINAL_EVIDENCE_MISSING")
     return owners[0] if owners else None
 
 

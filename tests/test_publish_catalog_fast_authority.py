@@ -23,7 +23,8 @@ from tests.test_catalog_fast_path import NOW
 @pytest.mark.parametrize(("phase", "fault", "version"), [(phase, fault, "1") for phase in ("gate", "finalize")
     for fault in (None, "write_rejected", "foreign_decision", "reusable")] + [("finalize", "foreign_receipt", "1")]
     + [("finalize", fault, "2") for fault in (None, "write_rejected", "foreign_decision", "reusable", "foreign_receipt")]
-    + [("gate", fault, "1") for fault in ("lineage_approved", "lineage_missing")])
+    + [("gate", fault, "1") for fault in ("lineage_approved", "lineage_missing")]
+    + [("finalize", fault, "2") for fault in ("unlaunched", "unlaunched_young")])
 def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeypatch, fault, phase, version):
     from scripts import publish_catalog_fast_authority as command
 
@@ -62,9 +63,17 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
     run_id = 234 if phase == "gate" else 123
     if phase == "finalize":
         current = FastAuthorityStateV1.bootstrap(campaigns=()).reserve(request=request, issue_number=280, run_id=123)
+        if fault in {"unlaunched", "unlaunched_young"}:
+            from tests.test_catalog_cloud_authority import emission
+            item = emission(request=request)
+            current = FastAuthorityStateV1.bootstrap(campaigns=()).stage_emission(item)
+            current = current.advance_emission(intent_id=item.intent_id, state="PUBLICACION_INCIERTA", post_run_id=500, post_run_attempt=1)
+            current = current.advance_emission(intent_id=item.intent_id, state="PUBLICADO", issue_number=280)
         fixture = publication_transport(state=current, phase="gate", reusable_issue_number=280 if fault == "reusable" else None)
     context = {"request": request.model_dump(mode="json"), "issue_number": 280, "actor": "requester",
         "protected_commit_sha": "a" * 40, "logical_recipe_count": 1}
+    if fault in {"unlaunched", "unlaunched_young"}:
+        context["issue_created_at"] = (NOW - timedelta(minutes=31 if fault == "unlaunched" else 1)).isoformat()
     context["content_sha256"] = canonical_sha256(context)
     context_path = tmp_path / "context.json"
     context_path.write_text(json.dumps(context))
@@ -73,6 +82,11 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
         submission_key_sha256=request.submission_key_sha256, campaign_key=request.campaign_key,
         prepared_receipt_sha256="1" * 64, selected_workers=1, launch_required=True, existing_run_id=None,
         decided_at=NOW, expires_at=NOW + timedelta(minutes=5))
+    if fault in {"unlaunched", "unlaunched_young"}:
+        values = decision.model_dump(exclude={"decision_sha256"})
+        values.update(state="BLOCKED", reason_code="CATALOG_REQUEST_EXPIRED", launch_required=False,
+                      selected_workers=0, expires_at=NOW - timedelta(minutes=1))
+        decision = CatalogFastLaunchDecisionV1.create(**values)
     decision_path = tmp_path / "decision.json"
     decision_path.write_text(decision.model_dump_json())
     receipt: CatalogTerminalReceipt = CatalogTerminalReceiptV1.create(state="BLOCKED", reason_code="CATALOG_ENGINE_OUTCOME_MISSING",
@@ -86,6 +100,10 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
         values = receipt.model_dump(exclude={"schema_version", "receipt_sha256", "queue_seconds", "preparation_seconds",
             "computation_seconds", "recovery_seconds", "reduction_seconds", "recovered_block_count"})
         receipt = CatalogTerminalReceiptV2.create(**values, timing={}, recovered_block_ids=None)
+    if fault in {"unlaunched", "unlaunched_young"}:
+        values = receipt.model_dump(exclude={"receipt_sha256"})
+        values.update(engine_run_id=None, run_url=None, reason_code="CATALOG_REQUEST_EXPIRED")
+        receipt = CatalogTerminalReceiptV2.create(**values)
     receipt_path = tmp_path / "terminal.json"
     receipt_path.write_text(receipt.model_dump_json())
     calls = []
@@ -93,7 +111,8 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
 
     def get_json(path):
         if path.endswith("/issues/280"):
-            return {"number": 280, "title": title, "body": body, "user": {"login": "requester"}}, None
+            return {"number": 280, "title": title, "body": body, "user": {"login": "requester"},
+                    "created_at": context.get("issue_created_at"), "state": "open", "labels": []}, None
         if path.endswith(f"/actions/runs/{run_id}"):
             if fault == "reusable":
                 return {**fixture.run, "id": run_id, "path": ".github/workflows/catalog-request-reconciler.yml", "event": "schedule",
@@ -106,6 +125,12 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
         return old_get(path)
 
     fixture.client.get_json = get_json
+    if fault in {"unlaunched", "unlaunched_young"}:
+        fixture.client.stable_paginated = lambda path, **kwargs: SimpleNamespace(
+            stable=True, collection=SimpleNamespace(complete=True, rows=(
+                {"id": 88, "expired": False, "workflow_run": {"id": run_id, "head_sha": "a" * 40}},
+            ) if "catalog-terminal-receipt-" in path else ()))
+        monkeypatch.setenv("CATALOG_TERMINAL_ARTIFACT_ID", "88")
 
     def process(args, **kwargs):
         if args[0] == "git":
@@ -134,7 +159,7 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
     code = command.main(["--repo-root", str(root), "--phase", phase, "--request-context", str(context_path),
         "--decision", str(decision_path), "--output", str(output), "--github-output", str(github_output)] +
         (["--terminal-receipt", str(receipt_path)] if phase == "finalize" else []))
-    if fault in {None, "reusable", "lineage_approved"}:
+    if fault in {None, "reusable", "lineage_approved", "unlaunched"}:
         assert code == 0
         assert github_output.read_text().strip() == f"authority_artifact_name=catalog-fast-authority-{run_id}-1-{phase}-790"
         publication = FastAuthorityEditBindingV1.model_validate_json(output.read_text())

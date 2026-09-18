@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -19,7 +20,8 @@ if str(REPOSITORY_ROOT) not in sys.path:
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.catalog_fast_authority import load_lineage_transition
 from aurora.infra.sp500_megarun.catalog_fast_authority_github import load_current_fast_authority, write_current_fast_authority
-from aurora.infra.sp500_megarun.catalog_fast_path import CatalogFastLaunchDecisionV1, parse_catalog_terminal_receipt
+from aurora.infra.sp500_megarun.catalog_fast_path import CatalogFastLaunchDecisionV1, REQUEST_MAX_AGE, parse_catalog_terminal_receipt
+from aurora.infra.sp500_megarun.catalog_fast_reservation import load_fast_gate_owner
 from aurora.infra.sp500_megarun.catalog_github_snapshot import CatalogGitHubReadOnlyClient, CatalogGitHubSnapshotError
 from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
 from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_request
@@ -57,6 +59,47 @@ def _publisher_job(client: CatalogGitHubReadOnlyClient, run_id: int, attempt: in
         if len(payload["jobs"]) < 100:
             break
     raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_JOB_UNAVAILABLE")
+
+
+def _require_unlaunched_terminal(*, client, repository, token, commit, number,
+                                request, issue, context, decision, receipt, run_id, receipt_artifact_id):
+    """A terminal without an engine can only close an expired, never-owned request."""
+    try:
+        created = datetime.fromisoformat(issue["created_at"].replace("Z", "+00:00"))
+        if (created.utcoffset() is None or issue["created_at"] != context.get("issue_created_at")
+                or issue.get("state") != "open"
+                or any(row.get("name") in {"catalog-run-active-v1", "catalog-run-terminal-v1"}
+                       for row in issue.get("labels", ()))
+                or decision.state != "BLOCKED" or decision.launch_required
+                or decision.existing_run_id is not None or decision.selected_workers != 0
+                or decision.reason_code == "CATALOG_FAST_EXISTING_RUN"
+                or decision.reason_code.startswith("CATALOG_REQUEST_ALREADY_")
+                or decision.expires_at != created + REQUEST_MAX_AGE
+                or decision.decided_at <= created + REQUEST_MAX_AGE
+                or receipt.created_at < decision.decided_at
+                or receipt.state != "BLOCKED" or receipt.reason_code != decision.reason_code
+                or receipt.engine_run_id is not None or receipt.run_url is not None
+                or receipt.observed_recipe_count != 0 or receipt.result_science_sha256 is not None):
+            raise ValueError
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        raise ValueError("CATALOG_FAST_AUTHORITY_UNLAUNCHED_TERMINAL_INVALID") from exc
+    owner = load_fast_gate_owner(client=client, issue_number=number, request=request,
+        approved_commits=frozenset({commit}),
+        approve_historical_commit=lambda candidate: _historical_owner_commit_approved(client, candidate, commit),
+        download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id))
+    if owner is not None:
+        raise ValueError("CATALOG_FAST_AUTHORITY_UNLAUNCHED_OWNER_EXISTS")
+    inventory = client.stable_paginated(
+        f"/repos/{repository}/actions/artifacts?name=catalog-terminal-receipt-{request.request_sha256}",
+        root="artifacts")
+    if (type(receipt_artifact_id) is not int or receipt_artifact_id < 1
+            or inventory.stable is not True or inventory.collection.complete is not True
+            or len(inventory.collection.rows) != 1
+            or any(row.get("workflow_run", {}).get("id") != run_id
+                   or row.get("workflow_run", {}).get("head_sha") != commit
+                   or row.get("id") != receipt_artifact_id or row.get("expired") is not False
+                   for row in inventory.collection.rows)):
+        raise ValueError("CATALOG_FAST_AUTHORITY_UNLAUNCHED_TERMINAL_CONFLICT")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -120,7 +163,8 @@ def main(argv: list[str] | None = None) -> int:
             or parse_catalog_run_request(issue["title"], issue["body"], public_path.read_bytes()) != request):
             raise ValueError("CATALOG_FAST_AUTHORITY_REQUEST_INVALID")
         decision = CatalogFastLaunchDecisionV1.model_validate(_strict_json(args.decision))
-        if (not decision.launch_required or decision.existing_run_id is not None
+        unlaunched_terminal = args.phase == "finalize" and not decision.launch_required
+        if ((not decision.launch_required and not unlaunched_terminal) or decision.existing_run_id is not None
             or decision.request_sha256 != request.request_sha256
             or decision.submission_key_sha256 != request.submission_key_sha256
             or decision.campaign_key != request.campaign_key):
@@ -132,10 +176,15 @@ def main(argv: list[str] | None = None) -> int:
                 or receipt.submission_key_sha256 != request.submission_key_sha256
                 or receipt.campaign_key != request.campaign_key
                 or receipt.prepared_receipt_sha256 != decision.prepared_receipt_sha256
-                or receipt.engine_run_id != run_id
-                or receipt.run_url != f"https://github.com/{repository}/actions/runs/{run_id}"
+                or receipt.engine_run_id != (None if unlaunched_terminal else run_id)
+                or receipt.run_url != (None if unlaunched_terminal else f"https://github.com/{repository}/actions/runs/{run_id}")
                 or receipt.expected_recipe_count != context.get("logical_recipe_count")):
                 raise ValueError("CATALOG_FAST_AUTHORITY_TERMINAL_BINDING_INVALID")
+            if unlaunched_terminal:
+                _require_unlaunched_terminal(client=client, repository=repository, token=token,
+                    commit=commit, number=number, request=request, issue=issue, context=context,
+                    decision=decision, receipt=receipt, run_id=run_id,
+                    receipt_artifact_id=int(os.environ.get("CATALOG_TERMINAL_ARTIFACT_ID", "0")))
         latest: dict[str, Any] = {}
 
         def read() -> dict[str, Any]:
@@ -147,9 +196,11 @@ def main(argv: list[str] | None = None) -> int:
             read_edit=read, download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
             approve_historical_commit=lambda candidate: _historical_owner_commit_approved(client, candidate, commit))
         expected_edit_id = latest["data"]["repository"]["issue"]["userContentEdits"]["nodes"][0]["id"]
-        transition = load_lineage_transition(root, request) if receipt is None else None
+        transition = load_lineage_transition(root, request) if receipt is None or unlaunched_terminal else None
         candidate = (current.reserve(request=request, issue_number=number, run_id=run_id,
                                     lineage_transition=transition) if receipt is None
+            else current.close_unlaunched(request=request, issue_number=number, run_id=run_id,
+                terminal_receipt_sha256=receipt.receipt_sha256, lineage_transition=transition) if unlaunched_terminal
             else current.terminalize(request=request, run_id=run_id, terminal_receipt_sha256=receipt.receipt_sha256))
         job_id = _publisher_job(client, run_id, attempt, commit, args.phase, number)
 
@@ -162,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         publication = write_current_fast_authority(current=current, candidate=candidate,
             expected_edit_id=expected_edit_id, anchor=anchor, run_id=run_id, run_attempt=attempt,
             job_id=job_id, phase=args.phase, commit=commit, read_edit=read, write_body=write,
-            lineage_transition=transition)
+            lineage_transition=transition, unlaunched_terminal=unlaunched_terminal)
         with args.output.open("x", encoding="utf-8") as stream:
             stream.write(publication.model_dump_json() + "\n")
         if args.github_output is not None:
