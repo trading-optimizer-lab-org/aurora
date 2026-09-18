@@ -2065,7 +2065,7 @@ class RequestsCatalogBrokerHttpTransport:
             )
         if 300 <= response.status_code < 400:
             raise ValueError("REQUESTER_GITHUB_REDIRECT_FORBIDDEN")
-        if response.status_code == 304:
+        if response.status_code in {204, 304}:
             payload = None
         else:
             try:

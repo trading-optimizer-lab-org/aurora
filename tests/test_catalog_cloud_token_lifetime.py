@@ -1,6 +1,10 @@
 import pytest
+import requests
 
-from aurora.infra.sp500_megarun.catalog_requester_broker import CatalogBrokerHttpResponse
+from aurora.infra.sp500_megarun.catalog_requester_broker import (
+    CatalogBrokerHttpResponse,
+    RequestsCatalogBrokerHttpTransport,
+)
 from tests.test_catalog_requester_broker import _FakeHttp, _client, _private_key
 
 
@@ -25,6 +29,38 @@ def test_ephemeral_token_is_revoked_without_deleting_installation():
     client.revoke_installation_token(token)
     assert http.calls[-1] == ("DELETE", "https://api.github.com/installation/token")
     assert http.issue_posts == 0
+
+
+def test_real_transport_accepts_empty_204_for_token_revocation(monkeypatch):
+    transport = RequestsCatalogBrokerHttpTransport(timeout_seconds=30)
+    calls = []
+    response = requests.Response()
+    response.status_code = 204
+    response._content = b""
+
+    def respond(method, url, **kwargs):
+        calls.append((method, url))
+        assert kwargs["allow_redirects"] is False
+        assert kwargs["json"] is None
+        return response
+
+    monkeypatch.setattr(transport._session, "request", respond)
+    client = _client(_FakeHttp(), _private_key())
+    client.http = transport
+    client.revoke_installation_token("opaque-installation-token")
+    assert calls == [("DELETE", "https://api.github.com/installation/token")]
+
+
+def test_real_transport_still_rejects_empty_json_response(monkeypatch):
+    transport = RequestsCatalogBrokerHttpTransport(timeout_seconds=30)
+    response = requests.Response()
+    response.status_code = 200
+    response._content = b""
+    monkeypatch.setattr(transport._session, "request", lambda *args, **kwargs: response)
+    client = _client(_FakeHttp(), _private_key())
+    client.http = transport
+    with pytest.raises(ValueError, match="RESPONSE_INVALID"):
+        client.revoke_installation_token("opaque-installation-token")
 
 
 @pytest.mark.parametrize("status", [401, 403, 500])
