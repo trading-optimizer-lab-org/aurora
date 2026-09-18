@@ -239,6 +239,7 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
     phase: str, commit: str, read_edit: Callable[[], Mapping[str, Any]],
     write_body: Callable[[str], None],
     lineage_transition: CatalogLineageTransitionV1 | None = None,
+    unlaunched_terminal: bool = False,
 ) -> FastAuthorityEditBindingV1:
     """Mutate under the workflow's shared writer lock, then bind the observed edit.
 
@@ -249,6 +250,8 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
     if (phase not in {"gate", "finalize", "reconcile"} | _INTAKE_PHASES or not re.fullmatch(r"[0-9a-f]{40}", commit)
         or any(type(value) is not int or value < 1 for value in (run_id, run_attempt, job_id))):
         raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_INVALID")
+    if unlaunched_terminal and phase != "finalize":
+        raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_PHASE_INVALID")
     if phase in _INTAKE_PHASES:
         old_emissions = {row.intent_id: row for row in current.emissions}
         changed_emissions = [row for row in candidate.emissions if old_emissions.get(row.intent_id) != row]
@@ -284,8 +287,19 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
     elif phase == "finalize":
         if row.terminal_receipt_sha256 is None:
             raise ValueError("CATALOG_FAST_AUTHORITY_TERMINAL_REQUIRED")
-        expected = current.terminalize(request=row.request, run_id=run_id,
-            terminal_receipt_sha256=row.terminal_receipt_sha256)
+        if unlaunched_terminal:
+            if row.legacy_closure_evidence_sha256 is not None:
+                raise ValueError("CATALOG_FAST_AUTHORITY_TRANSITION_INVALID")
+            expected = current.close_unlaunched(
+                request=row.request,
+                issue_number=row.owner_issue_number,
+                run_id=run_id,
+                terminal_receipt_sha256=row.terminal_receipt_sha256,
+                lineage_transition=lineage_transition,
+            )
+        else:
+            expected = current.terminalize(request=row.request, run_id=run_id,
+                terminal_receipt_sha256=row.terminal_receipt_sha256)
     else:
         if row.legacy_closure_evidence_sha256 is None or row.terminal_receipt_sha256 is not None:
             raise ValueError("CATALOG_FAST_AUTHORITY_RECONCILIATION_CANDIDATE_INVALID")

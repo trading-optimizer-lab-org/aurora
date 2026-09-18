@@ -447,6 +447,80 @@ def test_owner_lookup_checks_inventory_before_downloading(case: str) -> None:
                 approved_commits=frozenset({COMMIT}), download_archive=download)
 
 
+@pytest.mark.parametrize("prior_count", (1, 2))
+@pytest.mark.parametrize("invalid_producer", (False, True, "engine", "authority"))
+def test_rejected_gate_artifacts_do_not_invent_a_missing_owner(prior_count: int, invalid_producer: bool | str) -> None:
+    import hashlib
+    import io
+    import zipfile
+    from aurora.infra.github_performance.contracts import canonical_sha256
+    from aurora.infra.sp500_megarun.catalog_fast_reservation import load_fast_gate_owner
+
+    request = _request()
+    decision = decide_fast_catalog_launch(
+        request=request, registry_entry=_entry(), prepared_receipt=_prepared(),
+        expected_preparation_identity=_identity(),
+        snapshot=_snapshot(controller_enabled=False), issue_created_at=NOW,
+    )
+    assert decision.launch_required is False
+    assert decision.existing_run_id is None
+    context = {"request": request.model_dump(mode="json"), "issue_number": 249}
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("catalog-fast-request-context.json", json.dumps({
+            **context, "content_sha256": canonical_sha256(context),
+        }))
+        archive.writestr("catalog-fast-decision-v1.json", decision.model_dump_json())
+    raw = buffer.getvalue()
+    rows = tuple({
+        "id": 11 + offset, "name": "catalog-fast-gate-249", "expired": False,
+        "size_in_bytes": len(raw), "created_at": "2026-09-18T15:00:01Z",
+        "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+        "workflow_run": {"id": 22 + offset, "head_sha": COMMIT, "head_branch": "main",
+                         "repository_id": 123, "head_repository_id": 123},
+    } for offset in range(prior_count))
+
+    class Client:
+        repository = "trading-optimizer-lab-org/aurora"
+
+        def stable_paginated(self, path, *, root):
+            if root == "artifacts":
+                assert path.endswith("/actions/artifacts?name=catalog-fast-gate-249")
+                return SimpleNamespace(stable=True, collection=SimpleNamespace(complete=True, rows=rows))
+            run_id = int(path.split("/runs/")[1].split("/")[0])
+            jobs = ({"name": "gate", "run_id": run_id, "run_attempt": 1,
+                     "head_sha": COMMIT, "status": "completed", "conclusion": "success",
+                     "steps": [
+                         {"name": "Publish the one gate decision", "number": 1,
+                          "status": "completed", "conclusion": "success",
+                          "started_at": "2026-09-18T15:00:00Z", "completed_at": "2026-09-18T15:00:02Z"},
+                         {"name": "Reserve the campaign atomically and expose QUEUED", "number": 2,
+                          "status": "completed", "conclusion": "skipped"},
+                     ]},)
+            if invalid_producer == "engine":
+                jobs += ({"name": "engine / evaluate", "conclusion": "success"},)
+            if invalid_producer == "authority":
+                jobs[0]["steps"].append({"name": "Write current authority edition", "conclusion": "success"})
+            return SimpleNamespace(stable=True, collection=SimpleNamespace(complete=True, rows=jobs))
+
+        def get_json(self, path):
+            return {"id": int(path.rsplit("/", 1)[1]), "run_attempt": 1,
+                    "head_sha": COMMIT, "head_branch": "main", "event": "issues",
+                    "path": ".github/workflows/other.yml" if invalid_producer is True else ".github/workflows/catalog-fast-controller.yml",
+                    "repository": {"id": 123, "full_name": self.repository}}, None
+
+    def lookup():
+        return load_fast_gate_owner(client=Client(), issue_number=249, request=request,
+            approved_commits=frozenset({COMMIT}), download_archive=lambda artifact_id: raw)
+
+    if invalid_producer:
+        expected = "CATALOG_FAST_OWNER_PROVENANCE_INVALID" if invalid_producer is True else "CATALOG_FAST_OWNER_ORIGINAL_EVIDENCE_MISSING"
+        with pytest.raises(ValueError, match=expected):
+            lookup()
+    else:
+        assert lookup() is None
+
+
 def test_any_preparation_input_drift_is_rejected_before_launch() -> None:
     decision = decide_fast_catalog_launch(
         request=_request(),

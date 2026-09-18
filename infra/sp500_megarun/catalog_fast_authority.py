@@ -186,6 +186,66 @@ class FastAuthorityStateV1(_AuthorityContent):
             raise ValueError("CATALOG_FAST_PREDECESSOR_CONFLICT")
         return self._replace(FastAuthorityCampaignV1(request=request, owner_issue_number=issue_number, owner_run_id=run_id))
 
+    def close_unlaunched(
+        self, *, request: CatalogRunRequestV1, issue_number: int, run_id: int,
+        terminal_receipt_sha256: str,
+        lineage_transition: CatalogLineageTransitionV1 | None = None,
+    ) -> "FastAuthorityStateV1":
+        """Close one exact published cloud request without launching science.
+
+        ``reserve`` is used only as an in-memory validation of generation,
+        predecessor, owner-terminal and lineage rules.  Its intermediate
+        reservation is deliberately discarded; the returned state contains
+        one terminal campaign row and advances the authority exactly once.
+        """
+        emission = next(
+            (row for row in self.emissions if row.request.campaign_key == request.campaign_key),
+            None,
+        )
+        if (
+            emission is None
+            or emission.state != "PUBLICADO"
+            or emission.request != request
+            or emission.issue_number != issue_number
+        ):
+            raise ValueError("CATALOG_FAST_UNLAUNCHED_EMISSION_INVALID")
+
+        existing = next(
+            (row for row in self.campaigns if row.request.campaign_key == request.campaign_key),
+            None,
+        )
+        if existing is not None and (
+            existing.request.request_id == request.request_id
+            or existing.request.request_sha256 == request.request_sha256
+        ):
+            raise ValueError("CATALOG_FAST_UNLAUNCHED_OWNER_EXISTS")
+
+        validated = self.reserve(
+            request=request,
+            issue_number=issue_number,
+            run_id=run_id,
+            lineage_transition=lineage_transition,
+        )
+        row = next(
+            (item for item in validated.campaigns if item.request.campaign_key == request.campaign_key),
+            None,
+        )
+        if (
+            row is None
+            or row.request != request
+            or row.owner_issue_number != issue_number
+            or row.owner_run_id != run_id
+            or row.legacy_closure_evidence_sha256 is not None
+        ):
+            raise ValueError("CATALOG_FAST_UNLAUNCHED_TRANSITION_INVALID")
+
+        terminal_row = FastAuthorityCampaignV1.model_validate({
+            **row.model_dump(mode="json"),
+            "terminal_receipt_sha256": terminal_receipt_sha256,
+            "legacy_closure_evidence_sha256": None,
+        })
+        return self._replace(terminal_row)
+
     def reconcile_legacy_closure(
         self, *, request: CatalogRunRequestV1, issue_number: int, historical_run_id: int,
         legacy_closure_evidence_sha256: str,

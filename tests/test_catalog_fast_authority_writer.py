@@ -5,6 +5,7 @@ import json
 import pytest
 
 from aurora.infra.sp500_megarun.catalog_fast_authority import verify_authority_edit
+from tests.test_catalog_fast_authority import _published_unlaunched_request_state
 from tests.test_catalog_fast_authority_github import publication_transport
 from tests.test_catalog_fast_path import _request
 
@@ -96,3 +97,53 @@ def test_lineage_writer_rechecks_approval_and_production_reader_reopens_bytes(ap
     assert reopened == candidate
     assert reopened.previous_state_sha256 == current.state_sha256
     assert reopened.campaigns[0].generation == 7
+
+
+def test_unlaunched_finalize_writer_recomputes_composite_transition() -> None:
+    from aurora.infra.sp500_megarun.catalog_fast_authority_github import write_current_fast_authority
+
+    current, request = _published_unlaunched_request_state()
+    candidate = current.close_unlaunched(
+        request=request, issue_number=401, run_id=123, terminal_receipt_sha256="d" * 64,
+    )
+    fixture = publication_transport(state=current, phase="finalize")
+    issue = fixture.edit["data"]["repository"]["issue"]
+    writes: list[str] = []
+
+    def write_body(body):
+        writes.append(body)
+        issue["body"] = body
+        issue["userContentEdits"]["nodes"][0]["id"] = "E_written"
+
+    publication = write_current_fast_authority(
+        current=current, candidate=candidate, expected_edit_id="E_current", anchor=fixture.anchor,
+        run_id=123, run_attempt=1, job_id=789, phase="finalize", commit="a" * 40,
+        read_edit=lambda: fixture.edit, write_body=write_body, unlaunched_terminal=True,
+    )
+
+    reopened = verify_authority_edit(
+        body=candidate.to_body(), publication_json=publication.model_dump_json(),
+        issue_node_id="I_anchor", latest_edit_node_id="E_written",
+    )
+    assert reopened == candidate
+    assert len(writes) == 1
+
+
+def test_unlaunched_finalize_writer_does_not_write_non_exact_candidate() -> None:
+    from aurora.infra.sp500_megarun.catalog_fast_authority_github import write_current_fast_authority
+
+    current, request = _published_unlaunched_request_state()
+    candidate = current.close_unlaunched(
+        request=request, issue_number=401, run_id=123, terminal_receipt_sha256="d" * 64,
+    )
+    wrong = candidate.model_copy(update={"previous_state_sha256": "f" * 64})
+    fixture = publication_transport(state=current, phase="finalize")
+    writes: list[str] = []
+
+    with pytest.raises(ValueError, match="CATALOG_FAST_AUTHORITY_TRANSITION_INVALID"):
+        write_current_fast_authority(
+            current=current, candidate=wrong, expected_edit_id="E_current", anchor=fixture.anchor,
+            run_id=123, run_attempt=1, job_id=789, phase="finalize", commit="a" * 40,
+            read_edit=lambda: fixture.edit, write_body=writes.append, unlaunched_terminal=True,
+        )
+    assert writes == []
