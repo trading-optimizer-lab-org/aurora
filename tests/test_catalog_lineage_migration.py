@@ -122,8 +122,20 @@ def test_post308_canary_preserves_consumed_generation_and_requires_generation_si
     assert successor_boundary is not None
     assert successor_boundary.previous_request_sha256 == "362e3456c1ccbb00e1c40b0331ba53f8fdf697731ecb83a0537b4b30fda5fbfc"
     assert successor_boundary.next_generation == 6
-    assert successor_boundary.target_definition_sha256 == manifest.campaign_definition_sha256
+    assert successor_boundary.target_definition_sha256 == "66e9289acb4bdbf527a6cb68c48ea2550654b786463f367576801bfdd0523bf3"
     assert successor_boundary.target_prompt_sha256 == prompt_hash
+
+    after_expired = successor.model_copy(update={
+        "launch_generation": 7,
+        "previous_terminal_request_sha256": "67776ce5015c762184bdd8eb01fb2aca8c598c186dfeb656b64bdd41c271d53c",
+        "campaign_definition_sha256": successor_boundary.target_definition_sha256,
+    })
+    next_boundary = load_lineage_transition(root, after_expired)
+    assert next_boundary is not None
+    assert next_boundary.next_generation == 7
+    assert next_boundary.previous_request_sha256 == after_expired.previous_terminal_request_sha256
+    assert next_boundary.target_definition_sha256 == manifest.campaign_definition_sha256
+    assert next_boundary.target_prompt_sha256 == prompt_hash
 
 
 def _available_models():
