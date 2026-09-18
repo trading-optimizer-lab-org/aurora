@@ -77,6 +77,7 @@ def _new_emission(root, context, run_id, commit):
         authority=context.authority, intent=context.intent,
         campaign_definition_sha256=manifest.campaign_definition_sha256,
         prompt_sha256=prompt_sha, imported_ticket=imported, lineage_transition=transition,
+        lineage_resolver=lambda candidate: load_lineage_transition(root, candidate),
     )
     draft = build_catalog_intent_draft(ticket=ticket, registry_entry=entry,
                                       campaign_manifest=manifest, prompt_bytes=prompt)

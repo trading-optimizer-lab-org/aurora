@@ -10,6 +10,8 @@ import subprocess
 from types import SimpleNamespace
 import zipfile
 
+import pytest
+
 from aurora.infra.sp500_megarun import catalog_cloud_app as app_module
 from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import parse_catalog_campaign_definition_bytes
 from aurora.infra.sp500_megarun.catalog_cloud_qualification import CloudQualificationReceiptV1
@@ -34,6 +36,41 @@ QUALIFICATION_RUN_ID = 700
 QUALIFICATION_ATTEMPT = 1
 QUALIFICATION_JOB_ID = 701
 QUALIFICATION_ARTIFACT_ID = 702
+
+
+@pytest.mark.parametrize("approved", [True, False])
+def test_new_cloud_emission_reloads_protected_successor_lineage(tmp_path, monkeypatch, approved):
+    root, work, network, transport, _, _ = _complete_real_pipeline(tmp_path, monkeypatch)
+    before = validator.load_validated_cloud_context(root)
+    previous = before.replay.request
+    authority = before.authority.reserve(request=previous, issue_number=401, run_id=501)
+    authority = authority.terminalize(request=previous, run_id=501, terminal_receipt_sha256="d" * 64)
+    prompt = b"Updated protected prompt after the original cloud terminal.\n"
+    (root / "docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md").write_bytes(prompt)
+    transition = {
+        "campaign_key": previous.campaign_key,
+        "previous_request_sha256": previous.request_sha256,
+        "next_generation": previous.launch_generation + 1,
+        "target_definition_sha256": previous.campaign_definition_sha256,
+        "target_prompt_sha256": hashlib.sha256(prompt).hexdigest(),
+    }
+    (root / "config/catalog_lineage_transitions_v1.json").write_text(json.dumps({
+        "schema_version": "1", "transitions": [transition] if approved else [],
+    }), encoding="utf-8")
+    intent = before.intent.model_copy(update={
+        "intent_id": "018f47a2-6e91-4c34-8000-000000000099", "issue_number": 402,
+    })
+    context = SimpleNamespace(authority=authority, intent=intent)
+    if not approved:
+        with pytest.raises(ValueError, match="CATALOG_CLOUD_LINEAGE_TRANSITION_REQUIRED"):
+            phases._new_emission(root, context, 124, SHA)
+    else:
+        successor = phases._new_emission(root, context, 124, SHA)
+        assert successor.request.launch_generation == previous.launch_generation + 1
+        assert successor.request.previous_terminal_request_sha256 == previous.request_sha256
+        assert successor.request.prompt_sha256 == transition["target_prompt_sha256"]
+        assert successor.request.request_id != previous.request_id
+    assert transport.posts == 1
 
 
 def _qualification_frontier(public_key_sha256):
