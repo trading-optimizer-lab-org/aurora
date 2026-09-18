@@ -24,10 +24,15 @@ Para solicitar el run:
    `BLOCKED_CAMPAIGN_SELECTION_AMBIGUOUS`.
 3. Crea un UUIDv4 para esta intención y consérvalo antes de enviar. Recupera
    el mismo ID si se interrumpe la conversación; nunca inventes otro para
-   reintentar una solicitud ambigua. Usa únicamente la capacidad del chat/API
-   ya acreditada para este repositorio e incidencias. Si su aislamiento no
-   está acreditado, informa `BLOCKED_ORIGIN_SCOPE_UNPROVEN`. No sustituyas esa
-   capacidad por la sesión administrativa de mantenimiento.
+   reintentar una solicitud ambigua. Usa la conexión GitHub autorizada del
+   chat/API únicamente para crear o consultar esta intención estricta. No
+   afirmes que el conector está técnicamente aislado si tiene capacidades más
+   amplias. No se requiere ChatGPT Business/Enterprise: GitHub y AURORA validan
+   actor, repositorio, campaña, autoridad, firma, ticket, PREPARED e idempotencia;
+   solo la App requester existente con `issues: write` y `metadata: read`
+   publica la solicitud científica firmada. Si no se acredita ese recorrido
+   protegido, informa `BLOCKED_ORIGIN_SCOPE_UNPROVEN`. No sustituyas la conexión
+   ordinaria por la sesión administrativa de mantenimiento.
 4. Crea UNA incidencia de intención con título exacto
    `[AURORA CATALOG INTENT] INTENT_ID` y cuerpo de JSON puro, sin fences:
 

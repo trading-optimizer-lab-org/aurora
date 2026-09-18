@@ -61,7 +61,11 @@ def _config() -> CatalogRequesterConfigV1:
 
 def _install_available_campaign(broker: Path, *, updated_at: datetime = NOW):
     request = emission().request
-    ticket = ticket_for(request)
+    ticket = ticket_for(request).model_copy(update={
+        "request_id": "00000000-0000-7000-8000-000000000123",
+        "launch_generation": request.launch_generation + 1,
+        "previous_terminal_request_sha256": request.request_sha256,
+    })
     journal = _ticket_journal(
         ticket=ticket,
         state="available",
@@ -91,6 +95,7 @@ def _install_available_campaign(broker: Path, *, updated_at: datetime = NOW):
                 request=request,
                 owner_issue_number=276,
                 owner_run_id=33910681070,
+                terminal_receipt_sha256="9" * 64,
             ),
         )
     )
@@ -246,6 +251,88 @@ def test_inbox_and_processing_require_empty_stable_boundaries(tmp_path):
         command._processing_inventory(broker, config)
 
 
+def _install_processing_history(broker):
+    from aurora.infra.sp500_megarun.catalog_cloud_transport import _processing_record
+    from aurora.infra.sp500_megarun.catalog_requester_broker import CatalogBrokerPostAttemptV1
+    signed = _processing_record(emission(), NOW)
+    request = signed.request
+    key = request.intent.submission_key_sha256
+    terminal = _ticket_journal(ticket=ticket_for(request), state="terminal",
+        submission_key_sha256=key, request_sha256=request.request_sha256,
+        issue_number=276, created_at=NOW, updated_at=NOW)
+    models = {
+        f"processing/{key}.signed.json": signed,
+        f"processing/{key}.ticket.json": terminal.ticket,
+        f"processing/{key}.post-attempt.json": CatalogBrokerPostAttemptV1.create(signed=signed, post_lower_bound=NOW),
+        f"processing/processed-{key}.request": request.intent,
+        f"campaign-status/{request.campaign_key}.generation-{request.launch_generation:010d}.terminal.json": terminal,
+    }
+    for name, model in models.items():
+        (broker / name).write_bytes(canonical_model_bytes(model) + b"\n")
+    (broker / "processing/catalog-requester-broker.lock").write_bytes(b"1")
+    return key
+
+
+def test_processing_preserves_verified_terminal_history(tmp_path):
+    broker = _broker(tmp_path)
+    _install_processing_history(broker)
+    before = {p.name: p.read_bytes() for p in (broker / "processing").iterdir()}
+    assert command._processing_inventory(broker, _config())
+    assert {p.name: p.read_bytes() for p in (broker / "processing").iterdir()} == before
+
+
+@pytest.mark.parametrize("fault", ["pending", "missing_terminal", "wrong_terminal", "unknown", "unsafe_directory"])
+def test_processing_history_never_hides_pending_or_unproven_state(tmp_path, fault):
+    broker = _broker(tmp_path)
+    key = _install_processing_history(broker)
+    if fault == "pending":
+        (broker / "processing" / f"{key}.request.json").write_bytes(b"{}")
+    elif fault == "missing_terminal":
+        next((broker / "campaign-status").glob("*.terminal.json")).unlink()
+    elif fault == "wrong_terminal":
+        terminal = next((broker / "campaign-status").glob("*.terminal.json"))
+        terminal.write_bytes(b"{}")
+    elif fault == "unsafe_directory":
+        (broker / "processing" / "processed-dead.request").mkdir()
+    else:
+        (broker / "processing" / "unknown.entry").write_bytes(b"{}")
+    with pytest.raises(ValueError, match="CATALOG_CLOUD_RETIREMENT_PROCESSING_"):
+        command._processing_inventory(broker, _config())
+
+
+def test_history_rebuild_archive_is_inert_but_does_not_hide_recoverable_claim(tmp_path):
+    broker = _broker(tmp_path)
+    ticket, _, _, _ = _install_available_campaign(broker)
+    path = broker / "processing" / f"history-rebuild-{ticket.campaign_key}-request-{'a' * 32}.entry"
+    # The existing broker intentionally archives uncertain/malformed originals.
+    path.write_bytes(b"uncertain archived original, not an executable claim")
+    assert command._processing_inventory(broker, _config())
+    (broker / "processing" / f"{'b' * 64}.reconcile-hint.json").write_bytes(b"{}")
+    with pytest.raises(ValueError, match="CATALOG_CLOUD_RETIREMENT_PROCESSING_"):
+        command._processing_inventory(broker, _config())
+
+
+def test_history_rebuild_archive_cannot_name_an_unknown_campaign(tmp_path):
+    broker = _broker(tmp_path)
+    path = broker / "processing" / f"history-rebuild-unknown-v1-request-{'a' * 32}.entry"
+    path.write_bytes(b"{}")
+    with pytest.raises(ValueError, match="CATALOG_CLOUD_RETIREMENT_PROCESSING_"):
+        command._processing_inventory(broker, _config())
+
+
+def test_bounded_history_read_rejects_replacement_before_read(tmp_path, monkeypatch):
+    path = tmp_path / "history"
+    path.write_bytes(b"original")
+    real_open = command.os.open
+    def replace_before_open(target, flags):
+        path.rename(tmp_path / "preserved-original")
+        path.write_bytes(b"replacement outside original identity")
+        return real_open(target, flags)
+    monkeypatch.setattr(command.os, "open", replace_before_open)
+    with pytest.raises(ValueError, match="CATALOG_CLOUD_RETIREMENT_PROCESSING_UNSTABLE"):
+        command._bounded_history_bytes(path)
+
+
 def test_canonical_journal_or_status_tampering_fails_closed(tmp_path, monkeypatch):
     repo = _repo(tmp_path)
     broker = _broker(tmp_path)
@@ -312,3 +399,48 @@ def test_real_authority_reader_accepts_only_synthetic_get_transport(tmp_path, mo
     assert observed == authority
     assert fixture.calls
     assert all(path.startswith("/repos/trading-optimizer-lab-org/aurora/") for path in fixture.calls)
+
+
+@pytest.mark.parametrize("fault", ["active_owner", "same_generation", "generation_jump", "wrong_predecessor", "reused_request_id"])
+def test_available_ticket_requires_exact_terminal_successor(tmp_path, fault):
+    broker = _broker(tmp_path)
+    ticket, journal, status, authority = _install_available_campaign(broker)
+    owner = authority.campaigns[0]
+    if fault == "active_owner":
+        authority = authority.model_copy(update={"campaigns": (owner.model_copy(update={"terminal_receipt_sha256": None}),)})
+    else:
+        change = {
+            "same_generation": {"launch_generation": owner.generation},
+            "generation_jump": {"launch_generation": owner.generation + 2},
+            "wrong_predecessor": {"previous_terminal_request_sha256": "f" * 64},
+            "reused_request_id": {"request_id": owner.request.request_id},
+        }[fault]
+        ticket = ticket.model_copy(update=change)
+        journal = journal.model_copy(update={"ticket": ticket})
+    with pytest.raises(ValueError, match="CATALOG_CLOUD_RETIREMENT_TICKET_AUTHORITY_MISMATCH"):
+        command._verify_ticket_authority(authority, ((journal, status),))
+
+
+@pytest.mark.parametrize("wrong_generation", [False, True])
+def test_historical_terminal_poll_is_bounded_typed_and_not_a_current_pointer(tmp_path, wrong_generation):
+    from aurora.infra.sp500_megarun.catalog_requester_broker import CatalogBrokerTerminalPollStateV1
+    from aurora.infra.sp500_megarun.catalog_request_contract import canonical_sha256
+    broker = _broker(tmp_path)
+    ticket, _, _, authority = _install_available_campaign(broker)
+    request = authority.campaigns[0].request
+    unsigned = CatalogBrokerTerminalPollStateV1.model_construct(
+        schema_version="1", campaign_key=request.campaign_key, launch_generation=request.launch_generation,
+        submission_key_sha256=request.intent.submission_key_sha256, request_sha256=request.request_sha256,
+        issue_number=276, last_github_checked_at=NOW, next_github_check_at=NOW + timedelta(minutes=1),
+        backoff_seconds=60, etag=None, last_hint_sha256=None, poll_state_sha256="0" * 64)
+    poll = unsigned.model_copy(update={"poll_state_sha256": canonical_sha256(unsigned)})
+    generation = request.launch_generation + int(wrong_generation)
+    path = broker / "campaign-status" / f"{request.campaign_key}.generation-{generation:010d}.terminal-poll.json"
+    path.write_bytes(canonical_model_bytes(poll) + b"\n")
+    if wrong_generation:
+        with pytest.raises(ValueError, match="CATALOG_CLOUD_RETIREMENT_STATUS_LAYOUT_INVALID"):
+            command._campaign_snapshot(broker, _config())
+    else:
+        snapshot = command._campaign_snapshot(broker, _config())
+        assert len(snapshot.all_rows) == len(snapshot.available_rows) == 1
+        assert snapshot.available_rows[0][0].ticket == ticket
