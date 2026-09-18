@@ -108,7 +108,7 @@ def test_unlaunched_finalize_writer_recomputes_composite_transition() -> None:
     )
     fixture = publication_transport(state=current, phase="finalize")
     issue = fixture.edit["data"]["repository"]["issue"]
-    writes = []
+    writes: list[str] = []
 
     def write_body(body):
         writes.append(body)
@@ -138,7 +138,7 @@ def test_unlaunched_finalize_writer_does_not_write_non_exact_candidate() -> None
     )
     wrong = candidate.model_copy(update={"previous_state_sha256": "f" * 64})
     fixture = publication_transport(state=current, phase="finalize")
-    writes = []
+    writes: list[str] = []
 
     with pytest.raises(ValueError, match="CATALOG_FAST_AUTHORITY_TRANSITION_INVALID"):
         write_current_fast_authority(
