@@ -321,7 +321,7 @@ def admit_request(
                 _require_cloud_admission_mode(authority, request)
                 if any(row.request.request_sha256 == request.request_sha256 for row in authority.emissions):
                     from scripts.verify_catalog_cloud_qualification import require_cloud_qualification
-                    require_cloud_qualification(repo_root, client, expected_commit)
+                    require_cloud_qualification(root, client, expected_commit)
             if current is not None and current.request.request_id == request.request_id:
                 if current.request.intent_sha256 != request.intent_sha256:
                     raise ValueError("CATALOG_FAST_INTENT_CONFLICT")

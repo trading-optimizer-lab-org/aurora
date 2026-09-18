@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from cryptography.hazmat.primitives import serialization
@@ -22,7 +23,7 @@ from aurora.tests.test_inspect_catalog_fast_request import _entry, _signed_reque
 from scripts import admit_catalog_fast_request as admission
 
 
-@pytest.mark.parametrize("inventory_state", ("complete", "incomplete", "unstable", "complete_with_previous", "stale_generation", "wrong_predecessor", "invalid_terminal_author", "missing_terminal_author", "compact_valid", "compact_busy", "compact_wrong_predecessor", "compact_corrupt", "compact_missing_cli", "compact_lineage_approved", "compact_lineage_missing"))
+@pytest.mark.parametrize("inventory_state", ("complete", "incomplete", "unstable", "complete_with_previous", "stale_generation", "wrong_predecessor", "invalid_terminal_author", "missing_terminal_author", "compact_valid", "compact_busy", "compact_wrong_predecessor", "compact_corrupt", "compact_missing_cli", "compact_lineage_approved", "compact_lineage_missing", "compact_cloud_relative_valid", "compact_cloud_relative_invalid"))
 def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monkeypatch, capsys, inventory_state):
     """Ignoring inventory completeness/stability must fail the negative cases."""
     bundle, template, plan, identity, prepared = prepared_transport_fixture(tmp_path)
@@ -93,6 +94,41 @@ def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monke
         if inventory_state != "compact_missing_cli":
             (tmp_path / "catalog-fast-authority-current.json").write_text(json.dumps(snapshot), encoding="utf-8")
     request = parse_catalog_run_request(title, body, public)
+    if inventory_state.startswith("compact_cloud_relative_"):
+        from aurora.tests.test_catalog_cloud_authority import emission
+        from aurora.infra.sp500_megarun import catalog_cloud_qualification
+
+        # Exercise the workflow's --repo-root . through the real policy/path
+        # reader; only remote receipt verification is replaced at its boundary.
+        emitted = emission(request=request)
+        authority = authority.stage_emission(emitted).advance_emission(
+            intent_id=emitted.intent_id, state="PUBLICACION_INCIERTA",
+            post_run_id=500, post_run_attempt=1,
+        ).advance_emission(intent_id=emitted.intent_id, state="PUBLICADO", issue_number=280)
+        (tmp_path / "catalog-fast-authority-current.json").write_text(authority.model_dump_json(), encoding="utf-8")
+        (root / "config/catalog_cloud_intake_policy_v1.json").write_text(json.dumps({
+            "schema_version": "1", "repository_id": 1232647748,
+            "repository": "trading-optimizer-lab-org/aurora",
+            "allowed_actor_ids": [271768688], "ttl_seconds": 86400, "max_body_bytes": 1024,
+        }), encoding="utf-8")
+        actors_path = root / "config/catalog_controller_actors_v1.json"
+        actors = json.loads(actors_path.read_text("utf-8"))
+        actors["requester_public_key_sha256"] = request.requester_public_key_sha256
+        actors_path.write_text(json.dumps(actors), encoding="utf-8")
+        monkeypatch.chdir(root)
+        monkeypatch.setenv("CATALOG_CLOUD_INTAKE_MODE", "OPEN_REGISTERED")
+        monkeypatch.setenv("CATALOG_CLOUD_QUALIFICATION_RUN_ID", "700")
+
+        def remote_qualification(client, **bindings):
+            assert bindings == {
+                "run_id": 700, "expected_commit": "a" * 40,
+                "expected_public_key_sha256": request.requester_public_key_sha256,
+                "allowed_actor_ids": (271768688,),
+            }
+            if inventory_state.endswith("_invalid"):
+                raise ValueError("CLOUD_QUALIFICATION_RECEIPT_INVALID")
+
+        monkeypatch.setattr(catalog_cloud_qualification, "verify_cloud_qualification", remote_qualification)
     if inventory_state == "compact_lineage_approved":
         (root / "config/catalog_lineage_transitions_v1.json").write_text(json.dumps({
             "schema_version": "1", "transitions": [{
@@ -162,15 +198,17 @@ def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monke
         result = CatalogFastLaunchDecisionV1.model_validate_json((target / "catalog-fast-decision-v1.json").read_text("utf-8"))
     else:
         result = admission.admit_request(request_context_path=context_path, prepared_bundle=bundle,
-            repo_root=root, output_dir=target, github_output=tmp_path / "github-output")
-    if inventory_state in {"complete", "complete_with_previous", "compact_valid", "compact_lineage_approved"}:
+            repo_root=Path(".") if inventory_state.startswith("compact_cloud_relative_") else root,
+            output_dir=target, github_output=tmp_path / "github-output")
+    if inventory_state in {"complete", "complete_with_previous", "compact_valid", "compact_lineage_approved", "compact_cloud_relative_valid"}:
         assert result.launch_required is True
         assert result.selected_workers == 7
         verify_sealed_global_reuse_execution_plan(target / "sealed-plan", expected_bindings={
             "request_sha256": request.request_sha256, "decision_sha256": result.decision_sha256})
     else:
         assert result.launch_required is False
-        assert result.reason_code == ("CATALOG_CAMPAIGN_BUSY" if inventory_state == "compact_busy" else
+        assert result.reason_code == ("CATALOG_FAST_OWNER_LOOKUP_UNAVAILABLE" if inventory_state == "compact_cloud_relative_invalid" else
+            "CATALOG_CAMPAIGN_BUSY" if inventory_state == "compact_busy" else
             "CATALOG_FAST_AUTHORITY_LINEAGE_CHANGE_REQUIRES_MAINTENANCE" if inventory_state == "compact_lineage_missing" else
             "CATALOG_FAST_AUTHORITY_SNAPSHOT_INVALID" if inventory_state == "compact_corrupt" else
             "CATALOG_FAST_GENERATION_CONFLICT" if inventory_state == "stale_generation" else
