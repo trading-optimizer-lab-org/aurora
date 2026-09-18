@@ -133,7 +133,7 @@ class RealCanaryFixture(TypedDict):
     attempt_id: str
 
 
-def _token(*, generation: int = 6, campaign_key: str = "catalog-fast-canary-v1") -> str:
+def _token(*, generation: int = 7, campaign_key: str = "catalog-fast-canary-v1") -> str:
     return build_canary_acceptance_token(
         campaign_key=campaign_key,
         generation=generation,
@@ -147,7 +147,7 @@ def _scope(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "enabled": "true",
         "campaign_key": "catalog-fast-canary-v1",
-        "generation": 6,
+        "generation": 7,
         "context_sha256": _CONTEXT,
         "request_sha256": _REQUEST,
         "execution_plan_sha256": _PLAN,
@@ -292,7 +292,7 @@ def _real_canary_fixture(
     request = sign_canary_request(
         private,
         definition_sha256=definition.campaign_definition_sha256,
-        generation=6,
+        generation=7,
     )
     commit = "a" * 40
     identity = CatalogPreparationIdentityV1(
@@ -399,13 +399,14 @@ def test_policy_is_literal_and_targets_prepared_four_by_two_shape() -> None:
     policy = load_canary_recovery_policy()
     assert canary_policy_sha256()
     assert policy["campaign_key"] == "catalog-fast-canary-v1"
+    assert policy["controlled_generation"] == 7
     assert policy["expected_worker_count"] == 4
     assert policy["expected_strategy_count"] == 2
     assert policy["target_worker_id"] == 3
     assert policy["expected_checkpoint_slot_count"] == 1
 
 
-def test_only_authenticated_generation_six_target_block_is_selected() -> None:
+def test_only_authenticated_generation_seven_target_block_is_selected() -> None:
     with pytest.raises(ValueError, match="AUTHENTICATED_INPUTS_REQUIRED"):
         should_inject_canary_failure(**_scope())
 
@@ -418,7 +419,8 @@ def test_only_authenticated_generation_six_target_block_is_selected() -> None:
         {"generation": 3, "acceptance_token": _token(generation=3)},
         {"generation": 4, "acceptance_token": _token(generation=4)},
         {"generation": 5, "acceptance_token": _token(generation=5)},
-        {"generation": 7, "acceptance_token": _token(generation=7)},
+        {"generation": 6, "acceptance_token": _token(generation=6)},
+        {"generation": 8, "acceptance_token": _token(generation=8)},
         {"worker_id": 2},
         {"checkpoint_slot_index": 2},
         {"checkpoint_slot_count": 2},
@@ -536,13 +538,13 @@ def test_controlled_exception_keeps_deliberate_marker_in_existing_receipt(
         "--output-dir", str(tmp_path / "worker-3"),
         "--canary-acceptance-enabled", "true",
         "--canary-acceptance-campaign-key", "catalog-fast-canary-v1",
-        "--canary-acceptance-generation", "6",
+        "--canary-acceptance-generation", "7",
         "--canary-acceptance-context-sha256", str(fixture["context_sha256"]),
         "--canary-acceptance-request-sha256", fixture["request"].request_sha256,
         "--canary-acceptance-plan-sha256", str(fixture["plan_sha256"]),
         "--canary-acceptance-token", build_canary_acceptance_token(
             campaign_key="catalog-fast-canary-v1",
-            generation=6,
+            generation=7,
             context_sha256=str(fixture["context_sha256"]),
             request_sha256=fixture["request"].request_sha256,
             execution_plan_sha256=str(fixture["plan_sha256"]),
