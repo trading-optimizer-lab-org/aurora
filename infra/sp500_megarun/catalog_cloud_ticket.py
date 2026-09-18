@@ -16,6 +16,7 @@ def select_cloud_launch_ticket(
     campaign_definition_sha256: str, prompt_sha256: str,
     imported_ticket: CatalogLaunchTicketV1 | None,
     lineage_transition: CatalogLineageTransitionV1 | None = None,
+    lineage_resolver: Callable[[CatalogLaunchTicketV1], CatalogLineageTransitionV1 | None] | None = None,
     new_request_id: Callable[[], UUID] = _uuid7,
 ) -> CatalogLaunchTicketV1:
     """Preserve the verified cutover ticket or advance one cloud terminal.
@@ -65,6 +66,8 @@ def select_cloud_launch_ticket(
             ticket.campaign_definition_sha256 != owner.request.campaign_definition_sha256
             or ticket.prompt_sha256 != owner.request.prompt_sha256
         )
+        if context_changed and lineage_transition is None and lineage_resolver is not None:
+            lineage_transition = lineage_resolver(ticket)
         if context_changed and (lineage_transition is None
                                 or not lineage_transition.authorizes(owner.request, ticket)):
             raise ValueError("CATALOG_CLOUD_LINEAGE_TRANSITION_REQUIRED")
