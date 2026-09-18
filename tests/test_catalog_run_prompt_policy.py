@@ -135,6 +135,10 @@ def test_active_prompt_is_controller_only_and_hash_bound() -> None:
     assert "config/catalog_campaign_registry_v1.json" in text
     assert "BLOCKED_CAMPAIGN_SELECTION_AMBIGUOUS" in text
     assert "BLOCKED_ORIGIN_SCOPE_UNPROVEN" in text
+    assert "No se requiere ChatGPT Business/Enterprise" in text
+    assert "Si su aislamiento no" not in text
+    assert "issues: write" in text and "metadata: read" in text
+    assert "No sustituyas la conexión" in text
     assert hashlib.sha256(PROMPT.read_bytes()).hexdigest() == policy["active_prompt_sha256"]
     for forbidden in DIRECT_MECHANICS:
         assert forbidden not in text

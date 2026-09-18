@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -41,15 +42,21 @@ from aurora.infra.sp500_megarun.catalog_github_snapshot import (  # noqa: E402
 )
 from aurora.infra.sp500_megarun.catalog_request_contract import (  # noqa: E402
     CatalogLaunchTicketV1,
+    CatalogRunIntentDraftV1,
     canonical_model_bytes,
     canonical_sha256,
 )
 from aurora.infra.sp500_megarun.catalog_requester import (  # noqa: E402
     CatalogRequesterCampaignStatusV1,
     CatalogRequesterConfigV1,
+    CatalogRequesterReconcileHintV1,
 )
 from aurora.infra.sp500_megarun.catalog_requester_broker import (  # noqa: E402
     CatalogBrokerInboxInventoryV1,
+    CatalogBrokerPostAttemptV1,
+    CatalogBrokerProcessingRecordV1,
+    CatalogBrokerTerminalPollStateV1,
+    CatalogBrokerTerminalRateWindowV1,
     CatalogBrokerTicketJournalV1,
     _broker_directory,
     _is_reparse_stat,
@@ -83,6 +90,9 @@ _CURRENT_STATUS_FILE = re.compile(
 )
 _HISTORICAL_STATUS_FILE = re.compile(
     rf"(?P<campaign>{_CAMPAIGN_KEY})\.generation-[0-9]{{10}}\.terminal\.json\Z"
+)
+_HISTORICAL_POLL_FILE = re.compile(
+    rf"(?P<campaign>{_CAMPAIGN_KEY})\.generation-(?P<generation>[0-9]{{10}})\.terminal-poll\.json\Z"
 )
 _PUBLIC_JSON_MAX_BYTES = 256 * 1024
 
@@ -301,14 +311,40 @@ def _inbox_inventory(root: Path, config: CatalogRequesterConfigV1) -> CatalogBro
     return inventory
 
 
-def _processing_snapshot(root: Path, config: CatalogRequesterConfigV1) -> tuple[tuple[str, int, int], ...]:
+def _bounded_history_bytes(path: Path, maximum: int = 64_000) -> bytes:
+    before = path.lstat()
+    def identity(value):
+        return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns)
+    def safe(value):
+        return stat.S_ISREG(value.st_mode) and not _is_reparse_stat(value) and value.st_nlink == 1 and value.st_size <= maximum
+    if not safe(before):
+        raise _error("CATALOG_CLOUD_RETIREMENT_PROCESSING_FILE_UNSAFE")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if not safe(opened) or identity(opened) != identity(before):
+            raise _error("CATALOG_CLOUD_RETIREMENT_PROCESSING_UNSTABLE")
+        data = stream.read(maximum + 1)
+        if (len(data) != opened.st_size or identity(os.fstat(stream.fileno())) != identity(opened)
+                or identity(path.lstat()) != identity(opened)):
+            raise _error("CATALOG_CLOUD_RETIREMENT_PROCESSING_UNSTABLE")
+    return data
+
+
+def _processing_snapshot(root: Path, config: CatalogRequesterConfigV1) -> tuple[tuple[str, int, int, str], ...]:
     try:
         directory = _broker_directory(root, config.broker.processing)
-        records: list[tuple[str, int, int]] = []
+        records: list[tuple[str, int, int, str]] = []
         with os.scandir(directory) as iterator:
             for item in iterator:
                 metadata = os.lstat(item.path)
-                records.append((item.name, max(0, metadata.st_size), getattr(metadata, "st_mtime_ns", 0)))
+                if (not stat.S_ISREG(metadata.st_mode) or _is_reparse_stat(metadata)
+                        or metadata.st_nlink != 1 or metadata.st_size > 64_000 or len(records) >= 4096):
+                    raise _error("CATALOG_CLOUD_RETIREMENT_PROCESSING_FILE_UNSAFE")
+                # Windows holds this byte locked while the broker is alive.
+                # Task/process checks, not the file's presence, prove retirement.
+                digest = "lock" if item.name == "catalog-requester-broker.lock" else hashlib.sha256(_bounded_history_bytes(Path(item.path))).hexdigest()
+                records.append((item.name, metadata.st_size, getattr(metadata, "st_mtime_ns", 0), digest))
         return tuple(sorted(records))
     except FileNotFoundError as exc:
         raise _error("CATALOG_CLOUD_RETIREMENT_PROCESSING_MISSING") from exc
@@ -318,16 +354,92 @@ def _processing_snapshot(root: Path, config: CatalogRequesterConfigV1) -> tuple[
         raise _error("CATALOG_CLOUD_RETIREMENT_PROCESSING_INVALID") from exc
 
 
+def _verify_processing_history(root: Path, config: CatalogRequesterConfigV1, fingerprints: Mapping[str, str]) -> None:
+    directory = _broker_directory(root, config.broker.processing)
+    statuses = _broker_directory(root, config.broker.campaign_status)
+    signed_records: dict[str, CatalogBrokerProcessingRecordV1] = {}
+    def read_model(path: Path, model_type: Any, maximum_bytes: int = 16_384) -> Any:
+        data = _bounded_history_bytes(path, maximum_bytes)
+        if path.parent == directory and hashlib.sha256(data).hexdigest() != fingerprints[path.name]:
+            raise ValueError("processing content changed")
+        model = model_type.model_validate_json(data)
+        if data != canonical_model_bytes(model) + b"\n":
+            raise ValueError("noncanonical history")
+        return model
+    try:
+        for name in fingerprints:
+            match = re.fullmatch(r"([0-9a-f]{64})\.signed\.json", name)
+            if match is None:
+                continue
+            signed = read_model(directory / name, CatalogBrokerProcessingRecordV1, maximum_bytes=64_000)
+            if not isinstance(signed, CatalogBrokerProcessingRecordV1):
+                raise ValueError("signed type")
+            request = signed.request
+            if match[1] != request.intent.submission_key_sha256:
+                raise ValueError("signed name")
+            terminal = read_model(statuses / f"{request.campaign_key}.generation-{request.launch_generation:010d}.terminal.json", CatalogBrokerTicketJournalV1)
+            if (terminal.state != "terminal" or terminal.ticket != _authority_ticket(request)
+                    or terminal.submission_key_sha256 != match[1] or terminal.request_sha256 != request.request_sha256):
+                raise ValueError("terminal binding")
+            signed_records[match[1]] = signed
+        for name in fingerprints:
+            path = directory / name
+            if name == "catalog-requester-broker.lock":
+                if path.stat().st_size != 1:
+                    raise ValueError("lock size")
+                continue
+            if name == "terminal-reconcile-rate-v1.json":
+                read_model(path, CatalogBrokerTerminalRateWindowV1)
+                continue
+            archived = re.fullmatch(r"processed-([0-9a-f]{64})\.(request|hint)", name)
+            if archived:
+                model_type = CatalogRunIntentDraftV1 if archived[2] == "request" else CatalogRequesterReconcileHintV1
+                model = read_model(path, model_type)
+                if isinstance(model, CatalogRunIntentDraftV1):
+                    digest = model.submission_key_sha256
+                elif isinstance(model, CatalogRequesterReconcileHintV1):
+                    digest = model.hint_sha256
+                else:
+                    raise ValueError("archive type")
+                if digest != archived[1]:
+                    raise ValueError("archive binding")
+                continue
+            # These exact inert names are produced by _prepare_campaign_history_rebuild;
+            # their bytes are preserved, fingerprinted, and never interpreted as work.
+            history = re.fullmatch(rf"history-rebuild-({_CAMPAIGN_KEY})-(journal|status|poll|ticket|signed|consumed-ticket|post-attempt|request|receipt)-[0-9a-f]{{32}}\.entry", name)
+            if history:
+                current = read_model(statuses / f"{history[1]}.journal.json", CatalogBrokerTicketJournalV1)
+                if current.campaign_key != history[1] or current.state not in {"available", "terminal"}:
+                    raise ValueError("archived campaign is not quiescent")
+                continue
+            evidence = re.fullmatch(r"([0-9a-f]{64})\.(signed|ticket|post-attempt)\.json", name)
+            if evidence and evidence[1] in signed_records:
+                signed = signed_records[evidence[1]]
+                if evidence[2] == "ticket":
+                    ticket = read_model(path, CatalogLaunchTicketV1)
+                    if ticket != _authority_ticket(signed.request):
+                        raise ValueError("ticket binding")
+                elif evidence[2] == "post-attempt":
+                    attempt = read_model(path, CatalogBrokerPostAttemptV1)
+                    if (not isinstance(attempt, CatalogBrokerPostAttemptV1)
+                            or attempt.submission_key_sha256 != evidence[1]
+                            or attempt.processing_record_sha256 != signed.processing_record_sha256):
+                        raise ValueError("post binding")
+                continue
+            raise ValueError("pending or unknown entry")
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        raise _error("CATALOG_CLOUD_RETIREMENT_PROCESSING_NOT_QUIESCENT") from exc
+
+
 def _processing_inventory(root: Path, config: CatalogRequesterConfigV1) -> tuple[str, ...]:
     first = _processing_snapshot(root, config)
+    _verify_processing_history(root, config, {row[0]: row[3] for row in first})
     second = _processing_snapshot(root, config)
     if first != second:
         raise _error("CATALOG_CLOUD_RETIREMENT_PROCESSING_UNSTABLE")
-    # No safe historical/active distinction is assumed here.  Any entry is
-    # therefore evidence that processing is not quiescent.
-    if second:
-        raise _error("CATALOG_CLOUD_RETIREMENT_PROCESSING_NOT_QUIESCENT")
-    return tuple(name for name, _, _ in second)
+    # Return history fingerprints for the surrounding before/after comparison,
+    # not a pending-work count. No spool file is moved, removed or rewritten.
+    return tuple(f"{name}:{size}:{mtime}:{digest}" for name, size, mtime, digest in second)
 
 
 def _status_directory(root: Path, config: CatalogRequesterConfigV1) -> Path:
@@ -365,6 +477,17 @@ def _status_files(directory: Path) -> tuple[dict[str, Path], dict[str, Path]]:
                 if _HISTORICAL_STATUS_FILE.fullmatch(item.name):
                     # Historical terminal journals are bounded and their
                     # presence does not replace the current pointer pair.
+                    continue
+                historical_poll = _HISTORICAL_POLL_FILE.fullmatch(item.name)
+                if historical_poll:
+                    try:
+                        poll = _read_canonical_model(directory / item.name, CatalogBrokerTerminalPollStateV1, maximum_bytes=16_384)
+                    except (OSError, ValueError, TypeError) as exc:
+                        raise _error("CATALOG_CLOUD_RETIREMENT_STATUS_LAYOUT_INVALID") from exc
+                    if (not isinstance(poll, CatalogBrokerTerminalPollStateV1)
+                            or poll.campaign_key != historical_poll["campaign"]
+                            or poll.launch_generation != int(historical_poll["generation"])):
+                        raise _error("CATALOG_CLOUD_RETIREMENT_STATUS_LAYOUT_INVALID")
                     continue
                 raise _error("CATALOG_CLOUD_RETIREMENT_STATUS_LAYOUT_INVALID")
     except FileNotFoundError as exc:
@@ -520,7 +643,10 @@ def _verify_ticket_authority(
         if len(owners) != 1:
             raise _error("CATALOG_CLOUD_RETIREMENT_TICKET_AUTHORITY_MISMATCH")
         owner = owners[0]
-        if _authority_ticket(owner.request) != journal.ticket:
+        ticket = journal.ticket
+        if (not owner.is_terminal or ticket.launch_generation != owner.generation + 1
+                or ticket.previous_terminal_request_sha256 != owner.request.request_sha256
+                or ticket.request_id == owner.request.request_id):
             raise _error("CATALOG_CLOUD_RETIREMENT_TICKET_AUTHORITY_MISMATCH")
         if any(row.request.campaign_key == journal.campaign_key for row in authority.emissions):
             raise _error("CATALOG_CLOUD_RETIREMENT_AUTHORITY_ALREADY_EMITTED")
