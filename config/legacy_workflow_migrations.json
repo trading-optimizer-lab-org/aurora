@@ -33,8 +33,8 @@
     {
       "path": ".github/workflows/catalog-fast-controller.yml",
       "previous_sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e",
-      "reason": "retain protected admission and campaign restrictions while recovering an authenticated exact PREPARED artifact only on cache miss",
-      "replacement_sha256": "7d703f0142058ec31466cd9b189e791610a209684908006f85622a6eb174f3f1"
+      "reason": "retain protected admission and exact PREPARED recovery while requiring verified terminal authority before closing expired unlaunched cloud requests",
+      "replacement_sha256": "be96af9a6224338189e823acce993c0575f18418fd6f1bd5f19e5525e33605cc"
     },
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
