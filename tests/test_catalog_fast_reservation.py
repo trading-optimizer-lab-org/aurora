@@ -1,11 +1,244 @@
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+import hashlib
+import io
+import json
+from types import SimpleNamespace
+import zipfile
 
 import pytest
 
-from aurora.infra.sp500_megarun.catalog_fast_reservation import verify_fast_gate_owner_metadata
+from aurora.infra.github_performance.contracts import canonical_sha256
+from aurora.infra.sp500_megarun.catalog_fast_path import (
+    CatalogFastLaunchDecisionV1,
+    CatalogTerminalReceiptV1,
+)
+from aurora.infra.sp500_megarun.catalog_fast_reservation import (
+    FastGateOwnerEvidence,
+    bind_owner_terminal_receipt,
+    load_fast_gate_owner,
+    verify_fast_gate_owner_metadata,
+)
+from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
 
 
 COMMIT = "44d4f5e1bfe0d2d9396b99f44b4684205e737c0e"
+NOW = datetime(2026, 9, 18, 16, 0, tzinfo=timezone.utc)
+
+
+def _request() -> CatalogRunRequestV1:
+    return CatalogRunRequestV1.model_validate({
+        "schema_version": "1",
+        "request_id": "018f47a2-6e91-7c34-8000-000000000001",
+        "campaign_key": "sp500-optimized-catalog-v1",
+        "launch_generation": 1,
+        "launch_ticket_sha256": "8" * 64,
+        "previous_terminal_request_sha256": None,
+        "campaign_definition_sha256": "c" * 64,
+        "prompt_sha256": "9" * 64,
+        "authorization": "USER_EXPLICITLY_REQUESTED_NEW_CATALOG_RUN",
+        "free_resources_only": True,
+        "automatic_recovery": True,
+        "max_same_failure_count": 3,
+        "requester_public_key_sha256": "a" * 64,
+        "requester_attestation_algorithm": "rsa-pss-sha256-v1",
+        "requester_attestation_b64": "A" * 300,
+    })
+
+
+def _blocked_decision(request: CatalogRunRequestV1, **updates: object) -> CatalogFastLaunchDecisionV1:
+    values: dict[str, object] = {
+        "state": "BLOCKED",
+        "reason_code": "CATALOG_REQUEST_EXPIRED",
+        "request_sha256": request.request_sha256,
+        "submission_key_sha256": request.submission_key_sha256,
+        "campaign_key": request.campaign_key,
+        "prepared_receipt_sha256": "f" * 64,
+        "selected_workers": 0,
+        "launch_required": False,
+        "existing_run_id": None,
+        "decided_at": NOW,
+        "expires_at": NOW - timedelta(seconds=1),
+    }
+    values.update(updates)
+    return CatalogFastLaunchDecisionV1.create(**values)
+
+
+def _unlaunched_receipt(request: CatalogRunRequestV1, **updates: object) -> CatalogTerminalReceiptV1:
+    values: dict[str, object] = {
+        "state": "BLOCKED",
+        "reason_code": "CATALOG_REQUEST_EXPIRED",
+        "request_sha256": request.request_sha256,
+        "submission_key_sha256": request.submission_key_sha256,
+        "campaign_key": request.campaign_key,
+        "prepared_receipt_sha256": "f" * 64,
+        "engine_run_id": None,
+        "run_url": None,
+        "expected_recipe_count": 1,
+        "observed_recipe_count": 0,
+        "queue_seconds": 0.0,
+        "preparation_seconds": 0.0,
+        "computation_seconds": 0.0,
+        "recovery_seconds": 0.0,
+        "reduction_seconds": 0.0,
+        "recovered_block_count": 0,
+        "failure_class": "request",
+        "result_science_sha256": None,
+        "created_at": NOW,
+    }
+    values.update(updates)
+    return CatalogTerminalReceiptV1.create(**values)
+
+
+def test_pinned_unlaunched_terminal_binds_as_existing_without_science() -> None:
+    request = _request()
+    decision = _blocked_decision(request)
+    owner = FastGateOwnerEvidence(123, {"id": 123}, decision, unlaunched_terminal=True)
+
+    existing = bind_owner_terminal_receipt(
+        owner=owner,
+        receipt=_unlaunched_receipt(request),
+    )
+
+    assert owner.unlaunched_terminal is True
+    assert existing.run_id == 123
+    assert existing.state == "BLOCKED"
+    assert existing.submission_key_sha256 == request.submission_key_sha256
+
+
+@pytest.mark.parametrize("mutation", (
+    "launch", "existing", "success", "engine", "url", "observed", "science",
+    "request_hash", "prepared_hash", "before_expiry", "reason",
+    "decision_not_expired", "before_decision",
+))
+def test_pinned_unlaunched_terminal_rejects_science_or_identity_drift(mutation: str) -> None:
+    request = _request()
+    decision = _blocked_decision(request)
+    receipt_values: dict[str, object] = {}
+    decision_values: dict[str, object] = {}
+    if mutation == "launch":
+        decision_values.update(state="QUEUED", selected_workers=1, launch_required=True)
+    elif mutation == "existing":
+        decision_values.update(existing_run_id=456)
+    elif mutation == "success":
+        receipt_values.update(
+            state="SUCCESS", reason_code="CATALOG_RUN_SUCCESS", engine_run_id=123,
+            run_url="https://github.com/trading-optimizer-lab-org/aurora/actions/runs/123",
+            expected_recipe_count=1, observed_recipe_count=1,
+            failure_class=None, result_science_sha256="e" * 64,
+        )
+    elif mutation == "engine":
+        receipt_values.update(engine_run_id=123)
+    elif mutation == "url":
+        receipt_values.update(run_url="https://github.com/trading-optimizer-lab-org/aurora/actions/runs/123")
+    elif mutation == "observed":
+        receipt_values.update(observed_recipe_count=1)
+    elif mutation == "science":
+        receipt_values.update(result_science_sha256="e" * 64)
+    elif mutation == "request_hash":
+        receipt_values.update(request_sha256="1" * 64)
+    elif mutation == "prepared_hash":
+        receipt_values.update(prepared_receipt_sha256="1" * 64)
+    elif mutation == "before_expiry":
+        receipt_values.update(created_at=NOW - timedelta(seconds=2))
+    elif mutation == "reason":
+        receipt_values.update(reason_code="CATALOG_CONTROLLER_DISABLED")
+    elif mutation == "decision_not_expired":
+        decision_values.update(decided_at=NOW, expires_at=NOW)
+    elif mutation == "before_decision":
+        receipt_values.update(created_at=NOW - timedelta(seconds=1))
+    receipt = _unlaunched_receipt(request, **receipt_values)
+    owner = FastGateOwnerEvidence(123, {"id": 123},
+        _blocked_decision(request, **decision_values), unlaunched_terminal=True)
+
+    with pytest.raises(ValueError, match="CATALOG_FAST_OWNER_TERMINAL_BINDING_INVALID"):
+        bind_owner_terminal_receipt(owner=owner, receipt=receipt)
+
+
+@pytest.mark.parametrize("run_id", (True, 0, -1))
+def test_lookup_rejects_invalid_pinned_terminal_run_id(run_id: object) -> None:
+    with pytest.raises(ValueError, match="CATALOG_FAST_OWNER_LOOKUP_INVALID"):
+        load_fast_gate_owner(
+            client=SimpleNamespace(repository="trading-optimizer-lab-org/aurora"),
+            issue_number=276, request=_request(), approved_commits=frozenset({COMMIT}),
+            download_archive=lambda _artifact_id: b"", terminal_owner_run_id=run_id,
+        )
+
+
+def test_lookup_only_pins_a_proven_blocked_run_as_unlaunched_owner() -> None:
+    request = _request()
+    decision = _blocked_decision(request)
+    context = {"request": request.model_dump(mode="json"), "issue_number": 276}
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("catalog-fast-request-context.json", json.dumps({
+            **context, "content_sha256": canonical_sha256(context),
+        }))
+        archive.writestr("catalog-fast-decision-v1.json", decision.model_dump_json())
+    raw = archive_buffer.getvalue()
+    artifact = {
+        "id": 11, "name": "catalog-fast-gate-276", "expired": False,
+        "size_in_bytes": len(raw), "created_at": "2026-09-18T16:00:01Z",
+        "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+        "workflow_run": {"id": 22, "head_sha": COMMIT, "head_branch": "main",
+                         "repository_id": 123, "head_repository_id": 123},
+    }
+    run = {
+        "id": 22, "run_attempt": 1, "head_sha": COMMIT, "head_branch": "main",
+        "path": ".github/workflows/catalog-fast-controller.yml", "event": "issues",
+        "repository": {"id": 123, "full_name": "trading-optimizer-lab-org/aurora"},
+        "status": "completed", "conclusion": "failure",
+    }
+    jobs = ({
+        "id": 33, "run_id": 22, "run_attempt": 1, "head_sha": COMMIT,
+        "name": "gate", "status": "completed", "conclusion": "success",
+        "steps": [
+            {"name": "Publish the one gate decision", "number": 1, "status": "completed",
+             "conclusion": "success", "started_at": "2026-09-18T16:00:00Z",
+             "completed_at": "2026-09-18T16:00:02Z"},
+            {"name": "Reserve the campaign atomically and expose QUEUED", "number": 2,
+             "status": "completed", "conclusion": "skipped"},
+        ],
+    },)
+
+    class Client:
+        repository = "trading-optimizer-lab-org/aurora"
+
+        def stable_paginated(self, path: str, *, root: str):
+            if root == "artifacts":
+                assert path.endswith("/actions/artifacts?name=catalog-fast-gate-276")
+                return SimpleNamespace(stable=True, collection=SimpleNamespace(complete=True, rows=(artifact,)))
+            assert path.endswith("/actions/runs/22/attempts/1/jobs")
+            return SimpleNamespace(stable=True, collection=SimpleNamespace(complete=True, rows=jobs))
+
+        def get_json(self, path: str):
+            assert path.endswith("/actions/runs/22")
+            return run, None
+
+    def download(artifact_id: int) -> bytes:
+        assert artifact_id == 11
+        return raw
+
+    ignored = load_fast_gate_owner(
+        client=Client(), issue_number=276, request=request,
+        approved_commits=frozenset({COMMIT}), download_archive=download,
+    )
+    assert ignored is None
+
+    owner = load_fast_gate_owner(
+        client=Client(), issue_number=276, request=request,
+        approved_commits=frozenset({COMMIT}), download_archive=download,
+        terminal_owner_run_id=22,
+    )
+    assert isinstance(owner, FastGateOwnerEvidence)
+    assert owner.run_id == 22
+    assert owner.unlaunched_terminal is True
+
+    assert load_fast_gate_owner(
+        client=Client(), issue_number=276, request=request,
+        approved_commits=frozenset({COMMIT}), download_archive=download,
+        terminal_owner_run_id=23,
+    ) is None
 
 
 def _metadata():

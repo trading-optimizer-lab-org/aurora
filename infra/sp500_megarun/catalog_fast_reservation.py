@@ -96,6 +96,7 @@ class FastGateOwnerEvidence:
     run: Mapping[str, Any]
     decision: CatalogFastLaunchDecisionV1
     jobs: tuple[Mapping[str, Any], ...] = ()
+    unlaunched_terminal: bool = False
 
 
 @dataclass(frozen=True)
@@ -114,15 +115,36 @@ def bind_owner_terminal_receipt(
     owner-run artifact and terminal publisher before calling this function.
     """
     decision = owner.decision
-    if (
-        not decision.launch_required or decision.existing_run_id is not None
-        or receipt.engine_run_id != owner.run_id
-        or receipt.run_url != f"https://github.com/trading-optimizer-lab-org/aurora/actions/runs/{owner.run_id}"
-        or receipt.request_sha256 != decision.request_sha256
-        or receipt.submission_key_sha256 != decision.submission_key_sha256
-        or receipt.campaign_key != decision.campaign_key
-        or receipt.prepared_receipt_sha256 != decision.prepared_receipt_sha256
-    ):
+    if owner.unlaunched_terminal:
+        valid = (
+            decision.state == "BLOCKED"
+            and not decision.launch_required
+            and decision.existing_run_id is None
+            and decision.decided_at > decision.expires_at
+            and receipt.state == "BLOCKED"
+            and receipt.reason_code == decision.reason_code
+            and receipt.engine_run_id is None
+            and receipt.run_url is None
+            and receipt.observed_recipe_count == 0
+            and receipt.result_science_sha256 is None
+            and receipt.request_sha256 == decision.request_sha256
+            and receipt.submission_key_sha256 == decision.submission_key_sha256
+            and receipt.campaign_key == decision.campaign_key
+            and receipt.prepared_receipt_sha256 == decision.prepared_receipt_sha256
+            and receipt.created_at >= decision.expires_at
+            and receipt.created_at >= decision.decided_at
+        )
+    else:
+        valid = (
+            decision.launch_required and decision.existing_run_id is None
+            and receipt.engine_run_id == owner.run_id
+            and receipt.run_url == f"https://github.com/trading-optimizer-lab-org/aurora/actions/runs/{owner.run_id}"
+            and receipt.request_sha256 == decision.request_sha256
+            and receipt.submission_key_sha256 == decision.submission_key_sha256
+            and receipt.campaign_key == decision.campaign_key
+            and receipt.prepared_receipt_sha256 == decision.prepared_receipt_sha256
+        )
+    if not valid:
         raise ValueError("CATALOG_FAST_OWNER_TERMINAL_BINDING_INVALID")
     return ExistingCatalogLaunchV1(
         submission_key_sha256=receipt.submission_key_sha256,
@@ -230,6 +252,7 @@ def load_fast_gate_owner(
     *, client: _OwnerReader, issue_number: int, request: CatalogRunRequestV1,
     approved_commits: frozenset[str], download_archive: Callable[[int], bytes],
     approve_historical_commit: Callable[[str], bool] | None = None,
+    terminal_owner_run_id: int | None = None,
 ) -> FastGateOwnerEvidence | FastGateAliasEvidence | None:
     """Look up existing publication, not all historical runs or terminal issues.
 
@@ -243,6 +266,9 @@ def load_fast_gate_owner(
         or type(issue_number) is not int or issue_number < 1
         or not approved_commits
         or any(not re.fullmatch(r"[0-9a-f]{40}", commit) for commit in approved_commits)
+        or (terminal_owner_run_id is not None and (
+            type(terminal_owner_run_id) is not int or terminal_owner_run_id < 1
+        ))
     ):
         raise ValueError("CATALOG_FAST_OWNER_LOOKUP_INVALID")
     prefix = f"/repos/{client.repository}"
@@ -310,6 +336,11 @@ def load_fast_gate_owner(
                     raise ValueError("CATALOG_FAST_OWNER_ORIGINAL_EVIDENCE_MISSING")
             # A verified rejection is not a lost reservation. Durable authority
             # and issue-state checks in admission still protect missing owners.
+            if terminal_owner_run_id is not None and run_id == terminal_owner_run_id:
+                owners.append(FastGateOwnerEvidence(
+                    publisher_id, dict(run), decision, tuple(jobs.collection.rows),
+                    unlaunched_terminal=True,
+                ))
             continue
         if decision.launch_required:
             owners.append(FastGateOwnerEvidence(publisher_id, dict(run), decision, tuple(jobs.collection.rows)))

@@ -393,6 +393,54 @@ jobs:
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
             --input "$RUNNER_TEMP/queued-comment.json" > /dev/null || true
 
+      - name: Recover the original unlaunched terminal issue
+        if: ${{ steps.admit.outputs.recover_unlaunched_terminal == 'true' && steps.admit.outputs.terminal_receipt_sha256 != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.issue_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
+          from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_request
+
+          context = json.loads((Path(os.environ["RUNNER_TEMP"]) / "catalog-fast-request-context.json").read_text())
+          actors = json.loads(Path("config/catalog_controller_actors_v1.json").read_text())
+          public = Path(actors["requester_public_key_path"]).read_bytes()
+          request = CatalogRunRequestV1.model_validate(context["request"])
+          number = int(os.environ["ISSUE_NUMBER"])
+          endpoint = f"repos/{os.environ['GITHUB_REPOSITORY']}/issues/{number}"
+
+          def read_bound_issue():
+              issue = json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
+              if (issue["number"] != number or number != context["issue_number"]
+                      or issue["user"]["login"] != context["actor"]
+                      or parse_catalog_run_request(issue["title"], issue["body"], public) != request):
+                  raise ValueError("CATALOG_FAST_RECOVERY_ISSUE_CHANGED")
+              return issue
+
+          issue = read_bound_issue()
+          if issue["state"] != "open":
+              raise ValueError("CATALOG_FAST_RECOVERY_ISSUE_CHANGED")
+          subprocess.run(["gh", "api", "--method", "POST", endpoint + "/labels",
+                          "-f", "labels[]=catalog-run-terminal-v1"], check=True, capture_output=True)
+          if any(label["name"] == "catalog-run-active-v1" for label in issue.get("labels", ())):
+              subprocess.run(["gh", "api", "--method", "DELETE", endpoint + "/labels/catalog-run-active-v1"],
+                             check=True, capture_output=True)
+          subprocess.run(["gh", "api", "--method", "PATCH", endpoint, "-f", "state=closed",
+                          "-f", "state_reason=completed"], check=True, capture_output=True)
+          after = read_bound_issue()
+          labels = {row["name"] for row in after.get("labels", ())}
+          if (after["state"] != "closed" or after.get("state_reason") != "completed"
+                  or "catalog-run-terminal-v1" not in labels or "catalog-run-active-v1" in labels):
+              raise ValueError("CATALOG_FAST_RECOVERY_CLOSE_NOT_CONFIRMED")
+          PY
+
       - name: Close one unexpected gate publication failure
         if: >-
           ${{ always() && steps.inspect.outputs.valid_request == 'true' &&

@@ -59,6 +59,11 @@ def test_unlaunched_terminal_workflow_requires_authority_before_closing():
     assert "steps.verify_authority.outcome == 'success'" in named["publish_terminal"]["if"]
     fallback = steps[-1]
     assert "steps.verify_authority.outcome == 'success'" in fallback["if"]
+    recovered = next(step for step in workflow["jobs"]["gate"]["steps"]
+        if step.get("name") == "Recover the original unlaunched terminal issue")
+    assert "recover_unlaunched_terminal == 'true'" in recovered["if"]
+    assert "terminal_receipt_sha256 != ''" in recovered["if"]
+    assert "publish_catalog_fast_authority" not in recovered["run"]
 
 
 def test_expired_closure_unlocks_only_the_exact_successor():
@@ -73,3 +78,52 @@ def test_expired_closure_unlocks_only_the_exact_successor():
     assert ticket.launch_generation == request.launch_generation + 1
     assert ticket.previous_terminal_request_sha256 == request.request_sha256
     assert terminal.emissions == state.emissions
+
+
+@pytest.mark.parametrize("fault", (None, "actor_changed", "request_changed", "close_unconfirmed"))
+def test_recovery_step_revalidates_live_issue_and_confirms_close(tmp_path, monkeypatch, fault):
+    import json
+    from pathlib import Path
+    import subprocess
+    from aurora.infra.github_performance.preflight import load_github_yaml
+    from tests.test_catalog_cloud_authority import emission
+    from tests.test_catalog_run_request import REQUESTER_TEST_PUBLIC_KEY
+
+    workflow = load_github_yaml(Path(__file__).resolve().parents[1] / ".github/workflows/catalog-fast-controller.yml")
+    step = next(row for row in workflow["jobs"]["gate"]["steps"]
+        if row.get("name") == "Recover the original unlaunched terminal issue")
+    code = step["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    item = emission()
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "requester.pem").write_bytes(REQUESTER_TEST_PUBLIC_KEY)
+    (tmp_path / "config/catalog_controller_actors_v1.json").write_text(json.dumps({"requester_public_key_path": "requester.pem"}))
+    (tmp_path / "catalog-fast-request-context.json").write_text(json.dumps({
+        "request": item.request.model_dump(mode="json"), "issue_number": 401, "actor": "requester",
+    }))
+    for name, value in {"RUNNER_TEMP": str(tmp_path), "ISSUE_NUMBER": "401",
+                        "GITHUB_REPOSITORY": "trading-optimizer-lab-org/aurora"}.items():
+        monkeypatch.setenv(name, value)
+    issue = {"number": 401, "user": {"login": "other" if fault == "actor_changed" else "requester"},
+             "title": item.title, "body": "changed" if fault == "request_changed" else item.body,
+             "state": "open", "labels": [{"name": "catalog-run-active-v1"}]}
+    calls = []
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: json.dumps(issue))
+    def mutate(args, **kwargs):
+        calls.append(args)
+        method = args[3]
+        if method == "POST":
+            issue["labels"].append({"name": "catalog-run-terminal-v1"})
+        elif method == "DELETE":
+            issue["labels"] = [row for row in issue["labels"] if row["name"] != "catalog-run-active-v1"]
+        elif method == "PATCH" and fault != "close_unconfirmed":
+            issue.update(state="closed", state_reason="completed")
+    monkeypatch.setattr(subprocess, "run", mutate)
+    if fault is None:
+        exec(compile(code, "protected-recovery-step", "exec"), {})
+        assert len(calls) == 3
+        assert issue["state"] == "closed"
+    else:
+        with pytest.raises(ValueError):
+            exec(compile(code, "protected-recovery-step", "exec"), {})
+        assert len(calls) == (3 if fault == "close_unconfirmed" else 0)

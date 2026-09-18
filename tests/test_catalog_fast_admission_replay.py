@@ -36,6 +36,8 @@ from scripts import admit_catalog_fast_request as admission
     "failed_gate_terminal_blocked",
     "v2_terminal_success", "v2_terminal_blocked", "v2_terminal_foreign",
     "v2_terminal_bad_digest", "v2_terminal_other_request", "v2_compact_duplicate_terminal_resigned",
+    "v2_compact_unlaunched_terminal", "v2_compact_unlaunched_terminal_mismatch",
+    "v2_compact_duplicate_unlaunched_terminal",
 ))
 def test_admission_replay_preserves_original_and_never_materializes(tmp_path, monkeypatch, case):
     """Removing the production owner lookup must lose the original ID and fail.
@@ -51,6 +53,11 @@ def test_admission_replay_preserves_original_and_never_materializes(tmp_path, mo
     if failed_gate:
         case = "terminal_blocked"
     case = case.removeprefix("compact_")
+    unlaunched_mismatch = case == "unlaunched_terminal_mismatch"
+    if unlaunched_mismatch:
+        case = "unlaunched_terminal"
+    unlaunched_alias = case == "duplicate_unlaunched_terminal"
+    unlaunched = case == "unlaunched_terminal" or unlaunched_alias
     compact_failure = case if case in {"owner_mismatch", "terminal_mismatch", "owner_missing"} else None
     if compact_failure:
         case = "duplicate_terminal_resigned" if compact_failure == "terminal_mismatch" else "duplicate_active"
@@ -88,7 +95,7 @@ def test_admission_replay_preserves_original_and_never_materializes(tmp_path, mo
         "schema_version": "1", "document_type": "catalog_fast_request_context_v1",
         "protected_commit_sha": commit, "request": request.model_dump(mode="json"),
         "identity": _identity().model_dump(mode="json"), "issue_number": 280 if case.startswith("duplicate_") else 276,
-        "issue_created_at": "2026-09-04T19:20:00Z", "actor": "requester",
+        "issue_created_at": "2026-09-04T18:40:00Z" if unlaunched else "2026-09-04T19:20:00Z", "actor": "requester",
         "issue_labels": ["catalog-run-active-v1"],
     }
     context["content_sha256"] = canonical_sha256(context)
@@ -103,6 +110,11 @@ def test_admission_replay_preserves_original_and_never_materializes(tmp_path, mo
         decided_at=datetime(2026, 9, 4, 19, 20, tzinfo=timezone.utc),
         expires_at=datetime(2026, 9, 4, 19, 50, tzinfo=timezone.utc),
     )
+    if unlaunched:
+        values = decision.model_dump(exclude={"decision_sha256"})
+        values.update(state="BLOCKED", reason_code="CATALOG_REQUEST_EXPIRED", selected_workers=0,
+                      launch_required=False, expires_at=datetime(2026, 9, 4, 19, 10, tzinfo=timezone.utc))
+        decision = CatalogFastLaunchDecisionV1.create(**values)
     buffer = io.BytesIO()
     archived_context = dict(context)
     archived_context["issue_number"] = 276
@@ -119,6 +131,8 @@ def test_admission_replay_preserves_original_and_never_materializes(tmp_path, mo
     artifact["size_in_bytes"] = len(raw)
     run.update(head_sha=source_commit, status="in_progress", conclusion=None)
     jobs[0]["head_sha"] = source_commit
+    if unlaunched:
+        jobs[0]["steps"][1]["conclusion"] = "skipped"
     if failed_gate:
         jobs[0]["conclusion"] = "failure"
         jobs[0]["steps"][1].update(number=19, conclusion="failure")
@@ -129,7 +143,7 @@ def test_admission_replay_preserves_original_and_never_materializes(tmp_path, mo
                 ("Publish current authority edition", 17, 7),
                 ("Verify the uploaded reservation before exposing QUEUED", 18, 9)]
         ]
-    if case.startswith("terminal_") or case == "duplicate_terminal_resigned":
+    if case.startswith("terminal_") or case == "duplicate_terminal_resigned" or unlaunched:
         run.update(status="completed", conclusion="failure")
     terminal_receipt: CatalogTerminalReceipt = CatalogTerminalReceiptV1.create(
         state="BLOCKED" if case == "terminal_blocked" else "SUCCESS",
@@ -149,6 +163,12 @@ def test_admission_replay_preserves_original_and_never_materializes(tmp_path, mo
         values = terminal_receipt.model_dump(exclude={"schema_version", "receipt_sha256", "queue_seconds", "preparation_seconds",
             "computation_seconds", "recovery_seconds", "reduction_seconds", "recovered_block_count"})
         terminal_receipt = CatalogTerminalReceiptV2.create(**values, timing={}, recovered_block_ids=None)
+    if unlaunched:
+        values = terminal_receipt.model_dump(exclude={"receipt_sha256"})
+        values.update(state="BLOCKED", reason_code="CATALOG_REQUEST_EXPIRED", engine_run_id=None,
+                      run_url=None, observed_recipe_count=0, result_science_sha256=None,
+                      failure_class="infrastructure")
+        terminal_receipt = CatalogTerminalReceiptV2.create(**values)
     terminal_buffer = io.BytesIO()
     with zipfile.ZipFile(terminal_buffer, "w") as archive:
         archive.writestr("catalog-terminal-receipt-v1.json", terminal_receipt.model_dump_json())
@@ -175,7 +195,7 @@ def test_admission_replay_preserves_original_and_never_materializes(tmp_path, mo
         ],
     }
     # A failure updating the issue AFTER publication must not discard a valid receipt.
-    if case.startswith("terminal_") or case == "duplicate_terminal_resigned":
+    if case.startswith("terminal_") or case == "duplicate_terminal_resigned" or unlaunched:
         jobs.append(terminal_job)
     issue = {"number": context["issue_number"], "title": title, "body": body, "state": "open",
              "created_at": context["issue_created_at"], "user": {"login": "requester"},
@@ -183,6 +203,8 @@ def test_admission_replay_preserves_original_and_never_materializes(tmp_path, mo
     if case == "tampered_signature":
         issue["body"] = body.replace('"prompt_sha256":"' + "4" * 64, '"prompt_sha256":"' + "5" * 64)
     if case in {"fresh_without_preparation", "inspected_preparation_missing_new"} or case.startswith("duplicate_"):
+        issue["labels"] = []
+    if unlaunched:
         issue["labels"] = []
     alias_raw = b""
     if case.startswith("duplicate_alias"):
@@ -211,8 +233,8 @@ def test_admission_replay_preserves_original_and_never_materializes(tmp_path, mo
         authority = FastAuthorityStateV1.bootstrap(campaigns=(FastAuthorityCampaignV1(
             request=original_request, owner_issue_number=276,
             owner_run_id=99 if compact_failure == "owner_mismatch" else 33910681070,
-            terminal_receipt_sha256="0" * 64 if compact_failure == "terminal_mismatch" else
-                terminal_receipt.receipt_sha256 if case == "duplicate_terminal_resigned" else None,
+            terminal_receipt_sha256="0" * 64 if compact_failure == "terminal_mismatch" or unlaunched_mismatch else
+                terminal_receipt.receipt_sha256 if case == "duplicate_terminal_resigned" or unlaunched else None,
         ),))
         (temp / "catalog-fast-authority-current.json").write_text(authority.model_dump_json(), encoding="utf-8")
     reads = []
@@ -313,6 +335,13 @@ def test_admission_replay_preserves_original_and_never_materializes(tmp_path, mo
     emitted = dict(line.split("=", 1) for line in output.read_text("utf-8").splitlines())
     assert emitted["preserve_issue"] == ("false" if case == "fresh_without_preparation" else "true")
     assert emitted["launch_required"] == "false"
+    if unlaunched:
+        assert result.state == "BLOCKED"
+        assert result.existing_run_id == run["id"]
+        assert emitted["recover_unlaunched_terminal"] == ("false" if unlaunched_mismatch or unlaunched_alias else "true")
+        assert emitted["terminal_receipt_sha256"] == ("" if unlaunched_mismatch else terminal_receipt.receipt_sha256)
+        assert emitted["existing_run_url"] == ""
+        return
     if compact_failure:
         assert result.state == "BLOCKED"
         assert result.reason_code == {

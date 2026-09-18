@@ -181,6 +181,7 @@ def _historical_owner_commit_approved(client: CatalogGitHubReadOnlyClient, candi
 def _write_replay_decision(
     decision: CatalogFastLaunchDecisionV1, *, output_dir: Path, github_output: Path,
     terminal_receipt: CatalogTerminalReceipt | None = None,
+    recover_unlaunched_terminal: bool = False,
 ) -> None:
     output_dir.mkdir(parents=False, exist_ok=False)
     (output_dir / "catalog-fast-decision-v1.json").write_text(decision.model_dump_json() + "\n", encoding="utf-8")
@@ -192,7 +193,8 @@ def _write_replay_decision(
         "prepared_receipt_sha256": decision.prepared_receipt_sha256 or "",
         "decision_sha256": decision.decision_sha256,
         "terminal_receipt_sha256": terminal_receipt.receipt_sha256 if terminal_receipt else "",
-        "existing_run_url": terminal_receipt.run_url if terminal_receipt else "",
+        "existing_run_url": (terminal_receipt.run_url or "") if terminal_receipt else "",
+        "recover_unlaunched_terminal": "true" if recover_unlaunched_terminal else "false",
     }
     with github_output.open("a", encoding="utf-8", newline="\n") as stream:
         for key, value in outputs.items():
@@ -283,18 +285,20 @@ def admit_request(
     active_campaigns: set[str] = set()
     terminal_generations: list[tuple[CatalogRunRequestV1, Mapping[str, Any]]] = []
     pinned_terminal_sha256 = None
+    unlaunched_request_exact = False
     existing_issue_state = (
         bool(labels & {"catalog-run-active-v1", "catalog-run-terminal-v1"})
         or issue.get("state") == "closed"
     )
     durable_owner = existing_issue_state or context.get("request_mode") == "lookup_existing"
 
-    def lookup_owner(number: int, signed_request: CatalogRunRequestV1):
+    def lookup_owner(number: int, signed_request: CatalogRunRequestV1, terminal_owner_run_id: int | None = None):
         return load_fast_gate_owner(
             client=client, issue_number=number, request=signed_request,
             approved_commits=frozenset({expected_commit}),
             approve_historical_commit=lambda candidate: _historical_owner_commit_approved(client, candidate, expected_commit),
             download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
+            terminal_owner_run_id=terminal_owner_run_id,
         )
 
     try:
@@ -327,7 +331,8 @@ def admit_request(
                     raise ValueError("CATALOG_FAST_INTENT_CONFLICT")
                 durable_owner = True
                 owner_issue_number = current.owner_issue_number
-                resolved = lookup_owner(owner_issue_number, current.request)
+                resolved = lookup_owner(owner_issue_number, current.request,
+                    current.owner_run_id if current.terminal_receipt_sha256 is not None else None)
                 if isinstance(resolved, FastGateAliasEvidence):
                     raise ValueError("CATALOG_FAST_ALIAS_CHAIN_NOT_ALLOWED")
                 if resolved is not None and resolved.run_id != current.owner_run_id:
@@ -336,6 +341,7 @@ def admit_request(
                     raise ValueError("CATALOG_FAST_ALIAS_TARGET_CONFLICT")
                 owner = resolved
                 pinned_terminal_sha256 = current.terminal_receipt_sha256
+                unlaunched_request_exact = current.request == request
                 compact_handled = True
             # Absence from a partial maintenance baseline is NOT proof of an
             # empty campaign history. Older intents retain original evidence.
@@ -472,7 +478,15 @@ def admit_request(
             selected_workers=0, launch_required=False, existing_run_id=owner.run_id if owner else None,
             decided_at=client.observed_at, expires_at=_utc(context.get("issue_created_at")) + timedelta(minutes=30),
         )
-        _write_replay_decision(replay, output_dir=output_dir, github_output=github_output, terminal_receipt=terminal_receipt)
+        recover_unlaunched_terminal = (
+            owner is not None and owner.unlaunched_terminal and terminal_receipt is not None
+            and lookup_error is None and pinned_terminal_sha256 == terminal_receipt.receipt_sha256
+            and unlaunched_request_exact
+            and owner_issue_number == current_issue_number and issue.get("state") == "open"
+            and terminal_receipt.request_sha256 == request.request_sha256
+        )
+        _write_replay_decision(replay, output_dir=output_dir, github_output=github_output,
+            terminal_receipt=terminal_receipt, recover_unlaunched_terminal=recover_unlaunched_terminal)
         return replay
     identity = CatalogPreparationIdentityV1.model_validate(context.get("identity"))
     registry = load_catalog_campaign_registry(root / "config/catalog_campaign_registry_v1.json")
