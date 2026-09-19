@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from fnmatch import fnmatchcase
 import os
 from pathlib import Path
 import subprocess
@@ -28,6 +29,8 @@ INVENTORIES = {
         "expected": "EXPECTED_ATTEMPTS",
         "count": "expected_attempt_count",
         "path": "expected_attempt_path",
+        "name": "expected_attempt_name",
+        "selector_pattern": "expected_attempt_pattern",
         "step": "download_attempts",
         "prefix": "catalog-terminal-attempt-",
         "pattern": "catalog-terminal-attempt-*",
@@ -36,6 +39,8 @@ INVENTORIES = {
         "expected": "EXPECTED_CHECKPOINTS",
         "count": "expected_checkpoint_count",
         "path": "expected_checkpoint_path",
+        "name": "expected_checkpoint_name",
+        "selector_pattern": "expected_checkpoint_pattern",
         "step": "download_checkpoints",
         "prefix": "catalog-checkpoint-",
         "pattern": "catalog-checkpoint-*",
@@ -44,6 +49,8 @@ INVENTORIES = {
         "expected": "EXPECTED_FAILURES",
         "count": "expected_failure_count",
         "path": "expected_failure_path",
+        "name": "expected_failure_name",
+        "selector_pattern": "expected_failure_pattern",
         "step": "download_failures",
         "prefix": "catalog-failure-attempt-",
         "pattern": "catalog-failure-attempt-*",
@@ -134,6 +141,22 @@ def _observed_names(root: Path) -> tuple[str, ...]:
     return tuple(sorted(path.name for path in root.iterdir() if path.is_dir()))
 
 
+def _select_action_artifacts(
+    *, name: str, pattern: str, available: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Model the pinned selector's exact-name/pattern exclusivity."""
+    if bool(name) == bool(pattern):
+        raise ValueError("download selector must choose exactly one mode")
+    if name:
+        selected = tuple(artifact for artifact in available if artifact == name)
+        if not selected:
+            raise LookupError(f"artifact not found: {name}")
+        return selected
+    return tuple(
+        artifact for artifact in available if fnmatchcase(artifact, pattern)
+    )
+
+
 def test_recovery_download_steps_are_pinned_and_use_expected_layout_outputs() -> None:
     steps = _download_steps()
     assert set(steps) == {
@@ -144,7 +167,12 @@ def test_recovery_download_steps_are_pinned_and_use_expected_layout_outputs() ->
     for kind, metadata in INVENTORIES.items():
         step = steps[metadata["step"]]
         assert step["uses"] == DOWNLOAD_ACTION
-        assert step["with"]["pattern"] == metadata["pattern"]
+        assert step["with"]["name"] == (
+            f"${{{{ steps.expected.outputs.{metadata['name']} }}}}"
+        )
+        assert step["with"]["pattern"] == (
+            f"${{{{ steps.expected.outputs.{metadata['selector_pattern']} }}}}"
+        )
         assert step["with"]["merge-multiple"] is False
         assert step["with"]["path"] == (
             f"${{{{ steps.expected.outputs.{metadata['path']} }}}}"
@@ -169,13 +197,22 @@ def test_actual_expected_python_selects_pinned_download_layout(
         destination = Path(outputs[metadata["path"]])
         expected_destination = root / names[0] if count == 1 else root
         assert destination == expected_destination
+        assert outputs[metadata["name"]] == (names[0] if count == 1 else "")
+        assert outputs[metadata["selector_pattern"]] == (
+            metadata["pattern"] if count > 1 else ""
+        )
 
         if count == 0:
             assert "!= '0'" in str(_download_steps()[metadata["step"]]["if"])
             assert not root.exists()
             continue
 
-        _materialize_pinned_download(destination, names)
+        selected = _select_action_artifacts(
+            name=outputs[metadata["name"]],
+            pattern=outputs[metadata["selector_pattern"]],
+            available=names,
+        )
+        _materialize_pinned_download(destination, selected)
         observed = _observed_names(root)
         assert observed == names
         receipt = reconcile_expected_artifacts(
@@ -184,6 +221,49 @@ def test_actual_expected_python_selects_pinned_download_layout(
             download_outcome="success",
         )
         assert receipt.observed == names
+
+
+def test_singleton_exact_selector_rejects_unique_unexpected_artifact(
+    tmp_path: Path,
+) -> None:
+    expected = _names("attempts", 1)[0]
+    unexpected = "catalog-terminal-attempt-unique-u"
+    inventories: dict[str, list[str]] = {kind: [] for kind in INVENTORIES}
+    inventories["attempts"] = [expected]
+    result, _, outputs = _run_expected(tmp_path, inventories)
+    assert result.returncode == 0, result.stderr
+    assert outputs[INVENTORIES["attempts"]["name"]] == expected
+    assert outputs[INVENTORIES["attempts"]["selector_pattern"]] == ""
+    with pytest.raises(LookupError, match=expected):
+        _select_action_artifacts(
+            name=outputs[INVENTORIES["attempts"]["name"]],
+            pattern=outputs[INVENTORIES["attempts"]["selector_pattern"]],
+            available=(unexpected,),
+        )
+
+
+def test_singleton_exact_selector_fetches_authorized_expected_only(
+    tmp_path: Path,
+) -> None:
+    expected = _names("attempts", 1)[0]
+    unexpected = "catalog-terminal-attempt-unique-u"
+    inventories: dict[str, list[str]] = {kind: [] for kind in INVENTORIES}
+    inventories["attempts"] = [expected]
+    result, runner_temp, outputs = _run_expected(tmp_path, inventories)
+    assert result.returncode == 0, result.stderr
+
+    metadata = INVENTORIES["attempts"]
+    selected = _select_action_artifacts(
+        name=outputs[metadata["name"]],
+        pattern=outputs[metadata["selector_pattern"]],
+        available=(expected, unexpected),
+    )
+    assert selected == (expected,)
+    root = runner_temp / "catalog-recovery" / "attempts"
+    destination = Path(outputs[metadata["path"]])
+    assert destination == root / expected
+    _materialize_pinned_download(destination, selected)
+    assert _observed_names(root) == (expected,)
 
 
 @pytest.mark.parametrize(
