@@ -757,7 +757,7 @@ jobs:
               or set(config) != {"schema_version", "profiles"}
               or config.get("schema_version") != "1"
               or not isinstance(config.get("profiles"), list)
-              or len(config["profiles"]) != 2
+              or len(config["profiles"]) != 3
               or any(
                   not isinstance(candidate, dict)
                   or candidate.get("campaign_key") != "catalog-fast-canary-v1"
@@ -766,7 +766,7 @@ jobs:
               )
           ):
               raise SystemExit("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
-          if sorted(candidate["target_generation"] for candidate in config["profiles"]) != [8, 9]:
+          if sorted(candidate["target_generation"] for candidate in config["profiles"]) != [8, 9, 11]:
               raise SystemExit("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
           matches = [
               candidate for candidate in config["profiles"]
