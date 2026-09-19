@@ -234,6 +234,71 @@ def test_inline_python_imports_are_in_the_transitive_definition() -> None:
     assert "scripts/run_catalog_artifact_keeper.py" in builder.roles
 
 
+def test_provenance_workflow_marker_is_narrow_and_non_expanding() -> None:
+    from aurora.infra.sp500_megarun.catalog_campaign_definition_builder import (
+        _ClosureBuilder,
+    )
+
+    workflow = ".github/workflows/catalog-fast-controller.yml"
+    source = (
+        "def _is_expected_workflow_path(path, expected):\n"
+        "    return type(path) is str and path == expected\n"
+        "def marked(run):\n"
+        f"    return _is_expected_workflow_path(run['path'], {workflow!r})\n"
+    ).encode()
+    builder = _ClosureBuilder(ROOT, _entry())
+    builder._scan_python(
+        "infra/sp500_megarun/catalog_fast_reservation.py", source
+    )
+    assert workflow not in builder.roles
+
+    unmarked = _ClosureBuilder(ROOT, _entry())
+    unmarked._scan_python(
+        "infra/sp500_megarun/catalog_fast_reservation.py",
+        f"def direct(run):\n    return run['path'] == {workflow!r}\n".encode(),
+    )
+    assert workflow in unmarked.roles
+
+    opened = _ClosureBuilder(ROOT, _entry())
+    opened._scan_python(
+        "infra/sp500_megarun/catalog_fast_reservation.py",
+        f"def read():\n    return open({workflow!r})\n".encode(),
+    )
+    assert workflow in opened.roles
+
+    unknown = ".github/workflows/catalog-optimized-run.yml"
+    unknown_marker = _ClosureBuilder(ROOT, _entry())
+    unknown_marker._scan_python(
+        "infra/sp500_megarun/catalog_fast_reservation.py",
+        f"def unknown(run):\n    return _is_expected_workflow_path(run['path'], {unknown!r})\n".encode(),
+    )
+    assert unknown in unknown_marker.roles
+
+    dynamic_expected = _ClosureBuilder(ROOT, _entry())
+    dynamic_expected._scan_python(
+        "infra/sp500_megarun/catalog_fast_reservation.py",
+        (
+            f"EXPECTED = {workflow!r}\n"
+            "def dynamic(run, expected=EXPECTED):\n"
+            "    return _is_expected_workflow_path(run['path'], expected)\n"
+        ).encode(),
+    )
+    assert workflow in dynamic_expected.roles
+
+
+def test_recovery_closure_does_not_expand_provenance_workflow_identities() -> None:
+    discovered = discover_catalog_campaign_definition(
+        repo_root=ROOT,
+        registry_entry=_entry(),
+    )
+    paths = {item.path for item in discovered.entries}
+    assert "infra/sp500_megarun/catalog_fast_reservation.py" in paths
+    assert ".github/workflows/catalog-fast-controller.yml" not in paths
+    assert ".github/workflows/catalog-prepare-one.yml" not in paths
+    assert "infra/sp500_megarun/catalog_execution_protocol.py" not in paths
+    assert "scripts/verify_catalog_production_runtime.py" not in paths
+
+
 def test_unrelated_dirty_path_does_not_change_definition(tmp_path: Path) -> None:
     checked = _load_checked()
     checkout = _copy_definition_checkout(tmp_path, checked)

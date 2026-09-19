@@ -40,6 +40,16 @@ _DECLARED_PATH_KEYS = frozenset(
     }
 )
 _ARCHIVE_MEMBER_PATH_KEYS = frozenset({"content_manifest_path"})
+_PROVENANCE_WORKFLOW_MARKER_MODULE = (
+    "infra/sp500_megarun/catalog_fast_reservation.py"
+)
+_PROVENANCE_WORKFLOW_MARKER_FUNCTION = "_is_expected_workflow_path"
+_PROVENANCE_WORKFLOW_IDENTITY_BASENAMES = frozenset(
+    {
+        "catalog-fast-controller.yml",
+        "catalog-request-reconciler.yml",
+    }
+)
 _REPOSITORY_PREFIXES = (
     ".github/",
     "config/",
@@ -314,7 +324,49 @@ class _ClosureBuilder:
                             f"CATALOG_DEFINITION_EDGE_UNRESOLVED:{relative}:{module}"
                         )
             elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if self._is_non_expanding_provenance_identity(
+                    relative, node, parents
+                ):
+                    continue
                 self._consider_string_edge(relative, None, node.value)
+
+    @staticmethod
+    def _is_non_expanding_provenance_identity(
+        relative: str,
+        node: ast.Constant,
+        parents: dict[ast.AST, ast.AST],
+    ) -> bool:
+        if relative != _PROVENANCE_WORKFLOW_MARKER_MODULE:
+            return False
+        parent = parents.get(node)
+        if not isinstance(parent, ast.Call):
+            return False
+        if not (
+            isinstance(parent.func, ast.Name)
+            and parent.func.id == _PROVENANCE_WORKFLOW_MARKER_FUNCTION
+            and len(parent.args) == 2
+            and not parent.keywords
+            and parent.args[1] is node
+        ):
+            return False
+        path_expression = parent.args[0]
+        if not (
+            isinstance(path_expression, ast.Subscript)
+            and isinstance(path_expression.value, ast.Name)
+            and path_expression.value.id == "run"
+            and isinstance(path_expression.slice, ast.Constant)
+            and path_expression.slice.value == "path"
+        ):
+            return False
+        if type(node.value) is not str:
+            return False
+        parts = node.value.split("/")
+        return (
+            len(parts) == 3
+            and parts[0] == ".github"
+            and parts[1] == "workflows"
+            and parts[2] in _PROVENANCE_WORKFLOW_IDENTITY_BASENAMES
+        )
 
     def _consider_string_edge(
         self,

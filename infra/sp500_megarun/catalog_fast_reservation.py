@@ -23,6 +23,12 @@ _MEMBERS = frozenset({"catalog-fast-request-context.json", "catalog-fast-decisio
 _MAX_MEMBER_BYTES = 1024 * 1024
 
 
+def _is_expected_workflow_path(path: object, expected: str) -> bool:
+    """Compare one authenticated run-path identity without coercion."""
+
+    return type(path) is str and type(expected) is str and path == expected
+
+
 def _terminal_step_end_exclusive(value: datetime) -> datetime:
     """Use the full API second only when the step timestamp has no fraction."""
 
@@ -276,7 +282,9 @@ def load_owner_terminal_receipt(
         ):
             raise ValueError
         finalizer_name = (
-            "finalize" if run["path"] == ".github/workflows/catalog-fast-controller.yml"
+            "finalize" if _is_expected_workflow_path(
+                run["path"], ".github/workflows/catalog-fast-controller.yml"
+            )
             else f"catalog-request-{issue_number} / finalize"
         )
         finalizers = [job for job in owner.jobs if job.get("name") == finalizer_name]
@@ -412,7 +420,9 @@ def load_fast_gate_owner(
                     or decision.reason_code == "CATALOG_FAST_EXISTING_RUN"
                     or decision.reason_code.startswith("CATALOG_REQUEST_ALREADY_")):
                 raise ValueError("CATALOG_FAST_OWNER_ORIGINAL_EVIDENCE_MISSING")
-            prefix_name = "" if run["path"] == ".github/workflows/catalog-fast-controller.yml" else f"catalog-request-{issue_number} / "
+            prefix_name = "" if _is_expected_workflow_path(
+                run["path"], ".github/workflows/catalog-fast-controller.yml"
+            ) else f"catalog-request-{issue_number} / "
             for job in jobs.collection.rows:
                 name = str(job.get("name", ""))
                 if name == prefix_name + "gate":
@@ -474,10 +484,14 @@ def _verify_fast_gate_publication_metadata(
         attempt = run["run_attempt"]
         repository = run["repository"]
         source = artifact["workflow_run"]
-        if run["path"] == ".github/workflows/catalog-fast-controller.yml" and run["event"] == "issues":
+        if _is_expected_workflow_path(
+            run["path"], ".github/workflows/catalog-fast-controller.yml"
+        ) and run["event"] == "issues":
             gate_name = "gate"
         elif (
-            run["path"] == ".github/workflows/catalog-request-reconciler.yml"
+            _is_expected_workflow_path(
+                run["path"], ".github/workflows/catalog-request-reconciler.yml"
+            )
             and run["event"] in {"schedule", "workflow_dispatch"}
         ):
             references = run.get("referenced_workflows")
