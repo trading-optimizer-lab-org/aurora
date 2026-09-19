@@ -1,4 +1,4 @@
-"""Integration coverage for the protected gen7 -> gen8 recovery admission.
+"""Integration coverage for gen8/9 admission with immutable gen7 recovery source.
 
 The profile selector, authority model, predecessor guard, fast admission and
 prepared-plan materializer are real. GitHub issue/cache responses, the owner
@@ -6,6 +6,8 @@ evidence reader, the terminal reader and the observed GitHub clock are explicit
 boundaries: their independent provenance/reader contracts are covered by the
 existing tests. This test therefore does not claim to exercise live GitHub
 archive authentication or scientific execution.
+The 24-recipe transport fixture exercises materialization only, not compatibility
+with the eight scientific results pinned by the recovery profile.
 """
 
 from __future__ import annotations
@@ -70,8 +72,10 @@ CURRENT_ISSUE = 324
 CURRENT_RUN = 35436320228
 CURRENT_COMMIT = "a" * 40
 PREPARED_RECEIPT_SHA256 = "4dee5b0498c5eefc8c32b1dd08e89a6944573a052ab7e737b7174b85075747c3"
-CURRENT_CREATED_AT = "2026-09-19T12:00:00Z"
-OBSERVED_AT = datetime(2026, 9, 19, 12, 1, tzinfo=timezone.utc)
+CURRENT_CREATED_AT = "2026-09-19T17:00:00Z"
+OBSERVED_AT = datetime(2026, 9, 19, 17, 1, tzinfo=timezone.utc)
+GEN8_PREPARED = "938dd3aff5eafefbcd99d3140e22405e6b21d77f6996a4f769476da59fcb285b"
+GEN8_DECISION = "91e1e0bb41a76b5014d8d705cb67ccb5b163c24c2551bd1d84cc91ab37ccf023"
 
 
 def _public_request_body(payload: dict[str, Any]) -> str:
@@ -95,7 +99,7 @@ def _source_request() -> tuple[dict[str, Any], CatalogRunRequestV1, str, str]:
     return payload, request, title, body
 
 
-def _generation8_request(
+def _next_generation_request(
     source: CatalogRunRequestV1, private_key: rsa.RSAPrivateKey
 ) -> tuple[CatalogRunRequestV1, str, str, bytes]:
     request_id = "01a0b91d-df5d-7635-9421-4def26452d5e"
@@ -103,7 +107,7 @@ def _generation8_request(
         schema_version="1",
         request_id=request_id,
         campaign_key=source.campaign_key,
-        launch_generation=8,
+        launch_generation=source.launch_generation + 1,
         campaign_definition_sha256=source.campaign_definition_sha256,
         prompt_sha256=source.prompt_sha256,
         previous_terminal_request_sha256=source.request_sha256,
@@ -112,7 +116,7 @@ def _generation8_request(
         schema_version="1",
         request_id=request_id,
         campaign_key=source.campaign_key,
-        launch_generation=8,
+        launch_generation=source.launch_generation + 1,
         launch_ticket_sha256=ticket.launch_ticket_sha256,
         previous_terminal_request_sha256=source.request_sha256,
         campaign_definition_sha256=source.campaign_definition_sha256,
@@ -284,29 +288,32 @@ def _write_test_repo(
 
 
 def _terminal_receipt(source: CatalogRunRequestV1) -> CatalogTerminalReceiptV2:
+    gen8 = source.launch_generation == 8
+    run_id = 35454099484 if gen8 else SOURCE_RUN
     return CatalogTerminalReceiptV2.create(
         state="BLOCKED",
         reason_code="CATALOG_REDUCTION_FAILED",
         request_sha256=source.request_sha256,
         submission_key_sha256=source.submission_key_sha256,
         campaign_key=source.campaign_key,
-        prepared_receipt_sha256=PREPARED_RECEIPT_SHA256,
-        engine_run_id=SOURCE_RUN,
-        run_url=f"https://github.com/trading-optimizer-lab-org/aurora/actions/runs/{SOURCE_RUN}",
+        prepared_receipt_sha256=GEN8_PREPARED if gen8 else PREPARED_RECEIPT_SHA256,
+        engine_run_id=run_id,
+        run_url=f"https://github.com/trading-optimizer-lab-org/aurora/actions/runs/{run_id}",
         expected_recipe_count=8,
         observed_recipe_count=0,
         timing=CatalogTerminalTimingV2(
-            initial_queue_seconds=14.0,
-            preparation_jobs_window_seconds=183.0,
-            evaluation_jobs_window_seconds=53.0,
+            initial_queue_seconds=21.0 if gen8 else 14.0,
+            preparation_jobs_window_seconds=85.0 if gen8 else 183.0,
+            evaluation_jobs_window_seconds=None if gen8 else 53.0,
             recovery_jobs_window_seconds=None,
-            reduction_jobs_window_seconds=69.0,
+            reduction_jobs_window_seconds=49.0 if gen8 else 69.0,
             worker_evaluation_seconds=None,
         ),
         recovered_block_ids=None,
         failure_class="infrastructure",
         result_science_sha256=None,
-        created_at=datetime(2026, 9, 19, 10, 11, 9, 728262, tzinfo=timezone.utc),
+        created_at=(datetime(2026, 9, 19, 16, 14, 39, 41347, tzinfo=timezone.utc)
+                    if gen8 else datetime(2026, 9, 19, 10, 11, 9, 728262, tzinfo=timezone.utc)),
     )
 
 
@@ -316,10 +323,35 @@ def _run_admission(
     *,
     terminal_mode: str = "valid",
     include_profile: bool = True,
+    target_generation: int = 8,
+    owner_mode: str = "valid",
+    altered_link: bool = False,
 ) -> dict[str, Any]:
     source_metadata, source, _source_title, _source_body = _source_request()
+    predecessor = source
+    predecessor_metadata = source_metadata
+    if target_generation == 9:
+        predecessor_metadata = json.loads(
+            (ROOT / "tests/fixtures/catalog_recovery_gen8_request.json").read_text("utf-8")
+        )
+        predecessor = parse_catalog_run_request(
+            predecessor_metadata["title"], _public_request_body(predecessor_metadata),
+            (ROOT / "config/catalog_requester_public_key_v1.pem").read_bytes(),
+        )
+        assert predecessor.request_sha256 == predecessor_metadata["request_sha256"]
+        assert predecessor.previous_terminal_request_sha256 == source.request_sha256
+    predecessor_issue = predecessor_metadata["issue_number"]
+    predecessor_run = predecessor_metadata["owner_run_id"]
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    request, title, body, public_key = _generation8_request(source, private_key)
+    request, title, body, public_key = _next_generation_request(predecessor, private_key)
+    original_terminal = _terminal_receipt(predecessor)
+    assert original_terminal.receipt_sha256 == predecessor_metadata["terminal_receipt_sha256"]
+    # Corrupt only the authority boundary after authenticating the public request.
+    # Its changed request hash must also be rejected; no signature bypass is mocked.
+    if altered_link:
+        predecessor = predecessor.model_copy(
+            update={"previous_terminal_request_sha256": "0" * 64}
+        )
     runner_temp = tmp_path / "runner-temp"
     runner_temp.mkdir()
     bundle, template, plan, identity, prepared, cache_key = _prepare_transport_bundle(
@@ -335,10 +367,10 @@ def _run_admission(
     authority = FastAuthorityStateV1.bootstrap(
         campaigns=(
             FastAuthorityCampaignV1(
-                request=source,
-                owner_issue_number=SOURCE_ISSUE,
-                owner_run_id=SOURCE_RUN,
-                terminal_receipt_sha256=source_metadata["terminal_receipt_sha256"],
+                request=predecessor,
+                owner_issue_number=predecessor_issue,
+                owner_run_id=predecessor_run,
+                terminal_receipt_sha256=predecessor_metadata["terminal_receipt_sha256"],
             ),
         )
     )
@@ -361,7 +393,8 @@ def _run_admission(
     context_path.write_text(json.dumps(context), encoding="utf-8")
     github_output = runner_temp / "github-output.txt"
     target = runner_temp / "admitted"
-    profile = load_reduction_recovery_profiles(ROOT)[0]
+    profiles = load_reduction_recovery_profiles(ROOT)
+    profile = next(row for row in profiles if row.target_generation == target_generation)
     assert profile.source_request_sha256 == source.request_sha256
     assert profile.source_issue_number == SOURCE_ISSUE
     assert profile.source_run_id == SOURCE_RUN
@@ -379,36 +412,53 @@ def _run_admission(
         "execution_protocol_sha256",
     }
     if include_profile:
-        assert load_reduction_recovery_profiles(repo_root) == (profile,)
-    terminal = _terminal_receipt(source)
+        assert load_reduction_recovery_profiles(repo_root) == profiles
+    terminal: CatalogTerminalReceiptV2 | None = original_terminal
     if terminal_mode == "mismatch":
-        terminal = terminal.model_copy(update={"receipt_sha256": "0" * 64})
+        terminal = original_terminal.model_copy(update={"receipt_sha256": "0" * 64})
     elif terminal_mode == "missing":
         terminal = None
+    elif terminal_mode != "valid":
+        mutations = {
+            "status": {"state": "COMPLETED"},
+            "observed": {"observed_recipe_count": 8},
+            "science": {"result_science_sha256": profile.science_sha256},
+        }
+        # Keep the pinned hash to exercise semantic checks independently of hash mismatch.
+        terminal = original_terminal.model_copy(update=mutations[terminal_mode])
 
     owner_decision = cast(
         Any,
         SimpleNamespace(
-            decision_sha256=profile.source_plan_bindings["decision_sha256"],
-            prepared_receipt_sha256=PREPARED_RECEIPT_SHA256,
+            decision_sha256=(GEN8_DECISION if target_generation == 9
+                             else profile.source_plan_bindings["decision_sha256"]),
+            prepared_receipt_sha256=(GEN8_PREPARED if target_generation == 9
+                                     else PREPARED_RECEIPT_SHA256),
         ),
     )
-    owner = FastGateOwnerEvidence(
-        run_id=SOURCE_RUN,
-        run={
+    owner_run: dict[str, Any] = {
             "run_attempt": SOURCE_RUN_ATTEMPT,
-            "head_sha": profile.source_plan_bindings["protected_commit_sha"],
+            "head_sha": profile.predecessor_bindings.protected_commit_sha,
             "status": "completed",
-        },
+    }
+    owner = FastGateOwnerEvidence(
+        run_id=predecessor_run,
+        run=owner_run,
         decision=owner_decision,
     )
+    if owner_mode == "attempt":
+        owner_run["run_attempt"] = 2
+    elif owner_mode == "head":
+        owner_run["head_sha"] = "0" * 40
+    elif owner_mode == "decision":
+        owner_decision.decision_sha256 = profile.source_plan_bindings["decision_sha256"]
     owner_calls: list[int] = []
     terminal_calls: list[tuple[int, int]] = []
 
     def owner_reader(**kwargs: Any) -> FastGateOwnerEvidence | None:
         number = kwargs["issue_number"]
         owner_calls.append(number)
-        return owner if number == SOURCE_ISSUE else None
+        return owner if number == predecessor_issue else None
 
     def terminal_reader(**kwargs: Any) -> Any:
         terminal_calls.append((kwargs["issue_number"], kwargs["owner"].run_id))
@@ -479,6 +529,8 @@ def _run_admission(
         "template_before": template_before,
         "repo_root": repo_root,
         "include_profile": include_profile,
+        "predecessor_issue": predecessor_issue,
+        "predecessor_run": predecessor_run,
     }
 
 
@@ -490,10 +542,11 @@ def _file_hashes(root: Path) -> dict[str, str]:
     }
 
 
-def test_real_gen8_recovery_admission_materializes_protected_profile(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("target_generation", [8, 9])
+def test_real_recovery_admission_materializes_protected_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_generation: int,
 ) -> None:
-    result = _run_admission(tmp_path, monkeypatch)
+    result = _run_admission(tmp_path, monkeypatch, target_generation=target_generation)
     decision = result["decision"]
     profile = result["profile"]
     target = result["target"]
@@ -501,8 +554,8 @@ def test_real_gen8_recovery_admission_materializes_protected_profile(
     assert decision.launch_required is True
     assert decision.state == "QUEUED"
     assert decision.selected_workers == 7
-    assert result["owner_calls"] == [CURRENT_ISSUE, SOURCE_ISSUE]
-    assert result["terminal_calls"] == [(SOURCE_ISSUE, SOURCE_RUN)]
+    assert result["owner_calls"] == [CURRENT_ISSUE, result["predecessor_issue"]]
+    assert result["terminal_calls"] == [(result["predecessor_issue"], result["predecessor_run"])]
     sealed = target / "sealed-plan"
     assert json.loads((sealed / "reduction_recovery.json").read_text(encoding="utf-8")) == profile.model_dump(mode="json")
     verify_sealed_global_reuse_execution_plan(
@@ -515,25 +568,65 @@ def test_real_gen8_recovery_admission_materializes_protected_profile(
     assert result["template_before"] == _file_hashes(template)
 
 
-def test_real_gen8_recovery_admission_rejects_terminal_mismatch_without_materializing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("target_generation", [8, 9])
+@pytest.mark.parametrize("terminal_mode", ["mismatch", "missing"])
+def test_real_recovery_admission_rejects_terminal_without_materializing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_generation: int,
+    terminal_mode: str,
 ) -> None:
-    result = _run_admission(tmp_path, monkeypatch, terminal_mode="mismatch")
+    result = _run_admission(tmp_path, monkeypatch, terminal_mode=terminal_mode,
+                            target_generation=target_generation)
     decision = result["decision"]
     assert decision.launch_required is False
     assert decision.reason_code == "CATALOG_RECOVERY_PREDECESSOR_TERMINAL_INVALID"
     assert not (result["target"] / "sealed-plan").exists()
-    assert result["owner_calls"] == [CURRENT_ISSUE, SOURCE_ISSUE]
-    assert result["terminal_calls"] == [(SOURCE_ISSUE, SOURCE_RUN)]
+    assert result["owner_calls"] == [CURRENT_ISSUE, result["predecessor_issue"]]
+    assert result["terminal_calls"] == [(result["predecessor_issue"], result["predecessor_run"])]
 
 
-def test_real_gen8_recovery_admission_rejects_missing_profile_without_materializing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("target_generation", [8, 9])
+def test_real_recovery_admission_rejects_missing_profile_without_materializing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_generation: int,
 ) -> None:
-    result = _run_admission(tmp_path, monkeypatch, include_profile=False)
+    result = _run_admission(tmp_path, monkeypatch, include_profile=False,
+                            target_generation=target_generation)
     decision = result["decision"]
     assert decision.launch_required is False
     assert decision.reason_code == "CATALOG_REDUCTION_RECOVERY_CONFIG_INVALID"
     assert not (result["target"] / "sealed-plan").exists()
     assert result["owner_calls"] == [CURRENT_ISSUE]
     assert result["terminal_calls"] == []
+
+
+@pytest.mark.parametrize("owner_mode", ["attempt", "head", "decision"])
+def test_gen9_rejects_owner_corruption_before_materializing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owner_mode: str,
+) -> None:
+    result = _run_admission(tmp_path, monkeypatch, target_generation=9, owner_mode=owner_mode)
+    assert result["decision"].launch_required is False
+    assert result["decision"].reason_code == "CATALOG_RECOVERY_PREDECESSOR_OWNER_INVALID"
+    assert result["owner_calls"] == [CURRENT_ISSUE, 328]
+    assert result["terminal_calls"] == []
+    assert not (result["target"] / "sealed-plan").exists()
+
+
+@pytest.mark.parametrize("terminal_mode", ["status", "observed", "science"])
+def test_gen9_rejects_terminal_semantics_before_materializing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal_mode: str,
+) -> None:
+    result = _run_admission(tmp_path, monkeypatch, target_generation=9,
+                            terminal_mode=terminal_mode)
+    assert result["decision"].launch_required is False
+    assert result["decision"].reason_code == "CATALOG_RECOVERY_PREDECESSOR_TERMINAL_INVALID"
+    assert result["terminal_calls"] == [(328, 35454099484)]
+    assert not (result["target"] / "sealed-plan").exists()
+
+
+def test_gen9_rejects_altered_gen8_to_gen7_link_before_materializing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _run_admission(tmp_path, monkeypatch, target_generation=9, altered_link=True)
+    assert result["decision"].launch_required is False
+    assert result["decision"].reason_code == "CATALOG_FAST_PREDECESSOR_CONFLICT"
+    assert result["terminal_calls"] == []
+    assert not (result["target"] / "sealed-plan").exists()

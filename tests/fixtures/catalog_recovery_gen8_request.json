@@ -1,0 +1,26 @@
+{
+  "document_type": "catalog_recovery_gen8_public_request_v1",
+  "title": "[AURORA CATALOG RUN REQUEST] 01a0ba6e-76ff-7ad6-9fad-45b414de9f0c",
+  "issue_number": 328,
+  "owner_run_id": 35454099484,
+  "owner_run_attempt": 1,
+  "request_sha256": "70d15409754069379635e7ff1d9a6990d8b30dff68fce16531cee875d16e719f",
+  "terminal_receipt_sha256": "a10a880af0c3a3bd4ebd69958f5e4761cf3c620da32abddaff080a346b8a0193",
+  "request": {
+    "authorization": "USER_EXPLICITLY_REQUESTED_NEW_CATALOG_RUN",
+    "automatic_recovery": true,
+    "campaign_definition_sha256": "5d8fac86642c617334b6ee4db8567a5e7eebe0ebb609366f0ea3d4996a7c2e4b",
+    "campaign_key": "catalog-fast-canary-v1",
+    "free_resources_only": true,
+    "launch_generation": 8,
+    "launch_ticket_sha256": "7cca2cf86fdbeccfd7f59c3d00f62a5f673329fcbe30dd9c414d4b0a297c8f28",
+    "max_same_failure_count": 3,
+    "previous_terminal_request_sha256": "a0749c8833b52612096d8a820f3a46f5af48ce52848f8bfc02377f3236996896",
+    "prompt_sha256": "c69e7e311f2d2c728d41573a7512276a94ca6d7360d06d1f3f8b2e37b5bb42d3",
+    "request_id": "01a0ba6e-76ff-7ad6-9fad-45b414de9f0c",
+    "requester_attestation_algorithm": "rsa-pss-sha256-v1",
+    "requester_attestation_b64": "MJMp/13WuGsnXgopNAmLpMwBoIPZXoCRTRGRPQHnEB2KKrCh6yJ0j3WlY0rSOYW9xw0pRmyniWLzT4U606Qe3BO877m1786m5BMyOzM8UYHLVaFYtunj8wyb5ZIIzY73z4OPnMkCBBFrEorJaKO/5MOmW3KtLoIOUCrvWscmCFtUdTM2IIgdINTIbcEaI7RgQtRYKQjiGm+7JPFkDMzOLYgnc/pz3ru3UQJv2tZ+gGCMQaCfQbyB7vrwKEmSgrxzOf6GSoUwQKeKK0Jf9l7MSUluhHXcP3Iq+nCmcvpwtP5b/7P7SHFWuTsOoWcHFvr8BiLd2xDXpEqYprdlsiRuWQ==",
+    "requester_public_key_sha256": "7d9f2bf3eefca26d615b2843f3ac2de9f3b04ff398e2b0b6ed65fb8ebac23a5b",
+    "schema_version": "1"
+  }
+}
