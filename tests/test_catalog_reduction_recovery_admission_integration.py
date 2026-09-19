@@ -1,4 +1,4 @@
-"""Integration coverage for gen8/9 admission with immutable gen7 recovery source.
+"""Integration coverage for gen8/9/11 admission with closed recovery sources.
 
 The profile selector, authority model, predecessor guard, fast admission and
 prepared-plan materializer are real. GitHub issue/cache responses, the owner
@@ -7,7 +7,7 @@ boundaries: their independent provenance/reader contracts are covered by the
 existing tests. This test therefore does not claim to exercise live GitHub
 archive authentication or scientific execution.
 The 24-recipe transport fixture exercises materialization only, not compatibility
-with the eight scientific results pinned by the recovery profile.
+with the eight scientific results pinned by any recovery profile.
 """
 
 from __future__ import annotations
@@ -65,17 +65,37 @@ from scripts import admit_catalog_fast_request as admission
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_GEN7_FIXTURE = ROOT / "tests/fixtures/catalog_recovery_gen7_request.json"
+PUBLIC_GEN10_FIXTURE = ROOT / "tests/fixtures/catalog_recovery_gen10_request.json"
 SOURCE_ISSUE = 323
 SOURCE_RUN = 35436320227
 SOURCE_RUN_ATTEMPT = 1
+SOURCE10_ISSUE = 333
+SOURCE10_RUN = 35460847765
+SOURCE10_RUN_ATTEMPT = 1
+SOURCE10_REQUEST_SHA256 = "655d64878185f1066590c4acafcd76e6b48c6626e03e5c331371caa735a5193b"
+SOURCE10_TERMINAL_RECEIPT_SHA256 = "3a414441d7498154f1c3128f9fc4dc286075286e86fb2a3d001574b0236e9bf5"
 CURRENT_ISSUE = 324
 CURRENT_RUN = 35436320228
 CURRENT_COMMIT = "a" * 40
 PREPARED_RECEIPT_SHA256 = "4dee5b0498c5eefc8c32b1dd08e89a6944573a052ab7e737b7174b85075747c3"
+GEN10_PREPARED = "a739832505767bb239ed9d2423c6165ad56f30d82eda8bf2378597aa9af7a7ab"
 CURRENT_CREATED_AT = "2026-09-19T17:00:00Z"
 OBSERVED_AT = datetime(2026, 9, 19, 17, 1, tzinfo=timezone.utc)
 GEN8_PREPARED = "938dd3aff5eafefbcd99d3140e22405e6b21d77f6996a4f769476da59fcb285b"
 GEN8_DECISION = "91e1e0bb41a76b5014d8d705cb67ccb5b163c24c2551bd1d84cc91ab37ccf023"
+GEN10_DECISION = "4bedf1b0e05eb1d15b14aad37d08d2d42fa76f1299ccbddd501900c8869dbdc5"
+GEN10_SOURCE_PLAN_BINDINGS = {
+    "request_sha256": SOURCE10_REQUEST_SHA256,
+    "decision_sha256": GEN10_DECISION,
+    "protected_commit_sha": "26a6832e3d0b9f0c319b99afc328ea9fb4831acf",
+    "authority_id": "abe7c473-f1dd-56ce-a1f0-6477b3f6c211",
+    "campaign_id": "235cb870254559227dbac2e56f7d492af786851d044aa61c4c30e6cb083fd8db",
+    "science_sha256": "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2",
+    "execution_plan_sha256": "c0e73224fd7eb5af9abf51587f44fbaee791dabb1862164ac2829ed6eee2032c",
+    "execution_protocol_sha256": "a856bc16bb3c5b39746a47eefa8f3c079641d0b13b2a686b43ce4c359ef119cc",
+}
+GEN10_SOURCE_PLAN_RECEIPT_SHA256 = "27027da90e69ac0aeefc83c8d0818095c062f576e69a9f3521cf3c4f2418dea2"
+GEN10_CATALOG_MANIFEST_SHA256 = "2de5b6a09fb10b71adff0f45af450f30c7f3dbfb196bfea8f01f92d4cf3cb981"
 
 
 def _public_request_body(payload: dict[str, Any]) -> str:
@@ -83,20 +103,49 @@ def _public_request_body(payload: dict[str, Any]) -> str:
     return f"```json\n{encoded}\n```\n"
 
 
-def _source_request() -> tuple[dict[str, Any], CatalogRunRequestV1, str, str]:
-    payload = json.loads(PUBLIC_GEN7_FIXTURE.read_text(encoding="utf-8"))
+def _load_source_request(
+    fixture: Path,
+    *,
+    generation: int,
+    issue: int,
+    run_id: int,
+    run_attempt: int,
+    terminal_receipt_sha256: str,
+) -> tuple[dict[str, Any], CatalogRunRequestV1, str, str]:
+    payload = json.loads(fixture.read_text(encoding="utf-8"))
     title = payload["title"]
     body = _public_request_body(payload)
     public_key = (ROOT / "config/catalog_requester_public_key_v1.pem").read_bytes()
     request = parse_catalog_run_request(title, body, public_key)
     assert request.request_sha256 == payload["request_sha256"]
-    assert payload["issue_number"] == SOURCE_ISSUE
-    assert payload["owner_run_id"] == SOURCE_RUN
-    assert payload["owner_run_attempt"] == SOURCE_RUN_ATTEMPT
-    assert payload["terminal_receipt_sha256"] == (
-        "67224b935b44f2d7598e2b28d9cb686d4eee89a046d0ec3b0482db4aba9d8cc4"
-    )
+    assert request.launch_generation == generation
+    assert payload["issue_number"] == issue
+    assert payload["owner_run_id"] == run_id
+    assert payload["owner_run_attempt"] == run_attempt
+    assert payload["terminal_receipt_sha256"] == terminal_receipt_sha256
     return payload, request, title, body
+
+
+def _source_request() -> tuple[dict[str, Any], CatalogRunRequestV1, str, str]:
+    return _load_source_request(
+        PUBLIC_GEN7_FIXTURE,
+        generation=7,
+        issue=SOURCE_ISSUE,
+        run_id=SOURCE_RUN,
+        run_attempt=SOURCE_RUN_ATTEMPT,
+        terminal_receipt_sha256="67224b935b44f2d7598e2b28d9cb686d4eee89a046d0ec3b0482db4aba9d8cc4",
+    )
+
+
+def _source10_request() -> tuple[dict[str, Any], CatalogRunRequestV1, str, str]:
+    return _load_source_request(
+        PUBLIC_GEN10_FIXTURE,
+        generation=10,
+        issue=SOURCE10_ISSUE,
+        run_id=SOURCE10_RUN,
+        run_attempt=SOURCE10_RUN_ATTEMPT,
+        terminal_receipt_sha256=SOURCE10_TERMINAL_RECEIPT_SHA256,
+    )
 
 
 def _next_generation_request(
@@ -289,31 +338,39 @@ def _write_test_repo(
 
 def _terminal_receipt(source: CatalogRunRequestV1) -> CatalogTerminalReceiptV2:
     gen8 = source.launch_generation == 8
-    run_id = 35454099484 if gen8 else SOURCE_RUN
+    gen10 = source.launch_generation == 10
+    run_id = 35454099484 if gen8 else SOURCE10_RUN if gen10 else SOURCE_RUN
     return CatalogTerminalReceiptV2.create(
         state="BLOCKED",
-        reason_code="CATALOG_REDUCTION_FAILED",
+        reason_code="CATALOG_ENGINE_STAGE_FAILED" if gen10 else "CATALOG_REDUCTION_FAILED",
         request_sha256=source.request_sha256,
         submission_key_sha256=source.submission_key_sha256,
         campaign_key=source.campaign_key,
-        prepared_receipt_sha256=GEN8_PREPARED if gen8 else PREPARED_RECEIPT_SHA256,
+        prepared_receipt_sha256=(
+            GEN8_PREPARED if gen8 else GEN10_PREPARED if gen10 else PREPARED_RECEIPT_SHA256
+        ),
         engine_run_id=run_id,
         run_url=f"https://github.com/trading-optimizer-lab-org/aurora/actions/runs/{run_id}",
         expected_recipe_count=8,
         observed_recipe_count=0,
         timing=CatalogTerminalTimingV2(
-            initial_queue_seconds=21.0 if gen8 else 14.0,
-            preparation_jobs_window_seconds=85.0 if gen8 else 183.0,
-            evaluation_jobs_window_seconds=None if gen8 else 53.0,
-            recovery_jobs_window_seconds=None,
-            reduction_jobs_window_seconds=49.0 if gen8 else 69.0,
+            initial_queue_seconds=22.0 if gen10 else 21.0 if gen8 else 14.0,
+            preparation_jobs_window_seconds=138.0 if gen10 else 85.0 if gen8 else 183.0,
+            evaluation_jobs_window_seconds=None if gen8 or gen10 else 53.0,
+            recovery_jobs_window_seconds=179.0 if gen10 else None,
+            reduction_jobs_window_seconds=105.0 if gen10 else 49.0 if gen8 else 69.0,
             worker_evaluation_seconds=None,
         ),
         recovered_block_ids=None,
         failure_class="infrastructure",
         result_science_sha256=None,
-        created_at=(datetime(2026, 9, 19, 16, 14, 39, 41347, tzinfo=timezone.utc)
-                    if gen8 else datetime(2026, 9, 19, 10, 11, 9, 728262, tzinfo=timezone.utc)),
+        created_at=(
+            datetime(2026, 9, 19, 18, 30, 32, 493920, tzinfo=timezone.utc)
+            if gen10
+            else datetime(2026, 9, 19, 16, 14, 39, 41347, tzinfo=timezone.utc)
+            if gen8
+            else datetime(2026, 9, 19, 10, 11, 9, 728262, tzinfo=timezone.utc)
+        ),
     )
 
 
@@ -327,7 +384,10 @@ def _run_admission(
     owner_mode: str = "valid",
     altered_link: bool = False,
 ) -> dict[str, Any]:
-    source_metadata, source, _source_title, _source_body = _source_request()
+    if target_generation == 11:
+        source_metadata, source, _source_title, _source_body = _source10_request()
+    else:
+        source_metadata, source, _source_title, _source_body = _source_request()
     predecessor = source
     predecessor_metadata = source_metadata
     if target_generation == 9:
@@ -340,6 +400,9 @@ def _run_admission(
         )
         assert predecessor.request_sha256 == predecessor_metadata["request_sha256"]
         assert predecessor.previous_terminal_request_sha256 == source.request_sha256
+    elif target_generation == 11:
+        assert predecessor.launch_generation == 10
+        assert predecessor.request_sha256 == SOURCE10_REQUEST_SHA256
     predecessor_issue = predecessor_metadata["issue_number"]
     predecessor_run = predecessor_metadata["owner_run_id"]
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -395,11 +458,26 @@ def _run_admission(
     target = runner_temp / "admitted"
     profiles = load_reduction_recovery_profiles(ROOT)
     profile = next(row for row in profiles if row.target_generation == target_generation)
-    assert profile.source_request_sha256 == source.request_sha256
-    assert profile.source_issue_number == SOURCE_ISSUE
-    assert profile.source_run_id == SOURCE_RUN
-    assert profile.source_run_attempt == SOURCE_RUN_ATTEMPT
-    assert profile.source_terminal_receipt_sha256 == source_metadata["terminal_receipt_sha256"]
+    if target_generation == 11:
+        assert len(profiles) == 3
+        assert {row.target_generation for row in profiles} == {8, 9, 11}
+        assert profile.source_generation == 10
+        assert profile.terminal_reason_code == "CATALOG_ENGINE_STAGE_FAILED"
+        assert profile.source_request_sha256 == SOURCE10_REQUEST_SHA256
+        assert profile.source_issue_number == SOURCE10_ISSUE
+        assert profile.source_run_id == SOURCE10_RUN
+        assert profile.source_run_attempt == SOURCE10_RUN_ATTEMPT
+        assert profile.source_terminal_receipt_sha256 == SOURCE10_TERMINAL_RECEIPT_SHA256
+        assert profile.source_plan_bindings == GEN10_SOURCE_PLAN_BINDINGS
+        assert profile.source_plan_receipt_sha256 == GEN10_SOURCE_PLAN_RECEIPT_SHA256
+        assert profile.science_sha256 == GEN10_SOURCE_PLAN_BINDINGS["science_sha256"]
+        assert profile.catalog_manifest_sha256 == GEN10_CATALOG_MANIFEST_SHA256
+    else:
+        assert profile.source_request_sha256 == source.request_sha256
+        assert profile.source_issue_number == SOURCE_ISSUE
+        assert profile.source_run_id == SOURCE_RUN
+        assert profile.source_run_attempt == SOURCE_RUN_ATTEMPT
+        assert profile.source_terminal_receipt_sha256 == source_metadata["terminal_receipt_sha256"]
     assert len(profile.strategy_ids) == 8
     assert set(profile.source_plan_bindings) == {
         "request_sha256",
@@ -420,6 +498,13 @@ def _run_admission(
         terminal = None
     elif terminal_mode != "valid":
         mutations = {
+            "reason": {
+                "reason_code": (
+                    "CATALOG_REDUCTION_FAILED"
+                    if original_terminal.reason_code == "CATALOG_ENGINE_STAGE_FAILED"
+                    else "CATALOG_ENGINE_STAGE_FAILED"
+                )
+            },
             "status": {"state": "COMPLETED"},
             "observed": {"observed_recipe_count": 8},
             "science": {"result_science_sha256": profile.science_sha256},
@@ -430,16 +515,24 @@ def _run_admission(
     owner_decision = cast(
         Any,
         SimpleNamespace(
-            decision_sha256=(GEN8_DECISION if target_generation == 9
-                             else profile.source_plan_bindings["decision_sha256"]),
-            prepared_receipt_sha256=(GEN8_PREPARED if target_generation == 9
-                                     else PREPARED_RECEIPT_SHA256),
+            decision_sha256=(
+                GEN8_DECISION
+                if target_generation == 9
+                else profile.source_plan_bindings["decision_sha256"]
+            ),
+            prepared_receipt_sha256=(
+                GEN8_PREPARED
+                if target_generation == 9
+                else GEN10_PREPARED
+                if target_generation == 11
+                else PREPARED_RECEIPT_SHA256
+            ),
         ),
     )
     owner_run: dict[str, Any] = {
-            "run_attempt": SOURCE_RUN_ATTEMPT,
-            "head_sha": profile.predecessor_bindings.protected_commit_sha,
-            "status": "completed",
+        "run_attempt": profile.predecessor_bindings.run_attempt,
+        "head_sha": profile.predecessor_bindings.protected_commit_sha,
+        "status": "completed",
     }
     owner = FastGateOwnerEvidence(
         run_id=predecessor_run,
@@ -451,7 +544,7 @@ def _run_admission(
     elif owner_mode == "head":
         owner_run["head_sha"] = "0" * 40
     elif owner_mode == "decision":
-        owner_decision.decision_sha256 = profile.source_plan_bindings["decision_sha256"]
+        owner_decision.decision_sha256 = "0" * 64
     owner_calls: list[int] = []
     terminal_calls: list[tuple[int, int]] = []
 
@@ -542,7 +635,7 @@ def _file_hashes(root: Path) -> dict[str, str]:
     }
 
 
-@pytest.mark.parametrize("target_generation", [8, 9])
+@pytest.mark.parametrize("target_generation", [8, 9, 11])
 def test_real_recovery_admission_materializes_protected_profile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_generation: int,
 ) -> None:
@@ -568,7 +661,7 @@ def test_real_recovery_admission_materializes_protected_profile(
     assert result["template_before"] == _file_hashes(template)
 
 
-@pytest.mark.parametrize("target_generation", [8, 9])
+@pytest.mark.parametrize("target_generation", [8, 9, 11])
 @pytest.mark.parametrize("terminal_mode", ["mismatch", "missing"])
 def test_real_recovery_admission_rejects_terminal_without_materializing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_generation: int,
@@ -584,7 +677,7 @@ def test_real_recovery_admission_rejects_terminal_without_materializing(
     assert result["terminal_calls"] == [(result["predecessor_issue"], result["predecessor_run"])]
 
 
-@pytest.mark.parametrize("target_generation", [8, 9])
+@pytest.mark.parametrize("target_generation", [8, 9, 11])
 def test_real_recovery_admission_rejects_missing_profile_without_materializing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_generation: int,
 ) -> None:
@@ -598,27 +691,32 @@ def test_real_recovery_admission_rejects_missing_profile_without_materializing(
     assert result["terminal_calls"] == []
 
 
+@pytest.mark.parametrize("target_generation", [9, 11])
 @pytest.mark.parametrize("owner_mode", ["attempt", "head", "decision"])
-def test_gen9_rejects_owner_corruption_before_materializing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owner_mode: str,
+def test_gen9_and_gen11_reject_owner_corruption_before_materializing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_generation: int,
+    owner_mode: str,
 ) -> None:
-    result = _run_admission(tmp_path, monkeypatch, target_generation=9, owner_mode=owner_mode)
+    result = _run_admission(tmp_path, monkeypatch, target_generation=target_generation,
+                            owner_mode=owner_mode)
     assert result["decision"].launch_required is False
     assert result["decision"].reason_code == "CATALOG_RECOVERY_PREDECESSOR_OWNER_INVALID"
-    assert result["owner_calls"] == [CURRENT_ISSUE, 328]
+    assert result["owner_calls"] == [CURRENT_ISSUE, result["predecessor_issue"]]
     assert result["terminal_calls"] == []
     assert not (result["target"] / "sealed-plan").exists()
 
 
-@pytest.mark.parametrize("terminal_mode", ["status", "observed", "science"])
-def test_gen9_rejects_terminal_semantics_before_materializing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal_mode: str,
+@pytest.mark.parametrize("target_generation", [9, 11])
+@pytest.mark.parametrize("terminal_mode", ["reason", "status", "observed", "science"])
+def test_gen9_and_gen11_reject_terminal_semantics_before_materializing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_generation: int,
+    terminal_mode: str,
 ) -> None:
-    result = _run_admission(tmp_path, monkeypatch, target_generation=9,
+    result = _run_admission(tmp_path, monkeypatch, target_generation=target_generation,
                             terminal_mode=terminal_mode)
     assert result["decision"].launch_required is False
     assert result["decision"].reason_code == "CATALOG_RECOVERY_PREDECESSOR_TERMINAL_INVALID"
-    assert result["terminal_calls"] == [(328, 35454099484)]
+    assert result["terminal_calls"] == [(result["predecessor_issue"], result["predecessor_run"])]
     assert not (result["target"] / "sealed-plan").exists()
 
 
