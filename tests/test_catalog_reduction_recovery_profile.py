@@ -25,14 +25,14 @@ PREDECESSOR_REQUEST_SHA256 = (
 )
 SCIENCE_SHA256 = "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2"
 SOURCE_PLAN_BINDINGS = {
-    "request": PREDECESSOR_REQUEST_SHA256,
-    "decision": "c9471a1431226acc4ef70bfd815ac2a6e0cc2bc011865b61d5d045244b0ebc7c",
-    "protectedcommit": "fc77968dceeb93b332c143cc367b99128f488093",
-    "authority": "b7102536-d7fa-5dc8-a438-d456bd2313c5",
-    "campaign": "cf367334c63ed4e8a087ca3730b718e94e5e914877327a23c069f4989725173e",
-    "science": SCIENCE_SHA256,
-    "executionplan": "64ea4c3c11181f4aa47a545c81da55d5d3e67ee406d78b0ddf3d0867ebe03f25",
-    "executionprotocol": "e4f267c15125890abf6d1cc4e8889fa8975bf407b89d80306f59ac0691245631",
+    "request_sha256": PREDECESSOR_REQUEST_SHA256,
+    "decision_sha256": "c9471a1431226acc4ef70bfd815ac2a6e0cc2bc011865b61d5d045244b0ebc7c",
+    "protected_commit_sha": "fc77968dceeb93b332c143cc367b99128f488093",
+    "authority_id": "b7102536-d7fa-5dc8-a438-d456bd2313c5",
+    "campaign_id": "cf367334c63ed4e8a087ca3730b718e94e5e914877327a23c069f4989725173e",
+    "science_sha256": SCIENCE_SHA256,
+    "execution_plan_sha256": "64ea4c3c11181f4aa47a545c81da55d5d3e67ee406d78b0ddf3d0867ebe03f25",
+    "execution_protocol_sha256": "e4f267c15125890abf6d1cc4e8889fa8975bf407b89d80306f59ac0691245631",
 }
 EXPECTED_STRATEGY_IDS = (
     "SCV1-0008de8188a0dfedb69e2087fa0786d8876821d9dfaeaf970a6b3f830fc031b0",
@@ -61,10 +61,7 @@ GROUP_ARTIFACT = ReductionRecoveryArtifactV1(
     digest="sha256:1f32af1a9468e01a21fbb2e2869b945e273ed68a74eaf1b3153bc74588706e47",
     receipt_sha256="e7e2b1b22a70cbfcdba840f25d4b6e87656a3d1a9eb6e155e08f2d4a3e03fbd7",
     size_bytes=28148,
-    publisher_job_name=(
-        "engine / reduce_groups (catalog-checkpoint-64ea4c3c11181f4a-g00-*, 0, "
-        "catalog-reduction-group-64ea4c3c11181f4a-g00)"
-    ),
+    publisher_job_name="engine / reduce_groups (catalog-checkpoint-64ea4c3c11181f4a-g00-*, 0, catalog-reduction-group-64ea4c3c1118...",
     publish_step_name="Upload one bounded reduction group",
 )
 
@@ -189,6 +186,6 @@ def test_engine_loader_and_exact_validation_require_the_one_protected_profile() 
     payload = json.loads(CONFIG.read_text(encoding="utf-8"))["profiles"][0]
     assert validate_exact_profile(ROOT, payload) == profiles[0]
 
-    payload["source_plan_bindings"]["decision"] = "0" * 64
+    payload["source_plan_bindings"]["decision_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH"):
         validate_exact_profile(ROOT, payload)

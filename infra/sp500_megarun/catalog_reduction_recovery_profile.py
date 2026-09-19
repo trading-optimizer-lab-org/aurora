@@ -35,25 +35,25 @@ _STRATEGY_ID = r"^SCV1-[0-9a-f]{64}$"
 
 _SOURCE_PLAN_BINDING_KEYS = frozenset(
     {
-        "request",
-        "decision",
-        "protectedcommit",
-        "authority",
-        "campaign",
-        "science",
-        "executionplan",
-        "executionprotocol",
+        "request_sha256",
+        "decision_sha256",
+        "protected_commit_sha",
+        "authority_id",
+        "campaign_id",
+        "science_sha256",
+        "execution_plan_sha256",
+        "execution_protocol_sha256",
     }
 )
 _EXPECTED_SOURCE_PLAN_BINDINGS = {
-    "request": RECOVERY_PREDECESSOR_REQUEST_SHA256,
-    "decision": "c9471a1431226acc4ef70bfd815ac2a6e0cc2bc011865b61d5d045244b0ebc7c",
-    "protectedcommit": "fc77968dceeb93b332c143cc367b99128f488093",
-    "authority": "b7102536-d7fa-5dc8-a438-d456bd2313c5",
-    "campaign": "cf367334c63ed4e8a087ca3730b718e94e5e914877327a23c069f4989725173e",
-    "science": "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2",
-    "executionplan": "64ea4c3c11181f4aa47a545c81da55d5d3e67ee406d78b0ddf3d0867ebe03f25",
-    "executionprotocol": "e4f267c15125890abf6d1cc4e8889fa8975bf407b89d80306f59ac0691245631",
+    "request_sha256": RECOVERY_PREDECESSOR_REQUEST_SHA256,
+    "decision_sha256": "c9471a1431226acc4ef70bfd815ac2a6e0cc2bc011865b61d5d045244b0ebc7c",
+    "protected_commit_sha": "fc77968dceeb93b332c143cc367b99128f488093",
+    "authority_id": "b7102536-d7fa-5dc8-a438-d456bd2313c5",
+    "campaign_id": "cf367334c63ed4e8a087ca3730b718e94e5e914877327a23c069f4989725173e",
+    "science_sha256": "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2",
+    "execution_plan_sha256": "64ea4c3c11181f4aa47a545c81da55d5d3e67ee406d78b0ddf3d0867ebe03f25",
+    "execution_protocol_sha256": "e4f267c15125890abf6d1cc4e8889fa8975bf407b89d80306f59ac0691245631",
 }
 _EXPECTED_STRATEGY_IDS = (
     "SCV1-0008de8188a0dfedb69e2087fa0786d8876821d9dfaeaf970a6b3f830fc031b0",
@@ -112,7 +112,7 @@ class ReductionRecoveryArtifactV1(FrozenModel):
                 RECOVERY_GROUP_RECEIPT_SHA256,
                 28148,
                 "engine / reduce_groups (catalog-checkpoint-64ea4c3c11181f4a-g00-*, 0, "
-                "catalog-reduction-group-64ea4c3c11181f4a-g00)",
+                "catalog-reduction-group-64ea4c3c1118...",
                 "Upload one bounded reduction group",
             )
         actual = (
@@ -163,12 +163,19 @@ class ReductionRecoveryProfileV1(FrozenModel):
     @field_validator("source_plan_bindings")
     @classmethod
     def _validate_binding_values(cls, value: dict[str, str]) -> dict[str, str]:
-        for key in ("request", "decision", "campaign", "science", "executionplan", "executionprotocol"):
+        for key in (
+            "request_sha256",
+            "decision_sha256",
+            "campaign_id",
+            "science_sha256",
+            "execution_plan_sha256",
+            "execution_protocol_sha256",
+        ):
             if not re.fullmatch(r"[0-9a-f]{64}", value[key]):
                 raise ValueError(f"invalid {key} source binding")
-        if not re.fullmatch(_COMMIT, value["protectedcommit"]):
+        if not re.fullmatch(_COMMIT, value["protected_commit_sha"]):
             raise ValueError("invalid protected commit source binding")
-        if not re.fullmatch(_AUTHORITY_ID, value["authority"]):
+        if not re.fullmatch(_AUTHORITY_ID, value["authority_id"]):
             raise ValueError("invalid authority source binding")
         return value
 
@@ -233,9 +240,9 @@ class ReductionRecoveryProfileV1(FrozenModel):
             "group",
         ):
             raise ValueError("protected recovery artifacts mismatch")
-        if self.source_request_sha256 != self.source_plan_bindings["request"]:
+        if self.source_request_sha256 != self.source_plan_bindings["request_sha256"]:
             raise ValueError("profile source request binding mismatch")
-        if self.science_sha256 != self.source_plan_bindings["science"]:
+        if self.science_sha256 != self.source_plan_bindings["science_sha256"]:
             raise ValueError("profile science binding mismatch")
         return self
 
