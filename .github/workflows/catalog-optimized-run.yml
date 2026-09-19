@@ -2089,15 +2089,37 @@ jobs:
       checkpoint_manifest_artifacts: ${{ needs.recovery_wave_1.outputs.checkpoint_manifest_artifacts }}
       current_wave: 2
 
+  recovery_wave_3:
+    needs: recovery_wave_2
+    if: ${{ !cancelled() && inputs.execution_mode == 'run' && always() && (needs.recovery_wave_2.outputs.status == 'retry' || needs.recovery_wave_2.outputs.status == 'replan') }}
+    permissions: {actions: read, contents: read}
+    uses: ./.github/workflows/catalog-recovery-wave.yml
+    with:
+      request_sha256: ${{ inputs.request_sha256 }}
+      authority_id: ${{ inputs.authority_id }}
+      campaign_id: ${{ inputs.campaign_id }}
+      science_sha256: ${{ inputs.science_sha256 }}
+      execution_plan_sha256: ${{ inputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ inputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ github.sha }}
+      decision_sha256: ${{ inputs.decision_sha256 }}
+      campaign_state_artifact: ${{ needs.recovery_wave_2.outputs.campaign_state_artifact }}
+      attempt_manifest_artifacts: ${{ needs.recovery_wave_2.outputs.attempt_manifest_artifacts }}
+      failure_manifest_artifacts: ${{ needs.recovery_wave_2.outputs.failure_manifest_artifacts }}
+      checkpoint_manifest_artifacts: ${{ needs.recovery_wave_2.outputs.checkpoint_manifest_artifacts }}
+      current_wave: 3
+
   ready_to_merge:
     needs:
       - reconcile_wave_0
       - recovery_wave_1
       - recovery_wave_2
+      - recovery_wave_3
     if: >-
       ${{ !cancelled() && inputs.execution_mode == 'run' && always() &&
       (needs.recovery_wave_1.outputs.status == 'complete' ||
-      needs.recovery_wave_2.outputs.status == 'complete') }}
+      needs.recovery_wave_2.outputs.status == 'complete' ||
+      needs.recovery_wave_3.outputs.status == 'complete') }}
     runs-on: ubuntu-24.04
     environment: catalog-production
     timeout-minutes: 5
@@ -2373,7 +2395,7 @@ jobs:
           compression-level: 0
 
   audit_runtime:
-    needs: [engine_verify_sealed_plan, reduce, verify_terminal_science, reconcile_wave_0, recovery_wave_1, recovery_wave_2]
+    needs: [engine_verify_sealed_plan, reduce, verify_terminal_science, reconcile_wave_0, recovery_wave_1, recovery_wave_2, recovery_wave_3]
     if: ${{ inputs.execution_mode == 'run' && always() && needs.reduce.result == 'success' && needs.verify_terminal_science.result == 'success' }}
     runs-on: ubuntu-24.04
     environment: catalog-production
@@ -2406,6 +2428,9 @@ jobs:
           VERIFIED_WAVE_2_STATUS: ${{ needs.recovery_wave_2.outputs.status }}
           VERIFIED_WAVE_2_MATRIX_A: ${{ needs.recovery_wave_2.outputs.has_matrix_a }}
           VERIFIED_WAVE_2_MATRIX_B: ${{ needs.recovery_wave_2.outputs.has_matrix_b }}
+          VERIFIED_WAVE_3_STATUS: ${{ needs.recovery_wave_3.outputs.status }}
+          VERIFIED_WAVE_3_MATRIX_A: ${{ needs.recovery_wave_3.outputs.has_matrix_a }}
+          VERIFIED_WAVE_3_MATRIX_B: ${{ needs.recovery_wave_3.outputs.has_matrix_b }}
         shell: bash
         run: |
           set -euo pipefail
@@ -2441,7 +2466,7 @@ jobs:
                   "status": os.environ[f"VERIFIED_WAVE_{wave}_STATUS"],
                   "has_matrix_a": os.environ[f"VERIFIED_WAVE_{wave}_MATRIX_A"],
                   "has_matrix_b": os.environ[f"VERIFIED_WAVE_{wave}_MATRIX_B"],
-              } for wave in (1, 2)],
+              } for wave in (1, 2, 3)],
           }
           Path("runtime-skip-evidence.json").write_text(
               json.dumps(skip_evidence, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n",
@@ -2495,6 +2520,7 @@ jobs:
       - reconcile_wave_0
       - recovery_wave_1
       - recovery_wave_2
+      - recovery_wave_3
       - ready_to_merge
       - reduce_groups
       - reduce
@@ -2638,14 +2664,19 @@ jobs:
           RECOVERY_0: ${{ needs.reconcile_wave_0.outputs.status }}
           RECOVERY_1: ${{ needs.recovery_wave_1.outputs.status }}
           RECOVERY_2: ${{ needs.recovery_wave_2.outputs.status }}
+          RECOVERY_3: ${{ needs.recovery_wave_3.outputs.status }}
           FAILURE_FP_1: ${{ needs.recovery_wave_1.outputs.failure_fingerprint }}
           FAILURE_FP_2: ${{ needs.recovery_wave_2.outputs.failure_fingerprint }}
+          FAILURE_FP_3: ${{ needs.recovery_wave_3.outputs.failure_fingerprint }}
           FAILURE_COUNT_1: ${{ needs.recovery_wave_1.outputs.failure_occurrence_count }}
           FAILURE_COUNT_2: ${{ needs.recovery_wave_2.outputs.failure_occurrence_count }}
+          FAILURE_COUNT_3: ${{ needs.recovery_wave_3.outputs.failure_occurrence_count }}
           FAILURE_REASON_1: ${{ needs.recovery_wave_1.outputs.failure_reason_code }}
           FAILURE_REASON_2: ${{ needs.recovery_wave_2.outputs.failure_reason_code }}
+          FAILURE_REASON_3: ${{ needs.recovery_wave_3.outputs.failure_reason_code }}
           RETRY_NOT_BEFORE_1: ${{ needs.recovery_wave_1.outputs.retry_not_before }}
           RETRY_NOT_BEFORE_2: ${{ needs.recovery_wave_2.outputs.retry_not_before }}
+          RETRY_NOT_BEFORE_3: ${{ needs.recovery_wave_3.outputs.retry_not_before }}
           FINAL_EVIDENCE_ARTIFACT: ${{ needs.reduce.outputs.final_evidence_artifact }}
         run: |
           set -euo pipefail
@@ -2674,12 +2705,12 @@ jobs:
           }
           recovery = [
               os.environ[f"RECOVERY_{wave}"]
-                for wave in range(3)
+                for wave in range(4)
               if os.environ.get(f"RECOVERY_{wave}")
           ]
           evidence_artifact = None
           completed_waves = [
-                wave for wave in range(1, 3) if os.environ.get(f"RECOVERY_{wave}")
+                wave for wave in range(1, 4) if os.environ.get(f"RECOVERY_{wave}")
           ]
           if completed_waves:
               wave = completed_waves[-1]
