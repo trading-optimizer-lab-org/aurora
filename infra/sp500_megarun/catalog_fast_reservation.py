@@ -7,7 +7,7 @@ import io
 import json
 import re
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
@@ -21,6 +21,14 @@ from aurora.infra.sp500_megarun.catalog_github_snapshot import CatalogStableInve
 
 _MEMBERS = frozenset({"catalog-fast-request-context.json", "catalog-fast-decision-v1.json"})
 _MAX_MEMBER_BYTES = 1024 * 1024
+
+
+def _terminal_step_end_exclusive(value: datetime) -> datetime:
+    """Use the full API second only when the step timestamp has no fraction."""
+
+    if value.microsecond:
+        return value
+    return value + timedelta(seconds=1)
 
 # The reconciler is allowed to import only the one observed non-reserving
 # controller execution.  Keep this topology fixed here: accepting an
@@ -242,7 +250,11 @@ def load_owner_terminal_receipt(
             ))
     except (zipfile.BadZipFile, ValueError, OSError, RuntimeError) as exc:
         raise ValueError("CATALOG_FAST_OWNER_TERMINAL_ARCHIVE_INVALID") from exc
-    if not times[0] <= receipt.created_at <= times[1]:
+    if times[1].microsecond:
+        within_step_window = times[0] <= receipt.created_at <= times[1]
+    else:
+        within_step_window = times[0] <= receipt.created_at < _terminal_step_end_exclusive(times[1])
+    if not within_step_window:
         raise ValueError("CATALOG_FAST_OWNER_TERMINAL_TIME_INVALID")
     bind_owner_terminal_receipt(owner=owner, receipt=receipt)
     return receipt

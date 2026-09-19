@@ -91,7 +91,6 @@ def test_consumed_canary_generation_keeps_its_original_release_boundary():
 
 def test_post308_canary_preserves_consumed_generation_and_requires_generation_six_boundary():
     """The failed #308 boundary stays historical; only its successor may migrate."""
-    from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import parse_catalog_campaign_definition_bytes
     from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
 
     root = Path(__file__).resolve().parents[1]
@@ -109,8 +108,6 @@ def test_post308_canary_preserves_consumed_generation_and_requires_generation_si
     assert consumed_boundary.previous_request_sha256 == consumed.previous_terminal_request_sha256
     assert consumed_boundary.target_definition_sha256 == consumed.campaign_definition_sha256
 
-    manifest = parse_catalog_campaign_definition_bytes(
-        (root / "config/catalog_campaign_definitions/catalog-fast-canary-v1.manifest.json").read_bytes())
     successor = CatalogLaunchTicketV1(
         schema_version="1", request_id="01a09a8f-edbd-731a-960b-07d35093f828",
         campaign_key=consumed.campaign_key, launch_generation=6,
@@ -134,7 +131,8 @@ def test_post308_canary_preserves_consumed_generation_and_requires_generation_si
     assert next_boundary is not None
     assert next_boundary.next_generation == 7
     assert next_boundary.previous_request_sha256 == after_expired.previous_terminal_request_sha256
-    assert next_boundary.target_definition_sha256 == manifest.campaign_definition_sha256
+    # Generation seven was consumed by request 323; preserve its release boundary.
+    assert next_boundary.target_definition_sha256 == "53d55700dd84340a154184c2c32594e7710ef278ce1f6096475fc72e7d982fc5"
     assert next_boundary.target_prompt_sha256 == prompt_hash
 
 

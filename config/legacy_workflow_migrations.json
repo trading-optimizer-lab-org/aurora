@@ -39,8 +39,8 @@
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
-      "reason": "retain sealed runtime and authenticated canary activation while observing the third worker attempt without allowing a fourth attempt",
-      "replacement_sha256": "aa83706c864ce12341312f33e2c7834e3d6b7376ee0537fbd73494ea9c53bdc7"
+      "reason": "preserve sealed artifact identities when a checkpoint or reduction download contains one artifact, retaining strict readers and bounded recovery",
+      "replacement_sha256": "56eef8489a30b1677717b7ef0ffcbd40108fbdd4c60146fd667d35d390d6fc4f"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",

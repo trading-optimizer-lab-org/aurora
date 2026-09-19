@@ -17,6 +17,7 @@ from aurora.infra.sp500_megarun.catalog_fast_reservation import (
     FastGateOwnerEvidence,
     bind_owner_terminal_receipt,
     load_fast_gate_owner,
+    load_owner_terminal_receipt,
     verify_fast_gate_owner_metadata,
 )
 from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
@@ -88,6 +89,198 @@ def _unlaunched_receipt(request: CatalogRunRequestV1, **updates: object) -> Cata
     }
     values.update(updates)
     return CatalogTerminalReceiptV1.create(**values)
+
+
+def _terminal_owner_fixture(
+    created_at: str, *, wrong_owner: bool = False,
+    create_completed_at: str = "2026-09-19T10:11:09Z",
+    publish_started_at: str = "2026-09-19T10:11:09Z",
+) -> tuple[object, FastGateOwnerEvidence, object]:
+    request = _request()
+    run_id = 35436320227
+    head_sha = "fc77968dceeb93b332c143cc367b99128f488093"
+    decision = CatalogFastLaunchDecisionV1.create(
+        state="QUEUED",
+        reason_code="CATALOG_FAST_PATH_ADMITTED",
+        request_sha256=request.request_sha256,
+        submission_key_sha256=request.submission_key_sha256,
+        campaign_key=request.campaign_key,
+        prepared_receipt_sha256="f" * 64,
+        selected_workers=1,
+        launch_required=True,
+        existing_run_id=None,
+        decided_at=NOW,
+        expires_at=NOW + timedelta(minutes=1),
+    )
+    receipt = CatalogTerminalReceiptV1.create(
+        state="SUCCESS",
+        reason_code="CATALOG_RUN_SUCCESS",
+        request_sha256=request.request_sha256,
+        submission_key_sha256=request.submission_key_sha256,
+        campaign_key=request.campaign_key,
+        prepared_receipt_sha256="f" * 64,
+        engine_run_id=run_id,
+        run_url=f"https://github.com/trading-optimizer-lab-org/aurora/actions/runs/{run_id}",
+        expected_recipe_count=8,
+        observed_recipe_count=8,
+        queue_seconds=0.0,
+        preparation_seconds=0.0,
+        computation_seconds=1.0,
+        recovery_seconds=0.0,
+        reduction_seconds=0.0,
+        recovered_block_count=0,
+        failure_class=None,
+        result_science_sha256="e" * 64,
+        created_at=datetime.fromisoformat(created_at.replace("Z", "+00:00")),
+    )
+    terminal_buffer = io.BytesIO()
+    with zipfile.ZipFile(terminal_buffer, "w") as archive:
+        archive.writestr("catalog-terminal-receipt-v1.json", receipt.model_dump_json())
+    raw = terminal_buffer.getvalue()
+    artifact = {
+        "id": 10582396128,
+        "name": f"catalog-terminal-receipt-{request.request_sha256}",
+        "expired": False,
+        "size_in_bytes": len(raw),
+        "created_at": "2026-09-19T10:11:10Z",
+        "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+        "workflow_run": {
+            "id": run_id + 1 if wrong_owner else run_id,
+            "head_sha": head_sha,
+            "head_branch": "main",
+            "repository_id": 1232647748,
+            "head_repository_id": 1232647748,
+        },
+    }
+    run = {
+        "id": run_id,
+        "run_attempt": 1,
+        "head_sha": head_sha,
+        "head_branch": "main",
+        "path": ".github/workflows/catalog-fast-controller.yml",
+        "event": "issues",
+        "repository": {
+            "id": 1232647748,
+            "full_name": "trading-optimizer-lab-org/aurora",
+        },
+        "status": "completed",
+        "conclusion": "failure",
+    }
+    finalizer = {
+        "id": 105880454451,
+        "run_id": run_id,
+        "run_attempt": 1,
+        "head_sha": head_sha,
+        "name": "finalize",
+        "status": "completed",
+        "conclusion": "failure",
+        "steps": [
+            {
+                "name": "Create exactly one terminal receipt",
+                "number": 9,
+                "status": "completed",
+                "conclusion": "success",
+                "started_at": "2026-09-19T10:11:09Z",
+                "completed_at": create_completed_at,
+            },
+            {
+                "name": "Publish the terminal receipt before changing the issue",
+                "number": 10,
+                "status": "completed",
+                "conclusion": "success",
+                "started_at": publish_started_at,
+                "completed_at": "2026-09-19T10:11:10Z",
+            },
+        ],
+    }
+
+    class Client:
+        repository = "trading-optimizer-lab-org/aurora"
+
+        def stable_paginated(self, path: str, *, root: str):
+            assert root == "artifacts"
+            assert path.endswith(
+                f"/actions/runs/{run_id}/artifacts?name=catalog-terminal-receipt-{request.request_sha256}"
+            )
+            return SimpleNamespace(
+                stable=True,
+                collection=SimpleNamespace(complete=True, rows=(artifact,)),
+            )
+
+    owner = FastGateOwnerEvidence(run_id, run, decision, (finalizer,))
+
+    def download(artifact_id: int) -> bytes:
+        assert artifact_id == artifact["id"]
+        return raw
+
+    return Client(), owner, download
+
+
+@pytest.mark.parametrize(
+    ("created_at", "accepted"),
+    (
+        pytest.param("2026-09-19T10:11:09.728262Z", True, id="end_fraction_accepted"),
+        pytest.param("2026-09-19T10:11:09.999999Z", True, id="last_fraction_accepted"),
+        pytest.param("2026-09-19T10:11:10.000000Z", False, id="next_second_rejected"),
+        pytest.param("2026-09-19T10:11:08.999999Z", False, id="before_start_rejected"),
+    ),
+)
+def test_owner_terminal_receipt_uses_exclusive_second_boundary(
+    created_at: str, accepted: bool,
+) -> None:
+    client, owner, download = _terminal_owner_fixture(created_at)
+
+    if accepted:
+        receipt = load_owner_terminal_receipt(
+            client=client, owner=owner, issue_number=323, download_archive=download,
+        )
+        assert receipt is not None
+        assert receipt.created_at == datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    else:
+        with pytest.raises(ValueError, match="CATALOG_FAST_OWNER_TERMINAL_TIME_INVALID"):
+            load_owner_terminal_receipt(
+                client=client, owner=owner, issue_number=323, download_archive=download,
+            )
+
+
+@pytest.mark.parametrize(
+    ("created_at", "accepted"),
+    (
+        pytest.param("2026-09-19T10:11:09.500000Z", True, id="fractional_end_inclusive"),
+        pytest.param("2026-09-19T10:11:09.500001Z", False, id="fractional_end_not_widened"),
+    ),
+)
+def test_owner_terminal_receipt_does_not_widen_fractional_step_end(
+    created_at: str, accepted: bool,
+) -> None:
+    client, owner, download = _terminal_owner_fixture(
+        created_at,
+        create_completed_at="2026-09-19T10:11:09.500000Z",
+        publish_started_at="2026-09-19T10:11:09.500000Z",
+    )
+
+    if accepted:
+        receipt = load_owner_terminal_receipt(
+            client=client, owner=owner, issue_number=323, download_archive=download,
+        )
+        assert receipt is not None
+        assert receipt.created_at == datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    else:
+        with pytest.raises(ValueError, match="CATALOG_FAST_OWNER_TERMINAL_TIME_INVALID"):
+            load_owner_terminal_receipt(
+                client=client, owner=owner, issue_number=323, download_archive=download,
+            )
+
+
+def test_owner_terminal_receipt_keeps_wrong_owner_rejected() -> None:
+    client, owner, download = _terminal_owner_fixture(
+        "2026-09-19T10:11:09.728262Z", wrong_owner=True,
+    )
+
+    with pytest.raises(ValueError, match="CATALOG_FAST_OWNER_TERMINAL_PROVENANCE_INVALID"):
+        load_owner_terminal_receipt(
+            client=client, owner=owner, issue_number=323, download_archive=download,
+        )
 
 
 def test_pinned_unlaunched_terminal_binds_as_existing_without_science() -> None:

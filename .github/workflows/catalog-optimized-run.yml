@@ -2177,11 +2177,62 @@ jobs:
           expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
+      - name: Select safe checkpoint download destination
+        id: checkpoint_download_layout
+        shell: bash
+        env:
+          GROUP_ID: ${{ matrix.group_id }}
+          REDUCTION_PLAN: ${{ runner.temp }}/sealed-plan/reduction_plan.json
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          plan = json.loads(Path(os.environ["REDUCTION_PLAN"]).read_text("utf-8"))
+          try:
+              group_id = int(os.environ["GROUP_ID"])
+          except (KeyError, ValueError) as exc:
+              raise SystemExit("CATALOG_CHECKPOINT_DOWNLOAD_LAYOUT_INVALID") from exc
+          groups = plan.get("groups")
+          matches = [
+              group
+              for group in groups
+              if isinstance(group, dict) and group.get("group_id") == group_id
+          ] if isinstance(groups, list) else []
+          if len(matches) != 1:
+              raise SystemExit("CATALOG_CHECKPOINT_DOWNLOAD_LAYOUT_INVALID")
+          artifacts = matches[0].get("checkpoint_artifacts")
+          if (
+              not isinstance(artifacts, list)
+              or not artifacts
+              or len(artifacts) != len(set(artifacts))
+              or any(
+                  not isinstance(artifact, str)
+                  or not artifact
+                  or artifact in {".", ".."}
+                  or Path(artifact).name != artifact
+                  or "/" in artifact
+                  or "\\" in artifact
+                  or "\x00" in artifact
+                  or any(ord(character) < 32 or ord(character) == 127 for character in artifact)
+                  for artifact in artifacts
+              )
+          ):
+              raise SystemExit("CATALOG_CHECKPOINT_DOWNLOAD_ARTIFACT_NAME_INVALID")
+          destination = Path(os.environ["RUNNER_TEMP"]) / "checkpoint-group"
+          if len(artifacts) == 1:
+              destination /= artifacts[0]
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
+              out.write(f"path={destination}\n")
+          PY
+
       - name: Download only this sealed checkpoint group
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: ${{ matrix.checkpoint_artifact_pattern }}
-          path: ${{ runner.temp }}/checkpoint-group
+          path: ${{ steps.checkpoint_download_layout.outputs.path }}
           merge-multiple: false
 
       - name: Verify and reduce this bounded group
@@ -2280,12 +2331,51 @@ jobs:
           expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
+      - name: Select safe reduction download destination
+        id: reduction_download_layout
+        if: ${{ needs.engine_verify_sealed_plan.outputs.pending_recipe_count != '0' }}
+        shell: bash
+        env:
+          REDUCTION_PLAN: ${{ runner.temp }}/sealed-plan/reduction_plan.json
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          plan = json.loads(Path(os.environ["REDUCTION_PLAN"]).read_text("utf-8"))
+          groups = plan.get("groups")
+          if not isinstance(groups, list) or not groups:
+              raise SystemExit("CATALOG_REDUCTION_DOWNLOAD_LAYOUT_INVALID")
+          artifact_names = []
+          for group in groups:
+              artifact = group.get("reduction_artifact") if isinstance(group, dict) else None
+              if (
+                  not isinstance(artifact, str)
+                  or not artifact
+                  or artifact in {".", ".."}
+                  or Path(artifact).name != artifact
+                  or "/" in artifact
+                  or "\\" in artifact
+                  or "\x00" in artifact
+                  or any(ord(character) < 32 or ord(character) == 127 for character in artifact)
+              ):
+                  raise SystemExit("CATALOG_REDUCTION_DOWNLOAD_ARTIFACT_NAME_INVALID")
+              artifact_names.append(artifact)
+          destination = Path(os.environ["RUNNER_TEMP"]) / "reduction-groups"
+          if len(artifact_names) == 1:
+              destination /= artifact_names[0]
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
+              out.write(f"path={destination}\n")
+          PY
+
       - name: Download only bounded reduction groups
         if: ${{ needs.engine_verify_sealed_plan.outputs.pending_recipe_count != '0' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: ${{ needs.engine_verify_sealed_plan.outputs.reduction_artifact_pattern }}
-          path: ${{ runner.temp }}/reduction-groups
+          path: ${{ steps.reduction_download_layout.outputs.path }}
           merge-multiple: false
 
       - name: Merge the sealed bounded reduction groups
