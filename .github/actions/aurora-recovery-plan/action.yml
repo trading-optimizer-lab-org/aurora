@@ -58,12 +58,22 @@ runs:
             value = json.loads(os.environ[name])
             if (
                 not isinstance(value, list)
-                or value != sorted(set(value))
+                or any(not isinstance(item, str) for item in value)
+            ):
+                raise SystemExit(f"RECOVERY_{name}_INVALID")
+            if (
+                value != sorted(set(value))
                 or any(
-                    not isinstance(item, str)
-                    or not item
+                    not item
+                    or item in {".", ".."}
                     or "/" in item
                     or "\\" in item
+                    or "\x00" in item
+                    or Path(item).name != item
+                    or any(
+                        ord(character) < 32 or ord(character) == 127
+                        for character in item
+                    )
                     for item in value
                 )
             ):
@@ -75,6 +85,13 @@ runs:
         checkpoints = closed_list("EXPECTED_CHECKPOINTS")
         root = Path(os.environ["RUNNER_TEMP"]) / "catalog-recovery"
         root.mkdir(parents=True, exist_ok=True)
+
+        def expected_download_path(base: Path, values: list[str]) -> Path:
+            return base / values[0] if len(values) == 1 else base
+
+        attempt_path = expected_download_path(root / "attempts", attempts)
+        checkpoint_path = expected_download_path(root / "checkpoints", checkpoints)
+        failure_path = expected_download_path(root / "failures", failures)
         (root / "expected-attempts.json").write_text(
             json.dumps(attempts, separators=(",", ":")) + "\n",
             encoding="utf-8",
@@ -91,6 +108,9 @@ runs:
             output.write(f"expected_attempt_count={len(attempts)}\n")
             output.write(f"expected_failure_count={len(failures)}\n")
             output.write(f"expected_checkpoint_count={len(checkpoints)}\n")
+            output.write(f"expected_attempt_path={attempt_path}\n")
+            output.write(f"expected_checkpoint_path={checkpoint_path}\n")
+            output.write(f"expected_failure_path={failure_path}\n")
         PY
 
     - name: Download only the stable attempt inventory
@@ -100,7 +120,8 @@ runs:
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         pattern: catalog-terminal-attempt-*
-        path: ${{ runner.temp }}/catalog-recovery/attempts
+        path: ${{ steps.expected.outputs.expected_attempt_path }}
+        merge-multiple: false
 
     - name: Download only the stable checkpoint inventory
       id: download_checkpoints
@@ -109,7 +130,8 @@ runs:
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         pattern: catalog-checkpoint-*
-        path: ${{ runner.temp }}/catalog-recovery/checkpoints
+        path: ${{ steps.expected.outputs.expected_checkpoint_path }}
+        merge-multiple: false
 
     - name: Download only the stable failed-attempt inventory
       id: download_failures
@@ -118,7 +140,8 @@ runs:
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         pattern: catalog-failure-attempt-*
-        path: ${{ runner.temp }}/catalog-recovery/failures
+        path: ${{ steps.expected.outputs.expected_failure_path }}
+        merge-multiple: false
 
     - name: Download exact original descriptor bundles selected by the plan
       shell: bash
