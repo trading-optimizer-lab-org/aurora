@@ -141,7 +141,9 @@ def verify_recovered_evaluation_evidence(
             raise ValueError(invalid)
         failed_workers.add(failure.worker_id)
         worker_blocks = {row["block_id"] for row in blocks if row["worker_id"] == failure.worker_id}
-        if not worker_blocks or not worker_blocks <= set(recovered):
+        # Failures are worker-scoped; retained initial checkpoints are verified,
+        # not recovered. Exact global coverage was checked above.
+        if not worker_blocks.intersection(recovered):
             raise ValueError(invalid)
         matched = []
         for suffix in "abc":

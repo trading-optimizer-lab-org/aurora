@@ -194,3 +194,42 @@ def test_nontransient_failure_receipt_is_not_recoverable(tmp_path):
     path.write_text(failure.model_dump_json())
     with pytest.raises(ValueError):
         _verify(fixture)
+
+
+@pytest.mark.parametrize("mutation", [None, "missing_initial_checkpoint", "other_worker_only"])
+def test_multiblock_worker_keeps_initial_checkpoints_and_recovers_only_pending(
+    tmp_path, monkeypatch, mutation,
+):
+    from functools import partial
+    from aurora.tests import test_catalog_prepared_materialization as transport
+    from aurora.infra.sp500_megarun.catalog_recovery_blocks import recovery_metrics_from_checkpoints
+
+    # Real planner/writer: longer projected recipes require multiple checkpoint
+    # slots. This changes fixture inputs, not any verifier or recovery decision.
+    monkeypatch.setattr(transport, "_task10_plan_fixture",
+                        partial(transport._task10_plan_fixture, recipe_seconds=250.0))
+    fixture = _proof_fixture(tmp_path)
+    sealed, _, _, documents, bindings, payload = fixture
+    blocks = json.loads((sealed / "checkpoint_policy.json").read_text())["recovery_blocks_v1"]["blocks"]
+    worker = blocks[0]["worker_id"]
+    own_blocks = [row for row in blocks if row["worker_id"] == worker]
+    assert len(own_blocks) >= 2
+    recovered = own_blocks[-1]["block_id"]
+    if mutation == "other_worker_only":
+        recovered = next(row["block_id"] for row in blocks if row["worker_id"] != worker)
+    records = [{"recovery_block_id": row["block_id"], "worker_id": row["worker_id"],
+                "attempt_id": f'{bindings["authority_id"]}:worker:{row["worker_id"]:03d}:attempt:{2 if row["block_id"] == recovered else 1}'}
+               for row in blocks]
+    if mutation == "missing_initial_checkpoint":
+        records = [row for row in records if row["recovery_block_id"] != own_blocks[0]["block_id"]]
+    metrics = recovery_metrics_from_checkpoints(records, authority_id=bindings["authority_id"])
+    assert metrics["recovered_block_ids"] == [recovered]
+    documents["catalog_scientific_audit_receipt_v1.json"]["recovery_metrics"] = metrics
+    if mutation is not None:
+        with pytest.raises(ValueError):
+            _verify(fixture)
+    else:
+        proof = _verify(fixture)
+        selected = outcome.select_catalog_engine_outcome(**payload, recovered_evaluation_evidence=proof)
+        assert selected.state.value == "TERMINAL_CANDIDATE"
+        assert selected.stage_results["evaluate_a"] == "failure"
