@@ -330,7 +330,12 @@ def test_reduction_consumes_only_the_sealed_plan_and_checkpoint_deltas() -> None
     assert "pattern: ${{ matrix.checkpoint_artifact_pattern }}" in workflow
     assert "Merge the sealed bounded reduction groups" in workflow
     assert "python scripts/reduce_sp500_optimized_catalog_run.py" in workflow
-    assert "--input-root \"$RUNNER_TEMP/reduction-groups\"" in workflow
+    assert 'input_root="$RUNNER_TEMP/reduction-groups"\n' in workflow
+    assert (
+        'if [[ "${{ needs.engine_verify_sealed_plan.outputs.reduction_only }}" == "true" ]]; then\n'
+        '            input_root="$RUNNER_TEMP/reduction-recovery/groups"'
+    ) in workflow
+    assert '--input-root "$input_root"' in workflow
     assert "pattern: ${{ needs.engine_verify_sealed_plan.outputs.reduction_artifact_pattern }}" in workflow
     assert "pattern: catalog-checkpoint-*" not in workflow
 
@@ -654,10 +659,12 @@ def test_repository_workflows_have_one_guarded_public_entrypoint() -> None:
     }
     assert set(jobs["reduce"]["needs"]) == {
         "engine_verify_sealed_plan",
+        "prepare_runtime_and_inputs",
         "verify_component_store",
         "ready_to_merge",
         "reduce_groups",
     }
+    assert "needs.prepare_runtime_and_inputs.result == 'success'" in jobs["reduce"]["if"]
 
 
 def test_dynamic_workers_receive_only_compact_typed_matrix_routes() -> None:
