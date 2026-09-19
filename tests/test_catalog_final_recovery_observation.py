@@ -180,7 +180,9 @@ def test_wave_three_is_observed_by_the_real_engine_outcome_consumer(
     )
 
     assert payload["recovery_statuses"] == ["retry", "retry", "retry", "complete"]
-    assert payload["recovery_evidence_artifact"].endswith("-3-4242-1")
+    recovery_artifact = payload["recovery_evidence_artifact"]
+    assert isinstance(recovery_artifact, str)
+    assert recovery_artifact.endswith("-3-4242-1")
     assert outcome["state"] == "TERMINAL_CANDIDATE"
 
 
@@ -216,7 +218,9 @@ def test_wave_three_limit_is_consumed_as_blocked_with_its_failure_fields(
         failure_fingerprint=failure_fingerprint,
     )
 
-    assert payload["recovery_statuses"][-1] == "blocked"
+    recovery_statuses = payload["recovery_statuses"]
+    assert isinstance(recovery_statuses, list)
+    assert recovery_statuses[-1] == "blocked"
     assert payload["failure_fingerprint"] == failure_fingerprint
     assert payload["failure_occurrence_count"] == 2
     assert payload["failure_reason_code"] == "RECOVERY_WAVE_BUDGET_EXHAUSTED"
