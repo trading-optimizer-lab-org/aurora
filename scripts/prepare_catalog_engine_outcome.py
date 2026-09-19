@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping
 import json
+import os
 from pathlib import Path
 import sys
 
 from aurora.infra.sp500_megarun.catalog_engine_outcome import (
     CatalogEngineOutcomeV1,
     select_catalog_engine_outcome,
+    verify_recovered_evaluation_evidence,
 )
 from aurora.infra.sp500_megarun.catalog_request_contract import canonical_model_bytes
 
@@ -70,6 +72,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--recovered-science-index", type=Path)
+    parser.add_argument("--sealed-plan", type=Path)
+    parser.add_argument("--recovered-failure-root", type=Path)
     return parser
 
 
@@ -180,7 +185,19 @@ def main(argv: list[str] | None = None) -> int:
         outcome_payload = {
             key: value for key, value in payload.items() if key in _INPUT_KEYS
         }
-        outcome = select_catalog_engine_outcome(**outcome_payload)
+        proof = None
+        paths = (args.recovered_science_index, args.sealed_plan, args.recovered_failure_root)
+        if any(path is not None for path in paths):
+            if (any(path is None for path in paths) or reduction_only
+                    or str(payload["engine_run_id"]) != os.environ.get("GITHUB_RUN_ID")
+                    or str(payload["engine_run_attempt"]) != os.environ.get("GITHUB_RUN_ATTEMPT")
+                    or payload["protected_commit_sha"] != os.environ.get("GITHUB_SHA")):
+                raise ValueError("CATALOG_RECOVERED_EVALUATION_CURRENT_RUN_INVALID")
+            proof = verify_recovered_evaluation_evidence(
+                science_index=args.recovered_science_index, sealed_plan=args.sealed_plan,
+                failure_root=args.recovered_failure_root, expected=outcome_payload,
+            )
+        outcome = select_catalog_engine_outcome(**outcome_payload, recovered_evaluation_evidence=proof)
         args.output.write_bytes(canonical_model_bytes(outcome) + b"\n")
         _write_github_outputs(
             args.github_output,
