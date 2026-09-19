@@ -34,13 +34,13 @@
       "path": ".github/workflows/catalog-fast-controller.yml",
       "previous_sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e",
       "reason": "retain protected admission and exact PREPARED recovery while requiring verified terminal authority before closing expired unlaunched cloud requests",
-      "replacement_sha256": "d0845e4544a4d8e640e2b47e3f15ef75c752473ad81fbd6a338925cd13c1d630"
+      "replacement_sha256": "41984f4c0a92b44666e7e3530a3f60b43d09dc6ee12ec3508ee39d7d9d2a12e2"
     },
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
-      "reason": "preserve sealed artifact identities when a checkpoint or reduction download contains one artifact, retaining strict readers and bounded recovery",
-      "replacement_sha256": "56eef8489a30b1677717b7ef0ffcbd40108fbdd4c60146fd667d35d390d6fc4f"
+        "reason": "restore authenticated predecessor reduction groups without reevaluation through a current sealed admission, retaining scientific verification and protected terminal publication",
+        "replacement_sha256": "994f55f3b0e94a20bf4dab6a575e8675dc5bef58bd6b10bec38f4a582d0cc8d8"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",
@@ -52,13 +52,13 @@
       "path": ".github/workflows/catalog-prepare-one.yml",
       "previous_sha256": "3574b886740be21a68bbb62bc6d71744b74d32cb2aaed2716843a70d6ff334f9",
       "reason": "retain sealed payload publication and verify an exact durable PREPARED artifact before rebuilding after a bundle cache miss",
-      "replacement_sha256": "4829665ffe8473a45de8543777c66e5c646f52edaa40ab9396e5bd31951b65ac"
+      "replacement_sha256": "085e4f4ddb6b051ff6f44f0924b281bc9c2d94b43cf38a3cc9e973cbc653df2a"
     },
     {
       "path": ".github/workflows/catalog-prepare.yml",
       "previous_sha256": "3e5cb02e4fabfa74ed3340bbb4272d5747a7090646505221f65ca8fff880ab90",
       "reason": "remove the manually selectable code reference and make the repository package importable during automatic preparation",
-      "replacement_sha256": "f3e5606d2c3f3ddea347dfba050e08fb431334485021612ff4d33faaafcb841a"
+      "replacement_sha256": "cd03c3f59ca0f8fec223ced6bcf1c190a4984f6fcba9c716735ec1486e0affbd"
     },
     {
       "path": ".github/workflows/catalog-recovery-wave.yml",
@@ -76,7 +76,7 @@
       "path": ".github/workflows/catalog-run-controller.yml",
       "previous_sha256": "b2dc75b1805a9ad1efa42f56f1a3f36258669cc5e1a395e59edad26eea8ecd06",
       "reason": "read the protected authority issue through the GitHub Actions variables context while retaining history",
-      "replacement_sha256": "35e87a5133ff4a299c6de22c263271e65c9539933f6d99ee23e2f6c631afd3a4"
+      "replacement_sha256": "8fe2d18256a903f71132b2d7bafefaa71a0c111b5d9516ea9789dde4a9b4e05e"
     },
     {
       "path": ".github/workflows/catalog-run-watchdog.yml",

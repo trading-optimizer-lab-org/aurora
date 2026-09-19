@@ -112,6 +112,9 @@ jobs:
       active_recipe_workers: ${{ steps.verify.outputs.active_recipe_workers }}
       final_evidence_artifact: ${{ steps.verify.outputs.final_evidence_artifact }}
       runtime_skip_matrix_counts: ${{ steps.verify.outputs.runtime_skip_matrix_counts }}
+      reduction_only: ${{ steps.recovery.outputs.reduction_only }}
+      recovery_verified: ${{ steps.recovery.outputs.recovery_verified }}
+      reduction_recovery_sha256: ${{ steps.recovery.outputs.reduction_recovery_sha256 }}
       canary_fault_enabled: ${{ steps.canary.outputs.fault_enabled }}
       canary_acceptance_campaign_key: ${{ steps.canary.outputs.campaign_key }}
       canary_acceptance_generation: ${{ steps.canary.outputs.generation }}
@@ -181,6 +184,16 @@ jobs:
               "acceptance_token": "",
           }
           artifact = os.environ["CANARY_GATE_ARTIFACT"]
+          sealed_profile = (
+              Path(os.environ["RUNNER_TEMP"])
+              / "sealed-plan"
+              / "reduction_recovery.json"
+          )
+          if sealed_profile.is_symlink() or sealed_profile.exists():
+              with output.open("a", encoding="utf-8", newline="\n") as stream:
+                  for key, value in values.items():
+                      stream.write(f"{key}={value}\n")
+              raise SystemExit(0)
           if artifact:
               if not re.fullmatch(r"catalog-fast-gate-[1-9][0-9]*", artifact):
                   raise SystemExit("CATALOG_CANARY_GATE_ARTIFACT_INVALID")
@@ -657,6 +670,133 @@ jobs:
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
               for key, value in outputs.items():
                   out.write(f"{key}={value}\n")
+          PY
+
+      - name: Verify optional sealed reduction-recovery profile
+        id: recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          def reject_duplicates(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError("duplicate JSON key")
+                  result[key] = value
+              return result
+
+          def reject_nonfinite(value):
+              raise ValueError(f"non-finite JSON constant: {value}")
+
+          def read_json(path):
+              if path.is_symlink() or not path.is_file():
+                  raise ValueError("CATALOG_REDUCTION_RECOVERY_SEAL_INVALID")
+              return json.loads(
+                  path.read_text("utf-8"),
+                  object_pairs_hook=reject_duplicates,
+                  parse_constant=reject_nonfinite,
+              )
+
+          def canonical_bytes(value):
+              return json.dumps(
+                  value,
+                  sort_keys=True,
+                  separators=(",", ":"),
+                  ensure_ascii=False,
+                  allow_nan=False,
+              ).encode("utf-8")
+
+          def canonical_sha256(value):
+              return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+          def emit(values):
+              with output.open("a", encoding="utf-8", newline="\n") as stream:
+                  for key, value in values.items():
+                      stream.write(f"{key}={value}\n")
+
+          sealed_plan = Path(os.environ["RUNNER_TEMP"]) / "sealed-plan"
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          values = {
+              "reduction_only": "false",
+              "recovery_verified": "false",
+              "reduction_recovery_sha256": "",
+          }
+          profile_path = sealed_plan / "reduction_recovery.json"
+          controller = read_json(sealed_plan / "controller_binding.json")
+          binding = controller.get("binding") if isinstance(controller, dict) else None
+          bound = binding.get("reduction_recovery_sha256") if isinstance(binding, dict) else None
+          profile_present = profile_path.exists() or profile_path.is_symlink()
+          if not profile_present and bound is None:
+              emit(values)
+              raise SystemExit(0)
+          if profile_path.is_symlink() or not profile_path.is_file() or not isinstance(bound, str):
+              raise SystemExit("CATALOG_REDUCTION_RECOVERY_SEAL_INVALID")
+          if (
+              not isinstance(controller, dict)
+              or controller.get("content_sha256") != canonical_sha256(
+                  {key: value for key, value in controller.items() if key != "content_sha256"}
+              )
+          ):
+              raise SystemExit("CATALOG_REDUCTION_RECOVERY_BINDING_INVALID")
+
+          profile = read_json(profile_path)
+          if not isinstance(profile, dict):
+              raise SystemExit("CATALOG_REDUCTION_RECOVERY_PROFILE_INVALID")
+          config = read_json(
+              Path(os.environ["GITHUB_WORKSPACE"])
+              / "config/catalog_reduction_recovery_profiles_v1.json"
+          )
+          if (
+              not isinstance(config, dict)
+              or set(config) != {"schema_version", "profiles"}
+              or config.get("schema_version") != "1"
+              or not isinstance(config.get("profiles"), list)
+              or len(config["profiles"]) != 1
+              or not isinstance(config["profiles"][0], dict)
+              or canonical_bytes(profile) != canonical_bytes(config["profiles"][0])
+          ):
+              raise SystemExit("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
+          profile_sha256 = canonical_sha256(profile)
+          if bound != profile_sha256:
+              raise SystemExit("CATALOG_REDUCTION_RECOVERY_BINDING_INVALID")
+
+          receipt = read_json(sealed_plan / "execution_plan_receipt.json")
+          manifest = receipt.get("content_manifest") if isinstance(receipt, dict) else None
+          if (
+              not isinstance(receipt, dict)
+              or receipt.get("receipt_sha256") != canonical_sha256(
+                  {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+              )
+              or not isinstance(manifest, list)
+              or receipt.get("content_manifest_sha256") != canonical_sha256(manifest)
+          ):
+              raise SystemExit("CATALOG_REDUCTION_RECOVERY_MANIFEST_INVALID")
+          profile_rows = [
+              row for row in manifest
+              if isinstance(row, dict) and row.get("path") == profile_path.name
+          ]
+          if len(profile_rows) != 1:
+              raise SystemExit("CATALOG_REDUCTION_RECOVERY_MANIFEST_INVALID")
+          row = profile_rows[0]
+          if (
+              set(row) != {"path", "sha256", "size_bytes"}
+              or type(row["size_bytes"]) is not int
+              or row["size_bytes"] != profile_path.stat().st_size
+              or row["sha256"] != hashlib.sha256(profile_path.read_bytes()).hexdigest()
+          ):
+              raise SystemExit("CATALOG_REDUCTION_RECOVERY_MANIFEST_INVALID")
+          values.update(
+              reduction_only="true",
+              recovery_verified="true",
+              reduction_recovery_sha256=profile_sha256,
+          )
+          emit(values)
           PY
 
       - name: Publish bounded plan-verification receipt
@@ -1311,7 +1451,9 @@ jobs:
 
   publish_sealed_payload_artifacts:
     needs: [engine_verify_sealed_plan]
-    if: ${{ needs.engine_verify_sealed_plan.outputs.payload_artifact_count != '0' }}
+    if: >-
+      ${{ needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
+      needs.engine_verify_sealed_plan.outputs.payload_artifact_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 8
@@ -1343,7 +1485,9 @@ jobs:
 
   build_components_a:
     needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs, publish_sealed_payload_artifacts]
-    if: ${{ needs.engine_verify_sealed_plan.outputs.component_matrix_a_count != '0' }}
+    if: >-
+      ${{ needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
+      needs.engine_verify_sealed_plan.outputs.component_matrix_a_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -1367,7 +1511,9 @@ jobs:
 
   build_components_b:
     needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs, publish_sealed_payload_artifacts]
-    if: ${{ needs.engine_verify_sealed_plan.outputs.component_matrix_b_count != '0' }}
+    if: >-
+      ${{ needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
+      needs.engine_verify_sealed_plan.outputs.component_matrix_b_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -1391,7 +1537,9 @@ jobs:
 
   materialize_cached_components_a:
     needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs, publish_sealed_payload_artifacts]
-    if: ${{ needs.engine_verify_sealed_plan.outputs.cached_component_matrix_a_count != '0' }}
+    if: >-
+      ${{ needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
+      needs.engine_verify_sealed_plan.outputs.cached_component_matrix_a_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -1415,7 +1563,9 @@ jobs:
 
   materialize_cached_components_b:
     needs: [engine_verify_sealed_plan, prepare_runtime_and_inputs, publish_sealed_payload_artifacts]
-    if: ${{ needs.engine_verify_sealed_plan.outputs.cached_component_matrix_b_count != '0' }}
+    if: >-
+      ${{ needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
+      needs.engine_verify_sealed_plan.outputs.cached_component_matrix_b_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 120
@@ -1448,6 +1598,7 @@ jobs:
     if: >-
       ${{ !cancelled() && always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
       needs.prepare_runtime_and_inputs.result == 'success' &&
       (needs.build_components_a.result == 'success' || needs.build_components_a.result == 'skipped') &&
       (needs.build_components_b.result == 'success' || needs.build_components_b.result == 'skipped') &&
@@ -1724,6 +1875,7 @@ jobs:
     if: >-
       ${{ !cancelled() && always() && inputs.execution_mode == 'run' &&
       needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
       needs.verify_component_store.result == 'success' &&
       needs.engine_verify_sealed_plan.outputs.recipe_matrix_a_count != '0' }}
     strategy:
@@ -1759,6 +1911,7 @@ jobs:
     if: >-
       ${{ !cancelled() && always() && inputs.execution_mode == 'run' &&
       needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
       needs.verify_component_store.result == 'success' &&
       needs.engine_verify_sealed_plan.outputs.recipe_matrix_b_count != '0' }}
     strategy:
@@ -1794,6 +1947,7 @@ jobs:
     if: >-
       ${{ !cancelled() && always() && inputs.execution_mode == 'run' &&
       needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
       needs.verify_component_store.result == 'success' &&
       needs.engine_verify_sealed_plan.outputs.recipe_matrix_c_count != '0' }}
     strategy:
@@ -1834,6 +1988,7 @@ jobs:
     if: >-
       ${{ !cancelled() && inputs.execution_mode == 'run' && always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
       needs.verify_component_store.result == 'success' &&
       needs.evaluate_a.result != 'skipped' &&
       (needs.evaluate_b.result != 'skipped' ||
@@ -2050,8 +2205,12 @@ jobs:
           compression-level: 0
 
   recovery_wave_1:
-    needs: reconcile_wave_0
-    if: ${{ !cancelled() && inputs.execution_mode == 'run' && always() && (needs.reconcile_wave_0.outputs.status == 'retry' || needs.reconcile_wave_0.outputs.status == 'replan') }}
+    needs: [engine_verify_sealed_plan, reconcile_wave_0]
+    if: >-
+      ${{ !cancelled() && inputs.execution_mode == 'run' && always() &&
+      needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
+      (needs.reconcile_wave_0.outputs.status == 'retry' ||
+      needs.reconcile_wave_0.outputs.status == 'replan') }}
     permissions: {actions: read, contents: read}
     uses: ./.github/workflows/catalog-recovery-wave.yml
     with:
@@ -2070,8 +2229,12 @@ jobs:
       current_wave: 1
 
   recovery_wave_2:
-    needs: recovery_wave_1
-    if: ${{ !cancelled() && inputs.execution_mode == 'run' && always() && (needs.recovery_wave_1.outputs.status == 'retry' || needs.recovery_wave_1.outputs.status == 'replan') }}
+    needs: [engine_verify_sealed_plan, recovery_wave_1]
+    if: >-
+      ${{ !cancelled() && inputs.execution_mode == 'run' && always() &&
+      needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
+      (needs.recovery_wave_1.outputs.status == 'retry' ||
+      needs.recovery_wave_1.outputs.status == 'replan') }}
     permissions: {actions: read, contents: read}
     uses: ./.github/workflows/catalog-recovery-wave.yml
     with:
@@ -2090,8 +2253,12 @@ jobs:
       current_wave: 2
 
   recovery_wave_3:
-    needs: recovery_wave_2
-    if: ${{ !cancelled() && inputs.execution_mode == 'run' && always() && (needs.recovery_wave_2.outputs.status == 'retry' || needs.recovery_wave_2.outputs.status == 'replan') }}
+    needs: [engine_verify_sealed_plan, recovery_wave_2]
+    if: >-
+      ${{ !cancelled() && inputs.execution_mode == 'run' && always() &&
+      needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
+      (needs.recovery_wave_2.outputs.status == 'retry' ||
+      needs.recovery_wave_2.outputs.status == 'replan') }}
     permissions: {actions: read, contents: read}
     uses: ./.github/workflows/catalog-recovery-wave.yml
     with:
@@ -2111,12 +2278,14 @@ jobs:
 
   ready_to_merge:
     needs:
+      - engine_verify_sealed_plan
       - reconcile_wave_0
       - recovery_wave_1
       - recovery_wave_2
       - recovery_wave_3
     if: >-
       ${{ !cancelled() && inputs.execution_mode == 'run' && always() &&
+      needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
       (needs.recovery_wave_1.outputs.status == 'complete' ||
       needs.recovery_wave_2.outputs.status == 'complete' ||
       needs.recovery_wave_3.outputs.status == 'complete') }}
@@ -2138,6 +2307,7 @@ jobs:
     if: >-
       ${{ !cancelled() && inputs.execution_mode == 'run' && always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
       needs.engine_verify_sealed_plan.outputs.reduction_matrix_count != '0' &&
       needs.ready_to_merge.result == 'success' }}
     strategy:
@@ -2283,19 +2453,30 @@ jobs:
         run: test -n "$ARTIFACT_ID" && test -n "$ARTIFACT_DIGEST"
 
   reduce:
+    permissions: {actions: read, contents: read, issues: read}
     needs:
       - engine_verify_sealed_plan
+      - prepare_runtime_and_inputs
       - verify_component_store
       - ready_to_merge
       - reduce_groups
     if: >-
       ${{ !cancelled() && inputs.execution_mode == 'run' && always() &&
       needs.engine_verify_sealed_plan.result == 'success' &&
+      needs.prepare_runtime_and_inputs.result == 'success' &&
+      (
+      (needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
       needs.verify_component_store.result == 'success' &&
       needs.ready_to_merge.result == 'success' &&
       (needs.reduce_groups.result == 'success' ||
       (needs.engine_verify_sealed_plan.outputs.reduction_matrix_count == '0' &&
-      needs.reduce_groups.result == 'skipped')) }}
+      needs.reduce_groups.result == 'skipped'))) ||
+      (needs.engine_verify_sealed_plan.outputs.reduction_only == 'true' &&
+      needs.engine_verify_sealed_plan.outputs.recovery_verified == 'true' &&
+      needs.verify_component_store.result == 'skipped' &&
+      needs.ready_to_merge.result == 'skipped' &&
+      needs.reduce_groups.result == 'skipped')
+      ) }}
     runs-on: ubuntu-24.04
     environment: catalog-production
     timeout-minutes: 60
@@ -2331,9 +2512,22 @@ jobs:
           expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
+      - name: Restore sealed reduction-only source
+        if: ${{ needs.engine_verify_sealed_plan.outputs.reduction_only == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: >-
+          python scripts/restore_catalog_reduction_recovery.py
+          --sealed-plan "$RUNNER_TEMP/sealed-plan"
+          --output-dir "$RUNNER_TEMP/reduction-recovery"
+
       - name: Select safe reduction download destination
         id: reduction_download_layout
-        if: ${{ needs.engine_verify_sealed_plan.outputs.pending_recipe_count != '0' }}
+        if: >-
+          ${{ needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
+          needs.engine_verify_sealed_plan.outputs.pending_recipe_count != '0' }}
         shell: bash
         env:
           REDUCTION_PLAN: ${{ runner.temp }}/sealed-plan/reduction_plan.json
@@ -2371,7 +2565,9 @@ jobs:
           PY
 
       - name: Download only bounded reduction groups
-        if: ${{ needs.engine_verify_sealed_plan.outputs.pending_recipe_count != '0' }}
+        if: >-
+          ${{ needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
+          needs.engine_verify_sealed_plan.outputs.pending_recipe_count != '0' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: ${{ needs.engine_verify_sealed_plan.outputs.reduction_artifact_pattern }}
@@ -2380,15 +2576,26 @@ jobs:
 
       - name: Merge the sealed bounded reduction groups
         shell: bash
-        run: >-
-          python scripts/reduce_sp500_optimized_catalog_run.py
-          --input-root "$RUNNER_TEMP/reduction-groups"
-          --resolved-contract "$RUNNER_TEMP/sealed-plan/resolved_contract.json"
-          --resume-work-manifest "$RUNNER_TEMP/sealed-plan/resume_work_manifest.json"
-          --run-plan "$RUNNER_TEMP/sealed-plan/run_plan.json"
-          --admission-token "${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}"
-          --reduction-plan "$RUNNER_TEMP/sealed-plan/reduction_plan.json"
-          --output-dir outputs/final
+        run: |
+          set -euo pipefail
+          input_root="$RUNNER_TEMP/reduction-groups"
+          recovery_args=()
+          if [[ "${{ needs.engine_verify_sealed_plan.outputs.reduction_only }}" == "true" ]]; then
+            input_root="$RUNNER_TEMP/reduction-recovery/groups"
+            recovery_args=(
+              --recovery-source-root "$RUNNER_TEMP/reduction-recovery"
+            )
+          fi
+          python scripts/reduce_sp500_optimized_catalog_run.py \
+            --input-root "$input_root" \
+            --resolved-contract "$RUNNER_TEMP/sealed-plan/resolved_contract.json" \
+            --resume-work-manifest "$RUNNER_TEMP/sealed-plan/resume_work_manifest.json" \
+            --run-plan "$RUNNER_TEMP/sealed-plan/run_plan.json" \
+            --admission-token "${{ needs.engine_verify_sealed_plan.outputs.admission_token_sha256 }}" \
+            --reduction-plan "$RUNNER_TEMP/sealed-plan/reduction_plan.json" \
+            --sealed-plan "$RUNNER_TEMP/sealed-plan" \
+            "${recovery_args[@]}" \
+            --output-dir outputs/final
 
       - name: Upload bounded final results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -2511,6 +2718,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFIED_MATRIX_COUNTS: ${{ needs.engine_verify_sealed_plan.outputs.runtime_skip_matrix_counts }}
+          VERIFIED_RECOVERY: ${{ needs.engine_verify_sealed_plan.outputs.recovery_verified }}
           VERIFIED_RECONCILE_STATUS: ${{ needs.reconcile_wave_0.outputs.status }}
           VERIFIED_WAVE_1_STATUS: ${{ needs.recovery_wave_1.outputs.status }}
           VERIFIED_WAVE_1_MATRIX_A: ${{ needs.recovery_wave_1.outputs.has_matrix_a }}
@@ -2551,6 +2759,7 @@ jobs:
           skip_evidence = {
               "binding": binding,
               "matrix_counts": json.loads(os.environ["VERIFIED_MATRIX_COUNTS"]),
+              "recovery_verified": os.environ["VERIFIED_RECOVERY"] == "true",
               "reconcile_status": os.environ["VERIFIED_RECONCILE_STATUS"],
               "recovery": [{
                   "status": os.environ[f"VERIFIED_WAVE_{wave}_STATUS"],
@@ -2599,6 +2808,7 @@ jobs:
     needs:
       - engine_verify_sealed_plan
       - prepare_runtime_and_inputs
+      - publish_sealed_payload_artifacts
       - build_components_a
       - build_components_b
       - materialize_cached_components_a
@@ -2738,6 +2948,7 @@ jobs:
         env:
           RESULT_ENGINE_VERIFY: ${{ needs.engine_verify_sealed_plan.result }}
           RESULT_PREPARE: ${{ needs.prepare_runtime_and_inputs.result }}
+          RESULT_PUBLISH: ${{ needs.publish_sealed_payload_artifacts.result }}
           RESULT_BUILD_A: ${{ needs.build_components_a.result }}
           RESULT_BUILD_B: ${{ needs.build_components_b.result }}
           RESULT_CACHED_A: ${{ needs.materialize_cached_components_a.result }}
@@ -2746,11 +2957,17 @@ jobs:
           RESULT_EVALUATE_A: ${{ needs.evaluate_a.result }}
           RESULT_EVALUATE_B: ${{ needs.evaluate_b.result }}
           RESULT_EVALUATE_C: ${{ needs.evaluate_c.result }}
+          RESULT_RECONCILE: ${{ needs.reconcile_wave_0.result }}
+          RESULT_RECOVERY_1: ${{ needs.recovery_wave_1.result }}
+          RESULT_RECOVERY_2: ${{ needs.recovery_wave_2.result }}
+          RESULT_RECOVERY_3: ${{ needs.recovery_wave_3.result }}
           RESULT_READY: ${{ needs.ready_to_merge.result }}
           RESULT_REDUCE_GROUPS: ${{ needs.reduce_groups.result }}
           RESULT_REDUCE: ${{ needs.reduce.result }}
           RESULT_SCIENCE: ${{ needs.verify_terminal_science.result }}
           RESULT_AUDIT: ${{ needs.audit_runtime.result }}
+          VERIFIED_REDUCTION_ONLY: ${{ needs.engine_verify_sealed_plan.outputs.reduction_only }}
+          VERIFIED_RECOVERY: ${{ needs.engine_verify_sealed_plan.outputs.recovery_verified }}
           RECOVERY_0: ${{ needs.reconcile_wave_0.outputs.status }}
           RECOVERY_1: ${{ needs.recovery_wave_1.outputs.status }}
           RECOVERY_2: ${{ needs.recovery_wave_2.outputs.status }}
@@ -2779,6 +2996,7 @@ jobs:
           stages = {
               "engine_verify_sealed_plan": os.environ["RESULT_ENGINE_VERIFY"],
               "prepare_runtime_and_inputs": os.environ["RESULT_PREPARE"],
+              "publish_sealed_payload_artifacts": os.environ["RESULT_PUBLISH"],
               "build_components_a": os.environ["RESULT_BUILD_A"],
               "build_components_b": os.environ["RESULT_BUILD_B"],
               "materialize_cached_components_a": os.environ["RESULT_CACHED_A"],
@@ -2787,6 +3005,10 @@ jobs:
               "evaluate_a": os.environ["RESULT_EVALUATE_A"],
               "evaluate_b": os.environ["RESULT_EVALUATE_B"],
               "evaluate_c": os.environ["RESULT_EVALUATE_C"],
+              "reconcile_wave_0": os.environ["RESULT_RECONCILE"],
+              "recovery_wave_1": os.environ["RESULT_RECOVERY_1"],
+              "recovery_wave_2": os.environ["RESULT_RECOVERY_2"],
+              "recovery_wave_3": os.environ["RESULT_RECOVERY_3"],
               "ready_to_merge": os.environ["RESULT_READY"],
               "reduce_groups": os.environ["RESULT_REDUCE_GROUPS"],
               "reduce": os.environ["RESULT_REDUCE"],
@@ -2842,6 +3064,8 @@ jobs:
               "engine_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
               "stage_results": stages,
               "recovery_statuses": recovery,
+              "reduction_only": os.environ["VERIFIED_REDUCTION_ONLY"] == "true",
+              "recovery_verified": os.environ["VERIFIED_RECOVERY"] == "true",
               "final_evidence_artifact": (
                   os.environ["FINAL_EVIDENCE_ARTIFACT"]
                   if stages["reduce"] == "success"

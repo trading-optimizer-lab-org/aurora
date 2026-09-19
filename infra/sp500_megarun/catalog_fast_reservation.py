@@ -23,6 +23,12 @@ _MEMBERS = frozenset({"catalog-fast-request-context.json", "catalog-fast-decisio
 _MAX_MEMBER_BYTES = 1024 * 1024
 
 
+def _is_expected_workflow_path(path: object, expected: str) -> bool:
+    """Compare one authenticated run-path identity without coercion."""
+
+    return type(path) is str and type(expected) is str and path == expected
+
+
 def _terminal_step_end_exclusive(value: datetime) -> datetime:
     """Use the full API second only when the step timestamp has no fraction."""
 
@@ -160,6 +166,83 @@ def bind_owner_terminal_receipt(
     )
 
 
+def read_owner_artifact_archive(
+    *, client: _OwnerReader, owner: FastGateOwnerEvidence,
+    artifact_name: str, publisher_job_name: str, publish_step_name: str,
+    download_archive: Callable[[int], bytes],
+) -> tuple[bytes, Mapping[str, Any]]:
+    """Read one historical artifact from an already authenticated gate owner.
+
+    The caller must derive names from protected policy or a verified sealed
+    plan, and separately authenticate the predecessor terminal. This proves
+    publication and transport integrity, not scientific compatibility.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", artifact_name):
+        raise ValueError("CATALOG_RECOVERY_ARTIFACT_NAME_INVALID")
+    inventory = client.stable_paginated(
+        f"/repos/{client.repository}/actions/runs/{owner.run_id}/artifacts?name={artifact_name}",
+        root="artifacts",
+    )
+    if inventory.stable is not True or inventory.collection.complete is not True:
+        raise ValueError("CATALOG_RECOVERY_ARTIFACT_INVENTORY_INCOMPLETE")
+    if len(inventory.collection.rows) != 1:
+        raise ValueError("CATALOG_RECOVERY_ARTIFACT_AMBIGUOUS")
+    artifact = inventory.collection.rows[0]
+    maximum_bytes = 64 * 1024 * 1024
+    try:
+        run = owner.run
+        source = artifact["workflow_run"]
+        if (
+            client.repository != "trading-optimizer-lab-org/aurora"
+            or owner.unlaunched_terminal or not owner.decision.launch_required
+            or run["id"] != owner.run_id or run["status"] != "completed"
+            or run["head_branch"] != "main"
+            or run["repository"]["id"] != 1232647748
+            or artifact["name"] != artifact_name or artifact["expired"] is not False
+            or type(artifact["id"]) is not int or artifact["id"] < 1
+            or source["id"] != owner.run_id or source["head_sha"] != run["head_sha"]
+            or source["head_branch"] != "main"
+            or source["repository_id"] != 1232647748
+            or source["head_repository_id"] != 1232647748
+            or type(artifact["size_in_bytes"]) is not int
+            or not 0 < artifact["size_in_bytes"] <= maximum_bytes
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact["digest"])
+        ):
+            raise ValueError
+        publishers = [job for job in owner.jobs if job.get("name") == publisher_job_name]
+        if len(publishers) != 1:
+            raise ValueError
+        job = publishers[0]
+        if (
+            job["run_id"] != owner.run_id or job["run_attempt"] != run["run_attempt"]
+            or job["head_sha"] != run["head_sha"] or job["status"] != "completed"
+            or job["conclusion"] != "success"
+        ):
+            raise ValueError
+        steps = [step for step in job["steps"] if step.get("name") == publish_step_name]
+        if len(steps) != 1:
+            raise ValueError
+        step = steps[0]
+        if step["status"] != "completed" or step["conclusion"] != "success":
+            raise ValueError
+        start, created, end = [datetime.fromisoformat(value.replace("Z", "+00:00"))
+                               for value in (step["started_at"], artifact["created_at"], step["completed_at"])]
+        if any(value.utcoffset() is None for value in (start, created, end)) or start > end:
+            raise ValueError
+        if not (start <= created <= end if end.microsecond else start <= created < end + timedelta(seconds=1)):
+            raise ValueError
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("CATALOG_RECOVERY_ARTIFACT_PROVENANCE_INVALID") from exc
+    raw = download_archive(artifact["id"])
+    if (
+        not raw or len(raw) > maximum_bytes
+        or len(raw) != artifact["size_in_bytes"]
+        or hashlib.sha256(raw).hexdigest() != artifact["digest"][7:]
+    ):
+        raise ValueError("CATALOG_RECOVERY_ARTIFACT_DIGEST_INVALID")
+    return raw, artifact
+
+
 def load_owner_terminal_receipt(
     *, client: _OwnerReader, owner: FastGateOwnerEvidence, issue_number: int,
     download_archive: Callable[[int], bytes],
@@ -199,7 +282,9 @@ def load_owner_terminal_receipt(
         ):
             raise ValueError
         finalizer_name = (
-            "finalize" if run["path"] == ".github/workflows/catalog-fast-controller.yml"
+            "finalize" if _is_expected_workflow_path(
+                run["path"], ".github/workflows/catalog-fast-controller.yml"
+            )
             else f"catalog-request-{issue_number} / finalize"
         )
         finalizers = [job for job in owner.jobs if job.get("name") == finalizer_name]
@@ -335,7 +420,9 @@ def load_fast_gate_owner(
                     or decision.reason_code == "CATALOG_FAST_EXISTING_RUN"
                     or decision.reason_code.startswith("CATALOG_REQUEST_ALREADY_")):
                 raise ValueError("CATALOG_FAST_OWNER_ORIGINAL_EVIDENCE_MISSING")
-            prefix_name = "" if run["path"] == ".github/workflows/catalog-fast-controller.yml" else f"catalog-request-{issue_number} / "
+            prefix_name = "" if _is_expected_workflow_path(
+                run["path"], ".github/workflows/catalog-fast-controller.yml"
+            ) else f"catalog-request-{issue_number} / "
             for job in jobs.collection.rows:
                 name = str(job.get("name", ""))
                 if name == prefix_name + "gate":
@@ -397,10 +484,14 @@ def _verify_fast_gate_publication_metadata(
         attempt = run["run_attempt"]
         repository = run["repository"]
         source = artifact["workflow_run"]
-        if run["path"] == ".github/workflows/catalog-fast-controller.yml" and run["event"] == "issues":
+        if _is_expected_workflow_path(
+            run["path"], ".github/workflows/catalog-fast-controller.yml"
+        ) and run["event"] == "issues":
             gate_name = "gate"
         elif (
-            run["path"] == ".github/workflows/catalog-request-reconciler.yml"
+            _is_expected_workflow_path(
+                run["path"], ".github/workflows/catalog-request-reconciler.yml"
+            )
             and run["event"] in {"schedule", "workflow_dispatch"}
         ):
             references = run.get("referenced_workflows")

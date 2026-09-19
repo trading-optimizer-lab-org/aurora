@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import shutil
+from collections.abc import Mapping
 from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
@@ -218,6 +219,7 @@ def materialize_prepared_catalog_plan(
     request_sha256: str,
     decision_sha256: str,
     output_dir: Path,
+    reduction_recovery: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Copy one verified template and bind only its small controller envelope."""
 
@@ -263,6 +265,16 @@ def materialize_prepared_catalog_plan(
         "decision_sha256": decision_sha256,
         "prepared_receipt_sha256": receipt.receipt_sha256,
     }
+    recovery_raw = None
+    if reduction_recovery is not None:
+        # Admission owns authorization and source selection. Seal its exact
+        # protected profile without changing historical or scientific inputs.
+        recovery_payload = dict(reduction_recovery)
+        controller["binding"]["reduction_recovery_sha256"] = _canonical_sha256(recovery_payload)
+        recovery_raw = (json.dumps(
+            recovery_payload, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ) + "\n").encode("utf-8")
+        (target / "reduction_recovery.json").write_bytes(recovery_raw)
     controller_identity = {
         key: value for key, value in controller.items() if key != "content_sha256"
     }
@@ -291,6 +303,13 @@ def materialize_prepared_catalog_plan(
             "size_bytes": len(controller_raw),
         }
     )
+    if recovery_raw is not None:
+        plan_receipt["content_manifest"].append({
+            "path": "reduction_recovery.json",
+            "sha256": hashlib.sha256(recovery_raw).hexdigest(),
+            "size_bytes": len(recovery_raw),
+        })
+        plan_receipt["content_manifest"].sort(key=lambda row: row["path"])
     plan_receipt.update(
         {
             "request_sha256": request_sha256,

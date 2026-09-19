@@ -52,6 +52,7 @@ def _set_stage_environment(
     result_names = {
         "engine_verify_sealed_plan": "RESULT_ENGINE_VERIFY",
         "prepare_runtime_and_inputs": "RESULT_PREPARE",
+        "publish_sealed_payload_artifacts": "RESULT_PUBLISH",
         "build_components_a": "RESULT_BUILD_A",
         "build_components_b": "RESULT_BUILD_B",
         "materialize_cached_components_a": "RESULT_CACHED_A",
@@ -60,6 +61,10 @@ def _set_stage_environment(
         "evaluate_a": "RESULT_EVALUATE_A",
         "evaluate_b": "RESULT_EVALUATE_B",
         "evaluate_c": "RESULT_EVALUATE_C",
+        "reconcile_wave_0": "RESULT_RECONCILE",
+        "recovery_wave_1": "RESULT_RECOVERY_1",
+        "recovery_wave_2": "RESULT_RECOVERY_2",
+        "recovery_wave_3": "RESULT_RECOVERY_3",
         "ready_to_merge": "RESULT_READY",
         "reduce_groups": "RESULT_REDUCE_GROUPS",
         "reduce": "RESULT_REDUCE",
@@ -83,6 +88,8 @@ def _run_workflow_consumer(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GITHUB_RUN_ID", "4242")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("VERIFIED_REDUCTION_ONLY", "false")
+    monkeypatch.setenv("VERIFIED_RECOVERY", "false")
     _set_stage_environment(monkeypatch, stages)
     for wave in range(4):
         status = recovery_statuses[wave] if wave < len(recovery_statuses) else ""
@@ -158,6 +165,11 @@ def test_wave_three_is_observed_by_the_real_engine_outcome_consumer(
     stages = {
         "engine_verify_sealed_plan": "success",
         "prepare_runtime_and_inputs": "success",
+        "publish_sealed_payload_artifacts": "success",
+        "reconcile_wave_0": "success",
+        "recovery_wave_1": "success",
+        "recovery_wave_2": "success",
+        "recovery_wave_3": "success",
         "build_components_a": "success",
         "build_components_b": "success",
         "materialize_cached_components_a": "skipped",
@@ -193,6 +205,11 @@ def test_wave_three_limit_is_consumed_as_blocked_with_its_failure_fields(
     stages = {
         "engine_verify_sealed_plan": "success",
         "prepare_runtime_and_inputs": "success",
+        "publish_sealed_payload_artifacts": "success",
+        "reconcile_wave_0": "success",
+        "recovery_wave_1": "success",
+        "recovery_wave_2": "success",
+        "recovery_wave_3": "success",
         "build_components_a": "success",
         "build_components_b": "success",
         "materialize_cached_components_a": "skipped",

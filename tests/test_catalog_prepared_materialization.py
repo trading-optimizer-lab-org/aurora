@@ -83,6 +83,31 @@ def test_materialization_binds_prepared_identity_before_copying(tmp_path, mismat
                       for p in template.rglob("*") if p.is_file()}
 
 
+def test_materialization_seals_recovery_provenance_without_rewriting_template(tmp_path):
+    bundle, template, _plan, identity, _prepared_receipt = prepared_transport_fixture(tmp_path)
+    original = {p.relative_to(template).as_posix(): sha256(p.read_bytes()).hexdigest()
+                for p in template.rglob("*") if p.is_file()}
+    target = tmp_path / "sealed-recovery"
+    profile = {"schema_version": "1", "source_request_sha256": "3" * 64}
+    result = materialize_prepared_catalog_plan(
+        bundle_dir=bundle, expected_identity=identity,
+        request_sha256="1" * 64, decision_sha256="2" * 64, output_dir=target,
+        reduction_recovery=profile,
+    )
+    assert json.loads((target / "reduction_recovery.json").read_text("utf-8")) == profile
+    binding = json.loads((target / "controller_binding.json").read_text("utf-8"))["binding"]
+    assert binding["reduction_recovery_sha256"] == canonical_sha256(profile)
+    assert result["request_sha256"] == "1" * 64
+    assert any(row["path"] == "reduction_recovery.json" for row in result["content_manifest"])
+    assert original == {p.relative_to(template).as_posix(): sha256(p.read_bytes()).hexdigest()
+                        for p in template.rglob("*") if p.is_file()}
+    assert (target / "run_plan.json").read_bytes() == (template / "run_plan.json").read_bytes()
+    verify_sealed_global_reuse_execution_plan(target)
+    (target / "reduction_recovery.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="CATALOG_SEALED_PLAN_CONTENT_INVALID"):
+        verify_sealed_global_reuse_execution_plan(target)
+
+
 def test_materialized_plan_exposes_frozen_worker_and_recovery_inputs(tmp_path):
     """The real template must carry the root inputs consumed before payload download."""
     bundle, template, plan, identity, _prepared_receipt = prepared_transport_fixture(tmp_path)

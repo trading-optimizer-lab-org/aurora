@@ -9,11 +9,12 @@ import csv
 import json
 import math
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from aurora.infra.github_performance.contracts import canonical_sha256
+from aurora.infra.github_performance.contracts import canonical_sha256, deep_thaw_json
 from aurora.infra.github_performance.shard_planner import sha256_file
 from aurora.infra.sp500_megarun.catalog_admission import verify_catalog_plan_token
 from aurora.infra.sp500_megarun.catalog_resources import aggregate_worker_evaluation
@@ -27,6 +28,10 @@ from aurora.infra.sp500_megarun.catalog_resume import (
     load_resume_index,
     scientific_result_sha256,
 )
+
+if TYPE_CHECKING:
+    from aurora.infra.sp500_megarun.catalog_reduction_recovery_profile import ReductionRecoveryProfileV1
+    from aurora.infra.sp500_megarun.catalog_reduction_recovery_source import ValidatedReductionRecoverySource
 
 
 _REDUCTION_RESOURCE_FIELDS = {
@@ -97,8 +102,71 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-plan", type=Path, required=True)
     parser.add_argument("--admission-token", required=True)
     parser.add_argument("--reduction-plan", type=Path, required=True)
+    parser.add_argument("--sealed-plan", type=Path)
+    parser.add_argument("--recovery-source-root", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser
+
+
+def _load_reduction_only_source(
+    args: argparse.Namespace,
+    *,
+    work_manifest: CatalogResumeWorkManifestV1,
+    science_sha256: str,
+    catalog_manifest_sha256: str,
+    expected_ids: list[str],
+) -> tuple[ReductionRecoveryProfileV1, ValidatedReductionRecoverySource]:
+    # Local import avoids a cycle: the source verifier reuses the ordinary
+    # group validator from this reducer, without authorizing a new execution.
+    from aurora.infra.sp500_megarun.catalog_reduction_recovery_profile import read_sealed_reduction_recovery_profile
+    from aurora.infra.sp500_megarun.catalog_reduction_recovery_source import verify_reduction_recovery_source
+    from aurora.infra.sp500_megarun.catalog_sealed_plan import verify_sealed_global_reuse_execution_plan
+
+    if args.sealed_plan is None or args.resume_root:
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_INPUT_INVALID")
+    sealed = args.sealed_plan.resolve(strict=True)
+    source_root = args.recovery_source_root.resolve(strict=True)
+    for argument, member in (
+        (args.run_plan, "run_plan.json"), (args.resolved_contract, "resolved_contract.json"),
+        (args.resume_work_manifest, "resume_work_manifest.json"), (args.reduction_plan, "reduction_plan.json"),
+    ):
+        if argument.is_symlink() or argument.resolve(strict=True) != sealed / member:
+            raise ValueError("CATALOG_REDUCTION_RECOVERY_INPUT_INVALID")
+    if args.input_root.resolve(strict=True) != source_root / "groups":
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_INPUT_INVALID")
+    current = verify_sealed_global_reuse_execution_plan(sealed)
+    profile = read_sealed_reduction_recovery_profile(Path(__file__).resolve().parents[1], sealed)
+    if (
+        profile is None or current.get("admission_token_sha256") != args.admission_token
+        or profile.science_sha256 != science_sha256
+        or profile.catalog_manifest_sha256 != catalog_manifest_sha256
+        or set(profile.strategy_ids) != set(expected_ids)
+        or len(profile.strategy_ids) != len(expected_ids)
+        or set(work_manifest.all_strategy_ids) != set(expected_ids)
+    ):
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_CURRENT_BINDING_INVALID")
+    source = verify_reduction_recovery_source(
+        source_root / "sealed-plan", source_root / "groups", profile.source_plan_bindings,
+        science_sha256, catalog_manifest_sha256, profile.strategy_ids,
+    )
+    source_contract = RunOptimizationContractV1.model_validate_json(
+        (source_root / "sealed-plan/resolved_contract.json").read_text("utf-8")
+    )
+    current_contract = RunOptimizationContractV1.model_validate_json(
+        (sealed / "resolved_contract.json").read_text("utf-8")
+    )
+    # The protected predecessor profile and current admission authorize this
+    # control-plane transition. Protocol hashes also cover changed workflows;
+    # all scientific and execution contract fields must remain exactly equal.
+    if source_contract.model_dump(exclude={"infrastructure_sha256"}) != current_contract.model_dump(exclude={"infrastructure_sha256"}):
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_CONTRACT_INCOMPATIBLE")
+    if (
+        source.plan_receipt_sha256 != profile.source_plan_receipt_sha256
+        or source.group_receipt_sha256s != tuple(item.receipt_sha256 for item in profile.artifacts if item.role == "group")
+        or source.work_manifest_sha256 != work_manifest.manifest_sha256
+    ):
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_SOURCE_BINDING_INVALID")
+    return profile, source
 
 
 def _verify_group_reduction_inputs(
@@ -413,39 +481,66 @@ def main() -> int:
     expected_ids = [str(row["strategy_id"]) for row in expected_rows]
     catalog_by_id = {str(row["strategy_id"]): row for row in expected_rows}
     science_identity_sha256 = canonical_sha256(resolved.science)
-    worker_receipts, root_node_descriptor_sha256 = (
-        _verify_group_reduction_inputs(
-            args.input_root,
-            reduction_plan_path=args.reduction_plan,
-            pending_recipe_count=plan.pending_recipe_count,
-            expected_science_identity_sha256=science_identity_sha256,
-            expected_catalog_manifest_sha256=(
-                resolved.science.catalog_manifest_sha256
-            ),
-            expected_work_manifest_sha256=work_manifest.manifest_sha256,
+    recovery_source = None
+    if args.recovery_source_root is not None:
+        profile, historical = _load_reduction_only_source(
+            args, work_manifest=work_manifest, science_sha256=science_identity_sha256,
+            catalog_manifest_sha256=resolved.science.catalog_manifest_sha256,
+            expected_ids=expected_ids,
         )
-    )
-    resume_index = load_resume_index(
-        tuple(args.resume_root),
-        expected_science_identity_sha256=science_identity_sha256,
-        expected_catalog_manifest_sha256=resolved.science.catalog_manifest_sha256,
-    )
-    if set(resume_index.strategy_ids) != set(work_manifest.cached_strategy_ids):
-        raise SystemExit("OPTIMIZED_RESUME_RESULT_SET_INVALID")
-    if plan.pending_recipe_count:
-        current_index = load_resume_index(
-            (args.input_root,),
-            expected_science_identity_sha256=science_identity_sha256,
-            expected_catalog_manifest_sha256=resolved.science.catalog_manifest_sha256,
-        )
+        resume_index = historical.resume_index
+        current_index = load_resume_index((), expected_science_identity_sha256=science_identity_sha256,
+                                         expected_catalog_manifest_sha256=resolved.science.catalog_manifest_sha256)
+        worker_receipts: list[dict[str, object]] = []
+        root_node_descriptor_sha256 = None
+        recovery_source = {
+            "profile_sha256": profile.profile_sha256,
+            "source_request_sha256": profile.source_request_sha256,
+            "source_run_id": profile.source_run_id,
+            "source_run_attempt": profile.source_run_attempt,
+            "source_terminal_receipt_sha256": profile.source_terminal_receipt_sha256,
+            "source_plan_receipt_sha256": historical.plan_receipt_sha256,
+            "source_execution_protocol_sha256": historical.plan_receipt["execution_protocol_sha256"],
+            "current_execution_protocol_sha256": json.loads(
+                (args.sealed_plan / "execution_plan_receipt.json").read_text("utf-8")
+            )["execution_protocol_sha256"],
+            "source_root_node_descriptor_sha256": historical.source_root_node_descriptor_sha256,
+            "group_receipts": deep_thaw_json(historical.group_receipts),
+        }
     else:
-        current_index = load_resume_index(
-            (),
+        worker_receipts, root_node_descriptor_sha256 = (
+            _verify_group_reduction_inputs(
+                args.input_root,
+                reduction_plan_path=args.reduction_plan,
+                pending_recipe_count=plan.pending_recipe_count,
+                expected_science_identity_sha256=science_identity_sha256,
+                expected_catalog_manifest_sha256=(
+                    resolved.science.catalog_manifest_sha256
+                ),
+                expected_work_manifest_sha256=work_manifest.manifest_sha256,
+            )
+        )
+        resume_index = load_resume_index(
+            tuple(args.resume_root),
             expected_science_identity_sha256=science_identity_sha256,
             expected_catalog_manifest_sha256=resolved.science.catalog_manifest_sha256,
         )
-    if set(current_index.strategy_ids) != set(work_manifest.pending_strategy_ids):
-        raise SystemExit("OPTIMIZED_PHYSICAL_RESULT_SET_INVALID")
+        if set(resume_index.strategy_ids) != set(work_manifest.cached_strategy_ids):
+            raise SystemExit("OPTIMIZED_RESUME_RESULT_SET_INVALID")
+        if plan.pending_recipe_count:
+            current_index = load_resume_index(
+                (args.input_root,),
+                expected_science_identity_sha256=science_identity_sha256,
+                expected_catalog_manifest_sha256=resolved.science.catalog_manifest_sha256,
+            )
+        else:
+            current_index = load_resume_index(
+                (),
+                expected_science_identity_sha256=science_identity_sha256,
+                expected_catalog_manifest_sha256=resolved.science.catalog_manifest_sha256,
+            )
+        if set(current_index.strategy_ids) != set(work_manifest.pending_strategy_ids):
+            raise SystemExit("OPTIMIZED_PHYSICAL_RESULT_SET_INVALID")
     rows = [
         {"strategy_id": item.strategy_id, "result_json": item.result_json}
         for item in (*resume_index.results, *current_index.results)
@@ -594,7 +689,7 @@ def main() -> int:
         worker_receipts,
         expected_processes_per_worker=plan.processes_per_worker,
         expected_block_size=plan.block_size,
-        pending_recipe_count=plan.pending_recipe_count,
+        pending_recipe_count=0 if recovery_source is not None else plan.pending_recipe_count,
     )
     total_bytes = result_path.stat().st_size
     unique_positions = len(position_fingerprints)
@@ -625,8 +720,8 @@ def main() -> int:
             int(receipt.get("source_checkpoint_receipt_count", 1))
             for receipt in worker_receipts
         ),
-        "workers": plan.active_workers,
-        "component_workers": plan.component_workers,
+        "workers": 0 if recovery_source is not None else plan.active_workers,
+        "component_workers": 0 if recovery_source is not None else plan.component_workers,
         "component_processes_per_worker": (
             plan.component_processes_per_worker
         ),
@@ -655,6 +750,8 @@ def main() -> int:
         "validation_opened": False,
         "locked_opened": False,
     }
+    if recovery_source is not None:
+        receipt_identity["recovery_source"] = recovery_source
     receipt = {
         **receipt_identity,
         "receipt_sha256": canonical_sha256(receipt_identity),

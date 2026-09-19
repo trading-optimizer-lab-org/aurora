@@ -23,7 +23,7 @@ from aurora.tests.test_inspect_catalog_fast_request import _entry, _signed_reque
 from scripts import admit_catalog_fast_request as admission
 
 
-@pytest.mark.parametrize("inventory_state", ("complete", "incomplete", "unstable", "complete_with_previous", "stale_generation", "wrong_predecessor", "invalid_terminal_author", "missing_terminal_author", "compact_valid", "compact_busy", "compact_wrong_predecessor", "compact_corrupt", "compact_missing_cli", "compact_lineage_approved", "compact_lineage_missing", "compact_cloud_relative_valid", "compact_cloud_relative_invalid"))
+@pytest.mark.parametrize("inventory_state", ("complete", "incomplete", "unstable", "complete_with_previous", "stale_generation", "wrong_predecessor", "invalid_terminal_author", "missing_terminal_author", "compact_valid", "compact_busy", "compact_wrong_predecessor", "compact_corrupt", "compact_missing_cli", "compact_lineage_approved", "compact_lineage_missing", "compact_cloud_relative_valid", "compact_cloud_relative_invalid", "compact_reduction_recovery", "compact_reduction_recovery_rejected"))
 def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monkeypatch, capsys, inventory_state):
     """Ignoring inventory completeness/stability must fail the negative cases."""
     bundle, template, plan, identity, prepared = prepared_transport_fixture(tmp_path)
@@ -94,6 +94,23 @@ def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monke
         if inventory_state != "compact_missing_cli":
             (tmp_path / "catalog-fast-authority-current.json").write_text(json.dumps(snapshot), encoding="utf-8")
     request = parse_catalog_run_request(title, body, public)
+    recovery_checks = []
+    recovery_payload = {"schema_version": "1", "source_request_sha256": "b" * 64}
+    if inventory_state.startswith("compact_reduction_recovery"):
+        def select_recovery(selected_root, selected_request):
+            assert selected_root == root and selected_request == request
+            return SimpleNamespace(model_dump=lambda **kwargs: recovery_payload)
+
+        def authenticate_recovery(**bindings):
+            assert bindings["authority"] == authority
+            assert bindings["request"] == request
+            assert bindings["profile"] == recovery_payload
+            recovery_checks.append(True)
+            if inventory_state.endswith("_rejected"):
+                raise ValueError("CATALOG_RECOVERY_PREDECESSOR_TERMINAL_INVALID")
+
+        monkeypatch.setattr(admission, "load_reduction_recovery_profile", select_recovery)
+        monkeypatch.setattr(admission, "_require_reduction_recovery_predecessor", authenticate_recovery)
     if inventory_state.startswith("compact_cloud_relative_"):
         from aurora.tests.test_catalog_cloud_authority import emission
         from aurora.infra.sp500_megarun import catalog_cloud_qualification
@@ -200,14 +217,19 @@ def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monke
         result = admission.admit_request(request_context_path=context_path, prepared_bundle=bundle,
             repo_root=Path(".") if inventory_state.startswith("compact_cloud_relative_") else root,
             output_dir=target, github_output=tmp_path / "github-output")
-    if inventory_state in {"complete", "complete_with_previous", "compact_valid", "compact_lineage_approved", "compact_cloud_relative_valid"}:
+    if inventory_state.startswith("compact_reduction_recovery"):
+        assert recovery_checks == [True]
+    if inventory_state in {"complete", "complete_with_previous", "compact_valid", "compact_lineage_approved", "compact_cloud_relative_valid", "compact_reduction_recovery"}:
         assert result.launch_required is True
         assert result.selected_workers == 7
         verify_sealed_global_reuse_execution_plan(target / "sealed-plan", expected_bindings={
             "request_sha256": request.request_sha256, "decision_sha256": result.decision_sha256})
+        if inventory_state == "compact_reduction_recovery":
+            assert json.loads((target / "sealed-plan/reduction_recovery.json").read_text("utf-8")) == recovery_payload
     else:
         assert result.launch_required is False
-        assert result.reason_code == ("CATALOG_FAST_OWNER_LOOKUP_UNAVAILABLE" if inventory_state == "compact_cloud_relative_invalid" else
+        assert result.reason_code == ("CATALOG_RECOVERY_PREDECESSOR_TERMINAL_INVALID" if inventory_state == "compact_reduction_recovery_rejected" else
+            "CATALOG_FAST_OWNER_LOOKUP_UNAVAILABLE" if inventory_state == "compact_cloud_relative_invalid" else
             "CATALOG_CAMPAIGN_BUSY" if inventory_state == "compact_busy" else
             "CATALOG_FAST_AUTHORITY_LINEAGE_CHANGE_REQUIRES_MAINTENANCE" if inventory_state == "compact_lineage_missing" else
             "CATALOG_FAST_AUTHORITY_SNAPSHOT_INVALID" if inventory_state == "compact_corrupt" else

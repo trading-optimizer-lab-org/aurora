@@ -15,6 +15,7 @@ from aurora.infra.sp500_megarun.catalog_fast_path import (
 )
 from aurora.infra.sp500_megarun.catalog_fast_reservation import (
     FastGateOwnerEvidence,
+    _is_expected_workflow_path,
     bind_owner_terminal_receipt,
     load_fast_gate_owner,
     load_owner_terminal_receipt,
@@ -25,6 +26,36 @@ from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunReques
 
 COMMIT = "44d4f5e1bfe0d2d9396b99f44b4684205e737c0e"
 NOW = datetime(2026, 9, 18, 16, 0, tzinfo=timezone.utc)
+
+
+class _WorkflowPath(str):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("path", "expected", "valid"),
+    (
+        (
+            ".github/workflows/catalog-fast-controller.yml",
+            ".github/workflows/catalog-fast-controller.yml",
+            True,
+        ),
+        (
+            ".github/workflows/catalog-request-reconciler.yml",
+            ".github/workflows/catalog-fast-controller.yml",
+            False,
+        ),
+        (
+            _WorkflowPath(".github/workflows/catalog-fast-controller.yml"),
+            ".github/workflows/catalog-fast-controller.yml",
+            False,
+        ),
+    ),
+)
+def test_workflow_path_identity_requires_exact_string(
+    path: object, expected: str, valid: bool
+) -> None:
+    assert _is_expected_workflow_path(path, expected) is valid
 
 
 def _request() -> CatalogRunRequestV1:
