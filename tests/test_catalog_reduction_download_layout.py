@@ -202,13 +202,17 @@ def _valid_plan(
 
     files_by_artifact: dict[str, dict[str, bytes]] = {}
     for group, node in zip(groups, nodes):
+        worker_ids = group["worker_ids"]
+        artifact_name = group["reduction_artifact"]
+        assert isinstance(worker_ids, list)
+        assert isinstance(artifact_name, str)
         result = f"result-{group['group_id']}\n".encode()
         result_sha256 = hashlib.sha256(result).hexdigest()
         receipt_identity = {
             "reduction_group_id": group["group_id"],
             "reduction_artifact": group["reduction_artifact"],
             "worker_ids": group["worker_ids"],
-            "source_worker_receipt_count": len(group["worker_ids"]),
+            "source_worker_receipt_count": len(worker_ids),
             "science_identity_sha256": common["science_sha256"],
             "catalog_manifest_sha256": CATALOG_SHA,
             "work_manifest_sha256": WORK_SHA,
@@ -232,7 +236,7 @@ def _valid_plan(
             "validation_opened": False,
             "locked_opened": False,
         }
-        files_by_artifact[group["reduction_artifact"]] = {
+        files_by_artifact[artifact_name] = {
             "receipt.json": (json.dumps(receipt, sort_keys=True) + "\n").encode(),
             "reduction_group_manifest.json": (
                 json.dumps(manifest, sort_keys=True) + "\n"
