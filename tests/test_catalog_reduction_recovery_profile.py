@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import FrozenInstanceError, asdict
 import json
 from pathlib import Path
 
@@ -23,6 +24,7 @@ CONFIG = ROOT / "config/catalog_reduction_recovery_profiles_v1.json"
 PREDECESSOR_REQUEST_SHA256 = (
     "a0749c8833b52612096d8a820f3a46f5af48ce52848f8bfc02377f3236996896"
 )
+GEN8_REQUEST_SHA256 = "70d15409754069379635e7ff1d9a6990d8b30dff68fce16531cee875d16e719f"
 SCIENCE_SHA256 = "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2"
 SOURCE_PLAN_BINDINGS = {
     "request_sha256": PREDECESSOR_REQUEST_SHA256,
@@ -132,6 +134,7 @@ def test_generation8_canary_loads_one_frozen_profile_with_derived_hashes() -> No
     ("campaign_key", "launch_generation"),
     [
         ("catalog-fast-canary-v1", 7),
+        ("catalog-fast-canary-v1", 10),
         ("sp500-optimized-catalog-v1", 8),
         ("unknown-campaign-v1", 8),
     ],
@@ -180,12 +183,104 @@ def test_profile_has_no_target_definition_or_current_token_binding() -> None:
     assert "verification_token_sha256" not in dumped
 
 
-def test_engine_loader_and_exact_validation_require_the_one_protected_profile() -> None:
+def test_engine_loader_and_exact_validation_select_each_protected_profile() -> None:
     profiles = load_reduction_recovery_profiles(ROOT)
-    assert profiles == (load_reduction_recovery_profile(ROOT, _request()),)
+    assert tuple(profile.target_generation for profile in profiles) == (8, 9)
+    assert profiles[0] == load_reduction_recovery_profile(ROOT, _request())
+    assert validate_exact_profile(ROOT, profiles[1].model_dump(mode="json")) == profiles[1]
     payload = json.loads(CONFIG.read_text(encoding="utf-8"))["profiles"][0]
     assert validate_exact_profile(ROOT, payload) == profiles[0]
 
     payload["source_plan_bindings"]["decision_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH"):
+        validate_exact_profile(ROOT, payload)
+
+
+def test_gen8_serialization_and_hash_remain_exact() -> None:
+    profile = load_reduction_recovery_profile(ROOT, _request())
+    assert profile is not None
+    assert profile.profile_sha256 == "482a84722888ab7410a796c4542dbc0bedad1abb8a8834e89287b3b52cdc40e5"
+    assert "predecessor_bindings" not in profile.model_dump(mode="json")
+    assert "source_generation" not in profile.model_dump(mode="json")
+    assert profile.source_generation == 7
+    predecessor = profile.predecessor_bindings
+    assert predecessor.generation == 7
+    assert predecessor.request_sha256 == PREDECESSOR_REQUEST_SHA256
+    assert predecessor.issue_number == 323
+    assert predecessor.run_id == 35436320227
+    assert predecessor.run_attempt == 1
+    assert predecessor.protected_commit_sha == SOURCE_PLAN_BINDINGS["protected_commit_sha"]
+    assert predecessor.terminal_receipt_sha256 == profile.source_terminal_receipt_sha256
+    assert predecessor.decision_sha256 == SOURCE_PLAN_BINDINGS["decision_sha256"]
+
+
+def test_gen9_authorizes_gen8_but_preserves_gen7_source() -> None:
+    profile = load_reduction_recovery_profile(
+        ROOT, _request(launch_generation=9, previous_terminal_request_sha256=GEN8_REQUEST_SHA256)
+    )
+    assert profile is not None
+    original = load_reduction_recovery_profile(ROOT, _request())
+    assert original is not None
+    expected = original.model_dump(mode="json")
+    expected["target_generation"] = 9
+    assert profile.model_dump(mode="json") == expected
+    assert profile.profile_sha256 != original.profile_sha256
+    assert profile.source_generation == 7
+    assert asdict(profile.predecessor_bindings) == {
+        "generation": 8,
+        "request_sha256": GEN8_REQUEST_SHA256,
+        "issue_number": 328,
+        "run_id": 35454099484,
+        "run_attempt": 1,
+        "protected_commit_sha": "41d904b66c33bb8d0150aa14c7ca2564afd3f154",
+        "terminal_receipt_sha256": "a10a880af0c3a3bd4ebd69958f5e4761cf3c620da32abddaff080a346b8a0193",
+        "decision_sha256": None,
+    }
+    with pytest.raises(FrozenInstanceError):
+        profile.predecessor_bindings.run_id = 1
+
+
+@pytest.mark.parametrize("generation,predecessor", [(9, PREDECESSOR_REQUEST_SHA256), (9, "0" * 64), (8, GEN8_REQUEST_SHA256)])
+def test_predecessors_cannot_be_cross_selected(generation: int, predecessor: str) -> None:
+    with pytest.raises(ValueError, match="CATALOG_REDUCTION_RECOVERY_PREDECESSOR_MISMATCH"):
+        load_reduction_recovery_profile(
+            ROOT, _request(launch_generation=generation, previous_terminal_request_sha256=predecessor)
+        )
+
+
+@pytest.mark.parametrize("generations", [(8,), (9,), (8, 8), (9, 9), (8, 9, 9), (8, 10)])
+def test_config_requires_exactly_two_distinct_protected_generations(tmp_path: Path, generations: tuple[int, ...]) -> None:
+    original = json.loads(CONFIG.read_text("utf-8"))["profiles"][0]
+    payload = {"schema_version": "1", "profiles": [dict(original, target_generation=g) for g in generations]}
+    config = tmp_path / "config/catalog_reduction_recovery_profiles_v1.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="CATALOG_REDUCTION_RECOVERY_CONFIG_INVALID"):
+        load_reduction_recovery_profiles(tmp_path)
+
+
+def test_exact_selection_is_independent_of_profile_order(tmp_path: Path) -> None:
+    original = json.loads(CONFIG.read_text("utf-8"))["profiles"][0]
+    payload = {"schema_version": "1", "profiles": [dict(original, target_generation=9), original]}
+    config = tmp_path / "config/catalog_reduction_recovery_profiles_v1.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps(payload), encoding="utf-8")
+    assert validate_exact_profile(tmp_path, original).target_generation == 8
+    assert validate_exact_profile(tmp_path, payload["profiles"][0]).target_generation == 9
+
+
+@pytest.mark.parametrize("generation", [8, 9])
+@pytest.mark.parametrize("mutation", ["source_request", "source_binding", "artifact", "predecessor_override"])
+def test_both_generations_reject_source_or_predecessor_overrides(generation: int, mutation: str) -> None:
+    payload = json.loads(CONFIG.read_text("utf-8"))["profiles"][0]
+    payload["target_generation"] = generation
+    if mutation == "source_request":
+        payload["source_request_sha256"] = GEN8_REQUEST_SHA256
+    elif mutation == "source_binding":
+        payload["source_plan_bindings"]["request_sha256"] = GEN8_REQUEST_SHA256
+    elif mutation == "artifact":
+        payload["artifacts"][1]["artifact_id"] += 1
+    else:
+        payload["predecessor_bindings"] = {"request_sha256": "0" * 64}
     with pytest.raises(ValueError, match="CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH"):
         validate_exact_profile(ROOT, payload)
