@@ -46,6 +46,7 @@ from aurora.infra.sp500_megarun.catalog_rebuildable_store_index import (
     CatalogRebuildableStoreIndexV1,
 )
 from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
+from aurora.infra.sp500_megarun.catalog_reduction_recovery_profile import load_reduction_recovery_profile
 from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_request
 from aurora.infra.sp500_megarun.catalog_fast_reservation import (
     FastGateAliasEvidence, FastGateOwnerEvidence, load_fast_gate_owner, load_owner_terminal_receipt,
@@ -332,6 +333,7 @@ def admit_request(
     terminal_generations: list[tuple[CatalogRunRequestV1, Mapping[str, Any]]] = []
     pinned_terminal_sha256 = None
     unlaunched_request_exact = False
+    reduction_recovery: Mapping[str, Any] | None = None
     existing_issue_state = (
         bool(labels & {"catalog-run-active-v1", "catalog-run-terminal-v1"})
         or issue.get("state") == "closed"
@@ -353,6 +355,7 @@ def admit_request(
         owner = None if isinstance(evidence, FastGateAliasEvidence) else evidence
         if alias_target is not None:
             durable_owner = True
+        profile = load_reduction_recovery_profile(root, request) if owner is None and not durable_owner else None
         compact_handled = False
         authority_path = runner_temp / "catalog-fast-authority-current.json"
         if owner is None and authority_path.exists():
@@ -397,8 +400,17 @@ def admit_request(
                     raise ValueError("CATALOG_FAST_GATE_INVOCATION_INVALID")
                 authority.reserve(request=request, issue_number=current_issue_number, run_id=int(publisher),
                                   lineage_transition=load_lineage_transition(root, request))
+                if profile is not None:
+                    reduction_recovery = profile.model_dump(mode="json")
+                    _require_reduction_recovery_predecessor(
+                        profile=reduction_recovery, authority=authority, request=request,
+                        client=client, lookup_owner=lookup_owner,
+                        download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
+                    )
                 active_campaigns.update(row.request.campaign_key for row in authority.campaigns if not row.is_terminal)
                 compact_handled = True
+        if profile is not None and reduction_recovery is None and not durable_owner:
+            raise ValueError("CATALOG_RECOVERY_PREDECESSOR_AUTHORITY_REQUIRED")
         if owner is None and not compact_handled and (not existing_issue_state or alias_target is not None):
             active_inventory = client.stable_paginated(
                 f"/repos/{repository}/issues?state=open&labels=catalog-run-active-v1", root="list",
@@ -672,6 +684,7 @@ def admit_request(
             request_sha256=request.request_sha256,
             decision_sha256=decision.decision_sha256,
             output_dir=output_dir / "sealed-plan",
+            reduction_recovery=reduction_recovery,
         )
     outputs = {
         "preserve_issue": "false",

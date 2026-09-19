@@ -16,6 +16,7 @@ from typing import Literal, Mapping, cast
 from pydantic import ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .catalog_request_contract import CatalogRunRequestV1, FrozenModel, Sha256
+from .catalog_sealed_plan import verify_sealed_global_reuse_execution_plan
 
 
 RECOVERY_CONFIG_RELATIVE_PATH = "config/catalog_reduction_recovery_profiles_v1.json"
@@ -353,3 +354,27 @@ def validate_exact_profile(
     if candidate != expected:
         raise ValueError("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
     return candidate
+
+
+def read_sealed_reduction_recovery_profile(
+    repo_root: Path,
+    sealed_plan: Path,
+    *,
+    expected_bindings: Mapping[str, str] | None = None,
+) -> ReductionRecoveryProfileV1 | None:
+    """Read only a protected profile bound into the current admission seal."""
+    verify_sealed_global_reuse_execution_plan(sealed_plan, expected_bindings=expected_bindings)
+    binding_path = sealed_plan / "controller_binding.json"
+    binding = json.loads(binding_path.read_text("utf-8"))
+    bound = binding.get("binding", {}).get("reduction_recovery_sha256")
+    path = sealed_plan / "reduction_recovery.json"
+    if not path.exists() and bound is None:
+        return None
+    if path.is_symlink() or not path.is_file() or not isinstance(bound, str):
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_SEAL_INVALID")
+    payload = json.loads(path.read_text("utf-8"), object_pairs_hook=_reject_duplicate_keys,
+                         parse_constant=_reject_nonfinite)
+    profile = validate_exact_profile(repo_root, payload)
+    if profile.profile_sha256 != bound:
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_SEAL_INVALID")
+    return profile
