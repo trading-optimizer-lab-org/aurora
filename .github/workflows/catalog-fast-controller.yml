@@ -496,6 +496,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      issues: read
     uses: ./.github/workflows/catalog-optimized-run.yml
     with:
       request_sha256: ${{ needs.gate.outputs.request_sha256 }}

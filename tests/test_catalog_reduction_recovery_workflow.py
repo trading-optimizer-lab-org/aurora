@@ -216,3 +216,21 @@ def test_recovery_route_disables_fault_activation_and_does_not_use_old_token() -
     )
     assert "admission-token" in reducer["run"]
     assert "old" not in reducer["run"].lower()
+
+
+def test_historical_request_read_is_scoped_to_reducer_and_call_chain() -> None:
+    workflow = load_github_yaml(WORKFLOW)
+    assert workflow["permissions"].get("issues", "none") == "none"
+    assert workflow["jobs"]["reduce"]["permissions"] == {
+        "actions": "read", "contents": "read", "issues": "read",
+    }
+    for filename, job in (
+        ("catalog-fast-controller.yml", "engine"),
+        ("catalog-run-controller.yml", "engine_optimized_catalog_v1"),
+        ("catalog-prepare-one.yml", "prepare_engine"),
+        ("catalog-prepare.yml", "prepare"),
+    ):
+        caller = load_github_yaml(ROOT / ".github/workflows" / filename)
+        assert caller["jobs"][job]["permissions"] == {
+            "actions": "read", "contents": "read", "issues": "read",
+        }

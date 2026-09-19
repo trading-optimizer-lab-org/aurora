@@ -2453,6 +2453,7 @@ jobs:
         run: test -n "$ARTIFACT_ID" && test -n "$ARTIFACT_DIGEST"
 
   reduce:
+    permissions: {actions: read, contents: read, issues: read}
     needs:
       - engine_verify_sealed_plan
       - prepare_runtime_and_inputs
