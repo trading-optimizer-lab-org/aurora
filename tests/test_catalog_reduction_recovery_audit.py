@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -189,7 +189,7 @@ def test_real_runtime_audit_cli_accepts_only_current_bound_recovery_evidence(tmp
         (
             "--run-id", "1000",
             "--run-attempt", "1",
-            "--audited-at", datetime(2026, 9, 19, 12, 0, tzinfo=UTC).isoformat(),
+            "--audited-at", datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc).isoformat(),
             "--output", str(output),
         )
     )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -85,7 +85,7 @@ def _payload(**updates: object) -> dict[str, object]:
         "failure_reason_code": None,
         "retry_not_before": None,
         "terminal_failure_code": None,
-        "created_at": datetime(2026, 8, 22, 10, 0, tzinfo=UTC).isoformat(),
+        "created_at": datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc).isoformat(),
         "reduction_only": True,
         "recovery_verified": True,
     }
@@ -137,13 +137,12 @@ def test_cli_rejects_reduction_only_without_sealed_recovery_verification(tmp_pat
 def test_cli_classifies_reduction_failure_without_turning_it_into_input_invalid(
     tmp_path: Path,
 ) -> None:
+    base_stages = _payload()["stage_results"]
+    assert isinstance(base_stages, dict)
     result = _run(
         tmp_path,
         _payload(
-            stage_results={
-                **_payload()["stage_results"],  # type: ignore[arg-type]
-                "reduce": "failure",
-            }
+            stage_results={**base_stages, "reduce": "failure"}
         ),
     )
     assert result.returncode == 0, result.stderr

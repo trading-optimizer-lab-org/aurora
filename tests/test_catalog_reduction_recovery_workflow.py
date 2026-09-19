@@ -218,6 +218,81 @@ def test_recovery_route_disables_fault_activation_and_does_not_use_old_token() -
     assert "old" not in reducer["run"].lower()
 
 
+def test_run_outcome_extracts_all_recovery_stage_results_from_workflow(tmp_path: Path) -> None:
+    workflow = load_github_yaml(WORKFLOW)
+    assert "publish_sealed_payload_artifacts" in workflow["jobs"]["campaign_outcome"]["needs"]
+    outcome_step = next(
+        step
+        for step in workflow["jobs"]["campaign_outcome"]["steps"]
+        if step.get("name") == "Build one closed engine-outcome input"
+    )
+    script = _inline_python(outcome_step["run"])
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "RESULT_ENGINE_VERIFY": "success",
+            "RESULT_PREPARE": "success",
+            "RESULT_PUBLISH": "skipped",
+            "RESULT_BUILD_A": "skipped",
+            "RESULT_BUILD_B": "skipped",
+            "RESULT_CACHED_A": "skipped",
+            "RESULT_CACHED_B": "skipped",
+            "RESULT_COMPONENT_SEAL": "skipped",
+            "RESULT_EVALUATE_A": "skipped",
+            "RESULT_EVALUATE_B": "skipped",
+            "RESULT_EVALUATE_C": "skipped",
+            "RESULT_RECONCILE": "skipped",
+            "RESULT_RECOVERY_1": "skipped",
+            "RESULT_RECOVERY_2": "skipped",
+            "RESULT_RECOVERY_3": "skipped",
+            "RESULT_READY": "skipped",
+            "RESULT_REDUCE_GROUPS": "skipped",
+            "RESULT_REDUCE": "success",
+            "RESULT_SCIENCE": "success",
+            "RESULT_AUDIT": "success",
+            "VERIFIED_REDUCTION_ONLY": "true",
+            "VERIFIED_RECOVERY": "true",
+            "RECOVERY_0": "",
+            "RECOVERY_1": "",
+            "RECOVERY_2": "",
+            "RECOVERY_3": "",
+            "GITHUB_RUN_ID": "1234",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_OUTPUT": str(tmp_path / "github-output.txt"),
+            "FINAL_EVIDENCE_ARTIFACT": "catalog-final-root",
+        }
+    )
+    result = subprocess.run(
+        [sys.executable, "-S", "-c", script],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads((tmp_path / "engine-outcome-input.json").read_text(encoding="utf-8"))
+    recovery_stages = {
+        "publish_sealed_payload_artifacts",
+        "build_components_a",
+        "build_components_b",
+        "materialize_cached_components_a",
+        "materialize_cached_components_b",
+        "verify_component_store",
+        "evaluate_a",
+        "evaluate_b",
+        "evaluate_c",
+        "reconcile_wave_0",
+        "recovery_wave_1",
+        "recovery_wave_2",
+        "recovery_wave_3",
+        "ready_to_merge",
+        "reduce_groups",
+    }
+    stages = payload["stage_results"]
+    assert {name for name in recovery_stages if stages.get(name) != "skipped"} == set()
+
+
 def test_historical_request_read_is_scoped_to_reducer_and_call_chain() -> None:
     workflow = load_github_yaml(WORKFLOW)
     assert workflow["permissions"].get("issues", "none") == "none"

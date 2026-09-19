@@ -2808,6 +2808,7 @@ jobs:
     needs:
       - engine_verify_sealed_plan
       - prepare_runtime_and_inputs
+      - publish_sealed_payload_artifacts
       - build_components_a
       - build_components_b
       - materialize_cached_components_a
@@ -2947,6 +2948,7 @@ jobs:
         env:
           RESULT_ENGINE_VERIFY: ${{ needs.engine_verify_sealed_plan.result }}
           RESULT_PREPARE: ${{ needs.prepare_runtime_and_inputs.result }}
+          RESULT_PUBLISH: ${{ needs.publish_sealed_payload_artifacts.result }}
           RESULT_BUILD_A: ${{ needs.build_components_a.result }}
           RESULT_BUILD_B: ${{ needs.build_components_b.result }}
           RESULT_CACHED_A: ${{ needs.materialize_cached_components_a.result }}
@@ -2955,6 +2957,10 @@ jobs:
           RESULT_EVALUATE_A: ${{ needs.evaluate_a.result }}
           RESULT_EVALUATE_B: ${{ needs.evaluate_b.result }}
           RESULT_EVALUATE_C: ${{ needs.evaluate_c.result }}
+          RESULT_RECONCILE: ${{ needs.reconcile_wave_0.result }}
+          RESULT_RECOVERY_1: ${{ needs.recovery_wave_1.result }}
+          RESULT_RECOVERY_2: ${{ needs.recovery_wave_2.result }}
+          RESULT_RECOVERY_3: ${{ needs.recovery_wave_3.result }}
           RESULT_READY: ${{ needs.ready_to_merge.result }}
           RESULT_REDUCE_GROUPS: ${{ needs.reduce_groups.result }}
           RESULT_REDUCE: ${{ needs.reduce.result }}
@@ -2990,6 +2996,7 @@ jobs:
           stages = {
               "engine_verify_sealed_plan": os.environ["RESULT_ENGINE_VERIFY"],
               "prepare_runtime_and_inputs": os.environ["RESULT_PREPARE"],
+              "publish_sealed_payload_artifacts": os.environ["RESULT_PUBLISH"],
               "build_components_a": os.environ["RESULT_BUILD_A"],
               "build_components_b": os.environ["RESULT_BUILD_B"],
               "materialize_cached_components_a": os.environ["RESULT_CACHED_A"],
@@ -2998,6 +3005,10 @@ jobs:
               "evaluate_a": os.environ["RESULT_EVALUATE_A"],
               "evaluate_b": os.environ["RESULT_EVALUATE_B"],
               "evaluate_c": os.environ["RESULT_EVALUATE_C"],
+              "reconcile_wave_0": os.environ["RESULT_RECONCILE"],
+              "recovery_wave_1": os.environ["RESULT_RECOVERY_1"],
+              "recovery_wave_2": os.environ["RESULT_RECOVERY_2"],
+              "recovery_wave_3": os.environ["RESULT_RECOVERY_3"],
               "ready_to_merge": os.environ["RESULT_READY"],
               "reduce_groups": os.environ["RESULT_REDUCE_GROUPS"],
               "reduce": os.environ["RESULT_REDUCE"],
