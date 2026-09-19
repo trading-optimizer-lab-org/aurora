@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -48,7 +48,7 @@ from aurora.infra.sp500_megarun.catalog_rebuildable_store_index import (
 from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
 from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_request
 from aurora.infra.sp500_megarun.catalog_fast_reservation import (
-    FastGateAliasEvidence, load_fast_gate_owner, load_owner_terminal_receipt,
+    FastGateAliasEvidence, FastGateOwnerEvidence, load_fast_gate_owner, load_owner_terminal_receipt,
 )
 
 
@@ -199,6 +199,52 @@ def _write_replay_decision(
     with github_output.open("a", encoding="utf-8", newline="\n") as stream:
         for key, value in outputs.items():
             stream.write(f"{key}={value}\n")
+
+
+def _require_reduction_recovery_predecessor(
+    *, profile: Mapping[str, Any], authority: FastAuthorityStateV1,
+    request: CatalogRunRequestV1, client: CatalogGitHubReadOnlyClient,
+    lookup_owner: Callable[[int, CatalogRunRequestV1, int], object],
+    download_archive: Callable[[int], bytes],
+) -> None:
+    """Authorize reuse only from the exact terminal owner in current authority."""
+    rows = [row for row in authority.campaigns if row.request.campaign_key == request.campaign_key]
+    if len(rows) != 1:
+        raise ValueError("CATALOG_RECOVERY_PREDECESSOR_MISSING")
+    previous = rows[0]
+    if (
+        profile["campaign_key"] != request.campaign_key
+        or profile["target_generation"] != request.launch_generation
+        or request.launch_generation != previous.generation + 1
+        or request.previous_terminal_request_sha256 != previous.request.request_sha256
+        or profile["source_request_sha256"] != previous.request.request_sha256
+        or profile["source_issue_number"] != previous.owner_issue_number
+        or profile["source_run_id"] != previous.owner_run_id
+        or not previous.is_terminal
+        or previous.terminal_receipt_sha256 != profile["source_terminal_receipt_sha256"]
+    ):
+        raise ValueError("CATALOG_RECOVERY_PREDECESSOR_BINDING_INVALID")
+    owner = lookup_owner(previous.owner_issue_number, previous.request, previous.owner_run_id)
+    if (
+        not isinstance(owner, FastGateOwnerEvidence)
+        or owner.run_id != previous.owner_run_id or owner.unlaunched_terminal
+        or owner.run.get("run_attempt") != profile["source_run_attempt"]
+        or owner.run.get("head_sha") != profile["source_plan_bindings"]["protected_commit_sha"]
+        or owner.decision.decision_sha256 != profile["source_plan_bindings"]["decision_sha256"]
+    ):
+        raise ValueError("CATALOG_RECOVERY_PREDECESSOR_OWNER_INVALID")
+    terminal = load_owner_terminal_receipt(
+        client=client, owner=owner, issue_number=previous.owner_issue_number,
+        download_archive=download_archive,
+    )
+    if (
+        terminal is None
+        or terminal.receipt_sha256 != previous.terminal_receipt_sha256
+        or terminal.state != "BLOCKED" or terminal.reason_code != "CATALOG_REDUCTION_FAILED"
+        or terminal.expected_recipe_count != len(profile["strategy_ids"])
+        or terminal.engine_run_id != previous.owner_run_id
+    ):
+        raise ValueError("CATALOG_RECOVERY_PREDECESSOR_TERMINAL_INVALID")
 
 
 def admit_request(
