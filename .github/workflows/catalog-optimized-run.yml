@@ -3115,11 +3115,127 @@ jobs:
         id: outcome
         if: ${{ inputs.execution_mode == 'run' }}
         shell: bash
-        run: >-
-          python scripts/prepare_catalog_engine_outcome.py
-          --input engine-outcome-input.json
-          --output catalog-engine-outcome-v1.json
-          --github-output "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import io
+          import json
+          import os
+          import subprocess
+          import sys
+          import zipfile
+          from datetime import datetime
+          from pathlib import Path
+
+          from aurora.infra.sp500_megarun.catalog_sealed_plan import verify_sealed_global_reuse_execution_plan
+          from aurora.infra.sp500_megarun.catalog_worker_failure import worker_failure_artifact_name as official_worker_failure_artifact_name
+
+          payload = json.loads(Path("engine-outcome-input.json").read_text())
+          stages = payload["stage_results"]
+          recovery = payload["recovery_statuses"]
+          failed = [stage for stage in ("evaluate_a", "evaluate_b", "evaluate_c") if stages.get(stage) == "failure"]
+          eligible = (
+              not payload["reduction_only"] and failed
+              and "cancelled" not in stages.values()
+              and recovery and recovery[-1] == "complete" and "retry" in recovery
+              and all(stages.get(stage) == "success" for stage in (
+                  "engine_verify_sealed_plan", "prepare_runtime_and_inputs",
+                  "publish_sealed_payload_artifacts", "verify_component_store",
+                  "reconcile_wave_0", "ready_to_merge", "reduce_groups", "reduce",
+                  "verify_terminal_science", "audit_runtime",
+              ))
+          )
+          command = [sys.executable, "scripts/prepare_catalog_engine_outcome.py",
+                     "--input", "engine-outcome-input.json",
+                     "--output", "catalog-engine-outcome-v1.json",
+                     "--github-output", os.environ["GITHUB_OUTPUT"]]
+          if eligible:
+              run_id = os.environ["GITHUB_RUN_ID"]
+              attempt = os.environ["GITHUB_RUN_ATTEMPT"]
+              head = os.environ["GITHUB_SHA"]
+              if (str(payload["engine_run_id"]) != run_id
+                      or str(payload["engine_run_attempt"]) != attempt
+                      or payload["protected_commit_sha"] != head):
+                  raise ValueError("CATALOG_RECOVERED_OUTCOME_CURRENT_RUN_INVALID")
+              api_root = f"repos/{os.environ['GITHUB_REPOSITORY']}/actions"
+
+              def api(path, *args):
+                  return json.loads(subprocess.run(
+                      ["gh", "api", path, *args], check=True, capture_output=True, text=True,
+                  ).stdout)
+
+              current = api(f"{api_root}/runs/{run_id}/attempts/{attempt}")
+              if (str(current["id"]) != run_id or str(current["run_attempt"]) != attempt
+                      or current["head_sha"] != head):
+                  raise ValueError("CATALOG_RECOVERED_OUTCOME_RUN_ORIGIN_INVALID")
+              started = datetime.fromisoformat(current["run_started_at"].replace("Z", "+00:00"))
+              pages = api(f"{api_root}/runs/{run_id}/artifacts?per_page=100", "--paginate", "--slurp")
+              artifacts = [artifact for page in pages for artifact in page["artifacts"]]
+              root = Path(os.environ["RUNNER_TEMP"]) / "recovered-outcome-proof"
+              root.mkdir(exist_ok=False)
+
+              def download(name, destination):
+                  matches = [artifact for artifact in artifacts if artifact["name"] == name]
+                  if len(matches) != 1:
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_ARTIFACT_MISSING_OR_DUPLICATE")
+                  artifact = matches[0]
+                  origin = artifact["workflow_run"]
+                  if (artifact["expired"] or str(origin["id"]) != run_id
+                          or origin["head_sha"] != head
+                          or datetime.fromisoformat(artifact["created_at"].replace("Z", "+00:00")) < started):
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_ARTIFACT_ORIGIN_INVALID")
+                  archive_id = artifact["id"]
+                  if type(archive_id) is not int or archive_id <= 0:
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_ARTIFACT_ID_INVALID")
+                  raw = subprocess.run(["gh", "api", f"{api_root}/artifacts/{archive_id}/zip"],
+                                       check=True, capture_output=True).stdout
+                  destination.mkdir(parents=True, exist_ok=False)
+                  with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                      seen = set()
+                      for entry in archive.infolist():
+                          path = Path(entry.filename)
+                          if (entry.orig_filename != entry.filename
+                                  or path.is_absolute() or entry.filename.startswith("/")
+                                  or ".." in path.parts or "\\" in entry.filename
+                                  or ":" in entry.filename or entry.filename in seen
+                                  or (entry.external_attr >> 16) & 0o170000 == 0o120000):
+                              raise ValueError("CATALOG_RECOVERED_OUTCOME_ARCHIVE_INVALID")
+                          seen.add(entry.filename)
+                      archive.extractall(destination)
+
+              authority = payload["authority_id"]
+              plan = root / "sealed-plan"
+              download(f"catalog-sealed-execution-plan-{authority}", plan)
+              verify_sealed_global_reuse_execution_plan(plan, expected_bindings={
+                  key: payload[key] for key in (
+                      "request_sha256", "authority_id", "campaign_id", "science_sha256",
+                      "execution_plan_sha256", "execution_protocol_sha256", "protected_commit_sha",
+                  )
+              })
+              download(f"catalog-terminal-science-{authority}", root / "science")
+              for stage in failed:
+                  matrix = json.loads((plan / f"recipe_matrix_{stage[-1]}.json").read_text())
+                  names = []
+                  for row in matrix["include"]:
+                      worker = int(row["worker_id"])
+                      name = official_worker_failure_artifact_name(
+                          execution_plan_sha256=payload["execution_plan_sha256"],
+                          worker_id=worker, attempt_id=f"{authority}:worker:{worker:03d}:attempt:1",
+                      )
+                      if any(artifact["name"] == name for artifact in artifacts):
+                          names.append(name)
+                  if not names or len(names) != len(set(names)):
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_INITIAL_FAILURE_MISSING_OR_DUPLICATE")
+                  for name in names:
+                      download(name, root / "failures" / name)
+              command.extend([
+                  "--recovered-science-index", str(root / "science/catalog_terminal_science_index_v1.json"),
+                  "--sealed-plan", str(plan), "--recovered-failure-root", str(root / "failures"),
+              ])
+          subprocess.run(command, check=True)
+          PY
 
       - name: Publish exact engine outcome evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
