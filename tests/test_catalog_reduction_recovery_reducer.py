@@ -1,18 +1,38 @@
 import json
 import sys
+import shutil
 from types import SimpleNamespace
 
 import pytest
 
 from aurora.infra.sp500_megarun import catalog_reduction_recovery_profile as recovery
-from aurora.tests.test_catalog_reduction_recovery_source import build_historical_reduction_source_fixture
+from aurora.infra.github_performance.contracts import canonical_sha256
+from aurora.tests.test_catalog_reduction_recovery_source import build_historical_reduction_source_fixture, _reseal_member
 from scripts import reduce_sp500_optimized_catalog_run as reducer
 
 
-@pytest.mark.parametrize("mutation", ["none", "token", "plan_receipt", "group_receipt", "coverage", "input_root"])
+@pytest.mark.parametrize("mutation", ["none", "protocol_only", "infrastructure_only", "contract_drift", "token", "plan_receipt", "group_receipt", "coverage", "input_root"])
 def test_reduction_only_uses_prior_results_with_current_authorization(tmp_path, monkeypatch, mutation):
     fixture = build_historical_reduction_source_fixture(tmp_path / "source", cached_count=0)
-    sealed = fixture["sealed_plan"]
+    sealed = tmp_path / "current-sealed-plan"
+    shutil.copytree(fixture["sealed_plan"], sealed)
+    if mutation == "protocol_only":
+        receipt_path = sealed / "execution_plan_receipt.json"
+        payload = json.loads(receipt_path.read_text("utf-8"))
+        payload["execution_protocol_sha256"] = "f" * 64
+        payload["receipt_sha256"] = canonical_sha256({key: value for key, value in payload.items() if key != "receipt_sha256"})
+        receipt_path.write_text(json.dumps(payload), "utf-8")
+    if mutation in {"infrastructure_only", "contract_drift"}:
+        current_fixture = {**fixture, "sealed_plan": sealed}
+        contract = json.loads((sealed / "resolved_contract.json").read_text("utf-8"))
+        if mutation == "infrastructure_only":
+            contract["infrastructure_sha256"] = "0" * 64
+        else:
+            contract["limits"]["max_result_bytes_per_recipe"] *= 2
+        _reseal_member(current_fixture, "resolved_contract.json", contract)
+        plan = json.loads((sealed / "run_plan.json").read_text("utf-8"))
+        plan["contract_sha256"] = canonical_sha256(contract)
+        _reseal_member(current_fixture, "run_plan.json", plan)
     receipts = [json.loads(path.read_text("utf-8")) for path in fixture["groups"].glob("*/receipt.json")]
     profile = SimpleNamespace(
         source_plan_bindings=fixture["bindings"],
@@ -39,8 +59,9 @@ def test_reduction_only_uses_prior_results_with_current_authorization(tmp_path, 
             "--sealed-plan", str(sealed), "--recovery-source-root", str(tmp_path / "source"),
             "--output-dir", str(output)]
     monkeypatch.setattr(sys, "argv", argv)
-    if mutation != "none":
-        with pytest.raises((ValueError, SystemExit), match="CATALOG_|OPTIMIZED_"):
+    if mutation not in {"none", "protocol_only", "infrastructure_only"}:
+        expected_error = "CATALOG_REDUCTION_RECOVERY_CONTRACT_INCOMPATIBLE" if mutation == "contract_drift" else "CATALOG_|OPTIMIZED_"
+        with pytest.raises((ValueError, SystemExit), match=expected_error):
             reducer.main()
         assert not output.exists()
         return
@@ -50,6 +71,11 @@ def test_reduction_only_uses_prior_results_with_current_authorization(tmp_path, 
     assert receipt["physical_recipe_evaluations"] == 0
     assert receipt["prior_result_cache_hits"] == 24
     assert receipt["workers"] == receipt["worker_receipt_count"] == 0
+    assert receipt["execution_metrics"]["worker_evaluation_seconds"] is None
+    assert receipt["execution_metrics"]["basis"] == "unavailable"
     assert receipt["root_node_descriptor_sha256"] is None
     assert receipt["recovery_source"]["source_root_node_descriptor_sha256"]
     assert receipt["recovery_source"]["source_run_id"] == 17
+    if mutation == "protocol_only":
+        assert receipt["recovery_source"]["current_execution_protocol_sha256"] == "f" * 64
+        assert receipt["recovery_source"]["source_execution_protocol_sha256"] != "f" * 64

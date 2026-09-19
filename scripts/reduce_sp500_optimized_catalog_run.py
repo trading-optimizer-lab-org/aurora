@@ -149,11 +149,21 @@ def _load_reduction_only_source(
         source_root / "sealed-plan", source_root / "groups", profile.source_plan_bindings,
         science_sha256, catalog_manifest_sha256, profile.strategy_ids,
     )
+    source_contract = RunOptimizationContractV1.model_validate_json(
+        (source_root / "sealed-plan/resolved_contract.json").read_text("utf-8")
+    )
+    current_contract = RunOptimizationContractV1.model_validate_json(
+        (sealed / "resolved_contract.json").read_text("utf-8")
+    )
+    # The protected predecessor profile and current admission authorize this
+    # control-plane transition. Protocol hashes also cover changed workflows;
+    # all scientific and execution contract fields must remain exactly equal.
+    if source_contract.model_dump(exclude={"infrastructure_sha256"}) != current_contract.model_dump(exclude={"infrastructure_sha256"}):
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_CONTRACT_INCOMPATIBLE")
     if (
         source.plan_receipt_sha256 != profile.source_plan_receipt_sha256
         or source.group_receipt_sha256s != tuple(item.receipt_sha256 for item in profile.artifacts if item.role == "group")
         or source.work_manifest_sha256 != work_manifest.manifest_sha256
-        or source.plan_receipt.get("execution_protocol_sha256") != current.get("execution_protocol_sha256")
     ):
         raise ValueError("CATALOG_REDUCTION_RECOVERY_SOURCE_BINDING_INVALID")
     return profile, source
@@ -481,7 +491,7 @@ def main() -> int:
         resume_index = historical.resume_index
         current_index = load_resume_index((), expected_science_identity_sha256=science_identity_sha256,
                                          expected_catalog_manifest_sha256=resolved.science.catalog_manifest_sha256)
-        worker_receipts = []
+        worker_receipts: list[dict[str, object]] = []
         root_node_descriptor_sha256 = None
         recovery_source = {
             "profile_sha256": profile.profile_sha256,
@@ -490,6 +500,10 @@ def main() -> int:
             "source_run_attempt": profile.source_run_attempt,
             "source_terminal_receipt_sha256": profile.source_terminal_receipt_sha256,
             "source_plan_receipt_sha256": historical.plan_receipt_sha256,
+            "source_execution_protocol_sha256": historical.plan_receipt["execution_protocol_sha256"],
+            "current_execution_protocol_sha256": json.loads(
+                (args.sealed_plan / "execution_plan_receipt.json").read_text("utf-8")
+            )["execution_protocol_sha256"],
             "source_root_node_descriptor_sha256": historical.source_root_node_descriptor_sha256,
             "group_receipts": deep_thaw_json(historical.group_receipts),
         }
